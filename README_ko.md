@@ -51,13 +51,14 @@
 
 ## 📰 뉴스
 
+- **2026-05-02** 🧭 **배당 분석 + 더 선명한 로드맵**: 인컴 주식, 배당 지속 가능성, 배당 성장, 주주환원 수익률, 배당락 메커니즘, 고배당 함정 점검을 다루는 `dividend-analysis` 스킬을 추가하고 bundled skill 회귀 테스트로 고정했습니다. 공개 로드맵은 Research Autopilot, Data Bridge, Options Lab, Portfolio Studio, Alpha Zoo, Research Delivery, Trust Layer, Community 공유에 집중하도록 정리했습니다.
 - **2026-05-01** 🔥 **상관관계 히트맵 + OpenAI Codex OAuth + A주 pre-ST 필터**: 새 상관관계 대시보드/API가 롤링 수익률 상관관계를 계산하고, 포트폴리오 및 종목 분석용 ECharts 히트맵으로 렌더링합니다([#64](https://github.com/HKUDS/Vibe-Trading/pull/64)). OpenAI Codex provider는 이제 `vibe-trading provider login openai-codex`로 ChatGPT OAuth를 사용할 수 있으며, Settings 메타데이터와 어댑터 회귀 테스트도 추가되었습니다([#65](https://github.com/HKUDS/Vibe-Trading/pull/65)). A주 ST/*ST 리스크 스크리닝을 위한 `ashare-pre-st-filter` 스킬을 추가하고 강화했으며, Sina 제재 공시 관련성 필터링으로 증권 계좌 목록 언급이 E2 횟수를 부풀리지 않도록 했습니다([#63](https://github.com/HKUDS/Vibe-Trading/pull/63)).
 - **2026-04-30** ⚙️ **Web UI 설정 + validation CLI 강화**: LLM provider/model, Base URL, reasoning effort, 데이터 소스 자격 증명을 로컬에서 설정할 수 있는 Settings 페이지를 추가했습니다. settings API는 local/auth로 보호되며 provider 메타데이터도 데이터 기반 설정으로 분리되었습니다([#57](https://github.com/HKUDS/Vibe-Trading/pull/57)). 또한 `python -m backtest.validation <run_dir>`가 인자 없음, 빈 경로, 잘못된 경로, 존재하지 않는 경로, 디렉터리가 아닌 경로를 검증 시작 전에 명확한 메시지로 실패하도록 강화했습니다([#60](https://github.com/HKUDS/Vibe-Trading/pull/60)).
-- **2026-04-28** 🚀 **v0.1.6 릴리스**（`pip install -U vibe-trading-ai`）: `pip install` / `uv tool install` 설치 후 `vibe-trading --swarm-presets`가 비어 있는 문제 수정([#55](https://github.com/HKUDS/Vibe-Trading/issues/55)) — 프리셋 YAML을 `src.swarm` 패키지 내부에 번들링, 6개 회귀 테스트로 고정. 또한 AKShare 로더가 ETF(`510300.SH`)와 외환(`USDCNH`)을 올바른 엔드포인트로 라우팅하고 레지스트리 폴백 강화. v0.1.5 이후 업데이트 종합: 벤치마크 비교 패널, `/upload` 스트리밍 + 크기 제한, Futu 로더(HK + A주), vnpy 내보내기 스킬, 보안 강화, 프론트엔드 지연 로딩(688KB → 262KB).
 
 <details>
 <summary>이전 뉴스</summary>
 
+- **2026-04-28** 🚀 **v0.1.6 릴리스**（`pip install -U vibe-trading-ai`）: `pip install` / `uv tool install` 설치 후 `vibe-trading --swarm-presets`가 비어 있는 문제 수정([#55](https://github.com/HKUDS/Vibe-Trading/issues/55)) — 프리셋 YAML을 `src.swarm` 패키지 내부에 번들링, 6개 회귀 테스트로 고정. 또한 AKShare 로더가 ETF(`510300.SH`)와 외환(`USDCNH`)을 올바른 엔드포인트로 라우팅하고 레지스트리 폴백 강화. v0.1.5 이후 업데이트 종합: 벤치마크 비교 패널, `/upload` 스트리밍 + 크기 제한, Futu 로더(HK + A주), vnpy 내보내기 스킬, 보안 강화, 프론트엔드 지연 로딩(688KB → 262KB).
 - **2026-04-27** 📊 **벤치마크 비교 패널 + 업로드 안전성**: 백테스트 출력에 벤치마크 비교 패널(티커 / 벤치마크 수익률 / 초과 수익률 / 정보 비율) 추가, yfinance로 SPY · CSI 300 등 자동 해석([#48](https://github.com/HKUDS/Vibe-Trading/issues/48)). 또한 `/upload` 엔드포인트를 1MB 청크 스트리밍으로 전환, `MAX_UPLOAD_SIZE` 초과 시 즉시 중단 + 부분 파일 정리. 50MB 상한이 악성/초대형 요청에도 실효화([#53](https://github.com/HKUDS/Vibe-Trading/pull/53)) — 4개 회귀 테스트로 고정.
 - **2026-04-22** 🛡️ **하드닝 + 신규 연동**: `safe_path`에 경로 컨테인먼트 강제 + 거래 명세서/섀도우 계정 도구 샌드박스화, `MANIFEST.in` 추가로 sdist에 `.env.example` / 테스트 / Docker 파일 포함, 프론트엔드 라우트 단위 지연 로딩으로 초기 번들 688KB → 262KB. 또한 Futu 홍콩/A주 데이터 로더([#47](https://github.com/HKUDS/Vibe-Trading/pull/47))와 vnpy CtaTemplate 내보내기 스킬([#46](https://github.com/HKUDS/Vibe-Trading/pull/46)) 추가.
 - **2026-04-21** 🛡️ **워크스페이스 + 문서**: 상대 `run_dir`을 활성 run 디렉토리로 정규화([#43](https://github.com/HKUDS/Vibe-Trading/pull/43)). README 사용 예제 추가([#45](https://github.com/HKUDS/Vibe-Trading/pull/45)).
@@ -624,21 +625,14 @@ Vibe-Trading은 **[HKUDS](https://github.com/HKUDS)** 에이전트 생태계의 
 
 | Phase | Feature | Status |
 |-------|---------|--------|
-| **Agent Harness** | 크로스세션 영구 메모리 (저장 / 리콜 / 삭제) | **Done** |
-| | 자가 진화 스킬 — 에이전트가 스스로 워크플로우를 생성·수정·삭제 | **Done** |
-| | FTS5 크로스세션 검색 (모든 과거 대화 횡단) | **Done** |
-| | 5계층 컨텍스트 압축 (micro → collapse → auto → manual → iterative) | **Done** |
-| | 읽기/쓰기 도구 배치 처리 — 읽기 전용 도구 병렬 실행 | **Done** |
-| **Next Up** | 자율 리서치 루프 — 에이전트가 밤새 가설을 반복 | In Progress |
-| | IM 통합 (Slack / Telegram / WeChat) | Planned |
-| **Analysis & Viz** | 옵션 변동성 서피스 및 그릭스 3D 시각화 | Planned |
-| | 롤링 윈도우 + 클러스터링 기반 크로스자산 상관 히트맵 | Planned |
-| | CLI 백테스트 출력에 벤치마크 비교 | Planned |
-| **Skills & Presets** | 배당 분석 스킬 | **Done** |
-| | ESG / 지속가능 투자 스웜 프리셋 | Planned |
-| **Portfolio & Optimization** | 레버리지, 섹터 캡, 턴오버 제약을 포함한 고급 포트폴리오 옵티마이저 | Planned |
-| **Future** | 전략 마켓플레이스 (공유 & 발견) | Exploring |
-| | WebSocket 기반 실시간 데이터 스트리밍 | Exploring |
+| **Research Autopilot** | 야간 리서치 루프: 가설 → 데이터 수집 → 백테스트 → 근거 리포트 | In Progress |
+| **Data Bridge** | 사용자 데이터 연결: 로컬 CSV/Parquet/SQL 커넥터 + schema mapping | Planned |
+| **Options Lab** | 변동성 서피스, 그릭스 대시보드, 페이오프/시나리오 탐색기 | Planned |
+| **Portfolio Studio** | 리스크 엑스레이, 제약 조건, 턴오버 고려 옵티마이저, 리밸런싱 노트 | Planned |
+| **Alpha Zoo** | Alpha101 / Alpha158 / Alpha191 팩터 라이브러리와 스크리닝 + IC 테스트 | Planned |
+| **Research Delivery** | Slack / Telegram / 이메일형 채널로 예약 브리프 전달 | Planned |
+| **Trust Layer** | 재현 가능한 run card: 도구 추적, 데이터 소스, 가정, 인용 | Planned |
+| **Community** | 공유 가능한 skills, presets, strategy cards | Exploring |
 
 ---
 
