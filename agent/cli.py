@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -56,6 +57,129 @@ _VERSION = "0.1.5"
 # Agent color assignments for swarm display
 _AGENT_STYLES = ["cyan", "magenta", "green", "yellow", "blue", "bright_red", "bright_cyan", "bright_magenta"]
 _agent_color_map: dict[str, str] = {}
+
+_HAS_PROMPT_TOOLKIT = False
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.formatted_text import FormattedText
+    from prompt_toolkit.history import InMemoryHistory
+
+    _HAS_PROMPT_TOOLKIT = True
+except ImportError:
+    pass
+
+
+class _SessionStats:
+    """Mutable container for interactive session statistics.
+
+    Shared between the status bar renderer and the agent loop so that
+    tool callbacks can update counters in-place.
+    """
+
+    __slots__ = ("session_start", "last_elapsed", "total_tool_ms", "tool_count")
+
+    def __init__(self, session_start: float) -> None:
+        self.session_start = session_start
+        self.last_elapsed: Optional[float] = None
+        self.total_tool_ms = 0
+        self.tool_count = 0
+
+
+def _build_status_parts(stats: _SessionStats) -> list[str]:
+    """Build plain-text status bar segments.
+
+    Args:
+        stats: Session statistics.
+
+    Returns:
+        List of status text segments.
+    """
+    provider = os.getenv("LANGCHAIN_PROVIDER", "")
+    model = os.getenv("LANGCHAIN_MODEL_NAME", "")
+    model_short = model.split("/")[-1] if "/" in model else model
+    label = f"{provider}/{model_short}" if provider else model_short or "unknown"
+
+    session_s = int(time.monotonic() - stats.session_start)
+    mins, secs = divmod(session_s, 60)
+    session_str = f"{mins}m{secs:02d}s" if mins else f"{secs}s"
+
+    parts = [label, session_str]
+
+    if stats.last_elapsed is not None:
+        parts.append(f"last {stats.last_elapsed:.1f}s")
+
+    if stats.tool_count > 0:
+        total_s = stats.total_tool_ms / 1000
+        parts.append(f"{stats.tool_count} tools ({total_s:.1f}s)")
+
+    return parts
+
+
+def _ptk_toolbar(stats: _SessionStats) -> FormattedText:
+    """prompt_toolkit bottom_toolbar callback — called on every render.
+
+    Args:
+        stats: Session statistics.
+
+    Returns:
+        FormattedText for the toolbar.
+    """
+    segments = _build_status_parts(stats)
+    text = " │ ".join(segments)
+    return FormattedText([("class:bottom-toolbar.text", f" {text} ")])
+
+
+def _print_status_bar(stats: _SessionStats) -> None:
+    """Print a static status bar using Rich (fallback without prompt_toolkit).
+
+    Args:
+        stats: Session statistics.
+    """
+    parts = _build_status_parts(stats)
+    bar = "[dim] │ [/dim]".join(
+        f"[bold]{parts[0]}[/bold]" if i == 0 else p for i, p in enumerate(parts)
+    )
+    console.print(bar)
+
+
+def _create_prompt_session(stats: _SessionStats) -> Any:
+    """Create a prompt_toolkit PromptSession with history and live toolbar.
+
+    Args:
+        stats: Session statistics for the live bottom toolbar.
+
+    Returns:
+        A PromptSession instance, or None if prompt_toolkit is not available.
+    """
+    if not _HAS_PROMPT_TOOLKIT:
+        return None
+    return PromptSession(
+        history=InMemoryHistory(),
+        bottom_toolbar=lambda: _ptk_toolbar(stats),
+        refresh_interval=1.0,
+    )
+
+
+def _read_input(prompt_session: Any, prompt_str: str = "> ") -> str:
+    """Read user input with arrow key support if prompt_toolkit is available.
+
+    Falls back to Rich Prompt.ask() when prompt_toolkit is not installed or
+    when stdin is not a tty.
+
+    Args:
+        prompt_session: A prompt_toolkit PromptSession, or None.
+        prompt_str: Prompt text to display.
+
+    Returns:
+        User input string (not stripped).
+
+    Raises:
+        EOFError: When the user presses Ctrl-D.
+        KeyboardInterrupt: When the user presses Ctrl-C.
+    """
+    if prompt_session is not None and sys.stdin.isatty():
+        return prompt_session.prompt(prompt_str)
+    return Prompt.ask(f"[bold]{prompt_str}[/bold]")
 
 
 def serve_main(argv: list[str] | None = None) -> int:
@@ -681,10 +805,14 @@ def cmd_interactive(max_iter: int) -> None:
         return
 
     history: List[Dict[str, str]] = []
+    stats = _SessionStats(session_start=time.monotonic())
+    prompt_session = _create_prompt_session(stats)
 
     while True:
+        if prompt_session is None:
+            _print_status_bar(stats)
         try:
-            user_input = Prompt.ask("\n[bold]>[/bold]").strip()
+            user_input = _read_input(prompt_session).strip()
         except (KeyboardInterrupt, EOFError):
             break
 
@@ -702,14 +830,90 @@ def cmd_interactive(max_iter: int) -> None:
             continue
 
         # Natural language -> agent
-        start = time.perf_counter()
-        try:
-            result = _run_agent(user_input, history=history[-6:], max_iter=max_iter)
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Interrupted[/yellow]")
-            continue
+        from src.tools import build_registry
+        from src.providers.chat import ChatLLM
+        from src.agent.loop import AgentLoop
+        from src.memory.persistent import PersistentMemory
 
-        _print_result(result, time.perf_counter() - start)
+        run_start = time.perf_counter()
+        run_state = {"label": "connecting"}
+        pending_tool = {"name": "", "args_preview": ""}
+        stop_timer = threading.Event()
+
+        def _status_event_callback(event_type: str, data: Dict[str, Any]) -> None:
+            if event_type == "tool_result":
+                stats.total_tool_ms += data.get("elapsed_ms", 0)
+                stats.tool_count += 1
+                run_state["label"] = "thinking"
+            elif event_type == "tool_call":
+                run_state["label"] = f"running {data.get('tool', '?')}"
+            elif event_type == "text_delta":
+                run_state["label"] = "streaming"
+            elif event_type == "compact":
+                run_state["label"] = "compressing context"
+            _on_event_interactive(event_type, data)
+
+        def _on_event_interactive(event_type: str, data: Dict[str, Any]) -> None:
+            if event_type == "text_delta":
+                console.print(data.get("delta", ""), end="", style="dim")
+            elif event_type == "thinking_done":
+                console.print()
+            elif event_type == "tool_call":
+                pending_tool["name"] = data.get("tool", "")
+                pending_tool["args_preview"] = _format_tool_call_args(
+                    data.get("tool", ""), data.get("arguments", {})
+                )
+            elif event_type == "tool_result":
+                tool = data.get("tool", "") or pending_tool["name"]
+                name = tool
+                args_preview = pending_tool["args_preview"]
+                status_str = data.get("status", "ok")
+                elapsed_ms = data.get("elapsed_ms", 0)
+                elapsed_s = elapsed_ms / 1000
+                ok = status_str == "ok"
+                mark = "[green]\u2713[/green]" if ok else "[red]\u2717[/red]"
+                preview = _format_tool_result_preview(tool, status_str, data.get("preview", ""))
+                suffix = f"  {preview}" if preview else ""
+                console.print(f"  [cyan]\u25b6 {name}[/cyan]{args_preview}  {mark} [dim]{elapsed_s:.1f}s[/dim]{suffix}")
+                pending_tool["name"] = ""
+                pending_tool["args_preview"] = ""
+            elif event_type == "compact":
+                tokens = data.get("tokens_before", "?")
+                console.print(f"\n  [yellow]\u27f3 context compressed[/yellow] [dim]({tokens} tokens \u2192 summary)[/dim]\n")
+
+        def _timer_loop(status_ref: Any) -> None:
+            while not stop_timer.is_set():
+                elapsed = time.perf_counter() - run_start
+                label = run_state["label"]
+                try:
+                    status_ref.update(f"[bold cyan]\u23f3 {label}... {elapsed:.1f}s[/bold cyan]")
+                except Exception:
+                    pass
+                stop_timer.wait(1.0)
+
+        with console.status("[bold cyan]\u23f3 Connecting...[/bold cyan]") as spinner:
+            timer_thread = threading.Thread(target=_timer_loop, args=(spinner,), daemon=True)
+            timer_thread.start()
+
+            try:
+                pm = PersistentMemory()
+                agent = AgentLoop(
+                    registry=build_registry(persistent_memory=pm),
+                    llm=ChatLLM(),
+                    event_callback=_status_event_callback,
+                    max_iterations=max_iter,
+                    persistent_memory=pm,
+                )
+                result = agent.run(user_message=user_input, history=history[-6:])
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Interrupted[/yellow]")
+                continue
+            finally:
+                stop_timer.set()
+                timer_thread.join(timeout=1)
+
+        stats.last_elapsed = time.perf_counter() - run_start
+        _print_result(result, stats.last_elapsed)
         history.append({"role": "user", "content": user_input})
         if result.get("content"):
             history.append({"role": "assistant", "content": result["content"]})
@@ -1360,22 +1564,47 @@ def cmd_session_chat(session_id: str, max_iter: int) -> None:
         border_style="cyan",
     ))
 
+    stats = _SessionStats(session_start=time.monotonic())
+    prompt_session = _create_prompt_session(stats)
+
     while True:
+        if prompt_session is None:
+            _print_status_bar(stats)
         try:
-            prompt = Prompt.ask("\n[bold]>[/bold]").strip()
+            prompt = _read_input(prompt_session).strip()
         except (KeyboardInterrupt, EOFError):
             break
         if not prompt or prompt.lower() in ("q", "quit", "exit"):
             break
 
-        start = time.perf_counter()
-        try:
-            result = _run_agent(prompt, history=history[-6:], max_iter=max_iter)
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Interrupted[/yellow]")
-            continue
+        run_start = time.perf_counter()
+        _run_state = {"label": "running"}
+        _stop_timer = threading.Event()
 
-        _print_result(result, time.perf_counter() - start)
+        def _session_event_timer(status_ref: Any) -> None:
+            while not _stop_timer.is_set():
+                elapsed = time.perf_counter() - run_start
+                label = _run_state["label"]
+                try:
+                    status_ref.update(f"[bold cyan]\u23f3 {label}... {elapsed:.1f}s[/bold cyan]")
+                except Exception:
+                    pass
+                _stop_timer.wait(1.0)
+
+        with console.status("[bold cyan]\u23f3 Running...[/bold cyan]") as spinner:
+            _timer = threading.Thread(target=_session_event_timer, args=(spinner,), daemon=True)
+            _timer.start()
+            try:
+                result = _run_agent(prompt, history=history[-6:], max_iter=max_iter)
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Interrupted[/yellow]")
+                continue
+            finally:
+                _stop_timer.set()
+                _timer.join(timeout=1)
+
+        stats.last_elapsed = time.perf_counter() - run_start
+        _print_result(result, stats.last_elapsed)
         history.append({"role": "user", "content": prompt})
         if result.get("content"):
             history.append({"role": "assistant", "content": result["content"]})
