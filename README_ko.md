@@ -51,6 +51,7 @@
 
 ## 📰 뉴스
 
+- **2026-05-03** 🛡️ **보안 강화 패치**: 비로컬 배포의 기본 API 인증을 강화하고, 민감한 run/session/swarm 읽기 API를 보호하며, 업로드와 로컬 파일 읽기 경계를 제한하고, shell 가능 도구를 진입점별로 제어합니다. 생성된 전략은 import 전에 검증되며 Docker 이미지는 기본적으로 비root 사용자와 localhost 전용 포트 공개로 실행됩니다. CLI와 localhost Web UI 흐름은 낮은 마찰을 유지합니다. 원격 API/Web 배포에서는 `API_AUTH_KEY`를 설정하세요.
 - **2026-05-02** 🧭 **배당 분석 + 더 선명한 로드맵**: 인컴 주식, 배당 지속 가능성, 배당 성장, 주주환원 수익률, 배당락 메커니즘, 고배당 함정 점검을 다루는 `dividend-analysis` 스킬을 추가하고 bundled skill 회귀 테스트로 고정했습니다. 공개 로드맵은 Research Autopilot, Data Bridge, Options Lab, Portfolio Studio, Alpha Zoo, Research Delivery, Trust Layer, Community 공유에 집중하도록 정리했습니다.
 - **2026-05-01** 🔥 **상관관계 히트맵 + OpenAI Codex OAuth + A주 pre-ST 필터**: 새 상관관계 대시보드/API가 롤링 수익률 상관관계를 계산하고, 포트폴리오 및 종목 분석용 ECharts 히트맵으로 렌더링합니다([#64](https://github.com/HKUDS/Vibe-Trading/pull/64)). OpenAI Codex provider는 이제 `vibe-trading provider login openai-codex`로 ChatGPT OAuth를 사용할 수 있으며, Settings 메타데이터와 어댑터 회귀 테스트도 추가되었습니다([#65](https://github.com/HKUDS/Vibe-Trading/pull/65)). A주 ST/*ST 리스크 스크리닝을 위한 `ashare-pre-st-filter` 스킬을 추가하고 강화했으며, Sina 제재 공시 관련성 필터링으로 증권 계좌 목록 언급이 E2 횟수를 부풀리지 않도록 했습니다([#63](https://github.com/HKUDS/Vibe-Trading/pull/63)).
 - **2026-04-30** ⚙️ **Web UI 설정 + validation CLI 강화**: LLM provider/model, Base URL, reasoning effort, 데이터 소스 자격 증명을 로컬에서 설정할 수 있는 Settings 페이지를 추가했습니다. settings API는 local/auth로 보호되며 provider 메타데이터도 데이터 기반 설정으로 분리되었습니다([#57](https://github.com/HKUDS/Vibe-Trading/pull/57)). 또한 `python -m backtest.validation <run_dir>`가 인자 없음, 빈 경로, 잘못된 경로, 존재하지 않는 경로, 디렉터리가 아닌 경로를 검증 시작 전에 명확한 메시지로 실패하도록 강화했습니다([#60](https://github.com/HKUDS/Vibe-Trading/pull/60)).
@@ -260,6 +261,8 @@ docker compose up --build
 
 `http://localhost:8899`를 엽니다. 백엔드 + 프런트엔드가 하나의 컨테이너에 있습니다.
 
+Docker는 기본적으로 백엔드를 `127.0.0.1:8899`에만 게시하고, 비root 컨테이너 사용자로 앱을 실행합니다. API를 자신의 머신 밖으로 의도적으로 노출하는 경우 강한 `API_AUTH_KEY`를 설정하고 클라이언트에서 `Authorization: Bearer <key>`를 보내세요.
+
 ### 경로 B: 로컬 설치
 
 ```bash
@@ -324,6 +327,10 @@ npx clawhub@latest install vibe-trading --force
 | `LANGCHAIN_MODEL_NAME` | Yes | 모델 이름(예: `deepseek/deepseek-v3.2`) |
 | `TUSHARE_TOKEN` | No | A주 데이터용 Tushare Pro 토큰(AKShare 폴백) |
 | `TIMEOUT_SECONDS` | No | LLM 호출 타임아웃, 기본 120초 |
+| `API_AUTH_KEY` | 네트워크 배포 권장 | API가 비로컬 클라이언트에서 접근 가능한 경우 필요한 Bearer token |
+| `VIBE_TRADING_ENABLE_SHELL_TOOLS` | No | 원격 API / MCP-SSE 유형 배포에서 shell 가능 도구를 명시적으로 활성화 |
+| `VIBE_TRADING_ALLOWED_FILE_ROOTS` | No | 문서와 브로커 거래 명세서 import용 추가 루트(쉼표 구분) |
+| `VIBE_TRADING_ALLOWED_RUN_ROOTS` | No | 생성 코드 run 디렉터리용 추가 루트(쉼표 구분) |
 
 <sub>* Ollama는 API 키가 필요 없습니다.</sub>
 
@@ -428,6 +435,12 @@ vibe-trading serve --port 8899
 | `PUT` | `/settings/data-sources` | 로컬 데이터 소스 설정 업데이트 |
 
 인터랙티브 문서: `http://localhost:8899/docs`
+
+### 보안 기본값
+
+localhost 개발에서는 `vibe-trading serve`가 브라우저 워크플로를 단순하게 유지합니다. 비로컬 클라이언트가 민감한 API에 접근하려면 `API_AUTH_KEY`가 필요합니다. JSON/업로드 요청에는 `Authorization: Bearer <key>`를 사용하세요. 브라우저 EventSource 스트림은 Web UI Settings에 같은 키를 한 번 입력하면 처리됩니다.
+
+shell 가능 도구는 로컬 CLI와 신뢰된 localhost 워크플로에서 사용할 수 있지만, 원격 API 세션에는 기본적으로 노출되지 않습니다. 필요한 경우에만 `VIBE_TRADING_ENABLE_SHELL_TOOLS=1`을 명시적으로 설정하세요. 문서와 거래 명세서 리더는 기본적으로 업로드/import 루트로 제한됩니다. 파일은 `agent/uploads`, `agent/runs`, `./uploads`, `./data`, `~/.vibe-trading/uploads`, `~/.vibe-trading/imports`에 두거나, `VIBE_TRADING_ALLOWED_FILE_ROOTS`로 전용 디렉터리를 추가하세요.
 
 ### Web UI Settings
 

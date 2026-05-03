@@ -49,6 +49,12 @@ mcp = FastMCP("Vibe-Trading")
 
 _skills_loader = None
 _registry = None
+_include_shell_tools = True
+
+
+def _env_shell_tools_enabled() -> bool:
+    """Return whether shell tools were explicitly enabled for network MCP."""
+    return os.getenv("VIBE_TRADING_ENABLE_SHELL_TOOLS", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _get_skills_loader():
@@ -63,7 +69,7 @@ def _get_registry():
     global _registry
     if _registry is None:
         from src.tools import build_registry
-        _registry = build_registry()
+        _registry = build_registry(include_shell_tools=_include_shell_tools)
     return _registry
 
 
@@ -693,6 +699,7 @@ def scan_shadow_signals(
 
 def main():
     """Entry point for `vibe-trading-mcp` CLI command."""
+    global _include_shell_tools, _registry
     import argparse
 
     parser = argparse.ArgumentParser(description="Vibe-Trading MCP Server")
@@ -701,6 +708,8 @@ def main():
     parser.add_argument("--port", type=int, default=8900,
                         help="SSE port (only used with --transport sse)")
     args = parser.parse_args()
+    _include_shell_tools = True if args.transport == "stdio" else _env_shell_tools_enabled()
+    _registry = None
 
     if args.transport == "sse":
         mcp.run(transport="sse", port=args.port)

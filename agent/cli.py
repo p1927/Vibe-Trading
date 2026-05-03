@@ -283,7 +283,7 @@ def _run_agent(
 
     pm = PersistentMemory()
     agent = AgentLoop(
-        registry=build_registry(persistent_memory=pm),
+        registry=build_registry(persistent_memory=pm, include_shell_tools=True),
         llm=ChatLLM(),
         event_callback=on_event,
         max_iterations=max_iter,
@@ -923,7 +923,12 @@ def cmd_swarm_run_live(preset: str, vars_json: Optional[str] = None) -> None:
     dashboard = _SwarmDashboard(preset, "")
 
     try:
-        run = runtime.start_run(preset, user_vars, live_callback=dashboard.handle_event)
+        run = runtime.start_run(
+            preset,
+            user_vars,
+            live_callback=dashboard.handle_event,
+            include_shell_tools=True,
+        )
     except FileNotFoundError as exc:
         console.print(f"[red]{exc}[/red]")
         return

@@ -1,17 +1,50 @@
+import { authHeaders, withAuthQuery } from "@/lib/apiAuth";
+
 const BASE = "";
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+export const AUTH_REQUIRED_MESSAGE =
+  "Remote API access requires an API key. Add it in Settings, or run the backend on localhost for local-only use.";
+
+export function isAuthRequiredError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403);
+}
+
+async function errorFromResponse(res: Response): Promise<ApiError> {
+  let detail = `HTTP ${res.status}`;
+  try {
+    const body = await res.json();
+    detail = body.detail || body.message || detail;
+  } catch { /* ignore */ }
+  if (res.status === 401 || res.status === 403) {
+    detail = AUTH_REQUIRED_MESSAGE;
+  }
+  return new ApiError(detail, res.status);
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const { headers, ...rest } = options ?? {};
+  const mergedHeaders: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
+  if (headers) {
+    new Headers(headers).forEach((value, key) => {
+      mergedHeaders[key] = value;
+    });
+  }
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
-    ...options,
+    ...rest,
+    headers: mergedHeaders,
   });
   if (!res.ok) {
-    let detail = `HTTP ${res.status}`;
-    try {
-      const body = await res.json();
-      detail = body.detail || body.message || detail;
-    } catch { /* ignore */ }
-    throw new Error(detail);
+    throw await errorFromResponse(res);
   }
   const text = await res.text();
   return text ? JSON.parse(text) : ({} as T);
@@ -26,14 +59,9 @@ export interface UploadResult {
 async function uploadFile(file: File): Promise<UploadResult> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${BASE}/upload`, { method: "POST", body: form });
+  const res = await fetch(`${BASE}/upload`, { method: "POST", headers: authHeaders(), body: form });
   if (!res.ok) {
-    let detail = `HTTP ${res.status}`;
-    try {
-      const body = await res.json();
-      detail = body.detail || body.message || detail;
-    } catch { /* ignore */ }
-    throw new Error(detail);
+    throw await errorFromResponse(res);
   }
   return res.json();
 }
@@ -51,7 +79,7 @@ export const api = {
   sendMessage: (sid: string, content: string) => request<{ message_id: string; attempt_id: string }>(`/sessions/${sid}/messages`, { method: "POST", body: JSON.stringify({ content }) }),
   cancelSession: (sid: string) => request<{ status: string }>(`/sessions/${sid}/cancel`, { method: "POST" }),
   getSessionMessages: (sid: string) => request<MessageItem[]>(`/sessions/${sid}/messages`),
-  sseUrl: (sid: string) => `${BASE}/sessions/${sid}/events`,
+  sseUrl: (sid: string) => withAuthQuery(`${BASE}/sessions/${sid}/events`),
 
   // Swarm API
   listSwarmPresets: () => request<SwarmPreset[]>("/swarm/presets"),
@@ -62,6 +90,7 @@ export const api = {
     }),
   listSwarmRuns: () => request<SwarmRunSummary[]>("/swarm/runs"),
   getSwarmRun: (id: string) => request<Record<string, unknown>>(`/swarm/runs/${id}`),
+  swarmSseUrl: (id: string) => withAuthQuery(`${BASE}/swarm/runs/${id}/events`),
   cancelSwarmRun: (id: string) =>
     request<{ status: string }>(`/swarm/runs/${id}/cancel`, { method: "POST" }),
   getLLMSettings: () => request<LLMSettings>("/settings/llm"),

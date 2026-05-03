@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from src.agent.tools import BaseTool
+from src.tools.path_utils import safe_run_dir
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +314,12 @@ def run_pattern(run_dir: str, patterns: str = "all", window: int = 10) -> str:
     Returns:
         JSON-formatted detection results.
     """
-    arts = Path(run_dir) / "artifacts"
+    try:
+        run_path = safe_run_dir(run_dir)
+    except ValueError as exc:
+        return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False)
+
+    arts = run_path / "artifacts"
     ohlcv_files = list(arts.glob("ohlcv_*.csv"))
     if not ohlcv_files:
         return json.dumps({"status": "error", "error": "No OHLCV data found; run backtest first"}, ensure_ascii=False)

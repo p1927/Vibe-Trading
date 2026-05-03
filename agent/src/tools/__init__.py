@@ -19,6 +19,7 @@ from src.agent.tools import BaseTool, ToolRegistry
 logger = logging.getLogger(__name__)
 
 _SUBCLASSES_CACHE: list[type[BaseTool]] | None = None
+_SHELL_TOOL_NAMES = {"bash", "background_run"}
 
 
 def _discover_subclasses() -> list[type[BaseTool]]:
@@ -54,27 +55,41 @@ def _discover_subclasses() -> list[type[BaseTool]]:
     return classes
 
 
-def build_registry(*, persistent_memory: "PersistentMemory | None" = None) -> ToolRegistry:
+def build_registry(
+    *,
+    persistent_memory: "PersistentMemory | None" = None,
+    include_shell_tools: bool = False,
+) -> ToolRegistry:
     """Build the tool registry via auto-discovery.
 
     Args:
         persistent_memory: Shared PersistentMemory instance. Injected into
             tools that need it (e.g. RememberTool) so all tools share one
             instance instead of each creating their own.
+        include_shell_tools: Whether to include tools that execute shell
+            commands. Local CLI/stdin entry points can enable this; networked
+            server entry points should keep it disabled unless explicitly
+            opted in.
 
     Returns:
         ToolRegistry containing all available tools.
     """
     from src.tools.remember_tool import RememberTool
+    from src.tools.swarm_tool import SwarmTool
 
     registry = ToolRegistry()
     for cls in _discover_subclasses():
         try:
+            if cls.name in _SHELL_TOOL_NAMES and not include_shell_tools:
+                logger.info("Tool %s disabled by shell tool policy", cls.name)
+                continue
             if not cls.check_available():
                 logger.info("Tool %s unavailable, skipping", cls.name)
                 continue
             if cls is RememberTool and persistent_memory is not None:
                 registry.register(cls(memory=persistent_memory))
+            elif cls is SwarmTool:
+                registry.register(cls(include_shell_tools=include_shell_tools))
             else:
                 registry.register(cls())
         except Exception as exc:
@@ -82,16 +97,17 @@ def build_registry(*, persistent_memory: "PersistentMemory | None" = None) -> To
     return registry
 
 
-def build_filtered_registry(tool_names: list[str]) -> ToolRegistry:
+def build_filtered_registry(tool_names: list[str], *, include_shell_tools: bool = False) -> ToolRegistry:
     """Build a ToolRegistry with only specified tools.
 
     Args:
         tool_names: Tool names to include.
+        include_shell_tools: Whether to include filtered shell execution tools.
 
     Returns:
         ToolRegistry containing only the requested tools.
     """
-    full = build_registry()
+    full = build_registry(include_shell_tools=include_shell_tools)
     filtered = ToolRegistry()
     for name in tool_names:
         tool = full.get(name)

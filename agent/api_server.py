@@ -7,6 +7,7 @@ V5: ReAct Agent + async /run + CORS env + SSE tool events.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import ipaddress
 import json
 import os
@@ -278,6 +279,8 @@ async def _run_startup_preflight() -> None:
 
 _security = HTTPBearer(auto_error=False)
 _API_KEY = os.getenv("API_AUTH_KEY")
+_SHELL_TOOLS_ENV = "VIBE_TRADING_ENABLE_SHELL_TOOLS"
+_DOCKER_LOOPBACK_ENV = "VIBE_TRADING_TRUST_DOCKER_LOOPBACK"
 
 
 def _configured_api_key() -> str:
@@ -286,23 +289,74 @@ def _configured_api_key() -> str:
 
 
 async def require_auth(
-    cred: HTTPAuthorizationCredentials = Security(_security),
+    request: Request,
+    cred: Optional[HTTPAuthorizationCredentials] = Security(_security),
 ) -> None:
-    """Validate Bearer token against API_AUTH_KEY environment variable.
-
-    If API_AUTH_KEY is not set, authentication is skipped (dev mode).
-    Only write endpoints (POST/PUT/DELETE/PATCH) use this dependency.
+    """Validate Bearer token for sensitive API endpoints.
 
     Args:
+        request: Incoming HTTP request.
         cred: HTTP Bearer credentials extracted from the Authorization header.
 
     Raises:
+        HTTPException: 403 when dev-mode auth is reached from a non-local client.
         HTTPException: 401 when API_AUTH_KEY is set but the token is missing or wrong.
     """
+    _validate_api_auth(request=request, cred=cred)
+
+
+async def require_event_stream_auth(
+    request: Request,
+    api_key: Optional[str] = Query(None),
+    cred: Optional[HTTPAuthorizationCredentials] = Security(_security),
+) -> None:
+    """Validate auth for browser EventSource streams.
+
+    Native EventSource cannot send custom Authorization headers, so event
+    stream endpoints may accept the API key from the query string. Normal JSON
+    endpoints must continue to use Bearer auth only.
+
+    Args:
+        request: Incoming HTTP request.
+        api_key: Optional query-string API key for EventSource clients.
+        cred: HTTP Bearer credentials extracted from the Authorization header.
+    """
+    _validate_api_auth(request=request, cred=cred, query_api_key=api_key, allow_query=True)
+
+
+def _auth_credential_from_header_or_query(
+    cred: Optional[HTTPAuthorizationCredentials],
+    query_api_key: Optional[str],
+    *,
+    allow_query: bool,
+) -> str:
+    """Return the supplied API credential from the permitted source."""
+    if cred and cred.credentials:
+        return cred.credentials
+    if allow_query and query_api_key:
+        return query_api_key
+    return ""
+
+
+def _validate_api_auth(
+    *,
+    request: Request,
+    cred: Optional[HTTPAuthorizationCredentials],
+    query_api_key: Optional[str] = None,
+    allow_query: bool = False,
+) -> None:
+    """Validate configured auth, preserving loopback-only dev mode."""
     api_key = _configured_api_key()
     if not api_key:
-        return
-    if not cred or cred.credentials != api_key:
+        if _is_local_client(request):
+            return
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API_AUTH_KEY is required for non-local API access",
+        )
+
+    token = _auth_credential_from_header_or_query(cred, query_api_key, allow_query=allow_query)
+    if not token or not hmac.compare_digest(token, api_key):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
@@ -312,14 +366,67 @@ def _is_local_client(request: Request) -> bool:
     if host in {"localhost", "testclient"}:
         return True
     try:
-        return ipaddress.ip_address(host).is_loopback
+        ip = ipaddress.ip_address(host)
     except ValueError:
         return False
+    if ip.is_loopback:
+        return True
+    return _trusted_docker_loopback_ip(ip)
+
+
+def _env_flag_enabled(name: str) -> bool:
+    """Return whether a boolean environment flag is enabled."""
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _default_gateway_ips() -> set[ipaddress.IPv4Address]:
+    """Return IPv4 default gateway addresses from Linux procfs."""
+    gateways: set[ipaddress.IPv4Address] = set()
+    try:
+        lines = Path("/proc/net/route").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return gateways
+
+    for line in lines[1:]:
+        fields = line.split()
+        if len(fields) < 3 or fields[1] != "00000000":
+            continue
+        try:
+            raw = int(fields[2], 16).to_bytes(4, byteorder="little")
+            gateways.add(ipaddress.IPv4Address(raw))
+        except ValueError:
+            continue
+    return gateways
+
+
+def _trusted_docker_loopback_ip(ip: ipaddress._BaseAddress) -> bool:
+    """Return whether an IP is the trusted Docker host gateway.
+
+    Docker Desktop presents host requests to a container as the bridge gateway
+    instead of 127.0.0.1. This escape hatch is safe only when the published
+    port is bound to host loopback, so the official compose file enables it
+    together with a 127.0.0.1 port binding.
+    """
+    if not isinstance(ip, ipaddress.IPv4Address):
+        return False
+    if not _env_flag_enabled(_DOCKER_LOOPBACK_ENV):
+        return False
+    return ip in _default_gateway_ips()
+
+
+def _env_shell_tools_enabled() -> bool:
+    """Return whether server-side shell tools are explicitly enabled."""
+    return _env_flag_enabled(_SHELL_TOOLS_ENV)
+
+
+def _shell_tools_enabled_for_request(request: Request) -> bool:
+    """Return whether this API request may expose shell tools to the agent."""
+    return _is_local_client(request) or _env_shell_tools_enabled()
 
 
 async def require_local_or_auth(
     request: Request,
-    cred: HTTPAuthorizationCredentials = Security(_security),
+    cred: Optional[HTTPAuthorizationCredentials] = Security(_security),
 ) -> None:
     """Protect settings access when dev-mode auth is disabled.
 
@@ -328,7 +435,7 @@ async def require_local_or_auth(
     credential reads or writes in dev mode.
     """
     if _configured_api_key():
-        await require_auth(cred)
+        await require_auth(request, cred)
         return
     if not _is_local_client(request):
         raise HTTPException(
@@ -745,7 +852,7 @@ def _build_response_from_run_dir(run_dir: Path, elapsed: float, *, include_analy
 # API Endpoints
 # ============================================================================
 
-@app.get("/runs/{run_id}/code")
+@app.get("/runs/{run_id}/code", dependencies=[Depends(require_auth)])
 async def get_run_code(run_id: str):
     """Return strategy source files for a run.
 
@@ -766,7 +873,7 @@ async def get_run_code(run_id: str):
     return result
 
 
-@app.get("/runs/{run_id}/pine")
+@app.get("/runs/{run_id}/pine", dependencies=[Depends(require_auth)])
 async def get_run_pine(run_id: str):
     """Return Pine Script file for a run.
 
@@ -785,7 +892,7 @@ async def get_run_pine(run_id: str):
     }
 
 
-@app.get("/runs/{run_id}", response_model=RunResponse)
+@app.get("/runs/{run_id}", response_model=RunResponse, dependencies=[Depends(require_auth)])
 async def get_run_result(run_id: str):
     """Fetch full details for a historical run by ``run_id``."""
     run_dir = RUNS_DIR / run_id
@@ -801,7 +908,7 @@ async def get_run_result(run_id: str):
     return response
 
 
-@app.get("/runs", response_model=List[RunInfo])
+@app.get("/runs", response_model=List[RunInfo], dependencies=[Depends(require_auth)])
 async def list_runs(limit: int = 20):
     """List recent runs with summary fields."""
     limit = min(max(1, limit), 100)
@@ -1150,7 +1257,7 @@ async def create_session(request: CreateSessionRequest):
     )
 
 
-@app.get("/sessions", response_model=List[SessionResponse])
+@app.get("/sessions", response_model=List[SessionResponse], dependencies=[Depends(require_auth)])
 async def list_sessions(limit: int = Query(50, ge=1, le=200)):
     """List sessions."""
     svc = _get_session_service()
@@ -1170,7 +1277,7 @@ async def list_sessions(limit: int = Query(50, ge=1, le=200)):
     ]
 
 
-@app.get("/sessions/{session_id}", response_model=SessionResponse)
+@app.get("/sessions/{session_id}", response_model=SessionResponse, dependencies=[Depends(require_auth)])
 async def get_session(session_id: str):
     """Get one session by id."""
     svc = _get_session_service()
@@ -1224,13 +1331,17 @@ async def update_session(session_id: str, req: UpdateSessionRequest):
 
 
 @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
-async def send_message(session_id: str, request: SendMessageRequest):
+async def send_message(session_id: str, payload: SendMessageRequest, http_request: Request):
     """Send a user message and start the agent loop (natural language strategy)."""
     svc = _get_session_service()
     if not svc:
         raise HTTPException(status_code=501, detail="Session runtime not enabled")
     try:
-        result = await svc.send_message(session_id=session_id, content=request.content)
+        result = await svc.send_message(
+            session_id=session_id,
+            content=payload.content,
+            include_shell_tools=_shell_tools_enabled_for_request(http_request),
+        )
         return result
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -1248,7 +1359,7 @@ async def cancel_session(session_id: str):
     return {"status": "cancelled"}
 
 
-@app.get("/sessions/{session_id}/messages", response_model=List[MessageResponse])
+@app.get("/sessions/{session_id}/messages", response_model=List[MessageResponse], dependencies=[Depends(require_auth)])
 async def get_messages(session_id: str, limit: int = Query(100, ge=1, le=1000)):
     """List messages for a session."""
     svc = _get_session_service()
@@ -1269,7 +1380,7 @@ async def get_messages(session_id: str, limit: int = Query(100, ge=1, le=1000)):
     ]
 
 
-@app.get("/sessions/{session_id}/events")
+@app.get("/sessions/{session_id}/events", dependencies=[Depends(require_event_stream_auth)])
 async def session_events(
     session_id: str,
     request: Request,
@@ -1311,15 +1422,23 @@ _BLOCKED_UPLOAD_EXT = {
     # binaries / executables we should never accept
     ".exe", ".msi", ".bat", ".cmd", ".com", ".scr", ".app", ".dmg",
     ".so", ".dll", ".dylib",
+    # executable-adjacent source, shell, config, and template files
+    ".py", ".pyw", ".sh", ".bash", ".zsh", ".fish", ".ps1",
+    ".yaml", ".yml", ".j2", ".jinja", ".jinja2", ".template",
     # archives — don't auto-extract; user can unpack locally
     ".zip", ".rar", ".7z", ".tar", ".gz", ".tgz", ".bz2", ".xz",
+}
+
+_BLOCKED_UPLOAD_NAMES = {
+    "dockerfile",
+    "containerfile",
 }
 
 
 _SHADOW_ID_RE = __import__("re").compile(r"^shadow_[0-9a-f]{8}$")
 
 
-@app.get("/shadow-reports/{shadow_id}")
+@app.get("/shadow-reports/{shadow_id}", dependencies=[Depends(require_auth)])
 async def get_shadow_report(shadow_id: str, format: str = "html"):
     """Serve a rendered Shadow Account report (HTML by default, PDF if available).
 
@@ -1349,16 +1468,17 @@ async def upload_file(file: UploadFile):
     """Upload any document or data file (max 50MB).
 
     Accepts most common formats: PDF, Word, Excel, PowerPoint, images,
-    CSV/TSV, plain text, JSON/YAML/TOML, source code. Executables and
-    archives are rejected — unpack locally before uploading.
+    CSV/TSV, plain text, JSON, and TOML. Executables, executable-adjacent
+    source/config/template files, and archives are rejected.
     """
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
+    filename = Path(file.filename).name
     ext = Path(file.filename).suffix.lower()
-    if ext in _BLOCKED_UPLOAD_EXT:
+    if ext in _BLOCKED_UPLOAD_EXT or filename.lower() in _BLOCKED_UPLOAD_NAMES:
         raise HTTPException(
             status_code=400,
-            detail=f"File type {ext} is not allowed (executables/archives blocked).",
+            detail="This file type is not allowed for upload.",
         )
 
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1427,13 +1547,17 @@ async def list_swarm_presets():
 
 
 @app.post("/swarm/runs", dependencies=[Depends(require_auth)])
-async def create_swarm_run(request: dict):
+async def create_swarm_run(payload: dict, http_request: Request):
     """Start a swarm run: body must include preset_name and user_vars."""
     runtime = _get_swarm_runtime()
-    preset_name = request.get("preset_name", "")
-    user_vars = request.get("user_vars", {})
+    preset_name = payload.get("preset_name", "")
+    user_vars = payload.get("user_vars", {})
     try:
-        run = runtime.start_run(preset_name, user_vars)
+        run = runtime.start_run(
+            preset_name,
+            user_vars,
+            include_shell_tools=_shell_tools_enabled_for_request(http_request),
+        )
         return {"id": run.id, "status": run.status.value, "preset_name": run.preset_name}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -1441,7 +1565,7 @@ async def create_swarm_run(request: dict):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.get("/swarm/runs")
+@app.get("/swarm/runs", dependencies=[Depends(require_auth)])
 async def list_swarm_runs(limit: int = Query(20, ge=1, le=100)):
     """List swarm runs (newest first)."""
     runtime = _get_swarm_runtime()
@@ -1459,7 +1583,7 @@ async def list_swarm_runs(limit: int = Query(20, ge=1, le=100)):
     ]
 
 
-@app.get("/swarm/runs/{run_id}")
+@app.get("/swarm/runs/{run_id}", dependencies=[Depends(require_auth)])
 async def get_swarm_run(run_id: str):
     """Swarm run detail including task statuses."""
     from src.swarm.task_store import TaskStore
@@ -1491,7 +1615,7 @@ async def get_swarm_run(run_id: str):
     }
 
 
-@app.get("/swarm/runs/{run_id}/events")
+@app.get("/swarm/runs/{run_id}/events", dependencies=[Depends(require_event_stream_auth)])
 async def swarm_run_events(run_id: str, request: Request, last_index: int = Query(0, ge=0)):
     """SSE stream for a swarm run."""
     import asyncio

@@ -51,6 +51,7 @@
 
 ## 📰 ニュース
 
+- **2026-05-03** 🛡️ **セキュリティハードニングパッチ**: 非ローカルデプロイ向けの既定API認証を強化し、機密性の高いrun/session/swarm読み取りを保護、アップロードとローカルファイル読み取り境界を制限、shell系ツールをエントリーポイント別に制御、生成戦略をimport前に検証し、Dockerイメージは既定で非rootユーザーかつlocalhost限定ポート公開で動作します。CLIとlocalhost Web UIは低摩擦のままです。リモートAPI/Webデプロイでは`API_AUTH_KEY`を設定してください。
 - **2026-05-02** 🧭 **配当分析 + ロードマップ刷新**: インカム株、配当の持続性、増配、株主還元利回り、権利落ちメカニクス、利回りの罠チェックに対応する `dividend-analysis` スキルを追加し、バンドルスキル回帰テストで固定しました。公開ロードマップは Research Autopilot、Data Bridge、Options Lab、Portfolio Studio、Alpha Zoo、Research Delivery、Trust Layer、Community 共有に絞りました。
 - **2026-05-01** 🔥 **相関ヒートマップ + OpenAI Codex OAuth + A株 pre-ST フィルター**: 新しい相関ダッシュボード/APIでローリングリターン相関を計算し、ポートフォリオや銘柄分析向けに ECharts ヒートマップで可視化します（[#64](https://github.com/HKUDS/Vibe-Trading/pull/64)）。OpenAI Codex provider は `vibe-trading provider login openai-codex` による ChatGPT OAuth に対応し、Settings メタデータとアダプター回帰テストも追加（[#65](https://github.com/HKUDS/Vibe-Trading/pull/65)）。A株の ST/*ST リスクスクリーニング用 `ashare-pre-st-filter` スキルを追加・強化し、Sina 処分公告の関連性フィルターにより証券口座リスト内の言及が E2 回数を水増ししないようにしました（[#63](https://github.com/HKUDS/Vibe-Trading/pull/63)）。
 - **2026-04-30** ⚙️ **Web UI設定 + validation CLI強化**: LLM provider/model、Base URL、reasoning effort、データソース認証情報をローカルで設定できる Settings ページを追加。settings API は local/auth で保護され、provider メタデータもデータ駆動設定に移行（[#57](https://github.com/HKUDS/Vibe-Trading/pull/57)）。さらに `python -m backtest.validation <run_dir>` を強化し、引数なし・空パス・不正パス・存在しないパス・ディレクトリでないパスを検証開始前に分かりやすく失敗させます（[#60](https://github.com/HKUDS/Vibe-Trading/pull/60)）。
@@ -260,6 +261,8 @@ docker compose up --build
 
 `http://localhost:8899`を開きます。バックエンドとフロントエンドを1コンテナで提供。
 
+Dockerは既定でバックエンドを`127.0.0.1:8899`にのみ公開し、非rootコンテナユーザーでアプリを実行します。APIを自分のマシン外へ意図的に公開する場合は、強い`API_AUTH_KEY`を設定し、クライアントから`Authorization: Bearer <key>`を送ってください。
+
 ### Path B: ローカルインストール
 
 ```bash
@@ -324,6 +327,10 @@ npx clawhub@latest install vibe-trading --force
 | `LANGCHAIN_MODEL_NAME` | Yes | モデル名（例: `deepseek/deepseek-v3.2`） |
 | `TUSHARE_TOKEN` | No | A株データ用Tushare Proトークン（AKShareにフォールバック） |
 | `TIMEOUT_SECONDS` | No | LLM呼び出しタイムアウト（既定120s） |
+| `API_AUTH_KEY` | ネットワークデプロイでは推奨 | APIが非ローカルクライアントから到達可能な場合に必要なBearer token |
+| `VIBE_TRADING_ENABLE_SHELL_TOOLS` | No | リモートAPI / MCP-SSE系デプロイでshell系ツールを明示的に有効化 |
+| `VIBE_TRADING_ALLOWED_FILE_ROOTS` | No | 文書・ブローカー取引明細インポート用の追加ルート（カンマ区切り） |
+| `VIBE_TRADING_ALLOWED_RUN_ROOTS` | No | 生成コードrunディレクトリ用の追加ルート（カンマ区切り） |
 
 <sub>* OllamaはAPIキー不要。</sub>
 
@@ -427,6 +434,12 @@ vibe-trading serve --port 8899
 | `PUT` | `/settings/data-sources` | ローカルデータソース設定を更新 |
 
 インタラクティブドキュメント: `http://localhost:8899/docs`
+
+### セキュリティ既定値
+
+localhost開発では、`vibe-trading serve`はブラウザワークフローをシンプルに保ちます。非ローカルクライアントから機密APIへアクセスする場合は`API_AUTH_KEY`が必要です。JSON/アップロードリクエストでは`Authorization: Bearer <key>`を使ってください。ブラウザEventSourceストリームは、Web UIのSettingsで同じキーを一度入力すると処理されます。
+
+shell系ツールはローカルCLIと信頼済みlocalhostワークフローでは利用できますが、リモートAPIセッションには既定で公開されません。必要な場合のみ`VIBE_TRADING_ENABLE_SHELL_TOOLS=1`を明示的に設定してください。文書・取引明細リーダーは既定でアップロード/インポートルートに制限されます。ファイルは`agent/uploads`、`agent/runs`、`./uploads`、`./data`、`~/.vibe-trading/uploads`、`~/.vibe-trading/imports`へ置くか、`VIBE_TRADING_ALLOWED_FILE_ROOTS`で専用ディレクトリを追加してください。
 
 ### Web UI Settings
 

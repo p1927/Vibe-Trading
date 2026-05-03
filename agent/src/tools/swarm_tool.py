@@ -585,6 +585,15 @@ class SwarmTool(BaseTool):
     is_readonly = False
     repeatable = True  # loop.py dedups by tool name; each prompt is a distinct run (#42)
 
+    def __init__(self, *, include_shell_tools: bool = False) -> None:
+        """Initialize the swarm launcher.
+
+        Args:
+            include_shell_tools: Whether worker registries may include shell
+                execution tools requested by presets.
+        """
+        self.include_shell_tools = include_shell_tools
+
     def execute(self, **kwargs: Any) -> str:
         """Start a swarm run: auto-match preset, extract variables, wait for completion.
 
@@ -621,7 +630,11 @@ class SwarmTool(BaseTool):
         runtime = SwarmRuntime(store=store, max_workers=int(os.getenv("SWARM_MAX_WORKERS", "4")))
 
         try:
-            run = runtime.start_run(preset, variables)
+            run = runtime.start_run(
+                preset,
+                variables,
+                include_shell_tools=self.include_shell_tools,
+            )
         except FileNotFoundError as exc:
             return json.dumps(
                 {"status": "error", "error": f"Preset not found: {exc}"},

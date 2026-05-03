@@ -7,6 +7,7 @@ from pathlib import Path
 
 from src.agent.tools import BaseTool
 from src.core.runner import Runner
+from src.tools.path_utils import safe_run_dir
 
 
 def run_backtest(run_dir: str) -> str:
@@ -18,7 +19,10 @@ def run_backtest(run_dir: str) -> str:
     Returns:
         JSON-formatted execution result.
     """
-    run_path = Path(run_dir)
+    try:
+        run_path = safe_run_dir(run_dir)
+    except ValueError as exc:
+        return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False)
 
     config_path = run_path / "config.json"
     if not config_path.exists():

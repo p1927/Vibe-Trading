@@ -35,6 +35,13 @@ COPY --from=frontend-build /app/frontend/dist frontend/dist
 # Install CLI entrypoint
 RUN pip install --no-cache-dir -e .
 
+# Runtime should not run as root. Keep writable app data directories owned by
+# the service user so named Docker volumes inherit usable permissions.
+RUN useradd --create-home --shell /usr/sbin/nologin vibe \
+    && mkdir -p agent/runs agent/sessions agent/uploads agent/.swarm/runs \
+    && chown -R vibe:vibe /app
+USER vibe
+
 # Default port
 EXPOSE 8899
 

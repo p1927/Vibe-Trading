@@ -8,6 +8,7 @@ from typing import Any
 
 from src.agent.tools import BaseTool
 from src.tools.path_utils import safe_path as _safe_path
+from src.tools.path_utils import safe_run_dir as _safe_run_dir
 
 _OUTPUT_LIMIT = 50_000
 
@@ -42,7 +43,13 @@ class ReadFileTool(BaseTool):
 
         allowed_roots = []
         if run_dir:
-            allowed_roots.append(Path(run_dir).resolve())
+            try:
+                allowed_roots.append(_safe_run_dir(str(run_dir)))
+            except ValueError as exc:
+                return json.dumps({
+                    "status": "error",
+                    "error": str(exc),
+                }, ensure_ascii=False)
         # Read-only access to skills/
         skills_dir = Path(__file__).resolve().parents[1] / "skills"
         if skills_dir.exists():

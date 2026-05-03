@@ -186,6 +186,7 @@ def run_worker(
     user_vars: dict[str, str],
     run_dir: Path,
     event_callback: Callable[[SwarmEvent], None] | None = None,
+    include_shell_tools: bool = False,
 ) -> WorkerResult:
     """Execute a single worker task using a lightweight ReAct loop.
 
@@ -205,6 +206,7 @@ def run_worker(
         user_vars: User-provided variables for template rendering.
         run_dir: Path to .swarm/runs/{run_id}/ directory.
         event_callback: Optional callback for swarm events.
+        include_shell_tools: Whether this worker may register shell tools.
 
     Returns:
         WorkerResult with status, summary, artifacts, and iteration count.
@@ -217,7 +219,7 @@ def run_worker(
     _emit(event_callback, "worker_started", agent_id, task_id)
 
     # 1. Build filtered tool registry
-    registry = build_filtered_registry(agent_spec.tools)
+    registry = build_filtered_registry(agent_spec.tools, include_shell_tools=include_shell_tools)
 
     # 2. Create LLM
     llm = ChatLLM(model_name=agent_spec.model_name)

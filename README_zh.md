@@ -51,6 +51,7 @@
 
 ## 📰 新闻
 
+- **2026-05-03** 🛡️ **安全加固补丁**：收紧非本地部署的默认 API 鉴权，保护敏感的 run/session/swarm 读取接口，限制上传与本地文件读取边界，按入口类型控制 shell 能力工具，在导入前校验生成策略，并让 Docker 镜像默认以非 root 用户运行且只发布到 localhost。CLI 与本机 Web UI 仍保持低摩擦；远程 API/Web 部署应配置 `API_AUTH_KEY`。
 - **2026-05-02** 🧭 **分红分析 + 更清晰的路线图**：新增 `dividend-analysis` 技能，覆盖收益型股票、分红可持续性、股息增长、股东回报率、除息机制与高息陷阱检查，并用 bundled skill 回归测试固定。公开路线图现在聚焦未来工作：Research Autopilot、Data Bridge、Options Lab、Portfolio Studio、Alpha Zoo、Research Delivery、Trust Layer 和 Community 分享。
 - **2026-05-01** 🔥 **相关性热力图 + OpenAI Codex OAuth + A 股 pre-ST 过滤器**：新增相关性仪表盘/API，可计算滚动收益相关性，并用 ECharts 热力图展示组合与标的相关结构（[#64](https://github.com/HKUDS/Vibe-Trading/pull/64)）。OpenAI Codex provider 现支持通过 `vibe-trading provider login openai-codex` 使用 ChatGPT OAuth，并补齐 Settings 元数据与适配器回归测试（[#65](https://github.com/HKUDS/Vibe-Trading/pull/65)）。新增并加固 `ashare-pre-st-filter` 技能，用于 A 股 ST/*ST 风险筛查；Sina 处罚公告相关性过滤会避免证券账户名单提及误计入 E2 频次（[#63](https://github.com/HKUDS/Vibe-Trading/pull/63)）。
 - **2026-04-30** ⚙️ **Web UI 设置页 + validation CLI 加固**：新增 Settings 页面，可在本地配置 LLM provider/model、Base URL、reasoning effort 以及数据源凭据；对应 settings API 已加本地/鉴权保护，并把 provider 元数据改为数据驱动配置（[#57](https://github.com/HKUDS/Vibe-Trading/pull/57)）。同时加固 `python -m backtest.validation <run_dir>`：缺参、空路径、非法路径、不存在路径、非目录路径都会在验证开始前给出明确错误（[#60](https://github.com/HKUDS/Vibe-Trading/pull/60)）。
@@ -260,6 +261,8 @@ docker compose up --build
 
 打开 `http://localhost:8899`。后端与前端同一容器。
 
+Docker 默认只把后端发布到 `127.0.0.1:8899`，并以非 root 容器用户运行应用。如果你有意把 API 暴露到本机之外，请设置强 `API_AUTH_KEY`，客户端通过 `Authorization: Bearer <key>` 调用。
+
 ### Path B: 本地安装
 
 ```bash
@@ -324,6 +327,10 @@ npx clawhub@latest install vibe-trading --force
 | `LANGCHAIN_MODEL_NAME` | Yes | 模型名（如 `deepseek/deepseek-v3.2`） |
 | `TUSHARE_TOKEN` | No | A 股数据的 Tushare Pro token（可回退 AKShare） |
 | `TIMEOUT_SECONDS` | No | LLM 调用超时，默认 120s |
+| `API_AUTH_KEY` | 网络部署建议设置 | API 可被非本地客户端访问时所需的 Bearer token |
+| `VIBE_TRADING_ENABLE_SHELL_TOOLS` | No | 远程 API / MCP-SSE 类部署显式启用 shell 能力工具 |
+| `VIBE_TRADING_ALLOWED_FILE_ROOTS` | No | 文档和券商交割单导入的额外逗号分隔目录 |
+| `VIBE_TRADING_ALLOWED_RUN_ROOTS` | No | 生成代码 run 目录的额外逗号分隔目录 |
 
 <sub>* Ollama 不需要 API key。</sub>
 
@@ -427,6 +434,12 @@ vibe-trading serve --port 8899
 | `PUT` | `/settings/data-sources` | 更新本地数据源设置 |
 
 交互式文档：`http://localhost:8899/docs`
+
+### 安全默认值
+
+本机开发时，`vibe-trading serve` 会尽量保持浏览器工作流简单。任何非本地客户端访问敏感 API 时都需要 `API_AUTH_KEY`；JSON/上传请求请使用 `Authorization: Bearer <key>`。浏览器 EventSource 流由 Web UI 在 Settings 中保存同一个 key 后处理。
+
+Shell 能力工具对本地 CLI 和可信 localhost 工作流可用，但远程 API session 默认不会暴露，除非显式设置 `VIBE_TRADING_ENABLE_SHELL_TOOLS=1`。文档和交割单读取默认限制在上传/导入目录中；请把文件放到 `agent/uploads`、`agent/runs`、`./uploads`、`./data`、`~/.vibe-trading/uploads` 或 `~/.vibe-trading/imports`，也可以通过 `VIBE_TRADING_ALLOWED_FILE_ROOTS` 添加专用目录。
 
 ### Web UI 设置
 

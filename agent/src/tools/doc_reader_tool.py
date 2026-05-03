@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.agent.tools import BaseTool
+from src.tools.path_utils import safe_document_path
 
 _MAX_CHARS = 15000
 _MIN_TEXT_PER_PAGE = 50
@@ -267,7 +268,10 @@ def read_document(file_path: str, pages: str = "") -> str:
         JSON envelope: status, file, format, char_count, truncated, text,
         plus format-specific metadata (total_pages, sheets, etc.).
     """
-    path = Path(file_path)
+    try:
+        path = safe_document_path(file_path)
+    except ValueError as exc:
+        return _err(str(exc))
     if not path.exists():
         return _err(f"File not found: {file_path}")
     if not path.is_file():

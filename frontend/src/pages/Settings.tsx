@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Database, KeyRound, Loader2, RotateCcw, Save, Server, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
-import { api, type DataSourceSettings, type LLMProviderOption, type LLMSettings } from "@/lib/api";
+import { api, isAuthRequiredError, type DataSourceSettings, type LLMProviderOption, type LLMSettings } from "@/lib/api";
+import { getApiAuthKey, setApiAuthKey } from "@/lib/apiAuth";
 import { useI18n } from "@/lib/i18n";
 
 interface LLMFormState {
@@ -37,12 +38,14 @@ export function Settings() {
   const [dataSettings, setDataSettings] = useState<DataSourceSettings | null>(null);
   const [form, setForm] = useState<LLMFormState | null>(null);
   const [apiKey, setApiKey] = useState("");
+  const [localApiKey, setLocalApiKeyState] = useState(() => getApiAuthKey());
   const [clearApiKey, setClearApiKey] = useState(false);
   const [tushareToken, setTushareToken] = useState("");
   const [clearTushareToken, setClearTushareToken] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dataSaving, setDataSaving] = useState(false);
+  const [settingsLoadError, setSettingsLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -52,10 +55,17 @@ export function Settings() {
         setSettings(llmData);
         setForm(toForm(llmData));
         setDataSettings(dataSourceData);
+        setSettingsLoadError(null);
       })
       .catch((error) => {
-        toast.error(`${t.llmSettingsLoadFailed}: ${error.message}`);
-        toast.error(`${t.dataSourceSettingsLoadFailed}: ${error.message}`);
+        const message = error instanceof Error ? error.message : t.unknownError;
+        setSettingsLoadError(message);
+        if (isAuthRequiredError(error)) {
+          toast.error(message);
+        } else {
+          toast.error(`${t.llmSettingsLoadFailed}: ${message}`);
+          toast.error(`${t.dataSourceSettingsLoadFailed}: ${message}`);
+        }
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -89,6 +99,13 @@ export function Settings() {
     });
     setApiKey("");
     setClearApiKey(false);
+  };
+
+  const submitLocalApiKey = (event: FormEvent) => {
+    event.preventDefault();
+    setApiAuthKey(localApiKey);
+    toast.success(t.localApiKeySaved);
+    window.location.reload();
   };
 
   const submit = async (event: FormEvent) => {
@@ -132,11 +149,60 @@ export function Settings() {
     }
   };
 
+  const localApiAccessSection = (
+    <form onSubmit={submitLocalApiKey} className="rounded-lg border bg-card p-5 shadow-sm">
+      <div className="mb-4 space-y-1">
+        <div className="flex items-center gap-2">
+          <KeyRound className="h-4 w-4 text-primary" />
+          <h2 className="text-base font-semibold">{t.localApiAccess}</h2>
+        </div>
+        <p className="text-sm text-muted-foreground">{t.localApiAccessDesc}</p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+        <label className="grid gap-2">
+          <span className={labelClass}>{t.localApiKey}</span>
+          <input
+            type="password"
+            value={localApiKey}
+            onChange={(event) => setLocalApiKeyState(event.target.value)}
+            className={fieldClass}
+            placeholder={t.localApiKeyHint}
+            autoComplete="current-password"
+          />
+        </label>
+        <button
+          type="submit"
+          className="inline-flex items-center justify-center gap-2 self-end rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+        >
+          <Save className="h-4 w-4" />
+          {t.localApiKeySave}
+        </button>
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">{t.localApiKeyHint}</p>
+    </form>
+  );
+
   if (loading || !form || !settings || !dataSettings) {
     return (
-      <div className="flex h-[60vh] items-center justify-center text-muted-foreground">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        {t.loading}
+      <div className="mx-auto max-w-5xl space-y-6 p-6">
+        <div className="space-y-2">
+          <h1 className="text-2xl font-semibold tracking-tight">{t.settings}</h1>
+          <p className="max-w-3xl text-sm text-muted-foreground">{t.settingsDesc}</p>
+        </div>
+        {localApiAccessSection}
+        <div className="flex min-h-32 items-center justify-center rounded-lg border bg-card p-5 text-sm text-muted-foreground">
+          {settingsLoadError ? (
+            <div className="text-center">
+              <div className="font-medium text-foreground">{t.settingsUnavailable}</div>
+              <div className="mt-1">{settingsLoadError}</div>
+            </div>
+          ) : (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              {t.loading}
+            </>
+          )}
+        </div>
       </div>
     );
   }
@@ -159,6 +225,8 @@ export function Settings() {
         <h1 className="text-2xl font-semibold tracking-tight">{t.settings}</h1>
         <p className="max-w-3xl text-sm text-muted-foreground">{t.settingsDesc}</p>
       </div>
+
+      {localApiAccessSection}
 
       <div className="space-y-2">
         <h2 className="text-lg font-semibold tracking-tight">{t.llmSettings}</h2>

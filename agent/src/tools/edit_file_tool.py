@@ -8,6 +8,7 @@ from typing import Any
 
 from src.agent.tools import BaseTool
 from src.tools.path_utils import safe_path as _safe_path
+from src.tools.path_utils import safe_run_dir as _safe_run_dir
 
 
 class EditFileTool(BaseTool):
@@ -48,7 +49,8 @@ class EditFileTool(BaseTool):
             }, ensure_ascii=False)
 
         try:
-            resolved = _safe_path(file_path, Path(run_dir))
+            run_root = _safe_run_dir(str(run_dir))
+            resolved = _safe_path(file_path, run_root)
         except ValueError as exc:
             return json.dumps({
                 "status": "error",

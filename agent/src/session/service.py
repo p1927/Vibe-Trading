@@ -82,13 +82,21 @@ class SessionService:
         self.event_bus.clear(session_id)
         return self.store.delete_session(session_id)
 
-    async def send_message(self, session_id: str, content: str, role: str = "user") -> Dict[str, Any]:
+    async def send_message(
+        self,
+        session_id: str,
+        content: str,
+        role: str = "user",
+        *,
+        include_shell_tools: bool = False,
+    ) -> Dict[str, Any]:
         """Send a message to a session and trigger execution.
 
         Args:
             session_id: Session ID.
             content: Message content.
             role: Message role.
+            include_shell_tools: Whether this attempt may use shell tools.
 
         Returns:
             Dictionary containing message_id and attempt_id.
@@ -107,12 +115,13 @@ class SessionService:
 
         attempt = Attempt(session_id=session_id, parent_attempt_id=session.last_attempt_id, prompt=content)
         self.store.create_attempt(attempt)
+        session.config["include_shell_tools"] = include_shell_tools
         session.last_attempt_id = attempt.attempt_id
         session.updated_at = datetime.now().isoformat()
         self.store.update_session(session)
         self.event_bus.emit(session_id, "attempt.created", {"attempt_id": attempt.attempt_id, "prompt": content})
 
-        asyncio.create_task(self._run_attempt(session, attempt))
+        asyncio.create_task(self._run_attempt(session, attempt, include_shell_tools=include_shell_tools))
         return {"message_id": message.message_id, "attempt_id": attempt.attempt_id}
 
     async def resume_attempt(self, session_id: str, attempt_id: str, user_input: str) -> Dict[str, Any]:
@@ -144,7 +153,8 @@ class SessionService:
         self.store.update_attempt(attempt)
         self.event_bus.emit(session_id, "attempt.resumed", {"attempt_id": attempt_id, "user_input": user_input})
 
-        asyncio.create_task(self._run_attempt(session, attempt))
+        include_shell_tools = bool(session.config.get("include_shell_tools", False))
+        asyncio.create_task(self._run_attempt(session, attempt, include_shell_tools=include_shell_tools))
         return {"status": "resumed", "attempt_id": attempt_id}
 
     def get_messages(self, session_id: str, limit: int = 100) -> list[Message]:
@@ -174,7 +184,7 @@ class SessionService:
         loop.cancel()
         return True
 
-    async def _run_attempt(self, session: Session, attempt: Attempt) -> None:
+    async def _run_attempt(self, session: Session, attempt: Attempt, *, include_shell_tools: bool = False) -> None:
         """Execute an Attempt in the background."""
         attempt.mark_running()
         self.store.update_attempt(attempt)
@@ -182,7 +192,7 @@ class SessionService:
 
         try:
             messages = self.store.get_messages(session.session_id)
-            result = await self._run_with_agent(attempt, messages=messages)
+            result = await self._run_with_agent(attempt, messages=messages, include_shell_tools=include_shell_tools)
             if result.get("status") == "success":
                 attempt.mark_completed(summary=result.get("content", ""))
             else:
@@ -217,12 +227,19 @@ class SessionService:
             self.store.update_attempt(attempt)
             self.event_bus.emit(session.session_id, "attempt.failed", {"attempt_id": attempt.attempt_id, "error": str(exc)})
 
-    async def _run_with_agent(self, attempt: Attempt, messages: list = None) -> Dict[str, Any]:
+    async def _run_with_agent(
+        self,
+        attempt: Attempt,
+        messages: list = None,
+        *,
+        include_shell_tools: bool = False,
+    ) -> Dict[str, Any]:
         """Execute an attempt with the V5 AgentLoop.
 
         Args:
             attempt: Current execution attempt.
             messages: Session message history.
+            include_shell_tools: Whether the registry may include shell tools.
 
         Returns:
             Result dictionary containing status, run_dir, run_id, metrics, and related fields.
@@ -244,7 +261,7 @@ class SessionService:
             self.event_bus.emit(session_id, event_type, data)
 
         agent = AgentLoop(
-            registry=build_registry(persistent_memory=pm),
+            registry=build_registry(persistent_memory=pm, include_shell_tools=include_shell_tools),
             llm=llm,
             event_callback=event_callback,
             max_iterations=50,

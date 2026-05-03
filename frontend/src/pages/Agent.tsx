@@ -345,7 +345,7 @@ export function Agent() {
     try {
       const result = await api.createSwarmRun(presetName, { goal: prompt });
       const runId = result.id;
-      const sseUrl = `/swarm/runs/${runId}/events`;
+      const sseUrl = api.swarmSseUrl(runId);
       const evtSource = new EventSource(sseUrl);
       let sseFinished = false;
 

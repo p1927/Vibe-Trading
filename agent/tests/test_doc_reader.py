@@ -15,6 +15,12 @@ def _call(path: Path, pages: str = "") -> dict:
     return json.loads(read_document(str(path), pages))
 
 
+@pytest.fixture(autouse=True)
+def allow_tmp_documents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Allow each test's temporary directory as a document import root."""
+    monkeypatch.setenv("VIBE_TRADING_ALLOWED_FILE_ROOTS", str(tmp_path))
+
+
 # ---------------- Plain text variants ----------------
 
 @pytest.mark.parametrize("ext", [".txt", ".md", ".log", ".rst"])
@@ -136,8 +142,8 @@ def test_pptx_slides(tmp_path: Path) -> None:
 
 # ---------------- Error handling ----------------
 
-def test_missing_file() -> None:
-    result = _call(Path("/definitely/not/a/real/file.pdf"))
+def test_missing_file(tmp_path: Path) -> None:
+    result = _call(tmp_path / "missing.pdf")
     assert result["status"] == "error"
     assert "not found" in result["error"].lower()
 

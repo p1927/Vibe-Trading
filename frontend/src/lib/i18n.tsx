@@ -3,6 +3,13 @@ import { createContext, useContext, type ReactNode } from "react";
 const messages = {
   home: "Home", agent: "Agent", runs: "Runs", settings: "Settings",
   settingsDesc: "Configure model credentials and market data source tokens for this local project.",
+  localApiAccess: "Local API access",
+  localApiAccessDesc: "For remote or private Web UI deployments, enter the server API key once in this browser. Localhost use can stay blank.",
+  localApiKey: "Server API key",
+  localApiKeyHint: "Stored only in this browser. Leave blank to clear it.",
+  localApiKeySaved: "Local API key saved",
+  localApiKeySave: "Save local key",
+  settingsUnavailable: "Settings are unavailable",
   llmSettings: "LLM Settings",
   llmSettingsDesc: "Choose the model used by the agent and save it to the project-local agent/.env file.",
   llmConnection: "Connection",
