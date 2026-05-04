@@ -500,6 +500,7 @@ def test_extract_shadow_strategy_tool(
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("VIBE_TRADING_ALLOWED_FILE_ROOTS", str(tmp_path))
     tool = ExtractShadowStrategyTool()
     out = json.loads(tool.execute(journal_path=str(profitable_journal)))
     assert out["status"] == "ok"
@@ -514,9 +515,10 @@ def test_extract_shadow_strategy_tool(
 
 
 @pytest.mark.unit
-def test_extract_shadow_strategy_tool_reports_errors(tmp_path: Path) -> None:
+def test_extract_shadow_strategy_tool_reports_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from src.tools.shadow_account_tool import ExtractShadowStrategyTool
 
+    monkeypatch.setenv("VIBE_TRADING_ALLOWED_FILE_ROOTS", str(tmp_path))
     tool = ExtractShadowStrategyTool()
     out = json.loads(tool.execute(journal_path=str(tmp_path / "missing.csv")))
     assert out["status"] == "error"

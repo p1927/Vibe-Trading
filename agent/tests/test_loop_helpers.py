@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -265,12 +266,12 @@ class TestNormalizeToolRunDir:
     def test_resolves_relative_dot_to_memory_run_dir(self) -> None:
         args = {"run_dir": "."}
         out = _normalize_tool_run_dir(args, "/tmp/run_123")
-        assert out["run_dir"] == "/tmp/run_123"
+        assert out["run_dir"] == str(Path("/tmp/run_123").resolve())
 
     def test_resolves_relative_child_to_memory_run_dir(self) -> None:
         args = {"run_dir": "risk_parity_run"}
         out = _normalize_tool_run_dir(args, "/tmp/run_123")
-        assert out["run_dir"] == "/tmp/run_123/risk_parity_run"
+        assert out["run_dir"] == str((Path("/tmp/run_123") / "risk_parity_run").resolve())
 
     def test_preserves_absolute_run_dir(self) -> None:
         args = {"run_dir": "/var/tmp/custom_run"}
