@@ -51,6 +51,7 @@
 
 ## 📰 ニュース
 
+- **2026-05-04** 🖥️ **インタラクティブCLI UX + CI整理**: インタラクティブモードに、provider/model、セッション時間、直近実行時間、累計ツール呼び出し統計を表示するライブ下部ステータスバーを追加。さらに `prompt_toolkit` により上下キーの履歴移動と左右キーのカーソル編集に対応しました（[#69](https://github.com/HKUDS/Vibe-Trading/pull/69)）。`prompt_toolkit` またはTTYが利用できない場合は、従来どおりRich promptにフォールバックします。CIのパス期待値も強化済みファイルimportサンドボックスとクロスプラットフォームな `/tmp` 解決に合わせ、mainはグリーンに戻りました（[`bb67dc7`](https://github.com/HKUDS/Vibe-Trading/commit/bb67dc7cfcc11553c57d8962bee56381dca43758)）。
 - **2026-05-03** 🛡️ **セキュリティハードニングパッチ**: 非ローカルデプロイ向けの既定API認証を強化し、機密性の高いrun/session/swarm読み取りを保護、アップロードとローカルファイル読み取り境界を制限、shell系ツールをエントリーポイント別に制御、生成戦略をimport前に検証し、Dockerイメージは既定で非rootユーザーかつlocalhost限定ポート公開で動作します。CLIとlocalhost Web UIは低摩擦のままです。リモートAPI/Webデプロイでは`API_AUTH_KEY`を設定してください。
 - **2026-05-02** 🧭 **配当分析 + ロードマップ刷新**: インカム株、配当の持続性、増配、株主還元利回り、権利落ちメカニクス、利回りの罠チェックに対応する `dividend-analysis` スキルを追加し、バンドルスキル回帰テストで固定しました。公開ロードマップは Research Autopilot、Data Bridge、Options Lab、Portfolio Studio、Alpha Zoo、Research Delivery、Trust Layer、Community 共有に絞りました。
 - **2026-05-01** 🔥 **相関ヒートマップ + OpenAI Codex OAuth + A株 pre-ST フィルター**: 新しい相関ダッシュボード/APIでローリングリターン相関を計算し、ポートフォリオや銘柄分析向けに ECharts ヒートマップで可視化します（[#64](https://github.com/HKUDS/Vibe-Trading/pull/64)）。OpenAI Codex provider は `vibe-trading provider login openai-codex` による ChatGPT OAuth に対応し、Settings メタデータとアダプター回帰テストも追加（[#65](https://github.com/HKUDS/Vibe-Trading/pull/65)）。A株の ST/*ST リスクスクリーニング用 `ashare-pre-st-filter` スキルを追加・強化し、Sina 処分公告の関連性フィルターにより証券口座リスト内の言及が E2 回数を水増ししないようにしました（[#63](https://github.com/HKUDS/Vibe-Trading/pull/63)）。

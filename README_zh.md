@@ -51,6 +51,7 @@
 
 ## 📰 新闻
 
+- **2026-05-04** 🖥️ **交互式 CLI 体验 + CI 清理**：交互模式新增实时底部状态栏，可显示 provider/model、会话时长、上次运行耗时和累计工具调用统计；同时通过 `prompt_toolkit` 支持方向键历史浏览与光标编辑（[#69](https://github.com/HKUDS/Vibe-Trading/pull/69)）。当 `prompt_toolkit` 或 TTY 不可用时，CLI 仍会回退到 Rich prompt。CI 路径断言也已对齐新的文件导入沙箱和跨平台 `/tmp` 解析，main 已恢复绿色（[`bb67dc7`](https://github.com/HKUDS/Vibe-Trading/commit/bb67dc7cfcc11553c57d8962bee56381dca43758)）。
 - **2026-05-03** 🛡️ **安全加固补丁**：收紧非本地部署的默认 API 鉴权，保护敏感的 run/session/swarm 读取接口，限制上传与本地文件读取边界，按入口类型控制 shell 能力工具，在导入前校验生成策略，并让 Docker 镜像默认以非 root 用户运行且只发布到 localhost。CLI 与本机 Web UI 仍保持低摩擦；远程 API/Web 部署应配置 `API_AUTH_KEY`。
 - **2026-05-02** 🧭 **分红分析 + 更清晰的路线图**：新增 `dividend-analysis` 技能，覆盖收益型股票、分红可持续性、股息增长、股东回报率、除息机制与高息陷阱检查，并用 bundled skill 回归测试固定。公开路线图现在聚焦未来工作：Research Autopilot、Data Bridge、Options Lab、Portfolio Studio、Alpha Zoo、Research Delivery、Trust Layer 和 Community 分享。
 - **2026-05-01** 🔥 **相关性热力图 + OpenAI Codex OAuth + A 股 pre-ST 过滤器**：新增相关性仪表盘/API，可计算滚动收益相关性，并用 ECharts 热力图展示组合与标的相关结构（[#64](https://github.com/HKUDS/Vibe-Trading/pull/64)）。OpenAI Codex provider 现支持通过 `vibe-trading provider login openai-codex` 使用 ChatGPT OAuth，并补齐 Settings 元数据与适配器回归测试（[#65](https://github.com/HKUDS/Vibe-Trading/pull/65)）。新增并加固 `ashare-pre-st-filter` 技能，用于 A 股 ST/*ST 风险筛查；Sina 处罚公告相关性过滤会避免证券账户名单提及误计入 E2 频次（[#63](https://github.com/HKUDS/Vibe-Trading/pull/63)）。
