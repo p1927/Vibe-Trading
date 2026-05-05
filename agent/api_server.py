@@ -249,12 +249,43 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# CORS: override with CORS_ORIGINS (comma-separated)
-_CORS_ORIGINS = os.getenv(
-    "CORS_ORIGINS",
-    "http://localhost:3000,http://localhost:5173,http://localhost:8000,"
-    "http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:8000",
-).split(",")
+_DEFAULT_CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8000",
+]
+
+
+def _parse_cors_origins(raw: Optional[str]) -> List[str]:
+    """Parse CORS origins and reject credentialed wildcard configuration.
+
+    Args:
+        raw: Comma-separated CORS origins from ``CORS_ORIGINS``. ``None`` or a
+            blank value uses the loopback development defaults.
+
+    Returns:
+        Explicit CORS origins accepted by the API server.
+
+    Raises:
+        RuntimeError: If a wildcard origin is configured while credentials are
+            enabled.
+    """
+    if raw is None or not raw.strip():
+        return list(_DEFAULT_CORS_ORIGINS)
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    if "*" in origins:
+        raise RuntimeError(
+            "CORS_ORIGINS='*' is not allowed while credentials are enabled; "
+            "configure explicit Web UI origins instead."
+        )
+    return origins
+
+
+# CORS: override with CORS_ORIGINS (comma-separated explicit origins)
+_CORS_ORIGINS = _parse_cors_origins(os.getenv("CORS_ORIGINS"))
 
 app.add_middleware(
     CORSMiddleware,
@@ -571,16 +602,6 @@ def _write_env_values(path: Path, updates: Dict[str, str]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _mask_secret(value: str) -> Optional[str]:
-    """Return a non-sensitive hint for a configured secret."""
-    value = value.strip()
-    if not value:
-        return None
-    if len(value) <= 8:
-        return "****"
-    return f"{value[:4]}...{value[-4:]}"
-
-
 def _is_configured_secret(value: str, placeholders: set[str]) -> bool:
     """Return True when a secret is set and not a documented placeholder."""
     normalized = value.strip().strip('"').strip("'")
@@ -610,7 +631,7 @@ def _build_llm_settings_response(values: Optional[Dict[str, str]] = None) -> LLM
     provider = LLM_PROVIDER_BY_NAME.get(provider_name, LLM_PROVIDER_BY_NAME["openai"])
     api_key = env_values.get(provider.api_key_env or "", "") if provider.api_key_env else ""
     api_key_configured = _is_configured_secret(api_key, LLM_API_KEY_PLACEHOLDERS)
-    api_key_hint = _mask_secret(api_key) if api_key_configured else None
+    api_key_hint = None
     if provider.auth_type == "oauth":
         try:
             from src.providers.openai_codex import get_openai_codex_login_status
@@ -619,7 +640,7 @@ def _build_llm_settings_response(values: Optional[Dict[str, str]] = None) -> LLM
         except Exception:
             token = None
         api_key_configured = bool(token)
-        api_key_hint = getattr(token, "account_id", None) if token else None
+        api_key_hint = None
     return LLMSettingsResponse(
         provider=provider.name,
         model_name=env_values.get("LANGCHAIN_MODEL_NAME", provider.default_model),
@@ -665,7 +686,7 @@ def _build_data_source_settings_response(values: Optional[Dict[str, str]] = None
         baostock_message = "No BaoStock loader is registered in this project."
     return DataSourceSettingsResponse(
         tushare_token_configured=token_configured,
-        tushare_token_hint=_mask_secret(token) if token_configured else None,
+        tushare_token_hint=None,
         baostock_supported=supported,
         baostock_installed=installed,
         baostock_message=baostock_message,

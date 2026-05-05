@@ -1,28 +1,18 @@
-"""Shadow Account generated signal engine — {{ shadow_id }}
-
-Rules distilled from {{ profitable_roundtrips }} profitable roundtrips
-over {{ date_range[0] }} → {{ date_range[1] }}.
+"""Shadow Account generated signal engine.
 
 This file is auto-generated; do not hand-edit. Regenerate via
-`src.shadow_account.codegen.render_signal_engine`.
+``src.shadow_account.codegen.render_signal_engine``.
 """
 from __future__ import annotations
 
 import pandas as pd
 
-SHADOW_ID = "{{ shadow_id }}"
-PREFERRED_MARKETS = {{ preferred_markets | tojson }}
+SHADOW_ID = {{ shadow_id | py_literal }}
+PROFITABLE_ROUNDTRIPS = {{ profitable_roundtrips | py_literal }}
+DATE_RANGE = {{ date_range | py_literal }}
+PREFERRED_MARKETS = {{ preferred_markets | py_literal }}
 
-RULES = [
-{% for rule in rules %}    {
-        "rule_id": "{{ rule.rule_id }}",
-        "market": {{ rule.market | tojson }},
-        "entry_hour_min": {{ rule.entry_hour_min }},
-        "entry_hour_max": {{ rule.entry_hour_max }},
-        "hold_days": {{ rule.hold_days }},
-        "weight": {{ rule.weight }},
-    },
-{% endfor %}]
+RULES = {{ rules | py_literal }}
 
 
 def _market_of(code: str) -> str:

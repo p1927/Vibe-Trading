@@ -51,13 +51,14 @@
 
 ## 📰 新闻
 
+- **2026-05-05** 🛡️ **安全边界补充加固**：补齐显式 CORS origin、Settings 凭据状态提示、网页 URL 读取与 Shadow Account 代码生成相关的安全边界，并为这些路径加入回归测试。本机 CLI/Web UI 使用方式不变；远程部署仍应使用 `API_AUTH_KEY` 和显式可信 origin。
 - **2026-05-04** 🖥️ **交互式 CLI 体验 + CI 清理**：交互模式新增实时底部状态栏，可显示 provider/model、会话时长、上次运行耗时和累计工具调用统计；同时通过 `prompt_toolkit` 支持方向键历史浏览与光标编辑（[#69](https://github.com/HKUDS/Vibe-Trading/pull/69)）。当 `prompt_toolkit` 或 TTY 不可用时，CLI 仍会回退到 Rich prompt。CI 路径断言也已对齐新的文件导入沙箱和跨平台 `/tmp` 解析，main 已恢复绿色（[`bb67dc7`](https://github.com/HKUDS/Vibe-Trading/commit/bb67dc7cfcc11553c57d8962bee56381dca43758)）。
 - **2026-05-03** 🛡️ **安全加固补丁**：收紧非本地部署的默认 API 鉴权，保护敏感的 run/session/swarm 读取接口，限制上传与本地文件读取边界，按入口类型控制 shell 能力工具，在导入前校验生成策略，并让 Docker 镜像默认以非 root 用户运行且只发布到 localhost。CLI 与本机 Web UI 仍保持低摩擦；远程 API/Web 部署应配置 `API_AUTH_KEY`。
-- **2026-05-02** 🧭 **分红分析 + 更清晰的路线图**：新增 `dividend-analysis` 技能，覆盖收益型股票、分红可持续性、股息增长、股东回报率、除息机制与高息陷阱检查，并用 bundled skill 回归测试固定。公开路线图现在聚焦未来工作：Research Autopilot、Data Bridge、Options Lab、Portfolio Studio、Alpha Zoo、Research Delivery、Trust Layer 和 Community 分享。
 
 <details>
 <summary>更早的新闻</summary>
 
+- **2026-05-02** 🧭 **分红分析 + 更清晰的路线图**：新增 `dividend-analysis` 技能，覆盖收益型股票、分红可持续性、股息增长、股东回报率、除息机制与高息陷阱检查，并用 bundled skill 回归测试固定。公开路线图现在聚焦未来工作：Research Autopilot、Data Bridge、Options Lab、Portfolio Studio、Alpha Zoo、Research Delivery、Trust Layer 和 Community 分享。
 - **2026-05-01** 🔥 **相关性热力图 + OpenAI Codex OAuth + A 股 pre-ST 过滤器**：新增相关性仪表盘/API，可计算滚动收益相关性，并用 ECharts 热力图展示组合与标的相关结构（[#64](https://github.com/HKUDS/Vibe-Trading/pull/64)）。OpenAI Codex provider 现支持通过 `vibe-trading provider login openai-codex` 使用 ChatGPT OAuth，并补齐 Settings 元数据与适配器回归测试（[#65](https://github.com/HKUDS/Vibe-Trading/pull/65)）。新增并加固 `ashare-pre-st-filter` 技能，用于 A 股 ST/*ST 风险筛查；Sina 处罚公告相关性过滤会避免证券账户名单提及误计入 E2 频次（[#63](https://github.com/HKUDS/Vibe-Trading/pull/63)）。
 - **2026-04-30** ⚙️ **Web UI 设置页 + validation CLI 加固**：新增 Settings 页面，可在本地配置 LLM provider/model、Base URL、reasoning effort 以及数据源凭据；对应 settings API 已加本地/鉴权保护，并把 provider 元数据改为数据驱动配置（[#57](https://github.com/HKUDS/Vibe-Trading/pull/57)）。同时加固 `python -m backtest.validation <run_dir>`：缺参、空路径、非法路径、不存在路径、非目录路径都会在验证开始前给出明确错误（[#60](https://github.com/HKUDS/Vibe-Trading/pull/60)）。
 - **2026-04-28** 🚀 **v0.1.6 发布**（`pip install -U vibe-trading-ai`）：修复 `pip install` / `uv tool install` 安装后 `vibe-trading --swarm-presets` 返回空的问题（[#55](https://github.com/HKUDS/Vibe-Trading/issues/55)）—— 预设 YAML 现已打包进 `src.swarm` 包内，配套 6 个回归测试。同时 AKShare 加载器正确路由 ETF（`510300.SH`）和外汇（`USDCNH`）到对应端点，并加固注册表回退链。汇总自 v0.1.5 以来全部更新：基准对比面板、`/upload` 流式上传 + 大小限制、富途数据源（港股/A 股）、vnpy 导出技能、安全加固、前端懒加载（688KB → 262KB）。

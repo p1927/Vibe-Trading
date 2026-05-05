@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
+from urllib.parse import urlsplit
 
 import requests
 
@@ -11,6 +13,43 @@ from src.agent.tools import BaseTool
 _JINA_PREFIX = "https://r.jina.ai/"
 _TIMEOUT = 30
 _MAX_LENGTH = 8000
+
+
+def _url_allowed(url: str) -> tuple[bool, str]:
+    """Return whether a URL is safe to forward to the remote reader service."""
+    try:
+        parsed = urlsplit(url.strip())
+    except ValueError:
+        return False, "target URL is not allowed"
+
+    if parsed.scheme.lower() not in {"http", "https"}:
+        return False, "target URL is not allowed"
+    if not parsed.hostname:
+        return False, "target URL is not allowed"
+    if parsed.username or parsed.password:
+        return False, "target URL is not allowed"
+
+    host = parsed.hostname.rstrip(".").lower()
+    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+        return False, "target URL is not allowed"
+
+    ip_host = host.split("%", 1)[0]
+    try:
+        ip = ipaddress.ip_address(ip_host)
+    except ValueError:
+        return True, ""
+
+    if (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+        or not ip.is_global
+    ):
+        return False, "target URL is not allowed"
+    return True, ""
 
 
 def read_url(url: str) -> str:
@@ -22,9 +61,14 @@ def read_url(url: str) -> str:
     Returns:
         JSON-formatted result containing title, content, and url.
     """
+    target_url = url.strip()
+    allowed, error = _url_allowed(target_url)
+    if not allowed:
+        return json.dumps({"status": "error", "error": error}, ensure_ascii=False)
+
     try:
         resp = requests.get(
-            f"{_JINA_PREFIX}{url}",
+            f"{_JINA_PREFIX}{target_url}",
             headers={"Accept": "text/markdown"},
             timeout=_TIMEOUT,
         )
@@ -47,7 +91,7 @@ def read_url(url: str) -> str:
         return json.dumps({
             "status": "ok",
             "title": title,
-            "url": url,
+            "url": target_url,
             "content": text,
             "length": len(resp.text),
         }, ensure_ascii=False)

@@ -145,3 +145,25 @@ def test_shell_tools_remote_api_request_accepts_explicit_opt_in(
     monkeypatch.setenv("VIBE_TRADING_ENABLE_SHELL_TOOLS", "1")
 
     assert api_server._shell_tools_enabled_for_request(request)
+
+
+def test_default_cors_origins_are_loopback_only() -> None:
+    origins = api_server._parse_cors_origins(None)
+
+    assert origins
+    assert "*" not in origins
+    assert all(
+        origin.startswith("http://localhost:") or origin.startswith("http://127.0.0.1:")
+        for origin in origins
+    )
+
+
+def test_cors_origins_reject_credentialed_wildcard() -> None:
+    with pytest.raises(RuntimeError, match="CORS_ORIGINS"):
+        api_server._parse_cors_origins("https://app.example.com,*")
+
+
+def test_cors_origins_accept_explicit_remote_origins() -> None:
+    origins = api_server._parse_cors_origins(" https://app.example.com,https://admin.example.com ")
+
+    assert origins == ["https://app.example.com", "https://admin.example.com"]

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -24,14 +25,48 @@ _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _SIGNAL_ENGINE_TEMPLATE = "signal_engine.py.j2"
 
 
+def _literal_safe_value(value: Any) -> Any:
+    """Return a value that can be faithfully represented as a Python literal."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("Non-finite floats cannot be rendered as Python literals")
+        return value
+    if isinstance(value, list):
+        return [_literal_safe_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_literal_safe_value(item) for item in value)
+    if isinstance(value, dict):
+        return {
+            _literal_safe_value(key): _literal_safe_value(item)
+            for key, item in value.items()
+        }
+    raise TypeError(
+        f"Unsupported generated Python literal type: {type(value).__name__}",
+    )
+
+
+def _python_literal(value: Any) -> str:
+    """Render ``value`` as source text for a safe Python literal."""
+    literal = repr(_literal_safe_value(value))
+    try:
+        ast.literal_eval(literal)
+    except (SyntaxError, ValueError) as exc:
+        raise ValueError(f"Invalid generated Python literal: {literal!r}") from exc
+    return literal
+
+
 def _env() -> Environment:
     """Jinja2 environment rooted at our templates directory."""
-    return Environment(
+    env = Environment(
         loader=FileSystemLoader(str(_TEMPLATES_DIR)),
         autoescape=select_autoescape(enabled_extensions=("html", "xml")),
         trim_blocks=True,
         lstrip_blocks=True,
     )
+    env.filters["py_literal"] = _python_literal
+    return env
 
 
 def _rule_to_context(rule: ShadowRule) -> dict[str, Any]:

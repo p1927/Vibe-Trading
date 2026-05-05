@@ -207,16 +207,16 @@ export function Settings() {
     );
   }
 
-  const keyStatus = settings.api_key_hint
-    ? t.llmApiKeyConfigured.replace("{key}", settings.api_key_hint)
+  const keyStatus = settings.api_key_configured
+    ? t.llmApiKeyConfigured
     : settings.api_key_required
       ? t.llmApiKeyPlaceholder
       : selectedProvider?.auth_type === "oauth" && selectedProvider.login_command
         ? t.llmOauthRequired.replace("{command}", selectedProvider.login_command)
         : t.llmNoApiKeyRequired;
   const apiKeyDisabled = !selectedProvider?.api_key_required || clearApiKey;
-  const tushareStatus = dataSettings.tushare_token_hint
-    ? t.tushareTokenConfigured.replace("{key}", dataSettings.tushare_token_hint)
+  const tushareStatus = dataSettings.tushare_token_configured
+    ? t.tushareTokenConfigured
     : t.tushareTokenPlaceholder;
 
   return (
