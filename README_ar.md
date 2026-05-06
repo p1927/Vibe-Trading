@@ -51,6 +51,7 @@
 
 ## 📰 أحدث الأخبار
 
+- **2026-05-06** 🚀 **إصدار v0.1.7** ([Release notes](https://github.com/HKUDS/Vibe-Trading/releases/tag/v0.1.7)، `pip install -U vibe-trading-ai`): تم نشر إصدار تعزيز الحدود الأمنية على PyPI وClawHub، مع افتراضات أكثر أماناً لـ API/القراءة/الرفع/الملفات/URL/الكود المولّد/أدوات shell/Docker مع الحفاظ على تدفقات CLI وWeb UI المحلية منخفضة الاحتكاك. يتضمن هذا الإصدار أيضاً Web UI Settings، وخريطة الارتباط الحرارية، وOpenAI Codex OAuth، ومرشح pre-ST لأسهم A، وتحسين تجربة CLI التفاعلية، وفحص swarm presets، وتحليل التوزيعات، وتحسين سير التطوير، ورفع حدود أمان تبعيات بناء الواجهة. شكراً لمساهمي 0.1.7 ولـ lemi9090 (S2W) على التحقق الأمني المنسق.
 - **2026-05-05** 🛡️ **متابعة لتعزيز الحدود الأمنية**: يستكمل تعزيز الحدود الأمنية حول origins الصريحة في CORS، ومؤشرات بيانات الاعتماد في Settings، وقراءة عناوين URL على الويب، وتوليد كود Shadow Account، مع إضافة اختبارات انحدار لكل مسار. تبقى تدفقات CLI وWeb UI على localhost كما هي؛ ويجب أن تستمر عمليات النشر البعيدة في استخدام `API_AUTH_KEY` وorigins موثوقة صريحة.
 - **2026-05-04** 🖥️ **تحسين تجربة CLI التفاعلية + تنظيف CI**: أصبح الوضع التفاعلي يعرض شريط حالة سفلياً مباشراً يوضح provider/model ومدة الجلسة ووقت آخر تشغيل وإحصاءات استدعاءات الأدوات التراكمية، مع دعم تصفح السجل وتحرير المؤشر بأسهم لوحة المفاتيح عبر `prompt_toolkit` ([#69](https://github.com/HKUDS/Vibe-Trading/pull/69)). وعند غياب `prompt_toolkit` أو TTY، يعود CLI إلى Rich prompts. كما تمت مواءمة توقعات مسارات CI مع صندوق استيراد الملفات المعزز وحل `/tmp` عبر المنصات، فعاد main إلى الحالة الخضراء ([`bb67dc7`](https://github.com/HKUDS/Vibe-Trading/commit/bb67dc7cfcc11553c57d8962bee56381dca43758)).
 - **2026-05-03** 🛡️ **تصحيح لتعزيز الأمان**: يشدد المصادقة الافتراضية للـ API في النشر غير المحلي، ويحمي قراءات run/session/swarm الحساسة، ويقيّد حدود الرفع وقراءة الملفات المحلية، ويتحكم في أدوات shell بحسب نقطة الدخول، ويتحقق من الاستراتيجيات المولدة قبل الاستيراد، ويجعل صورة Docker تعمل افتراضياً كمستخدم غير root وبمنفذ منشور على localhost فقط. تبقى تجربة CLI وWeb UI المحلي منخفضة الاحتكاك؛ ويجب على نشر API/Web البعيد ضبط `API_AUTH_KEY`.
@@ -666,6 +667,18 @@ Vibe-Trading هو جزء من النظام البيئي للوكلاء **[HKUDS]
 ## المساهمون
 
 شكراً لكل من ساهم في Vibe-Trading!
+
+مساهمو واعتمادات دورة v0.1.7 الأخيرة:
+
+- @GTC2080 / TaoMu — Web UI Settings وواجهات إعداد provider/data-source (#57)
+- @BigNounce90 — تعزيز validation CLI لمسار backtest `run_dir` (#60)
+- @shadowinlife — مهارة مرشح pre-ST لأسهم A (#63)
+- @MB-Ndhlovu — لوحة خريطة الارتباط الحرارية وإصلاحات المراجعة (#64, #66)
+- @ykykj — خيار OpenAI Codex OAuth provider (#65)
+- @RuifengFu — شريط حالة CLI التفاعلي وتحرير prompt (#69)
+- @SiMinus — أمر swarm preset inspection (#73)
+- @warren618 / Haozhe Wu — تعزيز الأمان، تكامل الإصدار، الوثائق، Docker، التغليف، وسير التطوير المحلي
+- lemi9090 (S2W) — بحث أمني منسق، تحقق، ودعم الإفصاح
 
 <a href="https://github.com/HKUDS/Vibe-Trading/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=HKUDS/Vibe-Trading" />

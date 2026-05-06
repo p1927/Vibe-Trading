@@ -51,6 +51,7 @@
 
 ## 📰 News
 
+- **2026-05-06** 🚀 **v0.1.7 released** ([Release notes](https://github.com/HKUDS/Vibe-Trading/releases/tag/v0.1.7), `pip install -U vibe-trading-ai`): Security-boundary hardening is now published on PyPI and ClawHub, covering safer API/read/upload/file/URL/generated-code/shell-tool/Docker defaults while keeping localhost CLI/Web UI workflows low-friction. This cycle also includes Web UI Settings, correlation heatmap, OpenAI Codex OAuth, A-share pre-ST filtering, interactive CLI UX, swarm preset inspection, dividend analysis, dev workflow polish, and audited frontend build-dependency floors. Thanks to the 0.1.7 contributors and to lemi9090 (S2W) for coordinated security validation.
 - **2026-05-05** 🛡️ **Security boundary follow-up**: Completes the remaining security-boundary hardening around explicit CORS origins, Settings credential indicators, web URL reading, and Shadow Account code generation, with regression tests added for each path. Normal localhost CLI/Web UI workflows stay the same; remote deployments should continue using `API_AUTH_KEY` and explicit trusted origins.
 - **2026-05-04** 🖥️ **Interactive CLI UX + CI cleanup**: Interactive mode now has a live bottom status bar showing provider/model, session duration, last-run latency, and cumulative tool-call stats, plus prompt history navigation and cursor editing with arrow keys via `prompt_toolkit` ([#69](https://github.com/HKUDS/Vibe-Trading/pull/69)). The CLI still falls back to Rich prompts when `prompt_toolkit` or a TTY is unavailable. CI path expectations were also aligned with the hardened file-import sandbox and cross-platform `/tmp` resolution, returning main to green ([`bb67dc7`](https://github.com/HKUDS/Vibe-Trading/commit/bb67dc7cfcc11553c57d8962bee56381dca43758)).
 - **2026-05-03** 🛡️ **Security hardening patch**: Tightens default API authentication for non-local deployments, protects sensitive run/session/swarm reads, restricts upload and local file-reading boundaries, gates shell-capable tools by entry point, validates generated strategy loading before import, and runs the Docker image as a non-root user with a localhost-only published port by default. Local CLI and localhost Web UI workflows remain low-friction; remote API/Web deployments should set `API_AUTH_KEY`.
@@ -737,6 +738,18 @@ Want to contribute something bigger? Check the [Roadmap](#-roadmap) above and op
 ## Contributors
 
 Thanks to everyone who has contributed to Vibe-Trading!
+
+Recent v0.1.7 cycle contributors and credits:
+
+- @GTC2080 / TaoMu — Web UI Settings and provider/data-source configuration APIs (#57)
+- @BigNounce90 — validation CLI hardening for backtest `run_dir` input (#60)
+- @shadowinlife — A-share pre-ST filter skill (#63)
+- @MB-Ndhlovu — correlation heatmap dashboard and review fixes (#64, #66)
+- @ykykj — OpenAI Codex OAuth provider option (#65)
+- @RuifengFu — interactive CLI live status bar and prompt editing (#69)
+- @SiMinus — swarm preset inspection command (#73)
+- @warren618 / Haozhe Wu — security hardening, release integration, docs, Docker, packaging, and local dev workflow
+- lemi9090 (S2W) — coordinated security research, validation, and disclosure support
 
 <a href="https://github.com/HKUDS/Vibe-Trading/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=HKUDS/Vibe-Trading" />
