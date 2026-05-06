@@ -52,7 +52,7 @@ EXIT_RUN_FAILED = 1
 EXIT_USAGE_ERROR = 2
 RICH_TAG_PATTERN = re.compile(r"\[/?[^\]]+\]")
 
-_VERSION = "0.1.5"
+_VERSION = "0.1.7"
 
 # Agent color assignments for swarm display
 _AGENT_STYLES = ["cyan", "magenta", "green", "yellow", "blue", "bright_red", "bright_cyan", "bright_magenta"]
@@ -1747,6 +1747,7 @@ def cmd_provider_login(provider: str) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     """Build the CLI parser with subcommands and compatibility flags."""
     parser = argparse.ArgumentParser(description="Vibe-Trading CLI")
+    parser.add_argument("--version", action="version", version=f"vibe-trading {_VERSION}")
     parser.add_argument("-p", "--prompt", type=str, help="Prompt text")
     parser.add_argument("-f", "--prompt-file", type=Path, help="Read prompt text from a file")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON output")

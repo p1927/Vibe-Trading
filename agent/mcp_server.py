@@ -81,7 +81,7 @@ def _get_registry():
 def list_skills() -> str:
     """List all available finance skills with names and descriptions.
 
-    Returns a JSON array of {name, description} for all 71 skills.
+    Returns a JSON array of {name, description} for all loaded skills.
     Use load_skill(name) to get the full documentation for any skill.
     """
     loader = _get_skills_loader()
