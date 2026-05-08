@@ -241,6 +241,29 @@ class TestSymbolIsolation:
         assert metrics["benchmark_ticker"] == "000300.SH"
         assert metrics["benchmark_return"] == 0.00495
 
+    def test_configured_fundamental_enrichment_failure_is_not_silent(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Explicit statement-field requests should fail rather than degrade silently."""
+        dates = pd.bdate_range("2024-04-01", periods=1)
+        bars = pd.DataFrame({"close": [10.0]}, index=dates)
+
+        def fake_enrich(*args, **kwargs):
+            raise RuntimeError("provider failed")
+
+        monkeypatch.setattr(base_engine, "TushareFundamentalProvider", lambda: object(), raising=False)
+        monkeypatch.setattr(base_engine, "enrich_price_frames_with_fundamentals", fake_enrich, raising=False)
+
+        with pytest.raises(RuntimeError, match="fundamental_fields.*provider failed"):
+            base_engine._maybe_enrich_fundamentals(
+                {"000001.SZ": bars},
+                {
+                    "end_date": "2024-04-30",
+                    "fundamental_fields": {"income": ["total_revenue"]},
+                },
+            )
+
 
 # ---------------------------------------------------------------------------
 # 3. Config schema validation (pydantic)
@@ -257,6 +280,15 @@ class TestBacktestConfigSchema:
         assert c.codes == ["AAPL.US"]
         assert c.interval == "1D"
         assert c.engine == "daily"
+
+    def test_fundamental_fields_must_be_table_to_field_list_mapping(self) -> None:
+        with pytest.raises(ValueError, match="fundamental_fields"):
+            BacktestConfigSchema(
+                codes=["000001.SZ"],
+                start_date="2025-01-01",
+                end_date="2025-06-01",
+                fundamental_fields={"income": "total_revenue"},
+            )
 
     def test_empty_codes_rejected(self) -> None:
         with pytest.raises(Exception, match="codes must be a non-empty list"):

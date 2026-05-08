@@ -14,6 +14,7 @@ import logging
 import re as _re
 import sys
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -136,14 +137,29 @@ def _load_optimizer(config: Dict[str, Any]) -> Optional[Callable]:
 
 def _normalise_fundamental_fields(config: Dict[str, Any]) -> dict[str, list[str]]:
     """Read the optional statement-table field map from backtest config."""
-    raw_fields = config.get("fundamental_fields") or {}
-    if not isinstance(raw_fields, dict):
+    raw_fields = config.get("fundamental_fields")
+    if raw_fields in (None, {}):
         return {}
-    return {
-        str(table): list(fields)
-        for table, fields in raw_fields.items()
-        if fields
-    }
+    if not isinstance(raw_fields, dict):
+        raise ValueError("fundamental_fields must map table names to field-name lists")
+
+    normalized: dict[str, list[str]] = {}
+    for table, fields in raw_fields.items():
+        if not isinstance(table, str) or not table.strip():
+            raise ValueError("fundamental_fields table names must be non-empty strings")
+        if fields is None:
+            continue
+        if isinstance(fields, str) or not isinstance(fields, Iterable):
+            raise ValueError(f"fundamental_fields[{table!r}] must be a list of field names")
+
+        field_list = list(fields)
+        if not field_list:
+            continue
+        invalid = [field for field in field_list if not isinstance(field, str) or not field.strip()]
+        if invalid:
+            raise ValueError(f"fundamental_fields[{table!r}] contains invalid field names")
+        normalized[table.strip()] = field_list
+    return normalized
 
 
 def _maybe_enrich_fundamentals(
@@ -156,16 +172,18 @@ def _maybe_enrich_fundamentals(
         return data_map
 
     try:
+        provider = TushareFundamentalProvider()
         return enrich_price_frames_with_fundamentals(
             data_map,
-            TushareFundamentalProvider(),
+            provider,
             fields_by_table,
             as_of=config.get("end_date", ""),
             periods=config.get("fundamental_periods"),
         )
     except Exception as exc:
-        print(f"[WARN] failed to enrich Tushare fundamentals: {exc}")
-        return data_map
+        raise RuntimeError(
+            f"fundamental_fields requested but Tushare enrichment failed: {exc}"
+        ) from exc
 
 
 # ─── Base Engine ───
