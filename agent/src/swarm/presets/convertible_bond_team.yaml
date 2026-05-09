@@ -29,7 +29,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [convertible-bond, fundamental-filter, credit-analysis]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: equity_analyst
@@ -59,7 +59,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [convertible-bond, technical-basic, valuation-model]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: option_analyst
@@ -89,7 +89,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, options_pricing]
     skills: [options-strategy, volatility, convertible-bond, options-payoff]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: cb_strategist
@@ -121,7 +121,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, backtest]
     skills: [convertible-bond, strategy-generate]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

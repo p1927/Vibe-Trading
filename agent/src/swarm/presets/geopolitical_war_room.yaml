@@ -49,7 +49,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [geopolitical-risk, web-reader, global-macro]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: energy_analyst
@@ -104,7 +104,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [commodity-analysis, geopolitical-risk]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: supply_chain_analyst
@@ -161,7 +161,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [geopolitical-risk, sector-rotation, event-driven]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: chief_strategist
@@ -222,7 +222,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [asset-allocation, risk-analysis, hedging-strategy]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

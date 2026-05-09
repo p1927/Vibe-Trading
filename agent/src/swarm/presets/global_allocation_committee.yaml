@@ -26,7 +26,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [tushare, technical-basic, fundamental-filter, hk-connect-flow, sector-rotation, multi-factor]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: crypto_analyst
@@ -51,7 +51,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [okx-market, perp-funding-basis, stablecoin-flow, crypto-derivatives, volatility, onchain-analysis]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: us_hk_analyst
@@ -76,7 +76,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [yfinance, us-etf-flow, earnings-revision, adr-hshare, hk-connect-flow, technical-basic]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: allocator
@@ -109,7 +109,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, backtest]
     skills: [asset-allocation, risk-analysis, correlation-analysis, strategy-generate]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

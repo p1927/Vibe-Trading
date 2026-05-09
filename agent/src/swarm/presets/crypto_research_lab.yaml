@@ -63,7 +63,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [onchain-analysis, okx-market, stablecoin-flow]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: defi_analyst
@@ -114,7 +114,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [crypto-derivatives, defi-yield, token-unlock-treasury, web-reader]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: crypto_sentiment_analyst
@@ -175,7 +175,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [sentiment-analysis, okx-market, perp-funding-basis, liquidation-heatmap]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: alpha_synthesizer
@@ -225,7 +225,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [asset-allocation, risk-analysis]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

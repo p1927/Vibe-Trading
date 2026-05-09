@@ -47,7 +47,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [technical-basic, fundamental-filter, yfinance, earnings-revision, sentiment-analysis]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: bear_advocate
@@ -100,7 +100,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [technical-basic, fundamental-filter, yfinance, risk-analysis, volatility]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: risk_officer
@@ -152,7 +152,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [risk-analysis, volatility, correlation-analysis]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: portfolio_manager
@@ -199,7 +199,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, backtest]
     skills: [strategy-generate, asset-allocation]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

@@ -68,7 +68,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [etf-analysis, fund-analysis, tushare]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: macro_allocator
@@ -127,7 +127,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [macro-analysis, asset-allocation, global-macro]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: risk_budgeter
@@ -191,7 +191,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [risk-analysis, volatility, etf-analysis]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: portfolio_optimizer
@@ -244,7 +244,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, backtest]
     skills: [etf-analysis, strategy-generate, asset-allocation]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

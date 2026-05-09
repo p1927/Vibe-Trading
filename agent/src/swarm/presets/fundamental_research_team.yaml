@@ -45,7 +45,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [financial-statement, fundamental-filter]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: valuation_analyst
@@ -95,7 +95,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [valuation-model, earnings-forecast]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: quality_analyst
@@ -145,7 +145,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [fundamental-filter, web-reader]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: report_editor
@@ -179,7 +179,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [report-generate]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

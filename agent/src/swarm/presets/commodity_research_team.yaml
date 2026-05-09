@@ -32,7 +32,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [commodity-analysis, web-reader, geopolitical-risk]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: demand_analyst
@@ -65,7 +65,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [commodity-analysis, seasonal, global-macro]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: cycle_strategist
@@ -100,7 +100,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, backtest]
     skills: [commodity-analysis, seasonal, strategy-generate]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

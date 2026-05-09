@@ -57,7 +57,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [correlation-analysis, pair-trading, multi-factor]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: cointegration_tester
@@ -127,7 +127,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [correlation-analysis, quant-statistics]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: pair_strategist
@@ -190,7 +190,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, backtest]
     skills: [pair-trading, correlation-analysis, strategy-generate]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: microstructure_reviewer
@@ -254,7 +254,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [market-microstructure, execution-model]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

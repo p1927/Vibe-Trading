@@ -69,7 +69,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [technical-basic, candlestick]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: ichimoku_analyst
@@ -121,7 +121,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [ichimoku]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: harmonic_analyst
@@ -166,7 +166,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, pattern]
     skills: [harmonic]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: wave_analyst
@@ -218,7 +218,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, pattern]
     skills: [elliott-wave, chanlun]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: smc_analyst
@@ -265,7 +265,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [smc, minute-analysis]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: signal_aggregator
@@ -323,7 +323,7 @@ agents:
     tools: [bash, read_file, write_file]
     skills: []
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:
