@@ -890,7 +890,7 @@ def _validate_path_param(value: str, kind: str) -> None:
         HTTPException: 400 when ``value`` does not match the safe character
             class, mirroring the existing ``_SHADOW_ID_RE`` check.
     """
-    if not _SAFE_PATH_PARAM_RE.match(value or ""):
+    if not _SAFE_PATH_PARAM_RE.fullmatch(value or ""):
         raise HTTPException(status_code=400, detail=f"invalid {kind}")
 
 

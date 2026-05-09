@@ -199,6 +199,9 @@ def test_validate_path_param_accepts_known_good_values(value: str) -> None:
         "foo\\bar",
         "foo bar",
         "foo.bar",             # dot is not in the safe class
+        "foo\n",
+        "foo\r",
+        "foo\t",
         "foo\x00bar",
         "A" * 129,
     ],
@@ -221,6 +224,13 @@ def test_get_run_code_rejects_dot_run_id() -> None:
 
 def test_get_run_pine_rejects_traversal_run_id() -> None:
     response = _local_client().get("/runs/foo.bar/pine")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid run_id"
+
+
+def test_get_run_pine_rejects_url_encoded_newline_run_id() -> None:
+    response = _local_client().get("/runs/foo%0A/pine")
 
     assert response.status_code == 400
     assert response.json()["detail"] == "invalid run_id"
