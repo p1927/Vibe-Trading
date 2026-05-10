@@ -1012,14 +1012,14 @@ async def list_runs(limit: int = 20):
             try:
                 req_data = json.loads(req_file.read_text(encoding="utf-8"))
                 prompt = req_data.get("prompt")
-            except:
+            except (json.JSONDecodeError, OSError):
                 pass
-        
+
         if not prompt and planner_file.exists():
             try:
                 planner_data = json.loads(planner_file.read_text(encoding="utf-8"))
                 prompt = planner_data.get("user_goal") or planner_data.get("goal")
-            except:
+            except (json.JSONDecodeError, OSError):
                 pass
             
         if not prompt:
@@ -1039,7 +1039,7 @@ async def list_runs(limit: int = 20):
                         total_return = float(row.get('total_return', 0) or 0)
                         sharpe = float(row.get('sharpe', 0) or 0)
                         break
-            except:
+            except (OSError, ValueError):
                 pass
         
         run_context = load_run_context(d)
