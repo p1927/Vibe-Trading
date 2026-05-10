@@ -1,0 +1,187 @@
+"""Unit tests for the swarm grounding module.
+
+Network-touching paths (the actual loader fetch) are exercised through a
+monkeypatched stub so the suite stays offline; symbol extraction and the
+markdown formatter are pure-function tests.
+"""
+
+from __future__ import annotations
+
+from datetime import date
+
+import pandas as pd
+import pytest
+
+from src.swarm import grounding
+from src.swarm.worker import build_worker_prompt
+from src.swarm.models import SwarmAgentSpec
+
+
+# --------------------------------------------------------------------------- #
+# extract_symbols_from_user_vars
+# --------------------------------------------------------------------------- #
+
+def test_extract_us_hk_a_share_and_crypto_symbols() -> None:
+    user_vars = {
+        "target": "NVDA.US",
+        "secondary": "Compare with 700.HK and 600519.SH",
+        "crypto": "Hedge with BTC-USDT",
+        "shenzhen": "000001.SZ for liquidity",
+        "beijing": "Listed on 430090.BJ recently",
+    }
+    found = grounding.extract_symbols_from_user_vars(user_vars)
+    assert set(found) == {
+        "NVDA.US", "700.HK", "600519.SH", "BTC-USDT", "000001.SZ", "430090.BJ",
+    }
+
+
+def test_extract_preserves_first_occurrence_order() -> None:
+    user_vars = {
+        "a": "Look at NVDA.US",
+        "b": "Compare to AAPL.US",
+        "c": "And NVDA.US again",
+    }
+    assert grounding.extract_symbols_from_user_vars(user_vars) == ["NVDA.US", "AAPL.US"]
+
+
+def test_extract_returns_empty_when_no_symbol_present() -> None:
+    user_vars = {
+        "goal": "Q2 2026 outlook",
+        "market": "US equities",  # no suffixed symbol
+    }
+    assert grounding.extract_symbols_from_user_vars(user_vars) == []
+
+
+def test_extract_skips_non_string_values() -> None:
+    user_vars = {
+        "ticker": "TSM",                # bare ticker — intentionally not matched
+        "weight": 0.5,                  # type: ignore[dict-item]  — not a str
+        "real_target": "TSLA.US",
+    }
+    assert grounding.extract_symbols_from_user_vars(user_vars) == ["TSLA.US"]
+
+
+def test_extract_does_not_match_substrings_inside_words() -> None:
+    user_vars = {
+        # \b boundary should keep "FOO.USDA" / "BLAH.USA" from matching .US
+        "noisy": "regulator FOO.USDA approved BLAH.USAID rules",
+    }
+    assert grounding.extract_symbols_from_user_vars(user_vars) == []
+
+
+# --------------------------------------------------------------------------- #
+# fetch_grounding_data — monkeypatched loader
+# --------------------------------------------------------------------------- #
+
+class _StubLoader:
+    """Mimics enough of the loader contract for grounding.fetch."""
+
+    def __init__(self, frame: pd.DataFrame) -> None:
+        self._frame = frame
+
+    def fetch(self, codes, start_date, end_date, *, interval="1D"):
+        return {code: self._frame for code in codes}
+
+
+def _three_bar_frame() -> pd.DataFrame:
+    idx = pd.to_datetime(["2026-05-06", "2026-05-07", "2026-05-08"])
+    return pd.DataFrame(
+        {
+            "open":   [200.0, 208.3, 213.0],
+            "high":   [208.3, 214.2, 217.8],
+            "low":    [198.6, 206.5, 212.9],
+            "close":  [207.8, 211.5, 215.2],
+            "volume": [188e6, 168e6, 136e6],
+        },
+        index=idx,
+    )
+
+
+def test_fetch_returns_normalized_bars(monkeypatch) -> None:
+    frame = _three_bar_frame()
+    monkeypatch.setattr(
+        grounding,
+        "fetch_grounding_data",
+        grounding.fetch_grounding_data,  # keep real fn, only stub the loader
+    )
+    # Patch the loader registry that fetch_grounding_data imports lazily.
+    import backtest.loaders.registry as reg
+    monkeypatch.setattr(reg, "resolve_loader", lambda code: lambda: _StubLoader(frame))
+
+    bars = grounding.fetch_grounding_data(["NVDA.US"], today=date(2026, 5, 9))
+
+    assert "NVDA.US" in bars
+    rows = bars["NVDA.US"]
+    assert len(rows) == 3
+    assert rows[-1]["close"] == pytest.approx(215.2)
+    assert rows[0]["trade_date"].startswith("2026-05-06")
+
+
+def test_fetch_skips_symbols_with_no_data(monkeypatch) -> None:
+    import backtest.loaders.registry as reg
+    monkeypatch.setattr(
+        reg, "resolve_loader",
+        lambda code: lambda: _StubLoader(pd.DataFrame()),  # empty frame
+    )
+
+    bars = grounding.fetch_grounding_data(["NOPE.US"])
+    assert bars == {}
+
+
+def test_fetch_returns_empty_for_empty_input() -> None:
+    assert grounding.fetch_grounding_data([]) == {}
+
+
+# --------------------------------------------------------------------------- #
+# format_grounding_block
+# --------------------------------------------------------------------------- #
+
+def test_format_returns_empty_for_empty_grounding() -> None:
+    assert grounding.format_grounding_block({}) == ""
+    assert grounding.format_grounding_block({"NVDA.US": []}) == ""
+
+
+def test_format_renders_table_and_range() -> None:
+    rows = [
+        {"trade_date": "2026-05-06T00:00:00", "open": 200.0, "high": 208.3,
+         "low": 198.6, "close": 207.8, "volume": 188_000_000.0},
+        {"trade_date": "2026-05-07T00:00:00", "open": 208.3, "high": 214.2,
+         "low": 206.5, "close": 211.5, "volume": 168_000_000.0},
+        {"trade_date": "2026-05-08T00:00:00", "open": 213.0, "high": 217.8,
+         "low": 212.9, "close": 215.2, "volume": 136_000_000.0},
+    ]
+    block = grounding.format_grounding_block({"NVDA.US": rows})
+
+    assert "Ground Truth" in block
+    assert "NVDA.US" in block
+    assert "215.20" in block            # last close
+    assert "207.80 – 215.20" in block   # window range (min/max close)
+    assert "2026-05-06 → 2026-05-08" in block
+    # The instruction text must survive — it's the whole point.
+    assert "Do NOT cite prices" in block
+
+
+# --------------------------------------------------------------------------- #
+# Worker prompt integration
+# --------------------------------------------------------------------------- #
+
+def _spec() -> SwarmAgentSpec:
+    return SwarmAgentSpec(
+        id="dummy",
+        role="research analyst",
+        system_prompt="Analyse the asset.",
+    )
+
+
+def test_worker_prompt_includes_grounding_block_when_provided() -> None:
+    block = "## Ground Truth — Recent Market Data\n\nNVDA.US ..."
+    prompt = build_worker_prompt(_spec(), {}, "(no matching skills)", grounding_block=block)
+    assert block in prompt
+    # Block must appear before the Execution Rules so it's in scope when
+    # the worker plans its first call.
+    assert prompt.index(block) < prompt.index("## Execution Rules")
+
+
+def test_worker_prompt_omits_grounding_section_when_block_empty() -> None:
+    prompt = build_worker_prompt(_spec(), {}, "(no matching skills)")
+    assert "Ground Truth" not in prompt

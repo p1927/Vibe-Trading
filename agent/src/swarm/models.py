@@ -174,6 +174,13 @@ class SwarmRun(BaseModel):
             field is the run-level default.
         model: LLM model name in effect when the run started, captured from
             ``LANGCHAIN_MODEL_NAME``. Same scoping rules as :attr:`provider`.
+        grounding_data: Pre-fetched OHLCV bars for any suffixed stock or
+            crypto symbols mentioned in :attr:`user_vars`. Captured once at
+            run-creation time by :mod:`src.swarm.grounding` so workers see
+            real recent prices instead of training-data prices. Keyed by the
+            original symbol string; each value is the list of bars returned
+            by the loader. ``None`` when no symbols were detected or every
+            fetch failed.
     """
 
     id: str
@@ -189,6 +196,7 @@ class SwarmRun(BaseModel):
     total_output_tokens: int = 0
     provider: str | None = None
     model: str | None = None
+    grounding_data: dict[str, list[dict]] | None = None
 
 
 class WorkerResult(BaseModel):

@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from src.swarm import grounding
 from src.swarm.mailbox import Mailbox
 from src.swarm.models import (
     RunStatus,
@@ -101,6 +102,24 @@ class SwarmRuntime:
         # remain visible on SwarmAgentSpec.model_name.
         run.provider = (os.getenv("LANGCHAIN_PROVIDER") or "").strip().lower() or None
         run.model = (os.getenv("LANGCHAIN_MODEL_NAME") or "").strip() or None
+
+        # Pre-fetch market data for any suffixed stock / crypto symbols
+        # mentioned in user_vars and pin it on the run. Workers read these
+        # bars off run.grounding_data instead of hallucinating prices from
+        # their training cutoff. Failures are non-fatal — the run still
+        # proceeds, just without the grounding block.
+        symbols = grounding.extract_symbols_from_user_vars(user_vars)
+        if symbols:
+            try:
+                fetched = grounding.fetch_grounding_data(symbols)
+            except Exception:
+                logger.warning(
+                    "grounding: pre-fetch failed for run %s symbols=%s",
+                    run.id, symbols, exc_info=True,
+                )
+                fetched = {}
+            if fetched:
+                run.grounding_data = fetched
 
         self._store.create_run(run)
 
@@ -219,6 +238,11 @@ class SwarmRuntime:
 
         # Build agent lookup
         agent_map: dict[str, SwarmAgentSpec] = {a.id: a for a in run.agents}
+
+        # Render the grounding block once and pass it to every worker on
+        # this run. The block is empty when no symbols were detected, in
+        # which case workers see no extra section.
+        grounding_block = grounding.format_grounding_block(run.grounding_data or {})
 
         # Compute execution layers
         layers = topological_layers(run.tasks)
@@ -409,6 +433,7 @@ class SwarmRuntime:
                     event_callback=_event_callback,
                     run_id=run.id,
                     include_shell_tools=include_shell_tools,
+                    grounding_block=grounding_block,
                 )
                 futures[future] = tid
                 per_task_budget = agent_spec.timeout_seconds * (agent_spec.max_retries + 1)
@@ -463,6 +488,7 @@ class SwarmRuntime:
         event_callback: Callable[[SwarmEvent], None] | None,
         run_id: str,
         include_shell_tools: bool = False,
+        grounding_block: str = "",
     ) -> WorkerResult:
         """Run a worker with automatic retry on failure.
 
@@ -479,6 +505,9 @@ class SwarmRuntime:
             event_callback: Optional event callback.
             run_id: Run identifier for event emission.
             include_shell_tools: Whether the worker may register shell tools.
+            grounding_block: Pre-rendered "Ground Truth" markdown spliced
+                into the worker's system prompt. Empty string when no
+                symbols were extracted from user_vars.
 
         Returns:
             WorkerResult from the last attempt.
@@ -513,6 +542,7 @@ class SwarmRuntime:
                 run_dir=run_dir,
                 event_callback=event_callback,
                 include_shell_tools=include_shell_tools,
+                grounding_block=grounding_block,
             )
 
             cumulative_input_tokens += result.input_tokens
