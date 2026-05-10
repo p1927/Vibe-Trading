@@ -110,13 +110,18 @@ def fetch_grounding_data(
 
     # Imported lazily so unit tests of the extraction / formatting layer
     # don't have to drag in pandas + the loader graph just to import.
+    # ``resolve_loader`` expects a *market* key (``"us_equity"`` etc.), not a
+    # raw code; ``_detect_market`` is the function ``runner.py`` already uses
+    # to dispatch the same shapes we extract here, so reusing it keeps the
+    # routing identical to the rest of the codebase.
     from backtest.loaders.registry import resolve_loader
+    from backtest.runner import _detect_market
 
     out: dict[str, list[dict]] = {}
     for code in symbols_list:
         try:
-            loader_cls = resolve_loader(code)
-            loader = loader_cls()
+            market = _detect_market(code)
+            loader = resolve_loader(market)  # already a ready-to-use instance
             df_map = loader.fetch([code], start_str, end_str, interval="1D")
         except Exception as exc:  # pragma: no cover — depends on network
             logger.warning(

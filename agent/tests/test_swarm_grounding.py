@@ -98,18 +98,25 @@ def _three_bar_frame() -> pd.DataFrame:
 
 
 def test_fetch_returns_normalized_bars(monkeypatch) -> None:
+    """Real call path: ``_detect_market(code)`` → ``resolve_loader(market)``
+    returns a ready loader instance. The stub mirrors that contract so a
+    regression that drops or rewrites the dispatch shows up here.
+    """
     frame = _three_bar_frame()
-    monkeypatch.setattr(
-        grounding,
-        "fetch_grounding_data",
-        grounding.fetch_grounding_data,  # keep real fn, only stub the loader
-    )
-    # Patch the loader registry that fetch_grounding_data imports lazily.
     import backtest.loaders.registry as reg
-    monkeypatch.setattr(reg, "resolve_loader", lambda code: lambda: _StubLoader(frame))
+    captured_markets: list[str] = []
+
+    def _fake_resolve(market: str):
+        captured_markets.append(market)
+        return _StubLoader(frame)
+
+    monkeypatch.setattr(reg, "resolve_loader", _fake_resolve)
 
     bars = grounding.fetch_grounding_data(["NVDA.US"], today=date(2026, 5, 9))
 
+    # ``NVDA.US`` must dispatch through the us_equity branch — guards
+    # against a regression where the code is passed as the market key.
+    assert captured_markets == ["us_equity"]
     assert "NVDA.US" in bars
     rows = bars["NVDA.US"]
     assert len(rows) == 3
@@ -121,7 +128,7 @@ def test_fetch_skips_symbols_with_no_data(monkeypatch) -> None:
     import backtest.loaders.registry as reg
     monkeypatch.setattr(
         reg, "resolve_loader",
-        lambda code: lambda: _StubLoader(pd.DataFrame()),  # empty frame
+        lambda market: _StubLoader(pd.DataFrame()),  # empty frame
     )
 
     bars = grounding.fetch_grounding_data(["NOPE.US"])
