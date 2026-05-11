@@ -299,6 +299,7 @@ def run_worker(
         elapsed = time.monotonic() - t0
         if elapsed > timeout:
             summary = _best_summary(messages, last_assistant_content) or f"Worker timed out after {elapsed:.0f}s ({iteration} iterations)"
+            summary = _resolve_summary(artifact_dir, summary)
             _emit(event_callback, "worker_timeout", agent_id, task_id, {"elapsed": elapsed})
             _write_summary(artifact_dir, summary)
             _persist_messages(artifact_dir, messages)
@@ -315,6 +316,7 @@ def run_worker(
         token_estimate = len(json.dumps(messages, ensure_ascii=False)) // 4
         if token_estimate > _MAX_TOKEN_ESTIMATE:
             summary = last_assistant_content or f"Worker context too large (~{token_estimate} tokens, {iteration} iterations)"
+            summary = _resolve_summary(artifact_dir, summary)
             _emit(event_callback, "worker_token_limit", agent_id, task_id, {"tokens": token_estimate})
             _write_summary(artifact_dir, summary)
             return WorkerResult(
@@ -363,7 +365,7 @@ def run_worker(
             _emit(event_callback, "worker_failed", agent_id, task_id, {"error": error_msg})
             return WorkerResult(
                 status="failed",
-                summary=last_assistant_content or "",
+                summary=_resolve_summary(artifact_dir, last_assistant_content or ""),
                 artifact_paths=_collect_artifacts(artifact_dir),
                 iterations=iteration,
                 error=error_msg,
@@ -383,6 +385,7 @@ def run_worker(
         # If no tool calls, this is the final response
         if not response.has_tool_calls:
             summary = response.content or last_assistant_content or "(no summary)"
+            summary = _resolve_summary(artifact_dir, summary)
             _emit(event_callback, "worker_completed", agent_id, task_id, {"iterations": iteration + 1})
             _write_summary(artifact_dir, summary)
             return WorkerResult(
@@ -408,7 +411,7 @@ def run_worker(
             _emit(
                 event_callback, "tool_call", agent_id, task_id,
                 {"tool": tc.name, "iteration": iteration,
-                 "arguments": {k: v for k, v in tc.arguments.items() if k != "run_dir"}},
+                 "arguments": {k: (v if len(str(v)) <= 200 else str(v)[:200] + "...") for k, v in tc.arguments.items() if k != "run_dir"}},
             )
             tc_start = time.monotonic()
             args = {**tc.arguments, "run_dir": str(artifact_dir)}
@@ -418,7 +421,7 @@ def run_worker(
                 event_callback, "tool_result", agent_id, task_id,
                 {"tool": tc.name, "elapsed_ms": int(tc_elapsed * 1000),
                  "status": "ok", "iteration": iteration,
-                 "result": str(result)[:5000]},
+                 "result_preview": str(result)[:500]},
             )
             messages.append(
                 ContextBuilder.format_tool_result(tc.id, tc.name, result[:10_000])
@@ -426,6 +429,7 @@ def run_worker(
 
     # Hit iteration limit — use last meaningful content as summary
     summary = _best_summary(messages, last_assistant_content) or f"Worker hit iteration limit ({max_iterations} iterations)"
+    summary = _resolve_summary(artifact_dir, summary)
     _emit(event_callback, "worker_iteration_limit", agent_id, task_id)
     _write_summary(artifact_dir, summary)
     _persist_messages(artifact_dir, messages)
@@ -448,6 +452,19 @@ def _best_summary(messages: list[dict], fallback: str) -> str:
     ]
     if texts:
         return max(texts, key=len)
+    return fallback
+
+
+def _resolve_summary(artifact_dir: Path, fallback: str) -> str:
+    """Return report.md content if it exists, otherwise fall back to text."""
+    report_path = artifact_dir / "report.md"
+    try:
+        if report_path.is_file():
+            content = report_path.read_text(encoding="utf-8").strip()
+            if content:
+                return content
+    except Exception:
+        logger.warning("Failed to read report.md from %s", artifact_dir, exc_info=True)
     return fallback
 
 
