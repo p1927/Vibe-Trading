@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
-from src.swarm.worker import _resolve_summary, _best_summary, WorkerResult
+from src.swarm.worker import _preview_tool_arguments, _resolve_summary, _best_summary
 
 
 def test_resolve_summary_reads_report_md(tmp_path: Path) -> None:
@@ -54,3 +52,27 @@ def test_resolve_summary_handles_read_error(tmp_path: Path) -> None:
     """_resolve_summary returns fallback if reading report.md fails."""
     result = _resolve_summary(Path("/nonexistent/path/xyz"), "fallback")
     assert result == "fallback"
+
+
+def test_preview_tool_arguments_redacts_sensitive_values() -> None:
+    """Event previews should not leak file bodies or credentials."""
+    preview = _preview_tool_arguments({
+        "path": "report.md",
+        "content": "# very long confidential report",
+        "headers": {"Authorization": "Bearer secret-token"},
+        "api_token": "secret-token",
+        "run_dir": "/tmp/hidden",
+    })
+
+    assert preview == {
+        "path": "report.md",
+        "content": "[redacted]",
+        "headers": "[redacted]",
+        "api_token": "[redacted]",
+    }
+
+
+def test_preview_tool_arguments_truncates_non_sensitive_values() -> None:
+    """Non-sensitive event previews stay short."""
+    preview = _preview_tool_arguments({"query": "A" * 250})
+    assert preview["query"] == "A" * 200 + "..."

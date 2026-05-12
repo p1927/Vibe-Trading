@@ -30,6 +30,17 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAX_ITERATIONS = int(os.getenv("SWARM_WORKER_MAX_ITER", "50"))
 _DEFAULT_TIMEOUT_SECONDS = int(os.getenv("SWARM_WORKER_TIMEOUT", "300"))
 _MAX_TOKEN_ESTIMATE = 60_000
+_SENSITIVE_TOOL_ARGUMENT_KEYS = {
+    "api_key",
+    "authorization",
+    "content",
+    "env",
+    "headers",
+    "passphrase",
+    "password",
+    "secret",
+    "token",
+}
 
 
 def _emit(
@@ -335,8 +346,8 @@ def run_worker(
                 "role": "user",
                 "content": (
                     f"[SYSTEM] You have {remaining} iterations remaining. "
-                    "Stop calling tools and immediately output your final analysis summary as plain text. "
-                    "Do not call any more tools."
+                    "If report.md is not written yet, make one final write_file call for report.md. "
+                    "Otherwise stop calling tools and output your final analysis summary as plain text."
                 ),
             })
 
@@ -411,7 +422,7 @@ def run_worker(
             _emit(
                 event_callback, "tool_call", agent_id, task_id,
                 {"tool": tc.name, "iteration": iteration,
-                 "arguments": {k: (v if len(str(v)) <= 200 else str(v)[:200] + "...") for k, v in tc.arguments.items() if k != "run_dir"}},
+                 "arguments": _preview_tool_arguments(tc.arguments)},
             )
             tc_start = time.monotonic()
             args = {**tc.arguments, "run_dir": str(artifact_dir)}
@@ -421,7 +432,7 @@ def run_worker(
                 event_callback, "tool_result", agent_id, task_id,
                 {"tool": tc.name, "elapsed_ms": int(tc_elapsed * 1000),
                  "status": "ok", "iteration": iteration,
-                 "result_preview": str(result)[:500]},
+                 "result_preview": str(result)[:200]},
             )
             messages.append(
                 ContextBuilder.format_tool_result(tc.id, tc.name, result[:10_000])
@@ -453,6 +464,29 @@ def _best_summary(messages: list[dict], fallback: str) -> str:
     if texts:
         return max(texts, key=len)
     return fallback
+
+
+def _preview_tool_arguments(arguments: dict) -> dict[str, str]:
+    """Return a short, redacted argument preview for streamed events."""
+    preview: dict[str, str] = {}
+    for key, value in arguments.items():
+        if key == "run_dir":
+            continue
+        if _is_sensitive_tool_argument(key):
+            preview[key] = "[redacted]"
+            continue
+        text = str(value)
+        preview[key] = text if len(text) <= 200 else text[:200] + "..."
+    return preview
+
+
+def _is_sensitive_tool_argument(key: str) -> bool:
+    """Return whether a tool argument name should be redacted in events."""
+    normalized = key.strip().lower()
+    return normalized in _SENSITIVE_TOOL_ARGUMENT_KEYS or any(
+        marker in normalized
+        for marker in ("api_key", "authorization", "password", "secret", "token")
+    )
 
 
 def _resolve_summary(artifact_dir: Path, fallback: str) -> str:
