@@ -49,7 +49,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [macro-analysis, global-macro, credit-analysis]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: fx_strategist
@@ -94,7 +94,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [global-macro, macro-analysis, yfinance]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: commodity_inflation_analyst
@@ -133,7 +133,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [commodity-analysis, global-macro, seasonal]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: macro_pm
@@ -185,7 +185,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, backtest]
     skills: [asset-allocation, risk-analysis, hedging-strategy, strategy-generate]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

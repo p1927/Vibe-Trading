@@ -37,7 +37,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [event-driven, corporate-events, web-reader, geopolitical-risk]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: impact_analyst
@@ -84,7 +84,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [corporate-events, sentiment-analysis, valuation-model]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: strategy_builder
@@ -121,7 +121,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, backtest]
     skills: [event-driven, strategy-generate]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

@@ -55,7 +55,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, options_pricing]
     skills: [volatility, options-advanced]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: strategy_designer
@@ -120,7 +120,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, options_pricing]
     skills: [options-strategy, options-advanced, hedging-strategy, options-payoff]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: greeks_manager
@@ -181,7 +181,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, options_pricing]
     skills: [options-advanced, risk-analysis, volatility, options-payoff]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

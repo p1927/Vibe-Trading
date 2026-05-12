@@ -41,7 +41,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [perp-funding-basis, okx-market, crypto-derivatives]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: liquidation_analyst
@@ -82,7 +82,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [liquidation-heatmap, market-microstructure, execution-model]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: flow_analyst
@@ -118,7 +118,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [stablecoin-flow, onchain-analysis, token-unlock-treasury, defi-yield]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: desk_risk_manager
@@ -167,7 +167,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [risk-analysis, asset-allocation, volatility, hedging-strategy]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

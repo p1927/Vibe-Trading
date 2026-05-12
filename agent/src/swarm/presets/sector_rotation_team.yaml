@@ -54,7 +54,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [macro-analysis, seasonal]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: prosperity_analyst
@@ -108,7 +108,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [sector-rotation, fundamental-filter, multi-factor]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: flow_analyst
@@ -161,7 +161,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [tushare, sentiment-analysis]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: rotation_strategist
@@ -207,7 +207,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, backtest]
     skills: [strategy-generate, sector-rotation]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

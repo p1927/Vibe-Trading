@@ -24,7 +24,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [tushare, fundamental-filter]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: factor_miner
@@ -48,7 +48,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [multi-factor, factor-research]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: backtester
@@ -72,7 +72,7 @@ agents:
     tools: [bash, read_file, write_file, edit_file, load_skill, backtest]
     skills: [strategy-generate, technical-basic]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: risk_auditor
@@ -96,7 +96,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [volatility]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

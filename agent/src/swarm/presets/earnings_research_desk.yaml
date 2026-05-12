@@ -43,7 +43,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [edgar-sec-filings, financial-statement, yfinance, fundamental-filter, valuation-model]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: revision_tracker
@@ -84,7 +84,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [earnings-revision, earnings-forecast]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: event_options_analyst
@@ -127,7 +127,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [options-advanced, options-strategy, event-driven, volatility]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: earnings_strategist
@@ -176,7 +176,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, backtest]
     skills: [strategy-generate, risk-analysis, report-generate]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

@@ -37,7 +37,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [performance-attribution, multi-factor]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: risk_inspector
@@ -81,7 +81,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [risk-analysis, volatility]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: execution_analyst
@@ -124,7 +124,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [execution-model, market-microstructure]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: chief_investment_officer
@@ -162,7 +162,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [asset-allocation, risk-analysis]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

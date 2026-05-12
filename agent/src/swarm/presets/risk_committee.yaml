@@ -24,7 +24,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [volatility]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: tail_risk_analyst
@@ -48,7 +48,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [volatility]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: regime_detector
@@ -72,7 +72,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [volatility, technical-basic]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: aggregator
@@ -98,7 +98,7 @@ agents:
     tools: [bash, read_file, write_file]
     skills: []
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

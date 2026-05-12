@@ -30,7 +30,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [web-reader, sentiment-analysis, social-media-intelligence]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: social_analyst
@@ -60,7 +60,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [behavioral-finance, sentiment-analysis, social-media-intelligence]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: flow_analyst
@@ -90,7 +90,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [tushare, sentiment-analysis]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: signal_synthesizer
@@ -122,7 +122,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [behavioral-finance, risk-analysis]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

@@ -94,6 +94,7 @@ def _default_run_roots() -> list[Path]:
     agent_root = _agent_root()
     return [
         agent_root / "runs",
+        agent_root / ".swarm" / "runs",
         cwd / "runs",
         home / ".vibe-trading" / "shadow_runs",
     ]

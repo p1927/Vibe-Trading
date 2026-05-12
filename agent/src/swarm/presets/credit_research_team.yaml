@@ -48,7 +48,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [credit-analysis, financial-statement]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: rate_analyst
@@ -98,7 +98,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [credit-analysis, macro-analysis]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: sector_credit_analyst
@@ -151,7 +151,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, read_url]
     skills: [credit-analysis, sector-rotation, regulatory-knowledge]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: fixed_income_strategist
@@ -204,7 +204,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, backtest]
     skills: [credit-analysis, strategy-generate, risk-analysis]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:

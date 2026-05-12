@@ -45,7 +45,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, factor_analysis]
     skills: [pair-trading, quant-statistics, correlation-analysis]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: microstructure_analyst
@@ -86,7 +86,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [market-microstructure, execution-model]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: arb_strategist
@@ -134,7 +134,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill, backtest]
     skills: [pair-trading, strategy-generate, quant-statistics]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
   - id: risk_monitor
@@ -184,7 +184,7 @@ agents:
     tools: [bash, read_file, write_file, load_skill]
     skills: [risk-analysis, volatility]
     max_iterations: 50
-    timeout_seconds: 600
+    timeout_seconds: 1800
     max_retries: 1
 
 tasks:
