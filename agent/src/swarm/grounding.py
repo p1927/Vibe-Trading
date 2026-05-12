@@ -25,7 +25,7 @@ What this module **does not** do
   to false-positive on common English words. Users supply suffixed
   symbols already in every shipped preset.
 * It does not refresh data mid-run. The block is a snapshot taken once
-  at ``start_run`` time; long-running swarms will see stale data after
+  when the background run starts; long-running swarms will see stale data after
   many minutes, but that is still strictly better than training-data
   prices from a year ago.
 """
@@ -33,6 +33,7 @@ What this module **does not** do
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import date, timedelta
 from typing import Iterable
@@ -44,6 +45,8 @@ logger = logging.getLogger(__name__)
 # roughly 21 US trading days — enough for a "recent" view without
 # bloating the worker prompt.
 DEFAULT_WINDOW_DAYS = 30
+DEFAULT_MAX_SYMBOLS = 8
+MAX_SYMBOLS_ENV = "SWARM_GROUNDING_MAX_SYMBOLS"
 
 # How many of the most-recent rows to render in the worker prompt.
 # The full window is still used to compute the min/max line; the table
@@ -74,6 +77,22 @@ def extract_symbols_from_user_vars(user_vars: dict[str, str]) -> list[str]:
             for match in pattern.findall(value):
                 seen.setdefault(match, None)
     return list(seen.keys())
+
+
+def max_grounding_symbols() -> int:
+    """Return the configured cap for symbols fetched into worker prompts."""
+    raw = os.getenv(MAX_SYMBOLS_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MAX_SYMBOLS
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "grounding: invalid %s=%r, using default %d",
+            MAX_SYMBOLS_ENV, raw, DEFAULT_MAX_SYMBOLS,
+        )
+        return DEFAULT_MAX_SYMBOLS
+    return max(1, value)
 
 
 def fetch_grounding_data(

@@ -103,24 +103,6 @@ class SwarmRuntime:
         run.provider = (os.getenv("LANGCHAIN_PROVIDER") or "").strip().lower() or None
         run.model = (os.getenv("LANGCHAIN_MODEL_NAME") or "").strip() or None
 
-        # Pre-fetch market data for any suffixed stock / crypto symbols
-        # mentioned in user_vars and pin it on the run. Workers read these
-        # bars off run.grounding_data instead of hallucinating prices from
-        # their training cutoff. Failures are non-fatal — the run still
-        # proceeds, just without the grounding block.
-        symbols = grounding.extract_symbols_from_user_vars(user_vars)
-        if symbols:
-            try:
-                fetched = grounding.fetch_grounding_data(symbols)
-            except Exception:
-                logger.warning(
-                    "grounding: pre-fetch failed for run %s symbols=%s",
-                    run.id, symbols, exc_info=True,
-                )
-                fetched = {}
-            if fetched:
-                run.grounding_data = fetched
-
         self._store.create_run(run)
 
         cancel_event = threading.Event()
@@ -231,6 +213,8 @@ class SwarmRuntime:
         self._store.update_run(run)
         self._emit_event(run_id, self._make_event("run_started"))
 
+        self._prefetch_grounding_data(run)
+
         # Initialize task store
         task_store = TaskStore(run_dir)
         for task in run.tasks:
@@ -276,6 +260,7 @@ class SwarmRuntime:
                     run_dir=run_dir,
                     cancel_event=cancel_event,
                     include_shell_tools=include_shell_tools,
+                    grounding_block=grounding_block,
                 )
 
                 # Process results
@@ -355,6 +340,33 @@ class SwarmRuntime:
             self._cancel_events.pop(run_id, None)
             self._live_callbacks.pop(run_id, None)
 
+    def _prefetch_grounding_data(self, run: SwarmRun) -> None:
+        """Fetch run-level grounding data without blocking ``start_run``."""
+        symbols = grounding.extract_symbols_from_user_vars(run.user_vars)
+        if not symbols:
+            return
+
+        symbol_limit = grounding.max_grounding_symbols()
+        if len(symbols) > symbol_limit:
+            logger.warning(
+                "grounding: limiting run %s symbols from %d to %d",
+                run.id, len(symbols), symbol_limit,
+            )
+            symbols = symbols[:symbol_limit]
+
+        try:
+            fetched = grounding.fetch_grounding_data(symbols)
+        except Exception:
+            logger.warning(
+                "grounding: pre-fetch failed for run %s symbols=%s",
+                run.id, symbols, exc_info=True,
+            )
+            return
+
+        if fetched:
+            run.grounding_data = fetched
+            self._store.update_run(run)
+
     def _execute_layer(
         self,
         run: SwarmRun,
@@ -365,6 +377,7 @@ class SwarmRuntime:
         run_dir: Path,
         cancel_event: threading.Event,
         include_shell_tools: bool = False,
+        grounding_block: str = "",
     ) -> dict[str, WorkerResult]:
         """Execute all tasks in a single layer in parallel, with retry on failure.
 
@@ -380,6 +393,7 @@ class SwarmRuntime:
             run_dir: Run directory path.
             cancel_event: Cancellation event.
             include_shell_tools: Whether workers may register shell tools.
+            grounding_block: Pre-rendered "Ground Truth" markdown for workers.
 
         Returns:
             Mapping of task_id -> WorkerResult for all tasks in this layer.

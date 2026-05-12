@@ -7,14 +7,18 @@ markdown formatter are pure-function tests.
 
 from __future__ import annotations
 
+import threading
 from datetime import date
+from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
 
 from src.swarm import grounding
+from src.swarm.models import SwarmAgentSpec, SwarmRun, SwarmTask, WorkerResult
+from src.swarm.runtime import SwarmRuntime
+from src.swarm.task_store import TaskStore
 from src.swarm.worker import build_worker_prompt
-from src.swarm.models import SwarmAgentSpec
 
 
 # --------------------------------------------------------------------------- #
@@ -139,6 +143,16 @@ def test_fetch_returns_empty_for_empty_input() -> None:
     assert grounding.fetch_grounding_data([]) == {}
 
 
+def test_max_grounding_symbols_uses_env(monkeypatch) -> None:
+    monkeypatch.setenv("SWARM_GROUNDING_MAX_SYMBOLS", "3")
+    assert grounding.max_grounding_symbols() == 3
+
+
+def test_max_grounding_symbols_falls_back_on_invalid_env(monkeypatch) -> None:
+    monkeypatch.setenv("SWARM_GROUNDING_MAX_SYMBOLS", "nope")
+    assert grounding.max_grounding_symbols() == grounding.DEFAULT_MAX_SYMBOLS
+
+
 # --------------------------------------------------------------------------- #
 # format_grounding_block
 # --------------------------------------------------------------------------- #
@@ -192,3 +206,42 @@ def test_worker_prompt_includes_grounding_block_when_provided() -> None:
 def test_worker_prompt_omits_grounding_section_when_block_empty() -> None:
     prompt = build_worker_prompt(_spec(), {}, "(no matching skills)")
     assert "Ground Truth" not in prompt
+
+
+def test_runtime_threads_grounding_block_into_layer_workers(tmp_path, monkeypatch) -> None:
+    """Regression: _execute_layer must receive the run-level grounding block."""
+    store = MagicMock()
+    runtime = SwarmRuntime(store=store, max_workers=1)
+    run_dir = tmp_path / "run"
+    task_store = TaskStore(run_dir)
+    agent = _spec()
+    task = SwarmTask(id="task1", agent_id=agent.id, prompt_template="Analyze.")
+    task_store.save_task(task)
+    run = SwarmRun(
+        id="run1",
+        preset_name="dummy",
+        created_at="2026-05-13T00:00:00+00:00",
+        agents=[agent],
+        tasks=[task],
+    )
+    seen: list[str] = []
+
+    def _fake_worker(**kwargs):
+        seen.append(kwargs["grounding_block"])
+        return WorkerResult(status="completed", summary="done")
+
+    monkeypatch.setattr(runtime, "_run_worker_with_retries", _fake_worker)
+
+    results = runtime._execute_layer(
+        run=run,
+        task_store=task_store,
+        agent_map={agent.id: agent},
+        layer_task_ids=[task.id],
+        task_summaries={},
+        run_dir=run_dir,
+        cancel_event=threading.Event(),
+        grounding_block="GROUNDING",
+    )
+
+    assert results[task.id].summary == "done"
+    assert seen == ["GROUNDING"]
