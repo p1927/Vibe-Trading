@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from src.swarm import grounding
 from src.swarm.mailbox import Mailbox
 from src.swarm.models import (
     RunStatus,
@@ -212,6 +213,8 @@ class SwarmRuntime:
         self._store.update_run(run)
         self._emit_event(run_id, self._make_event("run_started"))
 
+        self._prefetch_grounding_data(run)
+
         # Initialize task store
         task_store = TaskStore(run_dir)
         for task in run.tasks:
@@ -219,6 +222,11 @@ class SwarmRuntime:
 
         # Build agent lookup
         agent_map: dict[str, SwarmAgentSpec] = {a.id: a for a in run.agents}
+
+        # Render the grounding block once and pass it to every worker on
+        # this run. The block is empty when no symbols were detected, in
+        # which case workers see no extra section.
+        grounding_block = grounding.format_grounding_block(run.grounding_data or {})
 
         # Compute execution layers
         layers = topological_layers(run.tasks)
@@ -252,6 +260,7 @@ class SwarmRuntime:
                     run_dir=run_dir,
                     cancel_event=cancel_event,
                     include_shell_tools=include_shell_tools,
+                    grounding_block=grounding_block,
                 )
 
                 # Process results
@@ -331,6 +340,33 @@ class SwarmRuntime:
             self._cancel_events.pop(run_id, None)
             self._live_callbacks.pop(run_id, None)
 
+    def _prefetch_grounding_data(self, run: SwarmRun) -> None:
+        """Fetch run-level grounding data without blocking ``start_run``."""
+        symbols = grounding.extract_symbols_from_user_vars(run.user_vars)
+        if not symbols:
+            return
+
+        symbol_limit = grounding.max_grounding_symbols()
+        if len(symbols) > symbol_limit:
+            logger.warning(
+                "grounding: limiting run %s symbols from %d to %d",
+                run.id, len(symbols), symbol_limit,
+            )
+            symbols = symbols[:symbol_limit]
+
+        try:
+            fetched = grounding.fetch_grounding_data(symbols)
+        except Exception:
+            logger.warning(
+                "grounding: pre-fetch failed for run %s symbols=%s",
+                run.id, symbols, exc_info=True,
+            )
+            return
+
+        if fetched:
+            run.grounding_data = fetched
+            self._store.update_run(run)
+
     def _execute_layer(
         self,
         run: SwarmRun,
@@ -341,6 +377,7 @@ class SwarmRuntime:
         run_dir: Path,
         cancel_event: threading.Event,
         include_shell_tools: bool = False,
+        grounding_block: str = "",
     ) -> dict[str, WorkerResult]:
         """Execute all tasks in a single layer in parallel, with retry on failure.
 
@@ -356,6 +393,7 @@ class SwarmRuntime:
             run_dir: Run directory path.
             cancel_event: Cancellation event.
             include_shell_tools: Whether workers may register shell tools.
+            grounding_block: Pre-rendered "Ground Truth" markdown for workers.
 
         Returns:
             Mapping of task_id -> WorkerResult for all tasks in this layer.
@@ -409,6 +447,7 @@ class SwarmRuntime:
                     event_callback=_event_callback,
                     run_id=run.id,
                     include_shell_tools=include_shell_tools,
+                    grounding_block=grounding_block,
                 )
                 futures[future] = tid
                 per_task_budget = agent_spec.timeout_seconds * (agent_spec.max_retries + 1)
@@ -463,6 +502,7 @@ class SwarmRuntime:
         event_callback: Callable[[SwarmEvent], None] | None,
         run_id: str,
         include_shell_tools: bool = False,
+        grounding_block: str = "",
     ) -> WorkerResult:
         """Run a worker with automatic retry on failure.
 
@@ -479,6 +519,9 @@ class SwarmRuntime:
             event_callback: Optional event callback.
             run_id: Run identifier for event emission.
             include_shell_tools: Whether the worker may register shell tools.
+            grounding_block: Pre-rendered "Ground Truth" markdown spliced
+                into the worker's system prompt. Empty string when no
+                symbols were extracted from user_vars.
 
         Returns:
             WorkerResult from the last attempt.
@@ -513,6 +556,7 @@ class SwarmRuntime:
                 run_dir=run_dir,
                 event_callback=event_callback,
                 include_shell_tools=include_shell_tools,
+                grounding_block=grounding_block,
             )
 
             cumulative_input_tokens += result.input_tokens

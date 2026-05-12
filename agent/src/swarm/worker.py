@@ -149,6 +149,7 @@ def build_worker_prompt(
     agent_spec: SwarmAgentSpec,
     upstream_summaries: dict[str, str],
     skill_descriptions: str,
+    grounding_block: str = "",
 ) -> str:
     """Build the worker's system prompt with role, upstream context, and skills.
 
@@ -156,6 +157,11 @@ def build_worker_prompt(
         agent_spec: The agent's role specification.
         upstream_summaries: Mapping of context_key -> upstream task summary.
         skill_descriptions: Pre-filtered skill description text.
+        grounding_block: Optional "Ground Truth" markdown produced by
+            :func:`src.swarm.grounding.format_grounding_block`. Spliced in
+            ahead of the Execution Rules section so the worker sees real
+            recent prices before any tool decision. Empty string skips the
+            section entirely.
 
     Returns:
         Complete system prompt string for the worker LLM.
@@ -179,6 +185,12 @@ def build_worker_prompt(
         prompt_parts.append(
             f"## Available Skills (use load_skill to access full documentation)\n\n{skill_descriptions}"
         )
+
+    if grounding_block:
+        # Placed before Execution Rules so it's in scope when the worker
+        # plans its first tool call. The block already contains an explicit
+        # instruction to prefer these prices over training data.
+        prompt_parts.append(grounding_block)
 
     prompt_parts.append(
         "## Execution Rules\n\n"
@@ -215,6 +227,7 @@ def run_worker(
     run_dir: Path,
     event_callback: Callable[[SwarmEvent], None] | None = None,
     include_shell_tools: bool = False,
+    grounding_block: str = "",
 ) -> WorkerResult:
     """Execute a single worker task using a lightweight ReAct loop.
 
@@ -235,6 +248,9 @@ def run_worker(
         run_dir: Path to .swarm/runs/{run_id}/ directory.
         event_callback: Optional callback for swarm events.
         include_shell_tools: Whether this worker may register shell tools.
+        grounding_block: Optional pre-rendered "Ground Truth" markdown that
+            anchors the worker on real recent prices for symbols mentioned in
+            ``user_vars``. Forwarded verbatim to :func:`build_worker_prompt`.
 
     Returns:
         WorkerResult with status, summary, artifacts, and iteration count.
@@ -255,7 +271,9 @@ def run_worker(
     # 3. Build system prompt with filtered skills
     skills_loader = SkillsLoader()
     skill_desc = _filter_skill_descriptions(skills_loader, agent_spec.skills)
-    system_prompt = build_worker_prompt(agent_spec, upstream_summaries, skill_desc)
+    system_prompt = build_worker_prompt(
+        agent_spec, upstream_summaries, skill_desc, grounding_block=grounding_block,
+    )
 
     # 4. Resolve prompt template with user vars (missing vars → LLM infers)
     class _FallbackDict(dict):
