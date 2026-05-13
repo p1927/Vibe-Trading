@@ -125,6 +125,22 @@ class TestCmdMemoryShow:
         assert rc == cli.EXIT_SUCCESS
         assert "evil[red]title" in out
 
+    def test_list_does_not_crash_on_bracketed_description(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Regression: descriptions that look like YAML list literals are parsed
+        # as lists. Without storage-layer coercion, rich.markup.escape() crashed
+        # with TypeError because it only accepts strings.
+        entry_path = tmp_path / "user_yaml-leak.md"
+        entry_path.write_text(
+            "---\nname: yaml-leak\ndescription: [red]inject[/red]\ntype: user\n---\n\nbody\n",
+            encoding="utf-8",
+        )
+        rc = cli.cmd_memory_list(memory_dir=tmp_path)
+        out = capsys.readouterr().out
+        assert rc == cli.EXIT_SUCCESS
+        assert "yaml-leak" in out
+
 
 class TestCmdMemorySearch:
     def test_finds_match(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

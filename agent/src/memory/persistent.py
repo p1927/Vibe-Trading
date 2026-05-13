@@ -68,6 +68,24 @@ def _tokenize(text: str) -> set[str]:
     return ascii_tokens | cjk_tokens
 
 
+def _coerce_str(value: object, default: str = "") -> str:
+    """Coerce frontmatter values to a display string.
+
+    ``parse_frontmatter`` returns lists for ``[a, b]`` syntax and bools for
+    ``true``/``false``. ``MemoryEntry`` annotates these fields as ``str`` so
+    callers (CLI rendering, recall scoring) can rely on string operations.
+    """
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
+    return str(value)
+
+
 class PersistentMemory:
     """File-based persistent memory that survives across sessions.
 
@@ -124,9 +142,9 @@ class PersistentMemory:
             meta, body = _parse_frontmatter(text)
             entries.append(MemoryEntry(
                 path=path,
-                title=meta.get("name", path.stem),
-                description=meta.get("description", ""),
-                memory_type=meta.get("type", "project"),
+                title=_coerce_str(meta.get("name"), default=path.stem),
+                description=_coerce_str(meta.get("description")),
+                memory_type=_coerce_str(meta.get("type"), default="project"),
                 body=body[:MAX_ENTRY_CHARS],
                 modified_at=path.stat().st_mtime,
             ))

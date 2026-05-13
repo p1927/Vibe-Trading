@@ -6,7 +6,41 @@ from pathlib import Path
 
 import pytest
 
-from src.memory.persistent import PersistentMemory, MemoryEntry, _tokenize
+from src.memory.persistent import PersistentMemory, MemoryEntry, _coerce_str, _tokenize
+
+
+class TestCoerceStr:
+    def test_passthrough_string(self) -> None:
+        assert _coerce_str("hello") == "hello"
+
+    def test_none_uses_default(self) -> None:
+        assert _coerce_str(None, default="fallback") == "fallback"
+
+    def test_list_joined_with_comma(self) -> None:
+        # `description: [red]inject[/red]` would parse to a single-element list
+        # because the frontmatter parser treats ``[...]`` as a list literal.
+        assert _coerce_str(["red]inject[/red"]) == "red]inject[/red"
+        assert _coerce_str(["a", "b"]) == "a, b"
+
+    def test_bool_lowercased(self) -> None:
+        assert _coerce_str(True) == "true"
+        assert _coerce_str(False) == "false"
+
+
+class TestScanEntriesCoercesFrontmatter:
+    def test_bracketed_description_renders_as_string(self, tmp_path) -> None:
+        # Regression: a description like ``[red]x[/red]`` parsed as a list used
+        # to leak through MemoryEntry.description and crash any downstream
+        # consumer that called string ops on it (e.g. rich.markup.escape).
+        entry_path = tmp_path / "user_bracket-desc.md"
+        entry_path.write_text(
+            "---\nname: bracket-desc\ndescription: [red]inject[/red]\ntype: user\n---\n\nbody\n",
+            encoding="utf-8",
+        )
+        pm = PersistentMemory(memory_dir=tmp_path)
+        entries = pm.list_entries()
+        assert len(entries) == 1
+        assert isinstance(entries[0].description, str)
 
 
 # ---------------------------------------------------------------------------
