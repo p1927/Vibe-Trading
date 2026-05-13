@@ -47,8 +47,6 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from src.memory.persistent import MEMORY_TYPES, PersistentMemory  # noqa: E402
-
 console = Console()
 AGENT_DIR = Path(__file__).resolve().parent
 RUNS_DIR = AGENT_DIR / "runs"
@@ -2370,7 +2368,7 @@ def _build_parser() -> argparse.ArgumentParser:
     memory_list_parser.add_argument(
         "--type",
         dest="memory_type",
-        choices=MEMORY_TYPES,
+        choices=_MEMORY_TYPES,
         help="Filter by memory type",
     )
 
@@ -2603,17 +2601,23 @@ def _render_env_content(config: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
+# Kept in sync with MEMORY_TYPES in src/memory/persistent.py. Duplicated here
+# rather than imported so that `vibe-trading --version` / `--help` and other
+# non-memory commands skip loading the full agent runtime chain at startup.
+_MEMORY_TYPES = ("user", "feedback", "project", "reference")
 _MEMORY_TYPE_STYLES = {
     "user": "cyan",
     "feedback": "yellow",
     "project": "green",
     "reference": "magenta",
 }
-assert set(_MEMORY_TYPE_STYLES) == set(MEMORY_TYPES), "_MEMORY_TYPE_STYLES drift: keys must mirror MEMORY_TYPES"
+assert set(_MEMORY_TYPE_STYLES) == set(_MEMORY_TYPES), "_MEMORY_TYPE_STYLES drift: keys must mirror _MEMORY_TYPES"
 
 
 def cmd_memory_list(memory_type: Optional[str] = None, *, memory_dir: Optional[Path] = None) -> int:
     """List persisted memory entries."""
+    from src.memory.persistent import PersistentMemory
+
     pm = PersistentMemory(memory_dir=memory_dir)
     entries = pm.list_entries()
     if memory_type:
@@ -2648,6 +2652,8 @@ def cmd_memory_list(memory_type: Optional[str] = None, *, memory_dir: Optional[P
 
 def cmd_memory_show(name: str, *, memory_dir: Optional[Path] = None) -> int:
     """Show full content of a single memory entry."""
+    from src.memory.persistent import PersistentMemory
+
     pm = PersistentMemory(memory_dir=memory_dir)
     entry = pm.find(name)
     if entry is None:
@@ -2668,6 +2674,8 @@ def cmd_memory_show(name: str, *, memory_dir: Optional[Path] = None) -> int:
 
 def cmd_memory_search(query: str, max_results: int = 5, *, memory_dir: Optional[Path] = None) -> int:
     """Run keyword recall and display the top matches."""
+    from src.memory.persistent import PersistentMemory
+
     pm = PersistentMemory(memory_dir=memory_dir)
     results = pm.find_relevant(query, max_results=max_results)
     if not results:
@@ -2695,6 +2703,8 @@ def cmd_memory_search(query: str, max_results: int = 5, *, memory_dir: Optional[
 
 def cmd_memory_forget(name: str, *, yes: bool = False, memory_dir: Optional[Path] = None) -> int:
     """Remove a memory entry by name."""
+    from src.memory.persistent import PersistentMemory
+
     pm = PersistentMemory(memory_dir=memory_dir)
     entry = pm.find(name)
     if entry is None:
