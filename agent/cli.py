@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import warnings
-
 warnings.filterwarnings("ignore", message=".*Importing verbose from langchain.*")
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="langchain")
 
@@ -143,7 +142,9 @@ def _print_status_bar(stats: _SessionStats) -> None:
         stats: Session statistics.
     """
     parts = _build_status_parts(stats)
-    bar = "[dim] │ [/dim]".join(f"[bold]{parts[0]}[/bold]" if i == 0 else p for i, p in enumerate(parts))
+    bar = "[dim] │ [/dim]".join(
+        f"[bold]{parts[0]}[/bold]" if i == 0 else p for i, p in enumerate(parts)
+    )
     console.print(bar)
 
 
@@ -254,7 +255,6 @@ def _read_prompt_source(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 
 def _read_json(path: Path) -> dict:
     """Safely read JSON."""
@@ -595,19 +595,18 @@ class _RunDashboard:
 # Agent execution core
 # ---------------------------------------------------------------------------
 
-
 def _format_tool_call_args(tool: str, args: Dict[str, str]) -> str:
     """Smart-format tool argument summary."""
     if tool == "load_skill":
         return f'("{args.get("name", "")}")'
     if tool in ("write_file", "read_file", "edit_file"):
-        return f" {args.get('path', args.get('file_path', ''))}"
+        return f' {args.get("path", args.get("file_path", ""))}'
     if tool in ("bash", "background_run"):
         cmd = args.get("command", "")[:80]
-        return f" [yellow]{cmd}[/yellow]"
+        return f' [yellow]{cmd}[/yellow]'
     if tool == "check_background":
         tid = args.get("task_id", "")
-        return f" {tid}" if tid else ""
+        return f' {tid}' if tid else ""
     if tool in ("backtest", "compact"):
         return ""
     for v in args.values():
@@ -627,7 +626,7 @@ def _format_tool_result_preview(tool: str, status: str, preview: str) -> str:
         if sharpe:
             parts.append(f"sharpe={sharpe.group(1)}")
         if ret:
-            parts.append(f"return={float(ret.group(1)) * 100:.1f}%")
+            parts.append(f"return={float(ret.group(1))*100:.1f}%")
         return ", ".join(parts) if parts else ""
     if tool == "render_shadow_report":
         url = re.search(r'"report_url":\s*"([^"]+)"', preview)
@@ -714,9 +713,7 @@ def _run_agent(
             console.print(f"  {mark} [dim]{elapsed_s:.1f}s[/dim]{suffix}")
         elif event_type == "compact":
             tokens = data.get("tokens_before", "?")
-            console.print(
-                f"\n  [yellow]\u27f3 context compressed[/yellow] [dim]({tokens} tokens \u2192 summary)[/dim]\n"
-            )
+            console.print(f"\n  [yellow]\u27f3 context compressed[/yellow] [dim]({tokens} tokens \u2192 summary)[/dim]\n")
 
     from src.memory.persistent import PersistentMemory
 
@@ -743,7 +740,7 @@ def _build_benchmark_table(m: dict) -> Optional[Table]:
     Returns:
         Rich Table, or None if no benchmark data is present.
     """
-    bench_ticker = m.get("benchmark_ticker")
+    bench_ticker  = m.get("benchmark_ticker")
     bench_ret_str = m.get("benchmark_return")
     bench_ret_raw = m.get("_benchmark_return_raw")
 
@@ -763,21 +760,21 @@ def _build_benchmark_table(m: dict) -> Optional[Table]:
         bench_ret = None
 
     strategy_ret_str = m.get("total_return")
-    strategy_ret = float(strategy_ret_str) if strategy_ret_str else None
+    strategy_ret     = float(strategy_ret_str) if strategy_ret_str else None
 
     table = Table(show_header=False, padding=(0, 2))
     table.add_column("Label", style="dim", width=20)
     table.add_column("Value", style="white no_wrap")
 
-    table.add_row("[dim]Benchmark[/dim]", bench_ticker)
+    table.add_row("[dim]Benchmark[/dim]",  bench_ticker)
 
     if bench_ret is not None:
         table.add_row("[dim]Benchmark Return[/dim]", f"{bench_ret * 100:+.2f}%")
 
     if strategy_ret is not None and bench_ret is not None:
         excess = strategy_ret - bench_ret
-        sign = "+" if excess >= 0 else ""
-        style = "green" if excess >= 0 else "red"
+        sign   = "+" if excess >= 0 else ""
+        style  = "green" if excess >= 0 else "red"
         table.add_row(
             "[dim]vs Benchmark[/dim]",
             f"[{style}]{sign}{excess * 100:+.2f}%[/{style}]",
@@ -814,16 +811,12 @@ def _print_result(result: dict, elapsed: float, *, no_rich: bool = False) -> Non
             print(f"Run dir: {run_dir}")
         if result.get("reason"):
             print(f"Reason: {result['reason']}")
-        metric_parts = [
-            f"{label}={m[key]}"
-            for key, label in (
-                ("total_return", "return"),
-                ("sharpe", "sharpe"),
-                ("max_drawdown", "max_dd"),
-                ("trade_count", "trades"),
-            )
-            if key in m
-        ]
+        metric_parts = [f"{label}={m[key]}" for key, label in (
+            ("total_return", "return"),
+            ("sharpe", "sharpe"),
+            ("max_drawdown", "max_dd"),
+            ("trade_count", "trades"),
+        ) if key in m]
         if metric_parts:
             print(f"Metrics: {', '.join(metric_parts)}")
         content = result.get("content", "").strip()
@@ -877,7 +870,7 @@ def _print_result(result: dict, elapsed: float, *, no_rich: bool = False) -> Non
         actions.add_column(style="dim")
         actions.add_row(f"vibe-trading show {rid}", "details")
         actions.add_row(f"vibe-trading code {rid}", "generated Python")
-        actions.add_row(f'vibe-trading continue {rid} "..."', "refine this run")
+        actions.add_row(f"vibe-trading continue {rid} \"...\"", "refine this run")
         panels.append(Panel(actions, border_style="dim", title="Next", padding=(0, 1)))
 
     if _terminal_width() < 104:
@@ -889,14 +882,12 @@ def _print_result(result: dict, elapsed: float, *, no_rich: bool = False) -> Non
     # Benchmark comparison panel.
     bench_table = _build_benchmark_table(m)
     if bench_table:
-        console.print(
-            Panel(
-                bench_table,
-                border_style="cyan",
-                title="Benchmark Comparison",
-                padding=(0, 1),
-            )
-        )
+        console.print(Panel(
+            bench_table,
+            border_style="cyan",
+            title="Benchmark Comparison",
+            padding=(0, 1),
+        ))
     # End benchmark comparison panel.
 
     content = result.get("content", "").strip()
@@ -908,12 +899,10 @@ def _print_result(result: dict, elapsed: float, *, no_rich: bool = False) -> Non
 # Subcommands
 # ---------------------------------------------------------------------------
 
-
 def cmd_run(prompt: str, max_iter: int, *, json_mode: bool = False, no_rich: bool = False) -> int:
     """Single run."""
     if not json_mode:
         from src.preflight import run_preflight
-
         results = run_preflight(console)
         if any(r.critical and r.status != "ready" for r in results):
             return EXIT_RUN_FAILED
@@ -948,7 +937,7 @@ def cmd_run(prompt: str, max_iter: int, *, json_mode: bool = False, no_rich: boo
         return _result_exit_code(result)
     _print_result(result, time.perf_counter() - start, no_rich=no_rich)
     if result.get("run_id"):
-        tip = f'--show {result["run_id"]}  |  --continue {result["run_id"]} "..."  |  --code {result["run_id"]}  |  --pine {result["run_id"]}'
+        tip = f"--show {result['run_id']}  |  --continue {result['run_id']} \"...\"  |  --code {result['run_id']}  |  --pine {result['run_id']}"
         if no_rich:
             print(tip)
         else:
@@ -959,7 +948,6 @@ def cmd_run(prompt: str, max_iter: int, *, json_mode: bool = False, no_rich: boo
 def _build_history_from_trace(run_dir: Path) -> List[Dict[str, str]]:
     """Build conversation history from trace.jsonl."""
     from src.agent.trace import TraceWriter
-
     entries = TraceWriter.read(run_dir)
     history: List[Dict[str, str]] = []
     for e in entries:
@@ -1039,7 +1027,6 @@ def cmd_continue(
 # Interactive mode (Welcome + Slash commands + Swarm streaming)
 # ---------------------------------------------------------------------------
 
-
 def _build_welcome_panel(term_width: Optional[int] = None) -> Panel:
     """Build the welcome screen for the given terminal width."""
     _ensure_cli_env()
@@ -1071,11 +1058,7 @@ def _build_welcome_panel(term_width: Optional[int] = None) -> Panel:
                 ]
             )
         )
-    header_lines.append(
-        Text(
-            _clip_inline("Research, backtest, inspect runs, and coordinate swarm presets.", content_width), style="dim"
-        )
-    )
+    header_lines.append(Text(_clip_inline("Research, backtest, inspect runs, and coordinate swarm presets.", content_width), style="dim"))
 
     config_lines: list[Text] = []
     if compact:
@@ -1101,14 +1084,7 @@ def _build_welcome_panel(term_width: Optional[int] = None) -> Panel:
     else:
         gap = " " * widths["gap"]
         rows = [
-            (
-                "Provider",
-                str(provider),
-                "bold cyan",
-                "Credential",
-                key_state,
-                "bold green" if credential_ready else "bold yellow",
-            ),
+            ("Provider", str(provider), "bold cyan", "Credential", key_state, "bold green" if credential_ready else "bold yellow"),
             ("Model", str(model), "white", "Runs", str(recent_runs), "cyan"),
             ("Workspace", str(AGENT_DIR), "dim", "Swarms", str(recent_swarms), "cyan"),
         ]
@@ -1249,12 +1225,7 @@ def _show_settings() -> None:
     provider_key_env = _provider_key_env(provider)
     provider_base_env = _provider_base_env(provider)
     provider_key = os.getenv(provider_key_env or "")
-    provider_base_url = (
-        os.getenv(provider_base_env or "")
-        or os.getenv("OPENAI_BASE_URL")
-        or os.getenv("OPENAI_API_BASE")
-        or "(not set)"
-    )
+    provider_base_url = os.getenv(provider_base_env or "") or os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or "(not set)"
 
     provider_table = Table.grid(expand=True)
     provider_table.add_column(width=12, style="dim")
@@ -1286,19 +1257,9 @@ def _show_settings() -> None:
     credential_table.add_row("TUSHARE_TOKEN", "***" if os.getenv("TUSHARE_TOKEN") else "(optional)")
 
     panels = [
-        Panel(
-            provider_table,
-            title=f"Provider {_state_badge(provider if provider != '(not set)' else None)}",
-            border_style="cyan",
-            padding=(0, 1),
-        ),
+        Panel(provider_table, title=f"Provider {_state_badge(provider if provider != '(not set)' else None)}", border_style="cyan", padding=(0, 1)),
         Panel(runtime_table, title="Runtime", border_style="dim", padding=(0, 1)),
-        Panel(
-            credential_table,
-            title=f"Credentials {_state_badge('ok' if credential_ready else None)}",
-            border_style="green" if credential_ready else "yellow",
-            padding=(0, 1),
-        ),
+        Panel(credential_table, title=f"Credentials {_state_badge('ok' if credential_ready else None)}", border_style="green" if credential_ready else "yellow", padding=(0, 1)),
     ]
     if compact:
         for panel in panels:
@@ -1405,7 +1366,6 @@ def cmd_interactive(max_iter: int) -> None:
     _print_welcome()
 
     from src.preflight import run_preflight
-
     results = run_preflight(console)
     if any(r.critical and r.status != "ready" for r in results):
         return
@@ -1460,7 +1420,6 @@ def cmd_interactive(max_iter: int) -> None:
 # Swarm live streaming (Rich Live panel)
 # ---------------------------------------------------------------------------
 
-
 def _get_agent_style(agent_id: str) -> str:
     """Assign a consistent color to each agent."""
     if agent_id not in _agent_color_map:
@@ -1489,13 +1448,9 @@ class _SwarmDashboard:
         if agent_id in self.agents:
             return agent_id
         self.agents[agent_id] = {
-            "name": agent_id,
-            "status": "waiting",
-            "tool": "\u2014",
-            "elapsed": 0.0,
-            "iters": 0,
-            "started_at": 0.0,
-            "layer": self.current_layer,
+            "name": agent_id, "status": "waiting",
+            "tool": "\u2014", "elapsed": 0.0, "iters": 0,
+            "started_at": 0.0, "layer": self.current_layer,
             "last_text": "",
         }
         self.agent_order.append(agent_id)
@@ -1736,15 +1691,12 @@ def cmd_swarm_run_live(preset: str, vars_json: Optional[str] = None) -> None:
         console.print(f"\n[bold]\u2500\u2500 Final Report \u2500\u2500[/bold]")
         console.print(current.final_report[:2000])
 
-    console.print(
-        f"\n[{status_color}]{current.status.value.upper()}[/{status_color}]  Time: {mins}m {secs}s{token_str}"
-    )
+    console.print(f"\n[{status_color}]{current.status.value.upper()}[/{status_color}]  Time: {mins}m {secs}s{token_str}")
 
 
 # ---------------------------------------------------------------------------
 # Legacy subcommands (used by flags and slash commands)
 # ---------------------------------------------------------------------------
-
 
 def cmd_chat(max_iter: int) -> None:
     """Interactive mode (delegates to cmd_interactive)."""
@@ -1808,7 +1760,6 @@ def cmd_show(run_id: str) -> None:
         lines.extend(f"  {k}: {v}" for k, v in metrics.items())
 
     from src.agent.trace import TraceWriter
-
     entries = TraceWriter.read(run_dir)
     answers = [e["content"] for e in entries if e.get("type") == "answer" and e.get("content")]
     if answers:
@@ -1841,7 +1792,7 @@ def cmd_pine(run_id: str) -> None:
     pine_path = RUNS_DIR / run_id / "artifacts" / "strategy.pine"
     if not pine_path.exists():
         console.print(f"[red]{run_id}/artifacts/strategy.pine not found[/red]")
-        console.print('[dim]Ask the agent: "export this strategy to Pine Script"[/dim]')
+        console.print("[dim]Ask the agent: \"export this strategy to Pine Script\"[/dim]")
         return
     code = pine_path.read_text(encoding="utf-8")
     console.print(Syntax(code, "javascript", theme="monokai", line_numbers=True), width=120)
@@ -1852,7 +1803,6 @@ def cmd_pine(run_id: str) -> None:
 def cmd_skills() -> None:
     """List available skills."""
     from src.agent.skills import SkillsLoader
-
     loader = SkillsLoader()
 
     table = Table(title="Skills", show_lines=False)
@@ -1889,9 +1839,7 @@ def cmd_trace(run_id: str) -> None:
         iter_tag = f"[dim]#{it}[/dim] " if it else ""
 
         if etype == "start":
-            console.print(
-                f"\n[bold cyan]{ts_str}[/bold cyan] {iter_tag}[bold]START[/bold]  {entry.get('prompt', '')[:120]}"
-            )
+            console.print(f"\n[bold cyan]{ts_str}[/bold cyan] {iter_tag}[bold]START[/bold]  {entry.get('prompt', '')[:120]}")
         elif etype == "thinking":
             content = entry.get("content", "")
             console.print(f"[dim]{ts_str}[/dim] {iter_tag}[dim italic]{content[:200]}[/dim italic]")
@@ -1908,9 +1856,7 @@ def cmd_trace(run_id: str) -> None:
             mark = "\u2713" if ok else "\u2717"
             color = "green" if ok else "red"
             preview = entry.get("preview", "")[:80]
-            console.print(
-                f"[dim]{ts_str}[/dim] {iter_tag}[{color}]{mark} {tool}[/{color}] [dim]{elapsed}ms[/dim]  {preview}"
-            )
+            console.print(f"[dim]{ts_str}[/dim] {iter_tag}[{color}]{mark} {tool}[/{color}] [dim]{elapsed}ms[/dim]  {preview}")
         elif etype == "tool_skipped":
             console.print(f"[dim]{ts_str}[/dim] {iter_tag}[yellow]\u2298 {entry.get('tool', '')} (skipped)[/yellow]")
         elif etype == "answer":
@@ -1928,7 +1874,6 @@ def cmd_trace(run_id: str) -> None:
 # ---------------------------------------------------------------------------
 # Swarm subcommands
 # ---------------------------------------------------------------------------
-
 
 def cmd_swarm_presets() -> None:
     """List available swarm presets."""
@@ -1948,7 +1893,9 @@ def cmd_swarm_presets() -> None:
 
     for p in presets:
         raw_vars = p.get("variables", [])
-        var_names = [v["name"] if isinstance(v, dict) else str(v) for v in raw_vars]
+        var_names = [
+            v["name"] if isinstance(v, dict) else str(v) for v in raw_vars
+        ]
         vars_str = ", ".join(var_names)
         table.add_row(
             p["name"],
@@ -2143,7 +2090,6 @@ def cmd_swarm_cancel(run_id: str) -> None:
 # Session subcommands
 # ---------------------------------------------------------------------------
 
-
 def cmd_sessions() -> None:
     """List chat sessions."""
     from src.session.store import SessionStore
@@ -2193,13 +2139,11 @@ def cmd_session_chat(session_id: str, max_iter: int) -> None:
         if msg.role in ("user", "assistant") and msg.content.strip():
             history.append({"role": msg.role, "content": msg.content})
 
-    console.print(
-        Panel(
-            f"[bold cyan]Session: {session.title or session_id}[/bold cyan]\n"
-            f"[dim]History: {len(messages)} messages | Type q to exit[/dim]",
-            border_style="cyan",
-        )
-    )
+    console.print(Panel(
+        f"[bold cyan]Session: {session.title or session_id}[/bold cyan]\n"
+        f"[dim]History: {len(messages)} messages | Type q to exit[/dim]",
+        border_style="cyan",
+    ))
 
     stats = _SessionStats(session_start=time.monotonic())
     prompt_session = _create_prompt_session(stats)
@@ -2253,7 +2197,6 @@ def cmd_session_chat(session_id: str, max_iter: int) -> None:
 # Upload subcommand
 # ---------------------------------------------------------------------------
 
-
 def cmd_upload(file_path: str) -> None:
     """Upload a file to the server."""
     src = Path(file_path)
@@ -2299,7 +2242,6 @@ def cmd_provider_login(provider: str) -> int:
 # CLI entrypoint
 # ---------------------------------------------------------------------------
 
-
 def _build_parser() -> argparse.ArgumentParser:
     """Build the CLI parser with subcommands and compatibility flags."""
     parser = argparse.ArgumentParser(description="Vibe-Trading CLI")
@@ -2333,9 +2275,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser("run", help="Run a prompt")
     run_parser.add_argument("-p", "--prompt", dest="run_prompt", type=str, help="Prompt text")
-    run_parser.add_argument(
-        "-f", "--prompt-file", dest="run_prompt_file", type=Path, help="Read prompt text from a file"
-    )
+    run_parser.add_argument("-f", "--prompt-file", dest="run_prompt_file", type=Path, help="Read prompt text from a file")
     run_parser.add_argument("--json", dest="run_json", action="store_true", help="Print machine-readable JSON output")
     run_parser.add_argument("--no-rich", dest="run_no_rich", action="store_true", help="Disable Rich formatting")
     run_parser.add_argument("--max-iter", dest="run_max_iter", type=int, default=50, help="Maximum agent iterations")
@@ -2407,9 +2347,7 @@ def _handle_prompt_command(
         return EXIT_USAGE_ERROR
     if not resolved_prompt:
         if json_mode:
-            _print_json_result(
-                {"status": "failed", "run_id": None, "run_dir": None, "reason": "Prompt cannot be empty"}
-            )
+            _print_json_result({"status": "failed", "run_id": None, "run_dir": None, "reason": "Prompt cannot be empty"})
         else:
             print("Prompt cannot be empty") if no_rich else console.print("[red]Prompt cannot be empty[/red]")
         return EXIT_USAGE_ERROR
@@ -2735,12 +2673,7 @@ def cmd_memory_forget(name: str, *, yes: bool = False, memory_dir: Optional[Path
 
 def cmd_init() -> int:
     """Interactive setup: create agent/.env."""
-    console.print(
-        Panel(
-            "[bold cyan]Vibe-Trading setup[/bold cyan]\n[dim]Configure the default LLM provider and data tokens.[/dim]",
-            border_style="cyan",
-        )
-    )
+    console.print(Panel("[bold cyan]Vibe-Trading setup[/bold cyan]\n[dim]Configure the default LLM provider and data tokens.[/dim]", border_style="cyan"))
 
     if _INIT_ENV_PATH.exists():
         console.print(f"[yellow]Config already exists:[/yellow] {_INIT_ENV_PATH}")
@@ -2754,13 +2687,7 @@ def cmd_init() -> int:
     provider_table.add_column("Default model", style="dim")
     provider_table.add_column("Credential", style="dim")
     for idx, option in enumerate(_PROVIDER_CHOICES, start=1):
-        credential = (
-            "OAuth"
-            if option["provider"] == "openai-codex"
-            else "none"
-            if option["key_env"] is None
-            else str(option["key_env"])
-        )
+        credential = "OAuth" if option["provider"] == "openai-codex" else "none" if option["key_env"] is None else str(option["key_env"])
         provider_table.add_row(str(idx), str(option["label"]), str(option["model"]), credential)
     console.print(provider_table)
 
@@ -2922,9 +2849,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.chat:
         return _coerce_exit_code(cmd_interactive(args.max_iter))
     if args.cont:
-        return _coerce_exit_code(
-            cmd_continue(args.cont[0], args.cont[1], args.max_iter, json_mode=args.json, no_rich=args.no_rich)
-        )
+        return _coerce_exit_code(cmd_continue(args.cont[0], args.cont[1], args.max_iter, json_mode=args.json, no_rich=args.no_rich))
 
     # No flags and no subcommand: check for a prompt, otherwise enter interactive mode.
     if args.prompt or args.prompt_file or not sys.stdin.isatty():
