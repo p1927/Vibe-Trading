@@ -19,41 +19,34 @@
   <a href="https://pypi.org/project/vibe-trading-ai/"><img src="https://img.shields.io/pypi/v/vibe-trading-ai?style=flat&logo=pypi&logoColor=white" alt="PyPI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=flat" alt="License"></a>
   <br>
-  <img src="https://img.shields.io/badge/Skills-74-orange" alt="Skills">
-  <img src="https://img.shields.io/badge/Swarm_Presets-29-7C3AED" alt="Swarm">
-  <img src="https://img.shields.io/badge/Tools-27-0F766E" alt="Tools">
-  <img src="https://img.shields.io/badge/Data_Sources-6-2563EB" alt="Data Sources">
-  <br>
   <a href="https://github.com/HKUDS/.github/blob/main/profile/README.md"><img src="https://img.shields.io/badge/Feishu-Group-E9DBFC?style=flat-square&logo=feishu&logoColor=white" alt="Feishu"></a>
   <a href="https://github.com/HKUDS/.github/blob/main/profile/README.md"><img src="https://img.shields.io/badge/WeChat-Group-C5EAB4?style=flat-square&logo=wechat&logoColor=white" alt="WeChat"></a>
   <a href="https://discord.gg/2vDYc2w5"><img src="https://img.shields.io/badge/Discord-Join-7289DA?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
 </p>
 
 <p align="center">
+  <a href="#-news">News</a> &nbsp;&middot;&nbsp;
   <a href="#-key-features">Features</a> &nbsp;&middot;&nbsp;
+  <a href="#-shadow-account">Shadow Account</a> &nbsp;&middot;&nbsp;
   <a href="#-demo">Demo</a> &nbsp;&middot;&nbsp;
-  <a href="#-what-is-vibe-trading">What Is It</a> &nbsp;&middot;&nbsp;
-  <a href="#-get-started">Get Started</a> &nbsp;&middot;&nbsp;
-  <a href="#-cli-reference">CLI</a> &nbsp;&middot;&nbsp;
-  <a href="#-api-server">API</a> &nbsp;&middot;&nbsp;
-  <a href="#-mcp-plugin">MCP</a> &nbsp;&middot;&nbsp;
-  <a href="#-project-structure">Structure</a> &nbsp;&middot;&nbsp;
+  <a href="#-quick-start">Quick Start</a> &nbsp;&middot;&nbsp;
+  <a href="#-examples">Examples</a> &nbsp;&middot;&nbsp;
+  <a href="#-api-server">API / MCP</a> &nbsp;&middot;&nbsp;
   <a href="#-roadmap">Roadmap</a> &nbsp;&middot;&nbsp;
-  <a href="#-contributing">Contributing</a> &nbsp;&middot;&nbsp;
-  <a href="#contributors">Contributors</a>
+  <a href="#-contributing">Contributing</a>
 </p>
 
 <p align="center">
-  <a href="#-get-started"><img src="assets/pip-install.svg" height="45" alt="pip install vibe-trading-ai"></a>
+  <a href="#-quick-start"><img src="assets/pip-install.svg" height="45" alt="pip install vibe-trading-ai"></a>
 </p>
 
 ---
 
 ## 📰 News
 
-- **2026-05-14** 🧠 **Persistent memory CLI**: Added `vibe-trading memory list/show/search/forget` so users can inspect, search, and prune persistent memory without opening `~/.vibe-trading/memory/` by hand. The implementation keeps non-memory CLI startup fast with lazy imports and hardens memory frontmatter scanning by coercing parsed metadata values back to strings before Rich rendering or recall scoring ([#102](https://github.com/HKUDS/Vibe-Trading/pull/102), thanks @Teerapat-Vatpitak).
-- **2026-05-13** 🧭 **Real-price swarm grounding + worker event hygiene**: Swarm runs now pre-fetch market data and ground worker prompts with real prices before analysts start, routing symbol lookups through `_detect_market(code)` and keeping grounding payloads thread-safe ([#93](https://github.com/HKUDS/Vibe-Trading/pull/93)). Worker reports now persist under allowed swarm-run paths, with better `report.md` summary extraction, longer preset timeouts, and redacted/sanitized event previews for cleaner streaming updates ([#84](https://github.com/HKUDS/Vibe-Trading/pull/84)).
-- **2026-05-12** 🧾 **Trust Layer run cards**: Backtests now emit reproducible `run_card.json` and `run_card.md` files alongside artifacts, capturing config and strategy hashes, data sources, scalar metrics, validation payloads, warnings, and artifact checksums. The backtest tool also returns the run-card paths so CLI/API callers can surface the evidence package directly.
+- **2026-05-14** 🧠 Persistent memory is now inspectable from the CLI via `vibe-trading memory list/show/search/forget` ([#102](https://github.com/HKUDS/Vibe-Trading/pull/102), thanks @Teerapat-Vatpitak).
+- **2026-05-13** 🧭 Swarm runs now ground workers with fetched market data and cleaner persisted reports ([#93](https://github.com/HKUDS/Vibe-Trading/pull/93), [#84](https://github.com/HKUDS/Vibe-Trading/pull/84)).
+- **2026-05-12** 🧾 Backtests now emit `run_card.json` and `run_card.md` alongside artifacts for reproducible research runs.
 
 <details>
 <summary>Earlier news</summary>
@@ -92,72 +85,127 @@
 
 ---
 
-## 💡 What Is Vibe-Trading?
-
-Vibe-Trading is an AI-powered multi-agent finance workspace that turns natural language requests into executable trading strategies, research insights, and portfolio analysis across global markets.
-
-### Key Capabilities:
-• **Natural Language → Strategy** — Describe an idea; the agent writes, tests, and exports trading code<br>
-• **6 Data Sources, Zero Config** — A-shares, HK/US, crypto, futures & forex with automatic fallback<br>
-• **29 Expert Teams** — Pre-built multi-agent swarm workflows for investment, trading & risk<br>
-• **Cross-Session Memory** — Remembers preferences and insights; creates & evolves reusable skills<br>
-• **7 Backtest Engines** — Cross-market composite testing with statistical validation & 4 optimizers<br>
-• **Multi-Platform Export** — One-click to TradingView, TDX (通达信/同花顺), and MetaTrader 5
-
----
-
 ## ✨ Key Features
 
 <table width="100%">
   <tr>
-    <td align="center" width="25%" valign="top">
-      <img src="assets/scene-research.png" height="150" alt="Research"/><br>
-      <h3>🔍 DeepResearch for Trading</h3>
-      <img src="https://img.shields.io/badge/74_Skills-FF6B6B?style=for-the-badge&logo=bookstack&logoColor=white" alt="Skills" /><br><br>
-      <div align="left" style="font-size: 4px;">
-        • 74 specialist skills with persistent cross-session memory<br>
-        • Self-evolving: agent creates & refines workflows from experience<br>
-        • 5-layer context compression — no info lost in long sessions<br>
-        • Natural-language task routing across all finance domains
+    <td align="center" width="50%" valign="top">
+      <img src="assets/scene-research.png" height="130" alt="Self-improving trading agent"/><br>
+      <h3>🔍 Self-Improving Trading Agent</h3>
+      <div align="left">
+        • Natural-language market research<br>
+        • Strategy drafts and file/web analysis<br>
+        • Memory-backed workflows
       </div>
     </td>
-    <td align="center" width="25%" valign="top">
-      <img src="assets/scene-swarm.png" height="150" alt="Swarm"/><br>
-      <h3>🐝 Swarm Intelligence</h3>
-      <img src="https://img.shields.io/badge/29_Trading_Teams-4ECDC4?style=for-the-badge&logo=hive&logoColor=white" alt="Swarm" /><br><br>
+    <td align="center" width="50%" valign="top">
+      <img src="assets/scene-swarm.png" height="130" alt="Multi-agent trading teams"/><br>
+      <h3>🐝 Multi-Agent Trading Teams</h3>
       <div align="left">
-        • 29 out-of-the-box trading team presets<br>
-        • DAG-based multi-agent orchestration<br>
-        • Real-time streaming dashboard with live agent status<br>
-        • FTS5 session search across all past conversations
+        • Investment, quant, crypto, and risk teams<br>
+        • Streaming progress and persisted reports<br>
+        • Workers grounded with fetched market data
       </div>
     </td>
-    <td align="center" width="25%" valign="top">
-      <img src="assets/scene-backtest.png" height="150" alt="Backtest"/><br>
-      <h3>📊 Cross-Market Backtest</h3>
-      <img src="https://img.shields.io/badge/6_Data_Sources-FFD93D?style=for-the-badge&logo=bitcoin&logoColor=black" alt="Backtest" /><br><br>
+  </tr>
+  <tr>
+    <td align="center" width="50%" valign="top">
+      <img src="assets/scene-backtest.png" height="130" alt="Cross-market data and backtesting"/><br>
+      <h3>📊 Cross-Market Data & Backtesting</h3>
       <div align="left">
-        • A-shares, HK/US equities, crypto, futures & forex<br>
-        • 7 market engines + composite cross-market engine with shared capital pool<br>
-        • Statistical validation: Monte Carlo, Bootstrap CI, Walk-Forward<br>
-        • 15+ performance metrics & 4 optimizers
+        • A/HK/US equities, crypto, futures, and forex<br>
+        • Data fallback and composite backtests<br>
+        • PIT data, validation, and run cards
       </div>
     </td>
-    <td align="center" width="25%" valign="top">
-      <img src="assets/scene-quant.png" height="150" alt="Quant"/><br>
-      <h3>🧮 Quant Analysis Toolkit</h3>
-      <img src="https://img.shields.io/badge/Quant_Tools-C77DFF?style=for-the-badge&logo=wolfram&logoColor=white" alt="Quant" /><br><br>
+    <td align="center" width="50%" valign="top">
+      <img src="assets/scene-quant.png" height="130" alt="Trade journal and strategy audit"/><br>
+      <h3>👥 Trade Journal & Strategy Audit</h3>
       <div align="left">
-        • Factor IC/IR analysis & quantile backtesting<br>
-        • Black-Scholes pricing & full Greeks calculation<br>
-        • Technical pattern recognition & detection<br>
-        • Portfolio optimization via MVO/Risk Parity/BL
+        • Broker-journal behavior diagnostics<br>
+        • Rule-based Shadow Account comparisons<br>
+        • Exportable audit reports and strategy code
       </div>
     </td>
   </tr>
 </table>
 
-## 74 Skills across 8 Categories
+## 💡 What Is Vibe-Trading?
+
+Vibe-Trading is an open-source research workspace for turning finance questions into runnable analysis. It connects natural-language prompts to market-data loaders, strategy generation, backtest engines, reports, exports, and persistent research memory.
+
+It is designed for research, simulation, and backtesting. It does not execute live trades.
+
+---
+
+## ✨ What You Can Do
+
+| Task | Output |
+|------|--------|
+| **Ask a trading question** | Market research with tools, data, documents, and reusable session context. |
+| **Backtest a strategy idea** | Strategy code, metrics, benchmark context, validation artifacts, and run cards. |
+| **Review your own trades** | Broker-journal parsing, behavior diagnostics, rule extraction, and Shadow Account comparisons. |
+| **Improve repeated research** | Persistent memory and editable skills turn useful routines into reusable workflows. |
+| **Run analyst teams** | Multi-agent research reviews for investment, quant, crypto, macro, and risk workflows. |
+| **Ship usable artifacts** | Reports, TradingView Pine Script, TDX, MetaTrader 5, MCP tools, and later research sessions. |
+
+---
+
+## ⚡ Quick Example
+
+```bash
+pip install vibe-trading-ai
+vibe-trading run -p "Backtest a BTC-USDT 20/50 moving-average strategy for 2024, summarize return and drawdown, then export the report"
+```
+
+```bash
+vibe-trading --upload trades_export.csv
+vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, and compare it with my actual trades"
+```
+
+---
+
+## 👥 Shadow Account
+
+Shadow Account starts from your own trading records instead of a generic strategy template.
+
+Upload a broker export, let the agent summarize your behavior, then compare the actual trading path with a rule-based shadow strategy.
+
+| Step | Agent output |
+|------|--------------|
+| **1. Read your journal** | Parses broker exports from 同花顺, 东方财富, 富途, and generic CSV formats. |
+| **2. Profile your behavior** | Holding days, win rate, PnL ratio, drawdown, disposition effect, overtrading, momentum chasing, and anchoring checks. |
+| **3. Extract your rules** | Turns recurring entries/exits into an explicit strategy profile instead of a hand-wavy summary. |
+| **4. Run the shadow** | Backtests the extracted rules and highlights rule breaks, early exits, missed signals, and alternative trade paths. |
+| **5. Deliver the report** | Produces an HTML/PDF report that can be inspected, archived, or refined in a later session. |
+
+```bash
+vibe-trading --upload trades_export.csv
+vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, and compare it with my actual trades"
+```
+
+---
+
+## 🧪 Research Workflow
+
+Most runs follow the same evidence path: route the request, load the right market context, execute tools, validate outputs, and keep the artifacts inspectable.
+
+| Layer | What happens |
+|-------|--------------|
+| **Plan** | Selects the relevant finance skills, tools, data sources, and swarm preset when useful. |
+| **Ground** | Pulls A-shares, HK/US equities, crypto, futures, forex, documents, or web context through the available loaders. |
+| **Execute** | Generates testable strategy code, runs tools, and uses the matching backtest engine or analysis workflow. |
+| **Validate** | Adds metrics, benchmark comparison, Monte Carlo, Bootstrap, Walk-Forward, run cards, and warnings where applicable. |
+| **Deliver** | Returns reports, artifacts, tool traces, and exports for TradingView, TDX, MetaTrader 5, MCP clients, or later sessions. |
+
+---
+
+## 🔩 Detailed Capabilities
+
+Detailed inventories are folded below to keep the main README scannable. Open them when you want to inspect the available building blocks.
+
+<details>
+<summary><b>Finance Skill Library</b> <sub>74 skills across 8 categories</sub></summary>
 
 - 📊 74 specialized finance skills organized into 8 categories
 - 🌐 Complete coverage from traditional markets to crypto & DeFi
@@ -174,7 +222,10 @@ Vibe-Trading is an AI-powered multi-agent finance workspace that turns natural l
 | Tool | 10 | `backtest-diagnose`, `report-generate`, `pine-script`, `doc-reader`, `web-reader`, `vnpy-export` |
 | Risk Analysis | 1 | `ashare-pre-st-filter` |
 
-## 29 Agent Swarm Team Presets
+</details>
+
+<details>
+<summary><b>Preset Trading Teams</b> <sub>29 swarm presets</sub></summary>
 
 - 🏢 29 ready-to-use agent teams
 - ⚡ Pre-configured finance workflows
@@ -196,7 +247,9 @@ Vibe-Trading is an AI-powered multi-agent finance workspace that turns natural l
 
 </sub>
 
-### 🎬 Demo
+</details>
+
+## 🎬 Demo
 
 <div align="center">
 <table>
@@ -220,12 +273,19 @@ https://github.com/user-attachments/assets/3754a414-c3ee-464f-b1e8-78e1a74fbd30
 
 ---
 
-## 🚀 Quick Started
+## 🚀 Quick Start
 
 ### One-line install (PyPI)
 
 ```bash
 pip install vibe-trading-ai
+```
+
+Then run a first research task:
+
+```bash
+vibe-trading init
+vibe-trading run -p "Backtest a BTC-USDT 20/50 moving-average strategy for 2024 and summarize return and drawdown"
 ```
 
 > **Package name vs commands:** The PyPI package is `vibe-trading-ai`. Once installed, you get three commands:
@@ -338,7 +398,7 @@ Copy `agent/.env.example` to `agent/.env` and uncomment the provider block you w
 | `LANGCHAIN_PROVIDER` | Yes | Provider name (`openrouter`, `deepseek`, `groq`, `ollama`, etc.) |
 | `<PROVIDER>_API_KEY` | Yes* | API key (`OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, etc.) |
 | `<PROVIDER>_BASE_URL` | Yes | API endpoint URL |
-| `LANGCHAIN_MODEL_NAME` | Yes | Model name (e.g. `deepseek/deepseek-v3.2`) |
+| `LANGCHAIN_MODEL_NAME` | Yes | Model name (e.g. `deepseek-v4-pro`) |
 | `TUSHARE_TOKEN` | No | Tushare Pro token for A-share data (falls back to AKShare) |
 | `TIMEOUT_SECONDS` | No | LLM call timeout, default 120s |
 | `API_AUTH_KEY` | Recommended for network deployments | Bearer token required when the API is reachable from non-local clients |
@@ -357,10 +417,10 @@ Vibe-Trading is a tool-heavy agent — skills, backtests, memory, and swarms all
 | Tier | Examples | When to use |
 |------|----------|-------------|
 | **Best** | `anthropic/claude-opus-4.7`, `anthropic/claude-sonnet-4.6`, `openai/gpt-5.4`, `google/gemini-3.1-pro-preview` | Complex swarms (3+ agents), long research sessions, paper-grade analysis |
-| **Sweet spot** (default) | `deepseek/deepseek-v3.2`, `x-ai/grok-4.20`, `z-ai/glm-5.1`, `moonshotai/kimi-k2.5`, `qwen/qwen3-max-thinking` | Daily driver — reliable tool-calling at ~1/10 the cost |
+| **Sweet spot** (default) | `deepseek-v4-pro`, `deepseek/deepseek-v4-pro`, `x-ai/grok-4.20`, `z-ai/glm-5.1`, `moonshotai/kimi-k2.5`, `qwen/qwen3-max-thinking` | Daily driver — reliable tool-calling at ~1/10 the cost |
 | **Avoid for agent use** | `*-nano`, `*-flash-lite`, `*-coder-next`, small / distilled variants | Tool-calling is unreliable — the agent will appear to "answer from memory" instead of loading skills or running backtests |
 
-The default `agent/.env.example` ships with `deepseek/deepseek-v3.2` — the cheapest option in the sweet-spot tier.
+The default `agent/.env.example` ships with DeepSeek official API + `deepseek-v4-pro`; OpenRouter users can use `deepseek/deepseek-v4-pro`.
 
 ---
 
