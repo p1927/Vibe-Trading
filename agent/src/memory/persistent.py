@@ -10,6 +10,7 @@ Storage layout:
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,11 +18,14 @@ from pathlib import Path
 from src.agent.frontmatter import parse_frontmatter as _parse_frontmatter
 from typing import List, Optional
 
+logger = logging.getLogger(__name__)
+
 MEMORY_BASE = Path.home() / ".vibe-trading" / "memory"
 MAX_INDEX_LINES = 200
 MAX_ENTRY_CHARS = 8000
 MAX_RESULTS = 5
 METADATA_WEIGHT = 2.0
+MEMORY_TYPES = ("user", "feedback", "project", "reference")
 
 
 @dataclass(frozen=True)
@@ -62,6 +66,24 @@ def _tokenize(text: str) -> set[str]:
     ascii_tokens = set(re.findall(r"[a-zA-Z0-9]{3,}", text.lower()))
     cjk_tokens = set(re.findall(r"[\u4e00-\u9fff\u3400-\u4dbf]", text))
     return ascii_tokens | cjk_tokens
+
+
+def _coerce_str(value: object, default: str = "") -> str:
+    """Coerce frontmatter values to a display string.
+
+    ``parse_frontmatter`` returns lists for ``[a, b]`` syntax and bools for
+    ``true``/``false``. ``MemoryEntry`` annotates these fields as ``str`` so
+    callers (CLI rendering, recall scoring) can rely on string operations.
+    """
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
+    return str(value)
 
 
 class PersistentMemory:
@@ -120,13 +142,46 @@ class PersistentMemory:
             meta, body = _parse_frontmatter(text)
             entries.append(MemoryEntry(
                 path=path,
-                title=meta.get("name", path.stem),
-                description=meta.get("description", ""),
-                memory_type=meta.get("type", "project"),
+                title=_coerce_str(meta.get("name"), default=path.stem),
+                description=_coerce_str(meta.get("description")),
+                memory_type=_coerce_str(meta.get("type"), default="project"),
                 body=body[:MAX_ENTRY_CHARS],
                 modified_at=path.stat().st_mtime,
             ))
         return entries
+
+    def list_entries(self) -> List[MemoryEntry]:
+        """Return all persisted memory entries, filename-sorted."""
+        return self._scan_entries()
+
+    def find(self, name: str) -> Optional[MemoryEntry]:
+        """Resolve a memory by exact title, then by on-disk filename stem.
+
+        Stem fallback accepts both the full ``{type}_{slug}`` form and the
+        bare ``slug`` suffix so users can paste either form from the index.
+        """
+        needle = name.strip()
+        if not needle:
+            return None
+        entries = self._scan_entries()
+        for entry in entries:
+            if entry.title == needle:
+                return entry
+        for entry in entries:
+            stem = entry.path.stem
+            if stem == needle or stem.endswith(f"_{needle}"):
+                return entry
+        return None
+
+    def remove_entry(self, entry: MemoryEntry) -> bool:
+        """Delete a resolved entry without re-scanning to find it again."""
+        try:
+            entry.path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("Failed to remove memory entry %s: %s", entry.path, exc)
+            return False
+        self._rebuild_index()
+        return True
 
     def find_relevant(self, query: str, max_results: int = MAX_RESULTS) -> List[MemoryEntry]:
         """Keyword search across all memory entries.

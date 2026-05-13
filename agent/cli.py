@@ -22,6 +22,7 @@ import sys
 import threading
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -38,6 +39,7 @@ from rich.console import Console
 from rich import box
 from rich.columns import Columns
 from rich.live import Live
+from rich.markup import escape as rich_escape
 from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.syntax import Syntax
@@ -1815,7 +1817,6 @@ def cmd_skills() -> None:
 
 def cmd_trace(run_id: str) -> None:
     """Replay trace.jsonl to show full execution."""
-    from datetime import datetime
     from src.agent.trace import TraceWriter
 
     run_dir = RUNS_DIR / run_id
@@ -2300,6 +2301,30 @@ def _build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("init", help="Interactive setup: create ~/.vibe-trading/.env")
 
+    memory_parser = subparsers.add_parser("memory", help="Inspect persistent memory")
+    memory_subparsers = memory_parser.add_subparsers(dest="memory_command")
+
+    memory_list_parser = memory_subparsers.add_parser("list", help="List memory entries")
+    memory_list_parser.add_argument(
+        "--type",
+        dest="memory_type",
+        choices=_MEMORY_TYPES,
+        help="Filter by memory type",
+    )
+
+    memory_show_parser = memory_subparsers.add_parser("show", help="Show a memory entry")
+    memory_show_parser.add_argument("name", help="Memory title or filename stem")
+
+    memory_search_parser = memory_subparsers.add_parser("search", help="Recall memories for a query")
+    memory_search_parser.add_argument("query", help="Search text")
+    memory_search_parser.add_argument(
+        "--limit", dest="memory_limit", type=int, default=5, help="Maximum matches (default: 5)"
+    )
+
+    memory_forget_parser = memory_subparsers.add_parser("forget", help="Remove a memory entry")
+    memory_forget_parser.add_argument("name", help="Memory title or filename stem")
+    memory_forget_parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
+
     return parser
 
 
@@ -2514,6 +2539,138 @@ def _render_env_content(config: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
+# Kept in sync with MEMORY_TYPES in src/memory/persistent.py. Duplicated here
+# rather than imported so that `vibe-trading --version` / `--help` and other
+# non-memory commands skip loading the full agent runtime chain at startup.
+_MEMORY_TYPES = ("user", "feedback", "project", "reference")
+_MEMORY_TYPE_STYLES = {
+    "user": "cyan",
+    "feedback": "yellow",
+    "project": "green",
+    "reference": "magenta",
+}
+assert set(_MEMORY_TYPE_STYLES) == set(_MEMORY_TYPES), "_MEMORY_TYPE_STYLES drift: keys must mirror _MEMORY_TYPES"
+
+
+def cmd_memory_list(memory_type: Optional[str] = None, *, memory_dir: Optional[Path] = None) -> int:
+    """List persisted memory entries."""
+    from src.memory.persistent import PersistentMemory
+
+    pm = PersistentMemory(memory_dir=memory_dir)
+    entries = pm.list_entries()
+    if memory_type:
+        entries = [e for e in entries if e.memory_type == memory_type]
+
+    if not entries:
+        scope = f" type={memory_type}" if memory_type else ""
+        console.print(f"[dim]No memory entries found{scope}.[/dim]")
+        return EXIT_SUCCESS
+
+    entries.sort(key=lambda e: -e.modified_at)
+    table = Table(title="Persistent Memory", box=box.SIMPLE_HEAVY, show_lines=False)
+    table.add_column("Title", style="bold")
+    table.add_column("Type")
+    table.add_column("Description", overflow="fold")
+    table.add_column("Modified", style="dim")
+
+    for e in entries:
+        style = _MEMORY_TYPE_STYLES.get(e.memory_type, "white")
+        modified = datetime.fromtimestamp(e.modified_at).strftime("%Y-%m-%d %H:%M")
+        table.add_row(
+            rich_escape(e.title),
+            f"[{style}]{e.memory_type}[/{style}]",
+            rich_escape(e.description) or "—",
+            modified,
+        )
+
+    console.print(table)
+    console.print(f"[dim]{len(entries)} entr{'y' if len(entries) == 1 else 'ies'}[/dim]")
+    return EXIT_SUCCESS
+
+
+def cmd_memory_show(name: str, *, memory_dir: Optional[Path] = None) -> int:
+    """Show full content of a single memory entry."""
+    from src.memory.persistent import PersistentMemory
+
+    pm = PersistentMemory(memory_dir=memory_dir)
+    entry = pm.find(name)
+    if entry is None:
+        console.print(f"[red]Memory not found:[/red] {rich_escape(name)}")
+        console.print("[dim]Run `vibe-trading memory list` to see available titles.[/dim]")
+        return EXIT_USAGE_ERROR
+
+    style = _MEMORY_TYPE_STYLES.get(entry.memory_type, "white")
+    header = (
+        f"[bold]{rich_escape(entry.title)}[/bold]\n"
+        f"[{style}]{entry.memory_type}[/{style}]  •  [dim]{rich_escape(entry.path.name)}[/dim]\n"
+        f"[dim]{rich_escape(entry.description)}[/dim]"
+    )
+    console.print(Panel(header, border_style="cyan"))
+    console.print(rich_escape(entry.body.rstrip()) or "[dim](empty body)[/dim]")
+    return EXIT_SUCCESS
+
+
+def cmd_memory_search(query: str, max_results: int = 5, *, memory_dir: Optional[Path] = None) -> int:
+    """Run keyword recall and display the top matches."""
+    from src.memory.persistent import PersistentMemory
+
+    pm = PersistentMemory(memory_dir=memory_dir)
+    results = pm.find_relevant(query, max_results=max_results)
+    if not results:
+        console.print(f"[dim]No matches for[/dim] [bold]{rich_escape(query)}[/bold]")
+        return EXIT_SUCCESS
+
+    table = Table(title=f"Recall: {rich_escape(query)}", box=box.SIMPLE_HEAVY, show_lines=False)
+    table.add_column("Rank", style="dim", width=4)
+    table.add_column("Title", style="bold")
+    table.add_column("Type")
+    table.add_column("Description", overflow="fold")
+
+    for rank, e in enumerate(results, start=1):
+        style = _MEMORY_TYPE_STYLES.get(e.memory_type, "white")
+        table.add_row(
+            str(rank),
+            rich_escape(e.title),
+            f"[{style}]{e.memory_type}[/{style}]",
+            rich_escape(e.description) or "—",
+        )
+
+    console.print(table)
+    return EXIT_SUCCESS
+
+
+def cmd_memory_forget(name: str, *, yes: bool = False, memory_dir: Optional[Path] = None) -> int:
+    """Remove a memory entry by name."""
+    from src.memory.persistent import PersistentMemory
+
+    pm = PersistentMemory(memory_dir=memory_dir)
+    entry = pm.find(name)
+    if entry is None:
+        console.print(f"[red]Memory not found:[/red] {rich_escape(name)}")
+        return EXIT_USAGE_ERROR
+
+    if not yes:
+        style = _MEMORY_TYPE_STYLES.get(entry.memory_type, "white")
+        console.print(
+            f"About to forget [bold]{rich_escape(entry.title)}[/bold] "
+            f"([{style}]{entry.memory_type}[/{style}], {rich_escape(entry.path.name)})."
+        )
+        try:
+            proceed = Confirm.ask("Proceed?", default=False)
+        except EOFError:
+            console.print("[dim]No input available; use --yes for non-interactive deletes.[/dim]")
+            return EXIT_USAGE_ERROR
+        if not proceed:
+            console.print("[dim]Aborted.[/dim]")
+            return EXIT_SUCCESS
+
+    if pm.remove_entry(entry):
+        console.print(f"[green]Forgot[/green] {rich_escape(entry.title)}")
+        return EXIT_SUCCESS
+    console.print(f"[red]Failed to remove[/red] {rich_escape(entry.title)}")
+    return EXIT_RUN_FAILED
+
+
 def cmd_init() -> int:
     """Interactive setup: create agent/.env."""
     console.print(Panel("[bold cyan]Vibe-Trading setup[/bold cyan]\n[dim]Configure the default LLM provider and data tokens.[/dim]", border_style="cyan"))
@@ -2643,6 +2800,17 @@ def main(argv: list[str] | None = None) -> int:
         return _coerce_exit_code(cmd_show(args.show))
     if args.command == "chat":
         return _coerce_exit_code(cmd_interactive(args.chat_max_iter))
+    if args.command == "memory":
+        if args.memory_command == "list":
+            return _coerce_exit_code(cmd_memory_list(args.memory_type))
+        if args.memory_command == "show":
+            return _coerce_exit_code(cmd_memory_show(args.name))
+        if args.memory_command == "search":
+            return _coerce_exit_code(cmd_memory_search(args.query, args.memory_limit))
+        if args.memory_command == "forget":
+            return _coerce_exit_code(cmd_memory_forget(args.name, yes=args.yes))
+        console.print("[red]memory requires a subcommand.[/red] Try: vibe-trading memory list")
+        return EXIT_USAGE_ERROR
 
     if args.list:
         return _coerce_exit_code(cmd_list())
