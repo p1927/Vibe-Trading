@@ -46,7 +46,7 @@
 
 ## 📰 뉴스
 
-- **2026-05-14** 🧠 이제 `vibe-trading memory list/show/search/forget`으로 CLI에서 영구 메모리를 확인할 수 있습니다([#102](https://github.com/HKUDS/Vibe-Trading/pull/102), @Teerapat-Vatpitak 감사합니다).
+- **2026-05-14** 🌐 공개 Wiki가 [vibetrading.wiki](https://vibetrading.wiki/)에 열렸고, docs, tutorials, Research Lab, Alpha Library 섹션을 Cloudflare Pages로 배포합니다. 영구 메모리도 이제 `vibe-trading memory list/show/search/forget`으로 CLI에서 확인할 수 있으며([#102](https://github.com/HKUDS/Vibe-Trading/pull/102), @Teerapat-Vatpitak 감사합니다), memory tokenization/slug는 태국어, 아랍어, 히브리어, 키릴 문자도 지원합니다([#104](https://github.com/HKUDS/Vibe-Trading/pull/104)).
 - **2026-05-13** 🧭 Swarm 실행은 이제 가져온 시장 데이터로 worker를 grounding하고, 더 깔끔한 영구 리포트를 남깁니다([#93](https://github.com/HKUDS/Vibe-Trading/pull/93), [#84](https://github.com/HKUDS/Vibe-Trading/pull/84)).
 - **2026-05-12** 🧾 백테스트는 이제 재현 가능한 리서치 실행을 위해 artifacts와 함께 `run_card.json` 및 `run_card.md`를 생성합니다.
 
