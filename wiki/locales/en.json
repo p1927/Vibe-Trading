@@ -1,5 +1,8 @@
 {
   "nav.docs": "Docs",
+  "nav.tutorials": "Tutorials",
+  "nav.alpha": "Alpha Library",
+  "nav.lab": "Research Lab",
   "nav.source": "Source",
   "nav.pypi": "PyPI",
   "hero.eyebrow": "Open-source finance research agent",

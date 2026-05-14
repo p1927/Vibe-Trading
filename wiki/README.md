@@ -9,7 +9,12 @@ cd wiki
 python3 -m http.server 8088
 ```
 
-Open `http://localhost:8088/home/` for the landing page and `http://localhost:8088/docs/` for the docs app.
+Open `http://localhost:8088/home/` for the landing page and these wiki sections:
+
+- `http://localhost:8088/docs/`
+- `http://localhost:8088/tutorials/`
+- `http://localhost:8088/alpha-library/`
+- `http://localhost:8088/research-lab/`
 
 Direct docs URLs such as `/docs/latest/getting-started/vibe-trading-overview` are handled by Cloudflare Pages via `_redirects`. The simple Python preview server does not apply those rewrite rules, so use `/docs/` as the local entry point.
 

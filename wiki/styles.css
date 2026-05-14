@@ -180,9 +180,11 @@ button {
 
 .hero,
 .install-band,
+.knowledge-band,
 .workflow,
 .feature-band,
-.safety-band {
+.safety-band,
+.section-page {
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
 }
@@ -370,6 +372,7 @@ h3 {
 }
 
 .install-band,
+.knowledge-band,
 .workflow,
 .feature-band,
 .safety-band {
@@ -413,14 +416,16 @@ pre {
 }
 
 .step-grid,
-.feature-grid {
+.feature-grid,
+.knowledge-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
 }
 
 .step-grid article,
-.feature-card {
+.feature-card,
+.knowledge-card {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface) 88%, transparent);
@@ -437,9 +442,59 @@ pre {
 }
 
 .step-grid p,
-.feature-card p {
+.feature-card p,
+.knowledge-card p,
+.section-hero p {
   margin: 0;
   color: var(--muted);
+}
+
+.knowledge-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.knowledge-card {
+  display: grid;
+  gap: 12px;
+  min-height: 128px;
+  align-content: start;
+  transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+}
+
+.knowledge-card:hover {
+  border-color: var(--accent);
+  background: var(--surface);
+  transform: translateY(-2px);
+}
+
+.knowledge-card strong {
+  font-family: var(--serif);
+  font-size: 1.7rem;
+  line-height: 1;
+}
+
+.section-page {
+  padding: 56px 0 72px;
+}
+
+.section-hero {
+  display: grid;
+  gap: 22px;
+  max-width: 920px;
+  padding: 72px 0 46px;
+}
+
+.section-hero h1 {
+  font-size: clamp(3.4rem, 9vw, 7.2rem);
+}
+
+.section-hero--blank {
+  min-height: calc(100vh - 236px);
+}
+
+.section-hero p {
+  max-width: 760px;
+  font-size: clamp(1.05rem, 2.2vw, 1.26rem);
 }
 
 .feature-card {
@@ -488,13 +543,19 @@ pre {
 }
 
 @media (max-width: 920px) {
+  .site-nav {
+    gap: 14px;
+    font-size: 0.88rem;
+  }
+
   .hero {
     grid-template-columns: 1fr;
     min-height: auto;
   }
 
   .step-grid,
-  .feature-grid {
+  .feature-grid,
+  .knowledge-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -532,6 +593,7 @@ pre {
 
   .step-grid,
   .feature-grid,
+  .knowledge-grid,
   .market-strip {
     grid-template-columns: 1fr;
   }

@@ -43,6 +43,9 @@ jobs:
           test -f wiki/index.html
           test -f wiki/home/index.html
           test -f wiki/docs/index.html
+          test -f wiki/tutorials/index.html
+          test -f wiki/alpha-library/index.html
+          test -f wiki/research-lab/index.html
           test -f wiki/_redirects
           test -f wiki/_headers
           test -f wiki/assets/icon.png

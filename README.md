@@ -25,6 +25,8 @@
 </p>
 
 <p align="center">
+  <a href="https://vibetrading.wiki/">Website</a> &nbsp;&middot;&nbsp;
+  <a href="https://vibetrading.wiki/docs/">Docs</a> &nbsp;&middot;&nbsp;
   <a href="#-news">News</a> &nbsp;&middot;&nbsp;
   <a href="#-key-features">Features</a> &nbsp;&middot;&nbsp;
   <a href="#-shadow-account">Shadow Account</a> &nbsp;&middot;&nbsp;

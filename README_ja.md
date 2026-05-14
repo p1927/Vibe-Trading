@@ -25,6 +25,8 @@
 </p>
 
 <p align="center">
+  <a href="https://vibetrading.wiki/">公式サイト</a> &nbsp;&middot;&nbsp;
+  <a href="https://vibetrading.wiki/docs/">ドキュメント</a> &nbsp;&middot;&nbsp;
   <a href="#-ニュース">ニュース</a> &nbsp;&middot;&nbsp;
   <a href="#-主な機能">機能</a> &nbsp;&middot;&nbsp;
   <a href="#-shadow-account">Shadow Account</a> &nbsp;&middot;&nbsp;

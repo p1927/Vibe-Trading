@@ -25,6 +25,8 @@
 </p>
 
 <p align="center">
+  <a href="https://vibetrading.wiki/">웹사이트</a> &nbsp;&middot;&nbsp;
+  <a href="https://vibetrading.wiki/docs/">문서</a> &nbsp;&middot;&nbsp;
   <a href="#-뉴스">뉴스</a> &nbsp;&middot;&nbsp;
   <a href="#-주요-기능">기능</a> &nbsp;&middot;&nbsp;
   <a href="#-섀도우-계정">섀도우 계정</a> &nbsp;&middot;&nbsp;

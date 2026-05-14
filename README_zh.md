@@ -25,6 +25,8 @@
 </p>
 
 <p align="center">
+  <a href="https://vibetrading.wiki/">官网</a> &nbsp;&middot;&nbsp;
+  <a href="https://vibetrading.wiki/docs/">文档</a> &nbsp;&middot;&nbsp;
   <a href="#-news">News</a> &nbsp;&middot;&nbsp;
   <a href="#-key-features">Features</a> &nbsp;&middot;&nbsp;
   <a href="#-shadow-account">Shadow Account</a> &nbsp;&middot;&nbsp;

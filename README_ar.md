@@ -25,6 +25,8 @@
 </p>
 
 <p align="center">
+  <a href="https://vibetrading.wiki/">الموقع</a> &nbsp;&middot;&nbsp;
+  <a href="https://vibetrading.wiki/docs/">الوثائق</a> &nbsp;&middot;&nbsp;
   <a href="#-الأخبار">الأخبار</a> &nbsp;&middot;&nbsp;
   <a href="#-الميزات-الرئيسية">الميزات</a> &nbsp;&middot;&nbsp;
   <a href="#-حساب-الظل">حساب الظل</a> &nbsp;&middot;&nbsp;

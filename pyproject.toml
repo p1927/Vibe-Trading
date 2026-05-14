@@ -59,7 +59,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/HKUDS/Vibe-Trading"
+Homepage = "https://vibetrading.wiki/"
+Documentation = "https://vibetrading.wiki/docs/"
 Repository = "https://github.com/HKUDS/Vibe-Trading"
 Issues = "https://github.com/HKUDS/Vibe-Trading/issues"
 
