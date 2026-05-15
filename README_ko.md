@@ -46,13 +46,14 @@
 
 ## 📰 뉴스
 
+- **2026-05-15** 🪪 Run 상세 페이지에서 metrics와 artifacts 옆에 Trust Layer run card를 렌더링해, 2026-05-12에 들어간 `run_card.json` 작업의 UI 측을 마무리합니다. `PersistentMemory.add()`도 #108/#109/#110 triage에 따라 길이, 빈 문자열 또는 공백만으로 이루어진 name, C0/C1 제어 바이트 경로에서 강화되었습니다([#112](https://github.com/HKUDS/Vibe-Trading/pull/112), @Teerapat-Vatpitak 감사합니다).
 - **2026-05-14** 🌐 공개 Wiki가 [vibetrading.wiki](https://vibetrading.wiki/)에 열렸고, docs, tutorials, Research Lab, Alpha Library 섹션을 Cloudflare Pages로 배포합니다. 영구 메모리도 이제 `vibe-trading memory list/show/search/forget`으로 CLI에서 확인할 수 있으며([#102](https://github.com/HKUDS/Vibe-Trading/pull/102), @Teerapat-Vatpitak 감사합니다), memory tokenization/slug는 태국어, 아랍어, 히브리어, 키릴 문자도 지원합니다([#104](https://github.com/HKUDS/Vibe-Trading/pull/104)).
 - **2026-05-13** 🧭 Swarm 실행은 이제 가져온 시장 데이터로 worker를 grounding하고, 더 깔끔한 영구 리포트를 남깁니다([#93](https://github.com/HKUDS/Vibe-Trading/pull/93), [#84](https://github.com/HKUDS/Vibe-Trading/pull/84)).
-- **2026-05-12** 🧾 백테스트는 이제 재현 가능한 리서치 실행을 위해 artifacts와 함께 `run_card.json` 및 `run_card.md`를 생성합니다.
 
 <details>
 <summary>이전 뉴스</summary>
 
+- **2026-05-12** 🧾 백테스트는 이제 재현 가능한 리서치 실행을 위해 artifacts와 함께 `run_card.json` 및 `run_card.md`를 생성합니다.
 - **2026-05-11** 🧭 **Memory slug, swarm 집계, CLI 프리플라이트**: 영구 메모리는 파일 slug를 생성할 때 CJK 문자를 보존하여 중국어/일본어/한국어 노트에서 조용한 파일명 충돌이 발생하지 않도록 합니다([#95](https://github.com/HKUDS/Vibe-Trading/pull/95), @voidborne-d 감사합니다). Swarm 실행 합계는 이제 provider가 보고한 token usage를 우선 사용하고 기존 추정 fallback도 유지합니다([#94](https://github.com/HKUDS/Vibe-Trading/pull/94), @Teerapat-Vatpitak 감사합니다). CLI 실행 UI에는 일반적인 환경 문제를 확인하는 시작 프리플라이트 체크도 추가되었습니다([#96](https://github.com/HKUDS/Vibe-Trading/pull/96), @ykykj 감사합니다).
 - **2026-05-10** 🧱 **회귀 가드레일 + run 메타데이터**: Memory recall은 이제 밑줄을 token 경계로 취급하므로 `mcp_wiring_test` 같은 snake_case 저장 메모리가 "mcp wiring" 같은 자연어 쿼리와 매칭됩니다([#87](https://github.com/HKUDS/Vibe-Trading/pull/87), @hp083625 감사합니다). MCP server에는 initialize → `tools/list` → `tools/call` 경로를 실제 subprocess로 검증하는 smoke test가 추가되어 첫 호출 deadlock 경로를 방지합니다([#86](https://github.com/HKUDS/Vibe-Trading/pull/86)). Windows 경로 민감 테스트, API best-effort 예외 처리, backtest `run_dir` 허용 루트 검증, SwarmRun provider/model 메타데이터에 대한 저위험 강화도 반영되었습니다([#88](https://github.com/HKUDS/Vibe-Trading/pull/88), [#90](https://github.com/HKUDS/Vibe-Trading/pull/90), [#91](https://github.com/HKUDS/Vibe-Trading/pull/91), [#92](https://github.com/HKUDS/Vibe-Trading/pull/92), @Teerapat-Vatpitak 감사합니다).
 - **2026-05-09** 🛡️ **API 경로 강화 + MCP server 안정성**: API run/session 라우트는 조회 전에 path ID를 검증하여 개행이 포함된 잘못된 파라미터를 거부하고, 이 동작을 auth/security 회귀 테스트에 고정했습니다([#80](https://github.com/HKUDS/Vibe-Trading/pull/80), @SJoon99 감사합니다). MCP server는 `tools/call`을 제공하기 전에 메인 스레드에서 도구 레지스트리를 미리 워밍업하여 lazy tool discovery의 첫 호출 deadlock을 피합니다([#85](https://github.com/HKUDS/Vibe-Trading/pull/85), @Teerapat-Vatpitak 감사합니다). Vite dev proxy도 기본값이 아닌 백엔드 타깃을 위해 `VITE_API_URL`을 존중합니다([#82](https://github.com/HKUDS/Vibe-Trading/pull/82), @voidborne-d 감사합니다).
