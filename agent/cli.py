@@ -718,8 +718,23 @@ def _run_agent(
     from src.memory.persistent import PersistentMemory
 
     pm = PersistentMemory()
+    from src.config.loader import load_agent_config
+
+    agent_config = load_agent_config()
+
+    def _mcp_warn(msg: str) -> None:
+        if no_rich:
+            print(f"WARNING: {msg}", flush=True)
+        else:
+            console.print(f"[yellow]WARNING:[/yellow] {msg}")
+
     agent = AgentLoop(
-        registry=build_registry(persistent_memory=pm, include_shell_tools=True),
+        registry=build_registry(
+            persistent_memory=pm,
+            include_shell_tools=True,
+            agent_config=agent_config,
+            warn_callback=_mcp_warn,
+        ),
         llm=ChatLLM(),
         event_callback=on_event,
         max_iterations=max_iter,
@@ -1405,7 +1420,6 @@ def cmd_interactive(max_iter: int) -> None:
         except KeyboardInterrupt:
             console.print("\n[yellow]Interrupted[/yellow]")
             continue
-
         stats.last_elapsed = time.perf_counter() - start
         stats.tool_count += dashboard.iterations
         _print_result(result, stats.last_elapsed)
