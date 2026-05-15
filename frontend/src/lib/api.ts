@@ -279,6 +279,7 @@ export interface RunData {
 
   metrics?: BacktestMetrics;
   artifacts?: ArtifactInfo[];
+  run_card?: RunCard;
   validation?: ValidationData;
 
   price_series?: Record<string, PriceBar[]>;
@@ -287,6 +288,26 @@ export interface RunData {
   equity_curve?: EquityPoint[];
   trade_log?: Array<Record<string, string>>;
   run_logs?: Array<{ source?: string; line_number?: number; message?: string }>;
+}
+
+export interface RunCard {
+  schema_version?: string;
+  generated_at?: string;
+  run_dir?: string;
+  backtest?: Record<string, unknown>;
+  reproducibility?: Record<string, unknown>;
+  data_sources?: string[];
+  metrics?: Record<string, unknown>;
+  validation?: unknown;
+  warnings?: string[];
+  artifacts?: RunCardArtifact[];
+  [key: string]: unknown;
+}
+
+export interface RunCardArtifact {
+  path: string;
+  size_bytes: number;
+  sha256: string;
 }
 
 export interface BacktestMetrics {

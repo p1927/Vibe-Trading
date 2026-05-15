@@ -125,6 +125,30 @@ def test_json_and_markdown_files_are_written(tmp_path: Path) -> None:
     assert "sample warning" in markdown
 
 
+def test_api_run_response_includes_run_card(tmp_path: Path) -> None:
+    import api_server
+
+    run_dir = tmp_path / "run_001"
+    run_dir.mkdir()
+    (run_dir / "state.json").write_text('{"status": "success"}\n', encoding="utf-8")
+    run_card = {
+        "schema_version": "0.1",
+        "generated_at": "2026-05-15T00:00:00Z",
+        "run_dir": str(run_dir),
+        "backtest": {"codes": ["AAPL"], "source": "yfinance"},
+        "reproducibility": {"config_hash": "abc123", "strategy_hash": "def456"},
+        "data_sources": ["yfinance"],
+        "metrics": {"sharpe": 1.2},
+        "warnings": ["sample warning"],
+        "artifacts": [{"path": "artifacts/metrics.csv", "size_bytes": 42, "sha256": "feed"}],
+    }
+    (run_dir / "run_card.json").write_text(json.dumps(run_card), encoding="utf-8")
+
+    response = api_server._build_response_from_run_dir(run_dir, elapsed=0.0)
+
+    assert response.run_card == run_card
+
+
 def test_runner_artifact_spec_surfaces_run_card_paths() -> None:
     runner = Runner()
 
