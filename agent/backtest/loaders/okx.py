@@ -5,6 +5,8 @@ Supports 1m/5m/15m/30m/1H/4H/1D.
 Up to 300 bars per request; paginates with ``after`` for longer history.
 """
 
+import os
+import time
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -15,6 +17,13 @@ from backtest.loaders.registry import register
 
 BASE_URL = "https://www.okx.com/api/v5"
 _MAX_PER_PAGE = 300
+# P12-b parity: OKX already sets a per-request timeout but had no retry
+# budget, so a transient blip dropped the whole symbol and a slow tier
+# could stall ~max_pages*timeout. Bound it like the ccxt loader.
+_OKX_TIMEOUT = int(os.getenv("OKX_TIMEOUT_S", "15"))
+_OKX_FETCH_BUDGET_S = float(os.getenv("OKX_FETCH_BUDGET_S", "60"))
+_OKX_MAX_RETRIES = 3
+_OKX_BACKOFF = (0.5, 1.5, 4.0)  # seconds; len == _OKX_MAX_RETRIES
 
 
 @register
@@ -98,16 +107,38 @@ class DataLoader:
         """
         all_rows: list = []
         after = str(end_ts)
+        deadline = time.monotonic() + _OKX_FETCH_BUDGET_S
 
         for _ in range(max_pages):
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f"OKX fetch for {inst_id} exceeded "
+                    f"{_OKX_FETCH_BUDGET_S:.0f}s budget"
+                )
             params = {
                 "instId": inst_id,
                 "bar": bar,
                 "limit": str(_MAX_PER_PAGE),
                 "after": after,
             }
-            resp = requests.get(f"{BASE_URL}/market/candles", params=params, timeout=15)
-            data = resp.json()
+            data = None
+            for attempt in range(_OKX_MAX_RETRIES + 1):
+                try:
+                    resp = requests.get(
+                        f"{BASE_URL}/market/candles",
+                        params=params,
+                        timeout=_OKX_TIMEOUT,
+                    )
+                    data = resp.json()
+                    break
+                except requests.RequestException as exc:
+                    remaining = deadline - time.monotonic()
+                    if attempt == _OKX_MAX_RETRIES or remaining <= 0:
+                        raise TimeoutError(
+                            f"OKX fetch for {inst_id} failed after "
+                            f"{attempt + 1} attempt(s): {exc}"
+                        ) from exc
+                    time.sleep(min(_OKX_BACKOFF[attempt], max(0.0, remaining)))
             if data.get("code") != "0" or not data.get("data"):
                 break
 

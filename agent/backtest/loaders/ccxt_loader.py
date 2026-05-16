@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -22,6 +23,15 @@ _INTERVAL_MAP = {
     "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m",
     "1H": "1h", "4H": "4h", "1D": "1d",
 }
+
+# P12-b: ccxt had no request timeout and an unbounded paginated fetch with
+# no retry budget, so a transient disconnect hung get_market_data for 10+
+# minutes. Cap each HTTP call, bound transient retries, and enforce a hard
+# wall-clock budget so the fetch fails fast instead of hanging.
+_CCXT_TIMEOUT_MS = int(os.getenv("CCXT_TIMEOUT_MS", "15000"))
+_CCXT_FETCH_BUDGET_S = float(os.getenv("CCXT_FETCH_BUDGET_S", "60"))
+_CCXT_MAX_RETRIES = 3
+_CCXT_BACKOFF = (0.5, 1.5, 4.0)  # seconds; len == _CCXT_MAX_RETRIES
 
 
 @register
@@ -51,7 +61,7 @@ class DataLoader:
         if exchange_cls is None:
             logger.warning("Unknown CCXT exchange %s, falling back to binance", exchange_id)
             exchange_cls = ccxt.binance
-        return exchange_cls({"enableRateLimit": True})
+        return exchange_cls({"enableRateLimit": True, "timeout": _CCXT_TIMEOUT_MS})
 
     def fetch(
         self,
@@ -97,12 +107,37 @@ class DataLoader:
         exchange, symbol: str, timeframe: str, since_ms: int, end_ms: int,
     ) -> Optional[pd.DataFrame]:
         """Paginated OHLCV fetch for one symbol."""
+        import ccxt
+
         all_rows: list = []
         cursor = since_ms
         limit = 1000
+        deadline = time.monotonic() + _CCXT_FETCH_BUDGET_S
 
         for _ in range(200):
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=cursor, limit=limit)
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f"ccxt fetch for {symbol} exceeded "
+                    f"{_CCXT_FETCH_BUDGET_S:.0f}s budget"
+                )
+            ohlcv = None
+            for attempt in range(_CCXT_MAX_RETRIES + 1):
+                try:
+                    ohlcv = exchange.fetch_ohlcv(
+                        symbol, timeframe, since=cursor, limit=limit
+                    )
+                    break
+                except ccxt.NetworkError as exc:
+                    # NetworkError covers RequestTimeout / DDoSProtection /
+                    # ExchangeNotAvailable — the transient family. Anything
+                    # else (e.g. ExchangeError: bad symbol) is not retried.
+                    remaining = deadline - time.monotonic()
+                    if attempt == _CCXT_MAX_RETRIES or remaining <= 0:
+                        raise TimeoutError(
+                            f"ccxt fetch for {symbol} failed after "
+                            f"{attempt + 1} attempt(s): {exc}"
+                        ) from exc
+                    time.sleep(min(_CCXT_BACKOFF[attempt], max(0.0, remaining)))
             if not ohlcv:
                 break
             all_rows.extend(ohlcv)
