@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 from urllib.parse import urlsplit
 
 import requests
 
 from src.agent.tools import BaseTool
 
+logger = logging.getLogger(__name__)
+
 _JINA_PREFIX = "https://r.jina.ai/"
 _TIMEOUT = 30
 _MAX_LENGTH = 8000
+_CACHED_MARKER = "Warning: This is a cached snapshot"
 
 
 def _url_allowed(url: str) -> tuple[bool, str]:
@@ -52,14 +56,20 @@ def _url_allowed(url: str) -> tuple[bool, str]:
     return True, ""
 
 
-def read_url(url: str) -> str:
+def read_url(url: str, no_cache: bool = False) -> str:
     """Fetch web page content via the Jina Reader API.
+
+    The full URL (including query string) is sent to the third-party Jina
+    Reader service (r.jina.ai); never pass credentials/tokens or private
+    addresses. Results may be a cached snapshot.
 
     Args:
         url: Target URL.
+        no_cache: When true, ask the reader for a fresh (uncached) fetch.
 
     Returns:
-        JSON-formatted result containing title, content, and url.
+        JSON result with title, content, url; ``cached: true`` is added
+        when the reader served a stale snapshot.
     """
     target_url = url.strip()
     allowed, error = _url_allowed(target_url)
@@ -67,15 +77,19 @@ def read_url(url: str) -> str:
         return json.dumps({"status": "error", "error": error}, ensure_ascii=False)
 
     try:
+        headers = {"Accept": "text/markdown"}
+        if no_cache:
+            headers["x-no-cache"] = "true"
         resp = requests.get(
             f"{_JINA_PREFIX}{target_url}",
-            headers={"Accept": "text/markdown"},
+            headers=headers,
             timeout=_TIMEOUT,
         )
         if resp.status_code != 200:
+            logger.warning("read_url upstream HTTP %s: %s", resp.status_code, resp.text[:500])
             return json.dumps({
                 "status": "error",
-                "error": f"Jina Reader returned {resp.status_code}: {resp.text[:500]}",
+                "error": f"remote reader returned HTTP {resp.status_code}: {resp.text[:500]}",
             }, ensure_ascii=False)
 
         text = resp.text
@@ -88,18 +102,25 @@ def read_url(url: str) -> str:
         if len(text) > _MAX_LENGTH:
             text = text[:_MAX_LENGTH] + f"\n\n... (truncated, total {len(resp.text)} chars)"
 
-        return json.dumps({
+        result = {
             "status": "ok",
             "title": title,
             "url": target_url,
             "content": text,
             "length": len(resp.text),
-        }, ensure_ascii=False)
+        }
+        if _CACHED_MARKER in resp.text:
+            result["cached"] = True
+        return json.dumps(result, ensure_ascii=False)
 
     except requests.Timeout:
         return json.dumps({"status": "error", "error": f"Request timed out ({_TIMEOUT}s)"}, ensure_ascii=False)
     except Exception as exc:
-        return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False)
+        logger.warning("read_url request failed: %s", exc)
+        return json.dumps(
+            {"status": "error", "error": f"remote reader request failed: {exc}"},
+            ensure_ascii=False,
+        )
 
 
 class WebReaderTool(BaseTool):
@@ -111,6 +132,7 @@ class WebReaderTool(BaseTool):
         "type": "object",
         "properties": {
             "url": {"type": "string", "description": "URL of the web page to read"},
+            "no_cache": {"type": "boolean", "description": "Request a fresh (uncached) fetch", "default": False},
         },
         "required": ["url"],
     }
@@ -118,4 +140,4 @@ class WebReaderTool(BaseTool):
 
     def execute(self, **kwargs) -> str:
         """Fetch web page."""
-        return read_url(kwargs["url"])
+        return read_url(kwargs["url"], no_cache=bool(kwargs.get("no_cache", False)))
