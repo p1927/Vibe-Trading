@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.agent.tools import BaseTool
+from src.security.scanner import with_security_warnings
 from src.tools.path_utils import safe_document_path
 
 _MAX_CHARS = 15000
@@ -70,6 +71,7 @@ def _envelope(path: Path, fmt: str, text: str, **extra: Any) -> str:
         "text": body,
     }
     payload.update(extra)
+    payload = with_security_warnings(payload, fields=("text",))
     return json.dumps(payload, ensure_ascii=False)
 
 

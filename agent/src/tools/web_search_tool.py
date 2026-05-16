@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from src.agent.tools import BaseTool
+from src.security.scanner import with_security_warnings
 
 
 class WebSearchTool(BaseTool):
@@ -75,10 +76,12 @@ class WebSearchTool(BaseTool):
                 }
                 for r in raw
             ]
-            return json.dumps(
-                {"status": "ok", "query": query, "results": results},
-                ensure_ascii=False,
+            payload = {"status": "ok", "query": query, "results": results}
+            payload = with_security_warnings(
+                payload,
+                fields=("results.*.title", "results.*.snippet"),
             )
+            return json.dumps(payload, ensure_ascii=False)
         except ImportError:
             return json.dumps(
                 {

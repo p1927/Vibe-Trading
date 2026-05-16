@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 import requests
 
 from src.agent.tools import BaseTool
+from src.security.scanner import with_security_warnings
 
 _JINA_PREFIX = "https://r.jina.ai/"
 _TIMEOUT = 30
@@ -88,13 +89,15 @@ def read_url(url: str) -> str:
         if len(text) > _MAX_LENGTH:
             text = text[:_MAX_LENGTH] + f"\n\n... (truncated, total {len(resp.text)} chars)"
 
-        return json.dumps({
+        payload = {
             "status": "ok",
             "title": title,
             "url": target_url,
             "content": text,
             "length": len(resp.text),
-        }, ensure_ascii=False)
+        }
+        payload = with_security_warnings(payload, fields=("content",))
+        return json.dumps(payload, ensure_ascii=False)
 
     except requests.Timeout:
         return json.dumps({"status": "error", "error": f"Request timed out ({_TIMEOUT}s)"}, ensure_ascii=False)
