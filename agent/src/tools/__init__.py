@@ -171,6 +171,13 @@ def build_filtered_registry(tool_names: list[str], *, include_shell_tools: bool 
         tool = full.get(name)
         if tool:
             filtered.register(tool)
+        else:
+            logger.warning(
+                "Requested tool %r is unavailable and was dropped from the "
+                "filtered registry (include_shell_tools=%s); a preset that "
+                "depends on it cannot execute it.",
+                name, include_shell_tools,
+            )
     return filtered
 
 

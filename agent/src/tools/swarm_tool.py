@@ -696,17 +696,9 @@ def _format_result(
     Returns:
         JSON string with run status, report, task summaries, and token usage.
     """
-    task_summaries = []
-    for task in run.tasks:
-        task_summaries.append(
-            {
-                "id": task.id,
-                "agent_id": task.agent_id,
-                "status": task.status.value if hasattr(task.status, "value") else str(task.status),
-                "summary": task.summary or "",
-                "iterations": task.worker_iterations,
-            }
-        )
+    from src.swarm.serialization import run_level_error, serialize_task
+
+    task_summaries = [serialize_task(task) for task in run.tasks]
 
     status = "timeout" if timed_out else run.status.value
 
@@ -716,6 +708,7 @@ def _format_result(
         "preset": preset,
         "auto_variables": variables,
         "final_report": run.final_report or "",
+        "error": run_level_error(run),
         "tasks": task_summaries,
         "token_usage": {
             "total_input_tokens": run.total_input_tokens,

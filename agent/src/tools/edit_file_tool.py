@@ -9,6 +9,7 @@ from typing import Any
 from src.agent.tools import BaseTool
 from src.tools.path_utils import safe_path as _safe_path
 from src.tools.path_utils import safe_run_dir as _safe_run_dir
+from src.tools.redaction import redact_internal_paths
 
 
 class EditFileTool(BaseTool):
@@ -43,42 +44,60 @@ class EditFileTool(BaseTool):
         run_dir = kwargs.get("run_dir")
 
         if not run_dir:
-            return json.dumps({
-                "status": "error",
-                "error": "run_dir is required for edit_file",
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": "run_dir is required for edit_file",
+                },
+                ensure_ascii=False,
+            )
 
         try:
             run_root = _safe_run_dir(str(run_dir))
             resolved = _safe_path(file_path, run_root)
         except ValueError as exc:
-            return json.dumps({
-                "status": "error",
-                "error": str(exc),
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": str(exc),
+                },
+                ensure_ascii=False,
+            )
 
         if not resolved.exists():
-            return json.dumps({
-                "status": "error",
-                "error": f"File not found: {file_path}",
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": f"File not found: {file_path}",
+                },
+                ensure_ascii=False,
+            )
 
         try:
             content = resolved.read_text(encoding="utf-8")
             if old_text not in content:
-                return json.dumps({
-                    "status": "error",
-                    "error": f"old_text not found in {file_path}",
-                }, ensure_ascii=False)
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "error": f"old_text not found in {file_path}",
+                    },
+                    ensure_ascii=False,
+                )
             new_content = content.replace(old_text, new_text, 1)
             resolved.write_text(new_content, encoding="utf-8")
-            return json.dumps({
-                "status": "ok",
-                "path": str(resolved),
-                "message": "Edit applied successfully",
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "status": "ok",
+                    "path": str(resolved),
+                    "message": "Edit applied successfully",
+                },
+                ensure_ascii=False,
+            )
         except Exception as exc:
-            return json.dumps({
-                "status": "error",
-                "error": str(exc),
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": redact_internal_paths(str(exc)),
+                },
+                ensure_ascii=False,
+            )

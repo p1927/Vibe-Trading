@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Callable
 
 from src.swarm import grounding
-from src.swarm.mailbox import Mailbox
 from src.swarm.models import (
     RunStatus,
     SwarmAgentSpec,
@@ -39,6 +38,7 @@ from src.swarm.task_store import (
     topological_layers,
     validate_dag,
 )
+from src.tools.redaction import redact_internal_paths
 from src.swarm.worker import run_worker
 
 logger = logging.getLogger(__name__)
@@ -269,11 +269,12 @@ class SwarmRuntime:
                     run.total_input_tokens += result.input_tokens
                     run.total_output_tokens += result.output_tokens
 
-                    if result.status in ("completed", "timeout", "token_limit"):
+                    if result.status == "completed":
                         task_summaries[tid] = result.summary
                         now_iso = datetime.now(timezone.utc).isoformat()
                         task_store.update_status(
-                            tid, TaskStatus.completed,
+                            tid,
+                            TaskStatus.completed,
                             summary=result.summary,
                             completed_at=now_iso,
                             artifacts=result.artifact_paths,
@@ -282,26 +283,38 @@ class SwarmRuntime:
                         resolve_dependencies(run_dir / "tasks", tid)
                         self._emit_event(
                             run_id,
-                            self._make_event("task_completed", task_id=tid,
-                                             data={"status": result.status,
-                                                   "iterations": result.iterations,
-                                                   "input_tokens": result.input_tokens,
-                                                   "output_tokens": result.output_tokens}),
+                            self._make_event(
+                                "task_completed",
+                                task_id=tid,
+                                data={
+                                    "status": result.status,
+                                    "iterations": result.iterations,
+                                    "input_tokens": result.input_tokens,
+                                    "output_tokens": result.output_tokens,
+                                },
+                            ),
                         )
                     else:
                         all_succeeded = False
                         task_store.update_status(
-                            tid, TaskStatus.failed,
-                            error=result.error or "Unknown error",
+                            tid,
+                            TaskStatus.failed,
+                            error=redact_internal_paths(result.error)
+                            or f"worker did not complete (status={result.status})",
                             completed_at=datetime.now(timezone.utc).isoformat(),
                             worker_iterations=result.iterations,
                         )
                         self._emit_event(
                             run_id,
-                            self._make_event("task_failed", task_id=tid,
-                                             data={"error": result.error,
-                                                   "input_tokens": result.input_tokens,
-                                                   "output_tokens": result.output_tokens}),
+                            self._make_event(
+                                "task_failed",
+                                task_id=tid,
+                                data={
+                                    "error": redact_internal_paths(result.error),
+                                    "input_tokens": result.input_tokens,
+                                    "output_tokens": result.output_tokens,
+                                },
+                            ),
                         )
 
         except Exception as exc:
@@ -309,14 +322,12 @@ class SwarmRuntime:
             all_succeeded = False
             self._emit_event(
                 run_id,
-                self._make_event("run_error", data={"error": str(exc)}),
+                self._make_event("run_error", data={"error": redact_internal_paths(str(exc))}),
             )
 
         # Finalize run
         final_status = (
-            RunStatus.cancelled if cancel_event.is_set()
-            else RunStatus.completed if all_succeeded
-            else RunStatus.failed
+            RunStatus.cancelled if cancel_event.is_set() else RunStatus.completed if all_succeeded else RunStatus.failed
         )
         run.status = final_status
         run.completed_at = datetime.now(timezone.utc).isoformat()
@@ -350,7 +361,9 @@ class SwarmRuntime:
         if len(symbols) > symbol_limit:
             logger.warning(
                 "grounding: limiting run %s symbols from %d to %d",
-                run.id, len(symbols), symbol_limit,
+                run.id,
+                len(symbols),
+                symbol_limit,
             )
             symbols = symbols[:symbol_limit]
 
@@ -359,7 +372,9 @@ class SwarmRuntime:
         except Exception:
             logger.warning(
                 "grounding: pre-fetch failed for run %s symbols=%s",
-                run.id, symbols, exc_info=True,
+                run.id,
+                symbols,
+                exc_info=True,
             )
             return
 
@@ -416,14 +431,16 @@ class SwarmRuntime:
                 agent_spec = agent_map.get(task.agent_id)
                 if agent_spec is None:
                     results[tid] = WorkerResult(
-                        status="failed", summary="",
+                        status="failed",
+                        summary="",
                         error=f"Agent '{task.agent_id}' not found in preset",
                     )
                     continue
 
                 # Mark task as in_progress
                 task_store.update_status(
-                    tid, TaskStatus.in_progress,
+                    tid,
+                    TaskStatus.in_progress,
                     started_at=datetime.now(timezone.utc).isoformat(),
                 )
                 self._emit_event(
@@ -467,7 +484,8 @@ class SwarmRuntime:
                     except Exception as exc:
                         logger.error("Worker for task %s raised exception", tid, exc_info=True)
                         results[tid] = WorkerResult(
-                            status="failed", summary="",
+                            status="failed",
+                            summary="",
                             error=str(exc),
                         )
             except FuturesTimeoutError:
@@ -477,10 +495,12 @@ class SwarmRuntime:
                     pending.cancel()
                     logger.error(
                         "Worker for task %s exceeded layer deadline (%ds)",
-                        tid, layer_deadline,
+                        tid,
+                        layer_deadline,
                     )
                     results[tid] = WorkerResult(
-                        status="timeout", summary="",
+                        status="timeout",
+                        summary="",
                         error=f"Worker exceeded layer deadline of {layer_deadline}s",
                     )
         except KeyboardInterrupt:
@@ -539,13 +559,18 @@ class SwarmRuntime:
                         "task_retry",
                         agent_id=agent_spec.id,
                         task_id=task.id,
-                        data={"attempt": attempt + 1, "max_retries": max_retries,
-                              "previous_error": result.error if result else None},
+                        data={
+                            "attempt": attempt + 1,
+                            "max_retries": max_retries,
+                            "previous_error": result.error if result else None,
+                        },
                     ),
                 )
                 logger.info(
                     "Retrying task %s (attempt %d/%d)",
-                    task.id, attempt + 1, max_retries + 1,
+                    task.id,
+                    attempt + 1,
+                    max_retries + 1,
                 )
 
             result = run_worker(
@@ -564,18 +589,22 @@ class SwarmRuntime:
 
             if result.status != "failed":
                 # Success (or timeout/token_limit/completed) — no more retries
-                result = result.model_copy(update={
-                    "input_tokens": cumulative_input_tokens,
-                    "output_tokens": cumulative_output_tokens,
-                })
+                result = result.model_copy(
+                    update={
+                        "input_tokens": cumulative_input_tokens,
+                        "output_tokens": cumulative_output_tokens,
+                    }
+                )
                 return result
 
         # All retries exhausted, return the last failed result with cumulative tokens
         if result is not None:
-            result = result.model_copy(update={
-                "input_tokens": cumulative_input_tokens,
-                "output_tokens": cumulative_output_tokens,
-            })
+            result = result.model_copy(
+                update={
+                    "input_tokens": cumulative_input_tokens,
+                    "output_tokens": cumulative_output_tokens,
+                }
+            )
         return result  # type: ignore[return-value]
 
     def _cancel_remaining_tasks(

@@ -9,6 +9,7 @@ from typing import Any
 from src.agent.tools import BaseTool
 from src.tools.path_utils import safe_path as _safe_path
 from src.tools.path_utils import safe_run_dir as _safe_run_dir
+from src.tools.redaction import redact_internal_paths
 
 
 class WriteFileTool(BaseTool):
@@ -41,30 +42,42 @@ class WriteFileTool(BaseTool):
         run_dir = kwargs.get("run_dir")
 
         if not run_dir:
-            return json.dumps({
-                "status": "error",
-                "error": "run_dir is required for write_file",
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": "run_dir is required for write_file",
+                },
+                ensure_ascii=False,
+            )
 
         try:
             run_root = _safe_run_dir(str(run_dir))
             resolved = _safe_path(file_path, run_root)
         except ValueError as exc:
-            return json.dumps({
-                "status": "error",
-                "error": str(exc),
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": str(exc),
+                },
+                ensure_ascii=False,
+            )
 
         try:
             resolved.parent.mkdir(parents=True, exist_ok=True)
             resolved.write_text(content, encoding="utf-8")
-            return json.dumps({
-                "status": "ok",
-                "path": str(resolved),
-                "bytes_written": len(content.encode("utf-8")),
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "status": "ok",
+                    "path": str(resolved),
+                    "bytes_written": len(content.encode("utf-8")),
+                },
+                ensure_ascii=False,
+            )
         except Exception as exc:
-            return json.dumps({
-                "status": "error",
-                "error": str(exc),
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": redact_internal_paths(str(exc)),
+                },
+                ensure_ascii=False,
+            )

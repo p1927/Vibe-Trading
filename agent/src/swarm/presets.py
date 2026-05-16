@@ -39,7 +39,7 @@ def load_preset(name: str) -> dict:
     if not path.exists():
         available = [p.stem for p in PRESETS_DIR.glob("*.yaml")] if PRESETS_DIR.exists() else []
         raise FileNotFoundError(
-            f"Preset '{name}' not found at {path}. Available: {available}"
+            f"Preset {name!r} not found. Available: {available}"
         )
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 

@@ -347,6 +347,7 @@ def run_worker(
     last_assistant_content = ""
 
     _KEEP_RECENT_TOOLS = 3
+    data_tool_calls = 0
 
     for iteration in range(max_iterations):
         # Microcompact: clear old tool results to prevent token bloat
@@ -448,8 +449,26 @@ def run_worker(
         if not response.has_tool_calls:
             summary = response.content or last_assistant_content or "(no summary)"
             summary = _resolve_summary(artifact_dir, summary)
-            _emit(event_callback, "worker_completed", agent_id, task_id, {"iterations": iteration + 1})
             _write_summary(artifact_dir, summary)
+            reason = _classify_deliverable(
+                summary,
+                is_data_agent=_is_data_agent(agent_spec),
+                report_written=_report_written(artifact_dir),
+                data_tool_calls=data_tool_calls,
+            )
+            if reason:
+                _emit(event_callback, "worker_incomplete", agent_id, task_id,
+                      {"iterations": iteration + 1, "reason": reason})
+                return WorkerResult(
+                    status="incomplete",
+                    summary=summary,
+                    artifact_paths=_collect_artifacts(artifact_dir),
+                    iterations=iteration + 1,
+                    error=f"output contract not met: {reason}",
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                )
+            _emit(event_callback, "worker_completed", agent_id, task_id, {"iterations": iteration + 1})
             return WorkerResult(
                 status="completed",
                 summary=summary,
@@ -478,6 +497,8 @@ def run_worker(
             tc_start = time.monotonic()
             args = {**tc.arguments, "run_dir": str(artifact_dir)}
             result = registry.execute(tc.name, args)
+            if tc.name != "load_skill" and not _is_error_result(result):
+                data_tool_calls += 1
             tc_elapsed = time.monotonic() - tc_start
             _emit(
                 event_callback, "tool_result", agent_id, task_id,
@@ -492,9 +513,27 @@ def run_worker(
     # Hit iteration limit — use last meaningful content as summary
     summary = _best_summary(messages, last_assistant_content) or f"Worker hit iteration limit ({max_iterations} iterations)"
     summary = _resolve_summary(artifact_dir, summary)
-    _emit(event_callback, "worker_iteration_limit", agent_id, task_id)
     _write_summary(artifact_dir, summary)
     _persist_messages(artifact_dir, messages)
+    reason = _classify_deliverable(
+        summary,
+        is_data_agent=_is_data_agent(agent_spec),
+        report_written=_report_written(artifact_dir),
+        data_tool_calls=data_tool_calls,
+    )
+    if reason:
+        _emit(event_callback, "worker_incomplete", agent_id, task_id,
+              {"iterations": max_iterations, "reason": f"iteration limit; {reason}"})
+        return WorkerResult(
+            status="incomplete",
+            summary=summary,
+            artifact_paths=_collect_artifacts(artifact_dir),
+            iterations=max_iterations,
+            error=f"hit iteration limit without a valid deliverable: {reason}",
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+        )
+    _emit(event_callback, "worker_iteration_limit", agent_id, task_id)
     return WorkerResult(
         status="completed",
         summary=summary,
@@ -538,6 +577,90 @@ def _is_sensitive_tool_argument(key: str) -> bool:
         marker in normalized
         for marker in ("api_key", "authorization", "password", "secret", "token")
     )
+
+
+# Tools that do not themselves fetch/compute market data. An agent whose
+# entire toolset is a subset of these is a synthesis/editor role (e.g. the
+# research editor in equity_research_team) and may legitimately produce a
+# text deliverable with no tool calls — it must NOT be failed for "no tool
+# evidence" (that would regress correct runs; see #115 framing).
+_GENERIC_TOOLS = {"bash", "read_file", "write_file", "load_skill", "edit_file"}
+
+_UNPARSED_TOOL_MARKERS = (
+    "<\uff5ctool\u2581calls\u2581begin\uff5c>",
+    "<tool_calls_begin>",
+    "<tool_call_begin>",
+    "<tool_sep>",
+    "tool\u2581sep",
+)
+_FABRICATION_MARKERS = ("mock data", "without actual data", "fabricated data", "placeholder data")
+_PLAN_PREFIXES = (
+    "# phase 1", "## phase 1", "### phase 1",
+    "phase 1 \u2014 plan", "phase 1 - plan", "phase 1: plan",
+    "# plan", "## plan", "### plan", "**plan**",
+)
+_HANDOFF_TAILS = (
+    "execute", "execute.", "execute:", "skills.", "skills", "proceed?",
+    "proceed.", "without writing files.", "let me adjust the approach",
+    "let me adjust the approach.", "stand by for final synthesis.",
+)
+
+
+def _report_written(artifact_dir: Path) -> bool:
+    """True iff a non-empty report.md was actually produced by the worker."""
+    try:
+        p = artifact_dir / "report.md"
+        return p.is_file() and bool(p.read_text(encoding="utf-8").strip())
+    except Exception:
+        return False
+
+
+def _is_data_agent(agent_spec: SwarmAgentSpec) -> bool:
+    """An agent with at least one data/analysis tool beyond the generic kit."""
+    return bool(set(agent_spec.tools or []) - _GENERIC_TOOLS)
+
+
+def _is_error_result(result: str) -> bool:
+    """Heuristic: did a tool call return an error envelope?"""
+    head = (result or "").strip()[:160].lower()
+    return head.startswith("{") and ('"status": "error"' in head or '"status":"error"' in head)
+
+
+def _classify_deliverable(
+    summary: str,
+    *,
+    is_data_agent: bool,
+    report_written: bool,
+    data_tool_calls: int,
+) -> str | None:
+    """Hybrid output contract. Return a short reason string when the worker
+    did NOT produce a substantive deliverable, else ``None``.
+
+    Content-sanity applies to every agent; the tool-evidence requirement
+    applies ONLY to data agents so tool-less synthesis/editor roles are
+    not false-rejected.
+    """
+    text = (summary or "").strip()
+    if not text:
+        return "empty deliverable"
+    low = text.lower()
+    if any(m in low for m in _UNPARSED_TOOL_MARKERS):
+        return "unparsed tool-call markup (provider did not parse tool calls)"
+    if any(m in low for m in _FABRICATION_MARKERS):
+        return "explicitly fabricated / mock data"
+    if text.startswith("{") and '"status"' in text[:40] and (
+        '"content"' in text[:300] or '"ok"' in text[:40]
+    ):
+        return "raw tool-result envelope, not analysis"
+    if low.startswith(_PLAN_PREFIXES):
+        tail = low.rsplit("phase 2", 1)[-1].strip() if "phase 2" in low else ""
+        if len(text) < 600 or low.rstrip().endswith(_HANDOFF_TAILS) or (
+            "phase 2" in low and len(tail) < 80
+        ):
+            return "plan-only stub (no executed analysis / conclusion)"
+    if is_data_agent and not report_written and data_tool_calls == 0:
+        return "data agent produced no tool calls and no report.md"
+    return None
 
 
 def _resolve_summary(artifact_dir: Path, fallback: str) -> str:

@@ -23,12 +23,12 @@ class TestSafePath:
         assert result == (tmp_path / "sub" / "dir" / "file.txt").resolve()
 
     def test_parent_traversal_rejected(self, tmp_path: Path):
-        with pytest.raises(ValueError, match="escapes workspace"):
+        with pytest.raises(ValueError, match="escapes the workspace"):
             safe_path("../../etc/passwd", tmp_path)
 
     def test_absolute_path_outside_workdir_rejected(self, tmp_path: Path):
         outside = tmp_path.parent / "elsewhere.txt"
-        with pytest.raises(ValueError, match="escapes workspace"):
+        with pytest.raises(ValueError, match="escapes the workspace"):
             safe_path(str(outside), tmp_path)
 
     def test_unc_path_rejected(self, tmp_path: Path):

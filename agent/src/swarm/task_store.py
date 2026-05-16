@@ -70,7 +70,7 @@ class TaskStore:
         """
         path = self._task_path(task_id)
         if not path.exists():
-            raise FileNotFoundError(f"Task not found: {path}")
+            raise FileNotFoundError(f"Task not found: {path.name}")
         return SwarmTask.model_validate_json(path.read_text(encoding="utf-8"))
 
     def load_all(self) -> list[SwarmTask]:

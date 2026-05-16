@@ -40,6 +40,23 @@ class RunStatus(str, Enum):
     cancelled = "cancelled"
 
 
+class WorkerStatus(str, Enum):
+    """Terminal status a worker returns.
+
+    ``incomplete`` is distinct from ``failed``: the worker ran without an
+    exception but produced no substantive deliverable (plan-only stub,
+    fabricated/mock numbers, unparsed tool markup, or a data agent that
+    made no tool call and wrote no report). It must never be folded into
+    ``completed`` (see P01/P03).
+    """
+
+    completed = "completed"
+    failed = "failed"
+    timeout = "timeout"
+    token_limit = "token_limit"
+    incomplete = "incomplete"
+
+
 class SwarmAgentSpec(BaseModel):
     """Role definition for a single agent in a Swarm.
 
@@ -203,7 +220,7 @@ class WorkerResult(BaseModel):
     """Return value after worker execution completes.
 
     Attributes:
-        status: "completed" or "failed".
+        status: WorkerStatus — completed|failed|timeout|token_limit|incomplete.
         summary: Execution summary.
         artifact_paths: List of generated artifact file paths.
         iterations: Actual ReAct iterations executed.
@@ -212,7 +229,7 @@ class WorkerResult(BaseModel):
         output_tokens: Cumulative output tokens (exact or estimated).
     """
 
-    status: str
+    status: WorkerStatus
     summary: str
     artifact_paths: list[str] = Field(default_factory=list)
     iterations: int = 0
