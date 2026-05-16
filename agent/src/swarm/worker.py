@@ -621,9 +621,27 @@ def _is_data_agent(agent_spec: SwarmAgentSpec) -> bool:
 
 
 def _is_error_result(result: str) -> bool:
-    """Heuristic: did a tool call return an error envelope?"""
-    head = (result or "").strip()[:160].lower()
-    return head.startswith("{") and ('"status": "error"' in head or '"status":"error"' in head)
+    """Did a tool call return a top-level error envelope?
+
+    Parses the result as JSON and checks for a top-level ``status == "error"``.
+    A nested ``status`` (e.g. inside ``data``) is intentionally ignored — only
+    the envelope matters for the deliverable contract.
+
+    Falls back to a fast substring check on the head for truncated or
+    non-JSON payloads, so the function is robust to streaming / partial
+    output without ever raising.
+    """
+    text = (result or "").strip()
+    if not text or not text.startswith("{"):
+        return False
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        # Truncated / non-JSON payload — keep the original heuristic so we
+        # never raise from a classifier on the worker hot path.
+        head = text[:160].lower()
+        return '"status": "error"' in head or '"status":"error"' in head
+    return isinstance(parsed, dict) and parsed.get("status") == "error"
 
 
 def _classify_deliverable(

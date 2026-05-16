@@ -30,6 +30,7 @@ from src.swarm.store import SwarmStore
 from src.swarm.worker import (
     _classify_deliverable,
     _is_data_agent,
+    _is_error_result,
     _report_written,
 )
 import src.swarm.runtime as rt
@@ -153,3 +154,55 @@ def test_genuine_completion_still_succeeds(tmp_path, monkeypatch):
     run = _run(tmp_path, None)
     assert run.status == RunStatus.completed
     assert run.final_report == REAL_REPORT
+
+
+# ---- _is_error_result: JSON parse + truncation fallback -------------------
+# Follow-up from #119: the substring head-match could (a) false-positive on
+# a nested ``status`` field and (b) false-negate when the envelope sat past
+# the 160-char head. Parsing the envelope as JSON pins both.
+
+
+def test_is_error_result_top_level_error():
+    assert _is_error_result('{"status": "error", "error": "bad key"}') is True
+    assert _is_error_result('{"status":"error"}') is True
+
+
+def test_is_error_result_top_level_ok():
+    assert _is_error_result('{"status": "ok", "content": "..."}') is False
+
+
+def test_is_error_result_nested_error_no_false_positive():
+    """A nested ``status`` (e.g. inside ``data``) must NOT count — only the
+    envelope status matters for the deliverable contract."""
+    nested = '{"status": "ok", "data": {"status": "error", "detail": "x"}}'
+    assert _is_error_result(nested) is False
+
+
+def test_is_error_result_error_past_substring_head():
+    """G2: an error envelope where ``status`` sits past the 160-char head
+    (long preamble in another field). Substring head-match used to miss
+    this; JSON parse catches it."""
+    long_field = "x" * 200
+    payload = '{"meta": "' + long_field + '", "status": "error"}'
+    assert _is_error_result(payload) is True
+
+
+def test_is_error_result_truncated_falls_back_to_substring():
+    """Truncated / unparseable JSON still gets the original substring
+    classifier; the function must never raise on the worker hot path."""
+    truncated = '{"status": "error", "trace": "...'  # missing closing quote
+    assert _is_error_result(truncated) is True
+
+
+def test_is_error_result_non_json_safe():
+    assert _is_error_result("") is False
+    assert _is_error_result(None) is False  # type: ignore[arg-type]
+    assert _is_error_result("plain text output") is False
+    assert _is_error_result("[1, 2, 3]") is False  # JSON array, not envelope
+
+
+def test_is_error_result_other_status_values():
+    """Only ``"error"`` counts; ``"warning"`` / ``"degenerate"`` etc. are
+    not error envelopes (the worker still credits them as a tool call)."""
+    assert _is_error_result('{"status": "degenerate", "warning": "T=0"}') is False
+    assert _is_error_result('{"status": "warning"}') is False
