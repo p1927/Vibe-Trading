@@ -16,6 +16,7 @@ import pytest
 import ccxt
 
 import backtest.loaders.ccxt_loader as cl
+from backtest.loaders.base import DEFAULT_MAX_RETRIES
 from backtest.loaders.ccxt_loader import DataLoader
 
 SINCE = int(pd.Timestamp("2026-05-01").timestamp() * 1000)
@@ -61,7 +62,7 @@ def test_persistent_disconnect_is_bounded_not_a_hang():
     ex = _FakeEx([ccxt.NetworkError("down")])  # always fails
     with pytest.raises(TimeoutError):
         DataLoader._fetch_one(ex, "BTC/USDT", "1d", SINCE, END)
-    assert ex.calls == cl._CCXT_MAX_RETRIES + 1  # bounded, not range(200)/forever
+    assert ex.calls == DEFAULT_MAX_RETRIES + 1  # bounded, not range(200)/forever
 
 
 def test_non_network_error_is_not_retried():

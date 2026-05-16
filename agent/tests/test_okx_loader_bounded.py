@@ -15,6 +15,7 @@ import pytest
 import requests
 
 import backtest.loaders.okx as okx
+from backtest.loaders.base import DEFAULT_MAX_RETRIES
 from backtest.loaders.okx import DataLoader
 
 S = int(pd.Timestamp("2026-05-01").timestamp() * 1000)
@@ -66,7 +67,7 @@ def test_persistent_disconnect_is_bounded(monkeypatch):
     monkeypatch.setattr(okx.requests, "get", seq)
     with pytest.raises(TimeoutError):
         DataLoader()._fetch_candles("BTC-USDT", S, E, "1D", 20)
-    assert seq.calls == okx._OKX_MAX_RETRIES + 1  # bounded, not max_pages/forever
+    assert seq.calls == DEFAULT_MAX_RETRIES + 1  # bounded, not max_pages/forever
 
 
 def test_non_network_error_not_retried(monkeypatch):
