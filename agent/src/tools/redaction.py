@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import sys
 import sysconfig
+from functools import cache
 from pathlib import Path
 
 _SENTINEL = "<redacted>"
 
 
+@cache
 def _internal_roots() -> list[str]:
     # AGENT_DIR derived like agent/src/providers/llm.py:90
     # (Path(__file__).resolve().parents[2]); redaction.py is agent/src/tools/
