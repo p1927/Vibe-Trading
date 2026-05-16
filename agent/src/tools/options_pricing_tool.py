@@ -3,12 +3,43 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 import numpy as np
 from scipy.stats import norm
 
 from src.agent.tools import BaseTool
+
+
+def _validate_inputs(
+    spot: float, strike: float, expiry_days: float, sigma: float, r: float, option_type: str
+) -> str | None:
+    """Reject genuinely invalid inputs at the boundary (P06).
+
+    T == 0 is a *valid* expiry (handled downstream as intrinsic value), so
+    it is intentionally NOT rejected here — only invalid inputs are.
+    """
+    if option_type not in ("call", "put"):
+        return f"option_type must be 'call' or 'put', got {option_type!r}"
+    for _name, _val in (
+        ("spot", spot),
+        ("strike", strike),
+        ("expiry_days", expiry_days),
+        ("volatility", sigma),
+        ("risk_free_rate", r),
+    ):
+        if not math.isfinite(_val):
+            return f"{_name} must be a finite number, got {_val}"
+    if spot <= 0:
+        return f"spot must be positive, got {spot}"
+    if strike <= 0:
+        return f"strike must be positive, got {strike}"
+    if sigma <= 0:
+        return f"volatility must be positive, got {sigma}"
+    if expiry_days < 0:
+        return f"expiry_days must be non-negative, got {expiry_days}"
+    return None
 
 
 def _bs_price_and_greeks(
@@ -42,7 +73,7 @@ def _bs_price_and_greeks(
         return {"price": price, "delta": delta, "gamma": 0.0, "theta": 0.0, "vega": 0.0}
 
     sqrt_T = np.sqrt(T)
-    d1 = (np.log(spot / strike) + (r + sigma ** 2 / 2) * T) / (sigma * sqrt_T)
+    d1 = (np.log(spot / strike) + (r + sigma**2 / 2) * T) / (sigma * sqrt_T)
     d2 = d1 - sigma * sqrt_T
     nd1_pdf = float(norm.pdf(d1))
 
@@ -108,6 +139,13 @@ class OptionsPricingTool(BaseTool):
         sigma = float(kwargs["volatility"])
         option_type = kwargs["option_type"]
 
+        err = _validate_inputs(spot, strike, expiry_days, sigma, r, option_type)
+        if err is not None:
+            return json.dumps(
+                {"status": "error", "tool": "options_pricing", "error": err},
+                ensure_ascii=False,
+            )
+
         T = expiry_days / 365.0
 
         result = _bs_price_and_greeks(spot, strike, T, r, sigma, option_type)
@@ -120,6 +158,24 @@ class OptionsPricingTool(BaseTool):
             "option_type": option_type,
             "T_years": round(T, 6),
         }
-        result["status"] = "ok"
+        nonfinite = any(
+            k not in result or not math.isfinite(float(result[k])) for k in ("price", "delta", "gamma", "theta", "vega")
+        )
+        if T == 0.0 or nonfinite:
+            result["status"] = "degenerate"
+            result["degenerate"] = True
+            result["warning"] = (
+                "option at expiry (T=0): Greeks are singular; intrinsic value returned"
+                if T == 0.0
+                else "non-finite result (extreme inputs); values unreliable"
+            )
+        else:
+            result["status"] = "ok"
 
-        return json.dumps(result, ensure_ascii=False)
+        try:
+            return json.dumps(result, ensure_ascii=False, allow_nan=False)
+        except ValueError as exc:
+            return json.dumps(
+                {"status": "error", "tool": "options_pricing", "error": f"non-serializable numeric result: {exc}"},
+                ensure_ascii=False,
+            )

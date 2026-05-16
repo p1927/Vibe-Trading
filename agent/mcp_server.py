@@ -27,6 +27,8 @@ Claude Desktop config:
 from __future__ import annotations
 
 import json
+import logging
+import math
 import os
 import re
 import sys
@@ -41,6 +43,8 @@ if str(AGENT_DIR) not in sys.path:
 from fastmcp import FastMCP
 
 mcp = FastMCP("Vibe-Trading")
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +65,7 @@ def _get_skills_loader():
     global _skills_loader
     if _skills_loader is None:
         from src.agent.skills import SkillsLoader
+
         _skills_loader = SkillsLoader()
     return _skills_loader
 
@@ -69,6 +74,7 @@ def _get_registry():
     global _registry
     if _registry is None:
         from src.tools import build_registry
+
         _registry = build_registry(include_shell_tools=_include_shell_tools)
     return _registry
 
@@ -76,6 +82,7 @@ def _get_registry():
 # ---------------------------------------------------------------------------
 # Skill tools
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool
 def list_skills() -> str:
@@ -111,6 +118,7 @@ def load_skill(name: str) -> str:
 # Backtest tool
 # ---------------------------------------------------------------------------
 
+
 @mcp.tool
 def backtest(run_dir: str) -> str:
     """Run a vectorized backtest using config.json and code/signal_engine.py.
@@ -133,12 +141,14 @@ def backtest(run_dir: str) -> str:
         run_dir: Path to the run directory containing config.json and code/.
     """
     from src.tools.backtest_tool import run_backtest
+
     return run_backtest(run_dir)
 
 
 # ---------------------------------------------------------------------------
 # Factor analysis tool
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool
 def factor_analysis(
@@ -165,16 +175,24 @@ def factor_analysis(
         bottom_n: Number of bottom-ranked stocks per period.
     """
     registry = _get_registry()
-    return registry.execute("factor_analysis", {
-        "codes": codes, "factor_name": factor_name,
-        "start_date": start_date, "end_date": end_date,
-        "source": source, "top_n": top_n, "bottom_n": bottom_n,
-    })
+    return registry.execute(
+        "factor_analysis",
+        {
+            "codes": codes,
+            "factor_name": factor_name,
+            "start_date": start_date,
+            "end_date": end_date,
+            "source": source,
+            "top_n": top_n,
+            "bottom_n": bottom_n,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
 # Options pricing tool
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool
 def analyze_options(
@@ -196,16 +214,23 @@ def analyze_options(
         option_type: "call" or "put".
     """
     registry = _get_registry()
-    return registry.execute("options_pricing", {
-        "spot": spot, "strike": strike, "expiry_days": expiry_days,
-        "risk_free_rate": risk_free_rate, "volatility": volatility,
-        "option_type": option_type,
-    })
+    return registry.execute(
+        "options_pricing",
+        {
+            "spot": spot,
+            "strike": strike,
+            "expiry_days": expiry_days,
+            "risk_free_rate": risk_free_rate,
+            "volatility": volatility,
+            "option_type": option_type,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
 # Pattern recognition tool
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool
 def pattern_recognition(run_dir: str) -> str:
@@ -226,6 +251,7 @@ def pattern_recognition(run_dir: str) -> str:
 # Web & document reading tools
 # ---------------------------------------------------------------------------
 
+
 @mcp.tool
 def read_url(url: str) -> str:
     """Fetch a web page and convert it to clean Markdown text.
@@ -237,6 +263,7 @@ def read_url(url: str) -> str:
         url: Target URL to read.
     """
     from src.tools.web_reader_tool import read_url as _read_url
+
     return _read_url(url)
 
 
@@ -258,6 +285,7 @@ def read_document(file_path: str) -> str:
 # Web search tool
 # ---------------------------------------------------------------------------
 
+
 @mcp.tool
 def web_search(query: str, max_results: int = 5) -> str:
     """Search the web via DuckDuckGo and return top results.
@@ -270,14 +298,19 @@ def web_search(query: str, max_results: int = 5) -> str:
         max_results: Maximum results to return (default 5, max 10).
     """
     registry = _get_registry()
-    return registry.execute("web_search", {
-        "query": query, "max_results": min(max_results, 10),
-    })
+    return registry.execute(
+        "web_search",
+        {
+            "query": query,
+            "max_results": min(max_results, 10),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
 # File I/O tools (sandboxed to workspace)
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool
 def write_file(path: str, content: str) -> str:
@@ -307,6 +340,7 @@ def read_file(path: str) -> str:
 # Swarm team tool
 # ---------------------------------------------------------------------------
 
+
 @mcp.tool
 def list_swarm_presets() -> str:
     """List available swarm multi-agent team presets.
@@ -316,6 +350,7 @@ def list_swarm_presets() -> str:
     Returns preset names, descriptions, agent counts, and required variables.
     """
     from src.swarm.presets import list_presets
+
     presets = list_presets()
     return json.dumps(presets, ensure_ascii=False, indent=2)
 
@@ -361,15 +396,19 @@ def run_swarm(preset_name: str, variables: dict[str, str]) -> str:
                 {"id": t.id, "agent_id": t.agent_id, "status": t.status.value, "summary": t.summary}
                 for t in current.tasks
             ]
-            return json.dumps({
-                "status": current.status.value,
-                "preset": preset_name,
-                "run_id": current.id,
-                "final_report": current.final_report,
-                "tasks": tasks,
-                "total_input_tokens": current.total_input_tokens,
-                "total_output_tokens": current.total_output_tokens,
-            }, ensure_ascii=False, indent=2)
+            return json.dumps(
+                {
+                    "status": current.status.value,
+                    "preset": preset_name,
+                    "run_id": current.id,
+                    "final_report": current.final_report,
+                    "tasks": tasks,
+                    "total_input_tokens": current.total_input_tokens,
+                    "total_output_tokens": current.total_output_tokens,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
 
     return json.dumps({"status": "error", "error": "Swarm timed out after 30 minutes"}, ensure_ascii=False)
 
@@ -377,6 +416,8 @@ def run_swarm(preset_name: str, variables: dict[str, str]) -> str:
 # ---------------------------------------------------------------------------
 # Market data tool
 # ---------------------------------------------------------------------------
+
+DEFAULT_MAX_ROWS = 250
 
 _SOURCE_PATTERNS = [
     (re.compile(r"^\d{6}\.(SZ|SH|BJ)$", re.I), "tushare"),
@@ -397,7 +438,38 @@ def _detect_source(code: str) -> str:
 def _get_loader(source: str):
     """Get loader class via registry with fallback support."""
     from backtest.loaders.registry import get_loader_cls_with_fallback
+
     return get_loader_cls_with_fallback(source)
+
+
+def _cap_rows(records: list, max_rows: int) -> list | dict[str, object]:
+    """Bound a per-symbol row list to keep the MCP payload within budget.
+
+    max_rows==0 disables the cap (full list, unchanged shape). A negative
+    max_rows is invalid and enforces the default cap (never unbounded).
+    Otherwise an oversized symbol is *evenly strided* — every step-th bar,
+    with the last bar pinned — so the returned series spans the full range
+    (no head+tail gap, no synthetic ``_gap`` sentinel). Symbols within the
+    cap are returned unchanged (plain list) — small queries are
+    byte-identical.
+    """
+    n = len(records)
+    if max_rows < 0:
+        max_rows = DEFAULT_MAX_ROWS  # negative invalid -> enforce cap, never unbounded
+    if max_rows == 0 or n <= max_rows:
+        return records
+    step = math.ceil(n / max_rows)
+    sampled = records[::step]
+    if sampled[-1] is not records[-1]:
+        sampled = sampled + [records[-1]]
+    return {
+        "rows": n,
+        "returned": len(sampled),
+        "truncated": True,
+        "policy": f"every-{step}th-row (even stride; last bar pinned)",
+        "hint": "narrow the date range, coarsen interval, or set max_rows=0 for all rows",
+        "data": sampled,
+    }
 
 
 @mcp.tool
@@ -407,6 +479,7 @@ def get_market_data(
     end_date: str,
     source: str = "auto",
     interval: str = "1D",
+    max_rows: int = DEFAULT_MAX_ROWS,
 ) -> str:
     """Fetch OHLCV market data for stocks, crypto, or mixed symbols.
 
@@ -424,6 +497,11 @@ def get_market_data(
         end_date: End date (YYYY-MM-DD).
         source: Data source ("auto", "yfinance", "okx", "tushare", "akshare", "ccxt").
         interval: Bar size (1m/5m/15m/30m/1H/4H/1D, default "1D").
+        max_rows: Per-symbol row cap (default 250) so the response stays
+            within the MCP token budget. A symbol exceeding it returns an
+            even-stride downsample (every step-th bar, last bar pinned)
+            plus truncation metadata. Set max_rows=0 for all rows
+            (unbounded, legacy behavior).
     """
     results = {}
 
@@ -438,7 +516,14 @@ def get_market_data(
     for src, src_codes in groups.items():
         loader_cls = _get_loader(src)
         loader = loader_cls()
-        data_map = loader.fetch(src_codes, start_date, end_date, interval=interval)
+        try:
+            data_map = loader.fetch(src_codes, start_date, end_date, interval=interval)
+        except Exception:
+            # A loader blow-up for one group must not lose already-resolved
+            # symbols or surface as an opaque MCP error; those codes fall
+            # through to _unresolved below (P05).
+            logger.exception("market-data loader %r failed for %s; codes fall through to _unresolved", src, src_codes)
+            data_map = {}
         for symbol, df in data_map.items():
             records = df.reset_index().to_dict(orient="records")
             for r in records:
@@ -447,7 +532,16 @@ def get_market_data(
                         r[k] = v.isoformat()
                     elif hasattr(v, "item"):
                         r[k] = v.item()
-            results[symbol] = records
+            results[symbol] = _cap_rows(records, max_rows)
+
+    # P05: a typo / wrong-suffix / delisted / no-data symbol used to vanish
+    # silently (the dict only held winners), indistinguishable from "no data".
+    # Surface every requested code that produced nothing under a reserved key.
+    # Additive: omitted entirely when all codes resolved, so the happy-path
+    # payload is byte-identical to before.
+    unresolved = [c for c in codes if c not in results]
+    if unresolved:
+        results["_unresolved"] = unresolved
 
     return json.dumps(results, ensure_ascii=False, indent=2)
 
@@ -456,10 +550,12 @@ def get_market_data(
 # Swarm status & history tools
 # ---------------------------------------------------------------------------
 
+
 def _get_swarm_store():
     swarm_dir = AGENT_DIR / ".swarm" / "runs"
     swarm_dir.mkdir(parents=True, exist_ok=True)
     from src.swarm.store import SwarmStore
+
     return SwarmStore(base_dir=swarm_dir)
 
 
@@ -532,20 +628,23 @@ def list_runs(limit: int = 20) -> str:
     runs = store.list_runs(limit=limit)
     items = []
     for run in runs:
-        items.append({
-            "run_id": run.id,
-            "preset": run.preset_name,
-            "status": run.status.value,
-            "created_at": run.created_at,
-            "total_input_tokens": run.total_input_tokens,
-            "total_output_tokens": run.total_output_tokens,
-        })
+        items.append(
+            {
+                "run_id": run.id,
+                "preset": run.preset_name,
+                "status": run.status.value,
+                "created_at": run.created_at,
+                "total_input_tokens": run.total_input_tokens,
+                "total_output_tokens": run.total_output_tokens,
+            }
+        )
     return json.dumps(items, ensure_ascii=False, indent=2)
 
 
 # ---------------------------------------------------------------------------
 # Trade journal tool
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool
 def analyze_trade_journal(
@@ -570,16 +669,20 @@ def analyze_trade_journal(
                      "symbol=600519.SH", "market=china_a").
     """
     registry = _get_registry()
-    return registry.execute("analyze_trade_journal", {
-        "file_path": file_path,
-        "analysis_type": analysis_type,
-        "filter_expr": filter_expr,
-    })
+    return registry.execute(
+        "analyze_trade_journal",
+        {
+            "file_path": file_path,
+            "analysis_type": analysis_type,
+            "filter_expr": filter_expr,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
 # Shadow Account tools (4)
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool
 def extract_shadow_strategy(
@@ -600,11 +703,14 @@ def extract_shadow_strategy(
         max_rules: Maximum rules to return (typically 3-5).
     """
     registry = _get_registry()
-    return registry.execute("extract_shadow_strategy", {
-        "journal_path": journal_path,
-        "min_support": min_support,
-        "max_rules": max_rules,
-    })
+    return registry.execute(
+        "extract_shadow_strategy",
+        {
+            "journal_path": journal_path,
+            "min_support": min_support,
+            "max_rules": max_rules,
+        },
+    )
 
 
 @mcp.tool
@@ -697,16 +803,15 @@ def scan_shadow_signals(
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main():
     """Entry point for `vibe-trading-mcp` CLI command."""
     global _include_shell_tools, _registry
     import argparse
 
     parser = argparse.ArgumentParser(description="Vibe-Trading MCP Server")
-    parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio",
-                        help="MCP transport (default: stdio)")
-    parser.add_argument("--port", type=int, default=8900,
-                        help="SSE port (only used with --transport sse)")
+    parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio", help="MCP transport (default: stdio)")
+    parser.add_argument("--port", type=int, default=8900, help="SSE port (only used with --transport sse)")
     args = parser.parse_args()
     _include_shell_tools = True if args.transport == "stdio" else _env_shell_tools_enabled()
     _registry = None
