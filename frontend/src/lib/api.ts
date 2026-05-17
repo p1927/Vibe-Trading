@@ -105,6 +105,26 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(settings),
     }),
+
+  // Alpha Zoo API
+  listAlphas: (params: AlphaListParams = {}) => {
+    const q = new URLSearchParams();
+    if (params.zoo) q.set("zoo", params.zoo);
+    if (params.theme) q.set("theme", params.theme);
+    if (params.universe) q.set("universe", params.universe);
+    if (params.limit !== undefined) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    return request<AlphaListResponse>(`/alpha/list${qs ? `?${qs}` : ""}`);
+  },
+  getAlpha: (alphaId: string) =>
+    request<AlphaDetailResponse>(`/alpha/${encodeURIComponent(alphaId)}`),
+  createAlphaBench: (body: AlphaBenchRequest) =>
+    request<{ status: string; job_id: string }>("/alpha/bench", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  alphaBenchStreamUrl: (jobId: string) =>
+    withAuthQuery(`${BASE}/alpha/bench/${encodeURIComponent(jobId)}/stream`),
 };
 
 // --- Swarm types ---
@@ -347,6 +367,73 @@ export interface SessionItem {
   created_at?: string;
   updated_at?: string;
   last_attempt_id?: string;
+}
+
+// --- Alpha Zoo types ---
+
+export interface AlphaListParams {
+  zoo?: string;
+  theme?: string;
+  universe?: string;
+  limit?: number;
+}
+
+export interface AlphaSummary {
+  id: string;
+  zoo: string;
+  theme: string[];
+  universe: string[];
+  nickname?: string;
+  decay_horizon?: number | null;
+  min_warmup_bars?: number | null;
+  requires_sector?: boolean;
+}
+
+export interface AlphaListResponse {
+  status: string;
+  alphas: AlphaSummary[];
+  total: number;
+  returned: number;
+  truncated: boolean;
+}
+
+export interface AlphaDetail {
+  id: string;
+  zoo: string;
+  module_path?: string;
+  meta: Record<string, unknown>;
+}
+
+export interface AlphaDetailResponse {
+  status: string;
+  alpha: AlphaDetail;
+  source_code: string;
+}
+
+export interface AlphaBenchRequest {
+  zoo: string;
+  universe: string;
+  period: string;
+  top?: number;
+}
+
+export interface AlphaBenchTopRow {
+  id: string;
+  ic_mean: number;
+  ir: number;
+  theme: string[];
+  formula_latex: string;
+  category: "alive" | "reversed" | "dead";
+}
+
+export interface AlphaBenchResult {
+  alive: number;
+  reversed: number;
+  dead: number;
+  skipped?: number;
+  top5_by_ir: AlphaBenchTopRow[];
+  dead_examples: AlphaBenchTopRow[];
+  by_theme: Record<string, { alive: number; reversed: number; dead: number }>;
 }
 
 export interface MessageItem {

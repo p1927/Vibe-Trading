@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useSearchParams } from "react-router-dom";
-import { BarChart3, Bot, Moon, Sun, Plus, Trash2, Pencil, MessageSquare, ChevronsLeft, ChevronsRight, Settings } from "lucide-react";
+import { BarChart3, Bot, Moon, Sun, Plus, Trash2, Pencil, MessageSquare, ChevronsLeft, ChevronsRight, Settings, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 import { useDarkMode } from "@/hooks/useDarkMode";
@@ -8,11 +8,16 @@ import { api, type SessionItem } from "@/lib/api";
 import { useAgentStore } from "@/stores/agent";
 import { ConnectionBanner } from "@/components/layout/ConnectionBanner";
 
+// Bump on each release; one place keeps the footer in sync with package.json.
+const APP_VERSION = "v0.1.8";
+
+// NAV entries: `key` looks up label in i18n; `label` overrides (used for "Alpha Zoo").
 const NAV = [
-  { to: "/", icon: BarChart3, key: "home" as const },
-  { to: "/agent", icon: Bot, key: "agent" as const },
-  { to: "/settings", icon: Settings, key: "settings" as const },
-  { to: "/correlation", icon: BarChart3, key: "correlation" as const },
+  { to: "/", icon: BarChart3, key: "home" as const, label: null },
+  { to: "/agent", icon: Bot, key: "agent" as const, label: null },
+  { to: "/alpha-zoo", icon: Layers, key: "alphaZoo" as const, label: "Alpha Zoo" },
+  { to: "/settings", icon: Settings, key: "settings" as const, label: null },
+  { to: "/correlation", icon: BarChart3, key: "correlation" as const, label: null },
 ];
 
 export function Layout() {
@@ -82,23 +87,26 @@ export function Layout() {
 
         {/* Nav */}
         <nav className={cn("space-y-0.5", collapsed ? "p-1" : "p-2")}>
-          {NAV.map(({ to, icon: Icon, key }) => (
-            <Link
-              key={to}
-              to={to}
-              className={cn(
-                "flex items-center rounded-md text-sm transition-colors",
-                collapsed ? "justify-center p-2" : "gap-3 px-3 py-2",
-                (to === "/" ? pathname === "/" : pathname.startsWith(to))
-                  ? "bg-primary/10 text-primary font-medium"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              )}
-              title={collapsed ? t[key] : undefined}
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              {!collapsed && t[key]}
-            </Link>
-          ))}
+          {NAV.map(({ to, icon: Icon, key, label }) => {
+            const text = label ?? t[key];
+            return (
+              <Link
+                key={to}
+                to={to}
+                className={cn(
+                  "flex items-center rounded-md text-sm transition-colors",
+                  collapsed ? "justify-center p-2" : "gap-3 px-3 py-2",
+                  (to === "/" ? pathname === "/" : pathname.startsWith(to))
+                    ? "bg-primary/10 text-primary font-medium"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                )}
+                title={collapsed ? text : undefined}
+              >
+                <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                {!collapsed && text}
+              </Link>
+            );
+          })}
         </nav>
 
         {/* Sessions — hidden when collapsed */}
@@ -227,7 +235,7 @@ export function Layout() {
                   </button>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground/60">v0.1.7</p>
+              <p className="text-xs text-muted-foreground/60">{APP_VERSION}</p>
             </>
           )}
         </div>

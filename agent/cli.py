@@ -2339,6 +2339,10 @@ def _build_parser() -> argparse.ArgumentParser:
     memory_forget_parser.add_argument("name", help="Memory title or filename stem")
     memory_forget_parser.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompt")
 
+    # Alpha Zoo subcommands (registered via cli_handlers.add_subparser)
+    from src.factors.cli_handlers import add_subparser as _add_alpha_subparser
+    _add_alpha_subparser(subparsers)
+
     return parser
 
 
@@ -2814,6 +2818,9 @@ def main(argv: list[str] | None = None) -> int:
         return _coerce_exit_code(cmd_show(args.show))
     if args.command == "chat":
         return _coerce_exit_code(cmd_interactive(args.chat_max_iter))
+    if args.command == "alpha":
+        from src.factors.cli_handlers import dispatch as _alpha_dispatch
+        return _coerce_exit_code(_alpha_dispatch(args))
     if args.command == "memory":
         if args.memory_command == "list":
             return _coerce_exit_code(cmd_memory_list(args.memory_type))

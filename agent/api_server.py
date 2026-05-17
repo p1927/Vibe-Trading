@@ -1718,6 +1718,14 @@ async def cancel_swarm_run(run_id: str):
 
 
 # ============================================================================
+# Alpha Zoo routes (Web UI) — defined in src/api/alpha_routes.py
+# ============================================================================
+
+from src.api.alpha_routes import register_alpha_routes  # noqa: E402
+register_alpha_routes(app)
+
+
+# ============================================================================
 # Main Entry Point
 # ============================================================================
 

@@ -1,7 +1,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 
 const messages = {
-  home: "Home", agent: "Agent", runs: "Runs", settings: "Settings",
+  home: "Home", agent: "Agent", runs: "Runs", settings: "Settings", alphaZoo: "Alpha Zoo",
   settingsDesc: "Configure model credentials and market data source tokens for this local project.",
   localApiAccess: "Local API access",
   localApiAccessDesc: "For remote or private Web UI deployments, enter the server API key once in this browser. Localhost use can stay blank.",
