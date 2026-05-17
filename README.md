@@ -46,13 +46,14 @@
 
 ## 📰 News
 
+- **2026-05-17** 🧬 **Alpha Zoo v1 (0.1.8)**: 452 pre-built quant alphas across 4 zoos — `qlib158` (Microsoft Qlib, Apache-2 attribution), `alpha101` (Kakushadze 101 Formulaic Alphas, paper rewrite from arXiv:1601.00991), `gtja191` (Guotai Junan 2014 short-horizon factor report), and `academic` (Fama-French 5 + Carhart price-based proxies). One-line CLI to bench any zoo on your universe: `vibe-trading alpha bench --zoo gtja191 --universe csi300 --period 2018-2025`. Ships with AST purity gate, lookahead-guard test, `pytest-socket` network kill-switch, per-zoo LICENSE.md, and a Developer Certificate of Origin (DCO) workflow for community PRs. Auto-rendered Alpha Library at [vibetrading.wiki/alpha-library/](https://vibetrading.wiki/alpha-library/) + research-lab post [Which of the 191 GTJA alphas still work in 2026?](https://vibetrading.wiki/research-lab/posts/alpha-191-in-2026.html).
 - **2026-05-16** 🧪 **Research spine update**: Added a backend Hypothesis Registry with `create_hypothesis`, `update_hypothesis`, `link_backtest`, and `search_hypotheses`; external-content readers now attach warning-only `security_warnings`; and Shadow Account scanning now uses deterministic OHLCV feature evaluation instead of the old calendar-phase stub.
 - **2026-05-15** 🪪 The run detail page now surfaces the Trust Layer run card alongside metrics and artifacts, completing the UI side of the `run_card.json` work landed on 2026-05-12. `PersistentMemory.add()` was also hardened on length, empty/whitespace-only names, and C0/C1 control bytes from the #108/#109/#110 triage ([#112](https://github.com/HKUDS/Vibe-Trading/pull/112), thanks @Teerapat-Vatpitak).
-- **2026-05-14** 🌐 the public wiki is now live at [vibetrading.wiki](https://vibetrading.wiki/) with docs, tutorials, Research Lab, and Alpha Library sections deployed through Cloudflare Pages. Persistent memory is also inspectable from the CLI via `vibe-trading memory list/show/search/forget` ([#102](https://github.com/HKUDS/Vibe-Trading/pull/102), thanks @Teerapat-Vatpitak), and memory tokenization/slugs now support Thai, Arabic, Hebrew, and Cyrillic text ([#104](https://github.com/HKUDS/Vibe-Trading/pull/104)).
 
 <details>
 <summary>Earlier news</summary>
 
+- **2026-05-14** 🌐 the public wiki is now live at [vibetrading.wiki](https://vibetrading.wiki/) with docs, tutorials, Research Lab, and Alpha Library sections deployed through Cloudflare Pages. Persistent memory is also inspectable from the CLI via `vibe-trading memory list/show/search/forget` ([#102](https://github.com/HKUDS/Vibe-Trading/pull/102), thanks @Teerapat-Vatpitak), and memory tokenization/slugs now support Thai, Arabic, Hebrew, and Cyrillic text ([#104](https://github.com/HKUDS/Vibe-Trading/pull/104)).
 - **2026-05-13** 🧭 Swarm runs now ground workers with fetched market data and cleaner persisted reports ([#93](https://github.com/HKUDS/Vibe-Trading/pull/93), [#84](https://github.com/HKUDS/Vibe-Trading/pull/84)).
 - **2026-05-12** 🧾 Backtests now emit `run_card.json` and `run_card.md` alongside artifacts for reproducible research runs.
 - **2026-05-11** 🧭 **Memory slugs, swarm accounting, and CLI preflight**: Persistent memory now preserves CJK characters when generating file slugs, preventing silent filename collisions for Chinese/Japanese/Korean notes ([#95](https://github.com/HKUDS/Vibe-Trading/pull/95), thanks @voidborne-d). Swarm run totals now prefer provider-reported token usage with the existing estimate fallback ([#94](https://github.com/HKUDS/Vibe-Trading/pull/94), thanks @Teerapat-Vatpitak), and the CLI run UI gained a startup preflight check for common environment issues ([#96](https://github.com/HKUDS/Vibe-Trading/pull/96), thanks @ykykj).
@@ -154,6 +155,7 @@ It is designed for research, simulation, and backtesting. It does not execute li
 | **Improve repeated research** | Persistent memory and editable skills turn useful routines into reusable workflows. |
 | **Run analyst teams** | Multi-agent research reviews for investment, quant, crypto, macro, and risk workflows. |
 | **Ship usable artifacts** | Reports, TradingView Pine Script, TDX, MetaTrader 5, MCP tools, and later research sessions. |
+| **Bench a pre-built alpha zoo** | One-line IC + alive/reversed/dead categorisation across 452 alphas (Qlib 158 + Kakushadze 101 + GTJA 191 + FF5 + Carhart) on your universe. |
 
 ---
 
@@ -161,7 +163,12 @@ It is designed for research, simulation, and backtesting. It does not execute li
 
 ```bash
 pip install vibe-trading-ai
+
+# Natural-language research
 vibe-trading run -p "Backtest a BTC-USDT 20/50 moving-average strategy for 2024, summarize return and drawdown, then export the report"
+
+# Bench a pre-built alpha zoo (one line)
+vibe-trading alpha bench --zoo gtja191 --universe csi300 --period 2018-2025 --top 20
 ```
 
 ```bash
@@ -211,9 +218,9 @@ Most runs follow the same evidence path: route the request, load the right marke
 Detailed inventories are folded below to keep the main README scannable. Open them when you want to inspect the available building blocks.
 
 <details>
-<summary><b>Finance Skill Library</b> <sub>74 skills across 8 categories</sub></summary>
+<summary><b>Finance Skill Library</b> <sub>75 skills across 8 categories</sub></summary>
 
-- 📊 74 specialized finance skills organized into 8 categories
+- 📊 75 specialized finance skills organized into 8 categories
 - 🌐 Complete coverage from traditional markets to crypto & DeFi
 - 🔬 Comprehensive capabilities spanning data sourcing to quantitative research
 
@@ -225,7 +232,7 @@ Detailed inventories are folded below to keep the main README scannable. Open th
 | Asset Class | 9 | `options-strategy`, `options-advanced`, `convertible-bond`, `etf-analysis`, `asset-allocation`, `sector-rotation` |
 | Crypto | 7 | `perp-funding-basis`, `liquidation-heatmap`, `stablecoin-flow`, `defi-yield`, `onchain-analysis` |
 | Flow | 7 | `hk-connect-flow`, `us-etf-flow`, `edgar-sec-filings`, `financial-statement`, `adr-hshare` |
-| Tool | 10 | `backtest-diagnose`, `report-generate`, `pine-script`, `doc-reader`, `web-reader`, `vnpy-export` |
+| Tool | 11 | `backtest-diagnose`, `report-generate`, `pine-script`, `doc-reader`, `web-reader`, `vnpy-export`, `alpha-zoo` |
 | Risk Analysis | 1 | `ashare-pre-st-filter` |
 
 </details>
@@ -252,6 +259,26 @@ Detailed inventories are folded below to keep the main README scannable. Open th
 <sub>Plus 20+ additional specialist presets — run vibe-trading --swarm-presets to explore all.
 
 </sub>
+
+</details>
+
+<details>
+<summary><b>Alpha Zoo</b> <sub>452 pre-built quant alphas across 4 zoos</sub></summary>
+
+- 🧬 452 cross-sectional alphas, lookahead-banned at the operator layer
+- 📈 IC + IR + alive/reversed/dead categorisation in one CLI command
+- 🔬 AST purity gate + 300-row lookahead sentinel test + `pytest-socket` network kill-switch
+- 📦 Apache-2 attribution for Qlib; per-zoo `LICENSE.md` declaring formulas as mathematical content
+- 🤝 Developer Certificate of Origin (DCO) sign-off workflow for community PRs
+
+| Zoo | Count | Source | License |
+|-----|-------|--------|---------|
+| **qlib158** | 154 | Microsoft Qlib `Alpha158` (Apache-2.0, commit-pinned) | Apache-2.0 |
+| **alpha101** | 101 | Kakushadze (2015), "101 Formulaic Alphas", arXiv:1601.00991 | Formulas are mathematical content |
+| **gtja191** | 191 | Guotai Junan (2014), "191 Short-period Trading Alpha Factors" | Formulas are mathematical content |
+| **academic** | 6 | Fama-French 5 + Carhart momentum (price-based proxies) | Public academic literature |
+
+Run `vibe-trading alpha list` to browse, `vibe-trading alpha show <id>` for formulas + source, `vibe-trading alpha bench --zoo X --universe Y --period Z` to score a whole zoo.
 
 </details>
 
@@ -436,6 +463,7 @@ The default `agent/.env.example` ships with DeepSeek official API + `deepseek-v4
 vibe-trading               # interactive TUI
 vibe-trading run -p "..."  # single run
 vibe-trading serve         # API server
+vibe-trading alpha list    # browse 452 pre-built alphas; show / bench / compare / export-manifest sub-commands available
 ```
 
 <details>
@@ -444,7 +472,7 @@ vibe-trading serve         # API server
 | Command | Description |
 |---------|-------------|
 | `/help` | Show all commands |
-| `/skills` | List all 74 finance skills |
+| `/skills` | List all 75 finance skills |
 | `/swarm` | List 29 swarm team presets |
 | `/swarm run <preset> [vars_json]` | Run a swarm team with live streaming |
 | `/swarm list` | Swarm run history |
@@ -487,6 +515,12 @@ vibe-trading --continue <run_id> "refine the strategy"
 vibe-trading --upload report.pdf
 ```
 
+```bash
+vibe-trading alpha list --zoo gtja191 --limit 10
+vibe-trading alpha show gtja191_171
+vibe-trading alpha bench --zoo gtja191 --universe csi300 --period 2018-2025 --top 20
+```
+
 </details>
 
 ---
@@ -507,6 +541,25 @@ vibe-trading run -p "Backtest a momentum + value + quality multi-factor strategy
 
 # After backtesting, export to TradingView / TDX / MetaTrader 5
 vibe-trading --pine <run_id>
+```
+
+**Bench a pre-built alpha zoo** (one line):
+```bash
+vibe-trading alpha bench --zoo gtja191 --universe csi300 --period 2018-2025 --top 20
+```
+
+**Browse the catalogue** and inspect a single alpha:
+```bash
+vibe-trading alpha list --zoo gtja191 --theme reversal --limit 10
+vibe-trading alpha show gtja191_171
+```
+
+**Compose a multi-factor signal** from the zoo (Python):
+```python
+from src.skills.multi_factor.zoo_signal_engine import ZooSignalEngine
+engine = ZooSignalEngine.from_zoo(["gtja191_171", "gtja191_111", "gtja191_163"])
+panel = ...  # your wide OHLCV panel
+signal = engine.compute_signal(panel)
 ```
 
 ### Market Research
@@ -579,6 +632,10 @@ vibe-trading serve --port 8899
 | `GET` | `/swarm/presets` | List swarm presets |
 | `POST` | `/swarm/runs` | Start swarm run |
 | `GET` | `/swarm/runs/{id}/events` | Swarm SSE stream |
+| `GET` | `/alpha/list` | List alphas (filter by zoo/theme/universe) |
+| `GET` | `/alpha/{alpha_id}` | Alpha metadata + source code |
+| `POST` | `/alpha/bench` | Start a bench job (returns `job_id`) |
+| `GET` | `/alpha/bench/{job_id}/stream` | SSE progress stream |
 | `GET` | `/settings/llm` | Read Web UI LLM settings |
 | `PUT` | `/settings/llm` | Update local LLM settings |
 | `GET` | `/settings/data-sources` | Read local data source settings |
@@ -664,7 +721,7 @@ Browse on ClawHub: [clawhub.ai/skills/vibe-trading](https://clawhub.ai/skills/vi
 <details>
 <summary><b>OpenSpace — self-evolving skills</b></summary>
 
-All 74 finance skills are published on [open-space.cloud](https://open-space.cloud) and evolve autonomously through OpenSpace's self-evolution engine.
+All 75 finance skills are published on [open-space.cloud](https://open-space.cloud) and evolve autonomously through OpenSpace's self-evolution engine.
 
 To use with OpenSpace, add both MCP servers to your agent config:
 
@@ -686,7 +743,7 @@ To use with OpenSpace, add both MCP servers to your agent config:
 }
 ```
 
-OpenSpace will auto-discover all 74 skills, enabling auto-fix, auto-improve, and community sharing. Search for Vibe-Trading skills via `search_skills("finance backtest")` in any OpenSpace-connected agent.
+OpenSpace will auto-discover all 75 skills, enabling auto-fix, auto-improve, and community sharing. Search for Vibe-Trading skills via `search_skills("finance backtest")` in any OpenSpace-connected agent.
 
 </details>
 
@@ -789,7 +846,7 @@ Vibe-Trading/
 │   │   ├── agent/                  # ReAct agent core
 │   │   │   ├── loop.py             #   5-layer compression + read/write tool batching
 │   │   │   ├── context.py          #   system prompt + auto-recall from persistent memory
-│   │   │   ├── skills.py           #   skill loader (74 bundled + user-created via CRUD)
+│   │   │   ├── skills.py           #   skill loader (75 bundled + user-created via CRUD)
 │   │   │   ├── tools.py            #   tool base class + registry
 │   │   │   ├── memory.py           #   lightweight workspace state per run
 │   │   │   ├── frontmatter.py      #   shared YAML frontmatter parser
@@ -798,16 +855,25 @@ Vibe-Trading/
 │   │   ├── memory/                 # Cross-session persistent memory
 │   │   │   └── persistent.py       #   file-based memory (~/.vibe-trading/memory/)
 │   │   │
-│   │   ├── tools/                  # 29 auto-discovered agent tools
+│   │   ├── tools/                  # 31 auto-discovered agent tools
 │   │   │   ├── backtest_tool.py    #   run backtests
 │   │   │   ├── remember_tool.py    #   cross-session memory (save/recall/forget)
 │   │   │   ├── skill_writer_tool.py #  skill CRUD (save/patch/delete/file)
 │   │   │   ├── session_search_tool.py # FTS5 cross-session search
 │   │   │   ├── swarm_tool.py       #   launch swarm teams
 │   │   │   ├── web_search_tool.py  #   DuckDuckGo web search
-│   │   │   └── ...                 #   bash, file I/O, factor analysis, options, etc.
+│   │   │   └── ...                 #   bash, file I/O, factor analysis, options, alpha browser + bench, etc.
 │   │   │
-│   │   ├── skills/                 # 74 finance skills in 8 categories (SKILL.md each)
+│   │   ├── factors/                # Alpha Zoo — 452 alphas across 4 zoos
+│   │   │   ├── base.py             #   19 operators (rank/scale/ts_*/delta/decay_linear/safe_div/vwap)
+│   │   │   ├── registry.py         #   AST-only metadata load + lazy compute + sanity gates
+│   │   │   ├── bench_runner.py     #   IC + alive/reversed/dead categorisation
+│   │   │   └── zoo/                #   qlib158 (154) + alpha101 (101) + gtja191 (191) + academic (6)
+│   │   │
+│   │   ├── api/                    # FastAPI route modules
+│   │   │   └── alpha_routes.py     #   /alpha/list, /alpha/{id}, /alpha/bench, SSE stream
+│   │   │
+│   │   ├── skills/                 # 75 finance skills in 8 categories (SKILL.md each)
 │   │   ├── swarm/                  # Swarm DAG execution engine
 │   │   │   └── presets/            #   29 swarm preset YAML definitions
 │   │   ├── session/                # Multi-turn chat + FTS5 session search
@@ -822,13 +888,15 @@ Vibe-Trading/
 │
 ├── frontend/                       # Web UI (React 19 + Vite + TypeScript)
 │   └── src/
-│       ├── pages/                  #   Home, Agent, RunDetail, Compare
+│       ├── pages/                  #   Home, Agent, AlphaZoo, RunDetail, Compare, Correlation, Settings
 │       ├── components/             #   chat, charts, layout
 │       └── stores/                 #   Zustand state management
 │
 ├── Dockerfile                      # Multi-stage build
 ├── docker-compose.yml              # One-command deploy
 ├── pyproject.toml                  # Package config + CLI entrypoint
+├── tools/                          # Repo-level CI helpers
+│   └── ci_grep_gates.sh            # rejects yaml.load / trademark / per-stock-data leaks
 └── LICENSE                         # MIT
 ```
 
@@ -875,7 +943,7 @@ Vibe-Trading is part of the **[HKUDS](https://github.com/HKUDS)** agent ecosyste
 | **Data Bridge** | Bring-your-own data: local CSV/Parquet/SQL connectors with schema mapping | Planned |
 | **Options Lab** | Vol surface, Greeks dashboard, payoff/scenario explorer | Planned |
 | **Portfolio Studio** | Risk x-ray, constraints, turnover-aware optimizer, rebalance notes | Planned |
-| **Alpha Zoo** | Alpha101 / Alpha158 / Alpha191 factor libraries with screening + IC tests | Planned |
+| **Alpha Zoo** | 452 pre-built alphas (Qlib 158 + Kakushadze 101 + GTJA 191 + FF5 + Carhart) with one-line bench, agent integration, and Web UI | **Shipped 0.1.8** |
 | **Research Delivery** | Scheduled briefs to Slack / Telegram / email-style channels | Planned |
 | **Community** | Shareable skills, presets, and strategy cards | Exploring |
 
