@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, Optional
+from urllib.parse import urlsplit
 
 try:
     from dotenv import load_dotenv
@@ -95,7 +97,59 @@ _ENV_CANDIDATES = [
     Path.cwd() / ".env",
 ]
 
+# Index-aligned with _ENV_CANDIDATES. CWE-209: never log the absolute
+# .env path (it leaks the OS username / home / CWD). The label names
+# which slot won - the entire P08 R1 signal - using compile-time
+# constants only.
+_ENV_LABELS = ("~/.vibe-trading/.env", "<AGENT_DIR>/.env", "<CWD>/.env")
+
+logger = logging.getLogger(__name__)
+
 _dotenv_loaded: bool = False
+
+
+def _redact_env_source(loaded: Path | None) -> str:
+    """Map a resolved `.env` candidate to a stable, leak-free label.
+
+    Returns a symbolic slot label (never the absolute path) so a stale
+    or shadowed `.env` stays diagnosable without exposing the OS
+    username, home, or CWD (CWE-209). A candidate outside the fixed
+    list (e.g. one injected by a test) collapses to a generic
+    placeholder rather than echoing a real path.
+    """
+    if loaded is None:
+        return "none (no .env file found)"
+    for label, candidate in zip(_ENV_LABELS, _ENV_CANDIDATES):
+        if loaded == candidate:
+            return label
+    return "<.env>"
+
+
+def _redact_base_url_for_log(raw: str | None) -> str:
+    """Return a diagnostic-safe base URL label for logs."""
+    if not raw or not raw.strip():
+        return "(unset)"
+
+    try:
+        parsed = urlsplit(raw.strip())
+    except ValueError:
+        return "<base-url>"
+
+    if not parsed.scheme or not parsed.hostname:
+        return "<base-url>"
+
+    host = parsed.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    if port is not None:
+        host = f"{host}:{port}"
+
+    return f"{parsed.scheme}://{host}"
 
 
 def _load_env_file(path: Path) -> None:
@@ -118,11 +172,23 @@ def _ensure_dotenv() -> None:
     global _dotenv_loaded
     if _dotenv_loaded:
         return
+    loaded = None
     for candidate in _ENV_CANDIDATES:
         if candidate.exists():
             _load_env_file(candidate)
+            loaded = candidate
             break
     _dotenv_loaded = True
+    # P08 R1: one-time, behavior-preserving diagnostic so a stale or
+    # shadowed .env is observable instead of costing hours. The path is
+    # redacted to a symbolic slot label and the API key is never logged.
+    logger.info(
+        "dotenv resolved from %s | provider=%s model=%s base=%s",
+        _redact_env_source(loaded),
+        os.getenv("LANGCHAIN_PROVIDER", "(unset)"),
+        os.getenv("LANGCHAIN_MODEL_NAME", "(unset)"),
+        _redact_base_url_for_log(os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")),
+    )
 
 
 def _sync_provider_env() -> None:
