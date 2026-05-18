@@ -3,20 +3,16 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 
 const PROXY_PATHS = [
-  "/run",
   "/runs",
-  "/health",
   "/sessions",
-  "/skills",
   "/swarm/presets",
   "/swarm/runs",
   "/settings/llm",
   "/settings/data-sources",
   "/correlation",
   "/upload",
-  "/api",
-  "/system",
   "/shadow-reports",
+  "/alpha",
 ];
 
 export default defineConfig(({ mode }) => {

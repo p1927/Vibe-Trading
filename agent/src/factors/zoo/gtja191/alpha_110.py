@@ -26,7 +26,6 @@ from src.factors.base import (
     ts_min,
     ts_rank,
     ts_std,
-    vwap,
 )
 
 ALPHA_ID = "gtja191_110"
@@ -57,8 +56,6 @@ def compute(panel):
     c = panel["close"]
     h = panel["high"]
     l = panel["low"]
-    vw = vwap(panel, "equity_cn")
-
     prev_c = c.shift(1)
     num = (h - prev_c).clip(lower=0.0).rolling(20).sum()
     den = (prev_c - l).clip(lower=0.0).rolling(20).sum()

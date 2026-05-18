@@ -26,7 +26,6 @@ from src.factors.base import (
     ts_min,
     ts_rank,
     ts_std,
-    vwap,
 )
 
 ALPHA_ID = "gtja191_107"
@@ -58,7 +57,5 @@ def compute(panel):
     o = panel["open"]
     h = panel["high"]
     l = panel["low"]
-    vw = vwap(panel, "equity_cn")
-
     out = (-1.0 * rank(o - h.shift(1))) * rank(o - c.shift(1)) * rank(o - l.shift(1))
     return out

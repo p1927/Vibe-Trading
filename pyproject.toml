@@ -113,3 +113,9 @@ src = ["agent"]
 [tool.ruff.lint]
 select = ["E", "F", "W"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Alpha zoo files import the full src.factors.base surface verbatim
+# to match research-paper formulas. F401 (unused-import) is noise here;
+# F841 (unused-local-variable) stays active to catch real formula bugs.
+"agent/src/factors/zoo/**/*.py" = ["F401"]

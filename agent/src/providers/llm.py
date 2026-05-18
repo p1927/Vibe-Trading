@@ -1,12 +1,11 @@
-"""LLM factory and JSON extraction helpers."""
+"""LLM factory."""
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 from urllib.parse import urlsplit
 
 try:
@@ -293,42 +292,3 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
     )
 
 
-def _extract_balanced_json(text: str) -> Optional[Dict[str, Any]]:
-    """Extract the outermost JSON object from text using bracket balancing.
-
-    Args:
-        text: Text that may embed a JSON object.
-
-    Returns:
-        Parsed dict, or None on failure.
-    """
-    start = -1
-    depth = 0
-    in_string = False
-    escape = False
-
-    for i, ch in enumerate(text):
-        if escape:
-            escape = False
-            continue
-        if ch == "\\" and in_string:
-            escape = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == "{":
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0 and start >= 0:
-                candidate = text[start : i + 1]
-                try:
-                    return json.loads(candidate)
-                except json.JSONDecodeError:
-                    start = -1
-    return None

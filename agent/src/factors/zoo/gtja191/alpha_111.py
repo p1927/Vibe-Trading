@@ -26,7 +26,6 @@ from src.factors.base import (
     ts_min,
     ts_rank,
     ts_std,
-    vwap,
 )
 
 ALPHA_ID = "gtja191_111"
@@ -61,8 +60,6 @@ def compute(panel):
     h = panel["high"]
     l = panel["low"]
     v = panel["volume"]
-    vw = vwap(panel, "equity_cn")
-
     ratio = safe_div(v * ((c - l) - (h - c)), h - l)
     out = _sma(ratio, 11, 2) - _sma(ratio, 4, 2)
     return out

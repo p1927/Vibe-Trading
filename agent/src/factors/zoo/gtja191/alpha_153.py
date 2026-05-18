@@ -26,7 +26,6 @@ from src.factors.base import (
     ts_min,
     ts_rank,
     ts_std,
-    vwap,
 )
 
 ALPHA_ID = "gtja191_153"
@@ -55,7 +54,5 @@ def compute(panel):
         pd.DataFrame with index = panel["close"].index, columns = panel["close"].columns.
     """
     c = panel["close"]
-    vw = vwap(panel, "equity_cn")
-
     out = (ts_mean(c, 3) + ts_mean(c, 6) + ts_mean(c, 12) + ts_mean(c, 24)) / 4.0
     return out

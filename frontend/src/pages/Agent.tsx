@@ -6,13 +6,12 @@ import { useAgentStore } from "@/stores/agent";
 import { useSSE } from "@/hooks/useSSE";
 import { useI18n } from "@/lib/i18n";
 import { api } from "@/lib/api";
-import type { AgentMessage, ToolCallEntry } from "@/types/agent";
+import type { AgentMessage } from "@/types/agent";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
 import { WelcomeScreen } from "@/components/chat/WelcomeScreen";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ThinkingTimeline } from "@/components/chat/ThinkingTimeline";
 import { ConversationTimeline } from "@/components/chat/ConversationTimeline";
-import { SwarmDashboard, type SwarmAgent, type SwarmDashboardProps } from "@/components/chat/SwarmDashboard";
 
 /* ---------- Message grouping ---------- */
 type MsgGroup =
@@ -55,9 +54,6 @@ export function Agent() {
   const uploadMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [swarmPreset, setSwarmPreset] = useState<{ name: string; title: string } | null>(null);
-  const swarmCancelRef = useRef(false);
-  const [swarmDash, setSwarmDash] = useState<SwarmDashboardProps | null>(null);
-  const swarmDashRef = useRef<SwarmDashboardProps | null>(null);
 
   const messages = useAgentStore(s => s.messages);
   const streamingText = useAgentStore(s => s.streamingText);
@@ -195,7 +191,6 @@ export function Agent() {
         // Build ThinkingTimeline summary from accumulated toolCalls
         const completedTools = s.toolCalls;
         if (completedTools.length > 0) {
-          const totalMs = completedTools.reduce((a, tc) => a + (tc.elapsed_ms || 0), 0);
           for (const tc of completedTools) {
             s.addMessage({ id: tc.id + "_call", type: "tool_call", content: "", tool: tc.tool, args: tc.arguments, status: tc.status || "ok", timestamp: tc.timestamp });
             if (tc.elapsed_ms != null) {
@@ -296,203 +291,6 @@ export function Agent() {
     return () => clearInterval(timer);
   }, [status]);
 
-  const runSwarm = async (presetName: string, presetTitle: string, prompt: string) => {
-    let sid = act().sessionId;
-    if (!sid) {
-      try {
-        const session = await api.createSession(`[Swarm] ${presetTitle}: ${prompt.slice(0, 30)}`);
-        sid = session.session_id;
-        act().setSessionId(sid);
-        setSearchParams({ session: sid }, { replace: true });
-      } catch { /* continue without session */ }
-    }
-
-    act().addMessage({ id: "", type: "user", content: `[${presetTitle}] ${prompt}`, timestamp: Date.now() });
-    act().setStatus("streaming");
-    // Add a placeholder swarm-progress message (rendered as SwarmDashboard)
-    act().addMessage({ id: "swarm-progress", type: "answer", content: "", timestamp: Date.now() });
-    forceScrollToBottom();
-    swarmCancelRef.current = false;
-
-    // Initialize dashboard state
-    const dash: SwarmDashboardProps = {
-      preset: presetTitle,
-      agents: {},
-      agentOrder: [],
-      currentLayer: 0,
-      finished: false,
-      finalStatus: "",
-      startTime: Date.now(),
-      completedSummaries: [],
-      finalReport: "",
-    };
-    swarmDashRef.current = dash;
-    setSwarmDash({ ...dash });
-
-    const ensureAgent = (agentId: string): SwarmAgent => {
-      if (!dash.agents[agentId]) {
-        dash.agents[agentId] = {
-          id: agentId, status: "waiting", tool: "", iters: 0,
-          startedAt: 0, elapsed: 0, lastText: "", summary: "",
-        };
-        dash.agentOrder.push(agentId);
-      }
-      return dash.agents[agentId];
-    };
-
-    const flush = () => { lastEventRef.current = Date.now(); swarmDashRef.current = dash; setSwarmDash({ ...dash }); scrollToBottom(); };
-
-    try {
-      const result = await api.createSwarmRun(presetName, { goal: prompt });
-      const runId = result.id;
-      const sseUrl = api.swarmSseUrl(runId);
-      const evtSource = new EventSource(sseUrl);
-      let sseFinished = false;
-
-      evtSource.addEventListener("layer_started", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          dash.currentLayer = d.data?.layer ?? 0;
-          flush();
-        } catch {}
-      });
-
-      evtSource.addEventListener("task_started", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          const agentId = d.agent_id || "";
-          if (agentId) {
-            const a = ensureAgent(agentId);
-            a.status = "running";
-            a.startedAt = Date.now();
-            flush();
-          }
-        } catch {}
-      });
-
-      evtSource.addEventListener("worker_text", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          const agentId = d.agent_id || "";
-          const content = (d.data?.content || "").trim();
-          if (agentId && content) {
-            const a = ensureAgent(agentId);
-            const lastLine = content.split("\n").pop()?.trim() || "";
-            if (lastLine) a.lastText = lastLine.slice(0, 60);
-            flush();
-          }
-        } catch {}
-      });
-
-      evtSource.addEventListener("tool_call", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          const agentId = d.agent_id || "";
-          const tool = d.data?.tool || "";
-          if (agentId && tool) {
-            const a = ensureAgent(agentId);
-            a.tool = tool;
-            a.iters++;
-            flush();
-          }
-        } catch {}
-      });
-
-      evtSource.addEventListener("tool_result", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          const agentId = d.agent_id || "";
-          if (agentId) {
-            const a = ensureAgent(agentId);
-            const ok = (d.data?.status || "ok") === "ok";
-            a.tool = `${a.tool} ${ok ? "\u2713" : "\u2717"}`;
-            a.elapsed = a.startedAt ? Date.now() - a.startedAt : 0;
-            flush();
-          }
-        } catch {}
-      });
-
-      evtSource.addEventListener("task_completed", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          const agentId = d.agent_id || "";
-          if (agentId) {
-            const a = ensureAgent(agentId);
-            a.status = "done";
-            a.elapsed = a.startedAt ? Date.now() - a.startedAt : 0;
-            a.iters = d.data?.iterations ?? a.iters;
-            const summary = d.data?.summary || "";
-            if (summary) {
-              a.summary = summary;
-              dash.completedSummaries.push({ agentId, summary });
-            }
-            flush();
-          }
-        } catch {}
-      });
-
-      evtSource.addEventListener("task_failed", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          const agentId = d.agent_id || "";
-          if (agentId) {
-            const a = ensureAgent(agentId);
-            a.status = "failed";
-            a.elapsed = a.startedAt ? Date.now() - a.startedAt : 0;
-            const error = (d.data?.error || "").slice(0, 80);
-            dash.completedSummaries.push({ agentId, summary: `FAILED: ${error}` });
-            flush();
-          }
-        } catch {}
-      });
-
-      evtSource.addEventListener("task_retry", (e) => {
-        try {
-          const d = JSON.parse(e.data);
-          const agentId = d.agent_id || "";
-          if (agentId) { ensureAgent(agentId).status = "retry"; flush(); }
-        } catch {}
-      });
-
-      evtSource.addEventListener("done", () => { sseFinished = true; evtSource.close(); });
-      evtSource.onerror = () => { if (!sseFinished) evtSource.close(); };
-
-      // Poll for completion
-      for (let i = 0; i < 720; i++) {
-        await new Promise(r => setTimeout(r, 2500));
-        if (swarmCancelRef.current) { evtSource.close(); break; }
-        try {
-          const run = await api.getSwarmRun(runId);
-          const rs = String(run.status || "");
-          if (["completed", "failed", "cancelled"].includes(rs)) {
-            evtSource.close();
-            dash.finished = true;
-            dash.finalStatus = rs;
-            const report = String(run.final_report || "");
-            if (!report) {
-              const tasks = (run.tasks || []) as Array<{ agent_id: string; summary?: string }>;
-              dash.finalReport = tasks
-                .filter(t => t.summary && !t.summary.startsWith("Worker hit iteration limit"))
-                .map(t => `### ${t.agent_id}\n${t.summary}`)
-                .join("\n\n") || "Swarm completed.";
-            } else {
-              dash.finalReport = report;
-            }
-            flush();
-            act().setStatus("idle");
-            return;
-          }
-        } catch {}
-      }
-      evtSource.close();
-      act().addMessage({ id: "", type: "error", content: "Swarm timed out", timestamp: Date.now() });
-      act().setStatus("idle");
-    } catch (err) {
-      act().setStatus("error");
-      act().addMessage({ id: "", type: "error", content: `Swarm failed: ${err instanceof Error ? err.message : "Unknown"}`, timestamp: Date.now() });
-    }
-  };
-
   const runPrompt = async (prompt: string) => {
     if (!prompt.trim() || status === "streaming") return;
 
@@ -534,7 +332,6 @@ export function Agent() {
   const handleSubmit = (e: FormEvent) => { e.preventDefault(); runPrompt(input.trim()); };
 
   const handleCancel = async () => {
-    swarmCancelRef.current = true;
     if (!sessionId) {
       act().setStatus("idle");
       return;
@@ -668,17 +465,6 @@ export function Agent() {
               );
             }
             const msgIdx = messages.indexOf(g.msg);
-            // Render swarm-progress as SwarmDashboard
-            if (g.msg.id === "swarm-progress" && swarmDash) {
-              return (
-                <div key="swarm-dash" className="flex gap-3">
-                  <AgentAvatar />
-                  <div className="flex-1 min-w-0">
-                    <SwarmDashboard {...swarmDash} />
-                  </div>
-                </div>
-              );
-            }
             return (
               <div key={g.msg.id || g.msg.timestamp} data-msg-idx={msgIdx}>
                 <MessageBubble msg={g.msg} onRetry={g.msg.type === "error" ? handleRetry : undefined} />

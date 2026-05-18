@@ -26,7 +26,6 @@ from src.factors.base import (
     ts_min,
     ts_rank,
     ts_std,
-    vwap,
 )
 
 ALPHA_ID = "gtja191_177"
@@ -55,7 +54,5 @@ def compute(panel):
         pd.DataFrame with index = panel["close"].index, columns = panel["close"].columns.
     """
     h = panel["high"]
-    vw = vwap(panel, "equity_cn")
-
     out = (20.0 - ts_argmax(h, 20)) / 20.0 * 100.0
     return out

@@ -26,7 +26,6 @@ from src.factors.base import (
     ts_min,
     ts_rank,
     ts_std,
-    vwap,
 )
 
 ALPHA_ID = "gtja191_109"
@@ -59,8 +58,6 @@ def compute(panel):
         return x.ewm(alpha=m / n, adjust=False).mean()
     h = panel["high"]
     l = panel["low"]
-    vw = vwap(panel, "equity_cn")
-
     hl = h - l
     num = _sma(hl, 10, 2)
     den = _sma(num, 10, 2)

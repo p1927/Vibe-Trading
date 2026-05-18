@@ -26,7 +26,6 @@ from src.factors.base import (
     ts_min,
     ts_rank,
     ts_std,
-    vwap,
 )
 
 ALPHA_ID = "gtja191_187"
@@ -56,8 +55,6 @@ def compute(panel):
     """
     o = panel["open"]
     h = panel["high"]
-    vw = vwap(panel, "equity_cn")
-
     prev = o.shift(1)
     cond = (o <= prev).astype("float64")
     arr_a = (h - o).to_numpy(dtype=np.float64, na_value=np.nan)

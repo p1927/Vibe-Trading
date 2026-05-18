@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { BarChart3 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
-import { api } from "@/lib/api";
 import { CorrelationMatrix } from "@/components/charts/CorrelationMatrix";
 
 const WINDOWS = [30, 60, 90, 180, 365] as const;

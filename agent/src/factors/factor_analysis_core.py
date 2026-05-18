@@ -1,8 +1,6 @@
 """Pure IC/IR + layered backtest math shared by factor_analysis_tool and alpha_bench_tool."""
 
-import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr
 
 _MIN_VALID_PER_DATE = 5
 
@@ -47,33 +45,6 @@ def compute_ic_series(factor_df: pd.DataFrame, return_df: pd.DataFrame) -> pd.Se
     if ic.empty:
         return pd.Series(dtype=float)
     return ic.astype(float)
-
-
-# Kept available for callers/tests that want the slow reference implementation.
-def _compute_ic_series_reference(
-    factor_df: pd.DataFrame, return_df: pd.DataFrame
-) -> pd.Series:
-    """Loop-based Spearman IC; retained as the numerical reference."""
-    common_dates = factor_df.index.intersection(return_df.index)
-    common_codes = factor_df.columns.intersection(return_df.columns)
-    if len(common_dates) == 0 or len(common_codes) == 0:
-        return pd.Series(dtype=float)
-
-    factor_df = factor_df.loc[common_dates, common_codes]
-    return_df = return_df.loc[common_dates, common_codes]
-
-    ic_values: dict = {}
-    for date in common_dates:
-        f = factor_df.loc[date].dropna()
-        r = return_df.loc[date].dropna()
-        shared = f.index.intersection(r.index)
-        if len(shared) < _MIN_VALID_PER_DATE:
-            continue
-        corr, _ = spearmanr(f[shared], r[shared])
-        if not np.isnan(corr):
-            ic_values[date] = corr
-
-    return pd.Series(ic_values, dtype=float)
 
 
 def compute_group_equity(

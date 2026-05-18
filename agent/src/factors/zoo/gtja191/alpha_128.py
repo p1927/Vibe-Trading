@@ -26,7 +26,6 @@ from src.factors.base import (
     ts_min,
     ts_rank,
     ts_std,
-    vwap,
 )
 
 ALPHA_ID = "gtja191_128"
@@ -58,8 +57,6 @@ def compute(panel):
     h = panel["high"]
     l = panel["low"]
     v = panel["volume"]
-    vw = vwap(panel, "equity_cn")
-
     tp = (h + l + c) / 3.0
     dtp = tp - tp.shift(1)
     up = (tp * v).where(dtp > 0, 0.0).rolling(14).sum()

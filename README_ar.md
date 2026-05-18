@@ -46,13 +46,14 @@
 
 ## 📰 الأخبار
 
+- **2026-05-18** 🧹 **تنظيف + إصلاح 3 أخطاء كامنة**: لم يعد `CompositeEngine` يوجّه رموز العقود الآجلة الصينية بدون لاحقة (مثل `RB2410`) إلى `GlobalFuturesEngine` بشكل خاطئ — انتقل `_is_china_futures` إلى وحدة `_market_hooks` المشتركة مع تطبيع حالة جدول المنتجات + حارس لبورصة غير صينية، وأُضيفت 9 حالات اختبار انحدار. تحفظ فهارس FTS5 للجلسات الآن الطوابع الزمنية، فيمكن لبحث الجلسات الفرز بالتاريخ، ونفس التغيير أصلح مسار إعادة الإدراج الذي كان يستبدل `started_at` بساعة الحائط في كل مرة. أُضيف `/alpha` المفقود إلى بروكسي تطوير Vite، فتُحلّ صفحة AlphaZoo الآن على `npm run dev`. تم تقييد `tests/test_e2e_harness_v2.py` (مجموعة e2e بـ LLM حقيقي) خلف `VIBE_TRADING_RUN_LIVE_E2E=1` كي لا تغيّر CI شكلها بناءً على وجود مفتاح البيئة. أُضيفت إلى ruff قاعدة `per-file-ignores` لمكتبة المعاملات (الضوضاء F401 من 3783 إلى 0)، وفُعِّلت `noUnusedLocals` / `noUnusedParameters` في tsconfig الواجهة كحواجز انحدار، وحُذف 76 سطراً من نموذج `vw = vwap(...)` غير المستخدم في ملفات `gtja191`. الصافي **-918 سطراً**.
 - **2026-05-17** 🧬 **Alpha Zoo v1 (0.1.8)**: 452 ألفا كمّي جاهز عبر 4 zoos — `qlib158` (ميزات Alpha158 من Microsoft Qlib، إسناد Apache-2.0)، `alpha101` (إعادة تنفيذ "101 Formulaic Alphas" من Kakushadze بناءً على ورقة arXiv:1601.00991)، `gtja191` (تقرير بحث Guotai Junan 2014 لعوامل تداول قصيرة الأجل)، `academic` (Fama-French 5 + Carhart momentum كـ proxy قائم على الأسعار). سطر أوامر واحد للـ bench على أي universe: `vibe-trading alpha bench --zoo gtja191 --universe csi300 --period 2018-2025`. تتضمن بوابة AST للنقاء، اختبار حماية lookahead، عزل الشبكة عبر `pytest-socket`، LICENSE.md لكل zoo، وسير عمل توقيع DCO لمساهمات المجتمع. تقديم Alpha Library تلقائياً على [vibetrading.wiki/alpha-library/](https://vibetrading.wiki/alpha-library/)، مع منشور Research Lab [Which of the 191 GTJA alphas still work in 2026?](https://vibetrading.wiki/research-lab/posts/alpha-191-in-2026.html).
 - **2026-05-16** 🧪 **تحديث عمود البحث**: أضيف backend Hypothesis Registry مع `create_hypothesis` و`update_hypothesis` و`link_backtest` و`search_hypotheses`. تضيف قارئات المحتوى الخارجي الآن `security_warnings` تحذيرية فقط، وانتقل ماسح Shadow Account من calendar-phase stub القديم إلى تقييم حتمي لميزات OHLCV.
-- **2026-05-15** 🪪 تعرض صفحة تفاصيل الـ run الآن بطاقة Trust Layer run card إلى جانب المقاييس والمخرجات، لتكمل الجانب الواجهي من عمل `run_card.json` الذي هبط في 2026-05-12. كما تم تعزيز `PersistentMemory.add()` على مسارات الطول والأسماء الفارغة أو التي تحتوي على فراغات فقط وبايتات التحكم C0/C1 ضمن فرز #108/#109/#110 ([#112](https://github.com/HKUDS/Vibe-Trading/pull/112)، شكراً @Teerapat-Vatpitak).
 
 <details>
 <summary>أخبار سابقة</summary>
 
+- **2026-05-15** 🪪 تعرض صفحة تفاصيل الـ run الآن بطاقة Trust Layer run card إلى جانب المقاييس والمخرجات، لتكمل الجانب الواجهي من عمل `run_card.json` الذي هبط في 2026-05-12. كما تم تعزيز `PersistentMemory.add()` على مسارات الطول والأسماء الفارغة أو التي تحتوي على فراغات فقط وبايتات التحكم C0/C1 ضمن فرز #108/#109/#110 ([#112](https://github.com/HKUDS/Vibe-Trading/pull/112)، شكراً @Teerapat-Vatpitak).
 - **2026-05-14** 🌐 أصبح الويكي العام متاحاً على [vibetrading.wiki](https://vibetrading.wiki/) مع أقسام docs وtutorials وResearch Lab وAlpha Library، ويُنشر عبر Cloudflare Pages. أصبحت الذاكرة الدائمة أيضاً قابلة للفحص من سطر الأوامر عبر `vibe-trading memory list/show/search/forget` ([#102](https://github.com/HKUDS/Vibe-Trading/pull/102)، شكراً @Teerapat-Vatpitak)، كما يدعم توليد الرموز وslugs للذاكرة الآن التايلاندية والعربية والعبرية والنص السيريلي ([#104](https://github.com/HKUDS/Vibe-Trading/pull/104)).
 
 - **2026-05-13** 🧭 أصبحت تشغيلات السرب تؤسس عمل الوكلاء على بيانات سوق مجلوبة مسبقاً، مع تقارير محفوظة أنظف ([#93](https://github.com/HKUDS/Vibe-Trading/pull/93)، [#84](https://github.com/HKUDS/Vibe-Trading/pull/84)).
@@ -883,7 +884,7 @@ Vibe-Trading جزء من نظام وكلاء **[HKUDS](https://github.com/HKUDS)
 
 شكراً لكل من ساهم في Vibe-Trading!
 
-مساهمو واعتمادات دورة v0.1.7 الأخيرة:
+مساهمو واعتمادات دورة v0.1.8 الأخيرة:
 
 - @GTC2080 / TaoMu — Web UI Settings وواجهات إعداد provider/data-source (#57)
 - @BigNounce90 — تعزيز validation CLI لمدخل `run_dir` في الاختبار الرجعي (#60)

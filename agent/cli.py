@@ -2322,7 +2322,7 @@ def _build_parser() -> argparse.ArgumentParser:
     memory_list_parser.add_argument(
         "--type",
         dest="memory_type",
-        choices=_MEMORY_TYPES,
+        choices=MEMORY_TYPES,
         help="Filter by memory type",
     )
 
@@ -2557,17 +2557,22 @@ def _render_env_content(config: dict[str, str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-# Kept in sync with MEMORY_TYPES in src/memory/persistent.py. Duplicated here
-# rather than imported so that `vibe-trading --version` / `--help` and other
-# non-memory commands skip loading the full agent runtime chain at startup.
-_MEMORY_TYPES = ("user", "feedback", "project", "reference")
+from src.memory.persistent import MEMORY_TYPES  # noqa: E402  source-of-truth for choices/invariants
+
 _MEMORY_TYPE_STYLES = {
     "user": "cyan",
     "feedback": "yellow",
     "project": "green",
     "reference": "magenta",
 }
-assert set(_MEMORY_TYPE_STYLES) == set(_MEMORY_TYPES), "_MEMORY_TYPE_STYLES drift: keys must mirror _MEMORY_TYPES"
+
+# Invariant: every persisted memory type has a display style. If a new type
+# is added in src.memory.persistent.MEMORY_TYPES, this assert fails fast
+# instead of silently rendering it in fallback white.
+assert set(_MEMORY_TYPE_STYLES) == set(MEMORY_TYPES), (
+    f"MEMORY_TYPES vs _MEMORY_TYPE_STYLES drift: "
+    f"types={sorted(MEMORY_TYPES)}, styles={sorted(_MEMORY_TYPE_STYLES)}"
+)
 
 
 def cmd_memory_list(memory_type: Optional[str] = None, *, memory_dir: Optional[Path] = None) -> int:

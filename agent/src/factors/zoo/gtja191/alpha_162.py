@@ -26,7 +26,6 @@ from src.factors.base import (
     ts_min,
     ts_rank,
     ts_std,
-    vwap,
 )
 
 ALPHA_ID = "gtja191_162"
@@ -58,8 +57,6 @@ def compute(panel):
         """SMA(x, n, m) per GTJA convention -> ewm with alpha = m/n."""
         return x.ewm(alpha=m / n, adjust=False).mean()
     c = panel["close"]
-    vw = vwap(panel, "equity_cn")
-
     dc = c - c.shift(1)
     rsi = safe_div(_sma(dc.clip(lower=0.0), 12, 1), _sma(dc.abs(), 12, 1)) * 100.0
     out = safe_div(rsi - ts_min(rsi, 12), ts_max(rsi, 12) - ts_min(rsi, 12))

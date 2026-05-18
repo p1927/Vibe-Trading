@@ -211,29 +211,6 @@ class SessionStore:
             attempt.to_dict(),
         )
 
-    def list_attempts(self, session_id: str) -> List[Attempt]:
-        """List all execution attempts for a session.
-
-        Args:
-            session_id: Session ID.
-
-        Returns:
-            List of Attempt objects sorted by creation time.
-        """
-        attempts_dir = self._session_dir(session_id) / "attempts"
-        if not attempts_dir.exists():
-            return []
-        attempts: List[Attempt] = []
-        for attempt_dir in attempts_dir.iterdir():
-            if not attempt_dir.is_dir():
-                continue
-            attempt_file = attempt_dir / "attempt.json"
-            data = self._read_json(attempt_file)
-            if data:
-                attempts.append(Attempt.from_dict(data))
-        attempts.sort(key=lambda a: a.created_at)
-        return attempts
-
     # ---- IO Helpers ----
 
     @staticmethod

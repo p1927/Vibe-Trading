@@ -26,7 +26,6 @@ from src.factors.base import (
     ts_min,
     ts_rank,
     ts_std,
-    vwap,
 )
 
 ALPHA_ID = "gtja191_164"
@@ -60,8 +59,6 @@ def compute(panel):
     c = panel["close"]
     h = panel["high"]
     l = panel["low"]
-    vw = vwap(panel, "equity_cn")
-
     dc = c - c.shift(1)
     inv = safe_div(pd.DataFrame(np.ones_like(c, dtype=np.float64), index=c.index, columns=c.columns), dc)
     val = inv.where(dc > 0, 1.0)

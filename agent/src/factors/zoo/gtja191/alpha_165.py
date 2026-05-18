@@ -26,7 +26,6 @@ from src.factors.base import (
     ts_min,
     ts_rank,
     ts_std,
-    vwap,
 )
 
 ALPHA_ID = "gtja191_165"
@@ -55,8 +54,6 @@ def compute(panel):
         pd.DataFrame with index = panel["close"].index, columns = panel["close"].columns.
     """
     c = panel["close"]
-    vw = vwap(panel, "equity_cn")
-
     dev = c - ts_mean(c, 48)
     csum = dev.rolling(48).sum()
     out = safe_div(ts_max(csum, 48) - ts_min(csum, 48), ts_std(c, 48))

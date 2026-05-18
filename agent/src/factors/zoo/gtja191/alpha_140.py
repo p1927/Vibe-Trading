@@ -26,7 +26,6 @@ from src.factors.base import (
     ts_min,
     ts_rank,
     ts_std,
-    vwap,
 )
 
 ALPHA_ID = "gtja191_140"
@@ -59,8 +58,6 @@ def compute(panel):
     h = panel["high"]
     l = panel["low"]
     v = panel["volume"]
-    vw = vwap(panel, "equity_cn")
-
     left = rank(decay_linear((rank(o) + rank(l)) - (rank(h) + rank(c)), 8))
     inner = ts_corr(ts_rank(c, 8), ts_rank(ts_mean(v, 60), 20), 8)
     right = ts_rank(decay_linear(ts_rank(inner, 7), 7), 3)

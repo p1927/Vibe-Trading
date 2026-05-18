@@ -26,7 +26,6 @@ from src.factors.base import (
     ts_min,
     ts_rank,
     ts_std,
-    vwap,
 )
 
 ALPHA_ID = "gtja191_123"
@@ -57,8 +56,6 @@ def compute(panel):
     h = panel["high"]
     l = panel["low"]
     v = panel["volume"]
-    vw = vwap(panel, "equity_cn")
-
     left = rank(ts_corr(((h + l) / 2.0).rolling(20).sum(), ts_mean(v, 60).rolling(20).sum(), 9))
     right = rank(ts_corr(l, v, 6))
     out = (left < right).astype("float64") * -1.0
