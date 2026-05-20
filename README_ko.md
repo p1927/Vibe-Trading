@@ -831,21 +831,25 @@ Vibe-Trading은 **[HKUDS](https://github.com/HKUDS)** agent ecosystem의 일부�
 
 <table>
   <tr>
-    <td align="center" width="25%">
-      <a href="https://github.com/HKUDS/ClawTeam"><b>ClawTeam</b></a><br>
-      <sub>Agent Swarm Intelligence</sub>
-    </td>
-    <td align="center" width="25%">
+    <td align="center" width="20%">
       <a href="https://github.com/HKUDS/nanobot"><b>NanoBot</b></a><br>
       <sub>초경량 개인 AI 어시스턴트</sub>
     </td>
-    <td align="center" width="25%">
+    <td align="center" width="20%">
+      <a href="https://github.com/HKUDS/AI-Trader"><b>AI-Trader</b></a><br>
+      <sub>Agent-Native Signal &amp; Copy Trading Platform</sub>
+    </td>
+    <td align="center" width="20%">
       <a href="https://github.com/HKUDS/CLI-Anything"><b>CLI-Anything</b></a><br>
       <sub>모든 소프트웨어를 agent-native로</sub>
     </td>
-    <td align="center" width="25%">
+    <td align="center" width="20%">
       <a href="https://github.com/HKUDS/OpenSpace"><b>OpenSpace</b></a><br>
       <sub>자가 진화 AI agent skills</sub>
+    </td>
+    <td align="center" width="20%">
+      <a href="https://github.com/HKUDS/ClawTeam"><b>ClawTeam</b></a><br>
+      <sub>Agent Swarm Intelligence</sub>
     </td>
   </tr>
 </table>
