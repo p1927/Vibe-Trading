@@ -130,7 +130,7 @@ wait_for_url() {
 }
 
 cmd_up() {
-  start_service backend env PYTHONPATH="$ROOT/agent" "$PYTHON_BIN" "$ROOT/agent/cli.py" serve \
+  start_service backend env PYTHONPATH="$ROOT/agent" "$PYTHON_BIN" -c 'import cli, sys; raise SystemExit(cli.main(sys.argv[1:]))' serve \
     --host "$BACKEND_HOST" \
     --port "$BACKEND_PORT"
   start_service frontend bash -lc '
@@ -159,7 +159,7 @@ cmd_restart() {
   case "$service" in
     backend)
       stop_service backend
-      start_service backend env PYTHONPATH="$ROOT/agent" "$PYTHON_BIN" "$ROOT/agent/cli.py" serve \
+      start_service backend env PYTHONPATH="$ROOT/agent" "$PYTHON_BIN" -c 'import cli, sys; raise SystemExit(cli.main(sys.argv[1:]))' serve \
         --host "$BACKEND_HOST" \
         --port "$BACKEND_PORT"
       wait_for_url backend "http://127.0.0.1:$BACKEND_PORT/health" 30

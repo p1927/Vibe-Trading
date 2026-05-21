@@ -35,7 +35,6 @@ for _s in ("stdout", "stderr"):
     if callable(_r):
         _r(encoding="utf-8", errors="replace")
 
-from rich.console import Console
 from rich import box
 from rich.columns import Columns
 from rich.live import Live
@@ -46,8 +45,10 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-console = Console()
-AGENT_DIR = Path(__file__).resolve().parent
+from cli.theme import get_console
+
+console = get_console()
+AGENT_DIR = Path(__file__).resolve().parents[1]
 RUNS_DIR = AGENT_DIR / "runs"
 SWARM_DIR = AGENT_DIR / ".swarm" / "runs"
 SESSIONS_DIR = AGENT_DIR / "sessions"
@@ -58,7 +59,7 @@ EXIT_RUN_FAILED = 1
 EXIT_USAGE_ERROR = 2
 RICH_TAG_PATTERN = re.compile(r"\[/?[^\]]+\]")
 
-_VERSION = "0.1.7"
+from cli._version import __version__ as _VERSION  # noqa: E402 — single source of truth
 
 # Agent color assignments for swarm display
 _AGENT_STYLES = ["cyan", "magenta", "green", "yellow", "blue", "bright_red", "bright_cyan", "bright_magenta"]

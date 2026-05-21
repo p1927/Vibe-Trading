@@ -11,6 +11,7 @@ import hmac
 import ipaddress
 import json
 import os
+import re
 import signal
 import time
 import csv
@@ -295,6 +296,61 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ----------------------------------------------------------------------------
+# SPA deep-link fallback
+# ----------------------------------------------------------------------------
+# A handful of API routes share their path with frontend SPA routes (e.g.
+# ``/runs/{id}`` and ``/correlation``). Because FastAPI matches registered
+# routes before the static SPA mount, a browser that refreshes or bookmarks
+# one of these URLs would receive JSON (or 401/422) instead of the SPA shell.
+# The middleware below serves ``frontend/dist/index.html`` when the request
+# clearly came from a browser (``Accept`` contains ``text/html``); programmatic
+# clients are routed to the real API handler as before.
+#
+# Patterns are written narrowly so the SPA shell only shadows paths that
+# actually correspond to frontend pages. In particular ``/runs/{id}`` is
+# the RunDetail page, but ``/runs/{id}/code`` and ``/runs/{id}/pine`` are
+# API-only endpoints with no SPA route — using a broad ``/runs/`` prefix
+# here would incorrectly hijack those when the browser sets ``Accept:
+# text/html`` (e.g. a user pasting the URL into the address bar).
+
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+_SPA_HTML_EXACT_PATHS: frozenset[str] = frozenset({"/correlation"})
+# Each regex matches a complete request path. Trailing slash optional.
+_SPA_HTML_PATH_REGEX: tuple[re.Pattern[str], ...] = (
+    # ``/runs/{run_id}`` — RunDetail page. Excludes ``/runs/{id}/code``,
+    # ``/runs/{id}/pine`` (API only) and ``/runs`` (collection endpoint).
+    re.compile(r"^/runs/[^/]+/?$"),
+)
+
+
+def _is_spa_html_route(path: str) -> bool:
+    """Return True when ``path`` corresponds to a frontend SPA page that
+    shadows an API endpoint and should fall back to ``index.html`` on
+    browser navigation."""
+    if path in _SPA_HTML_EXACT_PATHS:
+        return True
+    return any(pattern.match(path) for pattern in _SPA_HTML_PATH_REGEX)
+
+
+@app.middleware("http")
+async def _spa_html_deep_link_fallback(request: Request, call_next):
+    """Serve ``frontend/dist/index.html`` when a browser navigates directly to
+    an SPA path that also exists as an API endpoint.
+
+    Conflicts: ``/runs/{id}`` (RunDetail page vs API) and ``/correlation``
+    (Correlation page vs API). Programmatic clients (``Accept: */*`` or
+    ``application/json``) still hit the real API handler.
+    """
+    if request.method == "GET":
+        accept = request.headers.get("accept", "")
+        if "text/html" in accept and _is_spa_html_route(request.url.path):
+            index = _FRONTEND_DIST / "index.html"
+            if index.exists():
+                return FileResponse(str(index))
+    return await call_next(request)
 
 
 @app.on_event("startup")

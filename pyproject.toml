@@ -70,11 +70,11 @@ vibe-trading-mcp = "mcp_server:main"
 
 [tool.setuptools]
 package-dir = {"" = "agent"}
-py-modules = ["cli", "api_server", "mcp_server"]
+py-modules = ["api_server", "mcp_server"]
 
 [tool.setuptools.packages.find]
 where = ["agent"]
-include = ["src*", "backtest*"]
+include = ["src*", "backtest*", "cli*"]
 
 [tool.setuptools.package-data]
 "src" = [
