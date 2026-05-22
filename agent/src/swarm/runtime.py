@@ -91,6 +91,17 @@ class SwarmRuntime:
             FileNotFoundError: If preset does not exist.
             ValueError: If DAG validation fails.
         """
+        # Reap any previously running runs whose host process died without
+        # finalizing them. Threshold is computed per-run from agent timeouts +
+        # heartbeat interval (see SwarmStore.compute_stale_threshold), so a
+        # legitimately slow long-running task is not killed.
+        try:
+            reaped = self._store.reap_stale_running_runs()
+            if reaped:
+                logger.info("Reaped %d stale swarm run(s): %s", len(reaped), reaped)
+        except Exception:
+            logger.warning("Stale-run reaper failed", exc_info=True)
+
         run = build_run_from_preset(preset_name, user_vars)
         validate_dag(run.tasks)
 
@@ -317,6 +328,11 @@ class SwarmRuntime:
                             ),
                         )
 
+                # Snapshot run.json at the layer boundary so list_runs and any
+                # client that reads run.json directly sees fresh task statuses
+                # without per-task I/O spam. One write per layer is cheap.
+                self._sync_run_tasks_snapshot(run, task_store)
+
         except Exception as exc:
             logger.error("Run %s failed with exception", run_id, exc_info=True)
             all_succeeded = False
@@ -351,6 +367,20 @@ class SwarmRuntime:
             self._cancel_events.pop(run_id, None)
             self._live_callbacks.pop(run_id, None)
 
+    def _sync_run_tasks_snapshot(self, run: SwarmRun, task_store: TaskStore) -> None:
+        """Mirror live ``tasks/*.json`` back into ``run.json`` at a safe point.
+
+        Called at layer boundaries only — not per-task — to keep run.json a
+        useful coarse snapshot for ``list_runs`` and CLI/Web callers that
+        don't hydrate per request. Failures are logged but never fatal: the
+        per-task files are still the live source of truth.
+        """
+        try:
+            run.tasks = task_store.load_all()
+            self._store.update_run(run)
+        except Exception:
+            logger.warning("Layer-boundary run.json sync failed", exc_info=True)
+
     def _prefetch_grounding_data(self, run: SwarmRun) -> None:
         """Fetch run-level grounding data without blocking ``start_run``."""
         symbols = grounding.extract_symbols_from_user_vars(run.user_vars)
@@ -367,8 +397,33 @@ class SwarmRuntime:
             )
             symbols = symbols[:symbol_limit]
 
+        # Multi-symbol grounding fetch can take 30s+ on slow loaders. Wrap it
+        # in a heartbeat so events.jsonl gets fresh entries during the fetch
+        # — without this, the stale-run reaper would false-positive-mark a
+        # healthy fresh run that's just waiting on OHLCV API calls.
+        from src.agent.progress import HeartbeatTimer
+
+        def _on_grounding_heartbeat(payload: dict) -> None:
+            self._emit_event(
+                run.id,
+                self._make_event(
+                    "run_heartbeat",
+                    data={**payload, "phase": "grounding"},
+                ),
+            )
+
         try:
-            fetched = grounding.fetch_grounding_data(symbols)
+            interval = float(os.getenv("SWARM_HEARTBEAT_INTERVAL_S", "3.0"))
+        except ValueError:
+            interval = 3.0
+
+        try:
+            with HeartbeatTimer(
+                tool_name=f"grounding:{len(symbols)}symbols",
+                interval=interval,
+                emit=_on_grounding_heartbeat,
+            ):
+                fetched = grounding.fetch_grounding_data(symbols)
         except Exception:
             logger.warning(
                 "grounding: pre-fetch failed for run %s symbols=%s",

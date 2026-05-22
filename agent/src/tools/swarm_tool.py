@@ -665,13 +665,20 @@ class SwarmTool(BaseTool):
                     ensure_ascii=False,
                 )
 
-            if loaded.status.value in ("completed", "failed", "cancelled"):
-                return _format_result(loaded, preset, variables)
+            reconciled = store.reconcile_run(loaded, write=True)
+            if reconciled.status.value in ("completed", "failed", "cancelled"):
+                return _format_result(reconciled, preset, variables)
 
-        runtime.cancel_run(run_id)
+        # Wait budget elapsed but the run is still in flight. Do NOT cancel —
+        # the daemon thread keeps working and the agent can decide to wait
+        # more (re-invoke with the returned run_id) or hand off partial state
+        # to the user. Cancelling here used to throw away minutes of LLM cost
+        # whenever a preset legitimately ran past the budget.
         loaded = store.load_run(run_id)
         if loaded is not None:
-            return _format_result(loaded, preset, variables, timed_out=True)
+            return _format_result(
+                store.reconcile_run(loaded, write=True), preset, variables, timed_out=True
+            )
 
         return json.dumps(
             {"status": "timeout", "error": f"Swarm run {run_id} timed out after {_MAX_WAIT_SECONDS}s"},
@@ -700,10 +707,13 @@ def _format_result(
 
     task_summaries = [serialize_task(task) for task in run.tasks]
 
-    status = "timeout" if timed_out else run.status.value
-
+    # ``timed_out`` only means the SwarmTool's wait budget elapsed — the run
+    # itself is still progressing in the background. Surface the run's real
+    # status so a downstream agent can re-invoke with the run_id (or end its
+    # turn with a "still working" message) instead of treating it as failure.
     result = {
-        "status": status,
+        "status": run.status.value,
+        "wait_budget_exhausted": timed_out,
         "run_id": run.id,
         "preset": preset,
         "auto_variables": variables,

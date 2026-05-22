@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 from src.agent.context import ContextBuilder
+from src.agent.progress import HeartbeatTimer
 from src.agent.skills import SkillsLoader
 from src.providers.chat import ChatLLM
 from src.swarm.models import (
@@ -29,6 +30,22 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_ITERATIONS = int(os.getenv("SWARM_WORKER_MAX_ITER", "50"))
 _DEFAULT_TIMEOUT_SECONDS = int(os.getenv("SWARM_WORKER_TIMEOUT", "300"))
+
+
+def _heartbeat_interval_s() -> float:
+    """Resolve the heartbeat tick interval from env, robust to garbage values.
+
+    Matches the parsing discipline in :func:`SwarmStore.compute_stale_threshold`
+    — both sides use the same env var, so they must fail the same way. A bad
+    value (``"abc"``, empty) falls back to 3.0s instead of crashing import.
+    """
+    try:
+        return float(os.getenv("SWARM_HEARTBEAT_INTERVAL_S", "3.0"))
+    except ValueError:
+        return 3.0
+
+
+_HEARTBEAT_INTERVAL_S = _heartbeat_interval_s()
 _MAX_TOKEN_ESTIMATE = 60_000
 _SENSITIVE_TOOL_ARGUMENT_KEYS = {
     "api_key",
@@ -416,12 +433,34 @@ def run_worker(
                 _emit(event_callback, "worker_text", agent_id, task_id,
                       {"content": delta, "iteration": iteration})
 
-            response = llm.stream_chat(
-                messages,
-                tools=tool_defs,
-                timeout=remaining_timeout,
-                on_text_chunk=_on_text_chunk,
-            )
+            # LLM streaming can stall for 30s+ between request start and the
+            # first text chunk (slow first-token providers, reasoning models'
+            # think phase, pure-tool-call responses with no text). Without a
+            # ticker, the stale-run reaper would mark a healthy run failed
+            # the moment its silence exceeds the heartbeat-based threshold.
+            # Wrap the call in the same HeartbeatTimer used for tool execution
+            # so events.jsonl gets a fresh entry every few seconds no matter
+            # what the provider is doing.
+            def _on_llm_heartbeat(payload: dict) -> None:
+                _emit(
+                    event_callback,
+                    "task_heartbeat",
+                    agent_id,
+                    task_id,
+                    {**payload, "iteration": iteration, "phase": "llm"},
+                )
+
+            with HeartbeatTimer(
+                tool_name=f"llm:{agent_spec.model_name or 'default'}",
+                interval=_HEARTBEAT_INTERVAL_S,
+                emit=_on_llm_heartbeat,
+            ):
+                response = llm.stream_chat(
+                    messages,
+                    tools=tool_defs,
+                    timeout=remaining_timeout,
+                    on_text_chunk=_on_text_chunk,
+                )
         except Exception as exc:
             error_msg = f"LLM call failed at iteration {iteration}: {exc}"
             logger.warning(error_msg)
@@ -496,7 +535,26 @@ def run_worker(
             )
             tc_start = time.monotonic()
             args = {**tc.arguments, "run_dir": str(artifact_dir)}
-            result = registry.execute(tc.name, args)
+
+            # Wrap tool execution in a heartbeat so the events.jsonl tail has a
+            # fresh timestamp every few seconds. The stale-run reaper relies on
+            # this signal to tell a hung tool call apart from a dead host; the
+            # CLI dashboard / SSE clients also get live "still working" ticks.
+            def _on_heartbeat(payload: dict) -> None:
+                _emit(
+                    event_callback,
+                    "task_heartbeat",
+                    agent_id,
+                    task_id,
+                    {**payload, "iteration": iteration, "phase": "tool"},
+                )
+
+            with HeartbeatTimer(
+                tool_name=tc.name,
+                interval=_HEARTBEAT_INTERVAL_S,
+                emit=_on_heartbeat,
+            ):
+                result = registry.execute(tc.name, args)
             if tc.name != "load_skill" and not _is_error_result(result):
                 data_tool_calls += 1
             tc_elapsed = time.monotonic() - tc_start

@@ -1687,46 +1687,45 @@ async def create_swarm_run(payload: dict, http_request: Request):
 
 @app.get("/swarm/runs", dependencies=[Depends(require_auth)])
 async def list_swarm_runs(limit: int = Query(20, ge=1, le=100)):
-    """List swarm runs (newest first)."""
+    """List swarm runs (newest first), reconciled."""
     runtime = _get_swarm_runtime()
     runs = runtime._store.list_runs(limit=limit)
-    return [
-        {
-            "id": r.id,
-            "preset_name": r.preset_name,
-            "status": r.status.value,
-            "created_at": r.created_at,
-            "task_count": len(r.tasks),
-            "completed_count": sum(1 for t in r.tasks if t.status.value == "completed"),
-        }
-        for r in runs
-    ]
+    items = []
+    for r in runs:
+        # Reconcile each row: a zombie running run will be auto-finalized so
+        # the dashboard never shows a permanent "running" stuck row.
+        reconciled = runtime._store.reconcile_run(r, write=True)
+        items.append(
+            {
+                "id": reconciled.id,
+                "preset_name": reconciled.preset_name,
+                "status": reconciled.status.value,
+                "is_stale": runtime._store.is_run_stale(reconciled),
+                "created_at": reconciled.created_at,
+                "completed_at": reconciled.completed_at,
+                "task_count": len(reconciled.tasks),
+                "completed_count": sum(1 for t in reconciled.tasks if t.status.value == "completed"),
+            }
+        )
+    return items
 
 
 @app.get("/swarm/runs/{run_id}", dependencies=[Depends(require_auth)])
 async def get_swarm_run(run_id: str):
-    """Swarm run detail including task statuses."""
-    from src.swarm.task_store import TaskStore
-
+    """Swarm run detail including task statuses (reconciled)."""
     _validate_path_param(run_id, "run_id")
     runtime = _get_swarm_runtime()
-    run = runtime._store.load_run(run_id)
-    if not run:
+    loaded = runtime._store.load_run(run_id)
+    if not loaded:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
-    # Merge real-time task statuses from task_store (updated during execution)
-    run_dir = runtime._store.run_dir(run_id)
-    tasks_dir = run_dir / "tasks"
-    if tasks_dir.exists():
-        task_store = TaskStore(run_dir)
-        live_tasks = task_store.load_all()
-        if live_tasks:
-            run.tasks = live_tasks
+    run = runtime._store.reconcile_run(loaded, write=True)
 
     return {
         "id": run.id,
         "preset_name": run.preset_name,
         "status": run.status.value,
+        "is_stale": runtime._store.is_run_stale(run),
         "user_vars": run.user_vars,
         "agents": [a.model_dump() for a in run.agents],
         "tasks": [t.model_dump() for t in run.tasks],
@@ -1754,9 +1753,14 @@ async def swarm_run_events(run_id: str, request: Request, last_index: int = Quer
                 idx += 1
                 yield f"id: {idx}\nevent: {evt.type}\ndata: {json.dumps(evt.model_dump(), ensure_ascii=False)}\n\n"
             run = runtime._store.load_run(run_id)
-            if run and run.status.value in ("completed", "failed", "cancelled"):
-                yield f"event: done\ndata: {{\"status\": \"{run.status.value}\"}}\n\n"
-                break
+            if run:
+                # Reconcile so a zombie running run can still close this SSE
+                # stream cleanly — without it, a dead host would keep the
+                # stream open forever and block the dashboard's "done" state.
+                reconciled = runtime._store.reconcile_run(run, write=True)
+                if reconciled.status.value in ("completed", "failed", "cancelled"):
+                    yield f"event: done\ndata: {{\"status\": \"{reconciled.status.value}\"}}\n\n"
+                    break
             await asyncio.sleep(2)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
