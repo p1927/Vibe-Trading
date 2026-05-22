@@ -7,7 +7,7 @@ The layout follows §3.3 of the 2026-05-19 UI/UX design proposal:
     Natural-language finance research that
     thinks before it answers.
 
-    Model:      deepseek/deepseek-v3.2
+    Model:      deepseek/deepseek-v4-pro
     Skills:     72 loaded
     Tools:      27 registered
     Sessions:   3 prior (use /history to browse)
@@ -68,7 +68,7 @@ def print_banner(
 
     Args:
         console: Shared Rich console (use :func:`cli.theme.get_console`).
-        model: Active LLM model id, e.g. ``"deepseek/deepseek-v3.2"``.
+        model: Active LLM model id, e.g. ``"deepseek/deepseek-v4-pro"``.
         skills: Number of skills currently loaded.
         tools: Number of tools registered in the agent registry.
         sessions: Number of prior sessions on disk. ``0`` suppresses the
