@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, useMemo, useCallback, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Send, Loader2, ArrowDown, Square, Download, Plus, Paperclip, X, Users } from "lucide-react";
+import { Send, Loader2, ArrowDown, Square, Download, Plus, Paperclip, X, Users, Target } from "lucide-react";
 import { toast } from "sonner";
 import { useAgentStore } from "@/stores/agent";
 import { useSSE } from "@/hooks/useSSE";
-import { useI18n } from "@/lib/i18n";
-import { api } from "@/lib/api";
+import { ApiError, api, type GoalSnapshot } from "@/lib/api";
+import { isReportWorthyRun } from "@/lib/runReports";
 import type { AgentMessage, ToolCallEntry } from "@/types/agent";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
 import { WelcomeScreen } from "@/components/chat/WelcomeScreen";
@@ -13,6 +13,7 @@ import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ThinkingTimeline } from "@/components/chat/ThinkingTimeline";
 import { ConversationTimeline } from "@/components/chat/ConversationTimeline";
 import { ToolProgressIndicator } from "@/components/chat/ToolProgressIndicator";
+import { GoalDrawer, getGoalProgress } from "@/components/chat/GoalDrawer";
 
 /* ---------- Message grouping ---------- */
 type MsgGroup =
@@ -46,6 +47,7 @@ export function Agent() {
   const sseSessionRef = useRef<string | null>(null);
   const prevSseStatusRef = useRef<string>("disconnected");
   const genRef = useRef(0);
+  const pendingGoalSessionRef = useRef<string | null>(null);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const lastEventRef = useRef(0);
 
@@ -59,6 +61,10 @@ export function Agent() {
   const uploadMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [swarmPreset, setSwarmPreset] = useState<{ name: string; title: string } | null>(null);
+  const [goalOpen, setGoalOpen] = useState(false);
+  const [goalSnapshot, setGoalSnapshot] = useState<GoalSnapshot | null>(null);
+  const [goalLoading, setGoalLoading] = useState(false);
+  const [goalError, setGoalError] = useState<string | null>(null);
 
   const messages = useAgentStore(s => s.messages);
   const streamingText = useAgentStore(s => s.streamingText);
@@ -68,7 +74,6 @@ export function Agent() {
   const sessionLoading = useAgentStore(s => s.sessionLoading);
 
   const { connect, disconnect, onStatusChange } = useSSE();
-  const { t } = useI18n();
 
   const urlSessionId = searchParams.get("session");
 
@@ -112,16 +117,41 @@ export function Agent() {
   useEffect(() => {
     onStatusChange((s) => {
       act().setSseStatus(s);
-      if (s === "reconnecting" && prevSseStatusRef.current === "connected") toast.warning(t.reconnecting);
-      else if (s === "connected" && prevSseStatusRef.current === "reconnecting") toast.success(t.connected);
+      if (s === "reconnecting" && prevSseStatusRef.current === "connected") toast.warning("Connection lost, reconnecting…");
+      else if (s === "connected" && prevSseStatusRef.current === "reconnecting") toast.success("Connection restored");
       prevSseStatusRef.current = s;
     });
-  }, [onStatusChange, t]);
+  }, [onStatusChange]);
 
   const doDisconnect = useCallback(() => {
     disconnect();
     sseSessionRef.current = null;
   }, [disconnect]);
+
+  const loadGoalSnapshot = useCallback(async (sid?: string | null) => {
+    const targetSession = sid || act().sessionId;
+    if (!targetSession) {
+      setGoalSnapshot(null);
+      setGoalError(null);
+      return;
+    }
+    setGoalLoading(true);
+    setGoalError(null);
+    try {
+      const snapshot = await api.getGoal(targetSession);
+      if (act().sessionId !== targetSession) return;
+      setGoalSnapshot(snapshot);
+    } catch (error) {
+      if (act().sessionId !== targetSession) return;
+      if (error instanceof ApiError && error.status === 404) {
+        setGoalSnapshot(null);
+      } else {
+        setGoalError(error instanceof Error ? error.message : "Failed to load goal.");
+      }
+    } finally {
+      if (act().sessionId === targetSession) setGoalLoading(false);
+    }
+  }, []);
 
   const loadSessionMessages = useCallback(async (sid: string, gen: number) => {
     try {
@@ -140,7 +170,24 @@ export function Agent() {
           if (m.content && m.content !== "Strategy execution completed.") {
             agentMsgs.push({ id: m.message_id + "_ans", type: "answer", content: m.content, timestamp: ts });
           }
-          agentMsgs.push({ id: m.message_id, type: "run_complete", content: "", runId, metrics, timestamp: ts + 1 });
+          if (metrics && Object.keys(metrics).length > 0) {
+            agentMsgs.push({ id: m.message_id, type: "run_complete", content: "", runId, metrics, timestamp: ts + 1 });
+          } else {
+            try {
+              const runData = await api.getRun(runId);
+              if (isReportWorthyRun(runData)) {
+                agentMsgs.push({
+                  id: m.message_id,
+                  type: "run_complete",
+                  content: "",
+                  runId,
+                  metrics: runData.metrics,
+                  equityCurve: runData.equity_curve?.map((e) => ({ time: e.time, equity: e.equity })),
+                  timestamp: ts + 1,
+                });
+              }
+            } catch { /* ignore non-report attempt directories */ }
+          }
         } else {
           agentMsgs.push({ id: m.message_id, type: "answer", content: m.content, timestamp: ts });
         }
@@ -162,7 +209,7 @@ export function Agent() {
 
     const touch = () => { lastEventRef.current = Date.now(); };
 
-    connect(api.sseUrl(sid), {
+    connect(api.sseUrl(sid, { replay: "active" }), {
       text_delta: (d) => { touch(); act().appendDelta(String(d.delta || "")); scrollToBottom(); },
       thinking_done: () => { touch(); /* don't flush — keep streaming text visible */ },
 
@@ -262,11 +309,11 @@ export function Agent() {
         if (runId) {
           try {
             const runData = await api.getRun(runId);
-            const hasMetrics = runData.metrics && Object.keys(runData.metrics).length > 0;
-            if (hasMetrics || shadowId) {
+            const hasReport = isReportWorthyRun(runData);
+            if (hasReport || shadowId) {
               s.addMessage({
                 id: "", type: "run_complete", content: "", runId,
-                metrics: hasMetrics ? runData.metrics : undefined,
+                metrics: hasReport ? runData.metrics : undefined,
                 equityCurve: runData.equity_curve?.map(e => ({ time: e.time, equity: e.equity })),
                 shadowId,
                 timestamp: Date.now(),
@@ -294,10 +341,20 @@ export function Agent() {
         scrollToBottom();
       },
 
+      "goal.created": () => {
+        touch();
+        loadGoalSnapshot(sid);
+      },
+
+      "goal.evidence": () => {
+        touch();
+        loadGoalSnapshot(sid);
+      },
+
       heartbeat: () => {},
       reconnect: (d) => { act().setSseStatus("reconnecting", Number(d.attempt ?? 0)); },
     });
-  }, [connect, disconnect, scrollToBottom]);
+  }, [connect, disconnect, loadGoalSnapshot, scrollToBottom]);
 
   useEffect(() => {
     const gen = ++genRef.current;
@@ -322,6 +379,19 @@ export function Agent() {
       reset();
     }
   }, [urlSessionId, doDisconnect, loadSessionMessages, setupSSE, forceScrollToBottom]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      setGoalSnapshot(null);
+      setGoalError(null);
+      return;
+    }
+    if (pendingGoalSessionRef.current === sessionId) {
+      pendingGoalSessionRef.current = null;
+      return;
+    }
+    loadGoalSnapshot(sessionId);
+  }, [sessionId, loadGoalSnapshot]);
 
   useEffect(() => () => doDisconnect(), [doDisconnect]);
 
@@ -370,10 +440,64 @@ export function Agent() {
       await api.sendMessage(sid, finalPrompt);
     } catch {
       act().setStatus("error");
-      toast.error(t.sendFailed);
-      act().addMessage({ id: "", type: "error", content: t.sendFailed, timestamp: Date.now() });
+      toast.error("Failed to send message, please retry.");
+      act().addMessage({ id: "", type: "error", content: "Failed to send message, please retry.", timestamp: Date.now() });
     }
   };
+
+  const ensureGoalSession = useCallback(async (title: string): Promise<string> => {
+    let sid = act().sessionId;
+    if (sid) return sid;
+    const session = await api.createSession(title.slice(0, 50));
+    sid = session.session_id;
+    pendingGoalSessionRef.current = sid;
+    act().setSessionId(sid);
+    setSearchParams({ session: sid }, { replace: true });
+    setupSSE(sid);
+    return sid;
+  }, [setSearchParams, setupSSE]);
+
+  const handleStartGoal = useCallback(async (objective: string) => {
+    try {
+      const sid = await ensureGoalSession(objective);
+      const snapshot = await api.createGoal(sid, { objective });
+      setGoalSnapshot(snapshot);
+      setGoalError(null);
+      toast.success("Goal started");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to start goal.";
+      setGoalError(message);
+      toast.error(message);
+    }
+  }, [ensureGoalSession]);
+
+  const handleAddGoalEvidence = useCallback(async (criterionId: string, text: string) => {
+    const sid = act().sessionId;
+    const current = goalSnapshot;
+    if (!sid || !current) {
+      const message = "Start a goal before attaching evidence.";
+      setGoalError(message);
+      toast.error(message);
+      return;
+    }
+    try {
+      const result = await api.addGoalEvidence(sid, {
+        goal_id: current.goal.goal_id,
+        expected_goal_id: current.goal.goal_id,
+        criterion_id: criterionId,
+        text,
+        source_provider: "webui",
+        source_type: "manual_note",
+      });
+      setGoalSnapshot(result.snapshot);
+      setGoalError(null);
+      toast.success("Evidence attached");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to attach evidence.";
+      setGoalError(message);
+      toast.error(message);
+    }
+  }, [goalSnapshot]);
 
   const handleSubmit = (e: FormEvent) => { e.preventDefault(); runPrompt(input.trim()); };
 
@@ -480,10 +604,43 @@ export function Agent() {
   }, [showUploadMenu]);
 
   const groups = useMemo(() => groupMessages(messages), [messages]);
+  const goalProgress = useMemo(() => getGoalProgress(goalSnapshot), [goalSnapshot]);
 
   return (
     <div className="flex flex-col flex-1 min-w-0 overflow-hidden h-full">
       <div ref={listRef} className="flex-1 overflow-auto p-6 scroll-smooth relative">
+        <div className="fixed right-6 top-4 z-40 flex items-center gap-2">
+          <button
+            type="button"
+            title="Research goal"
+            aria-label="Research goal"
+            aria-expanded={goalOpen}
+            onClick={() => {
+              const nextOpen = !goalOpen;
+              setGoalOpen(nextOpen);
+              if (nextOpen) loadGoalSnapshot(sessionId);
+            }}
+            className="inline-flex h-8 items-center gap-1.5 rounded-full border bg-background px-3 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-muted"
+          >
+            <Target className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
+            <span>Goal</span>
+            {goalProgress.label && (
+              <span className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400">{goalProgress.label}</span>
+            )}
+          </button>
+        </div>
+
+        <GoalDrawer
+          open={goalOpen}
+          snapshot={goalSnapshot}
+          loading={goalLoading}
+          error={goalError}
+          onClose={() => setGoalOpen(false)}
+          onRefresh={() => loadGoalSnapshot(sessionId)}
+          onStart={handleStartGoal}
+          onAddEvidence={handleAddGoalEvidence}
+        />
+
         <div className="max-w-3xl mx-auto space-y-4">
           {sessionLoading && (
             <div className="space-y-4 py-4">
@@ -655,7 +812,7 @@ export function Agent() {
                   runPrompt(input.trim());
                 }
               }}
-              placeholder={t.prompt}
+              placeholder="e.g. Create a dual MA crossover strategy for 000001.SZ, backtest 2024"
               className="flex-1 px-4 py-2.5 rounded-xl border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 transition-shadow resize-none max-h-32 overflow-y-auto"
               disabled={status === "streaming"}
             />
