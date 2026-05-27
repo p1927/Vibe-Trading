@@ -364,7 +364,7 @@ vibe-trading-mcp               # start MCP server (stdio)
 
 > **مزودو LLM المدعومون:** OpenRouter, OpenAI, DeepSeek, Gemini, Groq, DashScope/Qwen, Zhipu, Moonshot/Kimi, MiniMax, Xiaomi MIMO, Z.ai, Ollama (local). راجع `.env.example` للإعداد.
 
-> **نصيحة:** تعمل كل الأسواق دون مفاتيح API بفضل fallback التلقائي. yfinance (HK/US)، وOKX (crypto)، وAKShare (A-shares, US, HK, futures, forex) مجانية. رمز Tushare اختياري، إذ يغطي AKShare أسهم A كبديل مجاني.
+> **نصيحة:** تعمل كل الأسواق دون مفاتيح API بفضل fallback التلقائي. yfinance (HK/US)، وOKX (crypto)، وmootdx (أسهم A، اتصال TCP مباشر بدون قيود IP)، وAKShare (A-shares, US, HK, futures, forex) كلها مجانية. رمز Tushare اختياري — mootdx هو الـ fallback الموصى به لأسهم A بدون رمز، بينما يوفر AKShare احتياطياً أوسع تغطية.
 
 ### المسار A: Docker (دون إعداد)
 
@@ -482,7 +482,7 @@ vibe-trading alpha list    # استعرض 452 ألفا جاهز؛ متاح show 
 | الأمر | الوصف |
 |---------|-------------|
 | `/help` | عرض كل الأوامر |
-| `/skills` | عرض كل المهارات المالية الـ 75 |
+| `/skills` | عرض كل المهارات المالية الـ 77 |
 | `/swarm` | عرض إعدادات فرق السرب الـ 29 |
 | `/swarm run <preset> [vars_json]` | تشغيل فريق سرب مع بث مباشر |
 | `/swarm list` | سجل تشغيلات السرب |
@@ -731,7 +731,7 @@ npx clawhub@latest install vibe-trading --force
 <details>
 <summary><b>OpenSpace — مهارات ذاتية التطور</b></summary>
 
-كل المهارات المالية الـ 75 منشورة على [open-space.cloud](https://open-space.cloud) وتتطور ذاتياً عبر محرك التطور الذاتي في OpenSpace.
+كل المهارات المالية الـ 77 منشورة على [open-space.cloud](https://open-space.cloud) وتتطور ذاتياً عبر محرك التطور الذاتي في OpenSpace.
 
 للاستخدام مع OpenSpace، أضف خادمي MCP إلى إعداد وكيلك:
 
@@ -753,7 +753,7 @@ npx clawhub@latest install vibe-trading --force
 }
 ```
 
-سيكتشف OpenSpace كل المهارات الـ 75 تلقائياً، مما يتيح auto-fix وauto-improve والمشاركة المجتمعية. ابحث عن مهارات Vibe-Trading عبر `search_skills("finance backtest")` في أي وكيل متصل بـ OpenSpace.
+سيكتشف OpenSpace كل المهارات الـ 77 تلقائياً، مما يتيح auto-fix وauto-improve والمشاركة المجتمعية. ابحث عن مهارات Vibe-Trading عبر `search_skills("finance backtest")` في أي وكيل متصل بـ OpenSpace.
 
 </details>
 
@@ -775,7 +775,7 @@ Vibe-Trading/
 │   │   ├── agent/                  # ReAct agent core
 │   │   │   ├── loop.py             #   5-layer compression + read/write tool batching
 │   │   │   ├── context.py          #   system prompt + auto-recall from persistent memory
-│   │   │   ├── skills.py           #   skill loader (75 bundled + user-created via CRUD)
+│   │   │   ├── skills.py           #   skill loader (77 bundled + user-created via CRUD)
 │   │   │   ├── tools.py            #   tool base class + registry
 │   │   │   ├── memory.py           #   lightweight workspace state per run
 │   │   │   ├── frontmatter.py      #   shared YAML frontmatter parser
@@ -802,7 +802,7 @@ Vibe-Trading/
 │   │   ├── api/                    # وحدات مسارات FastAPI
 │   │   │   └── alpha_routes.py     #   /alpha/list, /alpha/{id}, /alpha/bench, SSE stream
 │   │   │
-│   │   ├── skills/                 # 75 finance skills in 8 categories (SKILL.md each)
+│   │   ├── skills/                 # 77 finance skills in 8 categories (SKILL.md each)
 │   │   ├── swarm/                  # Swarm DAG execution engine
 │   │   │   └── presets/            #   29 swarm preset YAML definitions
 │   │   ├── session/                # Multi-turn chat + FTS5 session search

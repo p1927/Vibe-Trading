@@ -227,9 +227,9 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 为保持主 README 易读，详细清单折叠在下方。需要检查可用构件时可展开查看。
 
 <details>
-<summary><b>Finance Skill Library</b> <sub>8 个类别中的 75 个 skills</sub></summary>
+<summary><b>Finance Skill Library</b> <sub>8 个类别中的 77 个 skills</sub></summary>
 
-- 📊 75 个专业金融 skills，分布在 8 个类别中
+- 📊 77 个专业金融 skills，分布在 8 个类别中
 - 🌐 覆盖传统市场、加密与 DeFi
 - 🔬 从数据源到量化研究的完整能力链路
 
@@ -363,7 +363,7 @@ vibe-trading-mcp               # start MCP server (stdio)
 
 > **支持的 LLM providers：** OpenRouter、OpenAI、DeepSeek、Gemini、Groq、DashScope/Qwen、Zhipu、Moonshot/Kimi、MiniMax、Xiaomi MIMO、Z.ai、Ollama（本地）。配置见 `.env.example`。
 
-> **提示：** 由于自动 fallback，所有市场都可以在没有任何 API key 的情况下工作。yfinance（港/美股）、OKX（加密）和 AKShare（A 股、美股、港股、期货、外汇）都是免费的。Tushare token 是可选项，AKShare 可作为 A 股免费 fallback。
+> **提示：** 由于自动 fallback，所有市场都可以在没有任何 API key 的情况下工作。yfinance（港/美股）、OKX（加密）、mootdx（A 股，TCP 直连不封 IP）和 AKShare（A 股、美股、港股、期货、外汇）都是免费的。Tushare token 是可选项 —— mootdx 是首选的免 token A 股 fallback，AKShare 作为覆盖更广的兜底。
 
 ### Path A: Docker（零配置）
 
@@ -481,7 +481,7 @@ vibe-trading alpha list    # 浏览 452 个预置 alpha；支持 show / bench / 
 | 命令 | 说明 |
 |------|------|
 | `/help` | 显示所有命令 |
-| `/skills` | 列出全部 75 个 finance skills |
+| `/skills` | 列出全部 77 个 finance skills |
 | `/swarm` | 列出 29 个 swarm team presets |
 | `/swarm run <preset> [vars_json]` | 运行一个 swarm team，并实时流式展示 |
 | `/swarm list` | Swarm 运行历史 |
@@ -727,7 +727,7 @@ npx clawhub@latest install vibe-trading --force
 <details>
 <summary><b>OpenSpace — 自进化 skills</b></summary>
 
-全部 75 个 finance skills 都发布在 [open-space.cloud](https://open-space.cloud)，并通过 OpenSpace 的自进化引擎自主演进。
+全部 77 个 finance skills 都发布在 [open-space.cloud](https://open-space.cloud)，并通过 OpenSpace 的自进化引擎自主演进。
 
 要配合 OpenSpace 使用，请将两个 MCP servers 都加入你的 agent config：
 
@@ -749,7 +749,7 @@ npx clawhub@latest install vibe-trading --force
 }
 ```
 
-OpenSpace 会自动发现全部 75 个 skills，启用 auto-fix、auto-improve 和社区分享。在任意已连接 OpenSpace 的智能体中，可通过 `search_skills("finance backtest")` 搜索 Vibe-Trading skills。
+OpenSpace 会自动发现全部 77 个 skills，启用 auto-fix、auto-improve 和社区分享。在任意已连接 OpenSpace 的智能体中，可通过 `search_skills("finance backtest")` 搜索 Vibe-Trading skills。
 
 </details>
 
@@ -771,7 +771,7 @@ Vibe-Trading/
 │   │   ├── agent/                  # ReAct agent 内核
 │   │   │   ├── loop.py             #   5 层上下文压缩 + 读/写工具批处理
 │   │   │   ├── context.py          #   system prompt + 持久记忆自动召回
-│   │   │   ├── skills.py           #   skill loader（75 个内置 + 通过 CRUD 创建的用户 skill）
+│   │   │   ├── skills.py           #   skill loader（77 个内置 + 通过 CRUD 创建的用户 skill）
 │   │   │   ├── tools.py            #   tool 基类 + 注册表
 │   │   │   ├── memory.py           #   每个 run 的轻量 workspace 状态
 │   │   │   ├── frontmatter.py      #   共享的 YAML frontmatter 解析器
@@ -798,7 +798,7 @@ Vibe-Trading/
 │   │   ├── api/                    # FastAPI 路由模块
 │   │   │   └── alpha_routes.py     #   /alpha/list、/alpha/{id}、/alpha/bench、SSE 流
 │   │   │
-│   │   ├── skills/                 # 8 个类别共 75 个 finance skills（每个一份 SKILL.md）
+│   │   ├── skills/                 # 8 个类别共 77 个 finance skills（每个一份 SKILL.md）
 │   │   ├── swarm/                  # Swarm DAG 执行引擎
 │   │   │   └── presets/            #   29 个 swarm preset YAML 定义
 │   │   ├── session/                # 多轮对话 + FTS5 session 搜索
