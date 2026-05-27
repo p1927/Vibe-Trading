@@ -234,7 +234,7 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 
 | 类别 | Skills | 示例 |
 |------|--------|------|
-| Data Source | 6 | `data-routing`, `tushare`, `yfinance`, `okx-market`, `akshare`, `ccxt` |
+| Data Source | 7 | `data-routing`, `tushare`, `yfinance`, `okx-market`, `akshare`, `mootdx`, `ccxt` |
 | Strategy | 17 | `strategy-generate`, `cross-market-strategy`, `technical-basic`, `candlestick`, `ichimoku`, `elliott-wave`, `smc`, `multi-factor`, `ml-strategy` |
 | Analysis | 17 | `factor-research`, `macro-analysis`, `global-macro`, `valuation-model`, `earnings-forecast`, `credit-analysis`, `dividend-analysis` |
 | Asset Class | 9 | `options-strategy`, `options-advanced`, `convertible-bond`, `etf-analysis`, `asset-allocation`, `sector-rotation` |
@@ -805,7 +805,7 @@ Vibe-Trading/
 │   │
 │   └── backtest/                   # 回测引擎
 │       ├── engines/                #   7 个引擎 + 跨市场 composite 引擎 + options_portfolio
-│       ├── loaders/                #   6 个数据源：tushare、okx、yfinance、akshare、ccxt、futu
+│       ├── loaders/                #   7 个数据源：tushare、okx、yfinance、akshare、mootdx、ccxt、futu
 │       │   ├── base.py             #   DataLoader Protocol
 │       │   └── registry.py         #   Registry + 自动 fallback 链路
 │       └── optimizers/             #   MVO、equal vol、max div、risk parity
