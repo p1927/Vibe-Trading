@@ -1840,6 +1840,12 @@ class _SwarmDashboard:
             agent["elapsed"] = (time.monotonic() - agent["started_at"]) if agent["started_at"] else 0
             error = data.get("error", "")[:80]
             self.completed_summaries.append((agent["name"], f"[red]FAILED: {error}[/red]"))
+        elif etype == "task_blocked":
+            agent["status"] = "blocked"
+            blocked_by = ", ".join(data.get("blocked_by", []))
+            self.completed_summaries.append(
+                (agent["name"], f"[yellow]BLOCKED by: {blocked_by}[/yellow]")
+            )
         elif etype == "task_retry":
             attempt = data.get("attempt", "?")
             agent["status"] = "retry"

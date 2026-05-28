@@ -117,6 +117,12 @@ def test_blocked_downstream_emits_task_blocked_event(tmp_path, risk_fails):
     assert "task-risk" in blocked_evt.get("data", {}).get("blocked_by", []), (
         f"task_blocked.data.blocked_by must reference upstream task; got {blocked_evt['data']}"
     )
+    # CLI live panel (cli/_legacy.py) keys events off agent_id to update the
+    # per-agent row — task_blocked without agent_id silently noops the UI.
+    assert blocked_evt.get("agent_id") == "pm", (
+        f"task_blocked must carry agent_id for CLI live-panel routing; got "
+        f"{blocked_evt.get('agent_id')!r}"
+    )
 
 
 def test_run_marked_failed_when_downstream_blocked(tmp_path, risk_fails):

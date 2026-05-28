@@ -526,6 +526,7 @@ class SwarmRuntime:
                         run.id,
                         self._make_event(
                             "task_blocked",
+                            agent_id=task.agent_id,
                             task_id=tid,
                             data={"blocked_by": blocked_by_ids, "reason": reason},
                         ),
