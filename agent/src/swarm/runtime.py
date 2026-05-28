@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from src.config.schema import AgentConfig
 from src.swarm import grounding
 from src.swarm.models import (
     RunStatus,
@@ -56,15 +57,27 @@ class SwarmRuntime:
         _max_workers: Maximum concurrent workers in ThreadPoolExecutor.
     """
 
-    def __init__(self, store: SwarmStore, max_workers: int = 4) -> None:
+    def __init__(
+        self,
+        store: SwarmStore,
+        max_workers: int = 4,
+        agent_config: AgentConfig | None = None,
+    ) -> None:
         """Initialize SwarmRuntime.
 
         Args:
             store: SwarmStore instance for run persistence.
             max_workers: Maximum concurrent worker threads.
+            agent_config: Optional resolved agent config carrying remote MCP
+                server definitions. Boot-time / operator-trusted; never derived
+                from a swarm caller. Forwarded to every worker on every run so
+                the worker can assemble a registry that includes remote MCP
+                tools. ``None`` (the default) preserves the current
+                local-tool-only behavior byte-for-byte.
         """
         self._store = store
         self._max_workers = max_workers
+        self._agent_config = agent_config
         self._cancel_events: dict[str, threading.Event] = {}
         self._live_callbacks: dict[str, Callable] = {}
         self._lock = threading.Lock()
@@ -687,6 +700,7 @@ class SwarmRuntime:
                 event_callback=event_callback,
                 include_shell_tools=include_shell_tools,
                 grounding_block=grounding_block,
+                agent_config=self._agent_config,
             )
 
             cumulative_input_tokens += result.input_tokens
