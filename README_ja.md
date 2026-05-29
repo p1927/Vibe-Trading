@@ -46,11 +46,13 @@
 
 ## 📰 ニュース
 
+- **2026-05-29** 🔐 **Robinhood Agentic Trading 対応（オプトイン・有界自律）**: Robinhood Agentic Trading に対応しました（リモート MCP、OAuth）。デフォルトでは無効かつ読み取り専用。エージェントはユーザーがコミットした mandate（銘柄／注文サイズ／エクスポージャー／レバレッジ／日次上限）の範囲内でのみ自律取引し、ファイルレベルの即時 kill switch、先制的なポジション手仕舞い、mandate の自動失効、完全な監査台帳、永続的な自律 runner を備えます。資金の保管なし・取引所運営なし——資金の保有と執行はブローカーが行い、こちらは意図を中継するだけです。実験的 / 自己責任でご利用ください。
 - **2026-05-28** 🧪 **Swarm の安全性 + 厳格 alpha gate + worker 側 MCP**: Swarm DAG は上流タスクが失敗したとき下流タスクをブロックするようになりました ([#145](https://github.com/HKUDS/Vibe-Trading/pull/145))。新規 `run_bench_strict()` は IC gate に同 universe のランダムコントロール + train/test OOS 分割を追加し、市場 beta を追っているだけの偽 factor を捕捉します ([#143](https://github.com/HKUDS/Vibe-Trading/pull/143), @Soli22de さんに感謝)。Swarm worker は operator が設定した外部 MCP server からツールを呼べるようになり、信頼境界は専用テストで固定されています ([#142](https://github.com/HKUDS/Vibe-Trading/pull/142), @shadowinlife さんに感謝)。
 - **2026-05-27** 📊 **mootdx A 株データソース + 出力スタイル**: 新規 `mootdx` loader はネイティブ 通达信 TCP プロトコルで A 株 OHLCV を取得します（認証不要、IP 速度制限なし、日足 + 分足の 25 ページ walk-back ページング）。fallback chain では tushare と akshare の間に配置されます ([#107](https://github.com/HKUDS/Vibe-Trading/issues/107))。CCXT loader は `HTTP_PROXY/HTTPS_PROXY/ALL_PROXY` を読み込み、制限されたネットワークから Binance/OKX の公開データを取得できるようになりました ([#126](https://github.com/HKUDS/Vibe-Trading/pull/126), @ruok808 さんに感謝)。最終回答のレンダリングからは CLI と Web の見苦しい全幅 `---` セパレータを削除しました: system prompt は markdown table と `##` heading を促し、CLI renderer は単独 HR を defense-in-depth として除去し、chat bubble はすり抜けた `<hr>` を隠します ([#139](https://github.com/HKUDS/Vibe-Trading/issues/139), @sdwxm188 さんに感謝)。
-- **2026-05-26** ✅ **Research Goal ライフサイクルの閉ループ化**: Goal mode が実際のタスクランナーのように動くようになりました。Web UI で goal を作成すると session を作成または bind し、即座に kickoff turn を送ります。active goal は Web/API/CLI/MCP から continue/edit/cancel/complete でき、agent loop は最初の prompt だけでなく現在の goal snapshot（criteria、evidence、claims、open items）から前進します。criteria が covered でも goal が active のままなら silent stop ではなく audit/status update に入り、backend、CLI、MCP、frontend events の回帰で固定しました。
 <details>
 <summary>過去のニュース</summary>
+
+- **2026-05-26** ✅ **Research Goal ライフサイクルの閉ループ化**: Goal mode が実際のタスクランナーのように動くようになりました。Web UI で goal を作成すると session を作成または bind し、即座に kickoff turn を送ります。active goal は Web/API/CLI/MCP から continue/edit/cancel/complete でき、agent loop は最初の prompt だけでなく現在の goal snapshot（criteria、evidence、claims、open items）から前進します。criteria が covered でも goal が active のままなら silent stop ではなく audit/status update に入り、backend、CLI、MCP、frontend events の回帰で固定しました。
 
 - **2026-05-25** 🧼 **よりクリーンな Chat UI + composer workflow**: Web UI は次の入力に集中できる形になりました。upload、swarm、research-goal mode は composer の `+` メニューにまとまり、floating panel で会話を邪魔しません。現在の context は input 上の compact chip として表示され、goal details は chip クリック時だけ inline 展開されます。旧 custom i18n layer も削除し、直接 English copy に統一。Full Report card は report-worthy run のみに表示され、local dev startup/status reporting もブラウザ smoke test 向けに安定化しました。
 - **2026-05-24** 🎯 **Research Goal runtime**: backend、CLI、API/MCP、SSE、Web UI をまたぐ session-scoped Research Goal layer を追加しました。Goal は claim、acceptance criteria、evidence row、budget、completion policy を永続化します。agent tool は goal 作成と evidence 追加に対応し、`/goal` が CLI 入口になり、REST/MCP は goal snapshot と evidence write を公開し、SSE は chat client の状態を fresh に保ちます。後続 audit fixes では verified evidence をロックダウンし、agent tool からの live-trading risk tier をブロックし、CLI-created goal を後続 turn に接続し、session 削除時の goal ledger cleanup、replay-all 接続、frontend の cross-session snapshot race 修正を行いました。
@@ -152,7 +154,7 @@
 
 Vibe-Trading は、金融に関する問いを実行可能な分析へ変換するためのオープンソースのリサーチワークスペースです。自然言語プロンプトを、市場データ loader、戦略生成、バックテストエンジン、レポート、エクスポート、永続リサーチメモリへ接続します。
 
-研究、シミュレーション、バックテストのために設計されています。ライブ取引は実行しません。
+研究、シミュレーション、バックテストのために設計されています——さらに、お望みであれば、ご自身が認可したブローカー（例: Robinhood Agentic Trading）を通じた自律取引も可能です。資金は一切保管せず、設定した制限を超える取引は決して行わず、いつでも即座に停止できます。
 
 ---
 
@@ -914,7 +916,7 @@ Vibe-Trading に貢献してくださった皆さまに感謝します。
 
 ## Disclaimer
 
-Vibe-Trading は研究、シミュレーション、バックテスト専用です。投資助言ではなく、ライブ取引も実行しません。過去の成績は将来の結果を保証しません。
+Vibe-Trading は研究・取引ソフトウェアです。投資助言ではなく、資金を一切保管せず、取引所も運営しません。取引はご自身が明示的に認可したブローカーチャネル（例: Robinhood Agentic Trading）を通じてのみ行われ、設定した制限の範囲内で、いつでも停止できます。このブローカー取引機能は実験的であり、当方が実際のブローカー口座で検証したものではありません——自己責任でご利用ください。過去の成績は将来の結果を保証しません。
 
 ## License
 
