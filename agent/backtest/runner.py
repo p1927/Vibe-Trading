@@ -422,7 +422,15 @@ def main(run_dir: Path) -> None:
         print(json.dumps({"error": "code/signal_engine.py not found"}))
         sys.exit(1)
 
-    signal_module = _load_module_from_file(signal_path, "signal_engine")
+    try:
+        signal_module = _load_module_from_file(signal_path, "signal_engine")
+    except ValueError as exc:
+        # Source-level AST validation (circular self-import, unsafe imports,
+        # decorators, top-level statements) raises ValueError. Surface it as a
+        # clean JSON envelope instead of a raw traceback so the agent gets an
+        # actionable message.
+        print(json.dumps({"error": f"SignalEngine source error: {exc}"}))
+        sys.exit(1)
     engine_cls = getattr(signal_module, "SignalEngine", None)
     if engine_cls is None:
         print(json.dumps({"error": "SignalEngine class not found in signal_engine.py"}))
