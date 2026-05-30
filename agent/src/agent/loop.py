@@ -400,8 +400,12 @@ class AgentLoop:
 
                 logger.info(f"ReAct iteration {iteration}/{self.max_iterations}")
 
-                # Inject wrap-up nudge when approaching iteration limit
-                if iteration == wrap_up_at:
+                # Inject wrap-up nudge when approaching iteration limit.
+                # Skip on the first iteration (tiny budgets) and on the last
+                # iteration (the forced text-only path already guarantees an
+                # answer there) so the nudge never displaces the active-goal
+                # context as the most recent user message.
+                if iteration == wrap_up_at and 1 < iteration < self.max_iterations:
                     remaining = self.max_iterations - iteration
                     messages.append({
                         "role": "user",
