@@ -10,6 +10,7 @@ import asyncio
 import hmac
 import ipaddress
 import json
+import logging
 import os
 import re
 import signal
@@ -47,11 +48,7 @@ ENV_EXAMPLE_PATH = AGENT_DIR / ".env.example"
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
 _UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MB
 
-# Rich console for colored logs
 console = Console()
-
-import logging
-
 logger = logging.getLogger(__name__)
 
 
@@ -1245,20 +1242,20 @@ async def list_runs(limit: int = 20):
     """List recent runs with summary fields."""
     limit = min(max(1, limit), 100)
     runs_dir = RUNS_DIR
-    
+
     if not runs_dir.exists():
         return []
-    
+
     run_dirs = sorted(
         [d for d in runs_dir.iterdir() if d.is_dir()],
         key=lambda x: x.name,
         reverse=True
     )
-    
+
     results = []
     for d in run_dirs[:limit]:
         run_id = d.name
-        
+
         # Status from state.json or artifacts
         status_val = "unknown"
         state_file = _load_json_file(d / "state.json")
@@ -1268,7 +1265,7 @@ async def list_runs(limit: int = 20):
             status_val = "success"
         elif (d / "review_report.json").exists():
             status_val = "success"
-        
+
         # Parse created_at from run_id (YYYYMMDD_HHMMSS or run_YYYYMMDD_HHMMSS)
         created_at = "Unknown"
         if run_id.startswith("run_"):
@@ -1283,11 +1280,11 @@ async def list_runs(limit: int = 20):
                 d_str, t_str = parts[0], parts[1]
                 if len(d_str) == 8 and len(t_str) == 6:
                     created_at = f"{d_str[:4]}-{d_str[4:6]}-{d_str[6:8]} {t_str[:2]}:{t_str[2:4]}:{t_str[4:6]}"
-        
+
         if created_at == "Unknown":
             mtime = datetime.fromtimestamp(d.stat().st_mtime)
             created_at = mtime.strftime("%Y-%m-%d %H:%M:%S")
-        
+
         prompt = None
         req_file = d / "req.json"
         planner_file = d / "planner_output.json"
@@ -1304,12 +1301,12 @@ async def list_runs(limit: int = 20):
                 prompt = planner_data.get("user_goal") or planner_data.get("goal")
             except (json.JSONDecodeError, OSError):
                 pass
-            
+
         if not prompt:
             prompt_file = d / "user_prompt.txt"
             if prompt_file.exists():
                 prompt = prompt_file.read_text(encoding="utf-8").strip()
-        
+
         total_return = None
         sharpe = None
         metrics_file = d / "artifacts" / "metrics.csv"
@@ -1324,7 +1321,7 @@ async def list_runs(limit: int = 20):
                         break
             except (OSError, ValueError):
                 pass
-        
+
         run_context = load_run_context(d)
         results.append(RunInfo(
             run_id=run_id,
@@ -1337,7 +1334,7 @@ async def list_runs(limit: int = 20):
             start_date=run_context.get("start_date"),
             end_date=run_context.get("end_date"),
         ))
-        
+
     return results
 
 
@@ -2689,6 +2686,15 @@ def _runner_liveness_state(broker: str) -> RunnerLivenessState:
     return RunnerLivenessState(broker=broker, alive=alive, last_tick=tick, last_tick_age_seconds=age)
 
 
+def _connector_profile_for_broker(broker: str) -> str:
+    """Return the public connector profile id for a live broker key."""
+    if broker == "robinhood":
+        return "robinhood-live-mcp"
+    if broker == "ibkr":
+        return "ibkr-live-official-mcp-readonly"
+    return f"{broker}-live-mcp"
+
+
 @app.get("/live/status", response_model=LiveStatusResponse, dependencies=[Depends(require_auth)])
 async def live_status_endpoint(broker: Optional[str] = Query(None, max_length=64)):
     """Return live-channel status: auth, active mandate, runner liveness, halt (C2).
@@ -2749,9 +2755,10 @@ async def live_authorize_endpoint(payload: LiveAuthorizeRequest):
         "broker": broker,
         "oauth_token_present": _oauth_token_present(broker),
         "instruction": (
-            f"Run `vibe-trading live authorize {broker}` from the device that will "
-            "hold the broker session. This opens the broker's own OAuth consent flow; "
-            "Vibe-Trading never holds funds and only relays intent once you authorize."
+            f"Run `vibe-trading connector authorize {_connector_profile_for_broker(broker)}` "
+            "from the device that will hold the broker session. This opens the "
+            "broker's own OAuth consent flow; Vibe-Trading never holds funds and "
+            "only relays intent once you authorize."
         ),
         "note": (
             "The live channel stays read-only until the OAuth token is present AND a "
@@ -2837,14 +2844,26 @@ def _build_live_runner(broker: str) -> Any:
     if _runner_factory is not None:
         return _runner_factory(broker)
 
-    from functools import partial
-
     from src.live.audit import write_live_action
     from src.live.runtime.reconcile import reconcile
     from src.live.runtime.runner import LiveRunner
     from src.live.runtime.scheduler import Scheduler
     from src.live.runtime.triggers import Trigger
+    from src.trading.service import runner_tool_name
 
+    def _tool(operation: str) -> str:
+        remote_tool = runner_tool_name(broker, operation)
+        if remote_tool is None:
+            raise LiveRunnerUnavailable(
+                f"live runner for {broker!r} does not define remote tool {operation!r}"
+            )
+        return remote_tool
+
+    positions_tool = _tool("positions")
+    balance_tool = _tool("account")
+    open_orders_tool = _tool("orders")
+    submit_order_tool = _tool("submit_order")
+    cancel_order_tool = _tool("cancel_order")
     adapter = _live_broker_adapter(broker)  # raises LiveRunnerUnavailable if absent
 
     def _read(remote_tool: str):
@@ -2856,8 +2875,8 @@ def _build_live_runner(broker: str) -> Any:
         # Field mapping against the real Robinhood schema is finalized post-access
         # (L6); the action discriminator is broker-agnostic.
         if order.get("action") == "cancel":
-            return adapter.call_tool("cancel_order", order)
-        return adapter.call_tool("place_order", order)
+            return adapter.call_tool(cancel_order_tool, order)
+        return adapter.call_tool(submit_order_tool, order)
 
     svc = _get_session_service()
     session = svc.create_session(title=f"live-runner:{broker}")
@@ -2892,9 +2911,9 @@ def _build_live_runner(broker: str) -> Any:
         broker,
         agent_caller=_agent_caller,
         reconcile_fn=reconcile,
-        read_positions=_read("get_positions"),
-        read_balance=_read("get_account"),
-        read_open_orders=_read("list_orders"),
+        read_positions=_read(positions_tool),
+        read_balance=_read(balance_tool),
+        read_open_orders=_read(open_orders_tool),
         submit_fn=_submit,
         write_audit_fn=_audit_with_bus,
         scheduler=scheduler,
@@ -2932,6 +2951,13 @@ async def start_runner_endpoint(payload: LiveRunnerControlRequest):
     broker = payload.broker.strip().lower()
     if not broker:
         raise HTTPException(status_code=400, detail="broker must not be blank")
+    from src.trading.service import broker_supports_live_runner
+
+    if not broker_supports_live_runner(broker):
+        raise HTTPException(
+            status_code=400,
+            detail=f"live runner is not supported for {broker}",
+        )
 
     existing = _runner_tasks.get(broker)
     if existing is not None and not existing.done():
@@ -2954,9 +2980,15 @@ async def start_runner_endpoint(payload: LiveRunnerControlRequest):
 
     task = asyncio.ensure_future(_drive_runner(runner))
     _runner_tasks[broker] = task
-    task.add_done_callback(lambda t, b=broker: _runner_tasks.pop(b, None) if _runner_tasks.get(b) is t else None)
+    task.add_done_callback(
+        lambda t, b=broker: _runner_tasks.pop(b, None) if _runner_tasks.get(b) is t else None
+    )
 
-    _emit_live_event(payload.session_id, "live.action", {"kind": "runner_started", "broker": broker})
+    _emit_live_event(
+        payload.session_id,
+        "live.action",
+        {"kind": "runner_started", "broker": broker},
+    )
     return {"broker": broker, "started": True, "already_running": False}
 
 
@@ -2971,13 +3003,24 @@ async def stop_runner_endpoint(payload: LiveRunnerControlRequest):
     broker = payload.broker.strip().lower()
     if not broker:
         raise HTTPException(status_code=400, detail="broker must not be blank")
+    from src.trading.service import broker_supports_live_runner
+
+    if not broker_supports_live_runner(broker):
+        raise HTTPException(
+            status_code=400,
+            detail=f"live runner is not supported for {broker}",
+        )
 
     task = _runner_tasks.pop(broker, None)
     if task is None or task.done():
         return {"broker": broker, "stopped": False, "was_running": False}
 
     task.cancel()
-    _emit_live_event(payload.session_id, "live.action", {"kind": "runner_stopped", "broker": broker})
+    _emit_live_event(
+        payload.session_id,
+        "live.action",
+        {"kind": "runner_stopped", "broker": broker},
+    )
     return {"broker": broker, "stopped": True, "was_running": True}
 
 

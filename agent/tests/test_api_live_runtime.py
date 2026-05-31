@@ -123,7 +123,7 @@ def test_authorize_onramp_describes_cli_flow(tmp_path: Path, monkeypatch) -> Non
     assert body["broker"] == "robinhood"
     assert body["oauth_token_present"] is False
     # On-ramp must point at the desktop CLI flow and never return a token.
-    assert "vibe-trading live authorize robinhood" in body["instruction"]
+    assert "vibe-trading connector authorize robinhood-live-mcp" in body["instruction"]
     assert "token" not in body
 
 
@@ -147,6 +147,19 @@ def test_runner_start_requires_committed_mandate(tmp_path: Path, monkeypatch) ->
 
     assert response.status_code == 409
     assert "mandate" in response.json()["detail"].lower()
+
+
+def test_runner_start_rejects_readonly_connector_without_runner(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client = _client(tmp_path, monkeypatch)
+
+    response = client.post("/live/runner/start", json={"broker": "ibkr"})
+
+    assert response.status_code == 400
+    detail = response.json()["detail"].lower()
+    assert "ibkr" in detail
+    assert "runner" in detail
 
 
 def test_runner_start_blocked_by_kill_switch(tmp_path: Path, monkeypatch) -> None:
