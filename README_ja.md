@@ -671,7 +671,7 @@ Settings reads は side-effect free です。`GET /settings/llm` と `GET /setti
 
 ## 🔌 MCP Plugin
 
-Vibe-Trading は MCP-compatible client 向けに 22 MCP tools を公開します。stdio subprocess として動作し、server setup は不要です。**22 tools のうち 21 tools は API key なしで動作します**（HK/US/crypto）。LLM key が必要なのは `run_swarm` のみです。
+Vibe-Trading は MCP-compatible client 向けに 35 MCP tools を公開します。stdio subprocess として動作し、server setup は不要です。Core research tools は HK/US/crypto で API key なしに動作し、trading connector tools は選択中の connector profile を使います。LLM key が必要なのは `run_swarm` のみです。
 
 <details>
 <summary><b>Claude Desktop</b></summary>
@@ -713,7 +713,7 @@ vibe-trading-mcp --transport sse  # SSE for web clients
 
 </details>
 
-**公開される MCP tools（22）:** `list_skills`, `load_skill`, `backtest`, `factor_analysis`, `analyze_options`, `pattern_recognition`, `get_market_data`, `web_search`, `read_url`, `read_document`, `read_file`, `write_file`, `analyze_trade_journal`, `extract_shadow_strategy`, `run_shadow_backtest`, `render_shadow_report`, `scan_shadow_signals`, `list_swarm_presets`, `run_swarm`, `get_swarm_status`, `get_run_result`, `list_runs`.
+**公開される MCP tools（35）:** `list_skills`, `load_skill`, `start_research_goal`, `get_research_goal`, `add_goal_evidence`, `update_research_goal_status`, `backtest`, `factor_analysis`, `analyze_options`, `pattern_recognition`, `read_url`, `read_document`, `web_search`, `write_file`, `read_file`, `list_swarm_presets`, `run_swarm`, `get_market_data`, `get_swarm_status`, `get_run_result`, `list_runs`, `reap_stale_runs`, `analyze_trade_journal`, `extract_shadow_strategy`, `run_shadow_backtest`, `render_shadow_report`, `scan_shadow_signals`, `trading_connections`, `trading_select_connection`, `trading_check`, `trading_account`, `trading_positions`, `trading_orders`, `trading_quote`, `trading_history`.
 
 <details>
 <summary><b>ClawHub からインストール（1 コマンド）</b></summary>
@@ -771,7 +771,7 @@ Vibe-Trading/
 ├── agent/                          # バックエンド (Python)
 │   ├── cli/                        # CLI パッケージ — インタラクティブ TUI + サブコマンド
 │   ├── api_server.py               # FastAPI サーバー — runs、sessions、upload、swarm、SSE
-│   ├── mcp_server.py               # MCP サーバー — OpenClaw / Claude Desktop 向け 22 tools
+│   ├── mcp_server.py               # MCP サーバー — OpenClaw / Claude Desktop 向け 35 tools
 │   │
 │   ├── src/
 │   │   ├── agent/                  # ReAct エージェントコア

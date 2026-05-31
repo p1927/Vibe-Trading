@@ -152,6 +152,21 @@ def broker_supports_live_runner(broker: str) -> bool:
     return live_runner_profile_for_broker(broker) is not None
 
 
+def connector_profile_id_for_broker(broker: str) -> str:
+    """Return the preferred connector profile id for a broker on-ramp."""
+    key = str(broker or "").strip().lower()
+    if not key:
+        raise ValueError("broker must not be blank")
+
+    candidates = [profile for profile in list_profiles() if profile.connector == key and profile.environment == "live"]
+    for profile in candidates:
+        if profile.transport == "remote_mcp":
+            return profile.id
+    if candidates:
+        return candidates[0].id
+    return f"{key}-live-mcp"
+
+
 def runner_tool_name(connector: str, operation: str) -> str | None:
     """Map a runner operation to a connector-specific remote MCP tool name."""
     if connector == "robinhood":

@@ -121,6 +121,7 @@ def test_authorize_onramp_describes_cli_flow(tmp_path: Path, monkeypatch) -> Non
     assert response.status_code == 200
     body = response.json()
     assert body["broker"] == "robinhood"
+    assert body["connector_profile"] == "robinhood-live-mcp"
     assert body["oauth_token_present"] is False
     # On-ramp must point at the desktop CLI flow and never return a token.
     assert "vibe-trading connector authorize robinhood-live-mcp" in body["instruction"]

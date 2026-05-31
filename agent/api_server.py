@@ -2686,15 +2686,6 @@ def _runner_liveness_state(broker: str) -> RunnerLivenessState:
     return RunnerLivenessState(broker=broker, alive=alive, last_tick=tick, last_tick_age_seconds=age)
 
 
-def _connector_profile_for_broker(broker: str) -> str:
-    """Return the public connector profile id for a live broker key."""
-    if broker == "robinhood":
-        return "robinhood-live-mcp"
-    if broker == "ibkr":
-        return "ibkr-live-official-mcp-readonly"
-    return f"{broker}-live-mcp"
-
-
 @app.get("/live/status", response_model=LiveStatusResponse, dependencies=[Depends(require_auth)])
 async def live_status_endpoint(broker: Optional[str] = Query(None, max_length=64)):
     """Return live-channel status: auth, active mandate, runner liveness, halt (C2).
@@ -2751,11 +2742,15 @@ async def live_authorize_endpoint(payload: LiveAuthorizeRequest):
     if broker not in set(_known_live_brokers()):
         raise HTTPException(status_code=400, detail=f"unknown live broker: {broker}")
 
+    from src.trading.service import connector_profile_id_for_broker
+
+    connector_profile = connector_profile_id_for_broker(broker)
     return {
         "broker": broker,
+        "connector_profile": connector_profile,
         "oauth_token_present": _oauth_token_present(broker),
         "instruction": (
-            f"Run `vibe-trading connector authorize {_connector_profile_for_broker(broker)}` "
+            f"Run `vibe-trading connector authorize {connector_profile}` "
             "from the device that will hold the broker session. This opens the "
             "broker's own OAuth consent flow; Vibe-Trading never holds funds and "
             "only relays intent once you authorize."

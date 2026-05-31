@@ -60,6 +60,13 @@ def test_ibkr_official_profile_does_not_advertise_unknown_generic_reads() -> Non
     assert "does not support" in result["error"]
 
 
+def test_connector_profile_id_for_broker_prefers_live_remote_mcp() -> None:
+    """Broker on-ramps should resolve through the centralized profile registry."""
+    assert service.connector_profile_id_for_broker("robinhood") == "robinhood-live-mcp"
+    assert service.connector_profile_id_for_broker("ibkr") == "ibkr-live-official-mcp-readonly"
+    assert service.connector_profile_id_for_broker("futurebroker") == "futurebroker-live-mcp"
+
+
 def test_select_connection_tool_returns_canonical_profile_id(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

@@ -783,6 +783,7 @@ export interface LiveAuthorizeRequest {
 
 export interface LiveAuthorizeResponse {
   broker: string;
+  connector_profile: string;
   oauth_token_present: boolean;
   instruction: string;
   note?: string;

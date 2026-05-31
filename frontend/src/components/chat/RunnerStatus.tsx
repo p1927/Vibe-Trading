@@ -75,14 +75,8 @@ function summarizeLimits(limits: LiveMandateLimits | undefined): string {
   return parts.join(" · ");
 }
 
-function fallbackConnectorProfileForBroker(broker: string): string {
-  if (broker === "robinhood") return "robinhood-live-mcp";
-  if (broker === "ibkr") return "ibkr-live-official-mcp-readonly";
-  return `${broker}-live-mcp`;
-}
-
-function fallbackAuthorizeInstruction(broker: string): string {
-  return `Run \`vibe-trading connector authorize ${fallbackConnectorProfileForBroker(broker)}\` from the desktop session that will hold the broker connection.`;
+function fallbackAuthorizeInstruction(): string {
+  return "Run `vibe-trading connector list`, choose the broker profile, then run `vibe-trading connector authorize <profile>` from the desktop session that will hold the broker connection.";
 }
 
 function BrokerRow({
@@ -103,7 +97,7 @@ function BrokerRow({
   const mandate = broker.mandate ?? null;
   const countdown = formatCountdown(mandate?.expires_at);
   const authorizeInstruction = authorizeHint?.instruction
-    ?? (authorizeFailed ? fallbackAuthorizeInstruction(brokerKey) : "Loading connector authorization instructions...");
+    ?? (authorizeFailed ? fallbackAuthorizeInstruction() : "Loading connector authorization instructions...");
   const authorizeNote = "The connector channel stays read-only until OAuth succeeds and a mandate is committed.";
 
   useEffect(() => {
