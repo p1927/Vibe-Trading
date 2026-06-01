@@ -899,17 +899,21 @@ Contributions を歓迎します。ガイドラインは [CONTRIBUTING.md](CONTR
 
 Vibe-Trading に貢献してくださった皆さまに感謝します。
 
-最近の v0.1.8 cycle contributors and credits:
+最近の v0.1.9 cycle contributors and credits:
 
-- @GTC2080 / TaoMu — Web UI Settings and provider/data-source configuration APIs (#57)
-- @BigNounce90 — validation CLI hardening for backtest `run_dir` input (#60)
-- @shadowinlife — A-share pre-ST filter skill (#63)
-- @MB-Ndhlovu — correlation heatmap dashboard and review fixes (#64, #66)
-- @ykykj — OpenAI Codex OAuth provider option (#65)
-- @RuifengFu — interactive CLI live status bar and prompt editing (#69)
-- @SiMinus — swarm preset inspection command (#73)
-- @warren618 / Haozhe Wu — security hardening, release integration, docs, Docker, packaging, and local dev workflow
-- lemi9090 (S2W) — coordinated security research, validation, and disclosure support
+- @toanalien — session JSONL crash-hardening (#147), graceful agent-loop exit at the iteration budget (#148), pre-flight validation for LLM-generated signal engines (#149), and cross-browser Full Report links (#150)
+- @ai7eam-dev — cross-market correlation timestamp alignment (#158) and the session running-status indicator + swarm retry (#159 → #160)
+- @shadowinlife — remote MCP servers over SSE/HTTP (#125) and operator-configured external MCP tools in swarm workers (#142)
+- @DoubleSky123 — configurable SSE idle timeout (#157)
+- @ArthurXi — IME Enter submission handling in the Web composer (#146)
+- @omcdecor-cyber — swarm DAG gating when an upstream task fails (#145)
+- @Soli22de — strict alpha-bench mode with a mandatory random control (#143)
+- @ruok808 — proxy-env support in the CCXT loader (#126)
+- @faizack — remote Ollama base-URL normalization (#129)
+- @fightZy — agent session history loading fix (#136)
+- @lcwSeven — short universe names in the alpha list endpoint (#137)
+- @Teerapat-Vatpitak — resolved .env-source logging (#124)
+- @warren618 / Haozhe Wu — connector-first broker profiles, the Robinhood Agentic Trading channel, Research Goal runtime, swarm reconcile + retry_run, the agent/cli refactor, the mootdx loader, and release integration
 
 <a href="https://github.com/HKUDS/Vibe-Trading/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=HKUDS/Vibe-Trading" />

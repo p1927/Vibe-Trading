@@ -902,17 +902,21 @@ Vibe-Trading جزء من نظام وكلاء **[HKUDS](https://github.com/HKUDS)
 
 شكراً لكل من ساهم في Vibe-Trading!
 
-مساهمو واعتمادات دورة v0.1.8 الأخيرة:
+مساهمو واعتمادات دورة v0.1.9 الأخيرة:
 
-- @GTC2080 / TaoMu — Web UI Settings وواجهات إعداد provider/data-source (#57)
-- @BigNounce90 — تعزيز validation CLI لمدخل `run_dir` في الاختبار الرجعي (#60)
-- @shadowinlife — مهارة A-share pre-ST filter (#63)
-- @MB-Ndhlovu — لوحة خريطة الارتباط الحرارية وإصلاحات المراجعة (#64, #66)
-- @ykykj — خيار مزود OpenAI Codex OAuth (#65)
-- @RuifengFu — شريط حالة CLI التفاعلي وتحرير prompt (#69)
-- @SiMinus — أمر فحص swarm preset (#73)
-- @warren618 / Haozhe Wu — تعزيز الأمان، وتكامل الإصدار، والوثائق، وDocker، والتغليف، وسير التطوير المحلي
-- lemi9090 (S2W) — بحث أمني منسق، وتحقق، ودعم الإفصاح
+- @toanalien — تقوية session JSONL ضد الأعطال (#147)، وخروج لطيف من حلقة الوكيل عند نفاد ميزانية التكرارات (#148)، وتحقق مسبق من signal engines المولّدة بالـ LLM (#149)، وروابط Full Report عبر المتصفحات (#150)
+- @ai7eam-dev — محاذاة الطوابع الزمنية للارتباط عبر الأسواق (#158)، ومؤشر حالة تشغيل الجلسة + إعادة تشغيل swarm (#159 → #160)
+- @shadowinlife — خوادم MCP عن بُعد عبر SSE/HTTP (#125)، وأدوات MCP خارجية يضبطها المشغّل في عمّال swarm (#142)
+- @DoubleSky123 — مهلة خمول SSE قابلة للضبط (#157)
+- @ArthurXi — معالجة إرسال Enter في IME داخل محرّر الويب (#146)
+- @omcdecor-cyber — حجب المهام المتفرعة عند فشل المهمة الأعلى في swarm DAG (#145)
+- @Soli22de — وضع alpha-bench صارم بتحكم عشوائي إلزامي (#143)
+- @ruok808 — دعم متغيرات البيئة للوكيل في محمّل CCXT (#126)
+- @faizack — تطبيع عنوان Ollama البعيد الأساسي (#129)
+- @fightZy — إصلاح تحميل سجل جلسات الوكيل (#136)
+- @lcwSeven — قبول أسماء universe قصيرة في واجهة قائمة alpha (#137)
+- @Teerapat-Vatpitak — تسجيل مصدر .env بعد التحليل (#124)
+- @warren618 / Haozhe Wu — ملفات وسطاء تعتمد أولاً على connectors، وقناة Robinhood Agentic Trading، وزمن تشغيل Research Goal، وswarm reconcile + retry_run، وإعادة هيكلة agent/cli، ومحمّل mootdx، وتكامل الإصدار
 
 <a href="https://github.com/HKUDS/Vibe-Trading/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=HKUDS/Vibe-Trading" />
