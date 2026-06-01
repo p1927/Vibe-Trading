@@ -352,20 +352,33 @@ export function Agent() {
           if (metrics && Object.keys(metrics).length > 0) {
             agentMsgs.push({ id: m.message_id, type: "run_complete", content: "", runId, metrics, timestamp: ts + 1 });
           } else {
+            // Fetch run data to check report-worthiness; show fallback card if fetch fails
+            let fetchedMetrics: Record<string, number> | undefined;
+            let fetchedCurve: Array<{ time: string; equity: number }> | undefined;
+            let showCard = false;
             try {
               const runData = await api.getRun(runId);
               if (isReportWorthyRun(runData)) {
-                agentMsgs.push({
-                  id: m.message_id,
-                  type: "run_complete",
-                  content: "",
-                  runId,
-                  metrics: runData.metrics,
-                  equityCurve: runData.equity_curve?.map((e) => ({ time: e.time, equity: e.equity })),
-                  timestamp: ts + 1,
-                });
+                fetchedMetrics = runData.metrics;
+                fetchedCurve = runData.equity_curve?.map((e) => ({ time: e.time, equity: Number(e.equity) }));
+                showCard = true;
               }
-            } catch { /* ignore non-report attempt directories */ }
+              // succeeded but not report-worthy (plain chat turn) → skip card
+            } catch {
+              // fetch failed (auth/404/network) → can't tell, show link as fallback
+              showCard = true;
+            }
+            if (showCard) {
+              agentMsgs.push({
+                id: m.message_id,
+                type: "run_complete",
+                content: "",
+                runId,
+                metrics: fetchedMetrics,
+                equityCurve: fetchedCurve,
+                timestamp: ts + 1,
+              });
+            }
           }
         } else {
           agentMsgs.push({ id: m.message_id, type: "answer", content: m.content, timestamp: ts });
@@ -486,19 +499,28 @@ export function Agent() {
 
         // Show RunCompleteCard when the turn produced backtest metrics or a shadow report
         if (runId) {
+          let runMetrics: Record<string, number> | undefined;
+          let runCurve: Array<{ time: string; equity: number }> | undefined;
+          let showCard = false;
           try {
             const runData = await api.getRun(runId);
-            const hasReport = isReportWorthyRun(runData);
-            if (hasReport || shadowId) {
-              s.addMessage({
-                id: "", type: "run_complete", content: "", runId,
-                metrics: hasReport ? runData.metrics : undefined,
-                equityCurve: runData.equity_curve?.map(e => ({ time: e.time, equity: e.equity })),
-                shadowId,
-                timestamp: Date.now(),
-              });
+            if (isReportWorthyRun(runData)) {
+              runMetrics = runData.metrics;
+              runCurve = runData.equity_curve?.map(e => ({ time: e.time, equity: Number(e.equity) }));
+              showCard = true;
             }
-          } catch { /* ignore */ }
+          } catch {
+            showCard = true; // fetch failed → show link as fallback
+          }
+          if (showCard || shadowId) {
+            s.addMessage({
+              id: "", type: "run_complete", content: "", runId,
+              metrics: showCard ? runMetrics : undefined,
+              equityCurve: showCard ? runCurve : undefined,
+              shadowId,
+              timestamp: Date.now(),
+            });
+          }
         } else if (shadowId) {
           s.addMessage({ id: "", type: "run_complete", content: "", shadowId, timestamp: Date.now() });
         }
