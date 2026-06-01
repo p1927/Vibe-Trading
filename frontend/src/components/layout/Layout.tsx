@@ -8,7 +8,7 @@ import { useAgentStore } from "@/stores/agent";
 import { ConnectionBanner } from "@/components/layout/ConnectionBanner";
 
 // Bump on each release; one place keeps the footer in sync with package.json.
-const APP_VERSION = "v0.1.8";
+const APP_VERSION = "v0.1.9";
 
 const NAV = [
   { to: "/", icon: BarChart3, label: "Home" },
