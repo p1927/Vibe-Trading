@@ -1,46 +1,57 @@
-// GET /api/stats — aggregate usage numbers for the wiki footer.
+// GET /api/stats — aggregate numbers for the wiki footer.
 //
-// Combines three trust-safe sources, all anonymous / public:
-//   web    : agent-vs-human page views to vibetrading.wiki (last 30 days),
-//            counted server-side by _middleware.js into D1.
-//   pypi   : install counts for `vibe-trading-ai` (pypistats public API).
-//   github : repository stars (GitHub public API).
+//   web  : agent-vs-human page views to vibetrading.wiki (last 30 days),
+//          counted server-side by _middleware.js into D1. Authoritative.
+//   pypi : install counts for `vibe-trading-ai` (pypistats public API), with a
+//          last-good D1 cache so an occasional flaky/rate-limited upstream call
+//          never blanks the footer.
 //
-// Never throws to the client: on any failure it returns zeros so the footer
-// degrades gracefully.
+// GitHub stars are intentionally NOT fetched here — the page already loads them
+// client-side (main.js `initStars`), so adding them would only duplicate work
+// and introduce a rate-limited call. Never throws to the client.
 
 const WINDOW_DAYS = 30;
 
-async function fetchPypi() {
+async function getPypi(env) {
+  // 1) live pypistats; on success refresh the D1 last-good cache.
   try {
     const resp = await fetch(
       "https://pypistats.org/api/packages/vibe-trading-ai/recent",
-      { headers: { "User-Agent": "vibetrading-wiki" }, cf: { cacheTtl: 1800 } },
+      { headers: { "User-Agent": "vibetrading-wiki" } },
     );
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    return {
-      last_day: data?.data?.last_day ?? 0,
-      last_week: data?.data?.last_week ?? 0,
-      last_month: data?.data?.last_month ?? 0,
-    };
+    if (resp.ok) {
+      const data = await resp.json();
+      const value = {
+        last_day: data?.data?.last_day ?? 0,
+        last_week: data?.data?.last_week ?? 0,
+        last_month: data?.data?.last_month ?? 0,
+      };
+      if (env.DB) {
+        await env.DB.prepare(
+          "INSERT INTO cache (key, value, updated) VALUES ('pypi', ?1, ?2) " +
+            "ON CONFLICT(key) DO UPDATE SET value = ?1, updated = ?2",
+        )
+          .bind(JSON.stringify(value), new Date().toISOString())
+          .run()
+          .catch(() => {});
+      }
+      return value;
+    }
   } catch {
-    return null;
+    // fall through to cache
   }
-}
-
-async function fetchGithub() {
+  // 2) upstream failed — serve the last-good value if we have one.
   try {
-    const resp = await fetch("https://api.github.com/repos/HKUDS/Vibe-Trading", {
-      headers: { "User-Agent": "vibetrading-wiki", Accept: "application/vnd.github+json" },
-      cf: { cacheTtl: 1800 },
-    });
-    if (!resp.ok) return null;
-    const repo = await resp.json();
-    return { stars: repo?.stargazers_count ?? 0 };
+    if (env.DB) {
+      const row = await env.DB.prepare(
+        "SELECT value FROM cache WHERE key = 'pypi'",
+      ).first();
+      if (row && row.value) return JSON.parse(row.value);
+    }
   } catch {
-    return null;
+    // no cache yet
   }
+  return null;
 }
 
 export async function onRequest(context) {
@@ -69,13 +80,12 @@ export async function onRequest(context) {
     // leave zeros
   }
 
-  const [pypi, github] = await Promise.all([fetchPypi(), fetchGithub()]);
+  const pypi = await getPypi(env);
 
   return Response.json(
     {
       web,
       pypi,
-      github,
       note: "anonymous · first-party · aggregate sample",
       generated_at: new Date().toISOString(),
     },
