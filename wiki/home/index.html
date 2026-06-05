@@ -208,6 +208,11 @@ vibe-trading</code></pre>
     </section>
   </main>
 
+  <style>
+    .footer-traffic { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1.25rem; margin-top: .75rem; font-size: .85rem; opacity: .8; }
+    .footer-traffic .ft-item strong { font-variant-numeric: tabular-nums; font-weight: 700; }
+    .footer-traffic .ft-note { font-size: .72rem; opacity: .6; }
+  </style>
   <footer class="site-footer">
     <span>Vibe-Trading Wiki</span>
     <a href="/docs/">Docs</a>
@@ -216,6 +221,12 @@ vibe-trading</code></pre>
     <a href="/research-lab/">Research Lab</a>
     <a href="https://github.com/HKUDS/Vibe-Trading">GitHub</a>
     <a href="https://pypi.org/project/vibe-trading-ai/">PyPI</a>
+    <div class="footer-traffic" id="footer-traffic" hidden>
+      <span class="ft-item">🤖 <strong id="vt-agents">–</strong> AI agents</span>
+      <span class="ft-item">👤 <strong id="vt-humans">–</strong> humans</span>
+      <span class="ft-item">📦 <strong id="vt-installs">–</strong> installs/mo</span>
+      <span class="ft-note">visitors to this site · anonymous · first-party</span>
+    </div>
   </footer>
 </body>
 </html>
