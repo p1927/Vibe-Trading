@@ -1,7 +1,7 @@
 // GET /api/stats — aggregate numbers for the wiki footer.
 //
-//   web  : agent-vs-human page views to vibetrading.wiki (last 30 days),
-//          counted server-side by _middleware.js into D1. Authoritative.
+//   web  : all-time agent-vs-human page views to vibetrading.wiki, counted
+//          server-side by _middleware.js into D1 (cumulative since launch).
 //   pypi : install counts for `vibe-trading-ai` (pypistats public API), with a
 //          last-good D1 cache so an occasional flaky/rate-limited upstream call
 //          never blanks the footer.
@@ -9,8 +9,6 @@
 // GitHub stars are intentionally NOT fetched here — the page already loads them
 // client-side (main.js `initStars`), so adding them would only duplicate work
 // and introduce a rate-limited call. Never throws to the client.
-
-const WINDOW_DAYS = 30;
 
 async function getPypi(env) {
   // 1) live pypistats; on success refresh the D1 last-good cache.
@@ -61,17 +59,12 @@ export async function onRequest(context) {
     "Cache-Control": "public, max-age=60",
   };
 
-  const web = { human: 0, agent: 0, bot: 0, window_days: WINDOW_DAYS };
+  const web = { human: 0, agent: 0, bot: 0 };
   try {
     if (env.DB) {
-      const since = new Date(Date.now() - WINDOW_DAYS * 86400000)
-        .toISOString()
-        .slice(0, 10);
       const { results } = await env.DB.prepare(
-        "SELECT klass, SUM(n) AS total FROM visits WHERE day >= ?1 GROUP BY klass",
-      )
-        .bind(since)
-        .all();
+        "SELECT klass, SUM(n) AS total FROM visits GROUP BY klass",
+      ).all();
       for (const row of results || []) {
         if (row.klass in web) web[row.klass] = Number(row.total) || 0;
       }
