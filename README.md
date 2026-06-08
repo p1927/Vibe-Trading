@@ -368,6 +368,7 @@ vibe-trading-mcp               # start MCP server (stdio)
 | **B. Local install** | Development, full CLI access | 5 min |
 | **C. MCP plugin** | Plug into your existing agent | 3 min |
 | **D. ClawHub** | One command, no cloning | 1 min |
+| **E. Pre-built image (GHCR)** | Home server / NAS, no Git needed | 2 min |
 
 ### Prerequisites
 
@@ -443,6 +444,36 @@ npx clawhub@latest install vibe-trading --force
 ```
 
 The skill + MCP config is downloaded into your agent's skills directory. See [ClawHub install](#-mcp-plugin) for details.
+
+### Path E: Pre-built image (no Git required)
+
+Pull the latest release image directly from the GitHub Container Registry — no repository clone, no local build. Ideal for home servers and Synology NAS.
+
+**1. Create a `.env` file** with your LLM provider credentials (see [Environment Variables](#-environment-variables) for all options):
+
+```bash
+# Minimal example — OpenRouter
+LANGCHAIN_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-...
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+LANGCHAIN_MODEL_NAME=deepseek/deepseek-v4-pro
+```
+
+**2. Download the production compose file:**
+
+```bash
+curl -O https://raw.githubusercontent.com/HKUDS/Vibe-Trading/main/docker-compose.prod.yml
+```
+
+**3. Start the container:**
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Open `http://localhost:8899`. The frontend is baked into the image and served at the same port — no separate build step required.
+
+> **Data persistence:** Run data (agent runs and sessions) is stored in named Docker volumes (`vibe-runs`, `vibe-sessions`) and survives container recreation.
 
 ---
 
@@ -1012,7 +1043,8 @@ Vibe-Trading/
 │       └── stores/                 #   Zustand state management
 │
 ├── Dockerfile                      # Multi-stage build
-├── docker-compose.yml              # One-command deploy
+├── docker-compose.yml              # One-command deploy (build from source)
+├── docker-compose.prod.yml         # Buildless deploy from GHCR pre-built image
 ├── pyproject.toml                  # Package config + CLI entrypoint
 ├── tools/                          # Repo-level CI helpers
 │   └── ci_grep_gates.sh            # rejects yaml.load / trademark / per-stock-data leaks
