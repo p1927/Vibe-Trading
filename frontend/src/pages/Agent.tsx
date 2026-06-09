@@ -765,6 +765,13 @@ export function Agent() {
   /* Safety timeout: if streaming but no SSE event for sseTimeoutMsRef.current ms, reset to idle */
   useEffect(() => {
     if (status !== "streaming") return;
+    // Arm the clock at the start of every streaming turn. Without this, a turn
+    // whose very first event never arrives (e.g. the LLM provider hangs before
+    // emitting a single token) left lastEventRef at its 0 / stale value, so the
+    // guard below short-circuited and the UI hung on "Agent is working…"
+    // forever. touch() refreshes this on every real event; the no-op heartbeat
+    // deliberately does not, so a connection that only keep-alives still trips.
+    lastEventRef.current = Date.now();
     const timer = setInterval(() => {
       if (lastEventRef.current && Date.now() - lastEventRef.current > sseTimeoutMsRef.current && act().status === "streaming") {
         act().setStatus("idle");
