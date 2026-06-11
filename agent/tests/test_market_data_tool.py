@@ -6,6 +6,7 @@ import pandas as pd
 
 from src.market_data import fetch_market_data_json
 from src.swarm.models import SwarmAgentSpec
+from src.swarm.presets import list_presets, load_preset
 from src.swarm.worker import build_worker_prompt
 from src.tools import build_swarm_registry
 
@@ -45,6 +46,20 @@ def test_swarm_registry_can_expose_local_get_market_data_tool():
     registry = build_swarm_registry(["get_market_data"])
 
     assert "get_market_data" in registry.tool_names
+
+
+def test_every_market_data_worker_has_get_market_data_tool():
+    """Workers with OHLCV-capable skills must expose the loader-backed tool (#198)."""
+    market_data_skills = {"tushare", "yfinance", "okx-market"}
+    missing = []
+    for summary in list_presets():
+        preset = load_preset(summary["name"])
+        for agent in preset.get("agents", []):
+            if market_data_skills & set(agent.get("skills", [])):
+                if "get_market_data" not in (agent.get("tools") or []):
+                    missing.append(f"{summary['name']}:{agent['id']}")
+
+    assert not missing, f"workers with market-data skills lack get_market_data: {missing}"
 
 
 def test_worker_prompt_prioritizes_get_market_data_for_ohlcv():
