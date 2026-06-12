@@ -37,8 +37,10 @@ from src.goal.context import (
 )
 from src.providers.chat import ChatLLM, ProviderStreamError
 from src.tools.background_tools import get_background_manager
+from src.tools.redaction import redact_payload
 
 RUNS_DIR = Path(__file__).resolve().parents[2] / "runs"
+SESSIONS_DIR = Path(__file__).resolve().parents[2] / "sessions"
 TOKEN_THRESHOLD = int(os.getenv("TOKEN_THRESHOLD", "40000"))
 KEEP_RECENT = 3
 TOOL_RESULT_LIMIT = 10_000
@@ -59,6 +61,24 @@ COLLAPSE_TAIL = 500
 TAIL_TOKEN_BUDGET = 20_000
 
 logger = logging.getLogger(__name__)
+
+
+def _redact_trace_result(result: str) -> str:
+    """Redact structured sensitive fields before persisting trace/event previews.
+
+    Args:
+        result: Raw tool result string.
+
+    Returns:
+        Redacted JSON string when ``result`` is JSON, otherwise the original
+        text. Plain text is left unchanged because reliable free-text secret
+        scrubbing would be more error-prone than helpful here.
+    """
+    try:
+        payload = json.loads(result)
+    except (TypeError, json.JSONDecodeError):
+        return result
+    return json.dumps(redact_payload(payload), ensure_ascii=False)
 
 
 def _format_timeout(seconds: float) -> str:
@@ -352,6 +372,7 @@ class AgentLoop:
         self._cancelled: bool = False
         self._previous_summary: str = ""
         self._persistent_memory = persistent_memory
+        self._run_iteration: int = 0
 
     def cancel(self) -> None:
         """Cancel the current loop.
@@ -401,8 +422,26 @@ class AgentLoop:
         messages = context.build_messages(llm_user_message, history)
         react_trace: List[Dict[str, Any]] = []
 
-        trace = TraceWriter(run_dir)
-        trace.write({"type": "start", "prompt": user_message[:500]})
+        trace_dir = SESSIONS_DIR / session_id if session_id else run_dir
+        trace = TraceWriter(trace_dir)
+        if self._run_iteration == 0 and trace.path.exists():
+            existing = TraceWriter.read(trace_dir)
+            self._run_iteration = max(
+                (int(e.get("iter", 0)) for e in existing if "iter" in e),
+                default=0,
+            )
+        trace.write_text_entry(
+            {"type": "start", "iter": self._run_iteration + 1},
+            field="prompt",
+            value=user_message,
+            offload_kind=f"start-{self._run_iteration + 1}",
+        )
+        trace.write_text_entry(
+            {"type": "message", "iter": self._run_iteration + 1, "role": "user"},
+            field="content",
+            value=user_message,
+            offload_kind=f"user-message-{self._run_iteration + 1}",
+        )
 
         iteration = 0
         final_content = ""
@@ -414,11 +453,13 @@ class AgentLoop:
         try:
             while iteration < self.max_iterations:
                 if self._cancelled:
-                    trace.write({"type": "cancelled", "iter": iteration})
+                    trace.write({"type": "cancelled", "iter": self._run_iteration + 1})
                     logger.info("AgentLoop cancelled by user")
                     break
 
                 iteration += 1
+                self._run_iteration += 1
+                current_iter = self._run_iteration
 
                 # Inject background task notifications
                 bg = get_background_manager()
@@ -440,7 +481,7 @@ class AgentLoop:
                 # Layer 3: auto_compact (token threshold exceeded)
                 if tokens > TOKEN_THRESHOLD:
                     logger.info(f"Auto compact triggered: {tokens} tokens > {TOKEN_THRESHOLD}")
-                    self._auto_compact(messages, run_dir, trace)
+                    self._auto_compact(messages, run_dir, trace, iteration=current_iter)
 
                 logger.info(f"ReAct iteration {iteration}/{self.max_iterations}")
 
@@ -468,7 +509,7 @@ class AgentLoop:
 
                 def _on_text_chunk(delta: str) -> None:
                     thinking_chunks.append(delta)
-                    self._emit("text_delta", {"delta": delta, "iter": iteration})
+                    self._emit("text_delta", {"delta": delta, "iter": current_iter})
 
                 def _on_reasoning_chunk(delta: str) -> None:
                     # Throttled: long reasoning streams produce hundreds of
@@ -487,14 +528,14 @@ class AgentLoop:
                     last_reasoning_emit = now
                     self._emit(
                         "reasoning_delta",
-                        {"iter": iteration, "chars": reasoning_chars},
+                        {"iter": current_iter, "chars": reasoning_chars},
                     )
 
                 # On last iteration, drop tool definitions to force text output
                 is_last_iteration = (iteration == self.max_iterations)
                 tool_defs = None if is_last_iteration else self.registry.get_definitions()
                 if is_last_iteration:
-                    trace.write({"type": "forced_text_only", "iter": iteration})
+                    trace.write({"type": "forced_text_only", "iter": current_iter})
 
                 try:
                     response = self.llm.stream_chat(
@@ -513,13 +554,13 @@ class AgentLoop:
                         raise
                     logger.warning(
                         "Provider stream failed (iter %s), retrying once: %s",
-                        iteration,
+                        current_iter,
                         exc,
                     )
                     self._emit(
                         "stream_reset",
                         {
-                            "iter": iteration,
+                            "iter": current_iter,
                             "reason": "provider_stream_retry",
                             "provider": exc.provider,
                             "model": exc.model,
@@ -543,7 +584,7 @@ class AgentLoop:
                             "input_tokens": int(usage.get("input_tokens") or 0),
                             "output_tokens": int(usage.get("output_tokens") or 0),
                             "total_tokens": int(usage.get("total_tokens") or 0),
-                            "iter": iteration,
+                            "iter": current_iter,
                         },
                     )
                 if active_goal_id and session_id:
@@ -574,8 +615,13 @@ class AgentLoop:
 
                 thinking_text = "".join(thinking_chunks)
                 if thinking_text:
-                    trace.write({"type": "thinking", "iter": iteration, "content": thinking_text[:2000]})
-                    self._emit("thinking_done", {"iter": iteration, "content": thinking_text[:500]})
+                    trace.write_text_entry(
+                        {"type": "thinking", "iter": current_iter},
+                        field="content",
+                        value=thinking_text,
+                        offload_kind=f"thinking-{current_iter}",
+                    )
+                    self._emit("thinking_done", {"iter": current_iter, "content": thinking_text[:500]})
 
                 if not response.has_tool_calls:
                     final_content = response.content or ""
@@ -584,7 +630,7 @@ class AgentLoop:
                         trace.write(
                             {
                                 "type": "empty_model_response",
-                                "iter": iteration,
+                                "iter": current_iter,
                                 "provider": os.getenv("LANGCHAIN_PROVIDER", "openai"),
                                 "model": getattr(self.llm, "model_name", None) or os.getenv("LANGCHAIN_MODEL_NAME", ""),
                             }
@@ -618,21 +664,29 @@ class AgentLoop:
                             trace.write(
                                 {
                                     "type": "goal_continuation_suppressed",
-                                    "iter": iteration,
+                                    "iter": current_iter,
                                     "goal_id": active_goal_id,
                                     "progress": current_progress,
                                     "continuations": goal_continuations,
                                 }
                             )
                         else:
-                            trace.write(
+                            trace.write_text_entry(
                                 {
                                     "type": "goal_intermediate_answer",
-                                    "iter": iteration,
+                                    "iter": current_iter,
                                     "goal_id": active_goal_id,
-                                    "content": final_content[:2000],
                                     "progress": current_progress,
-                                }
+                                },
+                                field="content",
+                                value=final_content,
+                                offload_kind=f"goal-intermediate-answer-{current_iter}",
+                            )
+                            trace.write_text_entry(
+                                {"type": "message", "iter": current_iter, "role": "assistant"},
+                                field="content",
+                                value=final_content,
+                                offload_kind=f"assistant-message-{current_iter}",
                             )
                             react_trace.append(
                                 {"type": "goal_intermediate_answer", "content": final_content[:500]}
@@ -651,7 +705,18 @@ class AgentLoop:
                             goal_continuations += 1
                             continue
 
-                    trace.write({"type": "answer", "iter": iteration, "content": final_content[:2000]})
+                    trace.write_text_entry(
+                        {"type": "answer", "iter": current_iter},
+                        field="content",
+                        value=final_content,
+                        offload_kind=f"answer-{current_iter}",
+                    )
+                    trace.write_text_entry(
+                        {"type": "message", "iter": current_iter, "role": "assistant"},
+                        field="content",
+                        value=final_content,
+                        offload_kind=f"assistant-message-{current_iter}",
+                    )
                     react_trace.append({"type": "answer", "content": final_content[:500]})
                     break
 
@@ -665,13 +730,13 @@ class AgentLoop:
 
                 # Execute tools with read/write batching
                 compact_requested, focus_topic = self._process_tool_calls(
-                    response.tool_calls, context, messages, trace, react_trace, iteration,
+                    response.tool_calls, context, messages, trace, react_trace, current_iter,
                 )
 
                 # Layer 3: compress after all tools have executed
                 if compact_requested:
                     logger.info("Manual compact triggered by model")
-                    self._auto_compact(messages, run_dir, trace, focus_topic=focus_topic)
+                    self._auto_compact(messages, run_dir, trace, focus_topic=focus_topic, iteration=current_iter)
 
         except Exception as exc:
             logger.exception(f"AgentLoop error: {exc}")
@@ -680,7 +745,7 @@ class AgentLoop:
                 if isinstance(exc, ProviderStreamError)
                 else "agent_loop_error"
             )
-            trace.write({"type": "end", "status": "error", "reason": str(exc), "iterations": iteration})
+            trace.write({"type": "end", "iter": self._run_iteration, "status": "error", "reason": str(exc), "iterations": iteration})
             trace.close()
             state_store.mark_failure(run_dir, str(exc))
             return {
@@ -725,6 +790,7 @@ class AgentLoop:
 
         end_event: dict[str, Any] = {
             "type": "end",
+            "iter": self._run_iteration,
             "status": final_status,
             "iterations": iteration,
         }
@@ -874,8 +940,10 @@ class AgentLoop:
         runnable: list[tuple] = []
         for tc in tool_calls:
             args = _normalize_tool_run_dir(tc.arguments, self.memory.run_dir)
-            self._emit("tool_call", {"tool": tc.name, "arguments": {k: str(v)[:200] for k, v in args.items()}, "iter": iteration})
-            trace.write({"type": "tool_call", "iter": iteration, "tool": tc.name, "call_id": tc.id, "args": {k: str(v)[:200] for k, v in args.items()}})
+            redacted_args = redact_payload(args)
+            event_args = {k: str(v)[:200] for k, v in redacted_args.items()}
+            self._emit("tool_call", {"tool": tc.name, "arguments": event_args, "iter": iteration})
+            trace.write({"type": "tool_call", "iter": iteration, "tool": tc.name, "call_id": tc.id, "args": redacted_args})
             runnable.append((tc, args))
 
         # Execute in parallel — each worker gets its own heartbeat + progress emitter.
@@ -919,8 +987,10 @@ class AgentLoop:
         """
         args = _normalize_tool_run_dir(tc.arguments, self.memory.run_dir)
 
-        self._emit("tool_call", {"tool": tc.name, "arguments": {k: str(v)[:200] for k, v in args.items()}, "iter": iteration})
-        trace.write({"type": "tool_call", "iter": iteration, "tool": tc.name, "call_id": tc.id, "args": {k: str(v)[:200] for k, v in args.items()}})
+        redacted_args = redact_payload(args)
+        event_args = {k: str(v)[:200] for k, v in redacted_args.items()}
+        self._emit("tool_call", {"tool": tc.name, "arguments": event_args, "iter": iteration})
+        trace.write({"type": "tool_call", "iter": iteration, "tool": tc.name, "call_id": tc.id, "args": redacted_args})
         logger.info(f"Tool call: {tc.name}({list(args.keys())})")
 
         result, elapsed_ms = self._invoke_tool(tc.name, args)
@@ -1126,14 +1196,29 @@ class AgentLoop:
         truncated = result[:TOOL_RESULT_LIMIT]
         messages.append(context.format_tool_result(tc.id, tc.name, truncated))
 
-        trace.write({"type": "tool_result", "iter": iteration, "tool": tc.name, "call_id": tc.id, "status": status, "elapsed_ms": elapsed_ms, "preview": result[:200]})
-        react_trace.append({"type": "tool_call", "tool": tc.name, "result_preview": result[:200]})
-        self._emit("tool_result", {"tool": tc.name, "status": status, "elapsed_ms": elapsed_ms, "preview": result[:200]})
+        trace_result = _redact_trace_result(result)
+        trace.write_tool_result(
+            call_id=tc.id,
+            result=trace_result,
+            tool_name=tc.name,
+            status=status,
+            elapsed_ms=elapsed_ms,
+            iteration=iteration,
+        )
+        preview = trace_result[:200]
+        react_trace.append({"type": "tool_call", "tool": tc.name, "result_preview": preview})
+        self._emit("tool_result", {"tool": tc.name, "status": status, "elapsed_ms": elapsed_ms, "preview": preview})
 
     # -- Context compression ---------------------------------------------------
 
-    def _auto_compact(self, messages: list, run_dir: Path, trace: TraceWriter,
-                      focus_topic: str = "") -> None:
+    def _auto_compact(
+        self,
+        messages: list,
+        run_dir: Path,
+        trace: TraceWriter,
+        focus_topic: str = "",
+        iteration: int = 0,
+    ) -> None:
         """Layer 3/4/5: structured LLM summary with token-budget tail protection.
 
         Upgrades over the original:
@@ -1148,9 +1233,11 @@ class AgentLoop:
             run_dir: Run directory.
             trace: TraceWriter.
             focus_topic: Optional topic to prioritize in the summary.
+            iteration: Current trace iteration.
         """
-        # Save full transcript before compressing
-        transcript_path = run_dir / f"transcript_{int(_time.time())}.jsonl"
+        del run_dir
+        # Save full transcript before compressing next to the active trace.
+        transcript_path = trace.dir_path / f"transcript_{int(_time.time())}.jsonl"
         with open(transcript_path, "w", encoding="utf-8") as f:
             for msg in messages:
                 f.write(json.dumps(msg, default=str, ensure_ascii=False) + "\n")
@@ -1207,8 +1294,17 @@ class AgentLoop:
         self._previous_summary = summary
 
         tokens_before = estimate_tokens(messages)
-        trace.write({"type": "compact", "tokens_before": tokens_before, "summary": summary[:500],
-                      "focus_topic": focus_topic or "(none)"})
+        trace.write_text_entry(
+            {
+                "type": "compact",
+                "iter": iteration,
+                "tokens_before": tokens_before,
+                "focus_topic": focus_topic or "(none)",
+            },
+            field="summary",
+            value=summary,
+            offload_kind=f"compact-summary-{iteration}",
+        )
         self._emit("compact", {"tokens_before": tokens_before, "summary": summary[:200]})
 
         # Reconstruct: system + summary + acknowledge + preserved tail
