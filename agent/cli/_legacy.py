@@ -2832,6 +2832,14 @@ def cmd_live_authorize(broker: str) -> int:
     return EXIT_SUCCESS
 
 
+def cmd_provider_doctor() -> int:
+    """Print redacted provider diagnostics."""
+    from src.providers.llm import provider_diagnostics
+
+    console.print_json(data=provider_diagnostics())
+    return EXIT_SUCCESS
+
+
 def _format_expiry_countdown(expires_at: str) -> str:
     """Return a human-readable countdown to ``expires_at`` (ISO-8601 UTC)."""
     from datetime import datetime, timezone
@@ -3928,6 +3936,7 @@ def _build_parser() -> argparse.ArgumentParser:
     provider_subparsers = provider_parser.add_subparsers(dest="provider_command")
     login_parser = provider_subparsers.add_parser("login", help="Authenticate with an OAuth provider")
     login_parser.add_argument("provider", help="OAuth provider name, e.g. openai-codex")
+    provider_subparsers.add_parser("doctor", help="Print redacted provider diagnostics")
 
     list_parser = subparsers.add_parser("list", help="List runs")
     list_parser.add_argument("--limit", dest="list_limit", type=int, default=20, help="Maximum number of runs")
@@ -4529,7 +4538,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "provider":
         if args.provider_command == "login":
             return cmd_provider_login(args.provider)
-        console.print("[red]provider requires a subcommand.[/red] Try: vibe-trading provider login openai-codex")
+        if args.provider_command == "doctor":
+            return cmd_provider_doctor()
+        console.print("[red]provider requires a subcommand.[/red] Try: vibe-trading provider doctor")
         return EXIT_USAGE_ERROR
     if args.command == "run":
         return _handle_prompt_command(

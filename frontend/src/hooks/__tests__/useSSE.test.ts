@@ -122,6 +122,20 @@ describe("useSSE — event handling", () => {
     expect(textDeltas[0]).toEqual({ content: "hello" });
   });
 
+  it("dispatches reasoning progress events", () => {
+    const reasoningEvents: unknown[] = [];
+    const { result } = renderHook(() => useSSE());
+
+    act(() =>
+      result.current.connect("http://test/events", {
+        reasoning_delta: (data) => reasoningEvents.push(data),
+      }),
+    );
+
+    act(() => MockEventSource.latest.emit("reasoning_delta", { chars: 8 }, "evt-reasoning"));
+    expect(reasoningEvents).toEqual([{ chars: 8 }]);
+  });
+
   it("falls back to message handler for known event types without specific handler", () => {
     const messages: unknown[] = [];
     const { result } = renderHook(() => useSSE());

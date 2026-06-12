@@ -553,8 +553,12 @@ def test_worker_source_wires_heartbeat_around_llm_streaming():
     versions only wrapped registry.execute, leaving a real loophole where
     reconcile_run would mark a healthy run failed mid-LLM-call."""
     import inspect
+    import re
     source = inspect.getsource(worker_mod)
-    timer_idx = source.find('with HeartbeatTimer(\n                tool_name=f"llm:')
+    timer_match = re.search(
+        r'with HeartbeatTimer\(\s*\n\s*tool_name=f"llm:', source
+    )
+    timer_idx = timer_match.start() if timer_match else -1
     stream_idx = source.find("llm.stream_chat(", timer_idx)
     assert 0 < timer_idx < stream_idx, (
         "llm.stream_chat must be wrapped in a HeartbeatTimer so the stale-"
