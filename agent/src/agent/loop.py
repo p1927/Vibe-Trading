@@ -516,6 +516,15 @@ class AgentLoop:
                         iteration,
                         exc,
                     )
+                    self._emit(
+                        "stream_reset",
+                        {
+                            "iter": iteration,
+                            "reason": "provider_stream_retry",
+                            "provider": exc.provider,
+                            "model": exc.model,
+                        },
+                    )
                     thinking_chunks.clear()
                     reasoning_chars = 0
                     last_reasoning_emit = None

@@ -422,6 +422,13 @@ export function Agent() {
         if (act().status !== "streaming") act().setStatus("streaming");
         scrollToBottom();
       },
+      stream_reset: () => {
+        touch();
+        setReasoningActive(false);
+        act().clearStreaming();
+        if (act().status !== "streaming") act().setStatus("streaming");
+        scrollToBottom();
+      },
       thinking_done: () => { touch(); /* don't flush — keep streaming text visible */ },
 
       tool_call: (d) => {
