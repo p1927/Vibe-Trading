@@ -1392,17 +1392,17 @@ def cmd_run(prompt: str, max_iter: int, *, json_mode: bool = False, no_rich: boo
 
 
 def _build_history_from_trace(run_dir: Path) -> List[Dict[str, str]]:
-    """Build conversation history from trace.jsonl.
-
-    Checks sessions/<run_id>/ first (new location), then falls back to
-    runs/<run_id>/ (legacy location).
-    """
+    """Build conversation history from trace.jsonl."""
     from src.agent.trace import TraceWriter
 
     trace_dir = TraceWriter.find_trace_dir(run_dir.name, runs_dir=RUNS_DIR, sessions_dir=SESSIONS_DIR)
-    if trace_dir is None or not (trace_dir / "trace.jsonl").exists():
+    if trace_dir is None:
         return []
-    entries = TraceWriter.read(trace_dir)
+    entries = TraceWriter.read(
+        trace_dir,
+        resolve_offloads=True,
+        resolve_fields={"prompt", "content"},
+    )
     history: List[Dict[str, str]] = []
     for e in entries:
         if e.get("type") == "start" and e.get("prompt"):
@@ -1429,8 +1429,6 @@ def cmd_continue(
             return EXIT_USAGE_ERROR
         console.print(f"[red]Run {run_id} not found[/red]")
         return EXIT_USAGE_ERROR
-
-    # Ensure run_dir exists (for artifact storage) even if trace is in sessions/
     if not run_dir.exists():
         run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2236,7 +2234,11 @@ def cmd_show(run_id: str) -> None:
 
     from src.agent.trace import TraceWriter
     trace_dir = TraceWriter.find_trace_dir(run_id, runs_dir=RUNS_DIR, sessions_dir=SESSIONS_DIR)
-    entries = TraceWriter.read(trace_dir) if trace_dir else []
+    entries = (
+        TraceWriter.read(trace_dir, resolve_offloads=True, resolve_fields={"content"})
+        if trace_dir
+        else []
+    )
     answers = [e["content"] for e in entries if e.get("type") == "answer" and e.get("content")]
     if answers:
         summary = answers[-1][:200]
@@ -2296,11 +2298,15 @@ def cmd_trace(run_id: str) -> None:
     from src.agent.trace import TraceWriter
 
     trace_dir = TraceWriter.find_trace_dir(run_id, runs_dir=RUNS_DIR, sessions_dir=SESSIONS_DIR)
-    if trace_dir is None or not (trace_dir / "trace.jsonl").exists():
+    if trace_dir is None:
         console.print(f"[red]{run_id}/trace.jsonl not found[/red]")
         return
 
-    entries = TraceWriter.read(trace_dir)
+    entries = TraceWriter.read(
+        trace_dir,
+        resolve_offloads=True,
+        resolve_fields={"prompt", "content", "summary"},
+    )
     if not entries:
         console.print(f"[red]{run_id}/trace.jsonl is empty or missing[/red]")
         return
@@ -2322,7 +2328,7 @@ def cmd_trace(run_id: str) -> None:
         elif etype == "tool_call":
             tool = entry.get("tool", "")
             args = entry.get("args", {})
-            args_str = ", ".join(f"{k}={v[:40]}" for k, v in args.items()) if args else ""
+            args_str = ", ".join(f"{k}={str(v)[:40]}" for k, v in args.items()) if args else ""
             console.print(f"[dim]{ts_str}[/dim] {iter_tag}[cyan]\u25b6 {tool}[/cyan]({args_str})")
         elif etype == "tool_result":
             tool = entry.get("tool", "")
@@ -2331,16 +2337,16 @@ def cmd_trace(run_id: str) -> None:
             ok = status == "ok"
             mark = "\u2713" if ok else "\u2717"
             color = "green" if ok else "red"
-            # New format: result (inline) or result_preview (offloaded)
-            preview = (entry.get("result_preview") or entry.get("result") or "")[:80]
-            offloaded = "result_path" in entry
-            size_hint = f" [{entry.get('result_size', 0)//1024}K offloaded]" if offloaded else ""
+            preview = (entry.get("preview") or entry.get("result_preview") or entry.get("result") or "")[:80]
+            size_hint = ""
+            if entry.get("result_path"):
+                size_hint = f" [{int(entry.get('result_size') or 0) // 1024}K offloaded]"
             console.print(f"[dim]{ts_str}[/dim] {iter_tag}[{color}]{mark} {tool}[/{color}] [dim]{elapsed}ms[/dim]  {preview}{size_hint}")
         elif etype == "tool_skipped":
             console.print(f"[dim]{ts_str}[/dim] {iter_tag}[yellow]\u2298 {entry.get('tool', '')} (skipped)[/yellow]")
         elif etype == "message":
             role = entry.get("role", "?")
-            content = entry.get("content", "")
+            content = entry.get("content") or entry.get("content_preview") or ""
             role_color = "cyan" if role == "user" else "green"
             console.print(f"\n[dim]{ts_str}[/dim] {iter_tag}[bold {role_color}]{role.upper()}[/bold {role_color}] {content[:120]}")
         elif etype == "answer":
@@ -2851,6 +2857,14 @@ def cmd_live_authorize(broker: str) -> int:
         "[dim]The channel is read-only until you commit a mandate and enable "
         "order tools. Use `vibe-trading connector status` to check state.[/dim]"
     )
+    return EXIT_SUCCESS
+
+
+def cmd_provider_doctor() -> int:
+    """Print redacted provider diagnostics."""
+    from src.providers.llm import provider_diagnostics
+
+    console.print_json(data=provider_diagnostics())
     return EXIT_SUCCESS
 
 
@@ -3950,6 +3964,7 @@ def _build_parser() -> argparse.ArgumentParser:
     provider_subparsers = provider_parser.add_subparsers(dest="provider_command")
     login_parser = provider_subparsers.add_parser("login", help="Authenticate with an OAuth provider")
     login_parser.add_argument("provider", help="OAuth provider name, e.g. openai-codex")
+    provider_subparsers.add_parser("doctor", help="Print redacted provider diagnostics")
 
     list_parser = subparsers.add_parser("list", help="List runs")
     list_parser.add_argument("--limit", dest="list_limit", type=int, default=20, help="Maximum number of runs")
@@ -4551,7 +4566,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "provider":
         if args.provider_command == "login":
             return cmd_provider_login(args.provider)
-        console.print("[red]provider requires a subcommand.[/red] Try: vibe-trading provider login openai-codex")
+        if args.provider_command == "doctor":
+            return cmd_provider_doctor()
+        console.print("[red]provider requires a subcommand.[/red] Try: vibe-trading provider doctor")
         return EXIT_USAGE_ERROR
     if args.command == "run":
         return _handle_prompt_command(

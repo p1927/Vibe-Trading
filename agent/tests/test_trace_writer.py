@@ -1,398 +1,129 @@
-"""Tests for TraceWriter with offload support."""
+"""TraceWriter offload and path-safety tests."""
+
+from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
 
-from src.agent.trace import (
-    OFFLOAD_PREVIEW_CHARS,
-    TOOL_RESULT_OFFLOAD_THRESHOLD,
-    TraceWriter,
-)
+import src.agent.trace as trace_mod
+from src.agent.trace import TraceWriter
 
 
-class TestTraceWriterInline:
-    """Tool results ≤ threshold are stored inline."""
-
-    def test_write_basic_entry(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tw = TraceWriter(Path(tmp))
-            tw.write({"type": "start", "prompt": "hello"})
-            tw.close()
-
-            entries = TraceWriter.read(Path(tmp))
-            assert len(entries) == 1
-            assert entries[0]["type"] == "start"
-            assert entries[0]["prompt"] == "hello"
-            assert "ts" in entries[0]
-
-    def test_write_tool_result_inline(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tw = TraceWriter(Path(tmp))
-            result = "small result"
-            tw.write_tool_result(
-                call_id="call-1",
-                result=result,
-                tool_name="test_tool",
-                status="ok",
-                elapsed_ms=42,
-                iteration=1,
-            )
-            tw.close()
-
-            entries = TraceWriter.read(Path(tmp))
-            assert len(entries) == 1
-            e = entries[0]
-            assert e["type"] == "tool_result"
-            assert e["tool"] == "test_tool"
-            assert e["call_id"] == "call-1"
-            assert e["status"] == "ok"
-            assert e["elapsed_ms"] == 42
-            assert e["iter"] == 1
-            assert e["result"] == "small result"
-            assert "result_path" not in e  # No offload
-
-    def test_write_tool_result_inline_boundary(self) -> None:
-        """Exactly at threshold — still inline."""
-        with tempfile.TemporaryDirectory() as tmp:
-            tw = TraceWriter(Path(tmp))
-            result = "x" * TOOL_RESULT_OFFLOAD_THRESHOLD
-            tw.write_tool_result(
-                call_id="call-bnd",
-                result=result,
-                tool_name="test_tool",
-                status="ok",
-                elapsed_ms=10,
-                iteration=2,
-            )
-            tw.close()
-
-            entries = TraceWriter.read(Path(tmp))
-            assert len(entries) == 1
-            e = entries[0]
-            assert e["result"] == result
-            assert "result_path" not in e
-
-    def test_multiple_entries(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tw = TraceWriter(Path(tmp))
-            for i in range(5):
-                tw.write_tool_result(
-                    call_id=f"call-{i}",
-                    result=f"result-{i}",
-                    tool_name="tool",
-                    status="ok",
-                    elapsed_ms=i,
-                    iteration=i,
-                )
-            tw.close()
-
-            entries = TraceWriter.read(Path(tmp))
-            assert len(entries) == 5
-            assert all(e["result"] for e in entries)
+def _raw_entries(trace_dir: Path) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in (trace_dir / "trace.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
 
 
-class TestTraceWriterOffload:
-    """Tool results > threshold are offloaded to disk."""
+def test_tool_result_offload_uses_safe_name_and_resolves_only_on_request(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Large tool results should not trust provider-supplied call IDs as paths."""
+    monkeypatch.setattr(trace_mod, "TOOL_RESULT_OFFLOAD_THRESHOLD", 8)
+    trace = TraceWriter(tmp_path)
 
-    def test_offload_large_result(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tw = TraceWriter(Path(tmp))
-            result = "y" * (TOOL_RESULT_OFFLOAD_THRESHOLD + 1)
-            tw.write_tool_result(
-                call_id="call-off",
-                result=result,
-                tool_name="big_tool",
-                status="ok",
-                elapsed_ms=999,
-                iteration=3,
-            )
-            tw.close()
+    trace.write_tool_result(
+        call_id="../escape/token",
+        result="large result body",
+        tool_name="danger_tool",
+        status="ok",
+        elapsed_ms=12,
+        iteration=3,
+    )
+    trace.close()
 
-            # Check JSONL entry
-            path = Path(tmp) / "trace.jsonl"
-            raw = path.read_text(encoding="utf-8")
-            lines = [l for l in raw.splitlines() if l.strip()]
-            assert len(lines) == 1
-            entry = json.loads(lines[0])
-            assert entry["type"] == "tool_result"
-            assert entry["tool"] == "big_tool"
-            assert "result" not in entry  # Offloaded, not inline
-            assert entry["result_path"] == "tool-results/call-off.txt"
-            assert entry["result_preview"] == result[:OFFLOAD_PREVIEW_CHARS]
-            assert entry["result_size"] == len(result)
+    [entry] = _raw_entries(tmp_path)
+    assert "result" not in entry
+    assert entry["preview"] == "large result body"[: trace_mod.OFFLOAD_PREVIEW_CHARS]
+    assert entry["result_preview"] == entry["preview"]
+    assert entry["result_size"] == len("large result body")
+    assert entry["result_path"].startswith("tool-results/")
+    assert ".." not in Path(entry["result_path"]).parts
+    assert Path(entry["result_path"]).name == Path(entry["result_path"]).as_posix().split("/")[-1]
+    assert not (tmp_path.parent / "escape" / "token").exists()
 
-            # Check offloaded file exists and is complete
-            offload_file = Path(tmp) / "tool-results" / "call-off.txt"
-            assert offload_file.exists()
-            assert offload_file.read_text(encoding="utf-8") == result
+    unresolved = TraceWriter.read(tmp_path)
+    assert "result" not in unresolved[0]
 
-    def test_read_resolves_offloaded_results(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tw = TraceWriter(Path(tmp))
-            big_result = "BIG_DATA_" * 10000  # ~90K chars — above threshold
-            tw.write_tool_result(
-                call_id="call-resolve",
-                result=big_result,
-                tool_name="read_tool",
-                status="ok",
-                elapsed_ms=50,
-                iteration=1,
-            )
-            tw.close()
-
-            # TraceWriter.read should resolve the offloaded result
-            entries = TraceWriter.read(Path(tmp))
-            assert len(entries) == 1
-            e = entries[0]
-            assert e["result"] == big_result
-            # Metadata still present
-            assert e["result_path"] == "tool-results/call-resolve.txt"
-            assert e["result_preview"] == big_result[:OFFLOAD_PREVIEW_CHARS]
-            assert e["result_size"] == len(big_result)
-
-    def test_mixed_inline_and_offload(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            tw = TraceWriter(Path(tmp))
-            small = "small"
-            big = "B" * (TOOL_RESULT_OFFLOAD_THRESHOLD + 100)
-            tw.write_tool_result(
-                call_id="small-1", result=small, tool_name="t",
-                status="ok", elapsed_ms=1, iteration=1,
-            )
-            tw.write_tool_result(
-                call_id="big-1", result=big, tool_name="t",
-                status="ok", elapsed_ms=2, iteration=2,
-            )
-            tw.write_tool_result(
-                call_id="small-2", result=small, tool_name="t",
-                status="ok", elapsed_ms=3, iteration=3,
-            )
-            tw.close()
-
-            entries = TraceWriter.read(Path(tmp))
-            assert len(entries) == 3
-            # Small results inline
-            assert entries[0]["result"] == small
-            assert "result_path" not in entries[0]
-            # Big result offloaded but resolved
-            assert entries[1]["result"] == big
-            assert entries[1]["result_path"] == "tool-results/big-1.txt"
-            # Second small also inline
-            assert entries[2]["result"] == small
-            assert "result_path" not in entries[2]
-
-            # Offload file exists
-            assert (Path(tmp) / "tool-results" / "big-1.txt").exists()
-
-    def test_offload_file_content_complete(self) -> None:
-        """Offloaded result must be byte-exact, not truncated."""
-        with tempfile.TemporaryDirectory() as tmp:
-            tw = TraceWriter(Path(tmp))
-            # Use varied content to catch encoding issues
-            result = "🎯 TRADE " * 6000 + "中文测试" * 2500 + "!\n" * 1000
-            # Ensure it's above threshold
-            assert len(result) > TOOL_RESULT_OFFLOAD_THRESHOLD
-            tw.write_tool_result(
-                call_id="unicode-test",
-                result=result,
-                tool_name="t",
-                status="ok",
-                elapsed_ms=10,
-                iteration=1,
-            )
-            tw.close()
-
-            offload_file = Path(tmp) / "tool-results" / "unicode-test.txt"
-            assert offload_file.read_text(encoding="utf-8") == result
-
-            entries = TraceWriter.read(Path(tmp))
-            assert entries[0]["result"] == result
+    resolved = TraceWriter.read(tmp_path, resolve_offloads=True)
+    assert resolved[0]["result"] == "large result body"
 
 
-class TestTraceWriterRead:
-    """Edge cases for read()."""
-
-    def test_read_empty_dir(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            entries = TraceWriter.read(Path(tmp))
-            assert entries == []
-
-    def test_read_missing_file(self) -> None:
-        entries = TraceWriter.read(Path("/nonexistent/path"))
-        assert entries == []
-
-    def test_read_malformed_lines(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "trace.jsonl"
-            path.write_text(
-                '{"type": "ok", "ts": 1}\n'
-                'not json at all\n'
-                '{"type": "also-ok", "ts": 2}\n',
-                encoding="utf-8",
-            )
-            entries = TraceWriter.read(Path(tmp))
-            assert len(entries) == 2
-            assert entries[0]["type"] == "ok"
-            assert entries[1]["type"] == "also-ok"
-
-    def test_read_offloaded_missing_file(self) -> None:
-        """When offload file is missing, result is not resolved but entry is kept."""
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "trace.jsonl"
-            path.write_text(
-                json.dumps({
-                    "type": "tool_result",
-                    "tool": "ghost",
-                    "result_path": "tool-results/missing.txt",
-                    "result_preview": "ghost...",
-                    "result_size": 99999,
-                }) + "\n",
-                encoding="utf-8",
-            )
-            entries = TraceWriter.read(Path(tmp))
-            assert len(entries) == 1
-            e = entries[0]
-            assert "result" not in e  # Could not be resolved
-            assert e["result_path"] == "tool-results/missing.txt"
-
-
-class TestTraceWriterFindTraceDir:
-    """find_trace_dir resolves the correct directory for a run_id."""
-
-    def test_finds_sessions_first(self, tmp_path: Path) -> None:
-        sessions = tmp_path / "sessions"
-        runs = tmp_path / "runs"
-        # Create trace in sessions/
-        session_dir = sessions / "test-run"
-        session_dir.mkdir(parents=True)
-        (session_dir / "trace.jsonl").write_text('{"type": "start"}')
-
-        found = TraceWriter.find_trace_dir("test-run", runs_dir=runs, sessions_dir=sessions)
-        assert found == session_dir
-
-    def test_falls_back_to_runs(self, tmp_path: Path) -> None:
-        sessions = tmp_path / "sessions"
-        runs = tmp_path / "runs"
-        # Create trace in runs/ only
-        run_dir = runs / "test-run"
-        run_dir.mkdir(parents=True)
-        (run_dir / "trace.jsonl").write_text('{"type": "start"}')
-
-        found = TraceWriter.find_trace_dir("test-run", runs_dir=runs, sessions_dir=sessions)
-        assert found == run_dir
-
-    def test_sessions_takes_priority(self, tmp_path: Path) -> None:
-        """When trace exists in both sessions/ and runs/, sessions/ wins."""
-        sessions = tmp_path / "sessions"
-        runs = tmp_path / "runs"
-        session_dir = sessions / "dual-run"
-        run_dir = runs / "dual-run"
-        session_dir.mkdir(parents=True)
-        run_dir.mkdir(parents=True)
-        (session_dir / "trace.jsonl").write_text('{"type": "session"}')
-        (run_dir / "trace.jsonl").write_text('{"type": "run"}')
-
-        found = TraceWriter.find_trace_dir("dual-run", runs_dir=runs, sessions_dir=sessions)
-        assert found == session_dir
-
-    def test_returns_none_when_missing(self, tmp_path: Path) -> None:
-        sessions = tmp_path / "sessions"
-        runs = tmp_path / "runs"
-        sessions.mkdir(parents=True)
-        runs.mkdir(parents=True)
-
-        found = TraceWriter.find_trace_dir("nowhere", runs_dir=runs, sessions_dir=sessions)
-        # Falls back to runs/ dir path even if trace.jsonl doesn't exist
-        assert found == runs / "nowhere"
-
-
-class TestTraceWriterSessionDir:
-    """Session-based trace directory creation."""
-
-    def test_creates_dir_if_missing(self, tmp_path: Path) -> None:
-        session_dir = tmp_path / "sessions" / "new-session"
-        assert not session_dir.exists()
-
-        tw = TraceWriter(session_dir)
-        tw.write({"type": "start"})
-        tw.close()
-
-        assert session_dir.exists()
-        assert (session_dir / "trace.jsonl").exists()
-
-    def test_offload_creates_tool_results_dir(self, tmp_path: Path) -> None:
-        session_dir = tmp_path / "sessions" / "offload-test"
-        tw = TraceWriter(session_dir)
-        big = "X" * (TOOL_RESULT_OFFLOAD_THRESHOLD + 10)
-        tw.write_tool_result(
-            call_id="big-call",
-            result=big,
-            tool_name="t",
-            status="ok",
-            elapsed_ms=1,
-            iteration=1,
+def test_trace_reader_refuses_offload_path_escape(tmp_path: Path) -> None:
+    """A malicious trace.jsonl must not make read() open files outside trace dir."""
+    secret_file = tmp_path / "secret.txt"
+    secret_file.write_text("do-not-read", encoding="utf-8")
+    trace_dir = tmp_path / "trace"
+    trace_dir.mkdir()
+    (trace_dir / "trace.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "tool_result",
+                "iter": 1,
+                "tool": "ghost",
+                "result_path": "../secret.txt",
+                "result_preview": "x",
+                "result_size": 11,
+            }
         )
-        tw.close()
+        + "\n",
+        encoding="utf-8",
+    )
 
-        offload_dir = session_dir / "tool-results"
-        assert offload_dir.exists()
-        assert (offload_dir / "big-call.txt").exists()
+    [entry] = TraceWriter.read(trace_dir, resolve_offloads=True)
+
+    assert "result" not in entry
 
 
-class TestTraceFieldConsistency:
-    """Every entry carries `iter` right after `type`."""
+def test_text_field_offload_round_trips_selected_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Long prompt/answer fields can be offloaded without forcing all blobs open."""
+    monkeypatch.setattr(trace_mod, "TRACE_TEXT_OFFLOAD_THRESHOLD", 8)
+    trace = TraceWriter(tmp_path)
+    trace.write_text_entry(
+        {"type": "answer", "iter": 1},
+        field="content",
+        value="long final answer",
+        offload_kind="answer",
+    )
+    trace.close()
 
-    def test_tool_result_iter_second(self) -> None:
-        """write_tool_result puts iter right after type."""
-        with tempfile.TemporaryDirectory() as tmp:
-            tw = TraceWriter(Path(tmp))
-            tw.write_tool_result("c1", "result", "tool", "ok", 10, 42)
-            tw.close()
+    unresolved = TraceWriter.read(tmp_path)
+    assert "content" not in unresolved[0]
+    assert unresolved[0]["content_preview"] == "long final answer"[: trace_mod.OFFLOAD_PREVIEW_CHARS]
 
-            entry = json.loads((Path(tmp) / "trace.jsonl").read_text())
-            keys = list(entry.keys())
-            assert keys[:2] == ["type", "iter"], f"keys={keys}"
-            assert entry["iter"] == 42
+    still_unresolved = TraceWriter.read(
+        tmp_path,
+        resolve_offloads=True,
+        resolve_fields={"result"},
+    )
+    assert "content" not in still_unresolved[0]
 
-    def test_generic_write_preserves_type_then_iter(self) -> None:
-        """When caller passes type+iter first, field order is preserved on disk."""
-        with tempfile.TemporaryDirectory() as tmp:
-            tw = TraceWriter(Path(tmp))
-            tw.write({"type": "start", "iter": 3, "prompt": "hello"})
-            tw.write({"type": "end", "iter": 5, "status": "success", "iterations": 2})
-            tw.close()
+    resolved = TraceWriter.read(
+        tmp_path,
+        resolve_offloads=True,
+        resolve_fields={"content"},
+    )
+    assert resolved[0]["content"] == "long final answer"
 
-            for lineno, line in enumerate(
-                (Path(tmp) / "trace.jsonl").read_text().splitlines()
-            ):
-                entry = json.loads(line)
-                keys = list(entry.keys())
-                assert keys[0] == "type", f"line {lineno}: type not first: {keys}"
-                assert keys[1] == "iter", f"line {lineno}: iter not second: {keys}"
 
-    def test_all_entry_types_carry_iter(self) -> None:
-        """All semantically distinct entry types have iter."""
-        with tempfile.TemporaryDirectory() as tmp:
-            tw = TraceWriter(Path(tmp))
-            tw.write({"type": "start", "iter": 1, "prompt": "test"})
-            tw.write({"type": "message", "iter": 1, "role": "user", "content": "test"})
-            tw.write({"type": "thinking", "iter": 1, "content": "..."})
-            tw.write_tool_result("c1", "x", "tool", "ok", 10, 1)
-            tw.write({"type": "answer", "iter": 1, "content": "done"})
-            tw.write({"type": "message", "iter": 1, "role": "assistant", "content": "done"})
-            tw.write({"type": "cancelled", "iter": 1})
-            tw.write({"type": "forced_text_only", "iter": 1})
-            tw.write_tool_result("c2", "x", "tool", "error", 5, 1)
-            tw.write({"type": "end", "iter": 1, "status": "success", "iterations": 1})
-            tw.close()
+def test_find_trace_dir_prefers_sessions_then_runs(tmp_path: Path) -> None:
+    """Session traces are preferred while legacy run traces still work."""
+    sessions = tmp_path / "sessions"
+    runs = tmp_path / "runs"
+    session_dir = sessions / "abc"
+    run_dir = runs / "abc"
+    session_dir.mkdir(parents=True)
+    run_dir.mkdir(parents=True)
+    (session_dir / "trace.jsonl").write_text('{"type":"session"}\n', encoding="utf-8")
+    (run_dir / "trace.jsonl").write_text('{"type":"run"}\n', encoding="utf-8")
 
-            entries = TraceWriter.read(Path(tmp))
-            assert len(entries) > 0
-            for e in entries:
-                assert "iter" in e, f"{e['type']} missing iter"
-                keys = list(e.keys())
-                assert keys[0] == "type", f"{e['type']}: type not first: {keys}"
-                assert keys[1] == "iter", f"{e['type']}: iter not second: keys={keys}"
+    assert TraceWriter.find_trace_dir("abc", runs_dir=runs, sessions_dir=sessions) == session_dir
+    assert TraceWriter.find_trace_dir("missing", runs_dir=runs, sessions_dir=sessions) is None

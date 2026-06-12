@@ -249,6 +249,7 @@ export function Agent() {
    * could be active out-of-band (CLI/another session), not only off in-session SSE
    * items (audit M2: always-available global halt — SPEC Consent §4). */
   const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
+  const [reasoningActive, setReasoningActive] = useState(false);
   /* The status endpoint is not wired on every backend; a 404/501 hides the panel
    * and removes status from the kill-switch visibility condition. */
   const [liveStatusUnavailable, setLiveStatusUnavailable] = useState(false);
@@ -409,11 +410,30 @@ export function Agent() {
     const touch = () => { lastEventRef.current = Date.now(); };
 
     connect(api.sseUrl(sid, { replay: "active" }), {
-      text_delta: (d) => { touch(); act().appendDelta(String(d.delta || "")); scrollToBottom(); },
+      text_delta: (d) => {
+        touch();
+        setReasoningActive(false);
+        act().appendDelta(String(d.delta || ""));
+        scrollToBottom();
+      },
+      reasoning_delta: () => {
+        touch();
+        setReasoningActive(true);
+        if (act().status !== "streaming") act().setStatus("streaming");
+        scrollToBottom();
+      },
+      stream_reset: () => {
+        touch();
+        setReasoningActive(false);
+        act().clearStreaming();
+        if (act().status !== "streaming") act().setStatus("streaming");
+        scrollToBottom();
+      },
       thinking_done: () => { touch(); /* don't flush — keep streaming text visible */ },
 
       tool_call: (d) => {
         touch();
+        setReasoningActive(false);
         const toolName = String(d.tool || "");
         // Only update toolCalls tracker (no message creation during streaming)
         act().addToolCall({
@@ -498,6 +518,7 @@ export function Agent() {
 
       "attempt.completed": async (d) => {
         touch();
+        setReasoningActive(false);
         const s = act();
         // Build ThinkingTimeline summary from accumulated toolCalls
         const completedTools = s.toolCalls;
@@ -562,6 +583,7 @@ export function Agent() {
 
       "attempt.failed": (d) => {
         touch();
+        setReasoningActive(false);
         act().clearStreaming();
         act().addMessage({ id: "", type: "error", content: String(d.error || "Execution failed"), timestamp: Date.now() });
         act().setStatus("idle");
@@ -774,6 +796,7 @@ export function Agent() {
     lastEventRef.current = Date.now();
     const timer = setInterval(() => {
       if (lastEventRef.current && Date.now() - lastEventRef.current > sseTimeoutMsRef.current && act().status === "streaming") {
+        setReasoningActive(false);
         act().setStatus("idle");
         toast.warning("Execution timed out, automatically stopped");
       }
@@ -858,6 +881,7 @@ export function Agent() {
   const handleSubmit = (e: FormEvent) => { e.preventDefault(); runPrompt(input.trim()); };
 
   const handleCancel = async () => {
+    setReasoningActive(false);
     if (!sessionId) {
       act().setStatus("idle");
       return;
@@ -1140,7 +1164,7 @@ export function Agent() {
           })}
 
           {/* Pre-stream placeholder: visible after Send, before first SSE event */}
-          {status === "streaming" && !streamingText && toolCalls.length === 0 && !messages.some((m) => m.type === "swarm_status" && m.swarmStatus?.status === "running") && (
+          {status === "streaming" && !reasoningActive && !streamingText && toolCalls.length === 0 && !messages.some((m) => m.type === "swarm_status" && m.swarmStatus?.status === "running") && (
             <div className="flex gap-3">
               <AgentAvatar />
               <div className="flex-1 min-w-0 flex items-center gap-2 text-xs text-muted-foreground pt-1">
@@ -1151,10 +1175,16 @@ export function Agent() {
           )}
 
           {/* Live streaming area: text + tool status */}
-          {(streamingText || (status === "streaming" && toolCalls.length > 0)) && (
+          {(streamingText || reasoningActive || (status === "streaming" && toolCalls.length > 0)) && (
             <div className="flex gap-3">
               <AgentAvatar />
               <div className="flex-1 min-w-0 space-y-1.5">
+                {reasoningActive && !streamingText && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin text-primary shrink-0" />
+                    <span>Reasoning…</span>
+                  </div>
+                )}
                 {streamingText && (
                   <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed">
                     {streamingText}
