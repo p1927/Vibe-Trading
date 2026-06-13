@@ -341,6 +341,24 @@ def _session_store() -> Any:
     return _SESSION_STORE_CACHE
 
 
+def _build_session_history(store: Any, session_id: str) -> list[dict]:
+    """Load and filter recent message history for a session.
+
+    Returns up to ``_HISTORY_RETAINED_TURNS`` user/assistant messages
+    with non-empty content.
+    """
+    try:
+        messages = store.get_messages(session_id, limit=_HISTORY_RETAINED_TURNS * 2)
+    except Exception:  # noqa: BLE001 — persistence error → empty history
+        return []
+    history = [
+        {"role": m.role, "content": m.content}
+        for m in messages
+        if m.role in {"user", "assistant"} and m.content.strip()
+    ]
+    return history[-_HISTORY_RETAINED_TURNS:]
+
+
 def _new_session(prompt_preview: str) -> Optional[str]:
     """Create a fresh session record. Returns the id, or None on failure.
 
@@ -441,18 +459,9 @@ def _maybe_resume_last_session(console: Any) -> Optional[Dict[str, Any]]:
     if choice not in {"r", "resume", "y", "yes"}:
         return None
 
-    try:
-        messages = store.get_messages(last.session_id, limit=_HISTORY_RETAINED_TURNS * 2)
-    except Exception:  # noqa: BLE001
-        messages = []
-    history = [
-        {"role": m.role, "content": m.content}
-        for m in messages
-        if m.role in {"user", "assistant"} and m.content.strip()
-    ]
     return {
         "session_id": last.session_id,
-        "history": history[-_HISTORY_RETAINED_TURNS:],
+        "history": _build_session_history(store, last.session_id),
         "title": title,
     }
 
@@ -1077,16 +1086,7 @@ def _interactive_loop(max_iter: int, resume_session_id: Optional[str] = None) ->
             console.print(f"[red]Session {resume_session_id} not found[/red]")
             return 1
         ctx.session_id = resume_session_id
-        try:
-            messages = store.get_messages(resume_session_id, limit=_HISTORY_RETAINED_TURNS * 2)
-        except Exception:  # noqa: BLE001
-            messages = []
-        ctx.history = [
-            {"role": m.role, "content": m.content}
-            for m in messages
-            if m.role in {"user", "assistant"} and m.content.strip()
-        ]
-        ctx.history = ctx.history[-_HISTORY_RETAINED_TURNS:]
+        ctx.history = _build_session_history(store, resume_session_id)
         console.print(
             f"[dim]Resumed session: {session.title or session.session_id} "
             f"({len(ctx.history)} prior turns)[/dim]"
@@ -1238,7 +1238,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     # Handle ``vibe-trading resume <session-id>`` — enter the interactive
     # loop with a specific session loaded, bypassing the legacy dispatcher.
     if len(raw_argv) == 2 and raw_argv[0] == "resume":
-        return _interactive_loop(max_iter=50, resume_session_id=raw_argv[1])
+        max_iter = _extract_max_iter(raw_argv, default=50)
+        return _interactive_loop(max_iter=max_iter, resume_session_id=raw_argv[1])
 
     # Delegate every other path to the legacy dispatcher.
     try:
