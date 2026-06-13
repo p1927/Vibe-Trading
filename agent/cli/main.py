@@ -1047,8 +1047,13 @@ def _handle_proposal_reply(text: str, ctx: InteractiveContext) -> bool:
     return True
 
 
-def _interactive_loop(max_iter: int) -> int:
+def _interactive_loop(max_iter: int, resume_session_id: Optional[str] = None) -> int:
     """Drive the new interactive REPL.
+
+    Args:
+        max_iter: Maximum ReAct iterations per turn.
+        resume_session_id: If set, load this specific session instead of
+            prompting to resume the most recent one.
 
     Returns:
         Process exit code (always ``0`` on a clean exit).
@@ -1061,14 +1066,40 @@ def _interactive_loop(max_iter: int) -> int:
 
     ctx = InteractiveContext(max_iter=max_iter)
 
-    # Offer to resume the most recent session. Audit item 8.
-    resume = _maybe_resume_last_session(console)
-    if resume is not None:
-        ctx.session_id = resume["session_id"]
-        ctx.history = list(resume["history"])
+    if resume_session_id:
+        # Resume a specific session by ID (``vibe-trading resume <session-id>``).
+        try:
+            store = _session_store()
+            session = store.get_session(resume_session_id)
+        except Exception:  # noqa: BLE001
+            session = None
+        if session is None:
+            console.print(f"[red]Session {resume_session_id} not found[/red]")
+            return 1
+        ctx.session_id = resume_session_id
+        try:
+            messages = store.get_messages(resume_session_id, limit=_HISTORY_RETAINED_TURNS * 2)
+        except Exception:  # noqa: BLE001
+            messages = []
+        ctx.history = [
+            {"role": m.role, "content": m.content}
+            for m in messages
+            if m.role in {"user", "assistant"} and m.content.strip()
+        ]
+        ctx.history = ctx.history[-_HISTORY_RETAINED_TURNS:]
         console.print(
-            f"[dim]Resumed session: {resume['title']} ({len(ctx.history)} prior turns)[/dim]"
+            f"[dim]Resumed session: {session.title or session.session_id} "
+            f"({len(ctx.history)} prior turns)[/dim]"
         )
+    else:
+        # Offer to resume the most recent session. Audit item 8.
+        resume = _maybe_resume_last_session(console)
+        if resume is not None:
+            ctx.session_id = resume["session_id"]
+            ctx.history = list(resume["history"])
+            console.print(
+                f"[dim]Resumed session: {resume['title']} ({len(ctx.history)} prior turns)[/dim]"
+            )
 
     # Build the prompt session once so history + completer persist.
     try:
@@ -1161,6 +1192,10 @@ def _interactive_loop(max_iter: int) -> int:
         _run_one_turn(text, ctx)
 
     console.print("[dim]Goodbye[/dim]")
+    if ctx.session_id:
+        console.print(
+            f"[dim]To resume this session:[/dim] [bold]vibe-trading resume {ctx.session_id}[/bold]"
+        )
     return 0
 
 
@@ -1199,6 +1234,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         # the new loop can read them directly without re-parsing argv.
         max_iter = _extract_max_iter(raw_argv, default=50)
         return _interactive_loop(max_iter)
+
+    # Handle ``vibe-trading resume <session-id>`` — enter the interactive
+    # loop with a specific session loaded, bypassing the legacy dispatcher.
+    if len(raw_argv) == 2 and raw_argv[0] == "resume":
+        return _interactive_loop(max_iter=50, resume_session_id=raw_argv[1])
 
     # Delegate every other path to the legacy dispatcher.
     try:
