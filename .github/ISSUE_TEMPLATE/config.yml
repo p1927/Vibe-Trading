@@ -1,7 +1,7 @@
 blank_issues_enabled: true
 contact_links:
-  - name: Discord Community
-    url: https://discord.gg/2vDYc2w5
+  - name: GitHub Discussions
+    url: https://github.com/HKUDS/Vibe-Trading/discussions
     about: Ask questions, share strategies, get help
   - name: Documentation
     url: https://github.com/HKUDS/Vibe-Trading#-quick-started
