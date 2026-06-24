@@ -20,6 +20,8 @@ import json
 import os
 import re
 import shutil
+import signal
+import subprocess
 import sys
 import threading
 import time
@@ -4032,6 +4034,40 @@ def _build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("init", help="Interactive setup: create ~/.vibe-trading/.env")
 
+    # Cross-platform frontend setup. See cmd_setup() for details.
+    setup_parser = subparsers.add_parser(
+        "setup",
+        help="Install frontend dependencies and build the production bundle",
+    )
+    setup_parser.add_argument(
+        "--frontend-dir",
+        default=str(AGENT_DIR.parent / "frontend"),
+        help="Path to the frontend directory (default: <repo>/frontend)",
+    )
+
+    # Cross-platform dev mode. See cmd_dev() for details.
+    dev_parser = subparsers.add_parser(
+        "dev",
+        help="Start backend + frontend dev servers in one process",
+    )
+    dev_parser.add_argument(
+        "--port",
+        type=int,
+        default=8899,
+        help="Backend port (default: 8899)",
+    )
+    dev_parser.add_argument(
+        "--frontend-port",
+        type=int,
+        default=5899,
+        help="Vite dev server port, must match vite.config.ts (default: 5899)",
+    )
+    dev_parser.add_argument(
+        "--frontend-dir",
+        default=str(AGENT_DIR.parent / "frontend"),
+        help="Path to the frontend directory (default: <repo>/frontend)",
+    )
+
     memory_parser = subparsers.add_parser("memory", help="Inspect persistent memory")
     memory_subparsers = memory_parser.add_subparsers(dest="memory_command")
 
@@ -4601,6 +4637,273 @@ def cmd_init() -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Cross-platform frontend setup / dev commands.
+#
+# These exist to bridge a real Windows footgun: the package's frontend uses
+# TypeScript, but `npx tsc` on Windows does NOT resolve the locally-installed
+# TypeScript binary. Instead, npx hits the npm registry and downloads an
+# abandoned 10-year-old package called `tsc@2.0.4` that prints
+# "This is not the tsc command you are looking for". The fix is to always
+# invoke TypeScript via `npm exec --package=typescript tsc ...` (or
+# `npx --package=typescript tsc ...`) on Windows; on POSIX, `npm run build`
+# already works because npm prepends ./node_modules/.bin to PATH for local
+# scripts.
+# ---------------------------------------------------------------------------
+
+
+def _is_windows() -> bool:
+    """True when running on a Windows-like platform (win32, including Cygwin/MSYS)."""
+    return sys.platform == "win32"
+
+
+def _resolve_node_and_npm() -> tuple[Optional[str], Optional[str]]:
+    """Return ``(node_path, npm_path)`` if both are on PATH, else ``(None, None)``.
+
+    Used by ``cmd_setup`` to fail fast with a clear message instead of
+    surfacing a cryptic ENOENT from npm itself.
+    """
+    node = shutil.which("node")
+    npm = shutil.which("npm")
+    return node, npm
+
+
+def _build_frontend_cmd(frontend_dir: Path) -> list[list[str]]:
+    """Return the ordered list of subprocess invocations needed to build the frontend.
+
+    On Windows we explicitly pin ``--package=typescript`` / ``--package=vite``
+    so npm cannot accidentally fetch the abandoned ``tsc`` package from the
+    registry. On POSIX systems, ``npm run build`` is sufficient because npm
+    prepends ``./node_modules/.bin`` to ``PATH`` for local scripts.
+
+    Each inner list is a single ``subprocess.run`` invocation. Returned as a
+    list of steps so the caller can stream progress.
+    """
+    is_win = _is_windows()
+    if is_win:
+        # `npm exec --package=typescript tsc -b` is the safe form on Windows;
+        # plain `npx tsc` will fetch the abandoned `tsc@2.0.4` package.
+        return [
+            ["npm", "install", "--no-audit", "--no-fund"],
+            ["npm", "exec", "--package=typescript", "--", "tsc", "-b"],
+            ["npm", "exec", "--package=vite", "--", "vite", "build"],
+        ]
+    return [
+        ["npm", "install", "--no-audit", "--no-fund"],
+        ["npm", "run", "build"],
+    ]
+
+
+def _run_step(
+    description: str,
+    cmd: list[str],
+    cwd: Path,
+) -> bool:
+    """Run one subprocess step, returning True on success.
+
+    Decodes subprocess output as UTF-8 with ``errors="replace"`` so that
+    non-ASCII bytes emitted by tools like Vite do not raise
+    ``UnicodeDecodeError`` on platforms whose default codec is GBK/CP936
+    (notably Windows). The captured text is only used to surface a
+    friendly error message; lossy decoding is acceptable here.
+    """
+    console.print(f"[dim]  {description} …[/dim]")
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            shell=False,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        console.print(f"[red]  failed:[/red] {exc}")
+        return False
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout or "").strip()
+        # Show the last 20 lines to keep noise manageable.
+        tail = "\n".join(err.splitlines()[-20:]) if err else "(no output)"
+        console.print(f"[red]  {description} failed:[/red]\n{tail}")
+        return False
+    return True
+
+
+def cmd_setup(frontend_dir: Path) -> int:
+    """Install frontend dependencies and build the production bundle.
+
+    Cross-platform wrapper that hides the ``npx tsc`` / ``npm exec tsc``
+    Windows footgun. Equivalent to running ``cd frontend && npm install
+    && npm run build`` from a POSIX shell, but works on Windows without
+    the user having to know about the abandoned ``tsc`` package on the
+    npm registry.
+    """
+    console.print(
+        Panel(
+            f"[bold cyan]Vibe-Trading frontend setup[/bold cyan]\n"
+            f"[dim]{frontend_dir}[/dim]",
+            border_style="cyan",
+            padding=(0, 1),
+        )
+    )
+
+    if not frontend_dir.exists():
+        console.print(
+            f"[red]Frontend directory not found:[/red] {frontend_dir}\n"
+            "[dim]Pass --frontend-dir to point at a different location.[/dim]"
+        )
+        return EXIT_USAGE_ERROR
+
+    node, npm = _resolve_node_and_npm()
+    if not node or not npm:
+        missing = [name for name, path_ in (("node", node), ("npm", npm)) if not path_]
+        console.print(
+            f"[red]Required tool not on PATH:[/red] {', '.join(missing)}\n"
+            "[dim]Install Node.js (>= 18) from https://nodejs.org and retry.[/dim]"
+        )
+        return EXIT_USAGE_ERROR
+
+    # On Windows, ``npm`` is shipped as ``npm.cmd``; ``subprocess.run`` does
+    # not consult ``PATHEXT`` for bare command names, so it would raise
+    # ``FileNotFoundError`` even though ``shutil.which("npm")`` returned a
+    # valid path. Resolve to the full path before invoking.
+    npm_path = npm
+    if _is_windows():
+        steps = [
+            [npm_path, *step[1:]] if step and step[0] == "npm" else step
+            for step in _build_frontend_cmd(frontend_dir)
+        ]
+    else:
+        steps = _build_frontend_cmd(frontend_dir)
+    for step in steps:
+        description = " ".join(step[:3])  # e.g. "npm install --no-audit"
+        if not _run_step(description, step, frontend_dir):
+            return EXIT_RUN_FAILED
+
+    console.print(
+        Panel(
+            "[green]Frontend built.[/green]\n"
+            f"  Artifacts: [cyan]{frontend_dir / 'dist'}[/cyan]\n"
+            "[dim]Run [bold]vibe-trading serve[/bold] to serve everything on one port.[/dim]",
+            border_style="green",
+            padding=(0, 1),
+        )
+    )
+    return EXIT_SUCCESS
+
+
+def cmd_dev(
+    backend_port: int = 8899,
+    frontend_port: int = 5899,
+    frontend_dir: Optional[Path] = None,
+) -> int:
+    """Start backend + Vite dev server in one foreground process.
+
+    Spawns two child processes:
+
+    * The FastAPI backend, launched from ``AGENT_DIR`` so that
+      ``python -m cli._legacy serve`` resolves the in-repo ``cli`` package
+      (launching it from the repo root would fail with
+      ``ModuleNotFoundError: No module named 'cli'``).
+    * The Vite dev server, launched from ``frontend_dir`` with the port
+      from ``vite.config.ts`` (currently 5899). We do NOT hardcode
+      ``5173`` — that would be wrong for this project.
+
+    Both children inherit stdout/stderr so their logs are interleaved
+    with the dev banner. ``Ctrl+C`` (SIGINT) and ``SIGTERM`` cleanly
+    terminate both children.
+    """
+    frontend_dir = frontend_dir or (AGENT_DIR.parent / "frontend")
+    if not frontend_dir.exists():
+        console.print(
+            f"[red]Frontend directory not found:[/red] {frontend_dir}\n"
+            "[dim]Pass --frontend-dir to point at a different location.[/dim]"
+        )
+        return EXIT_USAGE_ERROR
+
+    node, npm = _resolve_node_and_npm()
+    if not node or not npm:
+        missing = [name for name, path_ in (("node", node), ("npm", npm)) if not path_]
+        console.print(
+            f"[red]Required tool not on PATH:[/red] {', '.join(missing)}\n"
+            "[dim]Install Node.js (>= 18) from https://nodejs.org and retry.[/dim]"
+        )
+        return EXIT_USAGE_ERROR
+
+    backend_cmd = [sys.executable, "-m", "cli._legacy", "serve", "--port", str(backend_port)]
+    # On Windows, ``npm`` is typically ``npm.cmd``. ``subprocess.Popen`` does
+    # not consult ``PATHEXT`` for bare command names, so the call would fail
+    # with ``FileNotFoundError`` even though ``shutil.which("npm")`` returned
+    # a path. Use the resolved executable path directly.
+    npm_executable = npm if _is_windows() else "npm"
+    frontend_cmd = [npm_executable, "run", "dev", "--", "--port", str(frontend_port)]
+
+    console.print(
+        Panel(
+            f"[bold cyan]Vibe-Trading dev[/bold cyan]\n"
+            f"  Backend  → [cyan]http://127.0.0.1:{backend_port}[/cyan]  "
+            f"(cwd: {AGENT_DIR})\n"
+            f"  Frontend → [cyan]http://localhost:{frontend_port}[/cyan]  "
+            f"(cwd: {frontend_dir})",
+            border_style="cyan",
+            padding=(0, 1),
+        )
+    )
+    console.print("[dim]Press Ctrl+C to stop both servers.[/dim]\n")
+
+    backend = subprocess.Popen(backend_cmd, cwd=str(AGENT_DIR))
+    frontend = subprocess.Popen(frontend_cmd, cwd=str(frontend_dir))
+    children = [backend, frontend]
+
+    def _terminate_all() -> None:
+        for child in children:
+            if child.poll() is None:
+                try:
+                    child.terminate()
+                except OSError:
+                    pass
+
+    # Wire signal handlers. On Windows, SIGTERM does not exist and signal
+    # handlers must be installed from the main thread; KeyboardInterrupt is
+    # the cross-platform path for Ctrl+C.
+    if threading.current_thread() is threading.main_thread():
+        try:
+            signal.signal(signal.SIGINT, lambda *_: _terminate_all())
+        except (ValueError, OSError):
+            pass
+        try:
+            signal.signal(signal.SIGTERM, lambda *_: _terminate_all())
+        except (AttributeError, ValueError, OSError):
+            pass
+
+    try:
+        # Wait for whichever process exits first; if it's the backend we
+        # bring the frontend down too, and vice versa.
+        while True:
+            time.sleep(0.5)
+            if backend.poll() is not None or frontend.poll() is not None:
+                break
+    except KeyboardInterrupt:
+        pass
+    finally:
+        _terminate_all()
+        # Give the children a brief grace period, then force-kill.
+        deadline = time.time() + 5
+        for child in children:
+            remaining = max(0.0, deadline - time.time())
+            try:
+                child.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                try:
+                    child.kill()
+                except OSError:
+                    pass
+
+    return EXIT_SUCCESS
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint returning a process exit code."""
     raw_argv = list(sys.argv[1:] if argv is None else argv)
@@ -4616,6 +4919,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "init":
         return cmd_init()
+    if args.command == "setup":
+        return _coerce_exit_code(
+            cmd_setup(frontend_dir=Path(args.frontend_dir))
+        )
+    if args.command == "dev":
+        return _coerce_exit_code(
+            cmd_dev(
+                backend_port=args.port,
+                frontend_port=args.frontend_port,
+                frontend_dir=Path(args.frontend_dir),
+            )
+        )
     if args.command == "serve":
         return serve_main(raw_argv[1:])
     if args.command == "provider":
