@@ -11,7 +11,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from backtest.loaders._symbol_utils import _ETF_PREFIXES, _is_etf_listed
+from backtest.loaders._symbol_utils import _is_etf_listed
 from backtest.loaders.base import cached_loader_fetch, validate_date_range
 from backtest.loaders.registry import register
 
