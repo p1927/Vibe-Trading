@@ -4263,7 +4263,7 @@ _PROVIDER_CHOICES: list[dict[str, str | None]] = [
         "key_env": "OPENAI_API_KEY",
         "base_env": "OPENAI_BASE_URL",
         "base_url": "https://api.openai.com/v1",
-        "model": "gpt-5.5-instant",
+        "model": "gpt-5.5",
         "key_prefix": "sk-",
         "key_placeholder": "sk-...",
     },

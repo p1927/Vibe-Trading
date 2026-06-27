@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import cli
 from cli.onboard import PROVIDERS as ONBOARD_PROVIDERS
 
 
@@ -44,6 +45,19 @@ def test_interactive_onboard_openai_defaults_to_available_model() -> None:
     assert "gpt-5.5-pro" in provider.suggested_models
     assert "gpt-5.5-instant" in provider.suggested_models
     assert provider.default_model != "gpt-5.5-instant"
+
+
+def test_legacy_cli_provider_choices_match_registry_defaults() -> None:
+    legacy_defaults = {
+        str(item["provider"]): item["model"]
+        for item in cli._PROVIDER_CHOICES
+        if item["provider"] in EXPECTED_PROVIDER_DEFAULTS
+    }
+
+    for provider, model in legacy_defaults.items():
+        assert model == EXPECTED_PROVIDER_DEFAULTS[provider]
+
+    assert legacy_defaults["openai"] == "gpt-5.5"
 
 
 def test_interactive_onboard_suggests_current_primary_models() -> None:
