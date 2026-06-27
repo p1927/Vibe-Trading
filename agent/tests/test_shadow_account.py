@@ -861,6 +861,66 @@ def test_single_cluster_fallback_carries_price_bounds() -> None:
     assert entry["entry_rsi14"]["min"] <= entry["entry_rsi14"]["max"]
 
 
+@pytest.mark.unit
+def test_codegen_and_extractor_share_price_feature_names() -> None:
+    """codegen must read the same price-feature names the extractor writes.
+
+    Both now source ``PRICE_FEATURES`` from ``models`` instead of repeating a
+    literal tuple, so a single edit cannot leave one side stale.
+    """
+    from src.shadow_account import codegen, extractor
+    from src.shadow_account.models import PRICE_FEATURES
+
+    assert extractor._PRICE_FEATURES is PRICE_FEATURES
+    # codegen flattens exactly these features' bounds — guard against drift.
+    rule = ShadowRule(
+        rule_id="R1",
+        human_text="x",
+        entry_condition={
+            "market": "us",
+            "entry_hour": {"min": 9, "max": 11},
+            **{f: {"min": 1.0, "max": 2.0} for f in PRICE_FEATURES},
+        },
+        exit_condition={"holding_days": {"min": 2, "max": 5}},
+        holding_days_range=(2, 5),
+        support_count=5,
+        coverage_rate=0.5,
+        sample_trades=("AAPL@2026-01-01",),
+    )
+    ctx = codegen._rule_to_context(rule)
+    for feature in PRICE_FEATURES:
+        assert f"{feature}_min" in ctx and f"{feature}_max" in ctx
+
+
+@pytest.mark.unit
+def test_price_bounds_keep_four_decimal_precision() -> None:
+    """Small ``prior_5d_return`` bounds must survive rounding.
+
+    Regression for PR #314 review nit: ``round(.,2)`` collapsed return-type
+    bounds (e.g. 0.0123 → 0.01); the extractor now rounds price-feature bounds
+    to 4 decimals.
+    """
+    from src.shadow_account.extractor import _extract_rules
+
+    df = pd.DataFrame({
+        "market": ["us"] * 4,
+        "holding_days": [3.0, 4.0, 5.0, 6.0],
+        "entry_hour": [10, 11, 10, 11],
+        "symbol": ["AAPL", "MSFT", "NVDA", "AMZN"],
+        "buy_dt": pd.to_datetime(
+            ["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"]
+        ),
+        "prior_5d_return": [0.0123, 0.0156, 0.0188, 0.0211],
+    })
+
+    rules = _extract_rules(df, min_support=10, max_rules=1, llm_translator=None)
+    bounds = rules[0].entry_condition["prior_5d_return"]
+    # At 2 decimals both would round to 0.01/0.02; 4-decimal keeps them distinct.
+    assert bounds["min"] != round(bounds["min"], 2) or bounds["max"] != round(bounds["max"], 2)
+    assert bounds["min"] == round(bounds["min"], 4)
+    assert bounds["max"] == round(bounds["max"], 4)
+
+
 # ---- Degradation branches in the price-fetch / attach path ----
 
 from src.shadow_account.extractor import (  # noqa: E402

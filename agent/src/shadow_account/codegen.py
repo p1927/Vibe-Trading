@@ -19,7 +19,7 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from src.shadow_account.models import ShadowProfile, ShadowRule
+from src.shadow_account.models import PRICE_FEATURES, ShadowProfile, ShadowRule
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _SIGNAL_ENGINE_TEMPLATE = "signal_engine.py.j2"
@@ -83,7 +83,7 @@ def _rule_to_context(rule: ShadowRule) -> dict[str, Any]:
         "hold_days": hold_days,
         "weight": float(rule.weight),
     }
-    for feature in ("entry_rsi14", "prior_5d_return"):
+    for feature in PRICE_FEATURES:
         bounds = rule.entry_condition.get(feature)
         if isinstance(bounds, dict):
             lo = bounds.get("min")

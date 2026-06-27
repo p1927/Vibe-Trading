@@ -26,7 +26,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from src.shadow_account.models import ShadowProfile, ShadowRule
+from src.shadow_account.models import PRICE_FEATURES, ShadowProfile, ShadowRule
 from src.shadow_account.storage import hash_journal, new_shadow_id, now_iso
 from src.tools.trade_journal_parsers import parse_file, records_to_dataframe
 from src.tools.trade_journal_tool import pair_trades_fifo
@@ -40,7 +40,9 @@ _NUMERIC_FEATURES = ("holding_days", "pnl_pct", "entry_hour", "entry_weekday")
 _CATEGORICAL_FEATURES = ("market",)
 
 # Price-context features attached as-of buy_dt (NaN when price data unavailable).
-_PRICE_FEATURES = ("entry_rsi14", "prior_5d_return")
+# Names live on the data-contract boundary (models.PRICE_FEATURES) so the
+# extractor, codegen, and scanner cannot drift; aliased here for local use.
+_PRICE_FEATURES = PRICE_FEATURES
 _RSI_PERIOD = 14
 _PRIOR_RETURN_WINDOW = 5
 # Calendar buffer added before the earliest buy_dt so the RSI warmup has enough
@@ -484,8 +486,10 @@ def _cluster_to_rule(
         if feature in cluster_df.columns:
             series = cluster_df[feature].dropna()
             if len(series) >= 2:
-                lo = float(round(series.quantile(0.10), 2))
-                hi = float(round(series.quantile(0.90), 2))
+                # 4 decimals: RSI bounds tolerate it and return-type features
+                # (prior_5d_return ~ ±0.0x) would lose meaningful precision at 2.
+                lo = float(round(series.quantile(0.10), 4))
+                hi = float(round(series.quantile(0.90), 4))
                 entry_condition[feature] = {"min": lo, "max": hi}
     exit_condition: dict[str, Any] = {
         "holding_days": {"min": hold_lo, "max": hold_hi},
