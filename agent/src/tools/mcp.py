@@ -24,7 +24,12 @@ from key_value.aio.stores.filetree import FileTreeStore
 from mcp import types as mcp_types
 
 from src.agent.tools import BaseTool
-from src.config.schema import MCPServerConfig
+from src.config.schema import (
+    ROBINHOOD_AGENT_CONFIG_PATH,
+    MCPServerConfig,
+    live_broker_key_for_entry,
+    robinhood_readonly_enabled_tools,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +266,19 @@ def normalize_mcp_tool_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
     return normalized
 
 
+def _format_zero_enabled_tools_warning(server_name: str, server_config: MCPServerConfig) -> str:
+    """Build a warning when discovery yields no locally enabled tools."""
+    enabled_tools = list(getattr(server_config, "enabled_tools", []) or [])
+    if "*" in enabled_tools and live_broker_key_for_entry(server_name, server_config) == "robinhood":
+        tools = ", ".join(robinhood_readonly_enabled_tools())
+        return (
+            f"Server '{server_name}' produced 0 enabled tools with wildcard enabledTools ['*']. "
+            "Robinhood live MCP must use the safe read-only allowlist "
+            f"({tools}); copy the safe seed into {ROBINHOOD_AGENT_CONFIG_PATH}."
+        )
+    return f"Server '{server_name}' produced 0 enabled tools — check the enabledTools allowlist in agent config."
+
+
 def _build_token_store(cache_dir: str) -> FileTreeStore:
     """Build a persistent OAuth token store rooted at ``cache_dir``.
 
@@ -351,10 +369,7 @@ class MCPServerAdapter:
             )
 
         if not specs:
-            logger.warning(
-                "Server '%s' produced 0 enabled tools — check the enabledTools allowlist in agent config.",
-                self.server_name,
-            )
+            logger.warning(_format_zero_enabled_tools_warning(self.server_name, self.server_config))
 
         return specs
 
