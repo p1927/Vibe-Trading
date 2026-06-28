@@ -20,7 +20,7 @@ from fastmcp.client.transports.http import StreamableHttpTransport
 from fastmcp.client.transports.sse import SSETransport
 from fastmcp.client.transports.stdio import StdioTransport
 from fastmcp.exceptions import McpError, ToolError
-from key_value.aio.stores.filetree import FileTreeStore
+from key_value.aio.stores.filetree import FileTreeStore, FileTreeV1KeySanitizationStrategy
 from mcp import types as mcp_types
 
 from src.agent.tools import BaseTool
@@ -285,9 +285,11 @@ def _build_token_store(cache_dir: str) -> FileTreeStore:
     The directory is created (with parents) and locked down to ``0700`` so only
     the owning user can read the cached refresh tokens. ``FileTreeStore`` is a
     pure-stdlib ``AsyncKeyValue`` backend (no ``diskcache`` dependency) and uses
-    atomic same-directory temp-file renames for write safety. The OAuth provider
-    persists refreshed tokens back through this store, giving silent refresh
-    across CLI sessions.
+    atomic same-directory temp-file renames for write safety. FastMCP's OAuth
+    storage uses raw MCP URLs as logical keys, so key sanitization is enabled to
+    keep those URL-shaped keys as filesystem-safe cache-local filenames. The
+    collection names stay unchanged because token-presence checks scan FastMCP's
+    literal ``mcp-oauth-token`` collection directory.
 
     Args:
         cache_dir: Token cache directory. A leading ``~`` is expanded.
@@ -301,7 +303,10 @@ def _build_token_store(cache_dir: str) -> FileTreeStore:
     path.mkdir(parents=True, exist_ok=True)
     # 0700: owner-only. Tokens are secrets; no group/other access.
     os.chmod(path, 0o700)
-    return FileTreeStore(data_directory=path)
+    return FileTreeStore(
+        data_directory=path,
+        key_sanitization_strategy=FileTreeV1KeySanitizationStrategy(path),
+    )
 
 
 class MCPServerAdapter:
