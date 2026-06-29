@@ -14,6 +14,7 @@ Tool execution:
 from __future__ import annotations
 
 import concurrent.futures
+import copy
 import json
 import logging
 import os
@@ -290,35 +291,72 @@ def _fix_tool_pairs(messages: list) -> None:
         messages.insert(pos, stub)
 
 
-def _attach_tool_call_thought_signatures(message: dict[str, Any], tool_calls: list) -> None:
-    """Attach Gemini thought signatures to replayed assistant tool calls."""
+def _attach_tool_call_thought_signatures(message: dict[str, Any], tool_calls: list) -> dict[str, Any]:
+    """Attach Gemini thought signatures to assistant replay tool calls.
+
+    The replay message is later converted back into LangChain messages from a
+    plain dict history. Keep signatures in both the provider-neutral
+    ``extra_content.thought_signature`` slot and Gemini's OpenAI-compatible
+    ``extra_content.google.thought_signature`` slot so both local replay tests
+    and the Gemini request injector can recover the value.
+    """
     outbound_tool_calls = message.get("tool_calls")
     if not isinstance(outbound_tool_calls, list):
-        return
+        return message
 
-    signatures_by_id = {
-        tc.id: tc.thought_signature
-        for tc in tool_calls
-        if getattr(tc, "thought_signature", None)
-    }
-    for index, outbound_tool_call in enumerate(outbound_tool_calls):
-        if not isinstance(outbound_tool_call, dict):
-            continue
-        signature = signatures_by_id.get(outbound_tool_call.get("id"))
-        if not signature and index < len(tool_calls):
-            signature = getattr(tool_calls[index], "thought_signature", None)
+    signatures_by_id: dict[str, str] = {}
+    signatures_by_index: dict[int, str] = {}
+    for index, tc in enumerate(tool_calls):
+        extra_content = getattr(tc, "extra_content", None)
+        signature = None
+        if isinstance(extra_content, dict):
+            signature = extra_content.get("thought_signature")
+            google_extra = extra_content.get("google")
+            if not signature and isinstance(google_extra, dict):
+                signature = google_extra.get("thought_signature") or google_extra.get(
+                    "thoughtSignature"
+                )
+        signature = signature or getattr(tc, "thought_signature", None)
         if not signature:
             continue
+        tc_id = getattr(tc, "id", None)
+        if tc_id:
+            signatures_by_id[str(tc_id)] = signature
+        signatures_by_index[index] = signature
 
-        extra_content = outbound_tool_call.get("extra_content")
+    if not signatures_by_id and not signatures_by_index:
+        return message
+
+    def attach(raw_tool_call: Any, index: int) -> None:
+        if not isinstance(raw_tool_call, dict):
+            return
+        signature = signatures_by_id.get(str(raw_tool_call.get("id"))) or signatures_by_index.get(index)
+        if not signature:
+            return
+        extra_content = raw_tool_call.setdefault("extra_content", {})
         if not isinstance(extra_content, dict):
             extra_content = {}
-            outbound_tool_call["extra_content"] = extra_content
-        google = extra_content.get("google")
+            raw_tool_call["extra_content"] = extra_content
+        extra_content["thought_signature"] = signature
+        google = extra_content.setdefault("google", {})
         if not isinstance(google, dict):
             google = {}
             extra_content["google"] = google
         google["thought_signature"] = signature
+
+    for index, raw_tool_call in enumerate(outbound_tool_calls):
+        attach(raw_tool_call, index)
+
+    additional_kwargs = message.setdefault("additional_kwargs", {})
+    raw_tool_calls = additional_kwargs.setdefault(
+        "tool_calls",
+        copy.deepcopy(outbound_tool_calls),
+    )
+    if isinstance(raw_tool_calls, list):
+        for index, raw_tool_call in enumerate(raw_tool_calls):
+            attach(raw_tool_call, index)
+
+    return message
 
 
 # -- Structured summary templates ------------------------------------------
