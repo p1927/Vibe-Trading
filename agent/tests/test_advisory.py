@@ -22,6 +22,8 @@ from src.live.advisory import (
     AdvisoryResult,
     AggregatedVerdict,
     Verdict,
+    clear_advisory_providers,
+    register_advisory_provider,
 )
 from src.live.advisory.mock import MockAdvisory
 from src.live.mandate.model import (
@@ -153,7 +155,7 @@ def _make_context(**overrides: Any) -> AdvisoryContext:
         "side": "buy",
         "notional_usd": 100.0,
         "account_equity": 5000.0,
-        "account_drawdown": 0.0,
+        "utilization_ratio": 0.0,
         "open_position_count": 0,
         "total_exposure_usd": 0.0,
         "funding_usd": 5000.0,
@@ -310,34 +312,31 @@ def test_gate_advisory_enabled_with_mock_provider(
         provider_id="test_mock",
     )
 
-    original_init = AdvisoryOrchestrator.__init__
+    register_advisory_provider(mock_provider)
+    try:
+        _write_mandate(live_runtime, _mandate())
+        adapter = _MockAdapter()
+        guard = _guard(adapter)
 
-    def _patched_init(self: AdvisoryOrchestrator, providers: list) -> None:
-        original_init(self, [mock_provider])
-
-    monkeypatch.setattr(AdvisoryOrchestrator, "__init__", _patched_init)
-
-    _write_mandate(live_runtime, _mandate())
-    adapter = _MockAdapter()
-    guard = _guard(adapter)
-
-    out = json.loads(
-        guard.execute(
-            symbol="AAPL", side="buy", instrument_type="equity", notional_usd=100.0
+        out = json.loads(
+            guard.execute(
+                symbol="AAPL", side="buy", instrument_type="equity", notional_usd=100.0
+            )
         )
-    )
 
-    assert out.get("status") == "ok"
-    assert len(adapter.order_calls) == 1
+        assert out.get("status") == "ok"
+        assert len(adapter.order_calls) == 1
 
-    live_action = out.get("live_action")
-    assert live_action is not None
-    gate_decision = live_action["gate_decision"]
-    assert "advisory" in gate_decision["checked_limits"]
+        live_action = out.get("live_action")
+        assert live_action is not None
+        gate_decision = live_action["gate_decision"]
+        assert "advisory" in gate_decision["checked_limits"]
 
-    advisory = gate_decision["advisory"]
-    assert advisory is not None
-    assert advisory["verdict"] == "approve_with_concerns"
-    assert "high concentration" in advisory["concerns"]
-    assert len(advisory["results"]) == 1
-    assert advisory["results"][0]["provider"] == "test_mock"
+        advisory = gate_decision["advisory"]
+        assert advisory is not None
+        assert advisory["verdict"] == "approve_with_concerns"
+        assert "high concentration" in advisory["concerns"]
+        assert len(advisory["results"]) == 1
+        assert advisory["results"][0]["provider"] == "test_mock"
+    finally:
+        clear_advisory_providers()
