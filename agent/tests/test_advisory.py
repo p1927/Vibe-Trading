@@ -340,3 +340,67 @@ def test_gate_advisory_enabled_with_mock_provider(
         assert advisory["results"][0]["provider"] == "test_mock"
     finally:
         clear_advisory_providers()
+
+
+def test_gate_advisory_reject_is_observational(
+    live_runtime: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VIBE_TRADING_ENABLE_ADVISORY", "1")
+
+    register_advisory_provider(
+        MockAdvisory(
+            verdict=Verdict.REJECT,
+            concerns=("risk service would reject this order",),
+            provider_id="rejecting_mock",
+        )
+    )
+    try:
+        _write_mandate(live_runtime, _mandate())
+        adapter = _MockAdapter()
+        guard = _guard(adapter)
+
+        out = json.loads(
+            guard.execute(
+                symbol="AAPL", side="buy", instrument_type="equity", notional_usd=100.0
+            )
+        )
+
+        assert out.get("status") == "ok"
+        assert len(adapter.order_calls) == 1
+
+        advisory = out["live_action"]["gate_decision"]["advisory"]
+        assert advisory["verdict"] == "reject"
+        assert "risk service would reject this order" in advisory["concerns"]
+    finally:
+        clear_advisory_providers()
+
+
+def test_gate_advisory_provider_failure_is_observational(
+    live_runtime: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VIBE_TRADING_ENABLE_ADVISORY", "1")
+
+    register_advisory_provider(
+        MockAdvisory(raise_on_review=True, provider_id="failing_mock")
+    )
+    try:
+        _write_mandate(live_runtime, _mandate())
+        adapter = _MockAdapter()
+        guard = _guard(adapter)
+
+        out = json.loads(
+            guard.execute(
+                symbol="AAPL", side="buy", instrument_type="equity", notional_usd=100.0
+            )
+        )
+
+        assert out.get("status") == "ok"
+        assert len(adapter.order_calls) == 1
+
+        advisory = out["live_action"]["gate_decision"]["advisory"]
+        assert advisory["verdict"] == "review_unavailable"
+        assert advisory["results"][0]["provider"] == "failing_mock"
+        assert advisory["results"][0]["summary"] == "provider error: RuntimeError"
+        assert "mock advisory failure" not in json.dumps(advisory)
+    finally:
+        clear_advisory_providers()
