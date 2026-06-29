@@ -276,7 +276,7 @@ export function Layout() {
 // the trigger with getBoundingClientRect() and update on resize/scroll.
 // ---------------------------------------------------------------------------
 function LanguageSwitcher() {
-  const { i18n } = useTranslation();
+  const { i18n, t } = useTranslation();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [menuStyle, setMenuStyle] = useState<{ left: number; bottom: number; minWidth: number } | null>(null);
@@ -353,7 +353,7 @@ function LanguageSwitcher() {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Language"
+        aria-label={t("layout.language")}
         className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
       >
         <Languages className="h-3.5 w-3.5 shrink-0" />
@@ -385,7 +385,7 @@ function LanguageSwitcher() {
                   }}
                   aria-current={active || undefined}
                   className={cn(
-                    "w-full flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-accent hover:text-accent-foreground transition-colors",
+                    "w-full flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-muted hover:text-foreground transition-colors",
                     active && "text-foreground",
                   )}
                 >
