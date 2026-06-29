@@ -68,9 +68,9 @@ class AdvisoryContext:
         side: ``"buy"`` or ``"sell"``.
         notional_usd: Order notional in USD.
         account_equity: Current account equity in USD.
-        account_drawdown: Current drawdown as a fraction (0.0 = no drawdown,
-            1.0 = fully drawn down). Approximated from mandate funding when
-            the broker does not supply a high-water mark.
+        utilization_ratio: Funding utilization as a fraction (0.0 = unused,
+            1.0 = fully utilized). Approximated from mandate funding cap
+            when the broker does not supply a high-water mark.
         open_position_count: Number of currently open positions.
         total_exposure_usd: Sum of all open position market values in USD.
         funding_usd: Mandate's ``account_funding_usd`` (the committed capital
@@ -81,7 +81,7 @@ class AdvisoryContext:
     side: str
     notional_usd: float
     account_equity: float
-    account_drawdown: float
+    utilization_ratio: float
     open_position_count: int
     total_exposure_usd: float
     funding_usd: float
@@ -217,10 +217,11 @@ class AdvisoryOrchestrator:
                     "advisory provider %s failed: %s",
                     getattr(provider, "provider_id", "<unknown>"),
                     exc,
+                    exc_info=True,
                 )
                 result = AdvisoryResult(
                     verdict=Verdict.REVIEW_UNAVAILABLE,
-                    summary=f"provider error: {exc}",
+                    summary=f"provider error: {type(exc).__name__}",
                     provider=getattr(provider, "provider_id", "<unknown>"),
                 )
             results.append(result)
@@ -232,6 +233,33 @@ class AdvisoryOrchestrator:
         )
 
 
+# -- Provider registry -------------------------------------------------------
+
+_advisory_providers: list[PreTradeAdvisoryInterface] = []
+
+
+def register_advisory_provider(provider: PreTradeAdvisoryInterface) -> None:
+    """Register an advisory provider to be consulted on each review.
+
+    Providers are consulted in registration order. Call
+    :func:`clear_advisory_providers` to remove all registered providers.
+
+    Args:
+        provider: An advisory provider instance.
+    """
+    _advisory_providers.append(provider)
+
+
+def clear_advisory_providers() -> None:
+    """Remove all registered advisory providers."""
+    _advisory_providers.clear()
+
+
+def get_advisory_providers() -> list[PreTradeAdvisoryInterface]:
+    """Return a copy of the current advisory provider list."""
+    return list(_advisory_providers)
+
+
 __all__ = [
     "AdvisoryContext",
     "AdvisoryOrchestrator",
@@ -239,4 +267,7 @@ __all__ = [
     "AggregatedVerdict",
     "PreTradeAdvisoryInterface",
     "Verdict",
+    "clear_advisory_providers",
+    "get_advisory_providers",
+    "register_advisory_provider",
 ]

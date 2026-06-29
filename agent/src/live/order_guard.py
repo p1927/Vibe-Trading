@@ -46,6 +46,7 @@ from src.live.advisory import (
     AdvisoryContext,
     AdvisoryOrchestrator,
     Verdict,
+    get_advisory_providers,
 )
 from src.live.audit import LiveActionEvent, write_live_action
 from src.live.enforcement import (
@@ -393,23 +394,30 @@ class LiveOrderGuardTool(MCPRemoteTool):
         if env_val not in _ADVISORY_TRUTHY:
             return None
 
+        providers = get_advisory_providers()
+        if not providers:
+            logger.info(
+                "advisory enabled but no providers registered — skipping review"
+            )
+            return None
+
         try:
             from src.live.enforcement import (
-                _account_balance_market_value,
-                _coerce_position_rows,
-                _positions_market_value,
+                account_balance_market_value,
+                coerce_position_rows,
+                positions_market_value,
             )
 
-            equity = _account_balance_market_value(balance) or 0.0
-            exposure = _positions_market_value(positions) or 0.0
+            equity = account_balance_market_value(balance) or 0.0
+            exposure = positions_market_value(positions) or 0.0
             funding_usd = mandate.hard_caps.account_funding_usd
 
             if equity > 0 and funding_usd > 0:
-                drawdown = max(0.0, 1.0 - equity / funding_usd)
+                utilization = max(0.0, 1.0 - equity / funding_usd)
             else:
-                drawdown = 0.0
+                utilization = 0.0
 
-            pos_rows = _coerce_position_rows(positions)
+            pos_rows = coerce_position_rows(positions)
             open_count = len(pos_rows) if pos_rows is not None else 0
 
             context = AdvisoryContext(
@@ -417,16 +425,13 @@ class LiveOrderGuardTool(MCPRemoteTool):
                 side=intent.side,
                 notional_usd=intent.notional_usd or 0.0,
                 account_equity=equity,
-                account_drawdown=drawdown,
+                utilization_ratio=utilization,
                 open_position_count=open_count,
                 total_exposure_usd=exposure,
                 funding_usd=funding_usd,
             )
 
-            orchestrator = AdvisoryOrchestrator([])
-            if not orchestrator.providers:
-                return None
-
+            orchestrator = AdvisoryOrchestrator(providers)
             aggregated = orchestrator.review(context)
             return {
                 "verdict": aggregated.verdict.value,
@@ -443,11 +448,11 @@ class LiveOrderGuardTool(MCPRemoteTool):
                 ],
             }
         except Exception as exc:
-            logger.warning("advisory review failed: %s", exc)
+            logger.warning("advisory review failed: %s", exc, exc_info=True)
             return {
                 "verdict": Verdict.REVIEW_UNAVAILABLE.value,
                 "concerns": [],
-                "error": str(exc),
+                "error": type(exc).__name__,
             }
 
     def _deny(
