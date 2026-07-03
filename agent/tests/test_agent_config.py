@@ -368,7 +368,7 @@ def test_robinhood_wildcard_validation_names_safe_seed_and_config_path() -> None
     assert ROBINHOOD_AGENT_CONFIG_PATH in message
     assert '"mcpServers"' in message
     assert '"enabledTools"' in message
-    assert '"get_account"' in message
+    assert '"get_portfolio"' in message
     assert "No live channel configured" not in message
 
 
@@ -424,7 +424,7 @@ def test_live_authorize_wildcard_robinhood_config_prints_safe_seed(
     assert 'Robinhood MCP config uses enabledTools: ["*"]' in out
     assert "safe read-only Robinhood seed" in out
     assert ROBINHOOD_AGENT_CONFIG_PATH in out
-    assert '"get_account"' in out
+    assert '"get_portfolio"' in out
     assert "No live channel configured" not in out
 
 
@@ -451,7 +451,7 @@ def test_mcp_robinhood_wildcard_zero_tools_warning_names_safe_allowlist(
     assert tools == []
     assert "wildcard enabledTools" in caplog.text
     assert "safe read-only allowlist" in caplog.text
-    assert "get_account" in caplog.text
+    assert "get_portfolio" in caplog.text
     assert ROBINHOOD_AGENT_CONFIG_PATH in caplog.text
 
 

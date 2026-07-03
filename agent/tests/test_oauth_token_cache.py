@@ -179,7 +179,7 @@ def test_token_never_in_audit_payload() -> None:
         session_id="s1",
         outcome="accepted",
         server="robinhood",
-        remote_tool="place_order",
+        remote_tool="place_equity_order",
         broker_request={"symbol": "AAPL", "access_token": _OAUTH_SECRET},
         broker_response={"order_id": "rh_x", "authorization": _OAUTH_SECRET},
     )
@@ -209,8 +209,8 @@ def test_token_not_accepted_from_tool_args_or_variables() -> None:
 
     spec = MCPRemoteToolSpec(
         server_name="robinhood",
-        remote_name="place_order",
-        local_name="mcp_robinhood_place_order",
+        remote_name="place_equity_order",
+        local_name="mcp_robinhood_place_equity_order",
         description="place an order",
         parameters={
             "type": "object",
@@ -282,12 +282,12 @@ def test_cache_expiry_surfaces_reauth_no_silent_stale_call() -> None:
             "type": "streamableHttp",
             "url": "https://agent.robinhood.com/mcp/trading",
             "auth": {"type": "oauth", "scopes": ["trading.read"]},
-            "enabled_tools": ["place_order"],
+            "enabled_tools": ["place_equity_order"],
         }
     )
     adapter = MCPServerAdapter("robinhood", cfg, client_factory=_ExpiredAuthClient)
 
-    result = adapter.call_tool("place_order", {"symbol": "AAPL", "side": "buy"})
+    result = adapter.call_tool("place_equity_order", {"symbol": "AAPL", "side": "buy"})
 
     # Surfaced as an error envelope — never a silent success off a stale token.
     assert result["status"] == "error"

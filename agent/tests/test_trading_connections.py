@@ -22,7 +22,7 @@ def test_remote_call_requires_enabled_tool(monkeypatch: pytest.MonkeyPatch) -> N
     """Generic remote reads must respect the operator MCP allowlist."""
     server = SimpleNamespace(
         url="https://agent.robinhood.com/mcp/trading",
-        enabled_tools=["get_account"],
+        enabled_tools=["get_portfolio"],
         auth=SimpleNamespace(cache_dir="/tmp/vibe-no-token"),
     )
     monkeypatch.setattr("src.config.loader.load_agent_config", lambda: _agent_config(server))
@@ -38,7 +38,7 @@ def test_remote_call_requires_cached_oauth(monkeypatch: pytest.MonkeyPatch) -> N
     """Generic remote reads must not trigger OAuth from tool/API/MCP paths."""
     server = SimpleNamespace(
         url="https://agent.robinhood.com/mcp/trading",
-        enabled_tools=["get_positions"],
+        enabled_tools=["get_equity_positions"],
         auth=SimpleNamespace(cache_dir="/tmp/vibe-no-token"),
     )
     monkeypatch.setattr("src.config.loader.load_agent_config", lambda: _agent_config(server))
@@ -102,3 +102,45 @@ def test_live_broker_mcp_wrappers_are_hidden_from_agent_registry(monkeypatch: py
 
     assert "trading_positions" in registry.tool_names
     assert not any(name.startswith("mcp_robinhood_") for name in registry.tool_names)
+
+
+def test_robinhood_generic_reads_use_current_agentic_mcp_tool_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for #381: generic reads must not call stale Robinhood tool names."""
+    calls: list[tuple[str, dict]] = []
+    server = SimpleNamespace(
+        url="https://agent.robinhood.com/mcp/trading",
+        enabled_tools=[
+            "get_portfolio",
+            "get_equity_positions",
+            "get_equity_orders",
+            "get_equity_quotes",
+        ],
+        auth=SimpleNamespace(cache_dir="/tmp/vibe-token"),
+    )
+
+    class _Adapter:
+        def __init__(self, server_name, server_config):  # noqa: ANN001
+            assert server_name == "robinhood"
+            assert server_config is server
+
+        def call_tool(self, remote_name, arguments):  # noqa: ANN001
+            calls.append((remote_name, dict(arguments)))
+            return {"status": "ok"}
+
+    monkeypatch.setattr("src.config.loader.load_agent_config", lambda: _agent_config(server))
+    monkeypatch.setattr("src.live.registry.has_cached_oauth_token", lambda *_: True)
+    monkeypatch.setattr("src.tools.mcp.MCPServerAdapter", _Adapter)
+
+    assert service.get_account("robinhood-live-mcp")["status"] == "ok"
+    assert service.get_positions("robinhood-live-mcp")["status"] == "ok"
+    assert service.get_open_orders("robinhood-live-mcp")["status"] == "ok"
+    assert service.get_quote("AAPL", "robinhood-live-mcp")["status"] == "ok"
+
+    assert calls == [
+        ("get_portfolio", {}),
+        ("get_equity_positions", {}),
+        ("get_equity_orders", {}),
+        ("get_equity_quotes", {"symbols": ["AAPL"]}),
+    ]
