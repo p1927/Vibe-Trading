@@ -138,13 +138,6 @@ class RunResponse(BaseModel):
     run_logs: Optional[List[Dict[str, Any]]] = Field(None, description="Structured stdout/stderr lines")
 
 
-class HealthResponse(BaseModel):
-    """Health check payload."""
-    status: str = Field(..., description="Service status")
-    service: str = Field(..., description="Service name")
-    timestamp: str = Field(..., description="Server timestamp")
-
-
 class LLMProviderOption(BaseModel):
     """Supported LLM provider metadata for the settings UI."""
 
@@ -1704,16 +1697,6 @@ async def update_data_source_settings(payload: UpdateDataSourceSettingsRequest):
     return _build_data_source_settings_response(_read_env_values(ENV_PATH))
 
 
-@app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Liveness probe."""
-    return HealthResponse(
-        status="healthy",
-        service="Vibe-Trading API",
-        timestamp=datetime.now().isoformat()
-    )
-
-
 @app.get("/channels/status", dependencies=[Depends(require_auth)])
 async def channels_status():
     """Return IM channel runtime and adapter status."""
@@ -1744,88 +1727,6 @@ async def channels_pairing_command(payload: ChannelPairingCommandRequest):
     return {
         "channel": payload.channel,
         "reply": handle_pairing_command(payload.channel, payload.command),
-    }
-
-
-@app.get("/correlation")
-async def get_correlation_matrix(
-    codes: str = Query(..., description="Comma-separated asset codes, e.g. BTC-USDT,ETH-USDT,SPY"),
-    days: int = Query(90, description="Lookback window in days", ge=7, le=365),
-    method: str = Query("pearson", description="Correlation method: pearson or spearman"),
-):
-    """Compute cross-asset correlation matrix from daily returns.
-
-    Fetches price data for each code via available data loaders,
-    computes pairwise correlation of daily returns over the lookback window.
-    """
-    from backtest.correlation import compute_correlation_matrix
-
-    code_list = [c.strip() for c in codes.split(",") if c.strip()]
-    if len(code_list) < 2:
-        raise HTTPException(status_code=400, detail="At least 2 asset codes required")
-    if len(code_list) > 20:
-        raise HTTPException(status_code=400, detail="Maximum 20 assets per request")
-    if method not in ("pearson", "spearman"):
-        raise HTTPException(status_code=400, detail="method must be 'pearson' or 'spearman'")
-
-    try:
-        result = compute_correlation_matrix(codes=code_list, days=days, method=method)
-        return result
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Correlation computation failed: {exc}")
-
-
-def _terminate_current_process() -> None:
-    """Stop the current API process after the response has been sent."""
-    time.sleep(0.25)
-    os.kill(os.getpid(), signal.SIGTERM)
-
-
-@app.post("/system/shutdown")
-async def shutdown_local_api(
-    background_tasks: BackgroundTasks,
-    request: Request,
-    cred: Optional[HTTPAuthorizationCredentials] = Security(_security),
-):
-    """Shut down the local API server after explicit local authorization."""
-    _require_shutdown_authorization(request=request, cred=cred)
-    client_host = request.client.host if request.client else ""
-    if client_host not in {"127.0.0.1", "::1", "localhost"}:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Local access only")
-
-    background_tasks.add_task(_terminate_current_process)
-    return {
-        "status": "shutting-down",
-        "service": "Vibe-Trading API",
-        "timestamp": datetime.now().isoformat(),
-    }
-
-
-@app.get("/skills")
-async def list_skills():
-    """List registered skills (name and description)."""
-    from src.agent.skills import SkillsLoader
-
-    loader = SkillsLoader()
-    return [
-        {
-            "name": s.name,
-            "description": s.description,
-        }
-        for s in loader.skills
-    ]
-
-
-@app.get("/api")
-async def api_info():
-    """Service metadata."""
-    return {
-        "service": "Vibe-Trading API",
-        "version": APP_VERSION,
-        "docs": "/docs",
-        "health": "/health",
     }
 
 
@@ -2327,6 +2228,17 @@ async def session_events(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ============================================================================
+# System routes - defined in src/api/system_routes.py
+# ============================================================================
+
+from src.api.system_routes import register_system_routes  # noqa: E402
+register_system_routes(app)
+
+# Re-export for test monkeypatch compatibility
+from src.api.system_routes import _terminate_current_process  # noqa: F401, E402
 
 
 # ============================================================================
