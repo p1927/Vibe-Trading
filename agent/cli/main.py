@@ -2,8 +2,8 @@
 
 Responsibilities:
 
-1. Detect whether ``~/.vibe-trading/.env`` exists; if missing, run the
-   onboarding wizard (:mod:`cli.onboard`) before doing anything else.
+1. Detect whether any provider `.env` candidate exists; if all are missing, run
+   the onboarding wizard (:mod:`cli.onboard`) before doing anything else.
 2. Render the startup banner (:mod:`cli.intro`) on interactive entry.
 3. For interactive entry (no subcommand, or ``chat``) drive the REPL
    built on :mod:`cli.input`, :mod:`cli.completer`,
@@ -84,7 +84,10 @@ def _register_live_slash_commands() -> None:
 
 _register_live_slash_commands()
 
+_AGENT_DIR = Path(__file__).resolve().parents[1]
 _ENV_PATH = Path.home() / ".vibe-trading" / ".env"
+_PROJECT_ENV_PATH = _AGENT_DIR / ".env"
+_CWD_ENV_PATH = Path.cwd() / ".env"
 # Best-effort fallbacks used only when the probe genuinely fails (missing
 # dependency, broken install). The numbers track the actual bundled counts
 # so a probe failure still shows a plausible banner rather than "0 loaded".
@@ -108,10 +111,15 @@ def _probe_model_name() -> str:
     name = os.environ.get("LANGCHAIN_MODEL_NAME") or os.environ.get("OPENAI_MODEL")
     if name:
         return name
+    env_path = _first_existing_env_path()
+    if env_path is None:
+        return "unset (use /model to pick one)"
     try:
-        text = _ENV_PATH.read_text(encoding="utf-8")
+        text = env_path.read_text(encoding="utf-8")
         for line in text.splitlines():
             if line.startswith("LANGCHAIN_MODEL_NAME="):
+                return line.split("=", 1)[1].strip()
+            if line.startswith("OPENAI_MODEL="):
                 return line.split("=", 1)[1].strip()
     except OSError:
         pass
@@ -244,13 +252,13 @@ def _is_supported_chat_invocation(argv: Sequence[str]) -> bool:
 
 
 def _maybe_run_onboarding() -> bool:
-    """Run the first-launch wizard when ``.env`` is missing.
+    """Run the first-launch wizard when every provider ``.env`` candidate is missing.
 
     Returns:
         ``True`` if startup should proceed, ``False`` if the user cancelled
         the wizard cleanly.
     """
-    if _ENV_PATH.exists():
+    if _first_existing_env_path() is not None:
         return True
     console = get_console()
     written = run_onboarding(console=console)
@@ -264,6 +272,19 @@ def _maybe_run_onboarding() -> bool:
     except Exception:  # noqa: BLE001 — legacy will load again later
         pass
     return True
+
+
+def _env_candidates() -> tuple[Path, ...]:
+    """Return provider `.env` candidates in the same order as ``src.providers.llm``."""
+    return (_ENV_PATH, _PROJECT_ENV_PATH, _CWD_ENV_PATH)
+
+
+def _first_existing_env_path() -> Path | None:
+    """Return the first configured `.env` candidate that exists, if any."""
+    for path in _env_candidates():
+        if path.exists():
+            return path
+    return None
 
 
 def _show_banner() -> None:

@@ -2631,13 +2631,12 @@ def _live_action_frame_from_tool_result(event: Any) -> Optional[str]:
 def _fetch_broker_ceilings(broker: str) -> Optional[Dict[str, Any]]:
     """Best-effort fetch of broker-side account ceilings for the commit re-check.
 
-    Reads the broker's ``get_account`` tool and derives an authoritative ceiling
-    snapshot (buying power / funding) so the commit-time fit check binds to the
-    venue's real limits rather than an agent-proposed number. Returns ``None`` on
-    any failure (channel not configured, tool error, fields not recognized) so
-    the caller falls back to the proposal's own snapshot — a commit is never
-    blocked on a broker read. The exact Robinhood field names are finalized
-    post-access (L6); we probe the common ones.
+    Reads the broker's mapped account/portfolio tool and derives an authoritative
+    ceiling snapshot (buying power / funding) so the commit-time fit check binds
+    to the venue's real limits rather than an agent-proposed number. Returns
+    ``None`` on any failure (channel not configured, tool error, fields not
+    recognized) so the caller falls back to the proposal's own snapshot — a
+    commit is never blocked on a broker read.
 
     Args:
         broker: The live-broker key.
@@ -2650,7 +2649,10 @@ def _fetch_broker_ceilings(broker: str) -> Optional[Dict[str, Any]]:
     except LiveRunnerUnavailable:
         return None
     try:
-        result = adapter.call_tool("get_account", {})
+        from src.trading.service import runner_tool_name
+
+        account_tool = runner_tool_name(broker, "account") or "get_account"
+        result = adapter.call_tool(account_tool, {})
     except Exception:  # pragma: no cover - status/commit must never raise here
         logger.debug("broker ceiling fetch failed for %s", broker, exc_info=True)
         return None
