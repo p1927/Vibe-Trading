@@ -1775,8 +1775,7 @@ async def update_session(session_id: str, req: UpdateSessionRequest):
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
     if req.title is not None:
         session.title = req.title
-    from datetime import datetime
-    session.updated_at = datetime.now().isoformat()
+    session.updated_at = datetime.now(timezone.utc).isoformat()
     svc.store.update_session(session)
     return {"status": "updated", "session_id": session_id}
 
