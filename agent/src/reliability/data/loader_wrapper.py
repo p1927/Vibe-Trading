@@ -88,7 +88,7 @@ class AuditedDataLoader:
     ) -> dict[str, pd.DataFrame]:
         """Fetch data and record audit metadata when reliability is enabled."""
         if not reliability_enabled():
-            return self.inner.fetch(codes, start_date, end_date, interval=interval, fields=fields)
+            return _fetch_inner(self.inner, codes, start_date, end_date, interval=interval, fields=fields)
 
         manifest = self._manifest(codes)
         request_hash = _request_hash(
@@ -129,7 +129,7 @@ class AuditedDataLoader:
 
         start = time.perf_counter()
         try:
-            data_map = self.inner.fetch(codes, start_date, end_date, interval=interval, fields=fields)
+            data_map = _fetch_inner(self.inner, codes, start_date, end_date, interval=interval, fields=fields)
         except Exception as exc:
             if self.circuit_breaker is not None:
                 self.circuit_breaker.record_failure(manifest.selected_source, exc)
@@ -304,6 +304,20 @@ def _request_hash(**kwargs: Any) -> str:
     return sha256_json(value)
 
 
+def _fetch_inner(
+    inner: Any,
+    codes,
+    start_date,
+    end_date,
+    *,
+    interval: str,
+    fields: list[str] | None,
+):
+    if fields is None:
+        return inner.fetch(codes, start_date, end_date, interval=interval)
+    return inner.fetch(codes, start_date, end_date, interval=interval, fields=fields)
+
+
 def _explicit_local(source: str, codes: list[str]) -> bool:
     normalized = str(source).strip().lower()
     return normalized in {"local", "local:"} or any(str(code).lower().startswith("local:") for code in codes)
@@ -325,4 +339,3 @@ def _to_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("datetime must be timezone-aware")
     return value.astimezone(timezone.utc)
-

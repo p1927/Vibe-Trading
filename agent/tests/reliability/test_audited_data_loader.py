@@ -32,6 +32,21 @@ class FakeLoader:
         return self.data_map
 
 
+class LoaderWithoutFields:
+    name = "yahoo"
+
+    def __init__(self, data_map: dict[str, pd.DataFrame] | None = None) -> None:
+        self.data_map = data_map or {}
+        self.calls: list[tuple] = []
+
+    def is_available(self) -> bool:
+        return True
+
+    def fetch(self, codes, start_date, end_date, interval="1D"):
+        self.calls.append((codes, start_date, end_date, interval))
+        return self.data_map
+
+
 def _frame() -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -55,6 +70,20 @@ def test_audited_loader_preserves_fetch_return_shape(monkeypatch: pytest.MonkeyP
     assert result is inner.data_map
     assert loader.last_audit_report is not None
     assert loader.last_audit_report.row_count == 2
+
+
+def test_audited_loader_preserves_legacy_fetch_without_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIBE_TRADING_RELIABILITY_MODE", "observe")
+    inner = LoaderWithoutFields({"AAPL.US": _frame()})
+    loader = AuditedDataLoader(inner, source="yahoo")
+
+    result = loader.fetch(["AAPL.US"], "2026-01-01", "2026-01-02")
+
+    assert result is inner.data_map
+    assert inner.calls == [(["AAPL.US"], "2026-01-01", "2026-01-02", "1D")]
+    assert loader.last_audit_report is not None
 
 
 def test_reliability_mode_off_uses_original_path(monkeypatch: pytest.MonkeyPatch) -> None:
