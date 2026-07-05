@@ -1793,6 +1793,7 @@ async def send_message(session_id: str, payload: SendMessageRequest, http_reques
             session_id=session_id,
             content=payload.content,
             include_shell_tools=_shell_tools_enabled_for_request(http_request),
+            governance_surface="local_api" if _is_local_client(http_request) else "remote_api",
         )
         return result
     except ValueError as exc:
@@ -2954,7 +2955,9 @@ async def _dispatch_scheduled_research_job(job: "ScheduledResearchJob") -> None:
         raise RuntimeError("Session runtime not enabled")
     # Pass a copy so the session runtime's internal config writes (e.g.
     # include_shell_tools) do not mutate the persisted scheduled-run config.
-    session = svc.create_session(title=f"scheduled-research:{job.id}", config=dict(job.config))
+    job_config = dict(job.config)
+    job_config["governance_surface"] = "scheduler"
+    session = svc.create_session(title=f"scheduled-research:{job.id}", config=job_config)
     logger.info("dispatching scheduled research job %s via session %s", job.id, session.session_id)
     await svc.send_message(session.session_id, job.prompt)
 
