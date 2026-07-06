@@ -861,6 +861,7 @@ def _get_channel_runtime():
         bus=_channel_bus,
         session_service=svc,
         manager=_channel_manager,
+        reply_timeout_s=config["reply_timeout_s"],
     )
     return _channel_runtime
 
