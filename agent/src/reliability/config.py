@@ -36,4 +36,3 @@ def artifact_root() -> Path:
     if raw:
         return Path(os.path.expandvars(os.path.expanduser(raw))).resolve(strict=False)
     return (Path.home() / ".vibe-trading" / "artifacts").resolve(strict=False)
-

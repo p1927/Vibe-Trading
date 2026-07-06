@@ -80,4 +80,3 @@ def _looks_like_pandas(value: Any) -> bool:
     module = type(value).__module__
     name = type(value).__name__
     return module.startswith("pandas.") and name in {"DataFrame", "Series"}
-

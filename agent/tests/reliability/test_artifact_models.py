@@ -71,4 +71,3 @@ def test_artifact_ref_is_lightweight() -> None:
         "sha256": "d" * 64,
         "uri": "artifact://sha256/" + "d" * 64,
     }
-

@@ -104,4 +104,3 @@ def test_reliability_mode_off_does_not_require_artifact_write(
     assert record is None
     assert not (tmp_path / "artifact_index.sqlite").exists()
     assert not (tmp_path / "objects").exists()
-

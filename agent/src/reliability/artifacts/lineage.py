@@ -26,4 +26,3 @@ def lineage_edges(record: ArtifactRecord) -> list[ArtifactLineageEdge]:
         ArtifactLineageEdge(parent_artifact_id=parent, child_artifact_id=record.artifact_id)
         for parent in record.parent_artifacts
     ]
-

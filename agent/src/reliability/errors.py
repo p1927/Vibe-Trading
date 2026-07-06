@@ -17,4 +17,3 @@ class ArtifactStoreError(ReliabilityError):
 
 class ArtifactPathError(ArtifactStoreError, ValueError):
     """Raised when an artifact path escapes the configured root."""
-
