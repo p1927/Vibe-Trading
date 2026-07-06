@@ -116,6 +116,7 @@ class RunResponse(BaseModel):
     metrics: Optional[BacktestMetrics] = Field(None, description="Backtest metrics")
     artifacts: List[Artifact] = Field(default_factory=list, description="Run artifacts")
     run_card: Optional[Dict[str, Any]] = Field(None, description="Trust Layer run card payload")
+    research_card: Optional[Dict[str, Any]] = Field(None, description="IRR-AGL research card payload")
     llm_usage: Optional[Dict[str, Any]] = Field(None, description="Provider-reported AgentLoop usage summary")
 
     equity_curve: Optional[List[Dict[str, Any]]] = Field(None, description="Equity preview")
@@ -1123,6 +1124,13 @@ def _build_response_from_run_dir(
     if run_card_path.exists():
         try:
             response.run_card = json.loads(run_card_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    research_card_path = run_dir / "research_card.json"
+    if research_card_path.exists():
+        try:
+            response.research_card = json.loads(research_card_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -2910,6 +2918,9 @@ async def stop_runner_endpoint(payload: LiveRunnerControlRequest):
 
 from src.api.alpha_routes import register_alpha_routes  # noqa: E402
 register_alpha_routes(app)
+
+from src.research_card.api import register_research_card_routes  # noqa: E402
+register_research_card_routes(app)
 
 
 # ============================================================================
