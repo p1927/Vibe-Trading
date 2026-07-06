@@ -12,11 +12,11 @@ Run this at the **start** of any research task (screening, sector study, company
 
 | Bias | How it shows | Correction |
 |------|--------------|------------|
-| **Leader-bias** (龙头偏好) | Search results are dominated by large-caps; you end up analyzing only the obvious names. | Deliberately search small/mid-caps and suppliers; add `small cap` / `mid cap` / `供应链` to queries. Ask: "who is NOT in the top-10 that should be here?" |
-| **English-bias** (英文偏好) | You miss Japanese / Korean / Taiwanese / European players because English sources under-cover them. | For any hardware/supply-chain thesis, explicitly search JP/KR/TW markets in their own languages — they are often the actual choke-point owners. |
-| **Narrative-bias** (叙事偏好) | You get pulled in by a concept label ("AI stock", "new energy") and analyze the marketing instead of the business. | Ignore the label; look at the actual product, unit economics, and financial statements. A company tagged "AI" may have no AI revenue. |
-| **Confirmation-bias** (确认偏见) | Once a thesis forms, you only search for evidence that supports it. | Force a Munger inversion: for every bull point, deliberately search the bear case ("X 风险 / 问题 / 看空"). Cite at least one disconfirming data point per conclusion. |
-| **Recency-bias** (时效偏见) | You rely on a cached/outdated figure because it ranks high in search. | For any material number, check its date. Prefer the last 30 days; mark anything older than a year as "possibly stale". |
+| **Leader-bias** | Search results are dominated by large-caps; you end up analyzing only the obvious names. | Deliberately search small/mid-caps and suppliers; add `small cap` / `mid cap` / `supply chain` to queries. Ask: "who is NOT in the top-10 that should be here?" |
+| **English-bias** | You miss Japanese / Korean / Taiwanese / European players because English sources under-cover them. | For any hardware/supply-chain thesis, explicitly search JP/KR/TW markets in their own languages — they are often the actual choke-point owners. |
+| **Narrative-bias** | You get pulled in by a concept label ("AI stock", "new energy") and analyze the marketing instead of the business. | Ignore the label; look at the actual product, unit economics, and financial statements. A company tagged "AI" may have no AI revenue. |
+| **Confirmation-bias** | Once a thesis forms, you only search for evidence that supports it. | Force a Munger inversion: for every bull point, deliberately search the bear case ("X risks / problems / bear case"). Cite at least one disconfirming data point per conclusion. |
+| **Recency-bias** | You rely on a cached/outdated figure because it ranks high in search. | For any material number, check its date. Prefer the last 30 days; mark anything older than a year as "possibly stale". |
 
 ## How to apply
 
