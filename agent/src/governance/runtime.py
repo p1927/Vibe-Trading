@@ -41,6 +41,15 @@ class GovernedToolRegistry:
     def get(self, name: str) -> Any:
         return self.inner.get(name)
 
+    def register(self, tool: Any) -> None:
+        """Delegate dynamic tool registration while keeping manifests in sync."""
+
+        register = getattr(self.inner, "register", None)
+        if not callable(register):
+            raise AttributeError("wrapped registry does not support register")
+        register(tool)
+        self.manifest_cache.register(tool)
+
     def get_definitions(self) -> list[dict[str, Any]]:
         return self.inner.get_definitions()
 

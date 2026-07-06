@@ -106,6 +106,16 @@ class ManifestCache:
             side_effects=["unknown"],
         )
 
+    def register(self, tool: "BaseTool") -> ToolManifest:
+        """Register a manifest for a tool added after cache construction."""
+
+        manifest = discover_tool_manifest(tool, surface=self.surface)
+        if manifest.risk_level == RiskLevel.UNCLASSIFIED:
+            fallback_risk = RiskLevel.R0_READ if manifest.readonly else RiskLevel.R1_WRITE_LOCAL
+            manifest = manifest.model_copy(update={"risk_level": fallback_risk})
+        self._manifests[manifest.name] = manifest
+        return manifest
+
 
 def discover_tool_manifest(tool: "BaseTool", *, surface: ToolSurface = ToolSurface.CLI) -> ToolManifest:
     """Derive a governance manifest from an existing BaseTool object."""

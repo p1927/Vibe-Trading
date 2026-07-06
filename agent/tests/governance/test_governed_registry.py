@@ -28,6 +28,17 @@ class _CountingTool(BaseTool):
         return json.dumps({"status": "ok", "calls": self.calls})
 
 
+class _ReadTool(BaseTool):
+    name = "new_read"
+    description = "new read"
+    parameters = {"type": "object", "properties": {}}
+    repeatable = True
+    is_readonly = True
+
+    def execute(self, **kwargs):
+        return json.dumps({"status": "ok"})
+
+
 def _registry(tool: _CountingTool | None = None) -> tuple[ToolRegistry, _CountingTool]:
     tool = tool or _CountingTool()
     inner = ToolRegistry()
@@ -145,3 +156,18 @@ def test_mode_off_delegates_directly() -> None:
 
     assert result["calls"] == 1
     assert tool.calls == 1
+
+
+def test_register_delegates_to_inner_registry_and_updates_manifest_cache() -> None:
+    inner = ToolRegistry()
+    governed = GovernedToolRegistry(
+        inner,
+        manifest_cache=ManifestCache({}, surface=ToolSurface.MCP_STDIO),
+        context=RuntimeContext(surface=ToolSurface.MCP_STDIO, mode="enforce"),
+    )
+
+    governed.register(_ReadTool())
+
+    assert "new_read" in governed.tool_names
+    assert governed.manifest_cache.get("new_read").risk_level == RiskLevel.R0_READ
+    assert json.loads(governed.execute("new_read", {})) == {"status": "ok"}
