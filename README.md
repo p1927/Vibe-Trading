@@ -208,6 +208,8 @@
 
 Vibe-Trading is an open-source research workspace for turning finance questions into runnable analysis. It connects natural-language prompts to market-data loaders, strategy generation, backtest engines, reports, exports, and persistent research memory.
 
+The IRR-AGL reliability layer adds optional governance, PIT audit, quant scorecard, Research Card, schema migration, and threat-model documentation without changing the quickstart or legacy run artifacts. See [`docs/reliability-governance-rfc.md`](docs/reliability-governance-rfc.md), [`docs/migration-guide.md`](docs/migration-guide.md), and [`docs/threat-model.md`](docs/threat-model.md).
+
 It is designed for research, simulation, and backtesting — and, when you choose, autonomous trading through a broker you authorize yourself (e.g. Robinhood Agentic Trading). It holds no funds and never trades outside the limits you set, and you can halt it instantly.
 
 ---

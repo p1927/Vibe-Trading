@@ -206,6 +206,8 @@
 
 Vibe-Trading 是一个开源研究工作台，用于把金融问题转化为可运行的分析。它将自然语言提示连接到市场数据加载器、策略生成、回测引擎、报告、导出和持久研究记忆。
 
+IRR-AGL 可靠性层以可选、附加的方式提供 governance、PIT audit、quant scorecard、Research Card、schema migration 和 threat model 文档，不改变 quickstart 或旧 run artifacts。参见 [`docs/reliability-governance-rfc.md`](docs/reliability-governance-rfc.md)、[`docs/migration-guide.md`](docs/migration-guide.md) 和 [`docs/threat-model.md`](docs/threat-model.md)。
+
 它面向研究、模拟和回测——并且在你选择时，可通过你自己授权的券商（如 Robinhood Agentic Trading）进行自主交易。它不托管任何资金，绝不超出你设定的限额交易，且你可随时一键停止。
 
 ---
