@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -609,8 +610,7 @@ def register_sessions_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
         if req.title is not None:
             session.title = req.title
-        from datetime import datetime
-        session.updated_at = datetime.now().isoformat()
+        session.updated_at = datetime.now(timezone.utc).isoformat()
         svc.store.update_session(session)
         return {"status": "updated", "session_id": session_id}
 
