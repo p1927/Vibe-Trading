@@ -64,4 +64,3 @@ class ArtifactRecord(BaseModel):
             sha256=self.sha256,
             uri=self.uri,
         )
-

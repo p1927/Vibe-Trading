@@ -46,4 +46,3 @@ def test_walk_forward_failure_definitions() -> None:
     assert "OOS IC mean < 0" in report.failure_reasons
     assert "OOS IR < 0" in report.failure_reasons
     assert "negative OOS fold ratio > 40%" in report.failure_reasons
-

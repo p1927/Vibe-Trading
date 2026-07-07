@@ -15,4 +15,3 @@ class SourceManifest(BaseModel):
     runtime_source: str | None = None
     cache_hit: bool = False
     fallback_chain_id: str | None = None
-

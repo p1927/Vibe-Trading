@@ -35,4 +35,3 @@ def test_circuit_breaker_skip_records_warning(tmp_path: Path) -> None:
     assert decision.allowed is False
     assert decision.warning is not None
     assert decision.warning.code == "DATA_SOURCE_SKIPPED_BY_CIRCUIT"
-

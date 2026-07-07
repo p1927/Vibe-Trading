@@ -56,4 +56,3 @@ def _key_is_secret_like(key: str) -> bool:
 
 def _value_is_secret_like(value: str) -> bool:
     return bool(_BEARER_RE.match(value) or _KEY_PREFIX_RE.match(value) or _LONG_RANDOM_RE.match(value))
-

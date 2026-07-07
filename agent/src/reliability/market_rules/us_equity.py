@@ -13,4 +13,3 @@ def audit_us_equity_assumptions(_config: Mapping[str, Any]) -> list[StructuredWa
     Phase 2 keeps this intentionally empty; later scorecard phases can extend it.
     """
     return []
-

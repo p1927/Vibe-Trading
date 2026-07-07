@@ -13,4 +13,3 @@ def audit_crypto_assumptions(_config: Mapping[str, Any]) -> list[StructuredWarni
     Phase 2 keeps this intentionally empty; later scorecard phases can extend it.
     """
     return []
-

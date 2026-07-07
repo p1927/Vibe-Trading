@@ -15,4 +15,3 @@ class PITViolation(BaseModel):
     message: str
     hard_failure: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
-

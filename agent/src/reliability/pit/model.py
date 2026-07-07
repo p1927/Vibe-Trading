@@ -24,4 +24,3 @@ class PITTimestampSet(BaseModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("PIT timestamps must be timezone-aware")
         return value.astimezone(timezone.utc)
-

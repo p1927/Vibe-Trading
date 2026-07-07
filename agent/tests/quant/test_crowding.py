@@ -17,4 +17,3 @@ def test_crowding_high_without_stress_caps_conclusion() -> None:
         issue.code == "QUANT_HIGH_CROWDING_NO_STRESS_TEST"
         for issue in report.hard_failures
     )
-

@@ -44,4 +44,3 @@ def test_missing_as_of_warns() -> None:
     result = checker.check(PITTimestampSet(available_at=datetime(2026, 7, 1, tzinfo=timezone.utc)))
 
     assert any(warning.code == "PIT_MISSING_AS_OF" for warning in result.warnings)
-

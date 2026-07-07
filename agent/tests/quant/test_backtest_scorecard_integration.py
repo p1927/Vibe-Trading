@@ -120,4 +120,3 @@ def test_reliability_mode_off_skips_backtest_scorecard_generation(
     run_card = json.loads((run_dir / "run_card.json").read_text(encoding="utf-8"))
     assert "scorecard_refs" not in run_card
     assert not (tmp_path / "artifact_root" / "objects").exists()
-

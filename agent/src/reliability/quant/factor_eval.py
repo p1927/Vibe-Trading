@@ -185,4 +185,3 @@ def build_walk_forward_report(
         failure_reasons=failure_reasons,
         hard_failures=hard_failures,
     )
-

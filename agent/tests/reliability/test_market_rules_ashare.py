@@ -29,4 +29,3 @@ def test_ashare_complete_assumptions_do_not_warn() -> None:
     )
 
     assert warnings == []
-

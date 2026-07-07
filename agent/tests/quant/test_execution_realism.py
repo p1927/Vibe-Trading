@@ -24,4 +24,3 @@ def test_execution_realism_distinguishes_all_required_timestamps() -> None:
     ]
     assert report.missing_fields == ["fill_time"]
     assert report.passed is False
-

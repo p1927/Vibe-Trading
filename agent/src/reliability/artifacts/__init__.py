@@ -14,4 +14,3 @@ __all__ = [
     "sha256_file",
     "sha256_json",
 ]
-

@@ -51,4 +51,3 @@ def test_compute_ic_horizon_report_from_factor_and_close_prices() -> None:
     report, _warnings = build_ic_horizon_report.from_prices(factor, close, horizons=[1, 5])
 
     assert [item.horizon for item in report] == [1, 5]
-

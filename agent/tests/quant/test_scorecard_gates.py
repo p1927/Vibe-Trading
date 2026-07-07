@@ -114,4 +114,3 @@ def test_reliability_mode_off_skips_scorecard(monkeypatch) -> None:
     monkeypatch.setenv("VIBE_TRADING_RELIABILITY_MODE", "off")
 
     assert should_generate_scorecard() is False
-

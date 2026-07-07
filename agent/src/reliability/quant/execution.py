@@ -44,4 +44,3 @@ def build_execution_realism_report(timestamps: ExecutionTimestampSet) -> Executi
         passed=not missing,
         warnings=warnings,
     )
-

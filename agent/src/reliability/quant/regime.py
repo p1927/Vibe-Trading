@@ -95,4 +95,3 @@ def build_regime_ic_report(
         warnings=warnings,
         hard_failures=hard_failures,
     )
-

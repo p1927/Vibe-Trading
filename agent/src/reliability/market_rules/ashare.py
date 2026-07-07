@@ -44,4 +44,3 @@ def audit_ashare_assumptions(config: Mapping[str, Any]) -> list[StructuredWarnin
 
 def _has_inline_cost_model(config: Mapping[str, Any]) -> bool:
     return any(key in config for key in ("commission_rate", "stamp_tax", "transfer_fee", "slippage"))
-

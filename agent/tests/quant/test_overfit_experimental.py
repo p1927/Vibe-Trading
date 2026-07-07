@@ -33,4 +33,3 @@ def test_dsr_missing_trial_count_warns_without_calculation() -> None:
         issue.code == "QUANT_TRIAL_COUNT_MISSING_FOR_DSR"
         for issue in result.warnings
     )
-

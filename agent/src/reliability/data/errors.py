@@ -32,4 +32,3 @@ class AllSourcesOpenError(Exception):
             "breaker_states": dict(self.breaker_states),
             "audit_id": self.audit_id,
         }
-

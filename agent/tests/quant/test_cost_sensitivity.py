@@ -15,4 +15,3 @@ def test_cost_sensitivity_warns_when_10bps_invalidates_edge() -> None:
     report = build_cost_sensitivity_report(gross_edge_bps=8.0)
 
     assert any(issue.code == "QUANT_COST_SENSITIVE_10BPS_FAIL" for issue in report.warnings)
-

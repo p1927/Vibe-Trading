@@ -104,4 +104,3 @@ def _to_utc(value: datetime) -> datetime:
 
 def _infer_ohlcv_available_at(effective_at: datetime) -> datetime:
     return effective_at.astimezone(timezone.utc) + timedelta(days=1)
-

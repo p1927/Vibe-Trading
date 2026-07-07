@@ -69,4 +69,3 @@ def build_overfit_experimental_metrics(
             )
         )
     return OverfitExperimentalResult(experimental_metrics=metrics, warnings=warnings)
-

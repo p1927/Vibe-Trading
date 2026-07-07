@@ -57,4 +57,3 @@ def test_neutralized_ic_unavailable_industry_falls_back_to_size() -> None:
         issue.code == "QUANT_INDUSTRY_CLASSIFICATION_UNAVAILABLE"
         for issue in report.warnings
     )
-

@@ -70,4 +70,3 @@ def test_pydantic_model_hash_requires_model_dump_json() -> None:
 
     assert isinstance(digest, str)
     assert len(digest) == 64
-

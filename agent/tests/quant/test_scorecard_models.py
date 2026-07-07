@@ -91,4 +91,3 @@ def test_warnings_and_hard_failures_are_structured() -> None:
 
     assert dumped["warnings"][0]["code"] == "QUANT_TEST_WARNING"
     assert dumped["hard_failures"][0]["severity"] == "hard_failure"
-

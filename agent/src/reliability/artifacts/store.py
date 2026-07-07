@@ -207,4 +207,3 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
             tmp.unlink()
         except FileNotFoundError:
             pass
-

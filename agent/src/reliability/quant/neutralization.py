@@ -103,4 +103,3 @@ def build_neutralized_ic_report(
         as_of=as_of,
         warnings=warnings,
     )
-

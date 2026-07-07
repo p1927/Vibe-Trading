@@ -114,4 +114,3 @@ def build_capacity_report(
         ],
         max_participation_used=max_used,
     )
-

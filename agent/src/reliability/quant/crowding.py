@@ -75,4 +75,3 @@ def build_crowding_report(
         warnings=warnings,
         hard_failures=hard_failures,
     )
-

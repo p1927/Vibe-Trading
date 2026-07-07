@@ -100,4 +100,3 @@ class DataAuditReport(BaseModel):
     circuit_breaker_events: list[CircuitBreakerSnapshot] = Field(default_factory=list)
     all_sources_open: bool = False
     artifact_refs: list[ArtifactRef] = Field(default_factory=list)
-

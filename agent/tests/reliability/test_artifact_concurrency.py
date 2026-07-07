@@ -32,4 +32,3 @@ def test_artifact_store_concurrent_writes_no_metadata_loss(
 
     assert count == len(payloads)
     assert len(set(artifact_ids)) == len(payloads)
-

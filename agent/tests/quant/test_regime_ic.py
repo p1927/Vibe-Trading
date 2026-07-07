@@ -71,4 +71,3 @@ def test_regime_stability_near_zero_denominator_warns() -> None:
 
     assert report.regime_stability_score is None
     assert any(issue.code == "QUANT_REGIME_STABILITY_DENOMINATOR_NEAR_ZERO" for issue in report.warnings)
-

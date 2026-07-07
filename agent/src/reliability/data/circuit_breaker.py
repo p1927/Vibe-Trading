@@ -147,4 +147,3 @@ def _from_epoch(value: float | None) -> datetime | None:
     if value is None:
         return None
     return datetime.fromtimestamp(float(value), tz=timezone.utc)
-

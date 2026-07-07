@@ -1,2 +1,1 @@
 """Quant reliability scorecard tests."""
-

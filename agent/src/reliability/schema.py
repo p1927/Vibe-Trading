@@ -31,4 +31,3 @@ ARTIFACT_TYPES: frozenset[str] = frozenset(
         "research_card",
     }
 )
-

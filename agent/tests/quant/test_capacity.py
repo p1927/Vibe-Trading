@@ -25,4 +25,3 @@ def test_capacity_missing_adv_warns_and_caps() -> None:
 
     assert report.conclusion_cap == "research_candidate"
     assert any(issue.code == "QUANT_ADV_UNAVAILABLE" for issue in report.warnings)
-

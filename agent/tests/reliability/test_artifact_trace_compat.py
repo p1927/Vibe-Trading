@@ -85,4 +85,3 @@ def test_run_card_can_include_optional_irr_artifact_refs(tmp_path: Path) -> None
     assert loaded["artifacts"] == card["artifacts"]
     assert loaded["artifact_refs"] == artifact_refs
     assert "art_scorecard" in (tmp_path / "run_card.md").read_text(encoding="utf-8")
-
