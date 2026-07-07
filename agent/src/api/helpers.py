@@ -3,20 +3,13 @@
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 from typing import Dict
 
 from fastapi import HTTPException, Request, status
 from fastapi.responses import FileResponse
 
-
-def _host_attr(name: str, fallback):
-    """Read a compatibility attribute from ``api_server`` when present."""
-    host = sys.modules.get("api_server")
-    if host is not None and hasattr(host, name):
-        return getattr(host, name)
-    return fallback
+from src.api._compat import host_attr as _host_attr
 
 
 # ============================================================================

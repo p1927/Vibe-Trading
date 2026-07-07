@@ -130,6 +130,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Middleware functions are defined in src.api.security / src.api.helpers, so
+# the @app.middleware("http") decorator cannot be used here — register them
+# programmatically instead.
 app.middleware("http")(_reject_untrusted_loopback_host)
 app.middleware("http")(_spa_html_deep_link_fallback)
 

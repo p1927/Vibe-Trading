@@ -5,7 +5,6 @@ from __future__ import annotations
 import hmac
 import ipaddress
 import os
-import sys
 import urllib.parse
 from pathlib import Path
 from typing import List, Optional
@@ -14,37 +13,21 @@ from fastapi import HTTPException, Query, Request, Security, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-
-# ============================================================================
-# Monkeypatch compatibility layer
-# ============================================================================
-
-
-def _host_attr(name: str, fallback):
-    """Read a compatibility attribute from ``api_server`` when present.
-
-    Tests monkeypatch ``api_server._API_KEY`` (and similar).  Route modules
-    resolve dependencies via ``sys.modules["api_server"]``, so the patched
-    value lives on the *host* module, not on this extracted module.
-    """
-    host = sys.modules.get("api_server")
-    if host is not None and hasattr(host, name):
-        return getattr(host, name)
-    return fallback
+from src.api._compat import host_attr as _host_attr
 
 
 # ============================================================================
 # Constants
 # ============================================================================
 
-_DEFAULT_CORS_ORIGINS = [
+_DEFAULT_CORS_ORIGINS: tuple[str, ...] = (
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:8000",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:8000",
-]
+)
 
 _DEFAULT_LOOPBACK_HOSTS = frozenset({
     "localhost",

@@ -3,31 +3,11 @@
 from __future__ import annotations
 
 import os
-import sys
 
 from fastapi import HTTPException
 
+from src.api._compat import host_attr as _host_attr, set_host_attr as _set_host_attr
 from src.api.helpers import RUNS_DIR, SESSIONS_DIR
-
-
-# ============================================================================
-# Monkeypatch compatibility layer
-# ============================================================================
-
-
-def _host_attr(name: str, fallback):
-    """Read a compatibility attribute from ``api_server`` when present."""
-    host = sys.modules.get("api_server")
-    if host is not None and hasattr(host, name):
-        return getattr(host, name)
-    return fallback
-
-
-def _set_host_attr(name: str, value) -> None:
-    """Write a compatibility attribute onto ``api_server`` when present."""
-    host = sys.modules.get("api_server")
-    if host is not None:
-        setattr(host, name, value)
 
 
 # ============================================================================
@@ -49,12 +29,10 @@ def _get_session_service():
     """Lazy-init session service when ENABLE_SESSION_RUNTIME=true."""
     global _session_service
 
-    host = sys.modules.get("api_server")
-    if host is not None and hasattr(host, "_session_service"):
-        host_val = getattr(host, "_session_service")
-        if host_val is not None:
-            return host_val
-    elif _session_service is not None:
+    host_val = _host_attr("_session_service", None)
+    if host_val is not None:
+        return host_val
+    if _session_service is not None:
         return _session_service
 
     if os.getenv("ENABLE_SESSION_RUNTIME", "true").lower() != "true":
@@ -84,6 +62,7 @@ def _get_session_service():
         event_bus=event_bus,
         runs_dir=runs_dir,
     )
+    _set_host_attr("_session_service", _session_service)
     return _session_service
 
 
@@ -92,12 +71,10 @@ def _get_channel_runtime():
     global _channel_runtime, _channel_bus, _channel_manager
 
     # Check api_server host module first (monkeypatch compatibility).
-    host = sys.modules.get("api_server")
-    if host is not None and hasattr(host, "_channel_runtime"):
-        host_rt = getattr(host, "_channel_runtime")
-        if host_rt is not None:
-            return host_rt
-    elif _channel_runtime is not None:
+    host_rt = _host_attr("_channel_runtime", None)
+    if host_rt is not None:
+        return host_rt
+    if _channel_runtime is not None:
         return _channel_runtime
 
     from src.channels.bus.queue import MessageBus
