@@ -172,7 +172,9 @@ describe("Settings QVeris card", () => {
     const fetchMock = mockQVerisFetch(qverisConfig({ enabled: false, mode: "free" }), qverisStatus({ recent: [] }));
     render(<QVerisSettings />);
 
-    await screen.findByDisplayValue("https://qveris.ai/api/v1");
+    // The base-URL input shows its default value before the config GET resolves,
+    // so wait for the save button to leave its loading-disabled state instead.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save QVeris settings" })).toBeEnabled());
     fireEvent.click(screen.getByLabelText("Enable paid QVeris route"));
     fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://example.test/qveris" } });
     fireEvent.change(screen.getByPlaceholderText("sk-...8TI"), { target: { value: "sk-new-key" } });
@@ -195,7 +197,9 @@ describe("Settings QVeris card", () => {
     const fetchMock = mockQVerisFetch();
     render(<QVerisSettings />);
 
-    await screen.findByDisplayValue("https://qveris.ai/api/v1");
+    // The base-URL input shows its default value before the config GET resolves,
+    // so wait for the save button to leave its loading-disabled state instead.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save QVeris settings" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Save QVeris settings" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/qveris/config", expect.objectContaining({ method: "PUT" })));
