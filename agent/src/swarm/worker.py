@@ -19,7 +19,6 @@ from src.agent.progress import HeartbeatTimer
 from src.agent.skills import SkillsLoader
 from src.agent.tools import ToolRegistry
 from src.config.schema import AgentConfig
-from src.governance.errors import PolicyDenied
 from src.providers.chat import ChatLLM, LLMResponse, ProviderStreamError
 from src.providers.content_filter import (
     CONTENT_FILTER_SKIP_MESSAGE,
@@ -687,10 +686,7 @@ def run_worker(
                 interval=_HEARTBEAT_INTERVAL_S,
                 emit=_on_heartbeat,
             ):
-                try:
-                    result = registry.execute(tc.name, args)
-                except PolicyDenied as exc:
-                    result = exc.user_safe_message
+                result = registry.execute(tc.name, args)
             if tc.name != "load_skill" and not _is_error_result(result):
                 data_tool_calls += 1
             tc_elapsed = time.monotonic() - tc_start

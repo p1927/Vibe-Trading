@@ -94,8 +94,6 @@ export const api = {
   },
   getRunCode: (id: string) => request<Record<string, string>>(`/runs/${id}/code`),
   getRunPine: (id: string) => request<PineScriptResult>(`/runs/${id}/pine`),
-  getPolicyDecisions: (runId: string) =>
-    request<PolicyDecisionsResponse>(`/governance/policy-decisions?run_id=${encodeURIComponent(runId)}`),
   listSessions: () => request<SessionItem[]>("/sessions"),
   createSession: (title?: string) => request<SessionItem>("/sessions", { method: "POST", body: JSON.stringify({ title: title || "" }) }),
   deleteSession: (sid: string) => request<{ status: string }>(`/sessions/${sid}`, { method: "DELETE" }),
@@ -438,7 +436,6 @@ export interface RunData {
   metrics?: BacktestMetrics;
   artifacts?: ArtifactInfo[];
   run_card?: RunCard;
-  research_card?: ResearchCard;
   validation?: ValidationData;
 
   chart_symbols?: string[];
@@ -468,51 +465,6 @@ export interface RunCardArtifact {
   path: string;
   size_bytes: number;
   sha256: string;
-}
-
-export interface StructuredResearchIssue {
-  code: string;
-  severity?: string;
-  message?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface ResearchCard {
-  card_id: string;
-  schema_version?: string;
-  title?: string;
-  hypothesis?: string | null;
-  universe?: Record<string, unknown>;
-  data_sources?: Array<Record<string, unknown>>;
-  data_audit_refs?: string[];
-  policy_decision_refs?: string[];
-  policy_decisions?: Array<Record<string, unknown>>;
-  tool_trace_refs?: string[];
-  backtest_refs?: string[];
-  alpha_bench_refs?: string[];
-  scorecard?: Record<string, unknown> | null;
-  key_metrics?: Record<string, unknown>;
-  benchmark?: Record<string, unknown>;
-  cost_model?: Record<string, unknown>;
-  execution_assumptions?: Record<string, unknown>;
-  oos_results?: Record<string, unknown>;
-  warnings?: StructuredResearchIssue[];
-  hard_failures?: StructuredResearchIssue[];
-  reproducibility?: Record<string, unknown>;
-  conclusion_level?: string;
-}
-
-export interface PolicyDecisionRecord {
-  decision_id?: string;
-  tool_name?: string;
-  action?: string;
-  rule_id?: string | null;
-  [key: string]: unknown;
-}
-
-export interface PolicyDecisionsResponse {
-  schema_version: string;
-  decisions: PolicyDecisionRecord[];
 }
 
 export interface BacktestMetrics {

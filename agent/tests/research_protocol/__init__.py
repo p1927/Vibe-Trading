@@ -1,1 +1,0 @@
-"""Research protocol tests."""

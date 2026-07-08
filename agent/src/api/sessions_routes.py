@@ -314,10 +314,6 @@ def register_sessions_routes(app: FastAPI) -> None:
         h = _sys.modules.get("api_server") or _sys.modules.get("agent.api_server")
         return h._shell_tools_enabled_for_request(request)
 
-    def _host_governance_surface_for_request(request: Request) -> str:
-        h = _sys.modules.get("api_server") or _sys.modules.get("agent.api_server")
-        return "local_api" if h._is_local_client(request) else "remote_api"
-
     def _get_existing_session_or_404(session_id: str):
         """Return (service, session) or raise 404."""
         svc = _host_get_session_service()
@@ -630,7 +626,6 @@ def register_sessions_routes(app: FastAPI) -> None:
                 session_id=session_id,
                 content=payload.content,
                 include_shell_tools=_host_shell_tools_enabled_for_request(http_request),
-                governance_surface=_host_governance_surface_for_request(http_request),
             )
             return result
         except ValueError as exc:
