@@ -65,6 +65,18 @@ def rank(df: pd.DataFrame) -> pd.DataFrame:
     return df.rank(axis=1, method="average", pct=True, na_option="keep")
 
 
+def zscore(df: pd.DataFrame) -> pd.DataFrame:
+    """Cross-sectional z-score per row (axis=1, sample std).
+
+    Rows with zero or NaN standard deviation become NaN — never silent zero.
+    """
+    df = _as_float(df)
+    mean = df.mean(axis=1, skipna=True)
+    std = df.std(axis=1, ddof=1, skipna=True)
+    result = df.sub(mean, axis=0).div(std.where(std > 0), axis=0)
+    return result.replace([np.inf, -np.inf], np.nan)
+
+
 def scale(df: pd.DataFrame, a: float = 1.0) -> pd.DataFrame:
     """Per-row L1 normalize so sum of absolute values equals ``a``.
 
