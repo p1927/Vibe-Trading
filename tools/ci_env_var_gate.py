@@ -72,6 +72,7 @@ class _EnvReadVisitor(ast.NodeVisitor):
         self._rel = str(filepath.relative_to(repo_root)).replace("\\", "/")
         self._violations: list[tuple[int, str]] = []
         self._warnings: list[tuple[int, str]] = []
+        self._source_lines: list[str] | None = None
 
     # -- properties ---------------------------------------------------------
 
@@ -84,6 +85,15 @@ class _EnvReadVisitor(ast.NodeVisitor):
         return list(self._warnings)
 
     # -- helpers ------------------------------------------------------------
+
+    def _set_source(self, source: str) -> None:
+        self._source_lines = source.splitlines()
+
+    def _line_has_noqa(self, lineno: int) -> bool:
+        """Return True when the source line contains ``# noqa: env-gate``."""
+        if self._source_lines is None or lineno < 1 or lineno > len(self._source_lines):
+            return False
+        return "# noqa: env-gate" in self._source_lines[lineno - 1]
 
     def _is_os_environ(self, node: ast.expr) -> bool:
         """Return True when *node* is ``os.environ``."""
@@ -110,6 +120,9 @@ class _EnvReadVisitor(ast.NodeVisitor):
 
         # os.getenv(...)
         if self._is_os_getenv(func):
+            if self._line_has_noqa(node.lineno):
+                self.generic_visit(node)
+                return
             self._violations.append(
                 (node.lineno, "os.getenv() — use src.config accessor")
             )
@@ -130,6 +143,9 @@ class _EnvReadVisitor(ast.NodeVisitor):
 
             # os.environ.get(...) — READ
             if method == "get":
+                if self._line_has_noqa(node.lineno):
+                    self.generic_visit(node)
+                    return
                 self._violations.append(
                     (node.lineno, "os.environ.get() — use src.config accessor")
                 )
@@ -149,6 +165,9 @@ class _EnvReadVisitor(ast.NodeVisitor):
                 return
 
             # Any other os.environ.<method>() — flag as read
+            if self._line_has_noqa(node.lineno):
+                self.generic_visit(node)
+                return
             self._violations.append(
                 (
                     node.lineno,
@@ -164,9 +183,10 @@ class _EnvReadVisitor(ast.NodeVisitor):
             self._is_os_environ(node.value)
             and isinstance(node.ctx, ast.Load)
         ):
-            self._violations.append(
-                (node.lineno, 'os.environ["..."] read — use src.config accessor')
-            )
+            if not self._line_has_noqa(node.lineno):
+                self._violations.append(
+                    (node.lineno, 'os.environ["..."] read — use src.config accessor')
+                )
 
         self.generic_visit(node)
 
@@ -250,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         visitor = _EnvReadVisitor(filepath, repo_root)
+        visitor._set_source(source)
         visitor.visit(tree)
 
         rel = str(filepath.relative_to(repo_root)).replace("\\", "/")

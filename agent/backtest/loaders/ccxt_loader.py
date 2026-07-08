@@ -42,7 +42,7 @@ _CCXT_FETCH_BUDGET_S = positive_env_float("CCXT_FETCH_BUDGET_S", 60.0)
 
 def _first_proxy_env(*names: str) -> str:
     for name in names:
-        value = os.getenv(name, "").strip()
+        value = os.getenv(name, "").strip()  # noqa: env-gate — system proxy vars
         if value:
             return value
     return ""

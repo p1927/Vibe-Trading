@@ -1542,7 +1542,7 @@ def _build_welcome_panel(term_width: Optional[int] = None) -> Panel:
     provider = _cfg.llm.langchain_provider or "(not set)"
     model = _cfg.llm.langchain_model_name or "(not set)"
     key_env = _provider_key_env(provider)
-    key_value = os.getenv(key_env or "")
+    key_value = os.getenv(key_env or "")  # noqa: env-gate — dynamic provider key display
     credential_ready = provider in {"ollama", "openai-codex"} or bool(key_value)
     key_state = "READY" if credential_ready else "MISSING"
     recent_runs = len([d for d in RUNS_DIR.iterdir() if d.is_dir()]) if RUNS_DIR.exists() else 0
@@ -1732,8 +1732,8 @@ def _show_settings() -> None:
     model = _cfg.llm.langchain_model_name or "(not set)"
     provider_key_env = _provider_key_env(provider)
     provider_base_env = _provider_base_env(provider)
-    provider_key = os.getenv(provider_key_env or "")
-    provider_base_url = os.getenv(provider_base_env or "") or os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or "(not set)"
+    provider_key = os.getenv(provider_key_env or "")  # noqa: env-gate — dynamic provider key display
+    provider_base_url = os.getenv(provider_base_env or "") or os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE") or "(not set)"  # noqa: env-gate — dynamic provider URL display
 
     provider_table = Table.grid(expand=True)
     provider_table.add_column(width=12, style="dim")
@@ -2807,15 +2807,8 @@ def _authorize_timeout_seconds() -> float:
     Returns:
         The authorize deadline in seconds (a positive float).
     """
-    raw = os.getenv(_LIVE_AUTHORIZE_TIMEOUT_ENV)
-    if raw:
-        try:
-            value = float(raw)
-        except ValueError:
-            return _LIVE_AUTHORIZE_INIT_TIMEOUT_SECONDS
-        if value > 0:
-            return value
-    return _LIVE_AUTHORIZE_INIT_TIMEOUT_SECONDS
+    raw = get_env_config().agent_tuning.vibe_live_authorize_timeout_s
+    return float(raw) if raw and raw > 0 else float(_LIVE_AUTHORIZE_INIT_TIMEOUT_SECONDS)
 
 
 def _live_api_base() -> str:
@@ -2830,7 +2823,7 @@ def _live_api_base() -> str:
     Returns:
         The API base URL with any trailing slash removed.
     """
-    return os.environ.get("VIBE_TRADING_API_URL", "http://127.0.0.1:8000").rstrip("/")
+    return get_env_config().api.vibe_trading_api_url.rstrip("/")
 
 
 def _api_auth_headers() -> Dict[str, str]:

@@ -747,9 +747,11 @@ class SwarmTool(BaseTool):
         # agent tool, the config path is resolved from disk / env, never from
         # the calling LLM's prompt (R-06).
         agent_config = load_swarm_agent_config()
+        from src.config.accessor import get_env_config
+
         runtime = SwarmRuntime(
             store=store,
-            max_workers=int(os.getenv("SWARM_MAX_WORKERS", "4")),
+            max_workers=get_env_config().swarm.swarm_max_workers,
             agent_config=agent_config,
         )
 

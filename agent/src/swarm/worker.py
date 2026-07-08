@@ -54,10 +54,9 @@ def _heartbeat_interval_s() -> float:
     — both sides use the same env var, so they must fail the same way. A bad
     value (``"abc"``, empty) falls back to 3.0s instead of crashing import.
     """
-    try:
-        return float(os.getenv("SWARM_HEARTBEAT_INTERVAL_S", "3.0"))
-    except ValueError:
-        return 3.0
+    from src.config.accessor import get_env_config
+
+    return get_env_config().swarm.swarm_heartbeat_interval_s
 
 
 def _stream_retry_delay_s() -> float:
@@ -68,10 +67,9 @@ def _stream_retry_delay_s() -> float:
         retry. Configurable via ``SWARM_STREAM_RETRY_DELAY_S``; a bad value
         falls back to 1.0s instead of crashing import.
     """
-    try:
-        return float(os.getenv("SWARM_STREAM_RETRY_DELAY_S", "1.0"))
-    except ValueError:
-        return 1.0
+    from src.config.accessor import get_env_config
+
+    return get_env_config().swarm.swarm_stream_retry_delay_s
 
 
 _HEARTBEAT_INTERVAL_S = _heartbeat_interval_s()

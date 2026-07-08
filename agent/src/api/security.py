@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hmac
 import ipaddress
-import os
 import urllib.parse
 from pathlib import Path
 from typing import List, Optional
@@ -14,7 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.api._compat import host_attr as _host_attr
-from src.config.accessor import _parse_bool, get_env_config
+from src.config.accessor import get_env_config
 
 
 # ============================================================================
@@ -37,9 +36,6 @@ _DEFAULT_LOOPBACK_HOSTS = frozenset({
     "[::1]",
     "testserver",
 })
-
-_SHELL_TOOLS_ENV = "VIBE_TRADING_ENABLE_SHELL_TOOLS"
-_DOCKER_LOOPBACK_ENV = "VIBE_TRADING_TRUST_DOCKER_LOOPBACK"
 
 _SAFE_BROWSER_METHODS = {"GET", "HEAD", "OPTIONS"}
 
@@ -279,11 +275,6 @@ def _is_local_client(request: Request) -> bool:
 # ============================================================================
 
 
-def _env_flag_enabled(name: str) -> bool:
-    """Return whether a boolean environment flag is enabled."""
-    return _parse_bool(os.getenv(name))
-
-
 def _default_gateway_ips() -> set[ipaddress.IPv4Address]:
     """Return IPv4 default gateway addresses from Linux procfs."""
     gateways: set[ipaddress.IPv4Address] = set()
@@ -308,7 +299,7 @@ def _trusted_docker_loopback_ip(ip: ipaddress._BaseAddress) -> bool:
     """Return whether an IP is the trusted Docker host gateway."""
     if not isinstance(ip, ipaddress.IPv4Address):
         return False
-    if not _env_flag_enabled(_DOCKER_LOOPBACK_ENV):
+    if not get_env_config().api.vibe_trading_trust_docker_loopback:
         return False
     gateway_fn = _host_attr("_default_gateway_ips", _default_gateway_ips)
     return ip in gateway_fn()
@@ -316,7 +307,7 @@ def _trusted_docker_loopback_ip(ip: ipaddress._BaseAddress) -> bool:
 
 def _env_shell_tools_enabled() -> bool:
     """Return whether server-side shell tools are explicitly enabled."""
-    return _env_flag_enabled(_SHELL_TOOLS_ENV)
+    return get_env_config().api.vibe_trading_enable_shell_tools
 
 
 def _shell_tools_enabled_for_request(request: Request) -> bool:

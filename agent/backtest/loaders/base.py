@@ -111,7 +111,7 @@ DEFAULT_MAX_RETRIES = 3
 
 def positive_env_int(name: str, default: int) -> int:
     """Read a positive integer env var, warning and falling back on invalid values."""
-    raw = os.getenv(name)
+    raw = os.getenv(name)  # noqa: env-gate — generic env var helper
     if raw is None or not raw.strip():
         return default
     try:
@@ -127,7 +127,7 @@ def positive_env_int(name: str, default: int) -> int:
 
 def positive_env_float(name: str, default: float) -> float:
     """Read a positive float env var, warning and falling back on invalid values."""
-    raw = os.getenv(name)
+    raw = os.getenv(name)  # noqa: env-gate — generic env var helper
     if raw is None or not raw.strip():
         return default
     try:

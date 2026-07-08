@@ -357,7 +357,7 @@ def _package_version(package: str) -> str:
 
 def _redact_env_flag(name: str) -> str:
     """Report whether an env var is set without exposing its value."""
-    value = os.getenv(name, "")
+    value = os.getenv(name, "")  # noqa: env-gate — diagnostic redaction helper
     return "set" if value else "unset"
 
 
@@ -402,8 +402,8 @@ def _build_native_deepseek(
         return None
 
     key_env, base_env = provider_env_names("deepseek", model)
-    api_key = os.getenv(key_env or "", "") or os.getenv("OPENAI_API_KEY", "")
-    base_url = os.getenv(base_env, "") or os.getenv("OPENAI_BASE_URL", "") or os.getenv("OPENAI_API_BASE", "")
+    api_key = os.getenv(key_env or "", "") or os.getenv("OPENAI_API_KEY", "")  # noqa: env-gate — dynamic provider key resolution
+    base_url = os.getenv(base_env, "") or os.getenv("OPENAI_BASE_URL", "") or os.getenv("OPENAI_API_BASE", "")  # noqa: env-gate — dynamic provider URL resolution
     return chat_deepseek(
         model=model,
         temperature=temperature,
@@ -450,7 +450,7 @@ def _ensure_dotenv() -> None:
         _redact_env_source(loaded),
         get_env_config().llm.langchain_provider,
         get_env_config().llm.langchain_model_name or "(unset)",
-        _redact_base_url_for_log(os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")),
+        _redact_base_url_for_log(os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")),  # noqa: env-gate — diagnostic display
     )
 
 
@@ -487,12 +487,12 @@ def _sync_provider_env() -> None:
 
     # Resolve API key: provider-specific env → OPENAI_API_KEY fallback
     if key_env is not None:
-        api_key = os.getenv(key_env, "") or os.getenv("OPENAI_API_KEY", "")
+        api_key = os.getenv(key_env, "") or os.getenv("OPENAI_API_KEY", "")  # noqa: env-gate — dynamic provider key fallback
     else:
-        api_key = os.getenv("OPENAI_API_KEY", "") or "ollama"
+        api_key = os.getenv("OPENAI_API_KEY", "") or "ollama"  # noqa: env-gate — ollama default key
 
     # Resolve base URL: provider-specific env → OPENAI_BASE_URL fallback
-    base_url = os.getenv(base_env, "") or os.getenv("OPENAI_BASE_URL", "") or os.getenv("OPENAI_API_BASE", "")
+    base_url = os.getenv(base_env, "") or os.getenv("OPENAI_BASE_URL", "") or os.getenv("OPENAI_API_BASE", "")  # noqa: env-gate — dynamic provider URL chain
     if provider == "ollama" and base_url:
         base_url = _normalize_ollama_base_url(base_url)
 
@@ -515,7 +515,7 @@ def provider_diagnostics() -> dict[str, Any]:
     model = get_env_config().llm.langchain_model_name.strip()
     caps = get_provider_capabilities(provider, model)
     key_env, base_env = provider_env_names(provider, model)
-    base_url = os.getenv(base_env, "") or os.getenv("OPENAI_BASE_URL", "") or os.getenv("OPENAI_API_BASE", "")
+    base_url = os.getenv(base_env, "") or os.getenv("OPENAI_BASE_URL", "") or os.getenv("OPENAI_API_BASE", "")  # noqa: env-gate — dynamic provider URL resolution
     proxy_names = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"]
     package_names = ["langchain-openai", "langchain-core", "langchain", "openai", "langchain-deepseek"]
     native_package_version = (
@@ -540,13 +540,13 @@ def provider_diagnostics() -> dict[str, Any]:
             "LANGCHAIN_PROVIDER": _redact_env_flag("LANGCHAIN_PROVIDER"),
             "LANGCHAIN_MODEL_NAME": _redact_env_flag("LANGCHAIN_MODEL_NAME"),
             "OPENAI_API_KEY": _redact_env_flag("OPENAI_API_KEY"),
-            "OPENAI_BASE_URL": _redact_base_url_for_log(os.getenv("OPENAI_BASE_URL")),
-            "OPENAI_API_BASE": _redact_base_url_for_log(os.getenv("OPENAI_API_BASE")),
+            "OPENAI_BASE_URL": _redact_base_url_for_log(os.getenv("OPENAI_BASE_URL")),  # noqa: env-gate — diagnostic snapshot
+            "OPENAI_API_BASE": _redact_base_url_for_log(os.getenv("OPENAI_API_BASE")),  # noqa: env-gate — diagnostic snapshot
         },
         "proxy": {
-            name: _redact_proxy_url(name, os.getenv(name))
+            name: _redact_proxy_url(name, os.getenv(name))  # noqa: env-gate — proxy env iteration
             for name in proxy_names
-            if os.getenv(name)
+            if os.getenv(name)  # noqa: env-gate — proxy env filter
         },
         "packages": {name: _package_version(name) for name in package_names},
         "timeout_seconds": get_env_config().llm.timeout_seconds,

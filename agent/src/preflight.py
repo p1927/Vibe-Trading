@@ -57,7 +57,7 @@ def _check_llm_provider() -> CheckResult:
 
     _sync_provider_env()
     diagnostics = provider_diagnostics()
-    base_url = os.getenv("OPENAI_BASE_URL", "") or os.getenv("OPENAI_API_BASE", "")
+    base_url = os.getenv("OPENAI_BASE_URL", "") or os.getenv("OPENAI_API_BASE", "")  # noqa: env-gate — diagnostic base URL fallback
     proxy_label = ",".join(sorted(diagnostics.get("proxy", {}).keys())) or "none"
     diag_hint = (
         f"base={diagnostics['base_url']} "

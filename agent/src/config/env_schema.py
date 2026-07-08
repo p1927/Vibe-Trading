@@ -134,6 +134,7 @@ class LLMConfig(_EnvBase):
         alias="OPENAI_CODEX_BASE_URL",
         default="https://chatgpt.com/backend-api/codex/responses",
     )
+    openai_model: str = Field(alias="OPENAI_MODEL", default="")
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +165,9 @@ class DataConfig(_EnvBase):
     vibe_trading_data_cache: EnvBool = Field(alias="VIBE_TRADING_DATA_CACHE", default=False)
     vibe_trading_data_cache_root: str = Field(alias="VIBE_TRADING_DATA_CACHE_ROOT", default="")
     aliyun_iqs_api_key: str = Field(alias="ALIYUN_IQS_API_KEY", default="")
+    qveris_api_key: str = Field(alias="QVERIS_API_KEY", default="")
+    qveris_base_url: str = Field(alias="QVERIS_BASE_URL", default="")
+    rsshub_base_url: str = Field(alias="RSSHUB_BASE_URL", default="")
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +202,10 @@ class APIConfig(_EnvBase):
     vibe_trading_allowed_run_roots: str = Field(
         alias="VIBE_TRADING_ALLOWED_RUN_ROOTS", default="",
     )
+    vibe_trading_api_url: str = Field(
+        alias="VIBE_TRADING_API_URL", default="http://127.0.0.1:8000",
+    )
+    futu_trade_pwd_md5: str = Field(alias="FUTU_TRADE_PWD_MD5", default="")
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +276,9 @@ class AgentTuningConfig(_EnvBase):
     vibe_trading_search_bing_fallback: EnvBool = Field(
         alias="VIBE_TRADING_SEARCH_BING_FALLBACK", default=True,
     )
+    vibe_live_authorize_timeout_s: int = Field(
+        alias="VIBE_LIVE_AUTHORIZE_TIMEOUT_SECONDS", default=300,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +299,8 @@ class PathConfig(_EnvBase):
         alias="VIBE_TRADING_SWARM_AGENT_CONFIG", default="",
     )
     allow_session_mcp_servers: EnvBool = Field(alias="ALLOW_SESSION_MCP_SERVERS", default=False)
+    vibe_trading_theme: str = Field(alias="VIBE_TRADING_THEME", default="")
+    vibe_goal_session_id: str = Field(alias="VIBE_GOAL_SESSION_ID", default="")
 
 
 # ---------------------------------------------------------------------------

@@ -41,6 +41,7 @@ def _run_visitor(
     tree = ast.parse(textwrap.dedent(source))
     filepath = repo_root / rel_path
     visitor = _EnvReadVisitor(filepath, repo_root)
+    visitor._set_source(textwrap.dedent(source))
     visitor.visit(tree)
     return visitor.violations, visitor.warnings
 
@@ -231,3 +232,39 @@ class TestAllowlistFlag:
         assert "os.environ.copy()" in captured.out
         assert "os.environ.items()" in captured.out
         assert "os.environ.setdefault" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Tests — noqa suppression
+# ---------------------------------------------------------------------------
+
+
+class TestNoqaSuppression:
+    """Lines with '# noqa: env-gate' are not flagged."""
+
+    def test_noqa_suppresses_getenv(self) -> None:
+        source = 'import os\nx = os.getenv("FOO")  # noqa: env-gate\n'
+        violations, _ = _run_visitor(source)
+        assert len(violations) == 0
+
+    def test_noqa_suppresses_environ_get(self) -> None:
+        source = 'import os\nx = os.environ.get("FOO")  # noqa: env-gate\n'
+        violations, _ = _run_visitor(source)
+        assert len(violations) == 0
+
+    def test_noqa_suppresses_subscript_read(self) -> None:
+        source = 'import os\nx = os.environ["FOO"]  # noqa: env-gate\n'
+        violations, _ = _run_visitor(source)
+        assert len(violations) == 0
+
+    def test_noqa_does_not_affect_other_lines(self) -> None:
+        source = 'import os\nx = os.getenv("FOO")  # noqa: env-gate\ny = os.getenv("BAR")\n'
+        violations, _ = _run_visitor(source)
+        assert len(violations) == 1
+        assert "BAR" not in violations[0][1]  # the violation is for BAR, not FOO
+
+    def test_partial_noqa_not_matched(self) -> None:
+        """Only exact '# noqa: env-gate' is recognized, not '# noqa' alone."""
+        source = 'import os\nx = os.getenv("FOO")  # noqa\n'
+        violations, _ = _run_visitor(source)
+        assert len(violations) == 1
