@@ -50,6 +50,7 @@ from rich.table import Table
 from rich.text import Text
 
 from cli.theme import get_console
+from src.config.accessor import get_env_config, reset_env_config
 
 console = get_console()
 AGENT_DIR = Path(__file__).resolve().parents[1]
@@ -151,8 +152,9 @@ def _build_status_parts(stats: _SessionStats) -> list[str]:
     Returns:
         List of status text segments.
     """
-    provider = os.getenv("LANGCHAIN_PROVIDER", "")
-    model = os.getenv("LANGCHAIN_MODEL_NAME", "")
+    _cfg = get_env_config()
+    provider = _cfg.llm.langchain_provider
+    model = _cfg.llm.langchain_model_name
     model_short = model.split("/")[-1] if "/" in model else model
     label = f"{provider}/{model_short}" if provider else model_short or "unknown"
 
@@ -1536,8 +1538,9 @@ def _build_welcome_panel(term_width: Optional[int] = None) -> Panel:
     term_width = term_width or _terminal_width()
     compact = term_width < 64
     widths = _welcome_widths(term_width)
-    provider = os.getenv("LANGCHAIN_PROVIDER", "(not set)")
-    model = os.getenv("LANGCHAIN_MODEL_NAME", "(not set)")
+    _cfg = get_env_config()
+    provider = _cfg.llm.langchain_provider or "(not set)"
+    model = _cfg.llm.langchain_model_name or "(not set)"
     key_env = _provider_key_env(provider)
     key_value = os.getenv(key_env or "")
     credential_ready = provider in {"ollama", "openai-codex"} or bool(key_value)
@@ -1724,8 +1727,9 @@ def _show_settings() -> None:
     term_width = _terminal_width()
     compact = term_width < 104
     value_limit = max(18, min(56, term_width - 28))
-    provider = os.getenv("LANGCHAIN_PROVIDER", "(not set)")
-    model = os.getenv("LANGCHAIN_MODEL_NAME", "(not set)")
+    _cfg = get_env_config()
+    provider = _cfg.llm.langchain_provider or "(not set)"
+    model = _cfg.llm.langchain_model_name or "(not set)"
     provider_key_env = _provider_key_env(provider)
     provider_base_env = _provider_base_env(provider)
     provider_key = os.getenv(provider_key_env or "")
@@ -1741,9 +1745,9 @@ def _show_settings() -> None:
     runtime_table = Table.grid(expand=True)
     runtime_table.add_column(width=13, style="dim")
     runtime_table.add_column(ratio=1)
-    runtime_table.add_row("Temperature", os.getenv("LANGCHAIN_TEMPERATURE", "0.0"))
-    runtime_table.add_row("Timeout", os.getenv("TIMEOUT_SECONDS", "2400") + "s")
-    runtime_table.add_row("Retries", os.getenv("MAX_RETRIES", "(not set)"))
+    runtime_table.add_row("Temperature", str(_cfg.llm.langchain_temperature))
+    runtime_table.add_row("Timeout", str(_cfg.llm.timeout_seconds) + "s")
+    runtime_table.add_row("Retries", str(_cfg.llm.max_retries))
 
     credential_table = Table.grid(expand=True)
     credential_table.add_column(width=21, style="dim")
@@ -1758,7 +1762,7 @@ def _show_settings() -> None:
     else:
         credential_table.add_row("Provider key", "(unknown provider)")
         credential_ready = False
-    credential_table.add_row("TUSHARE_TOKEN", "***" if os.getenv("TUSHARE_TOKEN") else "(optional)")
+    credential_table.add_row("TUSHARE_TOKEN", "***" if _cfg.data.tushare_token else "(optional)")
 
     panels = [
         Panel(provider_table, title=f"Provider {_state_badge(provider if provider != '(not set)' else None)}", border_style="cyan", padding=(0, 1)),
@@ -2831,7 +2835,8 @@ def _live_api_base() -> str:
 
 def _api_auth_headers() -> Dict[str, str]:
     """Return Bearer auth headers for CLI-to-API control calls."""
-    key = (os.environ.get("VIBE_TRADING_API_KEY") or os.environ.get("API_AUTH_KEY") or "").strip()
+    reset_env_config()  # ensure fresh read of auth credentials
+    key = get_env_config().api.api_auth_key.strip()
     return {"Authorization": f"Bearer {key}"} if key else {}
 
 

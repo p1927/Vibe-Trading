@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.api._compat import host_attr as _host_attr
+from src.config.accessor import _parse_bool, get_env_config
 
 
 # ============================================================================
@@ -68,7 +69,9 @@ def _parse_extra_loopback_hosts(raw: Optional[str]) -> set[str]:
     return {host.strip().lower().rstrip(".") for host in raw.split(",") if host.strip()}
 
 
-_EXTRA_LOOPBACK_HOSTS = _parse_extra_loopback_hosts(os.getenv("API_ALLOWED_HOSTS"))
+def _get_extra_loopback_hosts() -> set[str]:
+    from src.config.accessor import get_env_config
+    return _parse_extra_loopback_hosts(get_env_config().api.api_allowed_hosts or None)
 
 
 def _host_without_port(host: str) -> str:
@@ -89,7 +92,7 @@ def _host_without_port(host: str) -> str:
 def _is_allowed_loopback_host(host: str) -> bool:
     """Return whether *host* is allowed for loopback-trusted API requests."""
     normalized = _host_without_port(host)
-    return normalized in _DEFAULT_LOOPBACK_HOSTS or normalized in _EXTRA_LOOPBACK_HOSTS
+    return normalized in _DEFAULT_LOOPBACK_HOSTS or normalized in _get_extra_loopback_hosts()
 
 
 def _is_loopback_bind_host(host: str) -> bool:
@@ -100,7 +103,9 @@ def _is_loopback_bind_host(host: str) -> bool:
         return host == "localhost"
 
 
-_CORS_ORIGINS = _parse_cors_origins(os.getenv("CORS_ORIGINS"))
+def _get_cors_origins() -> List[str]:
+    from src.config.accessor import get_env_config
+    return _parse_cors_origins(get_env_config().api.cors_origins or None)
 
 
 # ============================================================================
@@ -123,12 +128,25 @@ async def _reject_untrusted_loopback_host(request: Request, call_next):
 # ============================================================================
 
 _security = HTTPBearer(auto_error=False)
-_API_KEY = os.getenv("API_AUTH_KEY")
+
+
+def _get_api_key() -> str:
+    from src.config.accessor import get_env_config
+    return get_env_config().api.api_auth_key
 
 
 def _configured_api_key() -> str:
-    """Return the current API auth key, if configured."""
-    return os.getenv("API_AUTH_KEY") or _host_attr("_API_KEY", _API_KEY) or ""
+    """Return the current API auth key, if configured.
+
+    Resolves the ``VIBE_TRADING_API_KEY`` alias server-side via
+    :func:`get_env_config` so both ``API_AUTH_KEY`` and the legacy
+    alias produce the same key.
+    """
+    return (
+        get_env_config().api.api_auth_key
+        or _host_attr("_API_KEY", _get_api_key())
+        or ""
+    )
 
 
 def _auth_credential_from_header_or_query(
@@ -263,7 +281,7 @@ def _is_local_client(request: Request) -> bool:
 
 def _env_flag_enabled(name: str) -> bool:
     """Return whether a boolean environment flag is enabled."""
-    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+    return _parse_bool(os.getenv(name))
 
 
 def _default_gateway_ips() -> set[ipaddress.IPv4Address]:
@@ -360,3 +378,16 @@ async def require_settings_write_auth(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Settings writes require API_AUTH_KEY or a local loopback client",
         )
+
+
+_LEGACY_LAZY_NAMES = {
+    "_API_KEY": _get_api_key,
+    "_CORS_ORIGINS": _get_cors_origins,
+    "_EXTRA_LOOPBACK_HOSTS": _get_extra_loopback_hosts,
+}
+
+
+def __getattr__(name: str):
+    if name in _LEGACY_LAZY_NAMES:
+        return _LEGACY_LAZY_NAMES[name]()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

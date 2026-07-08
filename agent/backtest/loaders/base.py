@@ -231,14 +231,18 @@ _LOADER_CACHE_VERSION = 2
 
 def loader_cache_enabled() -> bool:
     """Return whether the local market-data cache is explicitly enabled."""
-    return os.getenv(LOADER_CACHE_ENV, "").strip().lower() in _LOADER_CACHE_TRUE_VALUES
+    from src.config.accessor import get_env_config
+
+    return get_env_config().data.vibe_trading_data_cache
 
 
 def loader_cache_root() -> Path:
     """Return the root directory for opt-in loader cache files."""
-    raw = os.getenv(LOADER_CACHE_ROOT_ENV)
-    if raw and raw.strip():
-        return Path(raw).expanduser()
+    from src.config.accessor import get_env_config
+
+    root = get_env_config().data.vibe_trading_data_cache_root
+    if root and root.strip():
+        return Path(root).expanduser()
     return Path.home() / ".vibe-trading" / "cache" / "loaders"
 
 

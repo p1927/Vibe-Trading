@@ -120,7 +120,9 @@ _SESSION_STORE_CACHE: Any = None
 
 def _probe_model_name() -> str:
     """Return the configured LLM model id, or a placeholder."""
-    name = os.environ.get("LANGCHAIN_MODEL_NAME") or os.environ.get("OPENAI_MODEL")
+    from src.config.accessor import get_env_config
+
+    name = get_env_config().llm.langchain_model_name or os.environ.get("OPENAI_MODEL")
     if name:
         return name
     env_path = _first_existing_env_path()

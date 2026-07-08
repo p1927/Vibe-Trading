@@ -37,8 +37,14 @@ from src.tools.redaction import is_sensitive_arg, redact_payload
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MAX_ITERATIONS = int(os.getenv("SWARM_WORKER_MAX_ITER", "50"))
-_DEFAULT_TIMEOUT_SECONDS = int(os.getenv("SWARM_WORKER_TIMEOUT", "300"))
+def _default_max_iterations() -> int:
+    from src.config.accessor import get_env_config
+    return get_env_config().swarm.swarm_worker_max_iter
+
+
+def _default_timeout_seconds() -> int:
+    from src.config.accessor import get_env_config
+    return get_env_config().swarm.swarm_worker_timeout
 
 
 def _heartbeat_interval_s() -> float:
@@ -334,8 +340,8 @@ def run_worker(
     """
     agent_id = agent_spec.id
     task_id = task.id
-    max_iterations = agent_spec.max_iterations or _DEFAULT_MAX_ITERATIONS
-    timeout = agent_spec.timeout_seconds or _DEFAULT_TIMEOUT_SECONDS
+    max_iterations = agent_spec.max_iterations or _default_max_iterations()
+    timeout = agent_spec.timeout_seconds or _default_timeout_seconds()
 
     _emit(event_callback, "worker_started", agent_id, task_id)
 
