@@ -212,7 +212,7 @@ class TestMainRouting:
         cwd_env = tmp_path / "cwd" / ".env"
         project_env.parent.mkdir(parents=True)
         project_env.write_text(
-            "LANGCHAIN_MODEL_NAME=openai-codex/gpt-5.3-codex\n",
+            "LANGCHAIN_MODEL_NAME=openai-codex/gpt-5.4\n",
             encoding="utf-8",
         )
 
@@ -222,7 +222,35 @@ class TestMainRouting:
         monkeypatch.setattr(cli_main, "_PROJECT_ENV_PATH", project_env, raising=False)
         monkeypatch.setattr(cli_main, "_CWD_ENV_PATH", cwd_env, raising=False)
 
-        assert cli_main._probe_model_name() == "openai-codex/gpt-5.3-codex"
+        assert cli_main._probe_model_name() == "openai-codex/gpt-5.4"
+
+    def test_resume_prompt_treats_plain_text_as_first_turn(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Typing a chat message at the resume prompt must not discard it."""
+        cli_main = importlib.import_module("cli.main")
+        session = SimpleNamespace(session_id="sess_1", title="hello")
+        store = SimpleNamespace(list_sessions=lambda limit=1: [session])
+
+        monkeypatch.setattr(cli_main, "_session_store", lambda: store)
+        monkeypatch.setattr("builtins.input", lambda _prompt: "hello")
+
+        result = cli_main._maybe_resume_last_session(cli_main.get_console())
+
+        assert result == {"pending_input": "hello"}
+
+    @pytest.mark.parametrize("answer", ["", "n", "new", "no"])
+    def test_resume_prompt_explicit_new_answers_start_new_session(
+        self, monkeypatch: pytest.MonkeyPatch, answer: str
+    ) -> None:
+        cli_main = importlib.import_module("cli.main")
+        session = SimpleNamespace(session_id="sess_1", title="hello")
+        store = SimpleNamespace(list_sessions=lambda limit=1: [session])
+
+        monkeypatch.setattr(cli_main, "_session_store", lambda: store)
+        monkeypatch.setattr("builtins.input", lambda _prompt: answer)
+
+        assert cli_main._maybe_resume_last_session(cli_main.get_console()) is None
 
 
 # ---------------------------------------------------------------------------
