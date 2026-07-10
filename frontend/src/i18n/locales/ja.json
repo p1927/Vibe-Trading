@@ -495,9 +495,9 @@
   },
   "alphaZoo": {
     "title": "Alpha Zoo",
-    "prebuiltAlpha": "4 つの Zoo にまたがる {{count}} 個の事前構築クォント Alpha",
-    "prebuiltAlphaLoading": "4 つの Zoo にまたがる事前構築クォント Alpha",
-    "browseDesc": "Qlib、Kakushadze 101、GTJA 191、および学術的アノマリー文献から、フォーミュラ駆動のクロスセクションシグナルを参照できます。任意の Alpha をクリックして式とソースコードを読むか、ベンチを実行して特定のユニバースと期間で Zoo 全体をスコアリングできます。",
+    "prebuiltAlpha": "5 つの Zoo にまたがる {{count}} 個の事前構築クォント Alpha",
+    "prebuiltAlphaLoading": "5 つの Zoo にまたがる事前構築クォント Alpha",
+    "browseDesc": "Qlib、Kakushadze 101、GTJA 191、学術的アノマリー文献、および PIT セーフなファンダメンタルズから、フォーミュラ駆動のクロスセクションシグナルを参照できます。任意の Alpha をクリックして式とソースコードを読むか、ベンチを実行して特定のユニバースと期間で Zoo 全体をスコアリングできます。",
     "search": "検索",
     "searchPlaceholder": "ID またはニックネームで絞り込み…",
     "zoo": "Zoo",
@@ -579,13 +579,15 @@
       "qlib158": "Qlib 158",
       "alpha101": "Kakushadze 101 定式 Alpha",
       "gtja191": "GTJA 191",
-      "academic": "学術的アノマリー"
+      "academic": "学術的アノマリー",
+      "fundamental": "ファンダメンタル（PIT セーフ）"
     },
     "zooCardDesc": {
       "qlib158": "Microsoft Qlib の全 158 特徴ライブラリ。モメンタム、ボラティリティ、出来高、ローリング統計シグナルをカバー。",
       "alpha101": "Kakushadze (2015) の 101 個の定式 alpha シグナル。短期ホライゾンのクロスセクションシグナル。",
       "gtja191": "国泰君安証券の 191 個の Alpha。中国 A 株市場向けにチューニングされたテクニカルおよびマイクロストラクチャーシグナル。",
-      "academic": "学術文献からの長期ホライズンアノマリーのキュレーション (バリュー、モメンタム、クオリティ、低ボラティリティなど)。"
+      "academic": "学術文献からの長期ホライズンアノマリーのキュレーション (バリュー、モメンタム、クオリティ、低ボラティリティなど)。",
+      "fundamental": "PIT セーフな SEC company facts から算出される品質・バリュー系ファクター — earnings yield、ROE、gross profitability、asset growth（filed-date 基準）。"
     },
     "universeOption": {
       "csi300": "CSI 300 (中国 A 株)",

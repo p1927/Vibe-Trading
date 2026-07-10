@@ -69,6 +69,8 @@
 
 - **2026-07-04** 🧩 **API route slices, Chinese tutorial docs, and safer dependency floors**：IM channel と Settings routes は `api_server.py` から `src/api/channels_routes.py` / `src/api/settings_routes.py` に移り、[#331](https://github.com/HKUDS/Vibe-Trading/issues/331) の狭い modularization path を継続します（[#379](https://github.com/HKUDS/Vibe-Trading/pull/379)、[#382](https://github.com/HKUDS/Vibe-Trading/pull/382)、@shadowinlife さんに感謝）。Wiki には非金融読者向けの中国語入門チュートリアルが加わり（[#393](https://github.com/HKUDS/Vibe-Trading/pull/393)、@kadaliao さんに感謝）、Pillow / LangChain / LangGraph の dependency floors も installable な patched track に更新されました（[#390](https://github.com/HKUDS/Vibe-Trading/pull/390)、@aeonframework さんに感謝）。
 
+- **2026-07-04** 🧹 **セッション/API パスの UTC タイムスタンプ整理**：#395 のタイムスタンプ修正を強化し、session・goal・channel・API のタイムスタンプが明示的な ISO 形式のタイムゾーン付き UTC 値を出力するようになりました。
+
 - **2026-07-03** 🛡️ **Robinhood MCP refresh + API modularization + SSRF guard**：Robinhood Agentic Trading は generic reads、live-runner plumbing、default read-only seeds、mandate-gate tests のすべてで現在の MCP tool names を使うようになり、interactive startup も provider loader と同じ `.env` 探索順（`~/.vibe-trading/.env` → `agent/.env` → `$CWD/.env`）を尊重します（[#391](https://github.com/HKUDS/Vibe-Trading/pull/391)、[#381](https://github.com/HKUDS/Vibe-Trading/issues/381) と [#380](https://github.com/HKUDS/Vibe-Trading/issues/380) をクローズ）。System routes（`/health`、`/correlation`、`/system/shutdown`、`/skills`、`/api`）は次の狭い API modularization slice として `src/api/system_routes.py` に移りました（[#378](https://github.com/HKUDS/Vibe-Trading/pull/378)、@shadowinlife さんに感謝）。Channel media SSRF defenses は fetch 前に CGNAT/mesh/non-global targets と QQ media redirect-to-internal を拒否するようになりました（[#389](https://github.com/HKUDS/Vibe-Trading/pull/389)、@hobostay さんに感謝）。
 
 - **2026-07-02** ⚡ **Factor acceleration + safer runtime boundaries**：rolling factor のホットパスは `bottleneck`/NumPy fast path を使うようになり、alpha bench の process parallelism は巨大 panel payload を worker ごとに繰り返し渡さず、base equity 計算にも regression coverage が入りました（[#376](https://github.com/HKUDS/Vibe-Trading/pull/376)、[#339](https://github.com/HKUDS/Vibe-Trading/issues/339) をクローズ、元の実装は @shadowinlife さんの [#342](https://github.com/HKUDS/Vibe-Trading/pull/342)）。Upload と Shadow report routes は巨大な `api_server.py` から切り出され、API modularization の最初の狭い slice になりました。[#331](https://github.com/HKUDS/Vibe-Trading/issues/331) は引き続き open です（[#375](https://github.com/HKUDS/Vibe-Trading/pull/375)、[#358](https://github.com/HKUDS/Vibe-Trading/pull/358) ベース、@shadowinlife さんに感謝）。Generated backtest subprocess は parent secrets surface 全体ではなく allowlist された環境だけを継承するようになり（[#374](https://github.com/HKUDS/Vibe-Trading/pull/374)、[#332](https://github.com/HKUDS/Vibe-Trading/issues/332) をクローズ）、IM channels には `/new` session reset と case-insensitive pairing commands も入りました（[#372](https://github.com/HKUDS/Vibe-Trading/pull/372)、[#371](https://github.com/HKUDS/Vibe-Trading/issues/371) をクローズ、@shadowinlife さんに感謝）。
@@ -1028,7 +1030,7 @@ Vibe-Trading/
 │   │
 │   └── backtest/                   # バックテストエンジン
 │       ├── engines/                #   7 エンジン + クロスマーケット composite engine + options_portfolio
-│       ├── loaders/                #   19 ソース: tushare、okx、yfinance、akshare、baostock、tencent、mootdx、ccxt、futu、local、eastmoney、sina、stooq、yahoo、finnhub、alphavantage、tiingo、fmp、qveris
+│       ├── loaders/                #   20 ソース: tushare、okx、yfinance、akshare、baostock、tencent、mootdx、ccxt、futu、local、eastmoney、sina、stooq、yahoo、finnhub、alphavantage、tiingo、fmp、qveris、india_broker
 │       │   ├── base.py             #   DataLoader Protocol
 │       │   └── registry.py         #   Registry + 自動フォールバックチェーン
 │       └── optimizers/             #   MVO、equal vol、max div、risk parity
@@ -1114,7 +1116,7 @@ Contributions を歓迎します。ガイドラインは [CONTRIBUTING.md](CONTR
 
 Vibe-Trading に貢献してくださった皆さまに感謝します。
 
-最近の v0.1.11 cycle contributors and credits:
+最近の v0.1.11 サイクルの貢献者とクレジット：
 
 - @shadowinlife — the `api_server` modularization capstone (1,103 → 371 lines, #424 closing #331), centralized env config with the AST CI gate (#440), loader `fetch()` protocol conformance (#437), and the Strategy Development Manager RFC in review (#455/#457) — 12 merged PRs this cycle
 - @Robin1987China — Research Autopilot Phase 3 loop closure (#267), 4 canonical academic alphas (#277), Shadow Account PIT-safe entry conditions (#302/#314/#316), the turnover-aware portfolio optimizer (#466), scheduled-research route tests (#452), and test-coverage batches for trade-journal / pattern / loader layers (#268/#269/#276)
@@ -1149,7 +1151,7 @@ Vibe-Trading に貢献してくださった皆さまに感謝します。
 - @warren618 / Haozhe Wu — the fundamental factor layer (PIT-safe SEC panels), the QVeris premium track, the IM channel runtime, India-equity integration review, CN search fallbacks, and release integration
 
 <details>
-<summary>v0.1.10 cycle contributors</summary>
+<summary>v0.1.10 サイクルの貢献者</summary>
 
 - @Hinotoi-agent — a security-hardening wave: local-shutdown auth (#241), loopback-host rebinding rejection (#242), agent shell-tool opt-in (#243), settings-write auth (#245), mandate proposal-id containment (#256), persistent-memory type validation (#257), and MCP swarm run-id containment (#258)
 - @mvanhorn — the opt-in local data cache (#177), Gemini thoughtSignature round-trip over OpenAI-compat tool calls (#176), the custom data loader guide (#194), and the glm/zhipu provider alias + model-name inference (#247)

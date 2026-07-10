@@ -69,6 +69,8 @@
 
 - **2026-07-04** 🧩 **API 路由继续拆分、中文入门教程与依赖安全线**：IM channel 与 Settings routes 已从 `api_server.py` 迁入 `src/api/channels_routes.py` / `src/api/settings_routes.py`，延续 [#331](https://github.com/HKUDS/Vibe-Trading/issues/331) 的窄切片模块化路径（来自 [#379](https://github.com/HKUDS/Vibe-Trading/pull/379)、[#382](https://github.com/HKUDS/Vibe-Trading/pull/382)，感谢 @shadowinlife）。Wiki 新增面向非金融读者的中文入门教程（[#393](https://github.com/HKUDS/Vibe-Trading/pull/393)，感谢 @kadaliao）；Pillow / LangChain / LangGraph 依赖下限也更新到可安装的安全轨道（[#390](https://github.com/HKUDS/Vibe-Trading/pull/390)，感谢 @aeonframework）。
 
+- **2026-07-04** 🧹 **会话与 API 路径的 UTC 时间戳清理**：收紧 #395 的时间戳修复——session、goal、channel 与 API 时间戳现在统一输出显式 ISO 格式的时区感知 UTC 值。
+
 - **2026-07-03** 🛡️ **Robinhood MCP 刷新 + API 模块化 + SSRF 防护**：Robinhood Agentic Trading 现在在通用读取、live runner、默认只读 seed 和 mandate-gate 测试中统一使用当前 MCP 工具名；交互式启动也会按 provider loader 的同一顺序识别 `.env`：`~/.vibe-trading/.env` → `agent/.env` → `$CWD/.env`（[#391](https://github.com/HKUDS/Vibe-Trading/pull/391)，关闭 [#381](https://github.com/HKUDS/Vibe-Trading/issues/381) 和 [#380](https://github.com/HKUDS/Vibe-Trading/issues/380)）。System routes（`/health`、`/correlation`、`/system/shutdown`、`/skills`、`/api`）作为下一段 API 模块化窄切片迁入 `src/api/system_routes.py`（[#378](https://github.com/HKUDS/Vibe-Trading/pull/378)，感谢 @shadowinlife）。通道媒体 SSRF 防护现在会在 fetch 前拒绝 CGNAT/mesh/non-global 目标和 QQ media redirect-to-internal（[#389](https://github.com/HKUDS/Vibe-Trading/pull/389)，感谢 @hobostay）。
 
 - **2026-07-02** ⚡ **因子加速 + 更稳的运行边界**：滚动因子热路径现在使用 `bottleneck`/NumPy 快路径，alpha bench 的进程并行避免反复传输大面板数据，base equity 计算也补上回归覆盖（[#376](https://github.com/HKUDS/Vibe-Trading/pull/376)，关闭 [#339](https://github.com/HKUDS/Vibe-Trading/issues/339)，原始工作来自 @shadowinlife 的 [#342](https://github.com/HKUDS/Vibe-Trading/pull/342)）。上传与 Shadow report 路由已从巨大的 `api_server.py` 中拆出，作为 API 模块化的第一刀，同时 [#331](https://github.com/HKUDS/Vibe-Trading/issues/331) 继续保持 open（[#375](https://github.com/HKUDS/Vibe-Trading/pull/375)，基于 [#358](https://github.com/HKUDS/Vibe-Trading/pull/358)，感谢 @shadowinlife）。生成式回测子进程现在只继承 allowlist 环境变量，不再暴露完整父进程 secret surface（[#374](https://github.com/HKUDS/Vibe-Trading/pull/374)，关闭 [#332](https://github.com/HKUDS/Vibe-Trading/issues/332)）；IM 通道也新增 `/new` 会话重置，并让 pairing 命令大小写不敏感（[#372](https://github.com/HKUDS/Vibe-Trading/pull/372)，关闭 [#371](https://github.com/HKUDS/Vibe-Trading/issues/371)，感谢 @shadowinlife）。
@@ -1025,7 +1027,7 @@ Vibe-Trading/
 │   │
 │   └── backtest/                   # 回测引擎
 │       ├── engines/                #   7 个引擎 + 跨市场 composite 引擎 + options_portfolio
-│       ├── loaders/                #   19 个数据源：tushare、okx、yfinance、akshare、baostock、tencent、mootdx、ccxt、futu、local、eastmoney、sina、stooq、yahoo、finnhub、alphavantage、tiingo、fmp、qveris
+│       ├── loaders/                #   20 个数据源：tushare、okx、yfinance、akshare、baostock、tencent、mootdx、ccxt、futu、local、eastmoney、sina、stooq、yahoo、finnhub、alphavantage、tiingo、fmp、qveris、india_broker
 │       │   ├── base.py             #   DataLoader Protocol
 │       │   └── registry.py         #   Registry + 自动 fallback 链路
 │       └── optimizers/             #   MVO、equal vol、max div、risk parity

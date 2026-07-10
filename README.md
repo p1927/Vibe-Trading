@@ -1235,7 +1235,7 @@ Vibe-Trading/
 │   │
 │   └── backtest/                   # Backtest engines
 │       ├── engines/                #   7 engines + composite cross-market engine + options_portfolio
-│       ├── loaders/                #   19 sources: tushare, okx, yfinance, akshare, baostock, tencent, mootdx, ccxt, futu, local, eastmoney, sina, stooq, yahoo, finnhub, alphavantage, tiingo, fmp, qveris
+│       ├── loaders/                #   20 sources: tushare, okx, yfinance, akshare, baostock, tencent, mootdx, ccxt, futu, local, eastmoney, sina, stooq, yahoo, finnhub, alphavantage, tiingo, fmp, qveris, india_broker
 │       │   ├── base.py             #   DataLoader Protocol
 │       │   └── registry.py         #   Registry + auto-fallback chains
 │       └── optimizers/             #   MVO, equal vol, max div, risk parity

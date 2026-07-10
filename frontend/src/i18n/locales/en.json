@@ -500,9 +500,9 @@
   },
   "alphaZoo": {
     "title": "Alpha Zoo",
-    "prebuiltAlpha": "{{count}} pre-built quant alphas across 4 zoos",
-    "prebuiltAlphaLoading": "Pre-built quant alphas across 4 zoos",
-    "browseDesc": "Browse formula-driven cross-sectional signals from Qlib, the Kakushadze 101 set, GTJA 191, and the academic anomaly literature. Click any alpha to read its formula and source code, or run a bench to score the whole zoo on a universe and period.",
+    "prebuiltAlpha": "{{count}} pre-built quant alphas across 5 families",
+    "prebuiltAlphaLoading": "Pre-built quant alphas across 5 families",
+    "browseDesc": "Browse formula-driven cross-sectional signals from Qlib, the Kakushadze 101 set, GTJA 191, the academic anomaly literature, and PIT-safe fundamentals. Click any alpha to read its formula and source code, or run a bench to score the whole zoo on a universe and period.",
     "search": "Search",
     "searchPlaceholder": "Filter by id or nickname…",
     "zoo": "Zoo",
@@ -584,13 +584,15 @@
       "qlib158": "Qlib 158",
       "alpha101": "Kakushadze 101 Formulaic Alphas",
       "gtja191": "GTJA 191",
-      "academic": "Academic Anomalies"
+      "academic": "Academic Anomalies",
+      "fundamental": "PIT-Safe Fundamentals"
     },
     "zooCardDesc": {
       "qlib158": "Microsoft Qlib's full 158-feature library covering momentum, volatility, volume and rolling statistical signals.",
       "alpha101": "The 101 formulaic alphas from Kakushadze (2015); short-horizon cross-sectional signals.",
       "gtja191": "Guotai Junan Securities' 191 alphas; technical and microstructure signals tuned to China A-share markets.",
-      "academic": "Curated long-horizon anomalies from the academic literature (value, momentum, quality, low-vol, etc.)."
+      "academic": "Curated long-horizon anomalies from the academic literature (value, momentum, quality, low-vol, etc.).",
+      "fundamental": "Quality and value factors computed from PIT-safe SEC company facts — earnings yield, ROE, gross profitability, asset growth (filed-date anchored)."
     },
     "universeOption": {
       "csi300": "CSI 300 (China A)",

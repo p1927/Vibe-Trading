@@ -1,6 +1,6 @@
 ---
 name: asset-allocation
-description: Asset allocation theory and optimizer usage — MPT / Black-Litterman / risk budgeting / all-weather strategy, including guides for 4 optimizers and rebalancing rules.
+description: Asset allocation theory and optimizer usage — MPT / Black-Litterman / risk budgeting / all-weather strategy, including guides for 5 optimizers and rebalancing rules.
 category: asset-class
 ---
 
@@ -86,7 +86,7 @@ Simplified allocation example for China-focused portfolios:
 - 15% commodities / REITs
 ```
 
-## Guide to the 4 Optimizers
+## Guide to the 5 Optimizers
 
 ### Overview of the Built-In Optimizers
 
