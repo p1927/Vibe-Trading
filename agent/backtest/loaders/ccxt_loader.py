@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from typing import Dict, List, Optional
 
@@ -38,6 +39,19 @@ _INTERVAL_MAP = {
 # scheduling is delegated to :mod:`backtest.loaders.base`.
 _CCXT_TIMEOUT_MS = positive_env_int("CCXT_TIMEOUT_MS", 15_000)
 _CCXT_FETCH_BUDGET_S = positive_env_float("CCXT_FETCH_BUDGET_S", 60.0)
+
+
+def _parse_ccxt_symbol(code: str) -> tuple[str, str]:
+    """Return the canonical CCXT symbol and instrument type for ``code``."""
+    normalized = code.strip().upper()
+    if normalized.endswith("-PERP"):
+        match = re.fullmatch(r"([A-Z0-9]+)-USDT-PERP", normalized)
+        if match is None:
+            raise ValueError(
+                "USD-M perpetual symbol must use BASE-USDT-PERP, e.g. BTC-USDT-PERP"
+            )
+        return f"{match.group(1)}/USDT:USDT", "swap"
+    return normalized.replace("-", "/"), "spot"
 
 
 def _first_proxy_env(*names: str) -> str:
@@ -137,7 +151,7 @@ class DataLoader:
         result: Dict[str, pd.DataFrame] = {}
         for code in codes:
             try:
-                ccxt_symbol = code.replace("-", "/").upper()
+                ccxt_symbol, _instrument_type = _parse_ccxt_symbol(code)
                 df = cached_loader_fetch(
                     source=self.name,
                     symbol=code,
