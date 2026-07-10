@@ -58,8 +58,11 @@ class AnalyzeImageTool(BaseTool):
         "about it. Use this for charts, candlestick/K-line screenshots, "
         "account or app screenshots and photos - anything where reading the "
         "picture matters. (read_document only OCRs text and fails on charts.) "
+        "Requires a vision-capable session model (e.g. gpt-4o / claude / "
+        "gemini / qwen-vl); a text-only model may error or answer without "
+        "seeing the image. "
         "Supported: jpg/png/gif/bmp/webp under the allowed file roots. "
-        'Example: {"path": "/root/.vibe-trading/weixin/abc.jpg", '
+        'Example: {"path": "~/.vibe-trading/uploads/weixin/abc.jpg", '
         '"question": "解读这张K线图的走势"}.'
     )
     parameters = {

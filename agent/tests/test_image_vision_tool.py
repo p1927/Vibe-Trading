@@ -67,7 +67,6 @@ def test_happy_path_sends_data_url_and_returns_answer(tool, png_in_allowed_root)
 
 
 def test_empty_model_answer_is_an_error(tool, png_in_allowed_root):
-    result = None
     response = MagicMock()
     response.content = ""
     with patch("src.providers.chat.ChatLLM") as chat_cls:

@@ -68,7 +68,7 @@ def test_alpha_zoo_counts_match_factor_modules() -> None:
     zoo_counts = {
         path.name: sum(1 for module in path.glob("*.py") if module.name != "__init__.py")
         for path in ZOOS_DIR.iterdir()
-        if path.is_dir()
+        if path.is_dir() and path.name != "__pycache__"
     }
     _assert_all_counts(r"Alpha Zoo\D{0,4}(\d+)\s+pre-built", sum(zoo_counts.values()))
 
