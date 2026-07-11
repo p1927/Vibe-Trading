@@ -44,26 +44,31 @@ _TEXT_EXTS = {
     ".dockerfile", ".makefile", ".cmake",
 }
 
-_ocr_engine = None
-_ocr_checked = False
+from src.tools.ocr import get_ocr_engine, get_ocr_install_hint
 
-_OCR_INSTALL_MSG = (
-    "OCR engine not available. This document contains scanned/image-based pages "
-    "that require OCR to extract text. "
-    "Install the OCR dependency: pip install rapidocr_onnxruntime"
-)
+_cached_ocr_engine = None
+_cached_ocr_checked = False
+
+
+def _get_ocr():
+    """Return the configured OCR engine (cached), or None."""
+    global _cached_ocr_engine, _cached_ocr_checked
+    if not _cached_ocr_checked:
+        _cached_ocr_engine = get_ocr_engine()
+        _cached_ocr_checked = True
+    return _cached_ocr_engine
 
 
 def _ocr_available() -> bool:
-    """Check if RapidOCR is importable (cached after first call)."""
-    global _ocr_checked
-    if not _ocr_checked:
-        try:
-            import rapidocr_onnxruntime  # noqa: F401  # type: ignore
-            _ocr_checked = True
-        except ImportError:
-            _ocr_checked = False
-    return _ocr_checked
+    return _get_ocr() is not None
+
+
+def _ocr_image_array(img) -> str:
+    """Run OCR on a numpy image via the pluggable engine."""
+    engine = _get_ocr()
+    if engine is None:
+        return ""
+    return engine.recognize(img)
 
 
 # ---------------- shared helpers ----------------
@@ -93,27 +98,6 @@ def _envelope(path: Path, fmt: str, text: str, **extra: Any) -> str:
     payload.update(extra)
     payload = with_security_warnings(payload, fields=("text",))
     return json.dumps(payload, ensure_ascii=False)
-
-
-def _get_ocr():
-    """Lazily load RapidOCR. Raises ImportError if not installed."""
-    global _ocr_engine
-    if _ocr_engine is None:
-        from rapidocr_onnxruntime import RapidOCR  # type: ignore
-        _ocr_engine = RapidOCR()
-    return _ocr_engine
-
-
-def _ocr_image_array(img) -> str:
-    """Run OCR on a numpy image; return joined lines or empty string.
-
-    Raises ImportError if RapidOCR is not installed.
-    """
-    ocr = _get_ocr()
-    result, _ = ocr(img)
-    if not result:
-        return ""
-    return "\n".join(item[1] for item in result)
 
 
 # ---------------- PDF ----------------
@@ -165,10 +149,11 @@ def _read_pdf(path: Path, pages: str) -> str:
                 continue
             # Scanned/image page detected — OCR required
             if not _ocr_available():
+                engine = _get_ocr()
+                hint = get_ocr_install_hint(engine)
                 return _err(
                     f"Page {i + 1}/{total_pages} is a scanned/image page with no "
-                    f"extractable text, but the OCR engine is not installed. "
-                    f"{_OCR_INSTALL_MSG}"
+                    f"extractable text, but no OCR engine is available. {hint}"
                 )
             bitmap = page.render(scale=300 / 72)
             img = bitmap.to_numpy()
@@ -275,7 +260,12 @@ def _read_image(path: Path) -> str:
         return _err(f"Failed to open image: {exc}")
 
     if not _ocr_available():
-        return _err(_OCR_INSTALL_MSG)
+        engine = _get_ocr()
+        hint = get_ocr_install_hint(engine)
+        return _err(
+            f"This image requires OCR to extract text, but no OCR engine is "
+            f"available. {hint}"
+        )
 
     text = _ocr_image_array(img)
     if not text.strip():
