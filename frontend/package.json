@@ -12,6 +12,8 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
     "clsx": "^2.1.0",
     "echarts": "^6.1.0",
     "highlight.js": "^11.11.1",
