@@ -8,10 +8,10 @@ from typing import Any
 
 from src.agent.tools import BaseTool
 from src.strategy_store.decay import DecayEvaluator
+from src.strategy_store.metrics import compute_decay_metrics
 from src.strategy_store.models import (
     ArtifactStatus,
     ArtifactType,
-    DecaySignal,
 )
 from src.strategy_store._shared import get_store as _get_store
 
@@ -43,60 +43,6 @@ def _artifact_to_dict(artifact: Any) -> dict[str, Any]:
     return d
 
 
-def _compute_ic_metrics(
-    bench_history: list[Any],
-) -> dict[str, float | None]:
-    """Compute baseline and rolling IC metrics from bench history.
-
-    Returns dict with baseline_ic_mean, rolling_ic_mean, ic_ratio,
-    rolling_ir, ic_positive_ratio.
-    """
-    result: dict[str, float | None] = {
-        "baseline_ic_mean": None,
-        "rolling_ic_mean": None,
-        "ic_ratio": None,
-        "rolling_ir": None,
-        "ic_positive_ratio": None,
-    }
-
-    # bench_history is newest-first; reverse for chronological order
-    chronological = list(reversed(bench_history))
-
-    ic_values = [
-        r.ic_mean for r in chronological if r.ic_mean is not None
-    ]
-
-    if len(ic_values) < 3:
-        return result
-
-    # Baseline from first 5 entries, rolling from last 5
-    baseline_ics = ic_values[:5]
-    rolling_ics = ic_values[-5:]
-
-    baseline_mean = sum(baseline_ics) / len(baseline_ics)
-    rolling_mean = sum(rolling_ics) / len(rolling_ics)
-
-    result["baseline_ic_mean"] = round(baseline_mean, 6)
-    result["rolling_ic_mean"] = round(rolling_mean, 6)
-
-    if baseline_mean != 0:
-        result["ic_ratio"] = round(rolling_mean / baseline_mean, 4)
-
-    # IR from rolling window
-    if len(rolling_ics) > 1:
-        mean_r = sum(rolling_ics) / len(rolling_ics)
-        var_r = sum((x - mean_r) ** 2 for x in rolling_ics) / (len(rolling_ics) - 1)
-        std_r = var_r**0.5
-        if std_r > 0:
-            result["rolling_ir"] = round(mean_r / std_r, 4)
-
-    # IC positive ratio
-    positive_count = sum(1 for v in ic_values if v > 0)
-    result["ic_positive_ratio"] = round(positive_count / len(ic_values), 4)
-
-    return result
-
-
 class SdmStatusTool(BaseTool):
     """Query or update factor/strategy status in the strategy store."""
 
@@ -105,7 +51,7 @@ class SdmStatusTool(BaseTool):
         "Query or update factor/strategy status in the strategy store. "
         "Actions: list, detail, disable, enable, decay_check."
     )
-    is_readonly = True
+    is_readonly = False
     repeatable = True
     parameters = {
         "type": "object",
@@ -256,13 +202,14 @@ class SdmStatusTool(BaseTool):
                 "message": f"Need at least 3 bench results, have {len(bench_history)}",
             })
 
-        metrics = _compute_ic_metrics(bench_history)
+        metrics = compute_decay_metrics(bench_history)
         evaluator = DecayEvaluator()
 
         signal = evaluator.evaluate_decay(
             ic_ratio=metrics["ic_ratio"],
             ir=metrics["rolling_ir"],
             ic_positive_ratio=metrics["ic_positive_ratio"],
+            sharpe=metrics["rolling_sharpe"],
         )
 
         # Get prior decay signals from history

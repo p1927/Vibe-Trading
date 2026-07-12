@@ -32,6 +32,7 @@ __all__ = [
     "SwarmConfig",
     "AgentTuningConfig",
     "PathConfig",
+    "OcrConfig",
 ]
 
 
@@ -168,6 +169,22 @@ class DataConfig(_EnvBase):
     qveris_api_key: str = Field(alias="QVERIS_API_KEY", default="")
     qveris_base_url: str = Field(alias="QVERIS_BASE_URL", default="")
     rsshub_base_url: str = Field(alias="RSSHUB_BASE_URL", default="")
+    dashscope_api_key: str = Field(alias="DASHSCOPE_API_KEY", default="")
+
+
+# ---------------------------------------------------------------------------
+# OCR
+# ---------------------------------------------------------------------------
+
+
+class OcrConfig(_EnvBase):
+    """OCR engine selection and model configuration.
+
+    Sources: ``src/tools/ocr/engine.py``, ``src/tools/ocr/qwen_vision_ocr.py``.
+    """
+
+    vibe_trading_ocr_engine: str = Field(alias="VIBE_TRADING_OCR_ENGINE", default="auto")
+    vibe_trading_ocr_qwen_model: str = Field(alias="VIBE_TRADING_OCR_QWEN_MODEL", default="")
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +318,9 @@ class PathConfig(_EnvBase):
     allow_session_mcp_servers: EnvBool = Field(alias="ALLOW_SESSION_MCP_SERVERS", default=False)
     vibe_trading_theme: str = Field(alias="VIBE_TRADING_THEME", default="")
     vibe_goal_session_id: str = Field(alias="VIBE_GOAL_SESSION_ID", default="")
+    vibe_trading_strategy_store_db_path: str = Field(
+        alias="VIBE_TRADING_STRATEGY_STORE_DB_PATH", default="",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +345,7 @@ class EnvConfig(_EnvBase):
     swarm: SwarmConfig = Field(default_factory=SwarmConfig)
     agent_tuning: AgentTuningConfig = Field(default_factory=AgentTuningConfig)
     paths: PathConfig = Field(default_factory=PathConfig)
+    ocr: OcrConfig = Field(default_factory=OcrConfig)
 
     @model_validator(mode="after")
     def _resolve_api_key_alias(self) -> "EnvConfig":

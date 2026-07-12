@@ -133,6 +133,7 @@ def _read_pdf(path: Path, pages: str) -> str:
         total_targets = len(targets)
         chunks: list[str] = []
         ocr_pages = 0
+        skipped_pages = 0
         for idx, i in enumerate(targets, start=1):
             if not 0 <= i < total_pages:
                 continue
@@ -147,14 +148,15 @@ def _read_pdf(path: Path, pages: str) -> str:
                     message=f"page {i + 1}/{total_pages}",
                 )
                 continue
-            # Scanned/image page detected — OCR required
             if not _ocr_available():
-                engine = _get_ocr()
-                hint = get_ocr_install_hint(engine)
-                return _err(
-                    f"Page {i + 1}/{total_pages} is a scanned/image page with no "
-                    f"extractable text, but no OCR engine is available. {hint}"
+                skipped_pages += 1
+                emit_progress(
+                    "reading_pdf",
+                    current=idx,
+                    total=total_targets,
+                    message=f"page {i + 1}/{total_pages} (skipped: no OCR)",
                 )
+                continue
             bitmap = page.render(scale=300 / 72)
             img = bitmap.to_numpy()
             ocr_text = _ocr_image_array(img)
@@ -170,11 +172,19 @@ def _read_pdf(path: Path, pages: str) -> str:
                 message=f"page {i + 1}/{total_pages} (OCR)" if ocr_text.strip() else f"page {i + 1}/{total_pages}",
             )
         full = "\n\n".join(chunks)
+        if not full and skipped_pages > 0:
+            engine = _get_ocr()
+            hint = get_ocr_install_hint(engine)
+            return _err(
+                f"All {total_pages} page(s) are scanned/image pages with no "
+                f"extractable text, and no OCR engine is available. {hint}"
+            )
         return _envelope(
             path, "pdf", full,
             total_pages=total_pages,
             pages_read=len(targets),
             ocr_pages=ocr_pages,
+            skipped_pages=skipped_pages,
         )
     finally:
         doc.close()

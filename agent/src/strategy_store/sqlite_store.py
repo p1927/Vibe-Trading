@@ -8,7 +8,6 @@ for schema migrations.
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import threading
 import uuid
@@ -33,7 +32,6 @@ from src.strategy_store.models import (
 # ---------------------------------------------------------------------------
 
 _DEFAULT_DB_PATH = Path.home() / ".vibe-trading" / "strategy_store.db"
-_DB_PATH_ENV = "VIBE_TRADING_STRATEGY_STORE_DB_PATH"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -64,7 +62,9 @@ def _json_loads(value: str | None, default: object) -> object:
 
 def _default_db_path() -> Path:
     """Return the configured strategy-store database path."""
-    raw_path = os.getenv(_DB_PATH_ENV, "").strip()
+    from src.config.accessor import get_env_config
+
+    raw_path = get_env_config().paths.vibe_trading_strategy_store_db_path.strip()
     if raw_path:
         return Path(raw_path).expanduser()
     return _DEFAULT_DB_PATH
@@ -128,7 +128,7 @@ class SqliteStrategyStore:
                 CREATE TABLE IF NOT EXISTS artifacts (
                     id              TEXT PRIMARY KEY,
                     type            TEXT NOT NULL CHECK(type IN ('factor', 'strategy')),
-                    name            TEXT NOT NULL UNIQUE,
+                    name            TEXT NOT NULL,
                     source_paper    TEXT,
                     source_url      TEXT,
                     formula_latex   TEXT,
@@ -150,7 +150,8 @@ class SqliteStrategyStore:
                     created_at      TEXT NOT NULL,
                     updated_at      TEXT NOT NULL,
                     disabled_at     TEXT,
-                    disabled_reason TEXT
+                    disabled_reason TEXT,
+                    UNIQUE(name, universe)
                 );
 
                 CREATE TABLE IF NOT EXISTS bench_history (

@@ -7,14 +7,12 @@ Allows users to swap between local OCR (RapidOCR) and cloud vision models
 from __future__ import annotations
 
 import logging
-import os
 from typing import Protocol, runtime_checkable
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-_OCR_ENGINE_ENV = "VIBE_TRADING_OCR_ENGINE"
 _VALID_ENGINES = ("auto", "rapid", "qwen-vl", "none")
 
 
@@ -37,6 +35,13 @@ class OcrEngine(Protocol):
         ...
 
 
+def _get_ocr_choice() -> str:
+    """Return the configured OCR engine choice (cached per process)."""
+    from src.config.accessor import get_env_config
+
+    return get_env_config().ocr.vibe_trading_ocr_engine.strip().lower()
+
+
 def get_ocr_engine() -> OcrEngine | None:
     """Return the configured OCR engine, or None if unavailable.
 
@@ -46,7 +51,7 @@ def get_ocr_engine() -> OcrEngine | None:
       - "qwen-vl": Qwen-VL vision model (cloud, DashScope API)
       - "none": disable OCR entirely
     """
-    choice = os.getenv(_OCR_ENGINE_ENV, "auto").strip().lower()
+    choice = _get_ocr_choice()
     if choice not in _VALID_ENGINES:
         logger.warning("Unknown OCR engine '%s', falling back to 'auto'", choice)
         choice = "auto"
@@ -100,7 +105,7 @@ def get_ocr_install_hint(engine: OcrEngine | None) -> str:
     if engine is not None:
         return ""
 
-    choice = os.getenv(_OCR_ENGINE_ENV, "auto").strip().lower()
+    choice = _get_ocr_choice()
 
     if choice == "qwen-vl":
         return (

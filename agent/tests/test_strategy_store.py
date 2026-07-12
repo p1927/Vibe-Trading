@@ -501,6 +501,55 @@ class TestSdmTools:
         assert result["transitions_applied"] == 0
         assert result["summary"]["total_scanned"] == 1
 
+    def test_decay_scan_tool_active_to_monitoring_transition(self):
+        """Non-dry-run scan transitions active → monitoring after 3+ warnings."""
+        from src.tools.sdm_register_tool import SdmRegisterTool
+        from src.tools.sdm_decay_scan_tool import SdmDecayScanTool
+
+        reg = json.loads(
+            SdmRegisterTool().execute(
+                artifact_type="factor", name="decay_factor", universe="CSI300"
+            )
+        )
+        aid = reg["artifact"]["id"]
+
+        import src.strategy_store._shared as shared
+
+        store = shared._store
+        assert store is not None
+        store.update_status(aid, ArtifactStatus.ACTIVE)
+
+        # 5 baseline (high IC=0.08) + 5 rolling (low IC=0.04) → ratio ~0.5 = WARNING
+        for _ in range(5):
+            store.record_bench(BenchResult(artifact_id=aid, ic_mean=0.08))
+        for _ in range(5):
+            store.record_bench(BenchResult(artifact_id=aid, ic_mean=0.04))
+
+        # Pre-populate 2 prior WARNING snapshots so the 3rd scan triggers transition
+        store.record_decay_snapshot(
+            DecaySnapshot(artifact_id=aid, ic_ratio=0.5, decay_signal=DecaySignal.WARNING)
+        )
+        store.record_decay_snapshot(
+            DecaySnapshot(artifact_id=aid, ic_ratio=0.5, decay_signal=DecaySignal.WARNING)
+        )
+
+        # Third scan: now has 3 consecutive WARNING → active→monitoring
+        result = json.loads(SdmDecayScanTool().execute(dry_run=False))
+        assert result["status"] == "ok"
+        assert result["dry_run"] is False
+        assert result["summary"]["total_scanned"] == 1
+        assert result["transitions_applied"] >= 1
+
+        # Verify the artifact actually transitioned to monitoring
+        artifact = store.get_artifact(aid)
+        assert artifact is not None
+        assert artifact.status == ArtifactStatus.MONITORING
+
+        # Verify a decay snapshot was recorded with consecutive_warnings > 0
+        snapshots = store.get_decay_history(aid, limit=1)
+        assert len(snapshots) == 1
+        assert snapshots[0].consecutive_warnings >= 1
+
 
 # ===========================================================================
 # TestSqliteStore

@@ -5,16 +5,13 @@ from __future__ import annotations
 import base64
 import io
 import logging
-import os
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-_DASHSCOPE_API_KEY_ENV = "DASHSCOPE_API_KEY"
 _DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 _DEFAULT_MODEL = "qwen-vl-plus"
-_MODEL_ENV = "VIBE_TRADING_OCR_QWEN_MODEL"
 
 _OCR_SYSTEM_PROMPT = (
     "You are a precise OCR engine. Extract ALL text from the provided image. "
@@ -37,7 +34,9 @@ class QwenVisionOcrEngine:
         self._client = None
 
     def is_available(self) -> bool:
-        api_key = os.getenv(_DASHSCOPE_API_KEY_ENV)
+        from src.config.accessor import get_env_config
+
+        api_key = get_env_config().data.dashscope_api_key
         if not api_key:
             return False
         try:
@@ -54,11 +53,13 @@ class QwenVisionOcrEngine:
     def recognize(self, image: np.ndarray) -> str:
         if not self.is_available():
             raise RuntimeError(
-                f"Qwen-VL OCR requires {_DASHSCOPE_API_KEY_ENV} environment variable"
+                "Qwen-VL OCR requires DASHSCOPE_API_KEY environment variable"
             )
 
         b64 = self._numpy_to_base64(image)
-        model = os.getenv(_MODEL_ENV, _DEFAULT_MODEL)
+        from src.config.accessor import get_env_config
+
+        model = get_env_config().ocr.vibe_trading_ocr_qwen_model or _DEFAULT_MODEL
 
         try:
             response = self._client.chat.completions.create(
