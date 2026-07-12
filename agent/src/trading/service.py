@@ -23,6 +23,7 @@ _SDK_CONNECTOR_MODULES = {
     "dhan": "src.trading.connectors.dhan.sdk",
     "shoonya": "src.trading.connectors.shoonya.sdk",
     "trading212": "src.trading.connectors.trading212.sdk",
+    "mt5": "src.trading.connectors.mt5.sdk",
 }
 
 
@@ -200,6 +201,9 @@ def get_history(
 
 #: Connector → (instrument type, fixed asset class | None). ``None`` asset class
 #: means "infer from the symbol's market" (multi-market equity connectors).
+#: ``mt5`` is deliberately absent: its symbols split into forex pairs vs CFDs,
+#: so classification is per-symbol via ``classify_mt5_symbol`` (see
+#: ``_order_classification``).
 _CONNECTOR_INSTRUMENT = {
     "okx": ("crypto", "crypto"),
     "binance": ("crypto", "crypto"),
@@ -222,6 +226,13 @@ def _order_classification(connector: str, symbol: str):
     non-US class, so the unknown case is fail-safe.
     """
     from src.live.mandate.model import AssetClass, InstrumentType
+
+    if connector == "mt5":
+        from src.trading.connectors.mt5.symbols import classify_mt5_symbol
+
+        # Forex pairs → (FOREX, FOREX); metals/indices/anything else → (CFD,
+        # None), which the mandate admits only via an explicit "cfd" allowance.
+        return classify_mt5_symbol(symbol)
 
     instrument_name, asset_name = _CONNECTOR_INSTRUMENT.get(connector, ("equity", None))
     instrument = InstrumentType(instrument_name)
