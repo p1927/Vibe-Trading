@@ -46,6 +46,10 @@ from src.market_data import (
         ("500325.BO", "yahoo"),  # India BSE (numeric scrip code)
         ("BTC-USDT", "okx"),
         ("ETH/USDT", "ccxt"),
+        ("EUR/USD", "mt5"),  # forex pair → mt5 chain head (registry fallback)
+        ("XAU/USD", "mt5"),  # metals share the forex route
+        ("EURUSD.FX", "mt5"),
+        ("XAUUSD.FX", "mt5"),
         ("local:my_file", "local"),
         ("something_weird", "tushare"),  # documented fallback
     ],

@@ -28,6 +28,12 @@ _SOURCE_PATTERNS = [
     (re.compile(r"^[A-Z0-9&.\-]+\.(NS|BO)$", re.I), "yahoo"),
     (re.compile(r"^[A-Z]+-USDT$", re.I), "okx"),
     (re.compile(r"^[A-Z]+/USDT$", re.I), "ccxt"),
+    # Forex pairs and metals (EUR/USD, XAU/USD, EURUSD.FX). mt5 is the head of
+    # the forex chain and degrades to akshare/yfinance via the registry when no
+    # local MT5 terminal is attached. The 3-letter quote cannot collide with
+    # the 4-letter /USDT crypto rule above.
+    (re.compile(r"^[A-Z]{3}/[A-Z]{3}$", re.I), "mt5"),
+    (re.compile(r"^[A-Z]{6}\.FX$", re.I), "mt5"),
 ]
 
 

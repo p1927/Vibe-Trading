@@ -178,7 +178,9 @@ class TestFallbackChains:
         assert FALLBACK_CHAINS["futures"] == ["tushare", "akshare", "local"]
         assert FALLBACK_CHAINS["fund"] == ["tushare", "akshare", "local"]
         assert FALLBACK_CHAINS["macro"] == ["akshare", "tushare", "local"]
-        assert FALLBACK_CHAINS["forex"] == ["akshare", "yfinance", "local"]
+        # mt5 heads the forex chain (terminal feed when attached), degrading to
+        # the previous chain unchanged.
+        assert FALLBACK_CHAINS["forex"] == ["mt5", "akshare", "yfinance", "local"]
 
 
 # ---------------------------------------------------------------------------
