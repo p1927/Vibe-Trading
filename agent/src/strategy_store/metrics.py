@@ -9,6 +9,17 @@ from __future__ import annotations
 
 from typing import Any
 
+_DECAY_INPUT_KEYS = ("ic_ratio", "rolling_ir", "ic_positive_ratio", "rolling_sharpe")
+
+
+def has_decay_inputs(metrics: dict[str, float | None]) -> bool:
+    """Return True if at least one evaluate_decay input metric is available.
+
+    With all inputs ``None``, ``DecayEvaluator.evaluate_decay`` defaults to
+    HEALTHY — callers should report ``insufficient_data`` instead.
+    """
+    return any(metrics.get(key) is not None for key in _DECAY_INPUT_KEYS)
+
 
 def compute_decay_metrics(
     bench_history: list[Any],

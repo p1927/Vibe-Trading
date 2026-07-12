@@ -172,6 +172,14 @@ class TestInMemoryStore:
         assert art.created_at != ""
         assert art.updated_at != ""
 
+    def test_register_duplicate_name_universe_rejected(self):
+        store = InMemoryStrategyStore()
+        store.register_artifact(_make_artifact())
+        with pytest.raises(ValueError, match="already exists"):
+            store.register_artifact(_make_artifact())
+        # Same name in a different universe is allowed
+        store.register_artifact(_make_artifact(universe="SP500"))
+
     def test_list_artifacts_empty(self):
         store = InMemoryStrategyStore()
         assert store.list_artifacts() == []
@@ -501,6 +509,74 @@ class TestSdmTools:
         assert result["transitions_applied"] == 0
         assert result["summary"]["total_scanned"] == 1
 
+    def test_register_tool_duplicate_rejected(self):
+        """Registering the same (name, universe) twice returns an error."""
+        from src.tools.sdm_register_tool import SdmRegisterTool
+
+        first = json.loads(
+            SdmRegisterTool().execute(
+                artifact_type="factor", name="dup_tool", universe="CSI300"
+            )
+        )
+        assert first["status"] == "ok"
+        second = json.loads(
+            SdmRegisterTool().execute(
+                artifact_type="factor", name="dup_tool", universe="CSI300"
+            )
+        )
+        assert second["status"] == "error"
+        assert "already exists" in second["error"]
+
+    def test_decay_scan_no_evaluable_metrics_insufficient(self):
+        """3+ bench rows with all-None metrics report insufficient_data, not HEALTHY."""
+        from src.tools.sdm_register_tool import SdmRegisterTool
+        from src.tools.sdm_decay_scan_tool import SdmDecayScanTool
+
+        reg = json.loads(
+            SdmRegisterTool().execute(
+                artifact_type="factor", name="metricless", universe="CSI300"
+            )
+        )
+        aid = reg["artifact"]["id"]
+
+        import src.strategy_store._shared as shared
+
+        store = shared._store
+        assert store is not None
+        store.update_status(aid, ArtifactStatus.ACTIVE)
+        for _ in range(5):
+            store.record_bench(BenchResult(artifact_id=aid))
+
+        result = json.loads(SdmDecayScanTool().execute(dry_run=True))
+        assert result["status"] == "ok"
+        assert result["summary"]["insufficient_data"] == 1
+        assert result["summary"].get("healthy", 0) == 0
+
+    def test_status_tool_decay_check_no_evaluable_metrics(self):
+        """decay_check with all-None metrics reports insufficient_data."""
+        from src.tools.sdm_register_tool import SdmRegisterTool
+        from src.tools.sdm_status_tool import SdmStatusTool
+
+        reg = json.loads(
+            SdmRegisterTool().execute(
+                artifact_type="factor", name="metricless2", universe="CSI300"
+            )
+        )
+        aid = reg["artifact"]["id"]
+
+        import src.strategy_store._shared as shared
+
+        store = shared._store
+        assert store is not None
+        for _ in range(4):
+            store.record_bench(BenchResult(artifact_id=aid))
+
+        result = json.loads(
+            SdmStatusTool().execute(action="decay_check", artifact_id=aid)
+        )
+        assert result["status"] == "ok"
+        assert result["signal"] == "insufficient_data"
+
     def test_decay_scan_tool_active_to_monitoring_transition(self):
         """Non-dry-run scan transitions active → monitoring after 3+ warnings."""
         from src.tools.sdm_register_tool import SdmRegisterTool
@@ -594,6 +670,16 @@ class TestSqliteStore:
         assert fetched is not None
         assert fetched.created_at != ""
         assert fetched.updated_at != ""
+
+    def test_register_duplicate_name_universe_rejected(self):
+        """UNIQUE(name, universe) surfaces as a friendly ValueError."""
+        self.store.register_artifact(_make_artifact(name="dup_factor"))
+        with pytest.raises(ValueError, match="already exists"):
+            self.store.register_artifact(_make_artifact(name="dup_factor"))
+        # Same name in a different universe is allowed
+        self.store.register_artifact(
+            _make_artifact(name="dup_factor", universe="SP500")
+        )
 
     def test_list_with_filters(self):
         """List with type/status/universe filters."""

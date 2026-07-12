@@ -8,7 +8,7 @@ from typing import Any
 
 from src.agent.tools import BaseTool
 from src.strategy_store.decay import DecayEvaluator
-from src.strategy_store.metrics import compute_decay_metrics
+from src.strategy_store.metrics import compute_decay_metrics, has_decay_inputs
 from src.strategy_store.models import (
     ArtifactStatus,
     ArtifactType,
@@ -203,6 +203,15 @@ class SdmStatusTool(BaseTool):
             })
 
         metrics = compute_decay_metrics(bench_history)
+        if not has_decay_inputs(metrics):
+            return _ok({
+                "artifact_id": artifact_id,
+                "signal": "insufficient_data",
+                "message": (
+                    f"{len(bench_history)} bench results but no evaluable "
+                    "metric (need ic_mean or sharpe values)"
+                ),
+            })
         evaluator = DecayEvaluator()
 
         signal = evaluator.evaluate_decay(

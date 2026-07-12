@@ -46,10 +46,13 @@ def get_ocr_engine() -> OcrEngine | None:
     """Return the configured OCR engine, or None if unavailable.
 
     Engine selection via VIBE_TRADING_OCR_ENGINE:
-      - "auto" (default): try rapid first, then qwen-vl
+      - "auto" (default): local RapidOCR if installed, else no OCR
       - "rapid": RapidOCR only (local, ONNX)
       - "qwen-vl": Qwen-VL vision model (cloud, DashScope API)
       - "none": disable OCR entirely
+
+    Cloud OCR is never auto-selected: document pages leave the machine, so
+    "qwen-vl" must be an explicit user choice.
     """
     choice = _get_ocr_choice()
     if choice not in _VALID_ENGINES:
@@ -59,23 +62,10 @@ def get_ocr_engine() -> OcrEngine | None:
     if choice == "none":
         return None
 
-    if choice == "rapid":
-        return _try_rapid()
-
     if choice == "qwen-vl":
         return _try_qwen_vl()
 
-    engines_to_try = [(_try_rapid, "rapid"), (_try_qwen_vl, "qwen-vl")]
-    for factory, name in engines_to_try:
-        try:
-            engine = factory()
-            if engine is not None and engine.is_available():
-                logger.info("OCR engine selected: %s", name)
-                return engine
-        except Exception:
-            logger.debug("OCR engine '%s' not available", name, exc_info=True)
-
-    return None
+    return _try_rapid()
 
 
 def _try_rapid() -> OcrEngine | None:
@@ -123,6 +113,7 @@ def get_ocr_install_hint(engine: OcrEngine | None) -> str:
     return (
         "No OCR engine available. Install one of:\n"
         "  1. Local OCR: pip install rapidocr_onnxruntime\n"
-        "  2. Cloud vision: export DASHSCOPE_API_KEY=your_key (uses Qwen-VL)\n"
+        "  2. Cloud vision (pages are sent to DashScope): set "
+        "VIBE_TRADING_OCR_ENGINE=qwen-vl and DASHSCOPE_API_KEY=your_key\n"
         "Or set VIBE_TRADING_OCR_ENGINE=none to disable OCR."
     )

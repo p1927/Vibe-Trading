@@ -307,42 +307,50 @@ class SqliteStrategyStore:
         artifact_id = artifact.id or _new_artifact_id()
         created_at = artifact.created_at or now
 
-        with self._write_transaction():
-            self._conn.execute(
-                """
-                INSERT INTO artifacts (
-                    id, type, name, source_paper, source_url, formula_latex,
-                    theme, columns_required, decay_horizon, signal_definition,
-                    entry_rules, exit_rules, position_sizing, universe,
-                    signal_engine_path, run_dir, hypothesis_id, status,
-                    created_at, updated_at, disabled_at, disabled_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    artifact_id,
-                    artifact.type.value,
-                    artifact.name,
-                    artifact.source_paper,
-                    artifact.source_url,
-                    artifact.formula_latex,
-                    _json_dumps(list(artifact.theme)),
-                    _json_dumps(list(artifact.columns_required)),
-                    artifact.decay_horizon,
-                    artifact.signal_definition,
-                    artifact.entry_rules,
-                    artifact.exit_rules,
-                    artifact.position_sizing,
-                    artifact.universe,
-                    artifact.signal_engine_path,
-                    artifact.run_dir,
-                    artifact.hypothesis_id,
-                    artifact.status.value,
-                    created_at,
-                    now,
-                    artifact.disabled_at,
-                    artifact.disabled_reason,
-                ),
-            )
+        try:
+            with self._write_transaction():
+                self._conn.execute(
+                    """
+                    INSERT INTO artifacts (
+                        id, type, name, source_paper, source_url, formula_latex,
+                        theme, columns_required, decay_horizon, signal_definition,
+                        entry_rules, exit_rules, position_sizing, universe,
+                        signal_engine_path, run_dir, hypothesis_id, status,
+                        created_at, updated_at, disabled_at, disabled_reason
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        artifact_id,
+                        artifact.type.value,
+                        artifact.name,
+                        artifact.source_paper,
+                        artifact.source_url,
+                        artifact.formula_latex,
+                        _json_dumps(list(artifact.theme)),
+                        _json_dumps(list(artifact.columns_required)),
+                        artifact.decay_horizon,
+                        artifact.signal_definition,
+                        artifact.entry_rules,
+                        artifact.exit_rules,
+                        artifact.position_sizing,
+                        artifact.universe,
+                        artifact.signal_engine_path,
+                        artifact.run_dir,
+                        artifact.hypothesis_id,
+                        artifact.status.value,
+                        created_at,
+                        now,
+                        artifact.disabled_at,
+                        artifact.disabled_reason,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            if "artifacts.name" in str(exc):
+                raise ValueError(
+                    f"artifact '{artifact.name}' already exists in "
+                    f"universe '{artifact.universe}'"
+                ) from exc
+            raise
         return artifact_id
 
     @_synchronized

@@ -7,7 +7,7 @@ from typing import Any
 
 from src.agent.tools import BaseTool
 from src.strategy_store.decay import DecayEvaluator
-from src.strategy_store.metrics import compute_decay_metrics
+from src.strategy_store.metrics import compute_decay_metrics, has_decay_inputs
 from src.strategy_store.models import (
     ArtifactStatus,
     ArtifactType,
@@ -110,6 +110,16 @@ class SdmDecayScanTool(BaseTool):
                     continue
 
                 metrics = compute_decay_metrics(bench_history)
+
+                if not has_decay_inputs(metrics):
+                    counts["insufficient_data"] += 1
+                    per_artifact.append({
+                        "artifact_id": artifact.id,
+                        "name": artifact.name,
+                        "signal": "insufficient_data",
+                        "bench_count": len(bench_history),
+                    })
+                    continue
 
                 signal = evaluator.evaluate_decay(
                     ic_ratio=metrics["ic_ratio"],

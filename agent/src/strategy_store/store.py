@@ -162,6 +162,12 @@ class InMemoryStrategyStore:
         Returns:
             The assigned ``artifact_id``.
         """
+        for existing in self._artifacts.values():
+            if existing.name == artifact.name and existing.universe == artifact.universe:
+                raise ValueError(
+                    f"artifact '{artifact.name}' already exists in "
+                    f"universe '{artifact.universe}'"
+                )
         now = _now_iso()
         artifact_id = artifact.id or _new_artifact_id()
         stored = replace(
