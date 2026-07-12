@@ -1190,10 +1190,6 @@ MIT License — see [LICENSE](LICENSE)
 
 ---
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=HKUDS/Vibe-Trading&type=Date)](https://star-history.com/#HKUDS/Vibe-Trading&Date)
-
 <p align="center">
   ⭐ 如果 <b>Vibe-Trading</b> 对你的研究有帮助，点个 Star 让更多人看到它。
 </p>
