@@ -106,6 +106,16 @@ _PROVIDERS: dict[str, ProviderCapabilities] = {
         capture_reasoning=True,
         openrouter_reasoning_body=True,
     ),
+    # Requesty is an OpenAI-compatible LLM gateway using the same
+    # ``provider/model`` naming and the same opt-in ``extra_body.reasoning``
+    # request option as OpenRouter, so it shares OpenRouter's capability shape.
+    "requesty": ProviderCapabilities(
+        "requesty",
+        "REQUESTY_API_KEY",
+        "REQUESTY_BASE_URL",
+        capture_reasoning=True,
+        openrouter_reasoning_body=True,
+    ),
     "deepseek": ProviderCapabilities(
         "deepseek",
         "DEEPSEEK_API_KEY",

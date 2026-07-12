@@ -11,6 +11,7 @@ from cli.onboard import PROVIDERS as ONBOARD_PROVIDERS
 
 EXPECTED_PROVIDER_DEFAULTS = {
     "openrouter": "deepseek/deepseek-v4-pro",
+    "requesty": "openai/gpt-4o-mini",
     "openai": "gpt-5.5",
     "openai-codex": "openai-codex/gpt-5.4",
     "deepseek": "deepseek-v4-pro",
