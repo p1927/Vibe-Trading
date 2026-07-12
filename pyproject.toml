@@ -97,6 +97,12 @@ include = ["src*", "backtest*", "cli*"]
 ibkr = [
     "ib_async>=2.0",
 ]
+mt5 = [
+    # Official Windows-only bridge to a locally running MetaTrader 5 terminal
+    # (broker connector + mt5 data loader). Lazy-imported; on other platforms
+    # the marker makes this a no-op and everything degrades gracefully.
+    "MetaTrader5>=5.0.45; sys_platform == 'win32'",
+]
 deepseek = [
     "langchain-deepseek>=1.0.0,<2",
 ]

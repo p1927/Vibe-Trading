@@ -297,7 +297,7 @@ Most runs follow the same evidence path: route the request, load the right marke
 
 ## 📡 Data Sources & Smart Fallback
 
-One `get_market_data` call, **19 free market-data sources** (plus the optional **QVeris** premium marketplace). Set `source: "auto"` — the loader picks by symbol, then walks a per-market chain ordered by **IP-ban risk**: never-banned public sources first, throttled / key-gated ones last. Zero config, no single point of failure.
+One `get_market_data` call, **20 free market-data sources** (plus the optional **QVeris** premium marketplace). Set `source: "auto"` — the loader picks by symbol, then walks a per-market chain ordered by **IP-ban risk**: never-banned public sources first, throttled / key-gated ones last. Zero config, no single point of failure.
 
 | Source | Markets | Auth | Role |
 |--------|---------|------|------|
@@ -311,6 +311,7 @@ One `get_market_data` call, **19 free market-data sources** (plus the optional *
 | `qveris` | global multi-asset | key · credits | **premium marketplace** — 63+ providers via one key (explicit-only, never in auto fallback) |
 | `okx` · `ccxt` | crypto | none | OKX + 100+ exchanges |
 | `futu` | HK / A | OpenD | optional local FutuOpenD |
+| `mt5` | forex / metals | MT5 terminal | optional local MetaTrader 5 terminal (Windows) — your broker's exact feed, Exness-style symbol suffixes auto-resolved |
 | `india_broker` | India (NSE/BSE) | broker login | read-only Shoonya / Dhan bars for `.NS` / `.BO` (fallback-chain tail) |
 | `local` | any | none | your own CSV / Parquet / DuckDB via `local:` prefix |
 
@@ -320,7 +321,8 @@ One `get_market_data` call, **19 free market-data sources** (plus the optional *
 - **US** → `yahoo` · `stooq` · `sina` · `eastmoney` · `yfinance` · `tiingo` · `fmp` · `finnhub` · `alphavantage` · `akshare` · `local`
 - **HK** → `eastmoney` · `yahoo` · `futu` · `yfinance` · `akshare` · `local`
 - **India (NSE/BSE)** → `yahoo` · `yfinance` · `india_broker` · `local`
-- **Crypto** → `okx` · `ccxt` · `yfinance` · `local` &nbsp;·&nbsp; *(futures / fund / macro / forex → `tushare`/`akshare` → `local`)*
+- **Crypto** → `okx` · `ccxt` · `yfinance` · `local` &nbsp;·&nbsp; *(futures / fund / macro → `tushare`/`akshare` → `local`)*
+- **Forex / metals** → `mt5` · `akshare` · `yfinance` · `local`
 
 Beyond OHLCV, **18 read-only data tools** reach into fundamentals & flow — fund flow, dragon-tiger, northbound, margin, block trades, shareholder count, lockup, sector, research reports, news, SEC filings, financial statements, options chains, institutional holdings, market screening, symbol search, and macro — all exposed over MCP. An explicit `local:` symbol never silently falls back to a network source.
 
@@ -1126,6 +1128,64 @@ The agent exposes connector-scoped tools named `trading_connections`,
 `trading_positions`, `trading_orders`, `trading_quote`, and `trading_history`.
 Live-broker raw MCP tools are not registered directly as `mcp_<broker>_*`.
 No IBKR order-placement tool is registered.
+
+### MetaTrader 5 (Exness and other MT5 brokers)
+
+Connects to a **locally running MT5 terminal** through the official
+`MetaTrader5` package (**Windows-only**):
+
+```bash
+pip install "vibe-trading-ai[mt5]"
+```
+
+Configure `~/.vibe-trading/mt5.json` (created by hand, chmod 600 where
+supported):
+
+```json
+{
+  "login": 12345678,
+  "password": "...",
+  "server": "Exness-MT5Trial8",
+  "symbol_suffix": "m",
+  "max_order_volume": 1.0,
+  "max_order_notional_usd": 10000
+}
+```
+
+Then:
+
+```bash
+vibe-trading connector use mt5-paper-sdk
+vibe-trading connector check
+vibe-trading connector account
+vibe-trading connector quote EURUSD
+vibe-trading connector history EURUSD
+```
+
+| Profile | Account | Orders |
+|---------|---------|--------|
+| `mt5-paper-sdk` | demo | read-only |
+| `mt5-live-sdk-readonly` | real | read-only |
+| `mt5-paper-trade` | demo | direct (connector size guards apply) |
+| `mt5-live-trade` | real | mandate + kill-switch gated |
+
+Safety boundary: **"paper" is the broker's demo account**, verified on every
+call — the terminal echoes `account_info().trade_mode` and the login, so a
+paper profile attached to a real-money account (or vice versa) is hard-rejected.
+MT5 sizes orders in **lots** (1 lot EURUSD = 100,000 EUR); the live mandate
+gate prices lots through the connector's USD sizing hook, and the connector's
+own `max_order_volume` / `max_order_notional_usd` guards apply on demo AND
+live. Note for hedging accounts (the Exness default): an opposite-side order
+**opens a hedge** — close positions by ticket (`trading_cancel_order` with the
+position ticket, or `close_position`), which pins the deal to the position and
+can only reduce exposure. Rollback/halt path: the kill switch blocks new live
+orders; cancels stay available and are audit-logged. Mandate caps are USD;
+non-USD account currencies are margin-enforced broker-side in the account
+currency.
+
+The `mt5` market-data loader (forex fallback-chain head) shares the same
+`mt5.json` — with no file it attaches read-only to the last-used, logged-in
+terminal.
 
 ### Config reference
 
