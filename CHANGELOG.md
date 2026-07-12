@@ -6,10 +6,31 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Strategy Development Manager** skill (#457, thanks @shadowinlife, closes
+  #455) — `sdm_register` / `sdm_status` / `sdm_decay_scan` turn academic
+  papers and broker research into registered factors/strategies with a
+  persistent SQLite artifact store (`UNIQUE(name, universe)`) and automated
+  IC/Sharpe decay monitoring driving an active → monitoring → decayed →
+  disabled lifecycle. Pluggable OCR for `read_document` (local RapidOCR by
+  default; cloud Qwen-VL is explicit opt-in only via
+  `VIBE_TRADING_OCR_ENGINE=qwen-vl`, never auto-selected). Skills: 86 → **87**.
+- **Requesty** as an OpenAI-compatible LLM gateway provider (#474, thanks
+  @Thibaultjaigu) — same `provider/model` naming and capability shape as
+  OpenRouter, wired through CLI onboarding, provider menu, and Settings.
+- Binance USD-M perpetual routing, slice 1 of #462 (#470, thanks @honginp) —
+  explicit `BTC-USDT-PERP` symbol contract with execution/mark price
+  separation, fail-closed when the two aren't timestamp-synchronized.
 
 ### Changed
+- Correlation tab accepts bare tickers like `AAPL,SPY` and walks the full
+  loader fallback chain instead of failing with `Fetched: []` (#472, thanks
+  @yxhuang, closes #471).
+- `local` loader honors the requested interval via OHLCV resampling instead
+  of silently returning daily bars (#467, thanks @Shizoqua).
 
 ### Fixed
+- FastMCP transport imports work across both module layouts (#469, thanks
+  @roberttidball).
 
 ## [0.1.11] — 2026-07-11
 
