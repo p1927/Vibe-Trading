@@ -4,6 +4,8 @@ Solves, per rebalance date::
 
     min  -w'mu + lambda * w'Sigma w + gamma * ||w - w_prev||_1
     s.t. w >= 0, sum(w) = 1
+         w_i <= max_per_name                          (per-name cap)
+         sum_{i in group_g} w_i <= max_per_group[g]   (per-group cap)
 
 where ``w_prev`` is the weight vector applied at the previous rebalance,
 restricted to the current active set (assets absent last time have prior
@@ -25,7 +27,7 @@ instantiate ``TurnoverAwareOptimizer`` directly.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -40,6 +42,9 @@ class TurnoverAwareOptimizer(BaseOptimizer):
         risk_aversion: Weight on the variance term (lambda).
         turnover_penalty: Weight on the L1 turnover term (gamma). 0 reduces to
             the mean-variance baseline.
+        max_per_name: Per-asset weight cap (None = no limit).
+        groups: Asset-code → group-name mapping for per-group caps.
+        max_per_group: Group-name → maximum total weight for that group.
         realized_turnover: Per-rebalance realized turnover collected during
             ``optimize`` (``0.5 * ||w_t - w_{t-1}||_1``).
     """
@@ -49,11 +54,17 @@ class TurnoverAwareOptimizer(BaseOptimizer):
         lookback: int = 60,
         risk_aversion: float = 1.0,
         turnover_penalty: float = 0.0,
+        max_per_name: Optional[float] = None,
+        groups: Optional[Dict[str, str]] = None,
+        max_per_group: Optional[Dict[str, float]] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(lookback=lookback, **kwargs)
         self.risk_aversion = float(risk_aversion)
         self.turnover_penalty = float(turnover_penalty)
+        self.max_per_name = float(max_per_name) if max_per_name is not None else None
+        self.groups: Dict[str, str] = dict(groups) if groups else {}
+        self.max_per_group: Dict[str, float] = dict(max_per_group) if max_per_group else {}
         self._prev: Dict[str, float] = {}
         self.realized_turnover: List[float] = []
 
@@ -88,13 +99,40 @@ class TurnoverAwareOptimizer(BaseOptimizer):
             turn = np.abs(w - w_prev).sum()
             return -ret + lam * var + gamma * turn
 
+        # --- bounds: per-name cap ---
+        upper = 1.0
+        if self.max_per_name is not None:
+            upper = min(1.0, float(self.max_per_name))
+        bounds = [(0.0, upper)] * n
+
+        # --- constraints: simplex + per-group caps ---
+        constraints: list = [
+            {"type": "eq", "fun": lambda w: w.sum() - 1.0},
+        ]
+
+        group_indices: Dict[str, List[int]] = {}
+        if self.groups and self.max_per_group:
+            for i, code in enumerate(active):
+                g = self.groups.get(code)
+                if g is not None:
+                    group_indices.setdefault(g, []).append(i)
+            for g, cap in self.max_per_group.items():
+                indices = group_indices.get(g, [])
+                if not indices:
+                    continue
+                cap = float(cap)
+                constraints.append({
+                    "type": "ineq",
+                    "fun": lambda w, idx=indices, c=cap: c - w[np.array(idx)].sum(),
+                })
+
         x0 = w_prev if w_prev.sum() > 1e-12 else self._equal_weight(n)
         result = minimize(
             objective,
             x0,
             method="SLSQP",
-            bounds=[(0.0, 1.0)] * n,
-            constraints={"type": "eq", "fun": lambda w: w.sum() - 1.0},
+            bounds=bounds,
+            constraints=constraints,
             options={"maxiter": 200, "ftol": 1e-10},
         )
 
@@ -120,10 +158,16 @@ def optimize(
     lookback: int = 60,
     risk_aversion: float = 1.0,
     turnover_penalty: float = 0.0,
+    max_per_name: Optional[float] = None,
+    groups: Optional[Dict[str, str]] = None,
+    max_per_group: Optional[Dict[str, float]] = None,
 ) -> pd.DataFrame:
     """Module-level entry: turnover-penalized mean-variance positions."""
     return TurnoverAwareOptimizer(
         lookback=lookback,
         risk_aversion=risk_aversion,
         turnover_penalty=turnover_penalty,
+        max_per_name=max_per_name,
+        groups=groups,
+        max_per_group=max_per_group,
     ).optimize(ret, pos, dates)
