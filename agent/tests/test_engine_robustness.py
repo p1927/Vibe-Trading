@@ -355,6 +355,31 @@ class TestBacktestConfigSchema:
                 source="bloomberg",
             )
 
+    @pytest.mark.parametrize("initial_cash", [0, -1, -1_000_000])
+    def test_non_positive_initial_cash_rejected(self, initial_cash: float) -> None:
+        """A non-positive initial_cash makes returns divide by <= 0 and yields
+        inf/NaN metrics; reject it at the config boundary."""
+        with pytest.raises(Exception, match="initial_cash"):
+            BacktestConfigSchema(
+                codes=["AAPL.US"],
+                start_date="2025-01-01",
+                end_date="2025-06-01",
+                initial_cash=initial_cash,
+            )
+
+    def test_initial_cash_defaults_and_accepts_positive(self) -> None:
+        default = BacktestConfigSchema(
+            codes=["AAPL.US"], start_date="2025-01-01", end_date="2025-06-01"
+        )
+        assert default.initial_cash == 1_000_000
+        explicit = BacktestConfigSchema(
+            codes=["AAPL.US"],
+            start_date="2025-01-01",
+            end_date="2025-06-01",
+            initial_cash=50_000,
+        )
+        assert explicit.initial_cash == 50_000
+
     def test_mootdx_and_futu_sources_accepted(self) -> None:
         """mootdx and futu are registered loaders, so config validation must
         accept them. Regression: ``_VALID_SOURCES`` drifted and rejected both

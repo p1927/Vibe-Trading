@@ -9,6 +9,9 @@ Validates:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -19,6 +22,7 @@ from backtest.validation import (
     monte_carlo_test,
     run_validation,
     walk_forward_analysis,
+    write_validation_json,
 )
 
 
@@ -238,3 +242,47 @@ class TestRunValidation:
         result = run_validation(config, eq, trades, 1_000_000)
         assert "bootstrap" in result
         assert "monte_carlo" not in result
+
+
+# ---------------------------------------------------------------------------
+# Strict validation.json writer
+# ---------------------------------------------------------------------------
+
+
+def _strict_json_load(text: str):
+    """Parse ``text`` rejecting non-RFC-8259 NaN/Infinity tokens."""
+
+    def _reject(value: str):
+        raise ValueError(f"non-strict JSON constant: {value}")
+
+    return json.loads(text, parse_constant=_reject)
+
+
+class TestWriteValidationJson:
+    def test_non_finite_metric_written_as_null(self, tmp_path: Path) -> None:
+        """A non-finite metric must be serialized as null, not a bare
+        NaN/Infinity token that strict JSON parsers reject."""
+        out = tmp_path / "artifacts" / "validation.json"
+        results = {
+            "monte_carlo": {
+                "actual_sharpe": float("inf"),
+                "p_value_sharpe": float("nan"),
+                "n_trades": 3,
+            }
+        }
+        written = write_validation_json(out, results)
+
+        text = out.read_text(encoding="utf-8")
+        assert "NaN" not in text
+        assert "Infinity" not in text
+        parsed = _strict_json_load(text)  # must not raise
+        assert parsed["monte_carlo"]["actual_sharpe"] is None
+        assert parsed["monte_carlo"]["p_value_sharpe"] is None
+        assert parsed["monte_carlo"]["n_trades"] == 3
+        assert written["monte_carlo"]["actual_sharpe"] is None
+
+    def test_creates_parent_dir(self, tmp_path: Path) -> None:
+        out = tmp_path / "does" / "not" / "exist" / "validation.json"
+        write_validation_json(out, {"ok": 1.0})
+        assert out.is_file()
+        assert _strict_json_load(out.read_text(encoding="utf-8")) == {"ok": 1.0}
