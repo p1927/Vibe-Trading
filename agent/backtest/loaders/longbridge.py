@@ -14,8 +14,8 @@ historical bars are identical regardless of source account.
 
 The LongPort ``history_candlesticks_by_date`` endpoint caps responses at
 ~1000 bars per call. Date ranges longer than ~4 years of daily bars are
-automatically split into sequential 180-day windows so full history is
-retrieved without silent truncation.
+automatically split into sequential 180-day windows. Requests wider than the
+bounded window budget fail explicitly instead of returning truncated history.
 
 This module is for backtest data only; live trading uses the separate
 ``src.trading.connectors.longbridge.sdk`` module.
@@ -47,7 +47,6 @@ _INTERVAL_MAP: dict[str, str] = {
     "1M": "Month",
     "1H": "Min_60",
     "1h": "Min_60",
-    "4h": "Min_60",  # LongPort has no 4H; closest is 60M
     "1m": "Min_1",
     "5m": "Min_5",
     "15m": "Min_15",
@@ -76,7 +75,7 @@ def _require_longbridge():
     except ImportError as exc:
         raise LongbridgeDependencyError(
             "The 'longbridge' SDK is not installed. "
-            "Run: pip install longbridge"
+            "Run: pip install 'vibe-trading-ai[longbridge]'"
         ) from exc
     return openapi
 
@@ -107,12 +106,24 @@ def _to_longport_period(interval: str):
     """Map a project interval string to a LongPort ``Period`` enum value.
 
     Lazy-imports the SDK so this module can be imported without it installed.
-    Unknown intervals fall back to ``Day``.
+    Unsupported intervals fail explicitly so requested bar fidelity is never
+    changed silently.
     """
     openapi = _require_longbridge()
     period_cls = getattr(openapi, "Period")
-    attr = _INTERVAL_MAP.get(interval.strip(), "Day")
-    return getattr(period_cls, attr, getattr(period_cls, "Day"))
+    token = interval.strip()
+    attr = _INTERVAL_MAP.get(token)
+    if attr is None:
+        raise NoAvailableSourceError(
+            f"unsupported Longbridge interval: {interval!r}; "
+            f"supported intervals: {sorted(_INTERVAL_MAP)}"
+        )
+    try:
+        return getattr(period_cls, attr)
+    except AttributeError as exc:
+        raise NoAvailableSourceError(
+            f"installed Longbridge SDK does not expose Period.{attr}"
+        ) from exc
 
 
 def _date_windows(start: dt.date, end: dt.date) -> list[tuple[dt.date, dt.date]]:
@@ -122,6 +133,14 @@ def _date_windows(start: dt.date, end: dt.date) -> list[tuple[dt.date, dt.date]]
     Each window spans at most ``_MAX_WINDOW_DAYS`` days. Windows are capped
     at ``_MAX_WINDOWS`` so a pathological request cannot loop forever.
     """
+    requested_days = (end - start).days + 1
+    maximum_days = _MAX_WINDOW_DAYS * _MAX_WINDOWS
+    if requested_days > maximum_days:
+        raise NoAvailableSourceError(
+            f"Longbridge date range spans {requested_days} days and exceeds "
+            f"the {maximum_days}-day window limit"
+        )
+
     windows: list[tuple[dt.date, dt.date]] = []
     cursor = start
     while cursor <= end and len(windows) < _MAX_WINDOWS:
@@ -161,9 +180,10 @@ def _normalize_frame(bars: list[Any]) -> pd.DataFrame:
     result.index.name = "trade_date"
     result = result[_OHLCV_COLUMNS].copy()
 
-    # Standardise to timezone-naive (LongPort returns UTC timestamps).
+    # Standardise to timezone-naive UTC. Aware timestamps may be represented
+    # in an exchange timezone by SDK versions even when the instant is UTC.
     if isinstance(result.index, pd.DatetimeIndex) and result.index.tz is not None:
-        result.index = result.index.tz_localize(None)
+        result.index = result.index.tz_convert("UTC").tz_localize(None)
 
     result = result.dropna(subset=["open", "high", "low", "close"])
     result["volume"] = result["volume"].fillna(0.0)
@@ -193,21 +213,14 @@ class LongbridgeLoader:
     def is_available(self) -> bool:
         """Return True if the LongPort SDK is installed and credentials exist.
 
-        Performs a lightweight probe (``candlesticks`` for ``AAPL.US``) to
-        validate the credentials and connectivity.
+        Availability checks are side-effect free: they validate configured
+        credentials and SDK importability without consuming quote API quota.
         """
         if not (self._app_key and self._app_secret and self._access_token):
             return False
         try:
-            openapi = _require_longbridge()
-            cfg = openapi.Config(
-                self._app_key, self._app_secret, self._access_token,
-            )
-            ctx = openapi.QuoteContext(cfg)
-            # Lightweight probe — validates token + connectivity.
-            # AAPL.US is the most universally available LongPort symbol.
-            bars = ctx.candlesticks("AAPL.US", openapi.Period.Day, 1, openapi.AdjustType.NoAdjust)
-            return bars is not None
+            _require_longbridge()
+            return True
         except Exception:
             return False
 
@@ -265,6 +278,13 @@ class LongbridgeLoader:
         if not pending:
             return results
 
+        if not (self._app_key and self._app_secret and self._access_token):
+            raise NoAvailableSourceError(
+                "Longbridge credentials are not configured; set "
+                "LONGBRIDGE_APP_KEY, LONGBRIDGE_APP_SECRET, and "
+                "LONGBRIDGE_ACCESS_TOKEN"
+            )
+
         openapi = _require_longbridge()
         try:
             cfg = openapi.Config(
@@ -305,12 +325,10 @@ class LongbridgeLoader:
                         elif bars is not None:
                             all_bars.append(bars)
                     except Exception as exc:
-                        logger.warning(
-                            "LongPort history_candlesticks_by_date failed for %s "
-                            "%s..%s: %s",
-                            lp_symbol, w_start, w_end, exc,
-                        )
-                        continue
+                        raise NoAvailableSourceError(
+                            "incomplete Longbridge history for "
+                            f"{lp_symbol}: window {w_start}..{w_end} failed: {exc}"
+                        ) from exc
 
                 if not all_bars:
                     logger.warning(
