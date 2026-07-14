@@ -55,9 +55,18 @@ class WriteFileTool(BaseTool):
                 },
                 ensure_ascii=False,
             )
-        content = kwargs.get("content")
+        content = next(
+            (kwargs[key] for key in ("content", "text", "data") if kwargs.get(key) is not None),
+            None,
+        )
         if content is None:
-            content = kwargs.get("text", kwargs.get("data", ""))
+            return json.dumps(
+                {
+                    "status": "error",
+                    "error": "missing required argument 'content' (string): the file content to write",
+                },
+                ensure_ascii=False,
+            )
         run_dir = kwargs.get("run_dir")
 
         try:
