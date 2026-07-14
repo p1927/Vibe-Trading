@@ -222,7 +222,10 @@ def calc_metrics(
         ann_ret = -1.0
     else:
         ann_ret = float(growth ** (bpy / max(n, 1)) - 1)
-    vol = float(port_ret.std())
+    # ``Series.std()`` uses ddof=1, so a single-observation return series
+    # (e.g. a one-bar backtest) yields NaN and poisons the Sharpe ratio.
+    # Guard the small sample the same way ``downside_std`` is guarded below.
+    vol = float(port_ret.std()) if len(port_ret) > 1 else 0.0
     sharpe = float(port_ret.mean() / (vol + 1e-10) * np.sqrt(bpy))
 
     # Drawdown
@@ -252,7 +255,9 @@ def calc_metrics(
         bench_return = float((1 + bench_ret).prod() - 1)
         excess = total_ret - bench_return
         active_ret = port_ret - bench_ret.reindex(port_ret.index).fillna(0.0)
-        active_std = float(active_ret.std())
+        # Same ddof=1 small-sample guard as ``vol`` / ``downside_std`` so the
+        # information ratio stays finite for a single-observation series.
+        active_std = float(active_ret.std()) if len(active_ret) > 1 else 0.0
         ir = float(active_ret.mean() / (active_std + 1e-10) * np.sqrt(bpy))
 
     return {
