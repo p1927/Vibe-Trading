@@ -96,6 +96,20 @@ class TestMonteCarlo:
         result = monte_carlo_test(trades, 1_000_000)
         assert "error" in result
 
+    @pytest.mark.parametrize("n_simulations", [0, -1, -100])
+    def test_non_positive_simulations_errors(self, n_simulations: int) -> None:
+        """A non-positive n_simulations must not raise (was ZeroDivisionError)."""
+        trades = _make_trades([100, -50, 200, -30, 150])
+        result = monte_carlo_test(trades, 1_000_000, n_simulations=n_simulations)
+        assert "error" in result
+        assert result["p_value_sharpe"] == 1.0
+
+    def test_negative_seed_errors(self) -> None:
+        """A negative seed must not raise (default_rng rejects it)."""
+        trades = _make_trades([100, -50, 200, -30, 150])
+        result = monte_carlo_test(trades, 1_000_000, n_simulations=10, seed=-1)
+        assert "error" in result
+
     def test_reproducibility(self) -> None:
         trades = _make_trades([100, -50, 200, -30, 150, -80])
         r1 = monte_carlo_test(trades, 1_000_000, n_simulations=100, seed=42)
@@ -135,6 +149,26 @@ class TestBootstrapSharpe:
     def test_too_few_observations(self) -> None:
         eq = pd.Series([100, 101, 102], index=pd.bdate_range("2025-01-01", periods=3))
         result = bootstrap_sharpe_ci(eq, n_bootstrap=100)
+        assert "error" in result
+
+    @pytest.mark.parametrize("n_bootstrap", [0, -1, -50])
+    def test_non_positive_bootstrap_errors(self, n_bootstrap: int) -> None:
+        """A non-positive n_bootstrap must not raise (was IndexError from percentile)."""
+        eq = _make_equity(100)
+        result = bootstrap_sharpe_ci(eq, n_bootstrap=n_bootstrap)
+        assert "error" in result
+
+    @pytest.mark.parametrize("confidence", [0.0, 1.0, 1.5, -0.2])
+    def test_confidence_out_of_range_errors(self, confidence: float) -> None:
+        """A confidence outside (0, 1) must not raise (was percentile ValueError)."""
+        eq = _make_equity(100)
+        result = bootstrap_sharpe_ci(eq, confidence=confidence, n_bootstrap=100)
+        assert "error" in result
+
+    def test_negative_seed_errors(self) -> None:
+        """A negative seed must not raise (default_rng rejects it)."""
+        eq = _make_equity(100)
+        result = bootstrap_sharpe_ci(eq, n_bootstrap=10, seed=-1)
         assert "error" in result
 
     def test_reproducibility(self) -> None:
@@ -202,6 +236,18 @@ class TestWalkForward:
     def test_too_few_bars(self) -> None:
         eq = pd.Series([100, 101], index=pd.bdate_range("2025-01-01", periods=2))
         result = walk_forward_analysis(eq, [], n_windows=5)
+        assert "error" in result
+
+    @pytest.mark.parametrize("n_windows", [0, -1, -3])
+    def test_non_positive_windows_errors(self, n_windows: int) -> None:
+        """A non-positive n_windows must not raise or silently return garbage.
+
+        n_windows=0 raised ZeroDivisionError; a negative value silently returned
+        an empty ``windows`` list with a NaN ``return_mean`` and a negative
+        ``consistency_rate``.
+        """
+        eq = _make_equity(100)
+        result = walk_forward_analysis(eq, [], n_windows=n_windows)
         assert "error" in result
 
 

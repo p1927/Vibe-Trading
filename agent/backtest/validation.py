@@ -46,6 +46,13 @@ def monte_carlo_test(
         Dict with actual_sharpe, p_value_sharpe, actual_max_dd,
         p_value_max_dd, simulated_sharpes (percentiles).
     """
+    if n_simulations < 1:
+        return {
+            "error": f"n_simulations must be >= 1, got {n_simulations}",
+            "p_value_sharpe": 1.0,
+        }
+    if seed < 0:
+        return {"error": f"seed must be >= 0, got {seed}", "p_value_sharpe": 1.0}
     if len(trades) < 3:
         return {"error": "need at least 3 trades", "p_value_sharpe": 1.0}
 
@@ -116,6 +123,13 @@ def bootstrap_sharpe_ci(
         Dict with observed_sharpe, ci_lower, ci_upper, median_sharpe,
         prob_positive (fraction of samples with Sharpe > 0).
     """
+    if n_bootstrap < 1:
+        return {"error": f"n_bootstrap must be >= 1, got {n_bootstrap}"}
+    if not 0.0 < confidence < 1.0:
+        return {"error": f"confidence must be in (0, 1), got {confidence}"}
+    if seed < 0:
+        return {"error": f"seed must be >= 0, got {seed}"}
+
     returns = equity_curve.pct_change().dropna().values
     if len(returns) < 5:
         return {"error": "need at least 5 return observations"}
@@ -172,6 +186,8 @@ def walk_forward_analysis(
     Returns:
         Dict with per_window stats, consistency metrics.
     """
+    if n_windows < 1:
+        return {"error": f"n_windows must be >= 1, got {n_windows}"}
     if len(equity_curve) < n_windows * 2:
         return {"error": f"need at least {n_windows * 2} bars for {n_windows} windows"}
 
