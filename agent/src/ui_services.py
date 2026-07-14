@@ -460,7 +460,8 @@ def reconstruct_price_series(run_dir: Path) -> List[Dict[str, Any]]:
     fetch_start_date = _compute_fetch_start_date(run_dir, start_date)
 
     try:
-        source = context.get("source", "tushare")
+        config_data = load_json_file(run_dir / "config.json") or {}
+        source = str(config_data.get("source") or "tushare")
         if source == "okx":
             from backtest.loaders.okx import DataLoader
         elif source == "yfinance":
