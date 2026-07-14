@@ -516,21 +516,63 @@ class BaseEngine(ABC):
         for i, ts in enumerate(dates):
             self._bar_idx = i
 
-            # a. Per-bar hooks (funding fees, liquidation checks)
+            # a. Value the book at prices observable when orders execute.
+            # Rebalances happen at the bar open, so using close_df[ts] here
+            # would let the yet-unknown decision-bar close affect order size.
+            equity = self._calc_open_equity(data_map, close_df, ts)
+            target_weights: Dict[str, Optional[float]] = {}
+            for c in codes:
+                try:
+                    target_weights[c] = (
+                        float(target_pos.at[ts, c]) if ts in target_pos.index else 0.0
+                    )
+                except Exception as exc:
+                    target_weights[c] = None
+                    logger.warning("Target weight failed for %s at %s: %s", c, ts, exc)
+
+            # b. Release capital before opening replacement positions.  A
+            # single mixed close/open pass makes rotations depend on symbol
+            # iteration order when the new name is visited before the old one.
+            for c in codes:
+                target_w = target_weights[c]
+                current_pos = self.positions.get(c)
+                if target_w is None or current_pos is None:
+                    continue
+                target_dir = 1 if target_w > 1e-9 else (-1 if target_w < -1e-9 else 0)
+                if target_dir == 0 or target_dir != current_pos.direction:
+                    try:
+                        self._rebalance(c, 0.0, data_map.get(c), ts, equity)
+                    except Exception as exc:
+                        logger.warning(
+                            "Rebalance close failed for %s at %s: %s", c, ts, exc
+                        )
+
+            # c. Open target positions only after the close pass.  If a close
+            # was blocked by market rules, do not open the opposite side.
+            for c in codes:
+                target_w = target_weights[c]
+                if target_w is None:
+                    continue
+                target_dir = 1 if target_w > 1e-9 else (-1 if target_w < -1e-9 else 0)
+                current_pos = self.positions.get(c)
+                if current_pos is not None and (
+                    target_dir == 0 or target_dir != current_pos.direction
+                ):
+                    continue
+                try:
+                    self._rebalance(c, target_w, data_map.get(c), ts, equity)
+                except Exception as exc:
+                    logger.warning("Rebalance open failed for %s at %s: %s", c, ts, exc)
+
+            # d. Apply close/within-bar hooks after open execution.  Hooks use
+            # the current bar's close for funding, swaps, and liquidation, so
+            # running them first could liquidate a position that was scheduled
+            # to exit at the open (or charge a position before it was opened).
             for c in codes:
                 if ts in data_map[c].index:
                     self.on_bar(c, data_map[c].loc[ts], ts)
 
-            # b. Rebalance each symbol to target weight
-            equity = self._calc_equity(close_df, ts)
-            for c in codes:
-                try:
-                    target_w = float(target_pos.at[ts, c]) if ts in target_pos.index else 0.0
-                    self._rebalance(c, target_w, data_map.get(c), ts, equity)
-                except Exception as exc:
-                    logger.warning("Rebalance failed for %s at %s: %s", c, ts, exc)
-
-            # c. Record equity snapshot
+            # e. Record equity snapshot
             snap_equity = self._calc_equity(close_df, ts)
             if self.positions and type(self)._calc_pnl is BaseEngine._calc_pnl:
                 _syms = list(self.positions.keys())
@@ -554,12 +596,48 @@ class BaseEngine(ABC):
                 positions=len(self.positions),
             ))
 
-        # d. Force close all remaining positions
+        # f. Force close all remaining positions
         if len(dates) > 0:
             last_ts = dates[-1]
             for c in list(self.positions.keys()):
                 price = self._safe_price(close_df, last_ts, c, self.positions[c].entry_price)
                 self._close_position(c, price, last_ts, "end_of_backtest")
+
+    def _calc_open_equity(
+        self,
+        data_map: Dict[str, pd.DataFrame],
+        close_df: pd.DataFrame,
+        ts: pd.Timestamp,
+    ) -> float:
+        """Value current positions at the execution bar's observable open.
+
+        For a symbol that has a bar at ``ts``, its open is the mark available
+        when next-bar-open orders execute.  Symbols without a bar on the
+        unified calendar retain the aligned close fallback, which is the most
+        recent price carried by ``_align``.
+        """
+        if not self.positions:
+            return self.capital
+
+        equity = self.capital
+        for sym, pos in self.positions.items():
+            current_price = self._safe_price(close_df, ts, sym, pos.entry_price)
+            frame = data_map.get(sym)
+            if frame is not None and ts in frame.index:
+                open_price = frame.loc[ts].get("open")
+                if (
+                    open_price is not None
+                    and pd.notna(open_price)
+                    and float(open_price) > 0
+                ):
+                    current_price = float(open_price)
+
+            margin = self._calc_margin(sym, pos.size, pos.entry_price, pos.leverage)
+            unrealized = self._calc_pnl(
+                sym, pos.direction, pos.size, pos.entry_price, current_price
+            )
+            equity += margin + unrealized
+        return equity
 
     def _calc_equity(self, close_df: pd.DataFrame, ts: pd.Timestamp) -> float:
         """Total equity = free cash + sum(margin + unrealised) per position.
