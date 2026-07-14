@@ -558,8 +558,23 @@ class BaseEngine(ABC):
         if len(dates) > 0:
             last_ts = dates[-1]
             for c in list(self.positions.keys()):
-                price = self._safe_price(close_df, last_ts, c, self.positions[c].entry_price)
-                self._close_position(c, price, last_ts, "end_of_backtest")
+                pos = self.positions[c]
+                mark_price = self._safe_price(close_df, last_ts, c, pos.entry_price)
+                self._active_symbol = c
+                exit_price = self.apply_slippage(mark_price, -pos.direction)
+                self._close_position(c, exit_price, last_ts, "end_of_backtest")
+
+            # The final snapshot feeds metrics and artifacts.  Replace its
+            # pre-liquidation mark with post-liquidation cash so terminal
+            # slippage and exit commission are reflected in reported equity.
+            if self.equity_snapshots:
+                self.equity_snapshots[-1] = EquitySnapshot(
+                    timestamp=last_ts,
+                    capital=self.capital,
+                    unrealized=0.0,
+                    equity=self.capital,
+                    positions=0,
+                )
 
     def _calc_equity(self, close_df: pd.DataFrame, ts: pd.Timestamp) -> float:
         """Total equity = free cash + sum(margin + unrealised) per position.

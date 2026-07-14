@@ -52,6 +52,8 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   @roberttidball).
 - Portfolio optimizers no longer include the decision bar's close-to-close
   return in weights executed at that bar's open (#487, thanks @YZY0108).
+- End-of-backtest liquidations now apply exit slippage and include their
+  commission in the final reported equity.
 - Preflight (`vibe-trading run`) no longer resolves provider/model against a
   stale `EnvConfig` snapshot cached before dotenv loads (#479, thanks
   @ananaymital, closes #477).
