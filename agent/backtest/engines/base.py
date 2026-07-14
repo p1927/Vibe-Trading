@@ -35,6 +35,7 @@ from backtest.metrics import (
     by_exit_reason_stats,
     by_symbol_stats,
     calc_metrics,
+    calc_trade_turnover_series,
 )
 from backtest.models import EquitySnapshot, Position, TradeRecord
 
@@ -462,7 +463,16 @@ class BaseEngine(ABC):
         bench_equity = self.initial_capital * (1 + bench_ret).cumprod()
 
         # 6. Metrics
-        m = calc_metrics(equity_series, self.trades, self.initial_capital, bars_per_year, bench_ret, target_pos)
+        realized_turnover = calc_trade_turnover_series(self.trades, equity_series)
+        m = calc_metrics(
+            equity_series,
+            self.trades,
+            self.initial_capital,
+            bars_per_year,
+            bench_ret,
+            target_pos,
+            turnover_series=realized_turnover,
+        )
         m.update(benchmark_metadata)
         m["by_symbol"] = by_symbol_stats(self.trades)
         m["by_exit_reason"] = by_exit_reason_stats(self.trades)
@@ -688,6 +698,7 @@ class BaseEngine(ABC):
 
         pnl = self._calc_pnl(symbol, pos.direction, pos.size, pos.entry_price, exit_price)
         margin = self._calc_margin(symbol, pos.size, pos.entry_price, pos.leverage)
+        exit_margin = self._calc_margin(symbol, pos.size, exit_price, pos.leverage)
         pnl_pct = pnl / margin * 100 if margin > 1e-9 else 0.0
         exit_comm = self.calc_commission(pos.size, exit_price, pos.direction, is_open=False)
 
@@ -709,6 +720,8 @@ class BaseEngine(ABC):
             exit_reason=reason,
             holding_bars=holding_bars,
             commission=pos.entry_commission + exit_comm,
+            entry_margin=margin,
+            exit_margin=exit_margin,
         ))
 
     # ── Artifacts ──

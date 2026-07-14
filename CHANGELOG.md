@@ -52,6 +52,8 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   @roberttidball).
 - Portfolio optimizers no longer include the decision bar's close-to-close
   return in weights executed at that bar's open (#487, thanks @YZY0108).
+- Backtest turnover metrics now use actual filled and rounded position sizes;
+  targets rejected by market rules no longer inflate reported turnover.
 - Preflight (`vibe-trading run`) no longer resolves provider/model against a
   stale `EnvConfig` snapshot cached before dotenv loads (#479, thanks
   @ananaymital, closes #477).
