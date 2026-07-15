@@ -355,3 +355,106 @@ class _FakeNoOpClient:
                     })()
             completions = _Completions()
         self.chat = _Chat()
+
+
+# ---------------------------------------------------------------------------
+# Backward compatibility aliases (Issue #547)
+# ---------------------------------------------------------------------------
+
+
+class TestBackwardCompatAliases:
+    """Backward compatibility for deprecated engine names and env vars."""
+
+    def test_qwen_vl_alias_maps_to_llm_vision(self, monkeypatch, caplog):
+        """VIBE_TRADING_OCR_ENGINE=qwen-vl should alias to llm-vision with a deprecation warning."""
+        monkeypatch.setenv("VIBE_TRADING_OCR_ENGINE", "qwen-vl")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("LANGCHAIN_PROVIDER", "openai")
+        monkeypatch.setenv("LANGCHAIN_MODEL_NAME", "gpt-4o")
+        reset_env_config()
+
+        with caplog.at_level("WARNING", logger="src.tools.ocr.engine"):
+            engine = ocr_engine.get_ocr_engine()
+
+        # Should be aliased to llm-vision (cloud engine)
+        assert engine is not None
+        assert engine.name == "llm-vision"
+
+        # Should emit deprecation warning
+        assert any(
+            "deprecated" in rec.message and "qwen-vl" in rec.message
+            for rec in caplog.records
+        )
+
+    def test_qwen_vl_alias_not_in_engines_dict(self):
+        """Confirm 'qwen-vl' is not a registered engine name (only an alias)."""
+        engines = ocr_engine._all_engines()
+        assert "qwen-vl" not in engines
+        assert "llm-vision" in engines
+
+    def test_legacy_env_var_alias(self, monkeypatch, caplog):
+        """VIBE_TRADING_OCR_QWEN_MODEL should alias to VIBE_TRADING_OCR_LLM_MODEL with deprecation warning."""
+        monkeypatch.setenv("VIBE_TRADING_OCR_ENGINE", "llm-vision")
+        monkeypatch.setenv("LANGCHAIN_PROVIDER", "openai")
+        monkeypatch.setenv("LANGCHAIN_MODEL_NAME", "gpt-4o")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        # Legacy env var
+        monkeypatch.setenv("VIBE_TRADING_OCR_QWEN_MODEL", "qwen-vl-plus-legacy")
+        # New env var NOT set
+        monkeypatch.delenv("VIBE_TRADING_OCR_LLM_MODEL", raising=False)
+        reset_env_config()
+
+        from src.tools.ocr.llm_vision_ocr import _resolve_provider_config
+
+        with caplog.at_level("WARNING"):
+            config = _resolve_provider_config()
+
+        # Should pick up the legacy env var as the model override
+        assert config["model"] == "qwen-vl-plus-legacy"
+
+    def test_new_env_var_takes_precedence_over_legacy(self, monkeypatch):
+        """When both old and new env vars are set, the new one wins without warning."""
+        monkeypatch.setenv("VIBE_TRADING_OCR_ENGINE", "llm-vision")
+        monkeypatch.setenv("LANGCHAIN_PROVIDER", "openai")
+        monkeypatch.setenv("LANGCHAIN_MODEL_NAME", "gpt-4o")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        monkeypatch.setenv("VIBE_TRADING_OCR_QWEN_MODEL", "qwen-old")
+        monkeypatch.setenv("VIBE_TRADING_OCR_LLM_MODEL", "gpt-4o-new")
+        reset_env_config()
+
+        from src.tools.ocr.llm_vision_ocr import _resolve_provider_config
+
+        config = _resolve_provider_config()
+        assert config["model"] == "gpt-4o-new"
+
+    def test_unknown_provider_no_ollama_fallback(self, monkeypatch):
+        """Unknown provider without API key should NOT fall back to 'ollama' literal."""
+        monkeypatch.setenv("VIBE_TRADING_OCR_ENGINE", "llm-vision")
+        monkeypatch.setenv("LANGCHAIN_PROVIDER", "unknown-provider-xyz")
+        monkeypatch.setenv("LANGCHAIN_MODEL_NAME", "some-model")
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        reset_env_config()
+
+        from src.tools.ocr.llm_vision_ocr import _resolve_provider_config
+
+        config = _resolve_provider_config()
+        # Should be empty string, NOT "ollama"
+        assert config["api_key"] != "ollama"
+        # is_available() should return False because empty api_key
+        from src.tools.ocr.llm_vision_ocr import LlmVisionOcrEngine
+
+        engine = LlmVisionOcrEngine()
+        assert engine.is_available() is False
+
+    def test_ollama_provider_keeps_placeholder_key(self, monkeypatch):
+        """Ollama provider should still use 'ollama' placeholder when no OPENAI_API_KEY set."""
+        monkeypatch.setenv("VIBE_TRADING_OCR_ENGINE", "llm-vision")
+        monkeypatch.setenv("LANGCHAIN_PROVIDER", "ollama")
+        monkeypatch.setenv("LANGCHAIN_MODEL_NAME", "llava-1.5-7b")
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        reset_env_config()
+
+        from src.tools.ocr.llm_vision_ocr import _resolve_provider_config
+
+        config = _resolve_provider_config()
+        assert config["api_key"] == "ollama"

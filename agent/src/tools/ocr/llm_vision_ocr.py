@@ -112,7 +112,15 @@ def _resolve_provider_config() -> dict[str, str]:
     if key_env is not None:
         api_key = os.getenv(key_env, "") or os.getenv("OPENAI_API_KEY", "")  # noqa: env-gate
     else:
-        api_key = os.getenv("OPENAI_API_KEY", "") or "ollama"  # noqa: env-gate
+        # Provider unknown to provider_env_names() — fall back to OPENAI_API_KEY.
+        # Ollama (a local no-auth provider) uses "ollama" as a placeholder key
+        # because the OpenAI SDK requires non-empty api_key even for no-auth
+        # endpoints. For any other provider, empty string is correct (the user
+        # must configure it explicitly via OPENAI_API_KEY).
+        if provider == "ollama":
+            api_key = os.getenv("OPENAI_API_KEY", "") or "ollama"  # noqa: env-gate
+        else:
+            api_key = os.getenv("OPENAI_API_KEY", "")  # noqa: env-gate
 
     base_url = (
         (os.getenv(base_env, "") if base_env else "")  # noqa: env-gate

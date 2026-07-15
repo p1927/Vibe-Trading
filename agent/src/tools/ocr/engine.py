@@ -23,6 +23,13 @@ _ENTRY_POINT_GROUP = "vibe_trading.ocr_engines"
 # Built-in engine registry
 _BUILTIN_ENGINES: dict[str, type] = {}
 
+# Backward compatibility aliases (Issue #547)
+# Old engine names are mapped to new names with a deprecation warning.
+# Entries are read from env before engine lookup so existing configs keep working.
+_CHOICE_ALIASES: dict[str, str] = {
+    "qwen-vl": "llm-vision",  # removed DashScope-locked engine
+}
+
 
 @runtime_checkable
 class OcrEngine(Protocol):
@@ -120,6 +127,15 @@ def get_ocr_engine() -> OcrEngine | None:
     Plugins override built-in engines on name collision.
     """
     choice = _get_ocr_choice()
+    # Apply backward compat aliases (Issue #547)
+    if choice in _CHOICE_ALIASES:
+        new_name = _CHOICE_ALIASES[choice]
+        logger.warning(
+            "OCR engine '%s' is deprecated; use '%s' instead. "
+            "Alias will be removed in a future release.",
+            choice, new_name,
+        )
+        choice = new_name
     engines = _all_engines()
 
     if choice == "none":
