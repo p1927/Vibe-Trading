@@ -586,16 +586,23 @@ class BaseEngine(ABC):
                     open_targets.append((c, target_w, data_map.get(c)))
 
             def _plans(scale: float) -> list[_OpenOrder]:
-                return [
-                    order
-                    for c, target_w, frame in open_targets
-                    if (
-                        order := self._plan_open_order(
+                result: list[_OpenOrder] = []
+                for c, target_w, frame in open_targets:
+                    try:
+                        order = self._plan_open_order(
                             c, target_w * scale, frame, ts, equity
                         )
-                    )
-                    is not None
-                ]
+                    except Exception as exc:
+                        logger.warning(
+                            "Rebalance open plan failed for %s at %s: %s",
+                            c,
+                            ts,
+                            exc,
+                        )
+                        continue
+                    if order is not None:
+                        result.append(order)
+                return result
 
             planned = _plans(1.0)
             if sum(order.cost for order in planned) > self.capital + 1e-9:
