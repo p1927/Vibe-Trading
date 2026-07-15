@@ -360,11 +360,12 @@ def _parse_run_dir(argv: List[str]) -> Path:
 
 def _json_safe(value: Any) -> Any:
     """Return a JSON-strict copy of validation results."""
+    if isinstance(value, np.ndarray):
+        return [_json_safe(item) for item in value.tolist()]
+    if isinstance(value, np.generic):
+        return _json_safe(value.item())
     if isinstance(value, float):
         return value if math.isfinite(value) else None
-    if isinstance(value, np.floating):
-        as_float = float(value)
-        return as_float if math.isfinite(as_float) else None
     if isinstance(value, dict):
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
