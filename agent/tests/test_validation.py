@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from backtest.models import TradeRecord
 from backtest.validation import (
@@ -99,6 +100,21 @@ class TestMonteCarlo:
         result = monte_carlo_test(trades, 1_000_000)
         assert "error" in result
 
+    @pytest.mark.parametrize("n_simulations", [0, -1, -100, 1.5, "10", True])
+    def test_invalid_simulations_errors(self, n_simulations: object) -> None:
+        """A non-positive n_simulations must not raise (was ZeroDivisionError)."""
+        trades = _make_trades([100, -50, 200, -30, 150])
+        result = monte_carlo_test(trades, 1_000_000, n_simulations=n_simulations)
+        assert "error" in result
+        assert result["p_value_sharpe"] == 1.0
+
+    @pytest.mark.parametrize("seed", [-1, 1.5, "42", True])
+    def test_invalid_seed_errors(self, seed: object) -> None:
+        """An invalid seed must not escape as an opaque numpy error."""
+        trades = _make_trades([100, -50, 200, -30, 150])
+        result = monte_carlo_test(trades, 1_000_000, n_simulations=10, seed=seed)
+        assert "error" in result
+
     def test_reproducibility(self) -> None:
         trades = _make_trades([100, -50, 200, -30, 150, -80])
         r1 = monte_carlo_test(trades, 1_000_000, n_simulations=100, seed=42)
@@ -138,6 +154,27 @@ class TestBootstrapSharpe:
     def test_too_few_observations(self) -> None:
         eq = pd.Series([100, 101, 102], index=pd.bdate_range("2025-01-01", periods=3))
         result = bootstrap_sharpe_ci(eq, n_bootstrap=100)
+        assert "error" in result
+
+    @pytest.mark.parametrize("n_bootstrap", [0, -1, -50, 1.5, "10", True])
+    def test_invalid_bootstrap_errors(self, n_bootstrap: object) -> None:
+        """A non-positive n_bootstrap must not raise (was IndexError from percentile)."""
+        eq = _make_equity(100)
+        result = bootstrap_sharpe_ci(eq, n_bootstrap=n_bootstrap)
+        assert "error" in result
+
+    @pytest.mark.parametrize("confidence", [0.0, 1.0, 1.5, -0.2, float("inf"), float("nan"), "0.95", True])
+    def test_invalid_confidence_errors(self, confidence: object) -> None:
+        """A confidence outside (0, 1) must not raise (was percentile ValueError)."""
+        eq = _make_equity(100)
+        result = bootstrap_sharpe_ci(eq, confidence=confidence, n_bootstrap=100)
+        assert "error" in result
+
+    @pytest.mark.parametrize("seed", [-1, 1.5, "42", True])
+    def test_invalid_seed_errors(self, seed: object) -> None:
+        """An invalid seed must not escape as an opaque numpy error."""
+        eq = _make_equity(100)
+        result = bootstrap_sharpe_ci(eq, n_bootstrap=10, seed=seed)
         assert "error" in result
 
     def test_reproducibility(self) -> None:
@@ -207,6 +244,18 @@ class TestWalkForward:
         result = walk_forward_analysis(eq, [], n_windows=5)
         assert "error" in result
 
+    @pytest.mark.parametrize("n_windows", [0, -1, -3, 1.5, "5", True])
+    def test_invalid_windows_errors(self, n_windows: object) -> None:
+        """A non-positive n_windows must not raise or silently return garbage.
+
+        n_windows=0 raised ZeroDivisionError; a negative value silently returned
+        an empty ``windows`` list with a NaN ``return_mean`` and a negative
+        ``consistency_rate``.
+        """
+        eq = _make_equity(100)
+        result = walk_forward_analysis(eq, [], n_windows=n_windows)
+        assert "error" in result
+
 
 # ---------------------------------------------------------------------------
 # run_validation dispatcher
@@ -241,6 +290,28 @@ class TestRunValidation:
         result = run_validation(config, eq, trades, 1_000_000)
         assert "bootstrap" in result
         assert "monte_carlo" not in result
+
+    @pytest.mark.parametrize(
+        ("section", "field", "value"),
+        [
+            ("monte_carlo", "n_simulations", "10"),
+            ("monte_carlo", "seed", 1.5),
+            ("bootstrap", "n_bootstrap", True),
+            ("bootstrap", "confidence", float("inf")),
+            ("walk_forward", "n_windows", "5"),
+        ],
+    )
+    def test_malformed_nested_config_returns_error(
+        self, section: str, field: str, value: object
+    ) -> None:
+        """Raw nested config values fail visibly instead of raising."""
+        result = run_validation(
+            {"validation": {section: {field: value}}},
+            _make_equity(100),
+            _make_trades([100, -50, 200]),
+            1_000_000,
+        )
+        assert "error" in result[section]
 
 
 # ---------------------------------------------------------------------------
