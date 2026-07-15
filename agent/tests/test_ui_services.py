@@ -3,19 +3,21 @@
 from __future__ import annotations
 
 import json
-import sys
-import types
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
 
+import backtest.runner as runner
 from src.ui_services import reconstruct_price_series
 
 
-def test_reconstruct_price_series_preserves_configured_source(
+@pytest.mark.parametrize("source", ["yahoo", "auto"])
+def test_reconstruct_price_series_uses_central_fetch_router(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    source: str,
 ) -> None:
     run_dir = tmp_path / "completed-run"
     (run_dir / "code").mkdir(parents=True)
@@ -41,44 +43,105 @@ def test_reconstruct_price_series_preserves_configured_source(
                 "codes": ["BTC-USDT"],
                 "start_date": "2026-01-01",
                 "end_date": "2026-01-02",
-                "source": "okx",
+                "source": source,
+                "interval": "1H",
             }
         ),
         encoding="utf-8",
     )
 
-    selected_sources: list[str] = []
+    routed_configs: list[dict] = []
+    frame = pd.DataFrame(
+        {
+            "open": [1.0],
+            "high": [1.0],
+            "low": [1.0],
+            "close": [1.0],
+            "volume": [1.0],
+        },
+        index=pd.DatetimeIndex([pd.Timestamp("2026-01-01")]),
+    )
 
-    def install_loader(source: str) -> None:
-        module = types.ModuleType(f"backtest.loaders.{source}")
+    def fake_fetch_data_map(config: dict) -> SimpleNamespace:
+        routed_configs.append(config)
+        return SimpleNamespace(data_map={"BTC-USDT": frame})
 
-        class StubLoader:
-            def fetch(self, codes, start_date, end_date):
-                selected_sources.append(source)
-                index = pd.DatetimeIndex([pd.Timestamp("2026-01-01")])
-                return {
-                    codes[0]: pd.DataFrame(
-                        {
-                            "open": [1.0],
-                            "high": [1.0],
-                            "low": [1.0],
-                            "close": [1.0],
-                            "volume": [1.0],
-                        },
-                        index=index,
-                    )
-                }
-
-        module.DataLoader = StubLoader
-        monkeypatch.setitem(sys.modules, module.__name__, module)
-
-    install_loader("okx")
-    install_loader("tushare")
-    llm_module = types.ModuleType("src.providers.llm")
-    llm_module._ensure_dotenv = lambda: None
-    monkeypatch.setitem(sys.modules, llm_module.__name__, llm_module)
+    monkeypatch.setattr(runner, "fetch_data_map", fake_fetch_data_map)
 
     rows = reconstruct_price_series(run_dir)
 
-    assert selected_sources == ["okx"]
+    assert routed_configs[0]["source"] == source
+    assert routed_configs[0]["interval"] == "1H"
+    assert routed_configs[0]["codes"] == ["BTC-USDT"]
     assert rows[0]["code"] == "BTC-USDT"
+
+
+def test_fetch_data_map_uses_registry_for_nonlegacy_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple] = []
+    frame = pd.DataFrame(
+        {"open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0]},
+        index=pd.DatetimeIndex([pd.Timestamp("2026-01-01")]),
+    )
+
+    class StubLoader:
+        name = "yahoo"
+
+        def fetch(self, codes, start_date, end_date, **kwargs):
+            calls.append((codes, start_date, end_date, kwargs))
+            return {codes[0]: frame}
+
+    monkeypatch.setattr(runner, "_get_loader", lambda source: StubLoader)
+    config = {
+        "codes": ["AAPL.US"],
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-02",
+        "source": "yahoo",
+        "interval": "1H",
+    }
+    original = dict(config)
+
+    result = runner.fetch_data_map(config)
+
+    assert config == original
+    assert calls == [
+        (
+            ["AAPL.US"],
+            "2026-01-01",
+            "2026-01-02",
+            {"fields": None, "interval": "1H"},
+        )
+    ]
+    assert result.source == "yahoo"
+    assert result.effective_sources == ["yahoo"]
+    assert list(result.data_map) == ["AAPL.US"]
+
+
+def test_fetch_data_map_delegates_auto_routing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame = pd.DataFrame(
+        {"open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0]},
+        index=pd.DatetimeIndex([pd.Timestamp("2026-01-01")]),
+    )
+    calls: list[tuple[list[str], dict, str]] = []
+
+    def fake_fetch_auto(codes: list[str], config: dict, interval: str) -> dict:
+        calls.append((codes, config, interval))
+        return {"AAPL.US": frame}
+
+    monkeypatch.setattr(runner, "_fetch_auto", fake_fetch_auto)
+    config = {
+        "codes": ["AAPL.US"],
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-02",
+        "source": "auto",
+        "interval": "1D",
+    }
+
+    result = runner.fetch_data_map(config)
+
+    assert calls == [(["AAPL.US"], config, "1D")]
+    assert result.source == "auto"
+    assert result.effective_sources == ["yfinance"]
