@@ -212,8 +212,10 @@ class TestExposureCaps:
         w = opt._calc_weights(ctx)  # should not raise
         assert w.sum() == pytest.approx(1.0)
 
-    @pytest.mark.parametrize("cap", [0, -0.1, 1.1, float("inf"), float("nan")])
-    def test_invalid_per_name_cap_rejected(self, cap: float) -> None:
+    @pytest.mark.parametrize(
+        "cap", [0, -0.1, 1.1, float("inf"), float("nan"), True, np.bool_(True)]
+    )
+    def test_invalid_per_name_cap_rejected(self, cap: object) -> None:
         with pytest.raises(ValueError, match="max_per_name"):
             TurnoverAwareOptimizer(max_per_name=cap)
 
@@ -221,6 +223,13 @@ class TestExposureCaps:
         with pytest.raises(ValueError, match="no mapped assets"):
             TurnoverAwareOptimizer(
                 groups={"A0": "tech"}, max_per_group={"finance": 0.5}
+            )
+
+    @pytest.mark.parametrize("cap", [True, np.bool_(False)])
+    def test_boolean_group_cap_rejected(self, cap: object) -> None:
+        with pytest.raises(ValueError, match="not boolean"):
+            TurnoverAwareOptimizer(
+                groups={"A0": "tech"}, max_per_group={"tech": cap}
             )
 
     def test_infeasible_per_name_cap_fails_closed(self) -> None:

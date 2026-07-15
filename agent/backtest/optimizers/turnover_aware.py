@@ -62,6 +62,8 @@ class TurnoverAwareOptimizer(BaseOptimizer):
         super().__init__(lookback=lookback, **kwargs)
         self.risk_aversion = float(risk_aversion)
         self.turnover_penalty = float(turnover_penalty)
+        if isinstance(max_per_name, (bool, np.bool_)):
+            raise ValueError("max_per_name must be numeric, not boolean")
         self.max_per_name = float(max_per_name) if max_per_name is not None else None
         self.groups: Dict[str, str] = dict(groups) if groups else {}
         self.max_per_group: Dict[str, float] = dict(max_per_group) if max_per_group else {}
@@ -78,6 +80,8 @@ class TurnoverAwareOptimizer(BaseOptimizer):
                 + ", ".join(sorted(unknown_groups))
             )
         for group, cap in self.max_per_group.items():
+            if isinstance(cap, (bool, np.bool_)):
+                raise ValueError(f"cap for group {group!r} must be numeric, not boolean")
             try:
                 numeric_cap = float(cap)
             except (TypeError, ValueError) as exc:
