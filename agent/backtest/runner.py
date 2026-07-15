@@ -8,6 +8,7 @@ Usage: ``python -m backtest.runner <run_dir>``
 """
 
 import ast
+import copy
 import importlib.util
 import inspect
 import json
@@ -1071,6 +1072,7 @@ def fetch_data_map(config: dict) -> DataFetchResult:
     Returns:
         Data and effective routing metadata. The input config is not mutated.
     """
+    config = copy.deepcopy(config)
     source = str(config.get("source") or "tushare")
     codes = list(config.get("codes") or [])
     interval = str(config.get("interval") or "1D")

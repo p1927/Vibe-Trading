@@ -118,6 +118,35 @@ def test_fetch_data_map_uses_registry_for_nonlegacy_source(
     assert list(result.data_map) == ["AAPL.US"]
 
 
+def test_fetch_data_map_does_not_expose_config_mutables_to_loader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame = pd.DataFrame(
+        {"open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0]},
+        index=pd.DatetimeIndex([pd.Timestamp("2026-01-01")]),
+    )
+
+    class MutatingLoader:
+        name = "tushare"
+
+        def fetch(self, codes, start_date, end_date, **kwargs):
+            kwargs["fields"].append("injected")
+            return {codes[0]: frame}
+
+    monkeypatch.setattr(runner, "_get_loader", lambda source: MutatingLoader)
+    config = {
+        "codes": ["000001.SZ"],
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-02",
+        "source": "tushare",
+        "extra_fields": ["amount"],
+    }
+
+    runner.fetch_data_map(config)
+
+    assert config["extra_fields"] == ["amount"]
+
+
 def test_fetch_data_map_delegates_auto_routing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
