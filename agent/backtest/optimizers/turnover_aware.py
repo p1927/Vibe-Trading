@@ -158,28 +158,41 @@ class TurnoverAwareOptimizer(BaseOptimizer):
                     "fun": lambda w, idx=indices, c=cap: c - w[np.array(idx)].sum(),
                 })
 
-        # Groups are a single label per asset, so their caps are disjoint.
-        # Build a feasible simplex point directly instead of running a second
-        # optimizer before SLSQP: each bucket receives weight proportional to
-        # its capacity, then splits it evenly across its members.
-        buckets: list[tuple[List[int], float]] = []
-        capped_indices: set[int] = set()
-        for indices, cap in zip(group_constraint_indices, group_caps):
-            capacity = min(cap, len(indices) * upper)
-            buckets.append((indices, capacity))
-            capped_indices.update(indices)
-        uncapped = [i for i in range(n) if i not in capped_indices]
-        if uncapped:
-            buckets.append((uncapped, len(uncapped) * upper))
-        total_capacity = sum(capacity for _, capacity in buckets)
-        if total_capacity < 1.0 - 1e-12:
-            raise ValueError(
-                "exposure caps are infeasible for active assets "
-                f"{active}: total capacity is {total_capacity:.6g}"
+        has_effective_caps = upper < 1.0 or any(cap < 1.0 for cap in group_caps)
+        if not has_effective_caps:
+            x0 = w_prev if w_prev.sum() > 1e-12 else self._equal_weight(n)
+        elif (
+            np.isfinite(w_prev).all()
+            and (w_prev >= 0.0).all()
+            and abs(w_prev.sum() - 1.0) <= 1e-12
+            and (w_prev <= upper + 1e-12).all()
+            and all(
+                row @ w_prev <= cap + 1e-12
+                for row, cap in zip(group_rows, group_caps)
             )
-        x0 = np.zeros(n)
-        for indices, capacity in buckets:
-            x0[indices] = capacity / total_capacity / len(indices)
+        ):
+            x0 = w_prev
+        else:
+            # Groups are a single label per asset, so their caps are disjoint.
+            # Allocate each bucket by capacity to obtain a feasible simplex point.
+            buckets: list[tuple[List[int], float]] = []
+            capped_indices: set[int] = set()
+            for indices, cap in zip(group_constraint_indices, group_caps):
+                capacity = min(cap, len(indices) * upper)
+                buckets.append((indices, capacity))
+                capped_indices.update(indices)
+            uncapped = [i for i in range(n) if i not in capped_indices]
+            if uncapped:
+                buckets.append((uncapped, len(uncapped) * upper))
+            total_capacity = sum(capacity for _, capacity in buckets)
+            if total_capacity < 1.0 - 1e-12:
+                raise ValueError(
+                    "exposure caps are infeasible for active assets "
+                    f"{active}: total capacity is {total_capacity:.6g}"
+                )
+            x0 = np.zeros(n)
+            for indices, capacity in buckets:
+                x0[indices] = capacity / total_capacity / len(indices)
 
         result = minimize(
             objective,

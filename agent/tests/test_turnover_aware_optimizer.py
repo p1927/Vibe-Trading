@@ -171,6 +171,25 @@ class TestExposureCaps:
         assert (w_capped <= 0.3 + 1e-6).all()
         assert (w_free <= 1.0 + 1e-6).all()
 
+    def test_uncapped_second_rebalance_starts_from_previous_weights(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scipy import optimize as scipy_optimize
+
+        real_minimize = scipy_optimize.minimize
+        initial_weights: list[np.ndarray] = []
+
+        def capture_initial_weights(fun, x0, *args, **kwargs):
+            initial_weights.append(np.asarray(x0, dtype=float).copy())
+            return real_minimize(fun, x0, *args, **kwargs)
+
+        monkeypatch.setattr(scipy_optimize, "minimize", capture_initial_weights)
+        optimizer = TurnoverAwareOptimizer(turnover_penalty=0.5)
+        first_weights = optimizer._calc_weights(self._ctx())
+        optimizer._calc_weights(self._ctx())
+
+        np.testing.assert_array_equal(initial_weights[-1], first_weights)
+
     def test_tight_per_name_cap_spreads_weights(self) -> None:
         n = 10
         ctx = self._ctx(n_assets=n)
