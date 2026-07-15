@@ -52,6 +52,8 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   @roberttidball).
 - Portfolio optimizers no longer include the decision bar's close-to-close
   return in weights executed at that bar's open (#487, thanks @YZY0108).
+- Backtest turnover metrics now use actual filled and rounded position sizes;
+  targets rejected by market rules no longer inflate reported turnover.
 - End-of-backtest liquidations now apply exit slippage and include their
   commission in the final reported equity.
 - Open-price rebalances no longer use the decision bar's close for sizing or
