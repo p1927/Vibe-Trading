@@ -189,7 +189,8 @@ def calc_trade_turnover_series(
         equity_curve: Portfolio equity used to normalize traded values.
 
     Returns:
-        Per-bar realized turnover aligned to ``equity_curve``.
+        Per-bar realized turnover aligned to ``equity_curve``. Bars without
+        fills are zero and remain part of the average-turnover denominator.
     """
     if equity_curve is None or equity_curve.empty:
         return pd.Series(dtype=float)
