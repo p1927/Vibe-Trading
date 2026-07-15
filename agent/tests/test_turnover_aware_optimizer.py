@@ -205,12 +205,49 @@ class TestExposureCaps:
 
     def test_empty_group_skipped_safely(self) -> None:
         ctx = self._ctx()
-        groups: dict = {}
+        groups = {"NOT_ACTIVE": "nonexistent"}
         opt = TurnoverAwareOptimizer(
             groups=groups, max_per_group={"nonexistent": 0.1}
         )
         w = opt._calc_weights(ctx)  # should not raise
         assert w.sum() == pytest.approx(1.0)
+
+    @pytest.mark.parametrize("cap", [0, -0.1, 1.1, float("inf"), float("nan")])
+    def test_invalid_per_name_cap_rejected(self, cap: float) -> None:
+        with pytest.raises(ValueError, match="max_per_name"):
+            TurnoverAwareOptimizer(max_per_name=cap)
+
+    def test_unknown_group_cap_rejected(self) -> None:
+        with pytest.raises(ValueError, match="no mapped assets"):
+            TurnoverAwareOptimizer(
+                groups={"A0": "tech"}, max_per_group={"finance": 0.5}
+            )
+
+    def test_infeasible_per_name_cap_fails_closed(self) -> None:
+        with pytest.raises(ValueError, match="infeasible"):
+            TurnoverAwareOptimizer(max_per_name=0.19)._calc_weights(self._ctx())
+
+    def test_infeasible_active_group_cap_fails_closed(self) -> None:
+        ctx = self._ctx(n_assets=2)
+        groups = {"A0": "tech", "A1": "tech", "NOT_ACTIVE": "other"}
+        with pytest.raises(ValueError, match="infeasible"):
+            TurnoverAwareOptimizer(
+                groups=groups,
+                max_per_group={"tech": 0.5, "other": 0.5},
+            )._calc_weights(ctx)
+
+    def test_solver_failure_does_not_return_equal_weight(self, monkeypatch) -> None:
+        from scipy import optimize as scipy_optimize
+
+        monkeypatch.setattr(
+            scipy_optimize,
+            "minimize",
+            lambda *args, **kwargs: type(
+                "FailedResult", (), {"success": False, "message": "forced failure"}
+            )(),
+        )
+        with pytest.raises(RuntimeError, match="forced failure"):
+            TurnoverAwareOptimizer(max_per_name=0.3)._calc_weights(self._ctx())
 
     def test_no_caps_unchanged(self) -> None:
         ctx = self._ctx()

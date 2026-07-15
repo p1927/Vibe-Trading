@@ -65,6 +65,26 @@ class TurnoverAwareOptimizer(BaseOptimizer):
         self.max_per_name = float(max_per_name) if max_per_name is not None else None
         self.groups: Dict[str, str] = dict(groups) if groups else {}
         self.max_per_group: Dict[str, float] = dict(max_per_group) if max_per_group else {}
+        if self.max_per_name is not None and (
+            not np.isfinite(self.max_per_name) or not 0.0 < self.max_per_name <= 1.0
+        ):
+            raise ValueError("max_per_name must be finite and in (0, 1]")
+        if any(not isinstance(code, str) or not isinstance(group, str) for code, group in self.groups.items()):
+            raise ValueError("groups must map string asset codes to string group names")
+        unknown_groups = set(self.max_per_group) - set(self.groups.values())
+        if unknown_groups:
+            raise ValueError(
+                "max_per_group references groups with no mapped assets: "
+                + ", ".join(sorted(unknown_groups))
+            )
+        for group, cap in self.max_per_group.items():
+            try:
+                numeric_cap = float(cap)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"cap for group {group!r} must be numeric") from exc
+            if not np.isfinite(numeric_cap) or not 0.0 < numeric_cap <= 1.0:
+                raise ValueError(f"cap for group {group!r} must be finite and in (0, 1]")
+            self.max_per_group[group] = numeric_cap
         self._prev: Dict[str, float] = {}
         self.realized_turnover: List[float] = []
 
@@ -109,6 +129,9 @@ class TurnoverAwareOptimizer(BaseOptimizer):
         constraints: list = [
             {"type": "eq", "fun": lambda w: w.sum() - 1.0},
         ]
+        group_rows: list[np.ndarray] = []
+        group_caps: list[float] = []
+        group_constraint_indices: list[List[int]] = []
 
         group_indices: Dict[str, List[int]] = {}
         if self.groups and self.max_per_group:
@@ -121,12 +144,39 @@ class TurnoverAwareOptimizer(BaseOptimizer):
                 if not indices:
                     continue
                 cap = float(cap)
+                row = np.zeros(n)
+                row[indices] = 1.0
+                group_rows.append(row)
+                group_caps.append(cap)
+                group_constraint_indices.append(indices)
                 constraints.append({
                     "type": "ineq",
                     "fun": lambda w, idx=indices, c=cap: c - w[np.array(idx)].sum(),
                 })
 
-        x0 = w_prev if w_prev.sum() > 1e-12 else self._equal_weight(n)
+        # Groups are a single label per asset, so their caps are disjoint.
+        # Build a feasible simplex point directly instead of running a second
+        # optimizer before SLSQP: each bucket receives weight proportional to
+        # its capacity, then splits it evenly across its members.
+        buckets: list[tuple[List[int], float]] = []
+        capped_indices: set[int] = set()
+        for indices, cap in zip(group_constraint_indices, group_caps):
+            capacity = min(cap, len(indices) * upper)
+            buckets.append((indices, capacity))
+            capped_indices.update(indices)
+        uncapped = [i for i in range(n) if i not in capped_indices]
+        if uncapped:
+            buckets.append((uncapped, len(uncapped) * upper))
+        total_capacity = sum(capacity for _, capacity in buckets)
+        if total_capacity < 1.0 - 1e-12:
+            raise ValueError(
+                "exposure caps are infeasible for active assets "
+                f"{active}: total capacity is {total_capacity:.6g}"
+            )
+        x0 = np.zeros(n)
+        for indices, capacity in buckets:
+            x0[indices] = capacity / total_capacity / len(indices)
+
         result = minimize(
             objective,
             x0,
@@ -136,7 +186,17 @@ class TurnoverAwareOptimizer(BaseOptimizer):
             options={"maxiter": 200, "ftol": 1e-10},
         )
 
-        weights = self._normalize(result.x) if result.success else self._equal_weight(n)
+        if not result.success:
+            raise RuntimeError(f"turnover-aware optimization failed: {result.message}")
+        weights = np.maximum(np.asarray(result.x, dtype=float), 0.0)
+        weights /= weights.sum()
+        if (
+            not np.isfinite(weights).all()
+            or abs(weights.sum() - 1.0) > 1e-7
+            or weights.max() > upper + 1e-7
+            or any(row @ weights > cap + 1e-7 for row, cap in zip(group_rows, group_caps))
+        ):
+            raise RuntimeError("optimizer returned weights that violate exposure caps")
         self._record_turnover(active, weights)
         return weights
 
