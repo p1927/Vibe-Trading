@@ -50,8 +50,11 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - Explicit `source: local` backtests now route US/HK equities to the
   global-equity engine instead of the crypto default, and explicit benchmarks
-  are fetched through the configured source's loader (yfinance remains the
-  fallback), keeping offline runs offline (#550).
+  are fetched through the configured source's loader — `local` fails closed
+  (no yfinance fallback) so offline runs stay offline (#550).
+- Loading `.env` now invalidates an `EnvConfig` singleton cached during early
+  CLI imports, so the welcome panel, `/settings`, and dotenv diagnostic report
+  the configured provider and model consistently (#541).
 - FastMCP transport imports work across both module layouts (#469, thanks
   @roberttidball).
 - Portfolio optimizers no longer include the decision bar's close-to-close
