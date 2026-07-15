@@ -66,7 +66,7 @@ class BacktestConfigSchema(BaseModel):
     # Returns divide by initial_cash, so a non-positive value yields inf/NaN
     # metrics (total_return, annual_return, ...). Reject it at the config
     # boundary instead of letting the run produce non-finite results.
-    initial_cash: float = Field(default=1_000_000, gt=0)
+    initial_cash: float = Field(default=1_000_000, gt=0, allow_inf_nan=False)
     fundamental_fields: Optional[Dict[str, List[str]]] = None
     event_feeds: Optional[List[Dict[str, Any]]] = None
 

@@ -355,8 +355,12 @@ class TestBacktestConfigSchema:
                 source="bloomberg",
             )
 
-    @pytest.mark.parametrize("initial_cash", [0, -1, -1_000_000])
-    def test_non_positive_initial_cash_rejected(self, initial_cash: float) -> None:
+    @pytest.mark.parametrize(
+        "initial_cash", [0, -1, -1_000_000, float("inf"), float("-inf"), float("nan"), "Infinity"]
+    )
+    def test_non_finite_or_non_positive_initial_cash_rejected(
+        self, initial_cash: object
+    ) -> None:
         """A non-positive initial_cash makes returns divide by <= 0 and yields
         inf/NaN metrics; reject it at the config boundary."""
         with pytest.raises(Exception, match="initial_cash"):
@@ -585,19 +589,35 @@ class TestValidationArtifactDir:
         assert not (run_dir / "artifacts").exists()
 
         engine = ChinaAEngine({"initial_cash": 1_000_000})
-        metrics = engine.run_backtest(
-            {
-                "codes": ["000001.SZ"],
-                "start_date": "2024-04-01",
-                "end_date": "2024-04-30",
-                "source": "tushare",
-                "initial_cash": 1_000_000,
-                "validation": {"bootstrap": {"n_bootstrap": 20, "seed": 1}},
-            },
-            FakeLoader(),
-            SignalEngine(),
-            run_dir,
-        )
+        non_finite = {
+            "bootstrap": {
+                "observed_sharpe": float("inf"),
+                "median_sharpe": float("nan"),
+            }
+        }
+        with patch("backtest.validation.run_validation", return_value=non_finite):
+            metrics = engine.run_backtest(
+                {
+                    "codes": ["000001.SZ"],
+                    "start_date": "2024-04-01",
+                    "end_date": "2024-04-30",
+                    "source": "tushare",
+                    "initial_cash": 1_000_000,
+                    "validation": {"bootstrap": {"n_bootstrap": 20, "seed": 1}},
+                },
+                FakeLoader(),
+                SignalEngine(),
+                run_dir,
+            )
 
         assert "validation" in metrics
-        assert (run_dir / "artifacts" / "validation.json").exists()
+        validation_path = run_dir / "artifacts" / "validation.json"
+        parsed = json.loads(
+            validation_path.read_text(encoding="utf-8"),
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"non-strict JSON constant: {value}")
+            ),
+        )
+        assert parsed == {
+            "bootstrap": {"observed_sharpe": None, "median_sharpe": None}
+        }
