@@ -48,6 +48,9 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   of silently returning daily bars (#467, thanks @Shizoqua).
 
 ### Fixed
+- Loading `.env` now invalidates an `EnvConfig` singleton cached during early
+  CLI imports, so the welcome panel, `/settings`, and dotenv diagnostic report
+  the configured provider and model consistently (#541).
 - FastMCP transport imports work across both module layouts (#469, thanks
   @roberttidball).
 - Portfolio optimizers no longer include the decision bar's close-to-close
