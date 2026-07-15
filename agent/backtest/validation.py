@@ -382,16 +382,37 @@ def _parse_run_dir(argv: List[str]) -> Path:
 
 def _json_safe(value: Any) -> Any:
     """Return a JSON-strict copy of validation results."""
+    if isinstance(value, np.ndarray):
+        return [_json_safe(item) for item in value.tolist()]
+    if isinstance(value, np.generic):
+        return _json_safe(value.item())
     if isinstance(value, float):
         return value if math.isfinite(value) else None
-    if isinstance(value, np.floating):
-        as_float = float(value)
-        return as_float if math.isfinite(as_float) else None
     if isinstance(value, dict):
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(item) for item in value]
     return value
+
+
+def write_validation_json(path: Path, results: Dict[str, Any]) -> Dict[str, Any]:
+    """Write validation results to ``path`` as strict, RFC-8259 JSON.
+
+    A validation metric can be non-finite (e.g. a Sharpe computed from a path
+    whose equity touches zero), and ``json.dumps`` emits bare ``NaN`` /
+    ``Infinity`` tokens for those by default (``allow_nan=True``) — tokens that
+    strict parsers reject. Sanitize with :func:`_json_safe` (non-finite → null)
+    and serialize with ``allow_nan=False`` so every writer of
+    ``artifacts/validation.json`` produces the same valid JSON. Returns the
+    sanitized payload that was written.
+    """
+    safe_results = _json_safe(results)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(safe_results, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    return safe_results
 
 
 def main(run_dir: Path) -> Dict[str, Any]:
@@ -421,14 +442,9 @@ def main(run_dir: Path) -> Dict[str, Any]:
         "bootstrap": bootstrap_sharpe_ci(equity),
         "walk_forward": walk_forward_analysis(equity, trades),
     }
-    safe_results = _json_safe(results)
 
-    # Write results
     out = run_dir / "artifacts" / "validation.json"
-    out.write_text(
-        json.dumps(safe_results, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
+    safe_results = write_validation_json(out, results)
 
     print(json.dumps(safe_results, indent=2, allow_nan=False))
     return safe_results

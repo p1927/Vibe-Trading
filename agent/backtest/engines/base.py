@@ -488,17 +488,17 @@ class BaseEngine(ABC):
 
         # 7. Validation (optional — triggered by config["validation"])
         if config.get("validation"):
-            from backtest.validation import run_validation
+            from backtest.validation import run_validation, write_validation_json
             v_results = run_validation(
                 config, equity_series, self.trades, self.initial_capital, bars_per_year,
             )
             m["validation"] = v_results
-            # Write validation.json artifact. The artifacts dir is normally
-            # created by _write_artifacts() below (step 8), so ensure it exists
-            # here to avoid a FileNotFoundError when run_dir/artifacts is absent.
-            v_path = run_dir / "artifacts" / "validation.json"
-            v_path.parent.mkdir(parents=True, exist_ok=True)
-            v_path.write_text(json.dumps(v_results, indent=2, ensure_ascii=False), encoding="utf-8")
+            # Write validation.json through the shared strict writer so a
+            # non-finite validation metric is serialized as null rather than an
+            # invalid bare NaN/Infinity token (matching the standalone
+            # `python -m backtest.validation` path and run_card). The writer
+            # also creates the artifacts dir, which step 8 otherwise creates.
+            write_validation_json(run_dir / "artifacts" / "validation.json", v_results)
 
         # 8. Artifacts
         self._write_artifacts(

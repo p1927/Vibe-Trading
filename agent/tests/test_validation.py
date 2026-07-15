@@ -9,6 +9,9 @@ Validates:
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -19,6 +22,7 @@ from backtest.validation import (
     monte_carlo_test,
     run_validation,
     walk_forward_analysis,
+    write_validation_json,
 )
 
 
@@ -308,3 +312,80 @@ class TestRunValidation:
             1_000_000,
         )
         assert "error" in result[section]
+
+
+# ---------------------------------------------------------------------------
+# Strict validation.json writer
+# ---------------------------------------------------------------------------
+
+
+def _strict_json_load(text: str):
+    """Parse ``text`` rejecting non-RFC-8259 NaN/Infinity tokens."""
+
+    def _reject(value: str):
+        raise ValueError(f"non-strict JSON constant: {value}")
+
+    return json.loads(text, parse_constant=_reject)
+
+
+class TestWriteValidationJson:
+    def test_non_finite_metric_written_as_null(self, tmp_path: Path) -> None:
+        """A non-finite metric must be serialized as null, not a bare
+        NaN/Infinity token that strict JSON parsers reject."""
+        out = tmp_path / "artifacts" / "validation.json"
+        results = {
+            "monte_carlo": {
+                "actual_sharpe": float("inf"),
+                "p_value_sharpe": float("nan"),
+                "n_trades": 3,
+            }
+        }
+        written = write_validation_json(out, results)
+
+        text = out.read_text(encoding="utf-8")
+        assert "NaN" not in text
+        assert "Infinity" not in text
+        parsed = _strict_json_load(text)  # must not raise
+        assert parsed["monte_carlo"]["actual_sharpe"] is None
+        assert parsed["monte_carlo"]["p_value_sharpe"] is None
+        assert parsed["monte_carlo"]["n_trades"] == 3
+        assert written["monte_carlo"]["actual_sharpe"] is None
+
+    def test_creates_parent_dir(self, tmp_path: Path) -> None:
+        out = tmp_path / "does" / "not" / "exist" / "validation.json"
+        write_validation_json(out, {"ok": 1.0})
+        assert out.is_file()
+        assert _strict_json_load(out.read_text(encoding="utf-8")) == {"ok": 1.0}
+
+    def test_numpy_scalars_from_public_validators_are_strict_json(
+        self, tmp_path: Path
+    ) -> None:
+        results = {
+            "monte_carlo": monte_carlo_test(
+                _make_trades([100, -50, 200]),
+                1_000_000,
+                n_simulations=np.int64(2),
+                seed=np.int64(1),
+            ),
+            "bootstrap": bootstrap_sharpe_ci(
+                _make_equity(20),
+                n_bootstrap=np.int64(2),
+                seed=np.int64(1),
+            ),
+            "walk_forward": walk_forward_analysis(
+                _make_equity(20),
+                [],
+                n_windows=np.int64(2),
+            ),
+            "array": np.array([1, np.nan]),
+        }
+        out = tmp_path / "validation.json"
+
+        written = write_validation_json(out, results)
+
+        parsed = _strict_json_load(out.read_text(encoding="utf-8"))
+        assert parsed["monte_carlo"]["n_simulations"] == 2
+        assert parsed["bootstrap"]["n_bootstrap"] == 2
+        assert parsed["walk_forward"]["n_windows"] == 2
+        assert parsed["array"] == [1.0, None]
+        assert written == parsed
