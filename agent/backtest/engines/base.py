@@ -15,6 +15,7 @@ import re as _re
 import sys
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -39,6 +40,24 @@ from backtest.metrics import (
 from backtest.models import EquitySnapshot, Position, TradeRecord
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _OpenOrder:
+    """A fully priced opening order that can be committed atomically."""
+
+    symbol: str
+    direction: int
+    price: float
+    size: float
+    leverage: float
+    margin: float
+    commission: float
+
+    @property
+    def cost(self) -> float:
+        """Cash consumed by the fill."""
+        return self.margin + self.commission
 
 
 def _run_card_data_sources(config: Dict[str, Any], loader: Any) -> List[str]:
@@ -547,9 +566,13 @@ class BaseEngine(ABC):
                             "Rebalance close failed for %s at %s: %s", c, ts, exc
                         )
 
-            # c. Open target positions only after the close pass.  If a close
-            # was blocked by market rules, do not open the opposite side.
-            for c in codes:
+            # c. Price every opening order before committing any of them.  If
+            # the requested basket does not fit after fees/lot rounding, apply
+            # one common scale factor to all target weights.  This preserves
+            # portfolio proportions and makes fills independent of input code
+            # order; sequential cash clipping would privilege the first name.
+            open_targets: list[tuple[str, float, Optional[pd.DataFrame]]] = []
+            for c in sorted(codes):
                 target_w = target_weights[c]
                 if target_w is None:
                     continue
@@ -559,10 +582,34 @@ class BaseEngine(ABC):
                     target_dir == 0 or target_dir != current_pos.direction
                 ):
                     continue
-                try:
-                    self._rebalance(c, target_w, data_map.get(c), ts, equity)
-                except Exception as exc:
-                    logger.warning("Rebalance open failed for %s at %s: %s", c, ts, exc)
+                if current_pos is None and target_dir != 0:
+                    open_targets.append((c, target_w, data_map.get(c)))
+
+            def _plans(scale: float) -> list[_OpenOrder]:
+                return [
+                    order
+                    for c, target_w, frame in open_targets
+                    if (
+                        order := self._plan_open_order(
+                            c, target_w * scale, frame, ts, equity
+                        )
+                    )
+                    is not None
+                ]
+
+            planned = _plans(1.0)
+            if sum(order.cost for order in planned) > self.capital + 1e-9:
+                low, high = 0.0, 1.0
+                for _ in range(50):
+                    mid = (low + high) / 2.0
+                    candidate = _plans(mid)
+                    if sum(order.cost for order in candidate) <= self.capital + 1e-9:
+                        low, planned = mid, candidate
+                    else:
+                        high = mid
+
+            for order in planned:
+                self._execute_open_order(order, ts)
 
             # d. Apply close/within-bar hooks after open execution.  Hooks use
             # the current bar's close for funding, swaps, and liquidation, so
@@ -706,50 +753,69 @@ class BaseEngine(ABC):
                 else:
                     return  # blocked (e.g. limit-down can't sell)
 
-        # Open new if target non-zero and no remaining position
         if target_dir != 0 and symbol not in self.positions:
-            if not self.can_execute(symbol, target_dir, bar):
-                return  # blocked (e.g. A-share no-short)
+            order = self._plan_open_order(symbol, target_weight, df, ts, equity)
+            if order is not None and order.cost <= self.capital + 1e-9:
+                self._execute_open_order(order, ts)
 
-            open_price = float(bar.get("open", bar.get("close", 0)))
-            if open_price <= 0:
-                return
+    def _plan_open_order(
+        self,
+        symbol: str,
+        target_weight: float,
+        df: Optional[pd.DataFrame],
+        ts: pd.Timestamp,
+        equity: float,
+    ) -> Optional[_OpenOrder]:
+        """Price an opening order without mutating portfolio state."""
+        self._active_symbol = symbol
+        direction = 1 if target_weight > 1e-9 else (-1 if target_weight < -1e-9 else 0)
+        if direction == 0 or symbol in self.positions or df is None or ts not in df.index:
+            return None
+        bar = df.loc[ts]
+        if not self.can_execute(symbol, direction, bar):
+            return None
+        open_price = float(bar.get("open", bar.get("close", 0)))
+        if open_price <= 0:
+            return None
+        price = self.apply_slippage(open_price, direction)
+        leverage = self.default_leverage
+        target_notional = abs(target_weight) * equity * leverage
+        size = self.round_size(
+            self._calc_raw_size(symbol, target_notional, price), price
+        )
+        if size <= 0:
+            return None
+        margin = self._calc_margin(symbol, size, price, leverage)
+        commission = self.calc_commission(
+            size, price, direction, is_open=True
+        )
+        return _OpenOrder(
+            symbol=symbol,
+            direction=direction,
+            price=price,
+            size=size,
+            leverage=leverage,
+            margin=margin,
+            commission=commission,
+        )
 
-            slipped = self.apply_slippage(open_price, target_dir)
-            leverage = self.default_leverage
-            target_notional = abs(target_weight) * equity * leverage
-            raw_size = self._calc_raw_size(symbol, target_notional, slipped)
-            size = self.round_size(raw_size, slipped)
-            if size <= 0:
-                return
-
-            margin = self._calc_margin(symbol, size, slipped, leverage)
-            comm = self.calc_commission(size, slipped, target_dir, is_open=True)
-
-            # Capital check — reduce if insufficient
-            if margin + comm > self.capital:
-                available = self.capital - comm
-                if available <= 0:
-                    return
-                size = self.round_size(
-                    self._calc_raw_size(symbol, available * leverage, slipped), slipped,
-                )
-                if size <= 0:
-                    return
-                margin = self._calc_margin(symbol, size, slipped, leverage)
-                comm = self.calc_commission(size, slipped, target_dir, is_open=True)
-
-            self.capital -= (margin + comm)
-            self.positions[symbol] = Position(
-                symbol=symbol,
-                direction=target_dir,
-                entry_price=slipped,
-                entry_time=ts,
-                size=size,
-                leverage=leverage,
-                entry_bar_idx=self._bar_idx,
-                entry_commission=comm,
+    def _execute_open_order(self, order: _OpenOrder, ts: pd.Timestamp) -> None:
+        """Commit a previously priced opening order."""
+        if order.cost > self.capital + 1e-7:
+            raise RuntimeError(
+                f"planned order for {order.symbol} exceeds available capital"
             )
+        self.capital -= order.cost
+        self.positions[order.symbol] = Position(
+            symbol=order.symbol,
+            direction=order.direction,
+            entry_price=order.price,
+            entry_time=ts,
+            size=order.size,
+            leverage=order.leverage,
+            entry_bar_idx=self._bar_idx,
+            entry_commission=order.commission,
+        )
 
     def _close_position(
         self,

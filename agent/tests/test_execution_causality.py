@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from backtest.engines.base import BaseEngine
+from backtest.engines.china_a import ChinaAEngine
+from backtest.engines.china_futures import ChinaFuturesEngine
+from backtest.engines.composite import CompositeEngine
 from backtest.engines.crypto import CryptoEngine
+from backtest.engines.forex import ForexEngine
+from backtest.engines.global_equity import GlobalEquityEngine
+from backtest.engines.global_futures import GlobalFuturesEngine
+from backtest.engines.india_equity import IndiaEquityEngine
 
 
 class _FrictionlessEngine(BaseEngine):
@@ -111,3 +119,107 @@ def test_open_signal_exit_precedes_close_based_liquidation() -> None:
     assert engine.trades[0].exit_reason == "signal"
     assert engine.trades[0].exit_price == 100.0
     assert engine.capital == 1_000.0
+
+
+class _FeeEngine(_FrictionlessEngine):
+    def calc_commission(self, size, price, direction, is_open):
+        return 10.0
+
+
+def test_capital_constrained_open_basket_is_proportional_and_order_independent() -> None:
+    dates = pd.DatetimeIndex(["2026-01-05"])
+    data_map = {
+        code: pd.DataFrame({"open": [100.0], "close": [100.0]}, index=dates)
+        for code in ("A", "B")
+    }
+    close_df = pd.DataFrame({code: frame["close"] for code, frame in data_map.items()})
+    targets = pd.DataFrame({"A": [0.6], "B": [0.6]}, index=dates)
+
+    results = []
+    for codes in (["A", "B"], ["B", "A"]):
+        engine = _FeeEngine({"initial_cash": 1_000.0})
+        engine._execute_bars(dates, data_map, close_df, targets, codes)
+        results.append({trade.symbol: trade.size for trade in engine.trades})
+
+    assert results[0] == results[1]
+    assert results[0]["A"] == pytest.approx(results[0]["B"])
+    assert results[0]["A"] == pytest.approx(4.9)
+
+
+def _engine_case(name: str, codes: list[str], reverse: bool) -> tuple[BaseEngine, list[str]]:
+    ordered = list(reversed(codes)) if reverse else codes
+    config = {
+        "initial_cash": 1_000_000.0,
+        "codes": ordered,
+        "slippage": 0.0,
+        "slippage_us": 0.0,
+        "commission_override": 0.0,
+        "commission_per_contract": 0.0,
+        "maker_rate": 0.0,
+        "taker_rate": 0.0,
+        "funding_rate": 0.0,
+    }
+    factories = {
+        "china_a": lambda: ChinaAEngine(config),
+        "global_equity": lambda: GlobalEquityEngine(config, market="us"),
+        "crypto": lambda: CryptoEngine(config),
+        "china_futures": lambda: ChinaFuturesEngine(config),
+        "global_futures": lambda: GlobalFuturesEngine(config),
+        "forex": lambda: ForexEngine(config),
+        "india_equity": lambda: IndiaEquityEngine(config),
+        "composite": lambda: CompositeEngine(config, ordered),
+    }
+    return factories[name](), ordered
+
+
+@pytest.mark.parametrize(
+    ("name", "codes"),
+    [
+        ("china_a", ["000001.SZ", "000002.SZ"]),
+        ("global_equity", ["AAPL.US", "MSFT.US"]),
+        ("crypto", ["BTC-USDT", "ETH-USDT"]),
+        ("china_futures", ["IF2406.CFFEX", "IF2407.CFFEX"]),
+        ("global_futures", ["ESZ4", "ESH5"]),
+        ("forex", ["EUR/USD", "GBP/USD"]),
+        ("india_equity", ["RELIANCE.NS", "TCS.NS"]),
+        ("composite", ["AAPL.US", "BTC-USDT"]),
+    ],
+)
+def test_engine_family_execution_is_code_order_independent(
+    name: str, codes: list[str]
+) -> None:
+    dates = pd.DatetimeIndex(["2026-01-05"])
+    data_map = {
+        code: pd.DataFrame(
+            {
+                "open": [100.0],
+                "high": [100.0],
+                "low": [100.0],
+                "close": [100.0],
+                "pre_close": [100.0],
+                "volume": [1_000_000.0],
+            },
+            index=dates,
+        )
+        for code in codes
+    }
+    close_df = pd.DataFrame({code: frame["close"] for code, frame in data_map.items()})
+    targets = pd.DataFrame({code: [0.3] for code in codes}, index=dates)
+    signatures = []
+
+    for reverse in (False, True):
+        engine, ordered = _engine_case(name, codes, reverse)
+        engine._execute_bars(dates, data_map, close_df, targets, ordered)
+        signatures.append(
+            sorted(
+                (
+                    trade.symbol,
+                    round(trade.size, 8),
+                    round(trade.entry_price, 8),
+                    round(trade.commission, 8),
+                )
+                for trade in engine.trades
+            )
+        )
+
+    assert signatures[0] == signatures[1]
