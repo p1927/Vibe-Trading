@@ -54,6 +54,11 @@ class _EmptyLoader:
         return {}
 
 
+class _RaisingLoader:
+    def fetch(self, *args: object, **kwargs: object) -> Dict[str, pd.DataFrame]:
+        raise RuntimeError("boom")
+
+
 class TestBenchmarkLoaderForwarding:
     def test_explicit_source_loader_is_used_instead_of_yfinance(
         self, monkeypatch: pytest.MonkeyPatch,
@@ -78,15 +83,38 @@ class TestBenchmarkLoaderForwarding:
         assert loader.fetched == ["AAPL.US"]
         assert result.total_ret == pytest.approx(0.1)
 
-    def test_falls_back_to_yfinance_when_source_loader_has_no_data(
+    @pytest.mark.parametrize("loader", [_EmptyLoader(), _RaisingLoader(), None])
+    def test_local_source_fails_closed_without_yfinance(
+        self, monkeypatch: pytest.MonkeyPatch, loader: object,
+    ) -> None:
+        """source=local must never construct a yfinance loader, even when the
+        local loader yields no benchmark data or raises."""
+
+        def _no_network() -> None:
+            raise AssertionError("yfinance loader must not be created")
+
+        monkeypatch.setattr("backtest.benchmark.YfinanceLoader", _no_network)
+
+        result = resolve_benchmark(
+            strategy_codes=["AAPL.US"],
+            source="local",
+            start_date="2023-01-03",
+            end_date="2023-01-04",
+            explicit="SPY",
+            loader=loader,
+        )
+
+        assert result is None
+
+    def test_non_local_source_falls_back_to_yfinance_when_no_data(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         fallback = _FakeLoader([100.0, 105.0])
         monkeypatch.setattr("backtest.benchmark.YfinanceLoader", lambda: fallback)
 
         result = resolve_benchmark(
-            strategy_codes=["AAPL.US"],
-            source="local",
+            strategy_codes=["600519.SH"],
+            source="tushare",
             start_date="2023-01-03",
             end_date="2023-01-04",
             explicit="SPY",

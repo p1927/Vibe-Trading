@@ -55,7 +55,8 @@ def resolve_benchmark(
         explicit:       Override ticker (e.g. "SPY" passed via config).
         loader:         Loader of the configured data source. When given, the
                         benchmark is fetched through it first, falling back to
-                        yfinance if it yields no data.
+                        yfinance if it yields no data — except ``local``,
+                        which fails closed to keep offline runs offline.
 
     Returns:
         BenchmarkResult with return series and total return, or None if no
@@ -66,7 +67,11 @@ def resolve_benchmark(
         return None
 
     try:
-        bench_df = _fetch_benchmark(ticker, start_date, end_date, interval, loader=loader)
+        bench_df = _fetch_benchmark(
+            ticker, start_date, end_date, interval,
+            loader=loader,
+            allow_fallback=source != "local",
+        )
     except Exception:
         return None
 
@@ -139,12 +144,14 @@ def _fetch_benchmark(
     end_date:   str,
     interval:   str,
     loader:    Optional[Any] = None,
+    allow_fallback: bool = True,
 ) -> pd.DataFrame:
     """Fetch benchmark OHLCV data.
 
-    Tries the configured source's loader first (when given), so an explicit
-    source such as ``local`` stays offline. Falls back to yfinance
-    (single symbol, no auth) when no loader is given or it yields no data.
+    Tries the configured source's loader first (when given). Falls back to
+    yfinance (single symbol, no auth) when no loader is given or it yields
+    no data — unless ``allow_fallback`` is False (offline sources fail
+    closed instead of making a network request).
     """
     if loader is not None:
         try:
@@ -156,6 +163,9 @@ def _fetch_benchmark(
             df = pd.DataFrame()
         if not df.empty:
             return df
+
+    if not allow_fallback:
+        return pd.DataFrame()
 
     result = YfinanceLoader().fetch([ticker], start_date, end_date, interval=interval)
     return _extract_frame(result, ticker)
