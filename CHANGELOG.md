@@ -48,6 +48,10 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   of silently returning daily bars (#467, thanks @Shizoqua).
 
 ### Fixed
+- Explicit `source: local` backtests now route US/HK equities to the
+  global-equity engine instead of the crypto default, and explicit benchmarks
+  are fetched through the configured source's loader (yfinance remains the
+  fallback), keeping offline runs offline (#550).
 - FastMCP transport imports work across both module layouts (#469, thanks
   @roberttidball).
 - Portfolio optimizers no longer include the decision bar's close-to-close

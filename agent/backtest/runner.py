@@ -991,6 +991,13 @@ def _create_market_engine(source: str, config: dict, codes: List[str]):
         market = _detect_submarket(codes)
         return GlobalEquityEngine(config, market=market)
     else:
+        # Sources without a dedicated branch (local, stooq, ...): follow the
+        # instrument market rather than the loader name, so e.g. a local
+        # AAPL.US dataset gets US-equity execution rules instead of crypto.
+        if markets & {"us_equity", "hk_equity"}:
+            from backtest.engines.global_equity import GlobalEquityEngine
+            market = _detect_submarket(codes)
+            return GlobalEquityEngine(config, market=market)
         from backtest.engines.crypto import CryptoEngine
         return CryptoEngine(config)
 

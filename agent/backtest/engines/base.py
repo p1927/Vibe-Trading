@@ -463,13 +463,18 @@ class BaseEngine(ABC):
         bench_ticker = config.get("benchmark")
         if bench_ticker and bench_ticker != "auto":
             from backtest.benchmark import resolve_benchmark
+            bench_source = config.get("source", "yfinance")
             bench_result = resolve_benchmark(
                 strategy_codes=codes,
-                source=config.get("source", "yfinance"),
+                source=bench_source,
                 start_date=config.get("start_date", ""),
                 end_date=config.get("end_date", ""),
                 interval=interval,
                 explicit=bench_ticker,
+                # Explicit source: fetch the benchmark through its own loader
+                # (keeps e.g. source=local offline). Auto keeps the yfinance
+                # default — its loader only wraps the preloaded strategy data.
+                loader=loader if bench_source != "auto" else None,
             )
             if bench_result is not None:
                 bench_ret = bench_result.ret_series.reindex(dates).fillna(0.0)

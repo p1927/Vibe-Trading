@@ -7,7 +7,7 @@ data given a set of strategy codes and a data source.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -42,6 +42,7 @@ def resolve_benchmark(
     end_date:     str,
     interval:     str = "1D",
     explicit:     Optional[str] = None,
+    loader:       Optional[Any] = None,
 ) -> Optional[BenchmarkResult]:
     """Resolve the appropriate benchmark ticker and fetch its return series.
 
@@ -52,6 +53,9 @@ def resolve_benchmark(
         end_date:       Backtest end date.
         interval:       Bar interval (1m / 5m / 15m / 30m / 1H / 4H / 1D).
         explicit:       Override ticker (e.g. "SPY" passed via config).
+        loader:         Loader of the configured data source. When given, the
+                        benchmark is fetched through it first, falling back to
+                        yfinance if it yields no data.
 
     Returns:
         BenchmarkResult with return series and total return, or None if no
@@ -62,7 +66,7 @@ def resolve_benchmark(
         return None
 
     try:
-        bench_df = _fetch_benchmark(ticker, start_date, end_date, interval)
+        bench_df = _fetch_benchmark(ticker, start_date, end_date, interval, loader=loader)
     except Exception:
         return None
 
@@ -134,11 +138,31 @@ def _fetch_benchmark(
     start_date: str,
     end_date:   str,
     interval:   str,
+    loader:    Optional[Any] = None,
 ) -> pd.DataFrame:
-    """Fetch benchmark OHLCV data via yfinance (single symbol, no auth)."""
-    loader = YfinanceLoader()
-    result = loader.fetch([ticker], start_date, end_date, interval=interval)
+    """Fetch benchmark OHLCV data.
 
+    Tries the configured source's loader first (when given), so an explicit
+    source such as ``local`` stays offline. Falls back to yfinance
+    (single symbol, no auth) when no loader is given or it yields no data.
+    """
+    if loader is not None:
+        try:
+            df = _extract_frame(
+                loader.fetch([ticker], start_date, end_date, interval=interval),
+                ticker,
+            )
+        except Exception:
+            df = pd.DataFrame()
+        if not df.empty:
+            return df
+
+    result = YfinanceLoader().fetch([ticker], start_date, end_date, interval=interval)
+    return _extract_frame(result, ticker)
+
+
+def _extract_frame(result: Any, ticker: str) -> pd.DataFrame:
+    """Normalise a loader fetch result to a single DataFrame."""
     if isinstance(result, dict):
         df = result.get(ticker)
     elif isinstance(result, pd.DataFrame):
