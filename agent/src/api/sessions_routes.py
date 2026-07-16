@@ -227,6 +227,13 @@ def _mandate_proposal_frame_from_tool_result(event: Any) -> Optional[str]:
     return frame.to_sse()
 
 
+def _trade_plan_widget_frame_from_tool_result(event: Any) -> Optional[str]:
+    """Build trade_plan.widget SSE frame from options widget MCP tool_result."""
+    from src.api.trade_routes import trade_plan_widget_frame_from_tool_result
+
+    return trade_plan_widget_frame_from_tool_result(event)
+
+
 _LIVE_ACTION_ID_RE = re.compile(r'"audit_id"\s*:\s*"(la_[0-9a-zA-Z]+)"')
 
 
@@ -704,6 +711,9 @@ def register_sessions_routes(app: FastAPI) -> None:
                 live_action = _live_action_frame_from_tool_result(event)
                 if live_action is not None:
                     yield live_action
+                trade_widget = _trade_plan_widget_frame_from_tool_result(event)
+                if trade_widget is not None:
+                    yield trade_widget
 
         return StreamingResponse(
             event_generator(),
