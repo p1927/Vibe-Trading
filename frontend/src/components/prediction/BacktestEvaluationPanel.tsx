@@ -19,9 +19,10 @@ interface Props {
   loading?: boolean;
   error?: string | null;
   onRefresh?: () => void;
+  onMissSelect?: (date: string) => void;
 }
 
-export function BacktestEvaluationPanel({ report, loading, error, onRefresh }: Props) {
+export function BacktestEvaluationPanel({ report, loading, error, onRefresh, onMissSelect }: Props) {
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
   const [expandedDrop, setExpandedDrop] = useState<string | null>(null);
 
@@ -299,9 +300,29 @@ export function BacktestEvaluationPanel({ report, loading, error, onRefresh }: P
                     {open ? (
                       <tr className="border-b border-border/40 bg-muted/20">
                         <td colSpan={6} className="px-2 py-2">
+                          {!row.direction_correct && row.miss_category ? (
+                            <div className="mb-2 rounded border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-[11px]">
+                              <span className="font-medium">Miss: {row.miss_category.replace(/_/g, " ")}</span>
+                              {row.learning_note ? (
+                                <p className="mt-0.5 text-muted-foreground">{row.learning_note}</p>
+                              ) : null}
+                              {onMissSelect && row.date ? (
+                                <button
+                                  type="button"
+                                  className="mt-1 text-[10px] text-primary underline"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onMissSelect(row.date!);
+                                  }}
+                                >
+                                  Open in miss analysis panel
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : null}
                           <div className="grid gap-3 md:grid-cols-2">
                             <div>
-                              <p className="mb-1 font-medium text-muted-foreground">Factor moves (d/d)</p>
+                              <p className="mb-1 font-medium text-muted-foreground">Factor moves (d/d at T0)</p>
                               <ul className="space-y-0.5">
                                 {(row.factor_drivers ?? []).map((d) => (
                                   <li key={d.factor}>
@@ -309,6 +330,22 @@ export function BacktestEvaluationPanel({ report, loading, error, onRefresh }: P
                                   </li>
                                 ))}
                               </ul>
+                            </div>
+                            <div>
+                              <p className="mb-1 font-medium text-muted-foreground">
+                                Horizon drift T0 → {row.maturity_date ?? "maturity"}
+                              </p>
+                              {(row.factor_delta_horizon ?? []).length ? (
+                                <ul className="space-y-0.5">
+                                  {row.factor_delta_horizon!.map((d) => (
+                                    <li key={d.factor}>
+                                      {d.label}: {d.t0} → {d.t1} (Δ {fmtPct(d.delta)})
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <p className="text-muted-foreground">No horizon diff recorded</p>
+                              )}
                             </div>
                             <div>
                               <p className="mb-1 font-medium text-muted-foreground">Calendar / events</p>

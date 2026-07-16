@@ -160,6 +160,10 @@ async def _run_startup_preflight() -> None:
     import asyncio
 
     run_preflight(console)
+    loop = asyncio.get_running_loop()
+    from src.api.async_bridge import register_main_loop
+
+    register_main_loop(loop)
     _start_scheduled_research_executor()
 
     try:
@@ -168,6 +172,8 @@ async def _run_startup_preflight() -> None:
 
         svc = _get_session_service()
         if svc is not None:
+            if hasattr(svc, "event_bus"):
+                svc.event_bus.set_loop(loop)
             recovered = recover_stale_running_attempts(svc.store)
             if recovered:
                 logger.info("Recovered %d stale running session attempts", len(recovered))

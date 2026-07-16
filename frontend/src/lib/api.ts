@@ -532,6 +532,31 @@ export const api = {
     if (horizonDays != null) params.set("horizon_days", String(horizonDays));
     return request<IndexBacktestResponse>(`/trade/index-prediction/backtest?${params}`);
   },
+  getIndexPredictionMissAnalysis: (ticker = "NIFTY", refresh = false, days = 365, horizonDays?: number) => {
+    const params = new URLSearchParams({
+      ticker,
+      refresh: String(refresh),
+      days: String(days),
+    });
+    if (horizonDays != null) params.set("horizon_days", String(horizonDays));
+    return request<IndexMissAnalysisResponse>(`/trade/index-prediction/miss-analysis?${params}`);
+  },
+  runIndexPredictionMissAnalysis: (ticker = "NIFTY", days = 365, horizonDays?: number) => {
+    const params = new URLSearchParams({ ticker, days: String(days) });
+    if (horizonDays != null) params.set("horizon_days", String(horizonDays));
+    return request<IndexMissAnalysisResponse>(`/trade/index-prediction/miss-analysis/run?${params}`, {
+      method: "POST",
+    });
+  },
+  getIndexPredictionDataAudit: (ticker = "NIFTY", refresh = false, days = 365, horizonDays = 14) => {
+    const params = new URLSearchParams({
+      ticker,
+      refresh: String(refresh),
+      days: String(days),
+      horizon_days: String(horizonDays),
+    });
+    return request<IndexDataAuditResponse>(`/trade/index-prediction/data-audit?${params}`);
+  },
   getIndexPredictionJobs: () =>
     request<IndexPredictionJobsResponse>("/trade/index-prediction/jobs"),
   pauseIndexPredictionJob: (jobId: string) =>
@@ -1604,6 +1629,8 @@ export interface IndexPlaygroundContext {
   horizon_days?: number;
   headlines?: PlaygroundTrigger[];
   events?: PlaygroundTrigger[];
+  factor_news?: Record<string, PlaygroundTrigger[]>;
+  cascade_downstream?: Record<string, Array<{ factor: string; multiplier: number; mode: string }>>;
   ranked_factors?: PlaygroundRankedFactor[];
   event_impact_curves?: Array<Record<string, unknown>>;
   global_factors?: Record<string, number>;
@@ -1741,6 +1768,22 @@ export interface IndexBacktestDailyEval {
   error_pct?: number;
   direction_correct?: boolean;
   macro_delta_pct?: number;
+  macro_raw_pct?: number;
+  maturity_date?: string;
+  miss_category?: string;
+  learning_note?: string;
+  factor_delta_horizon?: Array<{
+    factor?: string;
+    label?: string;
+    t0?: number;
+    t1?: number;
+    delta?: number;
+    change_pct?: number;
+  }>;
+  factor_snapshot_t0?: Record<string, number>;
+  factor_snapshot_t1?: Record<string, number>;
+  headlines_at_maturity?: Array<{ title?: string; source?: string }>;
+  causal_hypotheses?: CausalHypothesis[];
   factor_drivers?: Array<{
     factor?: string;
     label?: string;
@@ -1749,6 +1792,7 @@ export interface IndexBacktestDailyEval {
     change_pct?: number;
   }>;
   calendar_events?: Array<{ type?: string; event?: string; description?: string }>;
+  calendar_events_at_maturity?: Array<{ type?: string; event?: string; description?: string }>;
   implied_level?: number;
 }
 
@@ -1868,6 +1912,63 @@ export interface IndexBacktestResponse {
   status: string;
   ticker?: string;
   report?: IndexBacktestReport | null;
+  message?: string;
+}
+
+export interface IndexMissAnalysisReport {
+  status?: string;
+  as_of?: string;
+  ticker?: string;
+  horizon_days?: number;
+  eval_count?: number;
+  summary?: {
+    direction_hit_rate?: number | null;
+    mae_pct?: number | null;
+    miss_count?: number;
+    hit_count?: number;
+    miss_categories?: Record<string, number>;
+    top_miss_patterns?: Array<{
+      category?: string;
+      count?: number;
+      example_dates?: string[];
+      action?: string;
+    }>;
+  };
+  misses?: IndexMissAnalysisRow[];
+  hits_sample?: IndexMissAnalysisRow[];
+}
+
+export interface IndexMissAnalysisRow {
+  prediction_date?: string;
+  maturity_date?: string;
+  predicted_return_pct?: number;
+  actual_return_pct?: number;
+  direction_correct?: boolean;
+  miss_category?: string;
+  learning_note?: string;
+  factor_delta_horizon?: Array<{
+    factor?: string;
+    label?: string;
+    t0?: number;
+    t1?: number;
+    delta?: number;
+    change_pct?: number;
+  }>;
+  headlines_at_maturity?: Array<{ title?: string; source?: string }>;
+  causal_hypotheses?: CausalHypothesis[];
+}
+
+export interface IndexMissAnalysisResponse {
+  status: string;
+  ticker?: string;
+  report?: IndexMissAnalysisReport | null;
+  message?: string;
+}
+
+export interface IndexDataAuditResponse {
+  status: string;
+  ticker?: string;
+  report?: Record<string, unknown> | null;
   message?: string;
 }
 
@@ -2090,15 +2191,20 @@ export interface AutonomousAgentMandateSummary {
   product_type?: string;
   revision_policy?: string;
   confidence_threshold?: number;
+  allowed_instruments?: string[];
 }
 
 export interface AutonomousAgentRuntime {
   mandate_summary?: AutonomousAgentMandateSummary;
   alert_rules_summary?: Record<string, unknown>;
-  scheduler_health?: "ok" | "stale" | "disabled" | "unknown";
+  bootstrap_status?: "pending" | "running" | "done" | "failed" | null;
+  scheduler_health?: "ok" | "stale" | "disabled" | "unknown" | "initializing" | "bootstrap_failed";
   market_open?: boolean;
   nautilus_watch_enabled?: boolean;
   nautilus_process_alive?: boolean;
+  nautilus_state?: "node_on" | "poll_ok" | "expected" | "off";
+  watch_configured?: boolean;
+  position_tracked?: boolean;
   handoff_active?: boolean;
   paper_session_linked?: boolean;
   last_decision?: Record<string, unknown> | null;
@@ -2110,6 +2216,7 @@ export interface AutonomousAgentRuntime {
 export interface AutonomousStackHealth {
   nautilus_watch_enabled?: boolean;
   nautilus_process_alive?: boolean;
+  nautilus_state?: "node_on" | "poll_ok" | "expected" | "off";
   scheduler_health?: string;
   market_open?: boolean;
   paper_session_enabled?: boolean;
@@ -2146,6 +2253,7 @@ export interface AutonomousAgentInstance {
   last_revision_at?: string | null;
   last_decision?: Record<string, unknown> | null;
   streaming?: boolean;
+  bootstrap_status?: "pending" | "running" | "done" | "failed" | null;
   runtime?: AutonomousAgentRuntime;
   created_at?: string;
 }
@@ -2166,7 +2274,10 @@ export interface AutonomousAgentProposal {
   expires_at_ms?: number;
   execution_market?: "IN" | "US";
   execution_backend?: "openalgo" | "alpaca";
+  routing_errors?: string[];
+  routing_warnings?: string[];
   stack_health?: AutonomousStackHealth;
+  mandate_config?: Record<string, unknown>;
   committed_agent_id?: string;
 }
 
@@ -2185,6 +2296,8 @@ export interface CommitAutonomousAgentResponse {
   status: string;
   agent: AutonomousAgentInstance;
   vibe_session_id: string;
+  paper_session_warnings?: string[];
+  already_committed?: boolean;
 }
 
 export interface OrchestratorSessionResponse {

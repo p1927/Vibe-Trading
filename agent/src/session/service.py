@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -298,6 +299,37 @@ class SessionService:
             attempt.mark_failed(error=str(exc))
             self.store.update_attempt(attempt)
             self.event_bus.emit(session.session_id, "attempt.failed", {"attempt_id": attempt.attempt_id, "error": str(exc)})
+        finally:
+            await self._finalize_autonomous_agent_turn(session)
+
+    async def _finalize_autonomous_agent_turn(self, session: Session) -> None:
+        agent_id = str((session.config or {}).get("autonomous_agent_id") or "").strip()
+        if not agent_id:
+            return
+        await asyncio.to_thread(self._clear_agent_streaming, agent_id)
+
+    @staticmethod
+    def _clear_agent_streaming(agent_id: str) -> None:
+        try:
+            import sys
+            from pathlib import Path
+
+            trade_root = Path(__file__).resolve().parents[3]
+            integrations = trade_root / "integrations"
+            if integrations.is_dir() and str(integrations) not in sys.path:
+                sys.path.insert(0, str(integrations))
+            from trade_integrations.autonomous_agents.store import get_agent, save_agent
+
+            agent = get_agent(agent_id)
+            if not agent:
+                return
+            if agent.get("streaming"):
+                agent["streaming"] = False
+                save_agent(agent)
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "clear agent streaming failed for %s", agent_id, exc_info=True
+            )
 
     async def _run_with_agent(
         self,
@@ -383,7 +415,11 @@ class SessionService:
         self._active_loops[session_id] = agent
 
         # Build the message history context.
-        history = self._convert_messages_to_history(messages) if messages else None
+        history = (
+            self._convert_messages_to_history(messages, session_config=session_config)
+            if messages
+            else None
+        )
         user_message = attempt.prompt
         if research_context:
             user_message = f"{research_context.strip()}\n\n{attempt.prompt}"
@@ -477,7 +513,11 @@ class SessionService:
             logging.getLogger(__name__).exception("Widget guard hook failed")
 
     @staticmethod
-    def _convert_messages_to_history(messages: list) -> list[Dict[str, Any]]:
+    def _convert_messages_to_history(
+        messages: list,
+        *,
+        session_config: Optional[Dict[str, Any]] = None,
+    ) -> list[Dict[str, Any]]:
         """Convert Session messages into OpenAI-format history.
 
         Keeps the readable ``[prev_run: {run_id}]`` marker instead of removing it
@@ -485,8 +525,12 @@ class SessionService:
         so the LLM can still see previous artifact paths and strategy content during
         iterative updates.
 
+        When ``history_cutoff_message_id`` is set (orchestrator → agent promotion),
+        messages at or before that divider are excluded from LLM context.
+
         Args:
             messages: Session message list without the current turn.
+            session_config: Session config (optional cutoff for promoted sessions).
 
         Returns:
             OpenAI-format messages trimmed from the newest items within the token budget.
@@ -499,8 +543,17 @@ class SessionService:
             run_id = Path(path_str).name if path_str else ""
             return f"[prev_run: {run_id}]" if run_id else ""
 
+        cutoff_id = str((session_config or {}).get("history_cutoff_message_id") or "").strip()
+        passed_cutoff = not cutoff_id
+
         history = []
         for msg in messages[:-1]:
+            message_id = msg.message_id if hasattr(msg, "message_id") else str(msg.get("message_id") or "")
+            if not passed_cutoff:
+                if message_id == cutoff_id:
+                    passed_cutoff = True
+                continue
+
             role = msg.role if hasattr(msg, "role") else msg.get("role", "user")
             content = msg.content if hasattr(msg, "content") else msg.get("content", "")
             if not content.strip() or role not in ("user", "assistant"):

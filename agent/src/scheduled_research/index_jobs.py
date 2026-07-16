@@ -217,6 +217,19 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     validate_schedule(snapshot_cron)
     validate_schedule(full_cron)
 
+    skip_unified_duplicates = False
+    try:
+        from src.scheduled_research.hub_calibration_jobs import (
+            is_hub_calibration_scheduler_enabled,
+            is_hub_unified_calibration_enabled,
+        )
+
+        skip_unified_duplicates = (
+            is_hub_calibration_scheduler_enabled() and is_hub_unified_calibration_enabled()
+        )
+    except Exception:
+        pass
+
     now_ms = int(time.time() * 1000)
     defaults = [
         ScheduledResearchJob(
@@ -261,6 +274,13 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             config={"job_type": JOB_TYPE_COMPANY_RESEARCH_ARCHIVE, "ticker": "NIFTY"},
         ),
     ]
+
+    if skip_unified_duplicates:
+        defaults = [
+            job
+            for job in defaults
+            if job.id not in {"nifty-index-calibration", "nifty-company-research-archive"}
+        ]
 
     if is_index_monitor_scheduler_enabled():
         poll_cron = os.getenv(INDEX_MONITOR_POLL_CRON_ENV, DEFAULT_INDEX_POLL_CRON).strip()

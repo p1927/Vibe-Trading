@@ -12,7 +12,17 @@ function StackHealthStrip({ health }: { health: AutonomousStackHealth | undefine
   if (!health) return null;
   const sched = health.scheduler_health ?? "unknown";
   const nautilusOn = health.nautilus_watch_enabled !== false;
-  const nautilusAlive = health.nautilus_process_alive;
+  const nautilusState = health.nautilus_state;
+  const nautilusLabel =
+    !nautilusOn
+      ? "off"
+      : nautilusState === "node_on"
+        ? "running"
+        : nautilusState === "poll_ok"
+          ? "poll"
+          : nautilusState === "stale"
+            ? "stale"
+            : "expected";
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
@@ -21,6 +31,8 @@ function StackHealthStrip({ health }: { health: AutonomousStackHealth | undefine
         className={cn(
           "rounded border px-1.5 py-0.5",
           sched === "ok" && "border-emerald-500/40 text-emerald-700",
+          sched === "initializing" && "border-primary/40 text-primary",
+          sched === "bootstrap_failed" && "border-red-500/40 text-red-700",
           sched === "stale" && "border-amber-500/40 text-amber-700",
         )}
       >
@@ -30,11 +42,13 @@ function StackHealthStrip({ health }: { health: AutonomousStackHealth | undefine
         className={cn(
           "rounded border px-1.5 py-0.5",
           !nautilusOn && "text-muted-foreground",
-          nautilusOn && nautilusAlive && "border-emerald-500/40 text-emerald-700",
-          nautilusOn && !nautilusAlive && "border-amber-500/40 text-amber-700",
+          (nautilusState === "node_on" || nautilusState === "poll_ok") &&
+            "border-emerald-500/40 text-emerald-700",
+          nautilusState === "expected" && "text-muted-foreground",
+          nautilusState === "stale" && "border-amber-500/40 text-amber-700",
         )}
       >
-        nautilus {nautilusOn ? (nautilusAlive ? "running" : "expected") : "off"}
+        nautilus {nautilusLabel}
       </span>
       {health.market_open != null && (
         <span>market {health.market_open ? "open" : "closed"}</span>
