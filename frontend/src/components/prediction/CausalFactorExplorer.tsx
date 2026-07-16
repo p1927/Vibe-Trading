@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { CausalFactorHistoryChart } from "@/components/charts/CausalFactorHistoryChart";
+import {
+  CascadeFactorBars,
+  FactorShockImpactChart,
+  pointAtShock,
+  ShockSummaryCards,
+} from "@/components/charts/FactorShockImpactChart";
 import {
   api,
   type IndexFactorHistoryPoint,
@@ -7,7 +14,6 @@ import {
   type IndexSimulationResult,
   type PlaygroundTrigger,
 } from "@/lib/api";
-import { CausalFactorChart } from "@/components/charts/CausalFactorChart";
 import { factorLabel } from "@/lib/factorEventMapping";
 import { CASCADE_DOWNSTREAM, PINNED_CAUSAL_FACTORS } from "@/lib/factorCascadeMap";
 import { researchNoteForFactor } from "@/lib/factorResearchNotes";
@@ -28,6 +34,11 @@ interface CascadeDownstreamRule {
 function fmtPct(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+}
+
+function fmtLevel(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
 export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = [] }: Props) {
@@ -65,7 +76,7 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
   }, [contributors, sensitivity]);
 
   const [activeFactor, setActiveFactor] = useState(factorOptions[0]?.factor ?? "fii_net_5d");
-  const [chartMode, setChartMode] = useState<"history" | "shock">("shock");
+  const [chartMode, setChartMode] = useState<"history" | "shock">("history");
   const [shockPct, setShockPct] = useState(0);
   const [simulation, setSimulation] = useState<IndexSimulationResult | null>(null);
   const [simulating, setSimulating] = useState(false);
@@ -105,6 +116,12 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
   }, [artifact.ticker, artifact.as_of]);
 
   const activeCurve = sensitivity.find((c) => c.factor === activeFactor);
+  const shockPoints = activeCurve?.points ?? [];
+  const baselinePoint = useMemo(() => pointAtShock(shockPoints, 0), [shockPoints]);
+  const isolatedAtShock = useMemo(
+    () => pointAtShock(shockPoints, shockPct),
+    [shockPoints, shockPct],
+  );
   const activeMeta = factorOptions.find((f) => f.factor === activeFactor);
   const researchNote = researchNoteForFactor(activeFactor);
   const downstream =
@@ -150,8 +167,6 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
   }, [runSimulate]);
 
   const newsItems = factorNews[activeFactor] ?? [];
-  const cascadeRows =
-    simulation?.cascade_applied?.filter((r) => r.reason?.includes("cascade")) ?? [];
 
   return (
     <div className="space-y-4 rounded-xl border bg-card p-4 shadow-sm">
@@ -160,8 +175,9 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
           Causal factor explorer
         </p>
         <p className="mt-1 text-[11px] text-muted-foreground">
-          Pick a driver (cause), read linked news, shock it ±10%, and see Nifty at horizon plus downstream
-          factors this driver typically moves — not the reverse.
+          Read linked news for each driver. <span className="font-medium text-foreground">History</span>{" "}
+          shows past Nifty vs factor. <span className="font-medium text-foreground">Shock</span> — move
+          the slider ±1%…±10% to see how Nifty at horizon changes and which linked factors move with it.
         </p>
       </div>
 
@@ -194,16 +210,6 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
             <div className="flex gap-1">
               <button
                 type="button"
-                onClick={() => setChartMode("shock")}
-                className={cn(
-                  "rounded-md border px-2 py-0.5 text-[10px]",
-                  chartMode === "shock" && "border-primary/50 bg-primary/10",
-                )}
-              >
-                Shock → Nifty
-              </button>
-              <button
-                type="button"
                 onClick={() => setChartMode("history")}
                 className={cn(
                   "rounded-md border px-2 py-0.5 text-[10px]",
@@ -211,6 +217,16 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
                 )}
               >
                 History
+              </button>
+              <button
+                type="button"
+                onClick={() => setChartMode("shock")}
+                className={cn(
+                  "rounded-md border px-2 py-0.5 text-[10px]",
+                  chartMode === "shock" && "border-primary/50 bg-primary/10",
+                )}
+              >
+                Shock
               </button>
             </div>
             {chartMode === "shock" ? (
@@ -223,9 +239,10 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
                   step={1}
                   value={shockPct}
                   onChange={(e) => setShockPct(Number(e.target.value))}
-                  className="h-2 max-w-[200px] flex-1 cursor-pointer accent-primary"
+                  className="h-2 max-w-[220px] flex-1 cursor-pointer accent-primary"
                   aria-label={`Shock ${activeMeta?.label || activeFactor}`}
                 />
+                <span className="text-[9px] text-muted-foreground">+10%</span>
                 <span className="text-[10px] font-medium tabular-nums">
                   {shockPct > 0 ? "+" : ""}
                   {shockPct}%
@@ -247,16 +264,54 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
             </p>
           ) : null}
 
-          <CausalFactorChart
-            mode={chartMode}
-            activeFactor={activeFactor}
-            factorHistory={factorHistory}
-            sensitivityPoints={activeCurve?.points}
-            spot={spot}
-            baselineReturnPct={baselineReturn}
-            simulation={simulation}
-            height={280}
-          />
+          {chartMode === "history" ? (
+            <CausalFactorHistoryChart
+              activeFactor={activeFactor}
+              factorHistory={factorHistory}
+              height={280}
+            />
+          ) : (
+            <div className="space-y-3">
+              <ShockSummaryCards
+                baseline={baselinePoint}
+                isolated={isolatedAtShock}
+                simulation={simulation}
+                shockPct={shockPct}
+              />
+              <FactorShockImpactChart
+                label={activeMeta?.label || factorLabel(activeFactor)}
+                points={shockPoints}
+                activeShockPct={shockPct}
+                simulation={simulation}
+                height={260}
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Blue line: Nifty at {horizonDays}d if only {activeMeta?.label || factorLabel(activeFactor)}{" "}
+                moves (others fixed). Pin = your slider. Cascade card includes linked factors (FII → VIX,
+                oil → INR, etc.) that also feed the Nifty forecast.
+              </p>
+              {simulation?.cascade_applied?.length ? (
+                <CascadeFactorBars rows={simulation.cascade_applied} />
+              ) : shockPct !== 0 && simulating ? (
+                <p className="text-[10px] text-muted-foreground">Recalculating cascade…</p>
+              ) : null}
+            </div>
+          )}
+
+          {chartMode === "shock" && simulation?.expected_return_pct != null && shockPct !== 0 ? (
+            <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[10px]">
+              <span className="font-medium">Nifty spot today:</span> {fmtLevel(spot)}
+              {" · "}
+              <span className="font-medium">Cascade target:</span>{" "}
+              {fmtLevel(simulation.index_level)} ({fmtPct(simulation.expected_return_pct)} over {horizonDays}d)
+              {baselineReturn != null ? (
+                <span className="text-muted-foreground">
+                  {" "}
+                  — {fmtPct(simulation.expected_return_pct - baselineReturn)} vs headline
+                </span>
+              ) : null}
+            </div>
+          ) : null}
 
           {downstream.length > 0 ? (
             <div className="rounded-lg border px-3 py-2">
@@ -273,32 +328,6 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
                   </li>
                 ))}
               </ul>
-            </div>
-          ) : null}
-
-          {cascadeRows.length > 0 ? (
-            <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
-              <p className="text-[9px] font-semibold uppercase text-muted-foreground">
-                Simulated cascade at {shockPct > 0 ? "+" : ""}
-                {shockPct}%
-              </p>
-              <ul className="mt-1 space-y-0.5 text-[10px] tabular-nums">
-                {simulation?.cascade_applied?.map((row) => (
-                  <li key={row.factor}>
-                    <span className="font-medium">{factorLabel(row.factor || "")}</span>: {row.before} →{" "}
-                    {row.after}
-                    {row.reason?.includes("cascade") ? (
-                      <span className="text-muted-foreground"> (linked)</span>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-              {simulation?.expected_return_pct != null ? (
-                <p className="mt-1 text-[10px]">
-                  Nifty horizon: {fmtPct(simulation.expected_return_pct)} (
-                  {simulation.index_level?.toLocaleString("en-IN", { maximumFractionDigits: 0 })})
-                </p>
-              ) : null}
             </div>
           ) : null}
         </div>

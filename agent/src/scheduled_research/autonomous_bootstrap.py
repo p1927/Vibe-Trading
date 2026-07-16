@@ -41,7 +41,7 @@ def schedule_agent_bootstrap(agent_id: str) -> bool:
 
 
 def resume_pending_bootstraps() -> int:
-    """Re-schedule bootstrap for running agents still pending/failed (e.g. after API restart)."""
+    """Re-schedule bootstrap for running agents still pending (e.g. after API restart)."""
     _ensure_integrations_on_path()
     from trade_integrations.autonomous_agents.store import list_agents
 
