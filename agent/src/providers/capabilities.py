@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from typing import Mapping, Optional
@@ -101,7 +102,9 @@ _ZHIPU_CAPABILITIES = ProviderCapabilities(
     capture_reasoning=True,
 )
 
-_OPENAI_CODEX_CAPABILITIES = ProviderCapabilities("openai-codex", None, "OPENAI_CODEX_BASE_URL")
+_OPENAI_CODEX_CAPABILITIES = ProviderCapabilities(
+    "openai-codex", None, "OPENAI_CODEX_BASE_URL"
+)
 
 
 _PROVIDERS: dict[str, ProviderCapabilities] = {
@@ -139,7 +142,9 @@ _PROVIDERS: dict[str, ProviderCapabilities] = {
         gemini_thought_signatures=True,
     ),
     "groq": ProviderCapabilities("groq", "GROQ_API_KEY", "GROQ_BASE_URL"),
-    "dashscope": ProviderCapabilities("dashscope", "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL"),
+    "dashscope": ProviderCapabilities(
+        "dashscope", "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL"
+    ),
     "qwen": ProviderCapabilities("qwen", "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL"),
     "zhipu": _ZHIPU_CAPABILITIES,
     "glm": _ZHIPU_CAPABILITIES,
@@ -152,8 +157,12 @@ _PROVIDERS: dict[str, ProviderCapabilities] = {
     "ollama": ProviderCapabilities("ollama", None, "OLLAMA_BASE_URL"),
     "openai-codex": _OPENAI_CODEX_CAPABILITIES,
     "openai_codex": _OPENAI_CODEX_CAPABILITIES,
-    "opencode-zen": ProviderCapabilities("opencode-zen", "OPENAI_API_KEY", "OPENAI_BASE_URL"),
-    "opencode-go": ProviderCapabilities("opencode-go", "OPENAI_API_KEY", "OPENAI_BASE_URL"),
+    "opencode-zen": ProviderCapabilities(
+        "opencode-zen", "OPENAI_API_KEY", "OPENAI_BASE_URL"
+    ),
+    "opencode-go": ProviderCapabilities(
+        "opencode-go", "OPENAI_API_KEY", "OPENAI_BASE_URL"
+    ),
 }
 
 
@@ -186,6 +195,12 @@ def get_provider_capabilities(
 
     Returns:
         Provider capability definition. Unknown providers fall back to OpenAI.
+
+    Notes:
+        Model-name inference (``_infer_from_model``) activates for the default
+        ``"openai"`` provider and empty/None providers. Explicit non-OpenAI
+        providers (OpenRouter, Requesty, DeepSeek, etc.) are never inferred —
+        the explicit provider choice always wins.
     """
     normalized = (provider or "").strip().lower().replace("_", "-")
     if normalized == "openai-codex":
@@ -198,7 +213,61 @@ def get_provider_capabilities(
     return _PROVIDERS.get(normalized, _PROVIDERS["openai"])
 
 
-def provider_env_names(provider: str | None, model: str | None = None) -> tuple[str | None, str]:
+def provider_env_names(
+    provider: str | None, model: str | None = None
+) -> tuple[str | None, str]:
     """Return the API-key and base-URL env names for a provider/model pair."""
     caps = get_provider_capabilities(provider, model)
     return caps.api_key_env, caps.base_url_env
+
+
+def get_llm_credentials(
+    provider: str | None,
+    model: str | None,
+) -> dict[str, str]:
+    """Resolve API key, base URL, and model from provider/model env vars.
+
+    Centralizes the ``provider → env_var_name → os.getenv → credential`` chain
+    that was previously duplicated across ``_sync_provider_env()`` and
+    ``provider_diagnostics()`` in ``llm.py``.
+
+    Args:
+        provider: Configured provider name (e.g. ``"openrouter"``).
+        model: Configured model name (e.g. ``"deepseek/deepseek-v4-pro"``).
+
+    Returns:
+        Dict with ``"provider"``, ``"api_key"``, ``"base_url"``, ``"model"``
+        keys. Values may be empty strings when not configured.
+
+    Notes:
+        Reads dynamic env vars via ``os.getenv`` — not part of ``EnvConfig``.
+    """
+    key_env, base_env = provider_env_names(provider, model)
+
+    if key_env is not None:
+        api_key = os.getenv(key_env, "") or os.getenv(
+            "OPENAI_API_KEY", ""
+        )  # noqa: env-gate — dynamic provider key fallback
+    else:
+        api_key = (
+            os.getenv("OPENAI_API_KEY", "") or "ollama"
+        )  # noqa: env-gate — ollama default key
+
+    base_url = (
+        (
+            os.getenv(base_env, "") if base_env else ""
+        )  # noqa: env-gate — dynamic provider URL chain
+        or os.getenv(
+            "OPENAI_BASE_URL", ""
+        )  # noqa: env-gate — dynamic provider URL chain
+        or os.getenv(
+            "OPENAI_API_BASE", ""
+        )  # noqa: env-gate — dynamic provider URL chain
+    )
+
+    return {
+        "provider": (provider or "").strip().lower(),
+        "api_key": api_key,
+        "base_url": base_url,
+        "model": model or "",
+    }

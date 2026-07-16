@@ -14,7 +14,11 @@ from urllib.parse import urlsplit
 from pydantic import PrivateAttr
 
 from src.config.accessor import get_env_config, reset_env_config
-from src.providers.capabilities import get_provider_capabilities, provider_env_names
+from src.providers.capabilities import (
+    get_llm_credentials,
+    get_provider_capabilities,
+    provider_env_names,
+)
 
 try:
     from dotenv import load_dotenv
@@ -28,6 +32,7 @@ except ImportError:
 
 
 if ChatOpenAI is not None:
+
     class ChatOpenAIWithReasoning(ChatOpenAI):  # type: ignore[misc,valid-type]
         """ChatOpenAI that preserves provider reasoning across invoke + stream.
 
@@ -43,7 +48,9 @@ if ChatOpenAI is not None:
 
         _vibe_provider: Optional[str] = PrivateAttr(default=None)
 
-        def __init__(self, *args: Any, vibe_provider: str | None = None, **kwargs: Any) -> None:
+        def __init__(
+            self, *args: Any, vibe_provider: str | None = None, **kwargs: Any
+        ) -> None:
             """Initialize while retaining the resolved provider name."""
             super().__init__(*args, **kwargs)
             self._vibe_provider = vibe_provider
@@ -66,7 +73,9 @@ if ChatOpenAI is not None:
             if isinstance(extra_content, dict):
                 google = extra_content.get("google")
                 if isinstance(google, dict):
-                    value = google.get("thought_signature") or google.get("thoughtSignature")
+                    value = google.get("thought_signature") or google.get(
+                        "thoughtSignature"
+                    )
                     if value:
                         return value
 
@@ -75,13 +84,17 @@ if ChatOpenAI is not None:
             if isinstance(function, dict):
                 containers.append(function)
             for container in containers:
-                value = container.get("thought_signature") or container.get("thoughtSignature")
+                value = container.get("thought_signature") or container.get(
+                    "thoughtSignature"
+                )
                 if value:
                     return value
             return None
 
         @classmethod
-        def _collect_tool_call_thought_signatures(cls, tool_calls: Any) -> list[dict[str, Any]]:
+        def _collect_tool_call_thought_signatures(
+            cls, tool_calls: Any
+        ) -> list[dict[str, Any]]:
             if not isinstance(tool_calls, list):
                 return []
 
@@ -105,10 +118,14 @@ if ChatOpenAI is not None:
             if not isinstance(src, dict):
                 return
             caps = self._capabilities()
-            if caps.capture_reasoning and (value := src.get("reasoning_content") or src.get("reasoning")):
+            if caps.capture_reasoning and (
+                value := src.get("reasoning_content") or src.get("reasoning")
+            ):
                 msg.additional_kwargs["reasoning_content"] = value
             if caps.gemini_thought_signatures and (
-                signatures := self._collect_tool_call_thought_signatures(src.get("tool_calls"))
+                signatures := self._collect_tool_call_thought_signatures(
+                    src.get("tool_calls")
+                )
             ):
                 msg.additional_kwargs["tool_call_thought_signatures"] = signatures
 
@@ -149,7 +166,9 @@ if ChatOpenAI is not None:
                                 raw.get("tool_calls")
                             )
                             if sigs:
-                                msg.additional_kwargs["tool_call_thought_signatures"] = sigs
+                                msg.additional_kwargs[
+                                    "tool_call_thought_signatures"
+                                ] = sigs
             return prompt_value
 
         @classmethod
@@ -201,7 +220,9 @@ if ChatOpenAI is not None:
             google["thought_signature"] = signature
 
         @classmethod
-        def _inject_tool_call_thought_signatures(cls, outbound: Any, source_message: Any) -> None:
+        def _inject_tool_call_thought_signatures(
+            cls, outbound: Any, source_message: Any
+        ) -> None:
             if not isinstance(outbound, list):
                 return
 
@@ -272,14 +293,19 @@ if ChatOpenAI is not None:
                 if caps.normalize_assistant_content and m.get("content") is None:
                     m["content"] = ""
                 if caps.send_reasoning_content:
-                    m["reasoning_content"] = source_message.additional_kwargs.get("reasoning_content", "")
+                    m["reasoning_content"] = source_message.additional_kwargs.get(
+                        "reasoning_content", ""
+                    )
                 else:
                     m.pop("reasoning_content", None)
                 if caps.gemini_thought_signatures:
-                    self._inject_tool_call_thought_signatures(m.get("tool_calls"), source_message)
+                    self._inject_tool_call_thought_signatures(
+                        m.get("tool_calls"), source_message
+                    )
                 else:
                     self._strip_tool_call_extra_content(m.get("tool_calls"))
             return payload
+
 else:
     ChatOpenAIWithReasoning = None  # type: ignore
 
@@ -398,12 +424,20 @@ def _build_native_deepseek(
         module = import_module("langchain_deepseek")
         chat_deepseek = getattr(module, "ChatDeepSeek")
     except Exception as exc:  # noqa: BLE001 - optional adapter fallback
-        logger.info("DeepSeek native adapter unavailable; using OpenAI-compatible path: %s", exc)
+        logger.info(
+            "DeepSeek native adapter unavailable; using OpenAI-compatible path: %s", exc
+        )
         return None
 
     key_env, base_env = provider_env_names("deepseek", model)
-    api_key = os.getenv(key_env or "", "") or os.getenv("OPENAI_API_KEY", "")  # noqa: env-gate — dynamic provider key resolution
-    base_url = os.getenv(base_env, "") or os.getenv("OPENAI_BASE_URL", "") or os.getenv("OPENAI_API_BASE", "")  # noqa: env-gate — dynamic provider URL resolution
+    api_key = os.getenv(key_env or "", "") or os.getenv(
+        "OPENAI_API_KEY", ""
+    )  # noqa: env-gate — dynamic provider key resolution
+    base_url = (
+        os.getenv(base_env, "")
+        or os.getenv("OPENAI_BASE_URL", "")
+        or os.getenv("OPENAI_API_BASE", "")
+    )  # noqa: env-gate — dynamic provider URL resolution
     return chat_deepseek(
         model=model,
         temperature=temperature,
@@ -452,7 +486,9 @@ def _ensure_dotenv() -> None:
         _redact_env_source(loaded),
         get_env_config().llm.langchain_provider,
         get_env_config().llm.langchain_model_name or "(unset)",
-        _redact_base_url_for_log(os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")),  # noqa: env-gate — diagnostic display
+        _redact_base_url_for_log(
+            os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
+        ),  # noqa: env-gate — diagnostic display
     )
 
 
@@ -485,16 +521,10 @@ def _sync_provider_env() -> None:
         os.environ.pop("OPENAI_API_KEY", None)
         return
 
-    key_env, base_env = provider_env_names(provider, get_env_config().llm.langchain_model_name)
+    creds = get_llm_credentials(provider, get_env_config().llm.langchain_model_name)
+    api_key = creds["api_key"]
+    base_url = creds["base_url"]
 
-    # Resolve API key: provider-specific env → OPENAI_API_KEY fallback
-    if key_env is not None:
-        api_key = os.getenv(key_env, "") or os.getenv("OPENAI_API_KEY", "")  # noqa: env-gate — dynamic provider key fallback
-    else:
-        api_key = os.getenv("OPENAI_API_KEY", "") or "ollama"  # noqa: env-gate — ollama default key
-
-    # Resolve base URL: provider-specific env → OPENAI_BASE_URL fallback
-    base_url = os.getenv(base_env, "") or os.getenv("OPENAI_BASE_URL", "") or os.getenv("OPENAI_API_BASE", "")  # noqa: env-gate — dynamic provider URL chain
     if provider == "ollama" and base_url:
         base_url = _normalize_ollama_base_url(base_url)
 
@@ -516,16 +546,34 @@ def provider_diagnostics() -> dict[str, Any]:
     provider = get_env_config().llm.langchain_provider.strip().lower()
     model = get_env_config().llm.langchain_model_name.strip()
     caps = get_provider_capabilities(provider, model)
-    key_env, base_env = provider_env_names(provider, model)
-    base_url = os.getenv(base_env, "") or os.getenv("OPENAI_BASE_URL", "") or os.getenv("OPENAI_API_BASE", "")  # noqa: env-gate — dynamic provider URL resolution
-    proxy_names = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"]
-    package_names = ["langchain-openai", "langchain-core", "langchain", "openai", "langchain-deepseek"]
+    key_env = caps.api_key_env
+    creds = get_llm_credentials(provider, model)
+    base_url = creds["base_url"]
+    proxy_names = [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+    ]
+    package_names = [
+        "langchain-openai",
+        "langchain-core",
+        "langchain",
+        "openai",
+        "langchain-deepseek",
+    ]
     native_package_version = (
         _package_version(caps.native_adapter_package)
         if caps.native_adapter_package
         else None
     )
-    adapter_mode = _deepseek_adapter_mode() if caps.name == "deepseek" else "openai-compatible"
+    adapter_mode = (
+        _deepseek_adapter_mode() if caps.name == "deepseek" else "openai-compatible"
+    )
     adapter_type = (
         "native"
         if caps.name == "deepseek"
@@ -542,18 +590,26 @@ def provider_diagnostics() -> dict[str, Any]:
             "LANGCHAIN_PROVIDER": _redact_env_flag("LANGCHAIN_PROVIDER"),
             "LANGCHAIN_MODEL_NAME": _redact_env_flag("LANGCHAIN_MODEL_NAME"),
             "OPENAI_API_KEY": _redact_env_flag("OPENAI_API_KEY"),
-            "OPENAI_BASE_URL": _redact_base_url_for_log(os.getenv("OPENAI_BASE_URL")),  # noqa: env-gate — diagnostic snapshot
-            "OPENAI_API_BASE": _redact_base_url_for_log(os.getenv("OPENAI_API_BASE")),  # noqa: env-gate — diagnostic snapshot
+            "OPENAI_BASE_URL": _redact_base_url_for_log(
+                os.getenv("OPENAI_BASE_URL")
+            ),  # noqa: env-gate — diagnostic snapshot
+            "OPENAI_API_BASE": _redact_base_url_for_log(
+                os.getenv("OPENAI_API_BASE")
+            ),  # noqa: env-gate — diagnostic snapshot
         },
         "proxy": {
-            name: _redact_proxy_url(name, os.getenv(name))  # noqa: env-gate — proxy env iteration
+            name: _redact_proxy_url(
+                name, os.getenv(name)
+            )  # noqa: env-gate — proxy env iteration
             for name in proxy_names
             if os.getenv(name)  # noqa: env-gate — proxy env filter
         },
         "packages": {name: _package_version(name) for name in package_names},
         "timeout_seconds": get_env_config().llm.timeout_seconds,
         "max_retries": get_env_config().llm.max_retries,
-        "reasoning_effort": get_env_config().llm.langchain_reasoning_effort.strip().lower(),
+        "reasoning_effort": get_env_config()
+        .llm.langchain_reasoning_effort.strip()
+        .lower(),
         "adapter": {
             "type": adapter_type,
             "mode": adapter_mode,
@@ -639,7 +695,11 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
         "timeout": get_env_config().llm.timeout_seconds,
         "max_retries": get_env_config().llm.max_retries,
         "callbacks": callbacks,
-        "extra_body": {"reasoning": {"effort": effort}} if effort and caps.openrouter_reasoning_body else None,
+        "extra_body": (
+            {"reasoning": {"effort": effort}}
+            if effort and caps.openrouter_reasoning_body
+            else None
+        ),
         "vibe_provider": provider,
     }
     if caps.default_headers:
