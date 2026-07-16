@@ -88,6 +88,14 @@ async def _dispatch_scheduled_research_job(job) -> None:
     if job_type in HUB_CALIBRATION_JOB_TYPES:
         await dispatch_hub_calibration_job(job)
         return
+    from src.scheduled_research.capture_jobs import (
+        HUB_CAPTURE_JOB_TYPES,
+        dispatch_hub_capture_job,
+    )
+
+    if job_type in HUB_CAPTURE_JOB_TYPES:
+        await dispatch_hub_capture_job(job)
+        return
     from src.scheduled_research.autonomous_agent_jobs import (
         AUTONOMOUS_JOB_TYPES,
         dispatch_autonomous_job,
@@ -169,6 +177,10 @@ def _start_scheduled_research_executor() -> None:
         is_hub_calibration_scheduler_enabled,
         register_default_hub_calibration_jobs,
     )
+    from src.scheduled_research.capture_jobs import (
+        is_hub_capture_scheduler_enabled,
+        register_default_hub_capture_jobs,
+    )
 
     if is_index_scheduler_enabled():
         register_default_index_jobs(_get_scheduled_research_store())
@@ -180,6 +192,8 @@ def _start_scheduled_research_executor() -> None:
         register_default_hub_calibration_jobs(_get_scheduled_research_store())
     elif is_trade_data_scheduler_enabled():
         register_default_trade_data_jobs(_get_scheduled_research_store())
+    if is_hub_capture_scheduler_enabled():
+        register_default_hub_capture_jobs(_get_scheduled_research_store())
     _register_persisted_autonomous_agent_jobs()
     try:
         from src.scheduled_research.autonomous_bootstrap import resume_pending_bootstraps

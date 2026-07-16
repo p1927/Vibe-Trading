@@ -76,11 +76,29 @@ def test_filters_nifty_injection_memory_on_us_spy_session() -> None:
     assert memory_matches_session(entry, cfg) is False
 
 
-def test_keeps_us_relevant_memory_on_us_session() -> None:
-    cfg = {"execution_market": "US", "symbols": ["SPY"]}
+def test_filters_e2e_memory_on_autonomous_in_session() -> None:
+    cfg = {
+        "session_kind": "autonomous_agent",
+        "symbols": ["NIFTY"],
+        "execution_market": "IN",
+    }
     entry = _Entry(
-        title="Alpaca paper order sizing for SPY",
-        description="US equity notes",
-        body="Use trading_place_order on alpaca-paper-trade for SPY shares.",
+        title="Bootstrap retry heuristic",
+        description="dev",
+        body="Commit from cached context rather than burn further context on idempotent reads.",
+    )
+    assert memory_matches_session(entry, cfg) is False
+
+
+def test_keeps_trading_memory_on_autonomous_in_session() -> None:
+    cfg = {
+        "session_kind": "autonomous_agent",
+        "symbols": ["NIFTY"],
+        "execution_market": "IN",
+    }
+    entry = _Entry(
+        title="NIFTY iron condor sizing",
+        description="options",
+        body="Low VIX regime favors iron condor on NIFTY with 0.5% spot move watch.",
     )
     assert memory_matches_session(entry, cfg) is True

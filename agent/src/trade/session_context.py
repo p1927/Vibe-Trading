@@ -28,6 +28,17 @@ _US_BACKEND_MARKERS = frozenset({"ALPACA", "ALPACA-PAPER"})
 
 _INJECTION_TITLE_RE = re.compile(r"prompt[- ]injection", re.I)
 
+_E2E_MEMORY_MARKERS = (
+    "handoff cycle",
+    "cached context",
+    "synthetic alert",
+    "idempotent reads",
+    "verification reads",
+    "e2e phase",
+    "integration test",
+    "commit from cached",
+)
+
 
 def session_execution_market(session_config: dict[str, Any] | None) -> str:
     """Return ``US``, ``IN``, or empty when unknown."""
@@ -126,6 +137,14 @@ def memory_matches_session(
     """Filter auto-recall so cross-market injection notes do not bleed into other sessions."""
     cfg = session_config or {}
     market = session_execution_market(cfg)
+    blob_lower = f"{entry.title} {entry.description} {entry.body}".lower()
+
+    if is_autonomous_agent_session(cfg) and not cfg.get("e2e_integration_test"):
+        if any(marker in blob_lower for marker in _E2E_MEMORY_MARKERS):
+            return False
+        if _INJECTION_TITLE_RE.search(entry.title.lower()):
+            return False
+
     if not market:
         return True
 

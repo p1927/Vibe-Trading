@@ -21,6 +21,7 @@ import { PredictionLearningPanel } from "@/components/prediction/PredictionLearn
 import { PredictionPipelinePanel } from "@/components/prediction/PredictionPipelinePanel";
 import { DerivativesFactorsPanel } from "@/components/prediction/DerivativesFactorsPanel";
 import { PredictionScheduledJobsPanel } from "@/components/prediction/PredictionScheduledJobsPanel";
+import { DataCapturePanel } from "@/components/prediction/DataCapturePanel";
 import { NewsTriggerPanel } from "@/components/prediction/NewsTriggerPanel";
 import { NewsImpactPanel } from "@/components/prediction/NewsImpactPanel";
 import { PredictionVerificationPanel } from "@/components/prediction/PredictionVerificationPanel";

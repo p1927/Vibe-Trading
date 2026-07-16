@@ -80,7 +80,7 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
             id=research_id,
             prompt=f"Autonomous research turn for {agent.get('name') or agent_id}",
             schedule=research_ms,
-            next_run_at=now_ms + 60_000,
+            next_run_at=research_next_run,
             status=JobStatus.PENDING,
             created_at=now_ms,
             config={"job_type": JOB_TYPE_RESEARCH, "autonomous_agent_id": agent_id},
