@@ -93,6 +93,7 @@ export function Autonomous() {
     navigate("/autonomous");
   }, [navigate]);
 
+  // After promotion, vibe_session_id === orchestrator session id; only agent param changes.
   const onAgentCommitted = useCallback(
     (newAgentId: string, newSessionId: string) => {
       setSearchParams({
