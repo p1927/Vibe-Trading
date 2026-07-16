@@ -278,7 +278,10 @@ class ContextBuilder:
         enriched = user_message
         if self._persistent_memory:
             try:
+                from src.trade.session_context import memory_matches_session
+
                 recalls = self._persistent_memory.find_relevant(user_message, max_results=3)
+                recalls = [r for r in recalls if memory_matches_session(r, self._session_config)]
                 if recalls:
                     lines = [f"- **{r.title}** ({r.memory_type}): {r.body[:500]}" for r in recalls]
                     recall_block = "\n".join(lines)

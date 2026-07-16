@@ -13,8 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 from src.trade.symbol_detect import (
     detect_finalize_intent,
-    extract_primary_ticker,
-    infer_asset_type,
 )
 
 if TYPE_CHECKING:
@@ -552,6 +550,7 @@ def prefetch_research_for_message(
     session_id: str,
     content: str,
     event_bus: EventBus | None = None,
+    session_config: dict[str, Any] | None = None,
 ) -> str:
     """Prefetch hub plan, emit SSE artifact, return agent context block (may be empty)."""
     try:
@@ -560,14 +559,18 @@ def prefetch_research_for_message(
         logger.debug("Trade stack path unavailable for research prefetch")
         return ""
 
-    ticker = extract_primary_ticker(content)
+    from src.trade.session_context import (
+        classify_prefetch_widget_intent,
+        infer_prefetch_asset_type,
+        resolve_prefetch_ticker,
+    )
+
+    ticker = resolve_prefetch_ticker(session_config, content)
     if not ticker:
         return ""
 
-    from src.trade.widget_intent import classify_widget_intent
-
-    widget_intent = classify_widget_intent(content)
-    asset_type = infer_asset_type(content, ticker)
+    widget_intent = classify_prefetch_widget_intent(session_config, content)
+    asset_type = infer_prefetch_asset_type(session_config, ticker, content)
     artifact: dict[str, Any] | None = None
     index_artifact: dict[str, Any] | None = None
     try:

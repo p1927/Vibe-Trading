@@ -165,7 +165,12 @@ class SessionService:
         try:
             from src.trade.hub_bridge import prefetch_research_for_message
 
-            return prefetch_research_for_message(session_id, content, self.event_bus)
+            return prefetch_research_for_message(
+                session_id,
+                content,
+                self.event_bus,
+                session_config,
+            )
         except Exception:
             import logging
 
@@ -418,6 +423,7 @@ class SessionService:
                 user_message=user_message,
                 assistant_text=assistant_text,
                 tools_called=tools_called,
+                session_config=session_config,
             )
         except Exception:
             import logging
