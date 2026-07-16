@@ -143,6 +143,7 @@ class SessionService:
             self._prefetch_research_for_message,
             session.session_id,
             content,
+            dict(session.config),
         )
         await self._run_attempt(
             session,
@@ -151,7 +152,16 @@ class SessionService:
             research_context=research_context,
         )
 
-    def _prefetch_research_for_message(self, session_id: str, content: str) -> str:
+    def _prefetch_research_for_message(
+        self,
+        session_id: str,
+        content: str,
+        session_config: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        from src.session.orchestrator_profile import is_orchestrator_session
+
+        if is_orchestrator_session(session_config):
+            return ""
         try:
             from src.trade.hub_bridge import prefetch_research_for_message
 
@@ -268,6 +278,7 @@ class SessionService:
                     attempt.prompt,
                     attempt.summary or "",
                     result.get("tools_called") or [],
+                    dict(session.config),
                 )
 
         except Exception as exc:
@@ -339,8 +350,15 @@ class SessionService:
                 session_id=session_id,
                 event_callback=event_callback,
                 warn_callback=_mcp_collision_warn,
+                session_config=session_config,
             ),
         )
+
+        if session_config:
+            from src.session.orchestrator_profile import filter_registry_for_orchestrator, is_orchestrator_session
+
+            if is_orchestrator_session(session_config):
+                registry = filter_registry_for_orchestrator(registry)
 
         agent = AgentLoop(
             registry=registry,
@@ -364,6 +382,7 @@ class SessionService:
                     user_message=user_message,
                     history=history,
                     session_id=session_id,
+                    session_config=session_config,
                 ),
             )
         finally:
@@ -384,7 +403,12 @@ class SessionService:
         user_message: str,
         assistant_text: str,
         tools_called: set[str] | list[str],
+        session_config: Optional[Dict[str, Any]] = None,
     ) -> None:
+        from src.session.orchestrator_profile import is_orchestrator_session
+
+        if is_orchestrator_session(session_config):
+            return
         try:
             from src.trade.widget_guard import maybe_inject_widget
 

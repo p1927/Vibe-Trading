@@ -73,6 +73,7 @@ def build_registry(
     warn_callback: Callable[[str], None] | None = None,
     interactive: bool | None = None,
     _mcp_server_tool_name_segments: Mapping[str, str] | None = None,
+    session_config: dict | None = None,
 ) -> ToolRegistry:
     """Build the tool registry via auto-discovery, optionally enriched with MCP tools.
 
@@ -120,6 +121,7 @@ def build_registry(
         UpdateResearchGoalStatusTool,
     )
     from src.tools.autopilot_tool import RunResearchAutopilotTool
+    from src.tools.propose_autonomous_agent_tool import ProposeAutonomousAgentTool
     from src.tools.remember_tool import RememberTool
     from src.tools.swarm_tool import SwarmTool
 
@@ -131,7 +133,10 @@ def build_registry(
     }
     # Tools that need the host session id injected: they create or mutate the
     # session's research goal, and the LLM never knows the session id.
-    session_injected_classes = goal_tool_classes | {RunResearchAutopilotTool}
+    session_injected_classes = goal_tool_classes | {
+        RunResearchAutopilotTool,
+        ProposeAutonomousAgentTool,
+    }
     registry = ToolRegistry()
     for cls in _discover_subclasses():
         try:

@@ -38,12 +38,21 @@ class ProposeAutonomousAgentTool(BaseTool):
             "watch_interval_min": {"type": "integer", "description": "Lightweight watch cadence, default 7"},
             "research_interval_min": {"type": "integer", "description": "Full reasoning cadence, default 90"},
             "mode": {"type": "string", "description": "paper (v1 only)"},
-            "session_id": {"type": "string", "description": "Orchestrator vibe session id."},
+            "session_id": {"type": "string", "description": "Orchestrator vibe session id (auto-filled)."},
         },
         "required": ["symbols"],
     }
     repeatable = True
     is_readonly = True
+
+    def __init__(
+        self,
+        *,
+        default_session_id: str | None = None,
+        event_callback: Any = None,
+    ) -> None:
+        self._default_session_id = default_session_id
+        self._event_callback = event_callback
 
     def execute(self, **kwargs: Any) -> str:
         from trade_integrations.autonomous_agents.proposals import propose_autonomous_agent
@@ -51,6 +60,8 @@ class ProposeAutonomousAgentTool(BaseTool):
         symbols = kwargs.get("symbols")
         if not isinstance(symbols, list) or not symbols:
             return json.dumps({"status": "error", "error": "symbols (array) is required"})
+
+        session_id = kwargs.get("session_id") or self._default_session_id
 
         result = propose_autonomous_agent(
             symbols=symbols,
@@ -62,10 +73,10 @@ class ProposeAutonomousAgentTool(BaseTool):
             watch_interval_min=kwargs.get("watch_interval_min"),
             research_interval_min=kwargs.get("research_interval_min"),
             mode=kwargs.get("mode"),
-            orchestrator_session_id=kwargs.get("session_id"),
+            orchestrator_session_id=session_id,
         )
         if result.get("status") == "ready" and isinstance(result.get("proposal"), dict):
             proposal = result["proposal"]
-            proposal["session_id"] = kwargs.get("session_id")
+            proposal["session_id"] = session_id
             result["proposal"] = proposal
         return json.dumps(result, ensure_ascii=False, default=str)
