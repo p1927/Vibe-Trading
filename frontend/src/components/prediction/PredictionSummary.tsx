@@ -56,7 +56,10 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
   const regime = artifact.regime || {};
   const view = String(pred.view || "neutral");
   const conf = range.confidence ?? pred.confidence;
-  const hitRate = accuracy.direction_hit_rate_14d ?? accuracy.direction_hit_rate;
+  const hitRate =
+    accuracy.direction_hit_rate_walk_forward ??
+    accuracy.direction_hit_rate_14d ??
+    accuracy.direction_hit_rate;
   const mae = accuracy.mae_14d_pct ?? accuracy.mae_pct;
   const sampleCount = accuracy.sample_count ?? 0;
   const spot = artifact.spot;

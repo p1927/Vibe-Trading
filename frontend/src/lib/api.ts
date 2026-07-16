@@ -1523,6 +1523,8 @@ export interface IndexAccuracy {
   mae_pct?: number | null;
   mae_14d_pct?: number | null;
   direction_hit_rate?: number | null;
+  direction_hit_rate_walk_forward?: number | null;
+  direction_hit_rate_ledger?: number | null;
   direction_hit_rate_14d?: number | null;
   window_days?: number;
   retrained?: boolean;
