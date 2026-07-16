@@ -2162,7 +2162,12 @@ export interface AutonomousAgentProposal {
   schedules?: AutonomousAgentSchedules;
   alert_rules?: Record<string, unknown>;
   session_id?: string;
+  orchestrator_session_id?: string;
   expires_at_ms?: number;
+  execution_market?: "IN" | "US";
+  execution_backend?: "openalgo" | "alpaca";
+  stack_health?: AutonomousStackHealth;
+  committed_agent_id?: string;
 }
 
 export interface AutonomousAgentsListResponse {

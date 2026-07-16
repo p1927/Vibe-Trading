@@ -1,15 +1,17 @@
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { Check, Loader2, Radio, ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
-import { api, type AutonomousAgentProposal } from "@/lib/api";
+import { api, type AutonomousAgentProposal, type AutonomousStackHealth } from "@/lib/api";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { cn } from "@/lib/utils";
 
 interface Props {
   proposal: AutonomousAgentProposal;
   committed?: { agent_id?: string; name?: string } | null;
   onAdjust: (message: string) => void;
   onCommitted?: (agentId: string, sessionId: string) => void;
+  onDismiss?: () => void;
 }
 
 function formatMs(ms: number | undefined): string {
@@ -20,33 +22,117 @@ function formatMs(ms: number | undefined): string {
   return `${hr} hr`;
 }
 
+function isProposalExpired(proposal: AutonomousAgentProposal): boolean {
+  const expires = proposal.expires_at_ms;
+  return Boolean(expires && Date.now() > expires);
+}
+
+function formatMoney(amount: number | undefined, market: "IN" | "US" | undefined): string {
+  const value = amount ?? 0;
+  if (market === "US") {
+    return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  }
+  return `₹${value.toLocaleString()}`;
+}
+
+function ProposalInfraStrip({
+  market,
+  backend,
+  health,
+}: {
+  market?: "IN" | "US";
+  backend?: string;
+  health?: AutonomousStackHealth;
+}) {
+  if (!health && !market) return null;
+
+  const nautilusOn = health?.nautilus_watch_enabled !== false;
+  const nautilusAlive = health?.nautilus_process_alive;
+  const sched = health?.scheduler_health ?? "unknown";
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+      <span className="font-medium text-muted-foreground">Infra</span>
+      {market === "US" ? (
+        <span
+          className={cn(
+            "rounded border px-1.5 py-0.5",
+            backend === "alpaca" ? "border-emerald-500/40 text-emerald-700" : "border-muted text-muted-foreground",
+          )}
+        >
+          Alpaca paper
+        </span>
+      ) : (
+        <>
+          <span
+            className={cn(
+              "rounded border px-1.5 py-0.5",
+              health?.paper_session_enabled
+                ? "border-emerald-500/40 text-emerald-700"
+                : "border-amber-500/40 text-amber-700",
+            )}
+          >
+            OpenAlgo {health?.paper_session_enabled ? "ready" : "check"}
+          </span>
+          <span
+            className={cn(
+              "rounded border px-1.5 py-0.5",
+              !nautilusOn && "text-muted-foreground",
+              nautilusOn && nautilusAlive && "border-emerald-500/40 text-emerald-700",
+              nautilusOn && !nautilusAlive && "border-amber-500/40 text-amber-700",
+            )}
+          >
+            Nautilus {nautilusOn ? (nautilusAlive ? "running" : "start watch") : "off"}
+          </span>
+        </>
+      )}
+      {market !== "US" && (
+        <span
+          className={cn(
+            "rounded border px-1.5 py-0.5",
+            sched === "ok" && "border-emerald-500/40 text-emerald-700",
+            sched === "stale" && "border-amber-500/40 text-amber-700",
+          )}
+        >
+          scheduler {sched}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposalCard({
   proposal,
   committed,
   onAdjust,
   onCommitted,
+  onDismiss,
 }: Props) {
   const [busy, setBusy] = useState(false);
   const [adjusting, setAdjusting] = useState(false);
   const [adjustText, setAdjustText] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  const expired = useMemo(() => isProposalExpired(proposal), [proposal]);
+  const market = proposal.execution_market;
+
   const handleCommit = useCallback(async () => {
-    if (busy) return;
+    if (busy || expired) return;
     setBusy(true);
     try {
       const result = await api.commitAutonomousAgent({
         proposal_id: proposal.proposal_id,
         consent_ack: true,
-        session_id: proposal.session_id,
+        session_id: proposal.session_id ?? proposal.orchestrator_session_id,
       });
       toast.success(`Agent "${result.agent.name}" is now running`);
+      window.dispatchEvent(new Event("autonomous-agents-refresh"));
       onCommitted?.(result.agent.id, result.vibe_session_id);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to create agent");
       setBusy(false);
     }
-  }, [busy, onCommitted, proposal.proposal_id, proposal.session_id]);
+  }, [busy, expired, onCommitted, proposal.orchestrator_session_id, proposal.proposal_id, proposal.session_id]);
 
   if (committed) {
     return (
@@ -69,11 +155,22 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
       <div className="flex-1 min-w-0 space-y-3 rounded-2xl border border-primary/20 bg-background/95 p-4 shadow-sm">
         <div className="flex items-start gap-2">
           <Radio className="h-4 w-4 shrink-0 text-primary" />
-          <div>
+          <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-foreground">Create autonomous agent</p>
             <p className="text-xs text-muted-foreground">{proposal.name}</p>
+            {expired ? (
+              <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+                Proposal expired — re-propose or dismiss.
+              </p>
+            ) : null}
           </div>
         </div>
+
+        <ProposalInfraStrip
+          market={market}
+          backend={proposal.execution_backend}
+          health={proposal.stack_health}
+        />
 
         <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
           <div className="col-span-2">
@@ -86,11 +183,11 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
           </div>
           <div>
             <dt className="text-muted-foreground">Budget</dt>
-            <dd className="font-mono">₹{(constraints.budget_inr ?? 0).toLocaleString()}</dd>
+            <dd className="font-mono">{formatMoney(constraints.budget_inr, market)}</dd>
           </div>
           <div>
             <dt className="text-muted-foreground">Max loss</dt>
-            <dd className="font-mono">₹{(constraints.max_daily_loss_inr ?? 0).toLocaleString()}</dd>
+            <dd className="font-mono">{formatMoney(constraints.max_daily_loss_inr, market)}</dd>
           </div>
           <div>
             <dt className="text-muted-foreground">Confidence</dt>
@@ -108,9 +205,34 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
             <dt className="text-muted-foreground">Research</dt>
             <dd>every {formatMs(schedules.research_ms)}</dd>
           </div>
+          {market ? (
+            <div className="col-span-2">
+              <dt className="text-muted-foreground">Execution</dt>
+              <dd>{market === "US" ? "US · Alpaca paper" : "India · Nautilus watch + OpenAlgo"}</dd>
+            </div>
+          ) : null}
         </dl>
 
-        {adjusting ? (
+        {expired ? (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => onAdjust("Please refresh this proposal with the same settings.")}
+              className="rounded-lg border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/50"
+            >
+              Re-propose
+            </button>
+            {onDismiss ? (
+              <button
+                type="button"
+                onClick={onDismiss}
+                className="rounded-lg border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+              >
+                Dismiss
+              </button>
+            ) : null}
+          </div>
+        ) : adjusting ? (
           <div className="grid gap-2">
             <input
               type="text"

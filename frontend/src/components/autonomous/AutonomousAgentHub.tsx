@@ -69,7 +69,12 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
   useEffect(() => {
     load();
     const timer = window.setInterval(load, POLL_MS);
-    return () => window.clearInterval(timer);
+    const onRefresh = () => void load();
+    window.addEventListener("autonomous-agents-refresh", onRefresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("autonomous-agents-refresh", onRefresh);
+    };
   }, [load]);
 
   const openAgent = (agent: AutonomousAgentInstance) => {

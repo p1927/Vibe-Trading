@@ -785,8 +785,27 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
         touch();
         const proposal = d as unknown as AutonomousAgentProposal;
         if (!proposal.proposal_id || proposal.status !== "ready") return;
-        setLiveItems((items) => [...items, { kind: "autonomous_proposal", timestamp: Date.now(), proposal }]);
+        setLiveItems((items) => {
+          if (
+            items.some(
+              (item) =>
+                item.kind === "autonomous_proposal" &&
+                item.proposal.proposal_id === proposal.proposal_id,
+            )
+          ) {
+            return items;
+          }
+          return [...items, { kind: "autonomous_proposal", timestamp: Date.now(), proposal }];
+        });
         scrollToBottom();
+      },
+
+      "autonomous_agent.committed": (d) => {
+        touch();
+        const payload = d as { agent_id?: string; vibe_session_id?: string; name?: string };
+        if (!payload.agent_id || !payload.vibe_session_id) return;
+        window.dispatchEvent(new Event("autonomous-agents-refresh"));
+        onAutonomousAgentCommitted?.(payload.agent_id, payload.vibe_session_id);
       },
 
       "trade_plan.widget": (d) => {
@@ -1503,6 +1522,17 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
                     proposal={ap.proposal}
                     committed={committedAutonomous[ap.proposal.proposal_id] ?? null}
                     onAdjust={runPrompt}
+                    onDismiss={() => {
+                      setLiveItems((items) =>
+                        items.filter(
+                          (item) =>
+                            !(
+                              item.kind === "autonomous_proposal" &&
+                              item.proposal.proposal_id === ap.proposal.proposal_id
+                            ),
+                        ),
+                      );
+                    }}
                     onCommitted={(agentId, sessionId) => {
                       setCommittedAutonomous((prev) => ({
                         ...prev,
