@@ -107,6 +107,8 @@ if ChatOpenAI is not None:
             caps = self._capabilities()
             if caps.capture_reasoning and (value := src.get("reasoning_content") or src.get("reasoning")):
                 msg.additional_kwargs["reasoning_content"] = value
+            if caps.name == "minimax" and (details := src.get("reasoning_details")):
+                msg.additional_kwargs["reasoning_details"] = details
             if caps.gemini_thought_signatures and (
                 signatures := self._collect_tool_call_thought_signatures(src.get("tool_calls"))
             ):
@@ -273,8 +275,13 @@ if ChatOpenAI is not None:
                     m["content"] = ""
                 if caps.send_reasoning_content:
                     m["reasoning_content"] = source_message.additional_kwargs.get("reasoning_content", "")
+                    if caps.name == "minimax":
+                        details = source_message.additional_kwargs.get("reasoning_details")
+                        if details is not None:
+                            m["reasoning_details"] = details
                 else:
                     m.pop("reasoning_content", None)
+                    m.pop("reasoning_details", None)
                 if caps.gemini_thought_signatures:
                     self._inject_tool_call_thought_signatures(m.get("tool_calls"), source_message)
                 else:
@@ -633,13 +640,18 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
     # Optional reasoning activation for relays requiring opt-in (e.g. OpenRouter).
     # Moonshot/DeepSeek official APIs emit reasoning by default and ignore this field.
     effort = get_env_config().llm.langchain_reasoning_effort.strip().lower()
+    extra_body: dict[str, Any] | None = None
+    if effort and caps.openrouter_reasoning_body:
+        extra_body = {"reasoning": {"effort": effort}}
+    if caps.minimax_reasoning_split:
+        extra_body = {**(extra_body or {}), "reasoning_split": True}
     kwargs: dict[str, Any] = {
         "model": name,
         "temperature": temperature,
         "timeout": get_env_config().llm.timeout_seconds,
         "max_retries": get_env_config().llm.max_retries,
         "callbacks": callbacks,
-        "extra_body": {"reasoning": {"effort": effort}} if effort and caps.openrouter_reasoning_body else None,
+        "extra_body": extra_body,
         "vibe_provider": provider,
     }
     if caps.default_headers:

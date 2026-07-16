@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 
 trade_router = APIRouter(prefix="/trade", tags=["trade"])
 
-_WIDGET_ID_RE = re.compile(r"(tp|ts)_[A-Z0-9_]+_[0-9a-f]{12}")
+_WIDGET_ID_RE = re.compile(r"(?:tp|ts)_[A-Z][A-Z0-9]*_[0-9a-f]{12}")
+_WIDGET_ID_INLINE_RE = re.compile(r"((?:tp|ts)_[A-Z][A-Z0-9]*_[0-9a-f]{12})")
 _WIDGET_TOOL_NAMES = frozenset(
     {
         "get_options_trade_widget",
@@ -50,8 +51,15 @@ def load_trade_widget(widget_id: str) -> Optional[Dict[str, Any]]:
 
 
 def _widget_id_from_preview(preview: str) -> Optional[str]:
-    match = re.search(r'"widget_id"\s*:\s*"((?:tp|ts)_[^"]+)"', preview or "")
-    return match.group(1) if match else None
+    """Extract widget id from tool_result preview (often escaped/truncated JSON)."""
+    text = preview or ""
+    inline = _WIDGET_ID_INLINE_RE.search(text)
+    if inline:
+        return inline.group(1)
+    match = re.search(r'"widget_id"\s*:\s*"((?:tp|ts)_[^"]+)"', text)
+    if match and _WIDGET_ID_RE.fullmatch(match.group(1)):
+        return match.group(1)
+    return None
 
 
 def trade_plan_widget_frame_from_tool_result(event: Any) -> Optional[str]:

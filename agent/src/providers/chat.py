@@ -14,6 +14,11 @@ from typing import Any, Callable, Dict, List, Optional
 from src.config.accessor import get_env_config
 from src.providers.content_filter import is_content_filter_triggered
 from src.providers.llm import build_llm
+from src.providers.minimax_content import (
+    ThinkBlockStreamFilter,
+    merge_reasoning,
+    split_minimax_think_blocks,
+)
 
 
 def _dedupe_finish_reason(raw: str) -> str:
@@ -280,12 +285,22 @@ class ChatLLM:
             accumulated = None
             pending_text = ""
             possible_dsml_text = True
+            provider = get_env_config().llm.langchain_provider.strip().lower()
+            think_filter = ThinkBlockStreamFilter() if provider == "minimax" else None
             for chunk in llm.stream(messages, config=config):
                 if should_cancel and should_cancel():
                     break
                 if chunk.content and on_text_chunk:
-                    if possible_dsml_text:
-                        pending_text += chunk.content
+                    text_delta = chunk.content
+                    if think_filter is not None:
+                        visible, reasoning = think_filter.feed(text_delta)
+                        if reasoning and on_reasoning_chunk:
+                            on_reasoning_chunk(reasoning)
+                        text_delta = visible
+                    if not text_delta:
+                        pass
+                    elif possible_dsml_text:
+                        pending_text += text_delta
                         if _is_possible_dsml_tool_call_prefix(pending_text):
                             pass
                         else:
@@ -293,14 +308,20 @@ class ChatLLM:
                             on_text_chunk(pending_text)
                             pending_text = ""
                     else:
-                        on_text_chunk(chunk.content)
+                        on_text_chunk(text_delta)
                 reasoning = getattr(chunk, "additional_kwargs", {}).get("reasoning_content")
-                if reasoning and not chunk.content and on_reasoning_chunk:
+                if reasoning and on_reasoning_chunk:
                     on_reasoning_chunk(reasoning)
                 accumulated = chunk if accumulated is None else accumulated + chunk
             if accumulated is None:
                 return LLMResponse(content="", tool_calls=[], finish_reason="stop")
             response = self._parse_response(accumulated)
+            if think_filter is not None:
+                trailing_text, trailing_reasoning = think_filter.flush()
+                if trailing_reasoning and on_reasoning_chunk:
+                    on_reasoning_chunk(trailing_reasoning)
+                if trailing_text and on_text_chunk:
+                    on_text_chunk(trailing_text)
             if pending_text and not (response.has_tool_calls and response.content == ""):
                 on_text_chunk(pending_text)
             return response
@@ -405,10 +426,17 @@ class ChatLLM:
             ai_message.response_metadata.get("finish_reason")
         )
 
+        content = "" if dsml_tool_calls else ai_message.content
+        reasoning_content = additional_kwargs.get("reasoning_content")
+        if content and get_env_config().llm.langchain_provider.strip().lower() == "minimax":
+            cleaned, embedded = split_minimax_think_blocks(content)
+            content = cleaned
+            reasoning_content = merge_reasoning(reasoning_content, embedded)
+
         return LLMResponse(
-            content="" if dsml_tool_calls else ai_message.content,
+            content=content,
             tool_calls=tool_calls,
-            reasoning_content=additional_kwargs.get("reasoning_content"),
+            reasoning_content=reasoning_content,
             finish_reason=finish_reason,
             usage_metadata=usage,
             content_filter_triggered=content_filter_triggered,
