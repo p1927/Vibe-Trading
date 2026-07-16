@@ -194,7 +194,23 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled }: Pro
               ) : null}
 
               <div className="mt-3 flex flex-wrap gap-1.5">
-                {(item.tagged_factors ?? []).map((t) => (
+                {(item.tags?.topics ?? []).map((topic) => (
+                  <span
+                    key={`topic-${topic}`}
+                    className="rounded-md bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:text-blue-300"
+                  >
+                    {topic}
+                  </span>
+                ))}
+                {(item.tags?.themes ?? []).map((theme) => (
+                  <span
+                    key={`theme-${theme}`}
+                    className="rounded-md bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-300"
+                  >
+                    {theme}
+                  </span>
+                ))}
+                {(item.tagged_factors ?? item.tags?.factors?.map((f) => ({ factor: f })) ?? []).map((t) => (
                   <span
                     key={t.factor}
                     className="rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium"

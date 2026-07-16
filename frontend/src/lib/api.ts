@@ -548,6 +548,16 @@ export const api = {
       method: "POST",
     });
   },
+  getIndexQuantReview: (ticker = "NIFTY", refresh = false, horizonDays?: number) => {
+    const params = new URLSearchParams({ ticker, refresh: String(refresh) });
+    if (horizonDays != null) params.set("horizon_days", String(horizonDays));
+    return request<IndexQuantReviewResponse>(`/trade/index-prediction/quant-review?${params}`);
+  },
+  runIndexQuantReview: (ticker = "NIFTY", horizonDays?: number) =>
+    request<IndexQuantReviewResponse>("/trade/index-prediction/quant-review/run", {
+      method: "POST",
+      body: JSON.stringify({ ticker, horizon_days: horizonDays ?? 14, refresh: true }),
+    }),
   getIndexPredictionDataAudit: (ticker = "NIFTY", refresh = false, days = 365, horizonDays = 14) => {
     const params = new URLSearchParams({
       ticker,
@@ -2050,6 +2060,15 @@ export interface NewsSourceAttribution {
   fetched_at?: string;
 }
 
+export interface NewsArticleTags {
+  publish_day?: string;
+  symbols?: string[];
+  topics?: string[];
+  factors?: string[];
+  themes?: string[];
+  flat?: string[];
+}
+
 export interface NewsImpactItem {
   id?: string;
   published_at?: string;
@@ -2071,6 +2090,7 @@ export interface NewsImpactItem {
   };
   status?: string;
   tagged_factors?: Array<{ factor?: string; confidence?: number; method?: string }>;
+  tags?: NewsArticleTags;
   sources?: NewsSourceAttribution[];
   verification_status?: string;
   horizon_trading_days?: number;
@@ -2175,6 +2195,36 @@ export interface IndexMissAnalysisResponse {
   status: string;
   ticker?: string;
   report?: IndexMissAnalysisReport | null;
+  message?: string;
+}
+
+export interface IndexQuantReviewReport {
+  ticker?: string;
+  as_of?: string;
+  horizon_days?: number;
+  horizon_name?: string;
+  disclaimer?: string;
+  review_confidence?: number;
+  model_prediction_view?: string;
+  model_expected_return_pct?: number;
+  active_strategy_profile?: string;
+  technical_interpretation?: string;
+  technical_readings?: Record<string, number>;
+  ta_consensus?: {
+    direction?: string;
+    confidence?: number;
+    key_levels_note?: string;
+  };
+  strategy_profile?: Record<string, unknown>;
+  surprises?: Array<{ kind?: string; message?: string; category?: string }>;
+  disagreements_with_forecast?: Array<{ type?: string; detail?: string }>;
+  data_freshness?: Record<string, unknown>;
+}
+
+export interface IndexQuantReviewResponse {
+  status: string;
+  ticker?: string;
+  review?: IndexQuantReviewReport | null;
   message?: string;
 }
 

@@ -622,6 +622,28 @@ class IndexNewsImpactResponse(BaseModel):
     message: str = ""
 
 
+class IndexVerifiedNewsResponse(BaseModel):
+    status: str
+    ticker: str = ""
+    count: int = 0
+    items: list[Dict[str, Any]] = Field(default_factory=list)
+    inventory: Dict[str, Any] | None = None
+    message: str = ""
+
+
+class IndexQuantReviewResponse(BaseModel):
+    status: str
+    ticker: str = ""
+    review: Dict[str, Any] | None = None
+    message: str = ""
+
+
+class RunIndexQuantReviewRequest(BaseModel):
+    ticker: str = "NIFTY"
+    horizon_days: int | None = 14
+    refresh: bool = False
+
+
 @trade_router.get("/index-prediction", response_model=IndexPredictionResponse)
 def get_index_prediction(
     ticker: str = "NIFTY",
@@ -1003,6 +1025,59 @@ def run_index_prediction_miss_analysis(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@trade_router.get("/index-prediction/quant-review", response_model=IndexQuantReviewResponse)
+def get_index_quant_review(
+    ticker: str = "NIFTY",
+    horizon_days: int | None = 14,
+    refresh: bool = False,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexQuantReviewResponse:
+    """Load cached India Quant Reviewer artifact (second opinion vs Ridge)."""
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from trade_integrations.bridge.quant_review import run_quant_review
+        from trade_integrations.context.hub import (
+            is_quant_review_cache_fresh,
+            load_quant_review_json,
+        )
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        if refresh or not is_quant_review_cache_fresh(key):
+            review = run_quant_review(key, horizon_days=horizon_days, save=True)
+        else:
+            review = load_quant_review_json(key)
+            if review is None:
+                review = run_quant_review(key, horizon_days=horizon_days, save=True)
+        return IndexQuantReviewResponse(status="ok", ticker=key, review=review)
+    except Exception as exc:
+        logger.exception("index-prediction quant-review failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.post("/index-prediction/quant-review/run", response_model=IndexQuantReviewResponse)
+def run_index_quant_review(
+    body: RunIndexQuantReviewRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexQuantReviewResponse:
+    """Run India Quant Reviewer and persist to hub."""
+    key = (body.ticker or "NIFTY").strip().upper()
+    try:
+        from trade_integrations.bridge.quant_review import run_quant_review
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        review = run_quant_review(
+            key,
+            horizon_days=body.horizon_days,
+            save=True,
+        )
+        return IndexQuantReviewResponse(status="ok", ticker=key, review=review)
+    except Exception as exc:
+        logger.exception("index-prediction quant-review run failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @trade_router.get("/index-prediction/data-audit", response_model=IndexDataAuditResponse)
 def get_index_prediction_data_audit(
     ticker: str = "NIFTY",
@@ -1093,11 +1168,7 @@ def get_index_prediction_news_impact(
     key = (ticker or "NIFTY").strip().upper()
     try:
         from trade_integrations.context.hub import load_index_research_json
-        from trade_integrations.dataflows.index_research.news_impact_engine import (
-            build_news_impact_snapshot,
-            load_news_impact_snapshot,
-            save_news_impact_snapshot,
-        )
+        from trade_integrations.dataflows import news_hub_bridge
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
@@ -1111,7 +1182,7 @@ def get_index_prediction_news_impact(
                     macro[str(row["factor"])] = float(row["value"])
 
         if refresh:
-            report = build_news_impact_snapshot(
+            report = news_hub_bridge.refresh_news_impact(
                 ticker=key,
                 horizon_days=horizon_days,
                 spot=spot,
@@ -1119,13 +1190,10 @@ def get_index_prediction_news_impact(
                 refresh_ingest=True,
                 include_rejected=include_rejected,
             )
-            save_news_impact_snapshot(report, ticker=key)
         else:
-            report = load_news_impact_snapshot(key)
-            if report is None and doc is not None and getattr(doc, "news_impact", None):
-                report = doc.news_impact
-            if report is None:
-                report = build_news_impact_snapshot(
+            report = news_hub_bridge.resolve_news_impact(ticker=key, doc=doc, limit=12)
+            if not (report.get("items") or []):
+                report = news_hub_bridge.refresh_news_impact(
                     ticker=key,
                     horizon_days=horizon_days,
                     spot=spot,
@@ -1133,19 +1201,65 @@ def get_index_prediction_news_impact(
                     refresh_ingest=False,
                     include_rejected=include_rejected,
                 )
-            else:
-                report = build_news_impact_snapshot(
-                    ticker=key,
-                    horizon_days=horizon_days,
-                    spot=spot,
-                    refresh_ingest=False,
-                    include_rejected=include_rejected,
-                )
-            save_news_impact_snapshot(report, ticker=key)
         status = str((report or {}).get("status") or "ok")
         return IndexNewsImpactResponse(status=status, ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction news-impact failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/index-prediction/verified-news", response_model=IndexVerifiedNewsResponse)
+def get_index_verified_news(
+    ticker: str = "NIFTY",
+    since: str | None = None,
+    until: str | None = None,
+    day: str | None = None,
+    symbols: str | None = None,
+    topics: str | None = None,
+    factors: str | None = None,
+    themes: str | None = None,
+    tags: str | None = None,
+    include_rejected: bool = False,
+    inventory: bool = False,
+    limit: int = 25,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexVerifiedNewsResponse:
+    """Filter verified hub news by date, symbol, topic, factor, or theme tags."""
+    key = (ticker or "NIFTY").strip().upper()
+
+    def _csv(raw: str | None) -> list[str] | None:
+        if not raw:
+            return None
+        return [part.strip() for part in raw.split(",") if part.strip()]
+
+    try:
+        from trade_integrations.dataflows import news_hub_bridge
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        inv = news_hub_bridge.tag_inventory(ticker=key) if inventory else None
+        items = news_hub_bridge.query_verified_news(
+            ticker=key,
+            since=since,
+            until=until,
+            publish_day=day,
+            symbols=_csv(symbols),
+            topics=_csv(topics),
+            factors=_csv(factors),
+            themes=_csv(themes),
+            tags=_csv(tags),
+            include_rejected=include_rejected,
+            limit=max(1, min(limit, 100)),
+        )
+        return IndexVerifiedNewsResponse(
+            status="ok",
+            ticker=key,
+            count=len(items),
+            items=items,
+            inventory=inv,
+        )
+    except Exception as exc:
+        logger.exception("index-prediction verified-news failed for %s", key)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
