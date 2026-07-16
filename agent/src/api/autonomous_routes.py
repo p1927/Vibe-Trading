@@ -110,19 +110,11 @@ def commit_autonomous_agent_route(body: CommitAutonomousAgentRequest) -> Dict[st
 
 @autonomous_router.post("/orchestrator/session", response_model=OrchestratorSessionResponse)
 def get_or_create_orchestrator_session() -> OrchestratorSessionResponse:
-    from trade_integrations.autonomous_agents.store import get_orchestrator_meta, save_orchestrator_meta
     from trade_integrations.autonomous_agents.turns import build_orchestrator_system_note
 
     svc = _session_service()
     if svc is None:
         raise HTTPException(status_code=503, detail="session runtime not enabled")
-
-    meta = get_orchestrator_meta()
-    existing_id = str(meta.get("vibe_session_id") or "").strip()
-    if existing_id:
-        existing = svc.get_session(existing_id)
-        if existing is not None:
-            return OrchestratorSessionResponse(session_id=existing_id, title=existing.title or "Orchestrator")
 
     session = svc.create_session(
         title="autonomous:orchestrator",
@@ -132,7 +124,6 @@ def get_or_create_orchestrator_session() -> OrchestratorSessionResponse:
             "system_note": build_orchestrator_system_note(),
         },
     )
-    save_orchestrator_meta({"vibe_session_id": session.session_id})
     return OrchestratorSessionResponse(session_id=session.session_id, title=session.title)
 
 
