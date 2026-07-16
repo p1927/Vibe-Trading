@@ -261,6 +261,14 @@ class SessionService:
                 {"attempt_id": attempt.attempt_id, "status": attempt.status.value,
                  "summary": attempt.summary, "error": attempt.error, "run_dir": attempt.run_dir},
             )
+            if attempt.status == AttemptStatus.COMPLETED:
+                await asyncio.to_thread(
+                    self._maybe_widget_guard,
+                    session.session_id,
+                    attempt.prompt,
+                    attempt.summary or "",
+                    result.get("tools_called") or [],
+                )
 
         except Exception as exc:
             attempt.mark_failed(error=str(exc))
@@ -311,6 +319,12 @@ class SessionService:
             data["attempt_id"] = attempt_id
             self._emit_provenance_if_needed(session_id, attempt_id, event_type, data)
             self.event_bus.emit(session_id, event_type, data)
+            if event_type == "tool_result" and isinstance(data, dict):
+                tool = str(data.get("tool") or "")
+                if tool:
+                    tools_called.add(tool)
+
+        tools_called: set[str] = set()
 
         def _mcp_collision_warn(msg: str) -> None:
             """Forward MCP server-name collision warnings to the operator event channel."""
@@ -361,7 +375,30 @@ class SessionService:
             if metrics:
                 result["metrics"] = metrics
 
+        result["tools_called"] = sorted(tools_called)
         return result
+
+    def _maybe_widget_guard(
+        self,
+        session_id: str,
+        user_message: str,
+        assistant_text: str,
+        tools_called: set[str] | list[str],
+    ) -> None:
+        try:
+            from src.trade.widget_guard import maybe_inject_widget
+
+            maybe_inject_widget(
+                session_id,
+                self.event_bus,
+                user_message=user_message,
+                assistant_text=assistant_text,
+                tools_called=tools_called,
+            )
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Widget guard hook failed")
 
     @staticmethod
     def _convert_messages_to_history(messages: list) -> list[Dict[str, Any]]:

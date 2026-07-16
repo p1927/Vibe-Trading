@@ -131,7 +131,12 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
         return {"skipped": True, "reason": "monitor_disabled"}
 
     _ensure_trade_integrations_on_path()
+    from trade_integrations.dataflows.options_research.prediction_ledger import (
+        reconcile_options_predictions,
+    )
     from trade_integrations.monitor.config import get_monitor_config
+
+    reconciled = reconcile_options_predictions()
 
     cfg = config or {}
     watchlist = cfg.get("watchlist")
@@ -155,7 +160,12 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
         refreshed.append({"ticker": ticker, "reasons": reasons})
         logger.info("options plan refreshed for %s (%s)", ticker, ", ".join(reasons))
 
-    return {"skipped": False, "refreshed": refreshed, "unchanged": skipped}
+    return {
+        "skipped": False,
+        "reconciled_predictions": reconciled,
+        "refreshed": refreshed,
+        "unchanged": skipped,
+    }
 
 
 def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
