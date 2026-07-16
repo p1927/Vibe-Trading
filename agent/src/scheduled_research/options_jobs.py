@@ -244,6 +244,25 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
             new_widget_id,
         )
 
+        try:
+            from trade_integrations.auto_paper.session_store import load_session, save_session
+
+            paper_session = load_session()
+            if paper_session.get("enabled") and paper_session.get("autonomous"):
+                urgent = list(paper_session.get("urgent_alerts") or [])
+                urgent.append(
+                    {
+                        "type": "thesis_break",
+                        "widget_id": widget_id,
+                        "underlying": underlying,
+                        "reasons": list(report.reasons or []),
+                    }
+                )
+                paper_session["urgent_alerts"] = urgent[-20:]
+                save_session(paper_session)
+        except Exception:
+            logger.debug("auto paper urgent alert skipped", exc_info=True)
+
     return {"skipped": False, "broken": broken, "refreshed": refreshed}
 
 
