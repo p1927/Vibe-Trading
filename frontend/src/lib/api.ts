@@ -110,6 +110,8 @@ export const api = {
   sendMessage: (sid: string, content: string) => request<{ message_id: string; attempt_id: string }>(`/sessions/${sid}/messages`, { method: "POST", body: JSON.stringify({ content }) }),
   cancelSession: (sid: string) => request<{ status: string }>(`/sessions/${sid}/cancel`, { method: "POST" }),
   getSessionMessages: (sid: string) => request<MessageItem[]>(`/sessions/${sid}/messages`),
+  getSessionProvenance: (sid: string) =>
+    request<ProvenanceListResponse>(`/sessions/${sid}/provenance`),
   createGoal: (sid: string, body: CreateGoalRequest) =>
     request<GoalSnapshot>(`/sessions/${sid}/goal`, {
       method: "POST",
@@ -899,6 +901,9 @@ export interface TradePlanWidget {
     mcp_tool?: string | null;
     payload?: Record<string, unknown>;
   }>;
+  plan_status?: "ready" | "partial" | "incomplete" | string;
+  data_warnings?: string[];
+  error?: string;
   meta?: {
     strategy_builder_url?: string;
     strategy_builder_pnl_url?: string;
@@ -932,6 +937,28 @@ export interface PlanPrediction {
   expected_move_pct?: number | null;
   pcr?: number | null;
   source?: string | null;
+}
+
+export interface ProvenanceSource {
+  ref_id: string;
+  session_id: string;
+  display_name: string;
+  summary: string;
+  category?: string;
+  provider?: string;
+  source_type?: string;
+  attempt_id?: string | null;
+  tool_name?: string | null;
+  retrieved_at?: string;
+  data_as_of?: string | null;
+  freshness_status?: string;
+  artifact_path?: string | null;
+  source_uri?: string | null;
+  raw_data?: string;
+}
+
+export interface ProvenanceListResponse {
+  sources: ProvenanceSource[];
 }
 
 export interface HubPlanArtifact {

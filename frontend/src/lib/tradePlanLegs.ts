@@ -9,6 +9,16 @@ import {
   type StrategyLeg,
 } from "@/lib/strategyMath";
 
+export interface PnlOverTimeSample {
+  days_to_expiry: number;
+  pnl: number;
+  net_pnl?: number;
+}
+
+export function normalizeStrategyKey(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
+}
+
 export function inferStrikeStep(underlying: string, legs: TradePlanLeg[]): number {
   const sym = underlying.toUpperCase();
   if (sym.includes("BANKNIFTY") || sym.includes("SENSEX")) return 100;
@@ -131,4 +141,43 @@ export function widgetPayoffInputs(widget: TradePlanWidget, legs: StrategyLeg[])
     tYears: daysToYears(nearestDays),
     payoff: computeWidgetPayoff(legs, spot, expiry, atmIv),
   };
+}
+
+function legPnlAtDte(leg: StrategyLeg, underlying: number, timeFraction: number): number {
+  const sideMult = leg.side === "BUY" ? 1 : -1;
+  const qty = leg.lots * leg.lotSize;
+  const premium = leg.price || 0;
+  const strike = leg.strike || 0;
+  const opt = leg.optionType || "CE";
+  const intrinsic =
+    opt === "CE" ? Math.max(0, underlying - strike) : Math.max(0, strike - underlying);
+  const extrinsic = Math.max(0, premium - intrinsic);
+  const decayed = extrinsic * Math.sqrt(Math.max(0, Math.min(1, timeFraction)));
+  const mark = intrinsic + decayed;
+  return sideMult * qty * (mark - premium);
+}
+
+/** Theta-decay P&L curve at current spot (mirrors backend compute_payoff_over_time). */
+export function computePnlOverTimeSamples(
+  legs: StrategyLeg[],
+  spot: number,
+  expiry: string,
+  entryCharges = 0,
+  points = 6,
+): PnlOverTimeSample[] {
+  if (spot <= 0 || legs.length === 0) return [];
+  const totalDays = Math.max(1, daysToExpiry(expiry) || nearestLegDays(legs) || 7);
+  const samples: PnlOverTimeSample[] = [];
+  for (let i = 0; i < points; i++) {
+    const dte =
+      points > 1 ? Math.round(totalDays * (1 - i / (points - 1))) : 0;
+    const timeFrac = totalDays ? dte / totalDays : 0;
+    const pnl = legs.reduce((sum, leg) => sum + legPnlAtDte(leg, spot, timeFrac), 0);
+    samples.push({
+      days_to_expiry: dte,
+      pnl: Math.round(pnl * 100) / 100,
+      net_pnl: Math.round((pnl - entryCharges) * 100) / 100,
+    });
+  }
+  return samples;
 }

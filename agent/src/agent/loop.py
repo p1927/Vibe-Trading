@@ -550,6 +550,7 @@ class AgentLoop:
         self._previous_summary: str = ""
         self._persistent_memory = persistent_memory
         self._run_iteration: int = 0
+        self._session_id: str = ""
 
     def cancel(self) -> None:
         """Cancel the current loop.
@@ -575,6 +576,7 @@ class AgentLoop:
         self._cancel_event.clear()
         self._called_ok = set()
         self._previous_summary = ""
+        self._session_id = session_id
 
         state_store = RunStateStore()
         RUNS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1463,6 +1465,12 @@ class AgentLoop:
         preview = trace_result[:200]
         react_trace.append({"type": "tool_call", "tool": tc.name, "result_preview": preview})
         self._emit("tool_result", {"tool": tc.name, "status": status, "elapsed_ms": elapsed_ms, "preview": preview})
+        source = self._emit_tool_provenance(tc, trace_result, status)
+        if source and success:
+            cite = f"\n\n[Source: [[{source.ref_id}|{source.display_name}]]]"
+            if cite not in truncated:
+                truncated = truncated.rstrip() + cite
+                messages[-1] = context.format_tool_result(tc.id, tc.name, truncated)
 
     # -- Context compression ---------------------------------------------------
 
@@ -1583,6 +1591,26 @@ class AgentLoop:
                 self._event_callback(event_type, data)
             except Exception:
                 pass
+
+    def _emit_tool_provenance(self, tc: Any, raw_result: str, status: str) -> Any:
+        """Record and emit a provenance source for a completed tool call."""
+        if not self._session_id:
+            return None
+        try:
+            from src.provenance.hook import record_tool_result
+
+            source = record_tool_result(
+                self._session_id,
+                tool=tc.name,
+                raw=raw_result,
+                status=status,
+                tool_call_id=getattr(tc, "id", None),
+            )
+            if source:
+                self._emit("provenance.source", {"source": source.to_dict()})
+            return source
+        except Exception:
+            return None
 
     def _update_memory(self, tool_name: str) -> None:
         """Update workspace memory counters after tool execution."""

@@ -671,6 +671,21 @@ def register_sessions_routes(app: FastAPI) -> None:
             for m in messages
         ]
 
+    @app.get("/sessions/{session_id}/provenance", dependencies=[Depends(require_auth)])
+    async def get_session_provenance(session_id: str):
+        """List provenance sources recorded for a session."""
+        _host_validate_path_param(session_id, "session_id")
+        svc = _host_get_session_service()
+        if not svc:
+            raise HTTPException(status_code=501, detail="Session runtime not enabled")
+        session = svc.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        from src.provenance.store import get_provenance_store
+
+        sources = get_provenance_store().list_session(session_id)
+        return {"sources": [item.to_dict() for item in sources]}
+
     @app.get("/sessions/{session_id}/events", dependencies=[Depends(require_event_stream_auth)])
     async def session_events(
         session_id: str,

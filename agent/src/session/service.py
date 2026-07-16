@@ -122,25 +122,75 @@ class SessionService:
         self.event_bus.emit(session_id, "attempt.created", {"attempt_id": attempt.attempt_id, "prompt": content})
 
         asyncio.create_task(
-            asyncio.to_thread(
-                self._prefetch_research_for_message,
-                session_id,
+            self._run_attempt_with_prefetch(
+                session,
+                attempt,
                 content,
+                include_shell_tools=include_shell_tools,
             )
         )
-
-        asyncio.create_task(self._run_attempt(session, attempt, include_shell_tools=include_shell_tools))
         return {"message_id": message.message_id, "attempt_id": attempt.attempt_id}
 
-    def _prefetch_research_for_message(self, session_id: str, content: str) -> None:
-        try:
-            from src.trade.hub_bridge import handle_user_message_research
+    async def _run_attempt_with_prefetch(
+        self,
+        session: Session,
+        attempt: Attempt,
+        content: str,
+        *,
+        include_shell_tools: bool = False,
+    ) -> None:
+        research_context = await asyncio.to_thread(
+            self._prefetch_research_for_message,
+            session.session_id,
+            content,
+        )
+        await self._run_attempt(
+            session,
+            attempt,
+            include_shell_tools=include_shell_tools,
+            research_context=research_context,
+        )
 
-            handle_user_message_research(session_id, content, self.event_bus)
+    def _prefetch_research_for_message(self, session_id: str, content: str) -> str:
+        try:
+            from src.trade.hub_bridge import prefetch_research_for_message
+
+            return prefetch_research_for_message(session_id, content, self.event_bus)
         except Exception:
             import logging
 
             logging.getLogger(__name__).exception("Research prefetch hook failed")
+            return ""
+
+    def _emit_provenance_if_needed(
+        self,
+        session_id: str,
+        attempt_id: str,
+        event_type: str,
+        data: dict,
+    ) -> None:
+        """Record non-tool provenance and emit a dedicated SSE frame."""
+        if event_type in {"tool_result", "provenance.source"}:
+            return
+        try:
+            from src.provenance.hook import record_from_event
+
+            source = record_from_event(
+                session_id,
+                event_type,
+                data,
+                attempt_id=attempt_id,
+            )
+            if source:
+                self.event_bus.emit(
+                    session_id,
+                    "provenance.source",
+                    {"source": source.to_dict(), "attempt_id": attempt_id},
+                )
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Provenance recording failed")
 
     def get_messages(self, session_id: str, limit: int = 100) -> list[Message]:
         """Return the message history."""
@@ -161,7 +211,14 @@ class SessionService:
         loop.cancel()
         return True
 
-    async def _run_attempt(self, session: Session, attempt: Attempt, *, include_shell_tools: bool = False) -> None:
+    async def _run_attempt(
+        self,
+        session: Session,
+        attempt: Attempt,
+        *,
+        include_shell_tools: bool = False,
+        research_context: str = "",
+    ) -> None:
         """Execute an Attempt in the background."""
         attempt.mark_running()
         self.store.update_attempt(attempt)
@@ -174,6 +231,7 @@ class SessionService:
                 messages=messages,
                 include_shell_tools=include_shell_tools,
                 session_config=dict(session.config),
+                research_context=research_context,
             )
             if result.get("status") == "success":
                 attempt.mark_completed(summary=result.get("content", ""))
@@ -216,6 +274,7 @@ class SessionService:
         *,
         include_shell_tools: bool = False,
         session_config: Optional[Dict[str, Any]] = None,
+        research_context: str = "",
     ) -> Dict[str, Any]:
         """Execute an attempt with the V5 AgentLoop.
 
@@ -250,6 +309,7 @@ class SessionService:
         def event_callback(event_type: str, data: Dict[str, Any]) -> None:
             """Forward AgentLoop events to the SSE event bus."""
             data["attempt_id"] = attempt_id
+            self._emit_provenance_if_needed(session_id, attempt_id, event_type, data)
             self.event_bus.emit(session_id, event_type, data)
 
         def _mcp_collision_warn(msg: str) -> None:
@@ -279,12 +339,15 @@ class SessionService:
 
         # Build the message history context.
         history = self._convert_messages_to_history(messages) if messages else None
+        user_message = attempt.prompt
+        if research_context:
+            user_message = f"{research_context.strip()}\n\n{attempt.prompt}"
 
         try:
             result = await loop.run_in_executor(
                 _AGENT_EXECUTOR,
                 lambda: agent.run(
-                    user_message=attempt.prompt,
+                    user_message=user_message,
                     history=history,
                     session_id=session_id,
                 ),
