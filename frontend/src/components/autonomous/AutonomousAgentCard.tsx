@@ -191,6 +191,9 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
 
       {expanded && (
         <div className="mt-2 space-y-2 border-t border-border/60 pt-2 text-[11px]">
+          {bootstrapFailed && agent.bootstrap_error && (
+            <p className="text-red-600/90">{agent.bootstrap_error}</p>
+          )}
           {agent.thesis?.rationale && (
             <p className="text-muted-foreground line-clamp-3">{agent.thesis.rationale}</p>
           )}

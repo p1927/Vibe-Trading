@@ -527,6 +527,13 @@ class IndexDataAuditResponse(BaseModel):
     message: str = ""
 
 
+class IndexCounterfactualResponse(BaseModel):
+    status: str
+    ticker: str = ""
+    report: Dict[str, Any] | None = None
+    message: str = ""
+
+
 class IndexPredictionJobsResponse(BaseModel):
     status: str
     env: Dict[str, Any] = Field(default_factory=dict)
@@ -896,6 +903,45 @@ def get_index_prediction_data_audit(
         return IndexDataAuditResponse(status=status, ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction data-audit failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/index-prediction/counterfactual", response_model=IndexCounterfactualResponse)
+def get_index_prediction_counterfactual(
+    ticker: str = "NIFTY",
+    refresh: bool = False,
+    days: int = 365,
+    horizon_days: int = 14,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexCounterfactualResponse:
+    """Load cached counterfactual decomposition or recompute from backtest eval rows."""
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from trade_integrations.dataflows.index_research.prediction_counterfactual import (
+            load_counterfactual_report,
+            run_and_save_counterfactual,
+        )
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        if refresh:
+            report = run_and_save_counterfactual(
+                days=days,
+                horizon_days=horizon_days,
+                ticker=key,
+            )
+        else:
+            report = load_counterfactual_report(key)
+            if report is None:
+                report = run_and_save_counterfactual(
+                    days=days,
+                    horizon_days=horizon_days,
+                    ticker=key,
+                )
+        status = str(report.get("status") or "ok")
+        return IndexCounterfactualResponse(status=status, ticker=key, report=report)
+    except Exception as exc:
+        logger.exception("index-prediction counterfactual failed for %s", key)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

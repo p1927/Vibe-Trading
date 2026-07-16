@@ -29,6 +29,7 @@ import { useIndexPredictionLive } from "@/hooks/useIndexPredictionLive";
 import {
   api,
   type IndexBacktestReport,
+  type IndexCounterfactualRow,
   type IndexMissAnalysisReport,
   type IndexFactorHistoryPoint,
   type IndexPredictionHistoryMeta,
@@ -60,6 +61,7 @@ export function Prediction() {
   const [backtest, setBacktest] = useState<IndexBacktestReport | null>(null);
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [missAnalysis, setMissAnalysis] = useState<IndexMissAnalysisReport | null>(null);
+  const [counterfactual, setCounterfactual] = useState<IndexCounterfactualRow[] | null>(null);
   const [missAnalysisLoading, setMissAnalysisLoading] = useState(false);
   const [missHighlightDate, setMissHighlightDate] = useState<string | null>(null);
   const [simulation, setSimulation] = useState<IndexSimulationResult | null>(null);
@@ -140,9 +142,13 @@ export function Prediction() {
       setMissAnalysisLoading(true);
       setMissAnalysisError(null);
       try {
-        const res = await api.getIndexPredictionMissAnalysis("NIFTY", refresh, 365, horizonDays);
+        const [res, cfRes] = await Promise.all([
+          api.getIndexPredictionMissAnalysis("NIFTY", refresh, 365, horizonDays),
+          api.getIndexPredictionCounterfactual("NIFTY", refresh, 365, horizonDays),
+        ]);
         if (res.report) setMissAnalysis(res.report);
         else if (res.status !== "ok") setMissAnalysisError(res.message || "Miss analysis unavailable");
+        setCounterfactual(cfRes.report?.misses ?? cfRes.report?.rows ?? null);
       } catch (e) {
         setMissAnalysisError(e instanceof Error ? e.message : "Miss analysis request failed");
       } finally {
@@ -462,6 +468,9 @@ export function Prediction() {
                 intraday={intradayHistory}
                 meta={historyMeta}
                 horizonDays={horizonDays}
+                onOpenCounterfactual={() => {
+                  document.getElementById("prediction-miss-analysis")?.scrollIntoView({ behavior: "smooth" });
+                }}
               />
               <IndexFactorLedgerPanel
                 daily={dailyHistory}
@@ -500,6 +509,7 @@ export function Prediction() {
               />
               <PredictionMissAnalysisPanel
                 report={missAnalysis}
+                counterfactual={counterfactual}
                 loading={missAnalysisLoading}
                 error={missAnalysisError}
                 highlightDate={missHighlightDate}

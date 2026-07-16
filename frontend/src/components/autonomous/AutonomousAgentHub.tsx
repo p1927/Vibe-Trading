@@ -7,6 +7,7 @@ import { AutonomousAgentCard } from "@/components/autonomous/AutonomousAgentCard
 import { cn } from "@/lib/utils";
 
 const POLL_MS = 15_000;
+const REFRESH_DEBOUNCE_MS = 300;
 
 function StackHealthStrip({ health }: { health: AutonomousStackHealth | undefined }) {
   if (!health) return null;
@@ -50,6 +51,9 @@ function StackHealthStrip({ health }: { health: AutonomousStackHealth | undefine
       >
         nautilus {nautilusLabel}
       </span>
+      {health.nautilus_bound_agent_id && (
+        <span className="text-muted-foreground">bound {health.nautilus_bound_agent_id}</span>
+      )}
       {health.market_open != null && (
         <span>market {health.market_open ? "open" : "closed"}</span>
       )}
@@ -83,10 +87,15 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
   useEffect(() => {
     load();
     const timer = window.setInterval(load, POLL_MS);
-    const onRefresh = () => void load();
+    let debounceTimer: number | undefined;
+    const onRefresh = () => {
+      window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => void load(), REFRESH_DEBOUNCE_MS);
+    };
     window.addEventListener("autonomous-agents-refresh", onRefresh);
     return () => {
       window.clearInterval(timer);
+      window.clearTimeout(debounceTimer);
       window.removeEventListener("autonomous-agents-refresh", onRefresh);
     };
   }, [load]);

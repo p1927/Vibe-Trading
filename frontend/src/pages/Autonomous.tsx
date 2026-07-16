@@ -21,9 +21,14 @@ function AgentRuntimeStrip({ agent }: { agent: AutonomousAgentInstance }) {
     agent.streaming ||
     sched === "initializing" ||
     agent.bootstrap_status === "pending" ||
-    agent.bootstrap_status === "running";
+    agent.bootstrap_status === "running" ||
+    runtime?.bootstrap_status === "pending" ||
+    runtime?.bootstrap_status === "running";
   const bootstrapFailed =
-    sched === "bootstrap_failed" || agent.bootstrap_status === "failed";
+    sched === "bootstrap_failed" ||
+    agent.bootstrap_status === "failed" ||
+    runtime?.bootstrap_status === "failed";
+  const bootstrapError = agent.bootstrap_error || runtime?.bootstrap_error;
 
   const nautilusLabel =
     !nautilusOn
@@ -39,6 +44,11 @@ function AgentRuntimeStrip({ agent }: { agent: AutonomousAgentInstance }) {
   return (
     <div className="ml-auto flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
       {bootstrapFailed && <span className="font-medium text-red-600">bootstrap failed</span>}
+      {bootstrapFailed && bootstrapError && (
+        <span className="max-w-xs truncate text-red-600/80" title={bootstrapError}>
+          {bootstrapError}
+        </span>
+      )}
       {isBootstrapping && !bootstrapFailed && <span className="font-medium text-primary">starting…</span>}
       {lastDecision?.decision && (
         <span className="font-medium text-foreground/80">last {lastDecision.decision}</span>
