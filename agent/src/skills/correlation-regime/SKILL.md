@@ -19,12 +19,17 @@ This skill answers the temporal questions a snapshot cannot:
 4. **Who** quietly rewired their relationship to the rest of the market, even without a
    violent move? (Mode 4 — rewiring leaderboard)
 
-The methodology was validated by historical replay on a continuous 17-asset crypto
-universe (1-minute bars, 2020–2024): the regime detector produced 13 fused/defused
-cycles with a calm-period false-alarm rate of ~0.008/day, and the attribution protocol
-produced zero wrong culprit names across 10 labeled crises (2 fully out-of-sample),
-naming FTT roughly two days before the November 2022 collapse. Those are replay
-results, not live results, and the method is market-agnostic even though the
+The methodology comes from an open-source streaming pipeline (see References)
+whose public repository pins the regime machinery's math and an eight-event
+historical replay regression (COVID, May-2021, China ban, Nov-2021 top, LUNA,
+FTX, SVB, yen-carry — 17 crypto symbols, 1-minute bars) that its CI reproduces
+bit-for-bit. The finer-grained numbers quoted in this skill — 13 fused/defused
+regime cycles on the continuous 2020–2024 tape at a ~0.008/day calm false-alarm
+rate, and zero wrong culprit names across 10 labeled crises (2 held
+out-of-sample), including naming FTT roughly two days before the November 2022
+collapse — are the **author's unpublished internal replays** on that same
+pipeline and are not independently verifiable. All of it is historical replay,
+never live results, and the method is market-agnostic even though the
 validation tape is crypto.
 
 **What this skill is NOT**: a trade-timing signal. The same validation program tested
@@ -153,9 +158,9 @@ The single most common silent bug in regime detection is **centered smoothing**
 window of future data into each point, making historical regime onsets appear
 earlier and cleaner than anything achievable live. Every smoothing step in a regime
 pipeline must be trailing-only, and any claimed onset lead time should be re-checked
-after replacing each filter with its causal version — in the validation program that
-re-check moved onsets later by 1–2 days and the detector still passed, which is the
-honest number to quote.
+after replacing each filter with its causal version — in the author's internal
+replays that re-check moved onsets later by 1–2 days and the detector still passed,
+which is the honest number to quote.
 
 ---
 
@@ -168,7 +173,7 @@ A fused regime means cross-asset diversification is effectively gone: the portfo
 has collapsed into a single position with leverage. The defensible, replay-tested
 framing for what to do about it:
 
-- **De-gross, don't liquidate.** In the validation replays, halving gross exposure
+- **De-gross, don't liquidate.** In the author's internal replays, halving gross exposure
   during fused regimes improved risk-adjusted outcomes versus buy-and-hold, while
   going fully to cash destroyed them — regime onset lags the price top, so full
   liquidation locks in the worst prints.
@@ -219,9 +224,9 @@ episode resolves to exactly one of four verdicts:
 | `AMBIGUOUS` | Multiple candidates, refuses to pick | Several assets crossed close together, ahead of the rest |
 | `ABSTAIN` | Nothing to say | No asset crossed the alarm bar |
 
-In the 10-crisis validation this protocol never emitted a wrong `NAME` — because the
-alarm bar is set very high and everything below it downgrades to `AMBIGUOUS`,
-`MACRO`, or `ABSTAIN`.
+In the author's internal 10-crisis replays (unpublished — see Overview) this
+protocol never emitted a wrong `NAME` — because the alarm bar is set very high
+and everything below it downgrades to `AMBIGUOUS`, `MACRO`, or `ABSTAIN`.
 
 ### Workflow
 
@@ -481,11 +486,15 @@ pip install pandas numpy
 
 ## References
 
-- Validated reference implementation (streaming, JVM): the corrcalc-graphs pipeline —
+- Streaming reference implementation (JVM): the corrcalc-graphs pipeline —
   https://github.com/tarvyn-analytics/corrcalc-graphs-pipeline (Apache-2.0). Its
   README's "The math — from bars to a fire" section derives the density/hysteresis
-  regime machinery, and "Validation — a pinned historical-event regression" pins the
-  13-cycle / 0.008 false-alarms-per-day / zero-wrong-names results quoted above.
+  regime machinery, and "Validation — a pinned historical-event regression" pins an
+  eight-event crypto replay regression (17 symbols, 1-minute bars) reproduced by
+  its CI. The finer-grained numbers quoted in this skill (regime-cycle count,
+  false-alarm rate, attribution results) are the author's unpublished internal
+  replays on that pipeline — they are not part of the public regression and the
+  public repo ships no crisis-naming system.
 - Maven Central artifacts for JVM users:
   `io.github.tarvyn-analytics.corrcalc:corrcalc-lib-core` (streaming correlation
   engine), `io.github.tarvyn-analytics.graphs:graphs-algos-lib` (graph analyses on
