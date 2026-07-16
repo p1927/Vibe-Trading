@@ -21,6 +21,7 @@ import {
 import { AgentAvatar } from "./AgentAvatar";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { MiniPnlOverTimeChart } from "@/components/charts/MiniPnlOverTimeChart";
+import { IndexFactorChart } from "@/components/charts/IndexFactorChart";
 import { buildOptionSymbol, type StrategyLeg } from "@/lib/strategyMath";
 import {
   computePnlOverTimeSamples,
@@ -120,7 +121,12 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
   const widgetIdRef = useRef(widget.widget_id);
 
   useEffect(() => {
-    api.getTradeExecutionMode().then(setExecMode).catch(() => null);
+    const loadMode = () => {
+      api.getTradeExecutionMode().then(setExecMode).catch(() => null);
+    };
+    loadMode();
+    window.addEventListener("focus", loadMode);
+    return () => window.removeEventListener("focus", loadMode);
   }, []);
 
   useEffect(() => {
@@ -132,7 +138,10 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
   const ranked = widget.ranked_strategies || [];
   const pred = widget.prediction || {};
   const isOptions =
-    widget.asset_type !== "stock" && widget.instrument_type !== "stock";
+    widget.asset_type !== "stock" &&
+    widget.asset_type !== "index" &&
+    widget.instrument_type !== "stock";
+  const isIndex = widget.asset_type === "index";
 
   const strategyIndex = useMemo(() => {
     if (!ranked.length) return 0;
@@ -296,7 +305,8 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
   const isScenarioOverride = Boolean(
     activeVariant && displayRec.name && displayRec.name !== agentPick,
   );
-  const isPaper = execMode?.mode === "paper" || execMode?.paper_env;
+  const isPaper = execMode?.mode === "paper";
+  const liveBlocked = Boolean(execMode?.paper_env && !execMode?.live_allowed);
   const assetLabel = isOptions ? "Options" : "Stock";
   const planWarnings = widget.data_warnings ?? [];
   const planIncomplete = widget.plan_status === "incomplete" || widget.plan_status === "partial";
@@ -382,7 +392,10 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
   }, [executeOrders, widget.widget_id]);
 
   const builderUrl = widget.meta?.strategy_builder_execute_url || widget.meta?.strategy_builder_url;
-  const executeLabel = isPaper ? "Execute (Paper)" : "Execute in OpenAlgo";
+  const executeLabel = isPaper ? "Execute (Paper)" : "Execute (Live)";
+  const executeDisabled =
+    executing || executed || executeOrders.length === 0 || (!isPaper && liveBlocked);
+  const openAlgoUrl = execMode?.switch_url || "";
 
   return (
     <div className="flex gap-3">
@@ -418,6 +431,11 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
             {isPaper && (
               <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-700 dark:text-amber-400">
                 Paper
+              </span>
+            )}
+            {!isPaper && (
+              <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-rose-700 dark:text-rose-400">
+                Live
               </span>
             )}
             {displayRec.tier && (
@@ -510,6 +528,41 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
             </p>
           </div>
         )}
+
+        {isIndex && (widget.factor_sensitivity?.length || widget.event_impact_curves?.length) ? (
+          <div>
+            <p className="text-[11px] font-medium text-muted-foreground mb-1">
+              Index vs factor / event shocks
+            </p>
+            <IndexFactorChart
+              sensitivity={widget.factor_sensitivity || []}
+              eventCurves={widget.event_impact_curves}
+              spot={widget.spot ?? undefined}
+              height={220}
+            />
+            {widget.factor_explanation?.contributors?.length ? (
+              <ul className="mt-2 space-y-1 text-[10px] text-muted-foreground">
+                {(widget.factor_explanation.contributors as Array<Record<string, unknown>>)
+                  .slice(0, 5)
+                  .map((row) => (
+                    <li key={String(row.factor)}>
+                      <span className="font-medium text-foreground">
+                        {String(row.label || row.factor)}
+                      </span>
+                      {": "}
+                      {typeof row.contribution_pct === "number"
+                        ? `${row.contribution_pct >= 0 ? "+" : ""}${row.contribution_pct.toFixed(2)}%`
+                        : "—"}
+                      {" macro"}
+                      {typeof row.share_of_macro === "number"
+                        ? ` (${Math.round(row.share_of_macro * 100)}% of macro block)`
+                        : ""}
+                    </li>
+                  ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
 
         {isOptions && payoffInputs && legs.length > 0 && (
           <div>
@@ -627,10 +680,30 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
           </div>
         )}
 
+        {execMode && (
+          <p className="text-[10px] text-muted-foreground">
+            Execution mode follows OpenAlgo ({isPaper ? "Analyze" : "Live"}).
+            {openAlgoUrl ? (
+              <>
+                {" "}
+                <a
+                  href={openAlgoUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium text-primary hover:underline"
+                >
+                  Switch in OpenAlgo
+                </a>
+              </>
+            ) : null}
+            {liveBlocked ? " · Live orders from Vibe are blocked while OPENALGO_PAPER_MODE=true." : null}
+          </p>
+        )}
+
         <div className="flex flex-wrap gap-2 pt-1">
           <button
             type="button"
-            disabled={executing || executed || executeOrders.length === 0}
+            disabled={executeDisabled}
             onClick={() => setConfirmOpen(true)}
             className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
           >
