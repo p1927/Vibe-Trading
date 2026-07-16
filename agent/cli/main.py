@@ -1043,18 +1043,29 @@ def _commit_mandate(proposal: Dict[str, Any], selected_ordinal: int) -> Dict[str
     """
     import httpx
 
+    from src.api.live_routes import CommitMandateRequest
     from src.config.accessor import get_env_config
 
-    base = get_env_config().api.vibe_trading_api_url.rstrip("/")
-    body = {
-        "proposal_id": proposal.get("proposal_id"),
-        "selected_ordinal": selected_ordinal,
-        "adjustments": None,
-        "session_id": proposal.get("session_id"),
-        "consent_ack": True,
-    }
     try:
-        response = httpx.post(f"{base}/mandate/commit", json=body, timeout=30.0)
+        account = proposal.get("account") or {}
+        body = CommitMandateRequest.model_validate(
+            {
+                "broker": account.get("broker"),
+                "proposal_id": proposal.get("proposal_id"),
+                "selected_ordinal": selected_ordinal,
+                "adjustments": None,
+                "session_id": proposal.get("session_id"),
+                "account_ref": account.get("account_ref", ""),
+                "consent_ack": True,
+            }
+        ).model_dump(mode="json")
+
+        base = get_env_config().api.vibe_trading_api_url.rstrip("/")
+        response = httpx.post(
+            f"{base}/mandate/commit",
+            json=body,
+            timeout=30.0,
+        )
         response.raise_for_status()
         return response.json()
     except Exception as exc:  # noqa: BLE001 — surface a clean error to the user
