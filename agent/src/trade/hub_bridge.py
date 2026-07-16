@@ -102,6 +102,55 @@ def _maybe_emit_options_widget(
         logger.exception("Failed to auto-emit options widget for %s", ticker)
 
 
+def _staleness_report_to_dict(report: Any) -> dict[str, Any]:
+    as_of = getattr(report, "as_of", None)
+    return {
+        "status": report.status,
+        "reasons": list(report.reasons or []),
+        "suggested_action": report.suggested_action,
+        "plan_spot": report.plan_spot,
+        "live_spot": report.live_spot,
+        "spot_drift_pct": report.spot_drift_pct,
+        "age_minutes": report.age_minutes,
+        "as_of": as_of.isoformat() if hasattr(as_of, "isoformat") else (str(as_of) if as_of else None),
+    }
+
+
+def _maybe_evaluate_plan_staleness(
+    artifact: dict[str, Any],
+    ticker: str,
+    asset_type: str,
+    event_bus: EventBus | None,
+    session_id: str,
+) -> None:
+    if asset_type != "options" or not artifact:
+        return
+    try:
+        from trade_integrations.monitor.service import MonitorService
+
+        if not MonitorService.is_enabled():
+            return
+        report = MonitorService().evaluate_ticker(ticker)
+        if not report:
+            return
+        artifact["staleness"] = _staleness_report_to_dict(report)
+        if report.status != "fresh":
+            key = ticker.strip().upper()
+            _emit(
+                event_bus,
+                session_id,
+                "plan.stale",
+                {
+                    "ticker": key,
+                    "status": report.status,
+                    "reasons": report.reasons,
+                    "suggested_action": report.suggested_action,
+                },
+            )
+    except Exception:
+        logger.exception("Plan staleness evaluation failed for %s", ticker)
+
+
 def _emit(event_bus: EventBus | None, session_id: str, event_type: str, data: dict[str, Any]) -> None:
     if event_bus is None or not session_id:
         return
@@ -352,6 +401,7 @@ def prefetch_research_for_message(
     try:
         artifact = prefetch_hub_plan(ticker, asset_type)
         if artifact:
+            _maybe_evaluate_plan_staleness(artifact, ticker, asset_type, event_bus, session_id)
             _emit(
                 event_bus,
                 session_id,

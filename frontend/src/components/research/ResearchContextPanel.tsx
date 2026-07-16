@@ -78,6 +78,8 @@ export function ResearchContextPanel({
   const summary = buildPlanSummary(merged);
   const legsSummary = formatLegsSummary(merged.recommended_legs);
   const warnings = merged.data_warnings ?? [];
+  const staleness = merged.staleness;
+  const isPlanStale = staleness?.status === "stale" || staleness?.status === "broken";
   const hasRanked = (merged.ranked_strategies?.length ?? 0) > 0;
   const hasScenarios = (merged.scenarios?.length ?? 0) > 0;
   const showConfidence = shouldShowConfidence(pred?.confidence);
@@ -108,6 +110,17 @@ export function ResearchContextPanel({
 
       {open && (
         <div className="space-y-4 border-t px-4 py-4 text-[12px]">
+          {isPlanStale && (
+            <div className="flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <p className="leading-relaxed">
+                Plan may be outdated ({staleness?.status}
+                {(staleness?.reasons?.length ?? 0) > 0 ? `: ${staleness?.reasons?.join(", ")}` : ""}
+                ). Ask the agent to refresh before trading.
+              </p>
+            </div>
+          )}
+
           {warnings.length > 0 && (
             <div className="flex gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
