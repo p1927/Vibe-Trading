@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import {
   BarChart3,
   Check,
@@ -18,7 +18,6 @@ import {
 } from "@/lib/api";
 import { AgentAvatar } from "./AgentAvatar";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
-import { PayoffChart } from "@/components/charts/PayoffChart";
 import { MiniPnlOverTimeChart } from "@/components/charts/MiniPnlOverTimeChart";
 import { buildOptionSymbol, type StrategyLeg } from "@/lib/strategyMath";
 import {
@@ -33,6 +32,10 @@ import {
   setTradeWidgetAdjustment,
   type TradeWidgetAdjustment,
 } from "@/lib/tradeWidgetContext";
+
+const PayoffChart = lazy(() =>
+  import("@/components/charts/PayoffChart").then((m) => ({ default: m.PayoffChart })),
+);
 
 interface Props {
   widget: TradePlanWidget;
@@ -349,19 +352,21 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
             <p className="text-[11px] font-medium text-muted-foreground mb-1">
               Interactive payoff{isScenarioOverride ? ` — ${rec.name}` : " (recommended)"}
             </p>
-            <PayoffChart
-              title={`${widget.underlying} — ${widget.expiry || "—"}`}
-              spot={payoffInputs.spot}
-              atmIv={payoffInputs.atmIv}
-              tYears={payoffInputs.tYears}
-              payoff={payoffInputs.payoff}
-              legs={legs}
-              strikeStep={strikeStep}
-              onStrikeChange={handleStrikeChange}
-              onResetStrikes={resetStrikes}
-              canResetStrikes={legsModified}
-              height={280}
-            />
+            <Suspense fallback={<div className="h-[280px] animate-pulse rounded-lg bg-muted/40" />}>
+              <PayoffChart
+                title={`${widget.underlying} — ${widget.expiry || "—"}`}
+                spot={payoffInputs.spot}
+                atmIv={payoffInputs.atmIv}
+                tYears={payoffInputs.tYears}
+                payoff={payoffInputs.payoff}
+                legs={legs}
+                strikeStep={strikeStep}
+                onStrikeChange={handleStrikeChange}
+                onResetStrikes={resetStrikes}
+                canResetStrikes={legsModified}
+                height={280}
+              />
+            </Suspense>
           </div>
         )}
 

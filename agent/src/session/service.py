@@ -121,8 +121,26 @@ class SessionService:
         self.store.update_session(session)
         self.event_bus.emit(session_id, "attempt.created", {"attempt_id": attempt.attempt_id, "prompt": content})
 
+        asyncio.create_task(
+            asyncio.to_thread(
+                self._prefetch_research_for_message,
+                session_id,
+                content,
+            )
+        )
+
         asyncio.create_task(self._run_attempt(session, attempt, include_shell_tools=include_shell_tools))
         return {"message_id": message.message_id, "attempt_id": attempt.attempt_id}
+
+    def _prefetch_research_for_message(self, session_id: str, content: str) -> None:
+        try:
+            from src.trade.hub_bridge import handle_user_message_research
+
+            handle_user_message_research(session_id, content, self.event_bus)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Research prefetch hook failed")
 
     def get_messages(self, session_id: str, limit: int = 100) -> list[Message]:
         """Return the message history."""
