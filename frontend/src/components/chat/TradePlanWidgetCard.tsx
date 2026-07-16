@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
   Check,
@@ -8,10 +8,17 @@ import {
   Wallet,
 } from "lucide-react";
 import { toast } from "sonner";
-import { api, type TradePlanScenario, type TradePlanWidget } from "@/lib/api";
+import {
+  api,
+  type TradePlanScenario,
+  type TradePlanStrategyVariant,
+  type TradePlanWidget,
+  type TradeExecutionMode,
+} from "@/lib/api";
 import { AgentAvatar } from "./AgentAvatar";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { MiniPayoffChart } from "@/components/charts/MiniPayoffChart";
+import { MiniPnlOverTimeChart } from "@/components/charts/MiniPnlOverTimeChart";
 
 interface Props {
   widget: TradePlanWidget;
@@ -21,6 +28,26 @@ function formatInr(value: unknown): string {
   const n = Number(value);
   if (!Number.isFinite(n)) return "—";
   return `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+}
+
+function formatProbability(value: unknown): string {
+  const n = Number(value);
+  if (Number.isFinite(n) && n > 0 && n <= 1) return `${(n * 100).toFixed(0)}%`;
+  if (typeof value === "string" && value) return value;
+  return "—";
+}
+
+function resolveVariant(
+  widget: TradePlanWidget,
+  hint: string | undefined,
+): TradePlanStrategyVariant | null {
+  if (!hint) return null;
+  const variants = widget.strategy_variants || {};
+  if (variants[hint]) return variants[hint];
+  const key = Object.keys(variants).find(
+    (k) => k.toLowerCase() === hint.toLowerCase(),
+  );
+  return key ? variants[key] : null;
 }
 
 function ScenarioTile({
@@ -44,7 +71,7 @@ function ScenarioTile({
       <div className="font-semibold text-foreground">{scenario.name}</div>
       <div className="mt-1 text-muted-foreground line-clamp-2">{scenario.trigger}</div>
       <div className="mt-1 font-mono text-[10px] text-primary">
-        {(Number(scenario.probability) * 100).toFixed(0)}% · {scenario.strategy_hint}
+        {formatProbability(scenario.probability)} · {scenario.strategy_hint}
       </div>
     </button>
   );
@@ -55,27 +82,55 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
   const [executing, setExecuting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [executed, setExecuted] = useState(false);
+  const [execMode, setExecMode] = useState<TradeExecutionMode | null>(null);
 
-  const rec = widget.recommended || {};
-  const charges = widget.charges || {};
-  const payoff = widget.payoff || {};
-  const pred = widget.prediction || {};
+  useEffect(() => {
+    api.getTradeExecutionMode().then(setExecMode).catch(() => null);
+  }, []);
+
   const scenarios = widget.scenarios || [];
   const ranked = widget.ranked_strategies || [];
+  const pred = widget.prediction || {};
+  const agentPick = widget.agent_recommended_strategy || widget.recommended?.name || "";
+
+  const activeScenario = scenarios[selectedScenario];
+  const scenarioVariant = useMemo(
+    () => resolveVariant(widget, activeScenario?.strategy_hint),
+    [widget, activeScenario?.strategy_hint],
+  );
+
+  const rec = scenarioVariant?.recommended || widget.recommended || {};
+  const charges = scenarioVariant?.charges || widget.charges || {};
+  const payoff = scenarioVariant?.payoff || widget.payoff || {};
+  const pnlOverTime = scenarioVariant?.payoff_over_time || widget.payoff_over_time || {};
+  const steps = scenarioVariant?.implementation_steps || widget.implementation_steps || [];
+
+  const isScenarioOverride = Boolean(
+    scenarioVariant && rec.name && rec.name !== agentPick,
+  );
+  const isPaper = execMode?.mode === "paper" || execMode?.paper_env;
+  const assetLabel = widget.asset_type === "stock" || widget.instrument_type === "stock"
+    ? "Stock"
+    : "Options";
 
   const payoffSamples = useMemo(
     () => (payoff.samples || []).filter((s) => s.spot != null && (s.pnl != null || s.net_pnl != null)),
     [payoff.samples],
   );
 
+  const pnlTimeSamples = useMemo(
+    () => (pnlOverTime.samples || []).filter((s) => s.pnl != null || s.net_pnl != null),
+    [pnlOverTime.samples],
+  );
+
   const executeOrders = useMemo(() => {
-    for (const step of widget.implementation_steps || []) {
+    for (const step of steps) {
       if (step.action === "execute_basket" && step.payload?.orders) {
         return step.payload.orders as Record<string, unknown>[];
       }
     }
     return (rec.legs || []) as Record<string, unknown>[];
-  }, [widget.implementation_steps, rec.legs]);
+  }, [steps, rec.legs]);
 
   const handleExecute = useCallback(async () => {
     setExecuting(true);
@@ -85,7 +140,8 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
         orders: executeOrders,
       });
       setExecuted(true);
-      toast.success(result.message || "Basket order submitted");
+      const mode = result.execution_mode === "paper" ? " (paper)" : "";
+      toast.success((result.message || "Basket order submitted") + mode);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Execution failed");
     } finally {
@@ -95,6 +151,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
   }, [executeOrders, widget.widget_id]);
 
   const builderUrl = widget.meta?.strategy_builder_execute_url || widget.meta?.strategy_builder_url;
+  const executeLabel = isPaper ? "Execute (Paper)" : "Execute in OpenAlgo";
 
   return (
     <div className="flex gap-3">
@@ -107,19 +164,33 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
               Trade plan — {widget.underlying}
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {pred.view || "neutral"} · IV {pred.iv_regime || "—"} · confidence {pred.confidence ?? "—"}
+              {pred.view || "neutral"}
+              {pred.iv_regime ? ` · IV ${pred.iv_regime}` : ""}
+              {pred.confidence != null ? ` · confidence ${pred.confidence}` : ""}
             </p>
           </div>
-          {rec.tier && (
-            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">
-              {rec.tier}
+          <div className="flex flex-wrap gap-1.5">
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
+              {assetLabel}
             </span>
-          )}
+            {isPaper && (
+              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-700 dark:text-amber-400">
+                Paper
+              </span>
+            )}
+            {rec.tier && (
+              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">
+                {rec.tier}
+              </span>
+            )}
+          </div>
         </div>
 
         {scenarios.length > 0 && (
           <div>
-            <p className="text-[11px] font-medium text-muted-foreground mb-1.5">Scenarios (agent assumptions)</p>
+            <p className="text-[11px] font-medium text-muted-foreground mb-1.5">
+              Scenarios — tap to preview strategy
+            </p>
             <div className="grid gap-2 sm:grid-cols-2">
               {scenarios.slice(0, 4).map((sc, i) => (
                 <ScenarioTile
@@ -135,8 +206,19 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
 
         {payoffSamples.length >= 2 && (
           <div>
-            <p className="text-[11px] font-medium text-muted-foreground mb-1">Payoff at expiry (recommended)</p>
+            <p className="text-[11px] font-medium text-muted-foreground mb-1">
+              Payoff at expiry{isScenarioOverride ? ` — ${rec.name}` : " (recommended)"}
+            </p>
             <MiniPayoffChart samples={payoffSamples} spot={widget.spot} height={120} />
+          </div>
+        )}
+
+        {pnlTimeSamples.length >= 2 && widget.asset_type !== "stock" && (
+          <div>
+            <p className="text-[11px] font-medium text-muted-foreground mb-1">
+              P&amp;L vs days to expiry (current spot)
+            </p>
+            <MiniPnlOverTimeChart samples={pnlTimeSamples} height={100} />
           </div>
         )}
 
@@ -144,8 +226,14 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
           <div className="rounded-lg border border-border/50 bg-muted/20 p-3 text-xs space-y-2">
             <div className="flex items-center gap-2 font-semibold text-foreground">
               <TrendingUp className="h-3.5 w-3.5" />
-              Recommended: {rec.name} (score {rec.score})
+              {isScenarioOverride ? `Scenario: ${rec.name}` : `Recommended: ${rec.name}`}
+              {rec.score != null ? ` (score ${rec.score})` : ""}
             </div>
+            {isScenarioOverride && agentPick && (
+              <p className="text-[10px] text-amber-700 dark:text-amber-400">
+                Agent recommended <span className="font-mono">{agentPick}</span> — you selected this alternative.
+              </p>
+            )}
             {rec.rationale && <p className="text-muted-foreground">{rec.rationale}</p>}
             <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
               <div>Gross max P: {formatInr(payoff.gross_max_profit ?? rec.max_profit)}</div>
@@ -156,7 +244,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
             {(rec.legs || []).length > 0 && (
               <ul className="space-y-0.5 text-[11px]">
                 {(rec.legs || []).map((leg, i) => (
-                  <li key={i} className="font-mono">
+                  <li key={`${leg.symbol}-${i}`} className="font-mono">
                     {leg.side} {leg.quantity}× {leg.symbol} @ {leg.price}
                   </li>
                 ))}
@@ -177,7 +265,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
           {(charges.per_leg || []).length > 0 && (
             <ul className="mt-2 space-y-0.5 text-[10px] text-muted-foreground">
               {(charges.per_leg || []).slice(0, 4).map((row, i) => (
-                <li key={i}>
+                <li key={`${row.symbol || row.leg}-${i}`}>
                   {row.symbol || row.leg}: brokerage {formatInr(row.brokerage)} · STT {formatInr(row.stt)} · GST {formatInr(row.gst)}
                 </li>
               ))}
@@ -199,7 +287,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
             className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
           >
             {executing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : executed ? <Check className="h-3.5 w-3.5" /> : null}
-            {executed ? "Submitted" : "Execute in OpenAlgo"}
+            {executed ? "Submitted" : executeLabel}
           </button>
           {builderUrl && (
             <a
@@ -216,9 +304,9 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
 
         <ConfirmDialog
           open={confirmOpen}
-          title="Execute trade plan?"
-          description={`Place ${executeOrders.length} leg(s) for ${widget.underlying} via OpenAlgo. Net debit/credit ${formatInr(charges.net_debit_credit)}.`}
-          confirmLabel="Place basket order"
+          title={isPaper ? "Execute trade plan (paper)?" : "Execute trade plan?"}
+          description={`Place ${executeOrders.length} leg(s) for ${widget.underlying} via OpenAlgo${isPaper ? " sandbox (no live broker)" : ""}. Net debit/credit ${formatInr(charges.net_debit_credit)}.`}
+          confirmLabel={isPaper ? "Place paper basket" : "Place basket order"}
           cancelLabel="Cancel"
           onConfirm={handleExecute}
           onCancel={() => setConfirmOpen(false)}
