@@ -557,6 +557,15 @@ export const api = {
     });
     return request<IndexDataAuditResponse>(`/trade/index-prediction/data-audit?${params}`);
   },
+  getIndexPredictionCounterfactual: (ticker = "NIFTY", refresh = false, days = 365, horizonDays = 14) => {
+    const params = new URLSearchParams({
+      ticker,
+      refresh: String(refresh),
+      days: String(days),
+      horizon_days: String(horizonDays),
+    });
+    return request<IndexCounterfactualResponse>(`/trade/index-prediction/counterfactual?${params}`);
+  },
   getIndexPredictionJobs: () =>
     request<IndexPredictionJobsResponse>("/trade/index-prediction/jobs"),
   pauseIndexPredictionJob: (jobId: string) =>
@@ -1984,6 +1993,41 @@ export interface IndexDataAuditResponse {
   message?: string;
 }
 
+export interface IndexCounterfactualRow {
+  prediction_date?: string;
+  maturity_date?: string;
+  predicted_t0_pct?: number;
+  actual_return_pct?: number;
+  residual_pct?: number;
+  explained_by_drift_pct?: number;
+  unexplained_pct?: number;
+  classification?: string | null;
+  t0_contributions?: Array<{ term?: string; contribution_pct?: number }>;
+  drift_contributions?: Array<{ term?: string; delta_contribution_pct?: number }>;
+}
+
+export interface IndexCounterfactualReport {
+  status?: string;
+  eval_count?: number;
+  summary?: {
+    direction_hit_rate?: number | null;
+    miss_count?: number;
+    mapping_error_count?: number;
+    drift_dominant_count?: number;
+    cap_artifact_count?: number;
+    top_drift_factors?: Array<{ term?: string; abs_drift_sum?: number }>;
+  };
+  rows?: IndexCounterfactualRow[];
+  misses?: IndexCounterfactualRow[];
+}
+
+export interface IndexCounterfactualResponse {
+  status: string;
+  ticker?: string;
+  report?: IndexCounterfactualReport | null;
+  message?: string;
+}
+
 export interface ProvenanceSource {
   ref_id: string;
   session_id: string;
@@ -2216,6 +2260,7 @@ export interface AutonomousAgentRuntime {
   nautilus_watch_enabled?: boolean;
   nautilus_process_alive?: boolean;
   nautilus_state?: "node_on" | "poll_ok" | "expected" | "stale" | "off";
+  nautilus_bound_agent_id?: string | null;
   watch_configured?: boolean;
   position_tracked?: boolean;
   handoff_active?: boolean;
@@ -2230,6 +2275,7 @@ export interface AutonomousStackHealth {
   nautilus_watch_enabled?: boolean;
   nautilus_process_alive?: boolean;
   nautilus_state?: "node_on" | "poll_ok" | "expected" | "stale" | "off";
+  nautilus_bound_agent_id?: string | null;
   scheduler_health?: string;
   market_open?: boolean;
   paper_session_enabled?: boolean;

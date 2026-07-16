@@ -228,6 +228,9 @@ class ContextBuilder:
                 memory_section=memory_section,
                 current_datetime=now.strftime("%A, %B %d, %Y %H:%M UTC"),
             )
+            skill_block = self._orchestrator_skill_block()
+            if skill_block:
+                base = f"{base}\n{skill_block}"
         else:
             base = _SYSTEM_PROMPT.format(
                 tool_count=len(self.registry._tools),
@@ -244,6 +247,13 @@ class ContextBuilder:
         if system_note:
             base = f"{base}\n\n## Session instructions\n{system_note}\n"
         return base
+
+    def _orchestrator_skill_block(self) -> str:
+        """Inject full orchestrator skill so the model need not call load_skill first."""
+        content = self.skills_loader.get_content("autonomous-orchestrator")
+        if not content or content.startswith("Error:"):
+            return ""
+        return f"\n## Orchestrator workflow (preloaded)\n{content}\n"
 
     @staticmethod
     def _count_data_sources() -> int:

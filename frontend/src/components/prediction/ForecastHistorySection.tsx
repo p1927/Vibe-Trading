@@ -23,9 +23,16 @@ interface Props {
   intraday: IndexPredictionHistoryRow[];
   meta?: IndexPredictionHistoryMeta;
   horizonDays?: number;
+  onOpenCounterfactual?: () => void;
 }
 
-export function ForecastHistorySection({ daily, intraday, meta, horizonDays = 14 }: Props) {
+export function ForecastHistorySection({
+  daily,
+  intraday,
+  meta,
+  horizonDays = 14,
+  onOpenCounterfactual,
+}: Props) {
   const chartRows = daily.length ? daily : intraday.slice(0, 1);
   const revisions = meta?.intraday_revisions ?? intraday.length;
   const uniqueDays = meta?.unique_days ?? daily.length;
@@ -41,6 +48,19 @@ export function ForecastHistorySection({ daily, intraday, meta, horizonDays = 14
             ? `${uniqueDays} calendar day in ledger — charts show today's forecast; more daily points accumulate after each Run analysis on different days.`
             : `${uniqueDays} days of ${horizonDays}d-horizon forecasts.`}
           {revisions > 1 ? ` ${revisions} intraday refreshes logged for today.` : ""}
+          {onOpenCounterfactual ? (
+            <>
+              {" "}
+              <button
+                type="button"
+                onClick={onOpenCounterfactual}
+                className="text-primary underline-offset-2 hover:underline"
+              >
+                View counterfactual decomposition
+              </button>{" "}
+              for matured misses.
+            </>
+          ) : null}
         </p>
       </div>
 

@@ -189,6 +189,19 @@ def _start_scheduled_research_executor() -> None:
             logger.info("resumed %d pending autonomous agent bootstrap(s)", resumed)
     except Exception:
         logger.exception("failed to resume pending autonomous bootstraps")
+    try:
+        from pathlib import Path
+
+        trade_root = Path(__file__).resolve().parents[3]
+        integrations = trade_root / "integrations"
+        if integrations.is_dir() and str(integrations) not in _sys.path:
+            _sys.path.insert(0, str(integrations))
+        from trade_integrations.autonomous_agents.nautilus_watch import ensure_nautilus_watch_for_running_agents
+
+        if ensure_nautilus_watch_for_running_agents():
+            logger.info("ensured Nautilus watch for running India bridge agent(s)")
+    except Exception:
+        logger.exception("failed to ensure Nautilus watch on startup")
     if not _scheduled_research_scheduler_enabled():
         return
     _get_scheduled_research_executor().start()

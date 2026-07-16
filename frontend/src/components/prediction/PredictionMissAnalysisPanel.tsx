@@ -1,5 +1,5 @@
 import { Fragment, useState } from "react";
-import type { IndexMissAnalysisReport } from "@/lib/api";
+import type { IndexCounterfactualRow, IndexMissAnalysisReport } from "@/lib/api";
 import { DayMoveCauses } from "@/components/prediction/DayMoveCauses";
 
 function fmtPct(v: number | null | undefined): string {
@@ -10,14 +10,50 @@ function fmtPct(v: number | null | undefined): string {
 
 interface Props {
   report: IndexMissAnalysisReport | null;
+  counterfactual?: IndexCounterfactualRow[] | null;
   loading?: boolean;
   error?: string | null;
   onRefresh?: () => void;
   highlightDate?: string | null;
 }
 
+function ContribBars({
+  title,
+  rows,
+  valueKey,
+}: {
+  title: string;
+  rows: Array<Record<string, unknown>>;
+  valueKey: string;
+}) {
+  if (!rows.length) return null;
+  const max = Math.max(...rows.map((r) => Math.abs(Number(r[valueKey]) || 0)), 0.01);
+  return (
+    <div>
+      <p className="mb-1 font-medium text-muted-foreground">{title}</p>
+      <ul className="space-y-1">
+        {rows.slice(0, 6).map((r) => {
+          const val = Number(r[valueKey]) || 0;
+          const width = Math.min(100, (Math.abs(val) / max) * 100);
+          return (
+            <li key={String(r.term)} className="flex items-center gap-2 text-[10px]">
+              <span className="w-28 truncate text-muted-foreground">{String(r.term)}</span>
+              <span
+                className={`h-2 rounded-sm ${val >= 0 ? "bg-emerald-500/70" : "bg-red-500/70"}`}
+                style={{ width: `${width}%` }}
+              />
+              <span className="tabular-nums">{fmtPct(val)}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 export function PredictionMissAnalysisPanel({
   report,
+  counterfactual,
   loading,
   error,
   onRefresh,
@@ -47,6 +83,9 @@ export function PredictionMissAnalysisPanel({
 
   const summary = report.summary ?? {};
   const misses = report.misses ?? [];
+  const cfByDate = new Map(
+    (counterfactual ?? []).map((row) => [row.prediction_date ?? "", row]),
+  );
   const patterns = summary.top_miss_patterns ?? [];
   const categories = summary.miss_categories ?? {};
 
@@ -144,6 +183,7 @@ export function PredictionMissAnalysisPanel({
                 const key = row.prediction_date ?? "";
                 const open = expandedDate === key;
                 const highlighted = highlightDate === key;
+                const cf = cfByDate.get(key);
                 return (
                   <Fragment key={key}>
                     <tr
@@ -190,6 +230,24 @@ export function PredictionMissAnalysisPanel({
                               )}
                             </div>
                           </div>
+                          {cf ? (
+                            <div className="mt-3 grid gap-3 md:grid-cols-2">
+                              <ContribBars
+                                title={`T0 mapping (${cf.classification?.replace(/_/g, " ") ?? "counterfactual"})`}
+                                rows={(cf.t0_contributions ?? []) as Array<Record<string, unknown>>}
+                                valueKey="contribution_pct"
+                              />
+                              <ContribBars
+                                title="Horizon drift attribution"
+                                rows={(cf.drift_contributions ?? []) as Array<Record<string, unknown>>}
+                                valueKey="delta_contribution_pct"
+                              />
+                              <p className="md:col-span-2 text-[10px] text-muted-foreground">
+                                Residual {fmtPct(cf.residual_pct)} · Drift explains {fmtPct(cf.explained_by_drift_pct)} ·
+                                Unexplained {fmtPct(cf.unexplained_pct)}
+                              </p>
+                            </div>
+                          ) : null}
                           {(row.causal_hypotheses ?? []).length ? (
                             <div className="mt-3">
                               <DayMoveCauses causalHypotheses={row.causal_hypotheses} compact />
