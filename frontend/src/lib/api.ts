@@ -241,6 +241,7 @@ export const api = {
     }),
   getTradeWidget: (widgetId: string) =>
     request<TradePlanWidget>(`/trade/widget/${encodeURIComponent(widgetId)}`),
+  getTradeExecutionMode: () => request<TradeExecutionMode>("/trade/execution-mode"),
 };
 
 // --- Swarm types ---
@@ -812,9 +813,17 @@ export interface AlphaCompareResult {
 
 export interface TradePlanScenario {
   name: string;
-  probability?: number;
+  probability?: number | string;
   trigger?: string;
   strategy_hint?: string;
+}
+
+export interface TradePlanStrategyVariant {
+  recommended?: TradePlanWidget["recommended"];
+  payoff?: TradePlanWidget["payoff"];
+  charges?: TradePlanWidget["charges"];
+  payoff_over_time?: { samples?: Array<{ days_to_expiry?: number; pnl: number; net_pnl?: number }> };
+  implementation_steps?: TradePlanWidget["implementation_steps"];
 }
 
 export interface TradePlanLeg {
@@ -829,11 +838,14 @@ export interface TradePlanLeg {
 export interface TradePlanWidget {
   type: "trade_plan.widget";
   widget_id: string;
+  asset_type?: "options" | "stock";
   underlying: string;
   instrument_type?: string;
   market?: string;
   spot?: number | null;
   expiry?: string;
+  agent_recommended_strategy?: string;
+  strategy_variants?: Record<string, TradePlanStrategyVariant>;
   prediction?: {
     view?: string;
     iv_regime?: string;
@@ -891,6 +903,13 @@ export interface ExecuteTradeBasketResponse {
   status: string;
   results?: Array<Record<string, unknown>>;
   message?: string;
+  execution_mode?: string;
+}
+
+export interface TradeExecutionMode {
+  mode: "paper" | "live" | string;
+  analyze_mode: boolean;
+  paper_env: boolean;
 }
 
 // --- Connector runtime channel types ---
