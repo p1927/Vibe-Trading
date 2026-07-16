@@ -35,17 +35,6 @@ class RapidOcrEngine:
             return ""
         return "\n".join(item[1] for item in result)
 
-    def confidence(self, image: np.ndarray) -> float | None:
-        """Return mean OCR confidence (0-1), or None if unavailable."""
-        if not self.is_available():
-            return None
-        result, _ = self._engine(image)
-        if not result:
-            return None
-        # RapidOCR returns (bbox, text, confidence) tuples
-        confidences = [item[2] for item in result if len(item) > 2]
-        return sum(confidences) / len(confidences) if confidences else None
-
 
 # Self-register to built-in engine table
 from src.tools.ocr.engine import register_builtin  # noqa: E402

@@ -206,7 +206,11 @@ class LlmVisionOcrEngine:
 
         b64 = self._numpy_to_base64(image)
 
-        # 1 retry for transient network errors
+        # 1 retry for transient network errors only.
+        # Deterministic failures (4xx client errors like 401/403/404/422)
+        # are raised immediately to avoid 90s x 2 pointless delay.
+        from openai import APIConnectionError, APITimeoutError, APIStatusError
+
         for attempt in range(2):
             try:
                 response = client.chat.completions.create(
@@ -237,9 +241,10 @@ class LlmVisionOcrEngine:
                 )
                 text = response.choices[0].message.content or ""
                 return text.strip()
-            except Exception as exc:
+            except (APITimeoutError, APIConnectionError) as exc:
+                # Transient network errors — retry once.
                 if attempt == 0:
-                    logger.warning("OCR attempt 1 failed, retrying: %s", exc)
+                    logger.warning("OCR attempt 1 failed (transient), retrying: %s", exc)
                     continue
                 logger.error(
                     "LLM vision OCR failed (%s / %s): %s",
@@ -248,6 +253,29 @@ class LlmVisionOcrEngine:
                     exc,
                 )
                 return ""
+            except APIStatusError as exc:
+                # 5xx server errors are transient — retry once.
+                if exc.status_code >= 500 and attempt == 0:
+                    logger.warning("OCR attempt 1 failed (server %d), retrying: %s", exc.status_code, exc)
+                    continue
+                # 4xx client errors (401, 403, 404, 422, etc.) are deterministic — raise immediately.
+                logger.error(
+                    "LLM vision OCR failed (%s / %s): HTTP %d — %s",
+                    config["provider"],
+                    config["model"],
+                    exc.status_code,
+                    exc,
+                )
+                raise
+            except Exception as exc:
+                # Unexpected errors — do not retry.
+                logger.error(
+                    "LLM vision OCR failed (%s / %s): %s",
+                    config["provider"],
+                    config["model"],
+                    exc,
+                )
+                raise
         return ""
 
     def confidence(self, image: np.ndarray) -> float | None:
