@@ -3,9 +3,12 @@ import {
   ColorType,
   CrosshairMode,
   createChart,
+  createSeriesMarkers,
   LineSeries,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type SeriesMarker,
   type Time,
 } from "lightweight-charts";
 import { getChartTheme } from "@/lib/chart-theme";
@@ -14,9 +17,10 @@ import type { IndexBacktestDailyEval, IndexPredictionHistoryRow } from "@/lib/ap
 import {
   buildForecastIndex,
   buildForwardPaths,
-  forecastVisibleRange,
+  listForecastAnchorPoints,
   mergePriceSeries,
   resolveForecastForDate,
+  type ForecastAnchorPoint,
   type LiveForecastInput,
   type PricePoint,
 } from "@/lib/forecastReplayUtils";
@@ -27,6 +31,7 @@ interface Props {
   backtestEvals?: IndexBacktestDailyEval[];
   priceSeries?: Array<{ date?: string; close?: number | null }>;
   liveForecast?: LiveForecastInput;
+  priceLoading?: boolean;
   height?: number;
 }
 
@@ -54,12 +59,66 @@ function timeToIsoDay(time: Time): string | null {
   return null;
 }
 
+function focusChartWindow(
+  chart: IChartApi,
+  prices: PricePoint[],
+  anchorDate: string,
+  horizonDays: number,
+  predictedCount: number,
+): void {
+  if (!prices.length) return;
+  const anchorIdx = prices.findIndex((p) => p.date === anchorDate);
+  if (anchorIdx < 0) {
+    chart.timeScale().fitContent();
+    return;
+  }
+  const from = Math.max(0, anchorIdx - 30);
+  const forward = Math.max(horizonDays + 2, predictedCount);
+  const to = anchorIdx + forward;
+  try {
+    chart.timeScale().setVisibleLogicalRange({ from, to });
+  } catch {
+    chart.timeScale().fitContent();
+  }
+}
+
+function markerColor(
+  source: ForecastAnchorPoint["source"],
+  isAnchor: boolean,
+  theme: ReturnType<typeof getChartTheme>,
+): string {
+  if (isAnchor) return theme.warningColor;
+  if (source === "ledger") return theme.warningColor;
+  if (source === "live") return theme.infoColor;
+  return `${theme.infoColor}99`;
+}
+
+function buildSeriesMarkers(
+  points: ForecastAnchorPoint[],
+  anchorDate: string,
+  theme: ReturnType<typeof getChartTheme>,
+): SeriesMarker<Time>[] {
+  return points.map((p) => {
+    const isAnchor = p.date === anchorDate;
+    const ret = p.expectedReturnPct;
+    return {
+      time: p.date as Time,
+      position: "atPriceMiddle",
+      price: p.price,
+      shape: isAnchor ? "square" : "circle",
+      color: markerColor(p.source, isAnchor, theme),
+      text: `${ret >= 0 ? "+" : ""}${ret.toFixed(1)}%`,
+    };
+  });
+}
+
 export function NiftyForecastReplayChart({
   horizonDays,
   ledgerRows = [],
   backtestEvals = [],
   priceSeries = [],
   liveForecast,
+  priceLoading = false,
   height = 380,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -69,7 +128,9 @@ export function NiftyForecastReplayChart({
   const actualRef = useRef<ISeriesApi<"Line"> | null>(null);
   const bandHighRef = useRef<ISeriesApi<"Line"> | null>(null);
   const bandLowRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const { dark } = useDarkMode();
+  const [chartEpoch, setChartEpoch] = useState(0);
 
   const prices = useMemo(() => mergePriceSeries([priceSeries]), [priceSeries]);
   const lastPriceDate = prices.length ? prices[prices.length - 1].date : "";
@@ -84,9 +145,9 @@ export function NiftyForecastReplayChart({
     [ledgerRows, backtestEvals, liveForecast, horizonDays, lastPriceDate],
   );
 
-  const forecastDates = useMemo(
-    () => new Set([...forecastIndex.keys()].filter((d) => d >= firstPriceDate && d <= lastPriceDate)),
-    [forecastIndex, firstPriceDate, lastPriceDate],
+  const forecastAnchors = useMemo(
+    () => listForecastAnchorPoints(forecastIndex, prices, firstPriceDate, lastPriceDate),
+    [forecastIndex, prices, firstPriceDate, lastPriceDate],
   );
 
   const [anchorDate, setAnchorDate] = useState<string>(() => lastPriceDate);
@@ -110,168 +171,205 @@ export function NiftyForecastReplayChart({
     return buildForwardPaths(anchorForecast, horizonDays, prices, lastPriceDate);
   }, [anchorForecast, horizonDays, prices, lastPriceDate]);
 
-  const focusAnchor = useCallback(() => {
-    if (!chartRef.current || !anchorDate) return;
-    const range = forecastVisibleRange(prices, anchorDate, horizonDays);
-    if (!range) return;
-    try {
-      chartRef.current.timeScale().setVisibleRange({
-        from: range.from as Time,
-        to: range.to as Time,
+  const stepForecastAnchor = useCallback(
+    (direction: -1 | 1) => {
+      if (!forecastAnchors.length) return;
+      const dates = forecastAnchors.map((a) => a.date);
+      let idx = dates.indexOf(anchorDate);
+      if (idx < 0) {
+        idx = dates.findIndex((d) => d > anchorDate);
+        if (idx < 0) idx = dates.length - 1;
+        else if (direction < 0) idx = Math.max(0, idx - 1);
+      } else {
+        idx = Math.min(dates.length - 1, Math.max(0, idx + direction));
+      }
+      setAnchorDate(dates[idx]);
+    },
+    [forecastAnchors, anchorDate],
+  );
+
+  const syncChartData = useCallback(() => {
+    if (!historyRef.current || !predictedRef.current || !actualRef.current) return;
+
+    historyRef.current.setData(prices.length ? toLineData(prices) : []);
+
+    if (paths) {
+      predictedRef.current.setData(toLineData(paths.predicted));
+      actualRef.current.setData(toLineData(paths.actual));
+      if (bandHighRef.current && bandLowRef.current) {
+        if (paths.bandHigh.length > 1) {
+          bandHighRef.current.setData(toLineData(paths.bandHigh));
+          bandLowRef.current.setData(toLineData(paths.bandLow));
+        } else {
+          bandHighRef.current.setData([]);
+          bandLowRef.current.setData([]);
+        }
+      }
+    } else {
+      predictedRef.current.setData([]);
+      actualRef.current.setData([]);
+      bandHighRef.current?.setData([]);
+      bandLowRef.current?.setData([]);
+    }
+
+    if (markersRef.current) {
+      const theme = getChartTheme();
+      markersRef.current.setMarkers(buildSeriesMarkers(forecastAnchors, anchorDate, theme));
+    }
+
+    if (chartRef.current && prices.length) {
+      focusChartWindow(
+        chartRef.current,
+        prices,
+        anchorDate,
+        horizonDays,
+        paths?.predicted.length ?? 0,
+      );
+    }
+  }, [prices, paths, anchorDate, horizonDays, forecastAnchors]);
+
+  const mountChart = useCallback(
+    (container: HTMLDivElement) => {
+      if (chartRef.current) {
+        chartRef.current.remove();
+        chartRef.current = null;
+        historyRef.current = null;
+        predictedRef.current = null;
+        actualRef.current = null;
+        bandHighRef.current = null;
+        bandLowRef.current = null;
+        markersRef.current = null;
+      }
+
+      const width = container.clientWidth;
+      if (width <= 0) return false;
+
+      const t = getChartTheme();
+      const chart = createChart(container, {
+        width,
+        height,
+        layout: {
+          background: { type: ColorType.Solid, color: "transparent" },
+          textColor: t.textColor,
+        },
+        grid: {
+          vertLines: { color: `${t.gridColor}88`, visible: true },
+          horzLines: { color: `${t.gridColor}88`, visible: true },
+        },
+        rightPriceScale: {
+          borderColor: `${t.axisColor}55`,
+          scaleMargins: { top: 0.08, bottom: 0.08 },
+        },
+        timeScale: {
+          borderColor: `${t.axisColor}55`,
+          timeVisible: true,
+          secondsVisible: false,
+        },
+        crosshair: {
+          mode: CrosshairMode.Normal,
+          vertLine: { labelVisible: true },
+          horzLine: { labelVisible: true },
+        },
+        handleScroll: { mouseWheel: true, pressedMouseMove: true },
+        handleScale: { mouseWheel: true, pinch: true },
       });
-    } catch {
-      chartRef.current.timeScale().fitContent();
-    }
-  }, [anchorDate, horizonDays, prices]);
 
-  const initChart = useCallback(() => {
-    if (!containerRef.current) return;
+      historyRef.current = chart.addSeries(LineSeries, {
+        color: t.infoColor,
+        lineWidth: 2,
+        title: "Nifty",
+        lastValueVisible: true,
+        priceLineVisible: false,
+      });
 
-    if (chartRef.current) {
-      chartRef.current.remove();
-      chartRef.current = null;
-    }
+      markersRef.current = createSeriesMarkers(historyRef.current, []);
 
-    const t = getChartTheme();
+      bandLowRef.current = chart.addSeries(LineSeries, {
+        color: `${t.infoColor}44`,
+        lineWidth: 1,
+        lineStyle: 2,
+        title: "Band low",
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
+
+      bandHighRef.current = chart.addSeries(LineSeries, {
+        color: `${t.infoColor}44`,
+        lineWidth: 1,
+        lineStyle: 2,
+        title: "Band high",
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
+
+      predictedRef.current = chart.addSeries(LineSeries, {
+        color: t.warningColor,
+        lineWidth: 2,
+        lineStyle: 2,
+        title: "Forecast",
+        lastValueVisible: true,
+        priceLineVisible: false,
+      });
+
+      actualRef.current = chart.addSeries(LineSeries, {
+        color: t.upColor,
+        lineWidth: 2,
+        title: "Actual path",
+        lastValueVisible: true,
+        priceLineVisible: false,
+      });
+
+      chartRef.current = chart;
+
+      chart.subscribeClick((param) => {
+        if (!param.time) return;
+        const d = timeToIsoDay(param.time);
+        if (d) setAnchorDate(d);
+      });
+
+      setChartEpoch((v) => v + 1);
+      return true;
+    },
+    [height, dark],
+  );
+
+  useEffect(() => {
     const container = containerRef.current;
+    if (!container) return;
 
-    const chart = createChart(container, {
-      width: container.clientWidth,
-      height,
-      layout: {
-        background: { type: ColorType.Solid, color: "transparent" },
-        textColor: t.textColor,
-      },
-      grid: {
-        vertLines: { color: `${t.gridColor}88`, visible: true },
-        horzLines: { color: `${t.gridColor}88`, visible: true },
-      },
-      rightPriceScale: {
-        borderColor: `${t.axisColor}55`,
-        scaleMargins: { top: 0.08, bottom: 0.08 },
-      },
-      timeScale: {
-        borderColor: `${t.axisColor}55`,
-        timeVisible: true,
-        secondsVisible: false,
-      },
-      crosshair: {
-        mode: CrosshairMode.Normal,
-        vertLine: { labelVisible: true },
-        horzLine: { labelVisible: true },
-      },
-      handleScroll: { mouseWheel: true, pressedMouseMove: true },
-      handleScale: { mouseWheel: true, pinch: true },
-    });
-
-    const history = chart.addSeries(LineSeries, {
-      color: t.infoColor,
-      lineWidth: 2,
-      title: "Nifty",
-      lastValueVisible: true,
-      priceLineVisible: false,
-    });
-
-    const bandLow = chart.addSeries(LineSeries, {
-      color: `${t.infoColor}44`,
-      lineWidth: 1,
-      lineStyle: 2,
-      title: "Band low",
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-
-    const bandHigh = chart.addSeries(LineSeries, {
-      color: `${t.infoColor}44`,
-      lineWidth: 1,
-      lineStyle: 2,
-      title: "Band high",
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
-
-    const predicted = chart.addSeries(LineSeries, {
-      color: t.warningColor,
-      lineWidth: 2,
-      lineStyle: 2,
-      title: "Forecast",
-      lastValueVisible: true,
-      priceLineVisible: false,
-    });
-
-    const actual = chart.addSeries(LineSeries, {
-      color: t.upColor,
-      lineWidth: 2,
-      title: "Actual path",
-      lastValueVisible: true,
-      priceLineVisible: false,
-    });
-
-    chartRef.current = chart;
-    historyRef.current = history;
-    predictedRef.current = predicted;
-    actualRef.current = actual;
-    bandHighRef.current = bandHigh;
-    bandLowRef.current = bandLow;
-
-    chart.subscribeClick((param) => {
-      if (!param.time) return;
-      const d = timeToIsoDay(param.time);
-      if (d) setAnchorDate(d);
-    });
+    mountChart(container);
 
     const ro = new ResizeObserver(() => {
-      if (containerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
+      if (!containerRef.current) return;
+      const el = containerRef.current;
+      if (!chartRef.current && el.clientWidth > 0) {
+        mountChart(el);
+        return;
+      }
+      if (chartRef.current && el.clientWidth > 0) {
+        chartRef.current.applyOptions({ width: el.clientWidth });
       }
     });
     ro.observe(container);
 
     return () => {
       ro.disconnect();
-      chart.remove();
-      chartRef.current = null;
-    };
-  }, [height, dark]);
-
-  useEffect(() => {
-    const cleanup = initChart();
-    return cleanup;
-  }, [initChart]);
-
-  useEffect(() => {
-    if (!historyRef.current || !prices.length) return;
-    historyRef.current.setData(toLineData(prices));
-  }, [prices]);
-
-  useEffect(() => {
-    if (!predictedRef.current || !actualRef.current) return;
-
-    if (!paths) {
-      predictedRef.current.setData([]);
-      actualRef.current.setData([]);
-      bandHighRef.current?.setData([]);
-      bandLowRef.current?.setData([]);
-      return;
-    }
-
-    predictedRef.current.setData(toLineData(paths.predicted));
-    actualRef.current.setData(toLineData(paths.actual));
-
-    if (bandHighRef.current && bandLowRef.current) {
-      if (paths.bandHigh.length > 1) {
-        bandHighRef.current.setData(toLineData(paths.bandHigh));
-        bandLowRef.current.setData(toLineData(paths.bandLow));
-      } else {
-        bandHighRef.current.setData([]);
-        bandLowRef.current.setData([]);
+      if (chartRef.current) {
+        chartRef.current.remove();
+        chartRef.current = null;
       }
-    }
-  }, [paths]);
+      historyRef.current = null;
+      predictedRef.current = null;
+      actualRef.current = null;
+      bandHighRef.current = null;
+      bandLowRef.current = null;
+      markersRef.current = null;
+    };
+  }, [mountChart]);
 
   useEffect(() => {
-    focusAnchor();
-  }, [focusAnchor, paths]);
+    syncChartData();
+  }, [syncChartData, chartEpoch]);
 
   const anchorIdx = prices.findIndex((p) => p.date === anchorDate);
   const isLiveAnchor = anchorDate === lastPriceDate;
@@ -280,6 +378,17 @@ export function NiftyForecastReplayChart({
     paths?.maturedActualReturnPct != null && anchorForecast
       ? paths.maturedActualReturnPct - anchorForecast.expectedReturnPct
       : null;
+
+  if (priceLoading && !prices.length) {
+    return (
+      <div
+        className="flex items-center justify-center rounded-xl border bg-card text-[12px] text-muted-foreground"
+        style={{ height }}
+      >
+        Loading Nifty price history…
+      </div>
+    );
+  }
 
   if (!prices.length) {
     return (
@@ -296,7 +405,7 @@ export function NiftyForecastReplayChart({
     <div className="space-y-3 rounded-xl border bg-card p-4 shadow-sm">
       <div ref={containerRef} className="w-full" style={{ height }} />
 
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px]">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px]">
         <label className="flex min-w-[200px] flex-1 items-center gap-2">
           <span className="shrink-0 text-muted-foreground">Anchor</span>
           <input
@@ -313,10 +422,45 @@ export function NiftyForecastReplayChart({
           />
           <span className="shrink-0 tabular-nums font-medium">{anchorDate}</span>
         </label>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            className="rounded border px-2 py-0.5 text-[10px] hover:bg-muted disabled:opacity-40"
+            disabled={!forecastAnchors.length}
+            onClick={() => stepForecastAnchor(-1)}
+          >
+            ← Prev forecast
+          </button>
+          <button
+            type="button"
+            className="rounded border px-2 py-0.5 text-[10px] hover:bg-muted disabled:opacity-40"
+            disabled={!forecastAnchors.length}
+            onClick={() => stepForecastAnchor(1)}
+          >
+            Next forecast →
+          </button>
+        </div>
         <span className="text-muted-foreground">
-          {forecastDates.size} day{forecastDates.size === 1 ? "" : "s"} with recorded forecasts
+          {forecastAnchors.length} prediction day{forecastAnchors.length === 1 ? "" : "s"} on chart
         </span>
       </div>
+
+      {forecastAnchors.length ? (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-primary/70" />
+            Walk-forward backtest
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
+            Ledger snapshot
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-2.5 w-2.5 rotate-45 bg-primary" />
+            Selected anchor
+          </span>
+        </div>
+      ) : null}
 
       {!hasForecast ? (
         <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
@@ -364,9 +508,9 @@ export function NiftyForecastReplayChart({
       ) : null}
 
       <p className="text-[10px] text-muted-foreground">
-        Drag the slider or click the chart to pick an anchor — dashed orange is the {horizonDays}d forecast
-        from that day; green is what Nifty actually did over the same window. The view auto-focuses on the
-        anchor and forward path.
+        Markers show every day a {horizonDays}d forecast was recorded (walk-forward backtest + ledger).
+        Click a marker or use Prev/Next forecast — dashed orange is the forecast from that anchor; green is
+        what Nifty actually did.
       </p>
     </div>
   );

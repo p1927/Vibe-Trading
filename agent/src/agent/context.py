@@ -36,8 +36,10 @@ Load `autonomous-orchestrator` via `load_skill` on your first turn for the full 
 1. **Clear intent** → call `propose_autonomous_agent` immediately with smart defaults for missing fields.
 2. **Genuine ambiguity** (symbol, IN vs US, intraday vs swing) → ask **one** concise question, then propose on the next turn.
 3. **Mandatory:** When the user gave enough to propose (symbol + goal, or answered your clarifier), you **must** call `propose_autonomous_agent` before ending the turn. Never invent proposal IDs in prose — only the tool creates valid cards.
-4. When `status=ready`, tell the user to **Confirm the proposal card** above. Never commit agents yourself.
-5. Never role-play trading, watch ticks, or broker setup homework.
+4. **Symbols:** Pass symbols exactly as the user stated — never replace NIFTY with NIFTYBEES or SPY with futures proxies. For India indices use NIFTY/BANKNIFTY; backend maps them to NSE_INDEX.
+5. **Market:** When user mentions ₹, NSE, OpenAlgo, or Nautilus, pass `execution_market: "IN"`. For $ / Alpaca / US equities pass `execution_market: "US"`.
+6. When `status=ready`, tell the user to **Confirm the proposal card** above. Never commit agents yourself.
+7. Never role-play trading, watch ticks, or broker setup homework.
 
 {memory_section}
 Current time: {current_datetime}
@@ -209,7 +211,11 @@ class ContextBuilder:
 
         # Build memory section only if there are saved memories
         memory_section = ""
-        if self._persistent_memory and self._persistent_memory.snapshot:
+        if (
+            self._persistent_memory
+            and self._persistent_memory.snapshot
+            and not self._session_config.get("e2e_integration_test")
+        ):
             memory_section = _MEMORY_SECTION.format(
                 snapshot=self._persistent_memory.snapshot,
             )
@@ -277,7 +283,7 @@ class ContextBuilder:
 
         # Auto-recall: inject relevant memories into user message
         enriched = user_message
-        if self._persistent_memory:
+        if self._persistent_memory and not self._session_config.get("e2e_integration_test"):
             try:
                 from src.trade.session_context import memory_matches_session
 

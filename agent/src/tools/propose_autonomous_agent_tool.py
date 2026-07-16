@@ -38,6 +38,15 @@ class ProposeAutonomousAgentTool(BaseTool):
             "watch_interval_min": {"type": "integer", "description": "Lightweight watch cadence, default 7"},
             "research_interval_min": {"type": "integer", "description": "Full reasoning cadence, default 90"},
             "mode": {"type": "string", "description": "paper (v1 only)"},
+            "execution_market": {
+                "type": "string",
+                "enum": ["IN", "US"],
+                "description": "Override execution market when user explicitly chose India or US.",
+            },
+            "user_text": {
+                "type": "string",
+                "description": "Original user message for market hint resolution (auto-filled).",
+            },
             "session_id": {"type": "string", "description": "Orchestrator vibe session id (auto-filled)."},
         },
         "required": ["symbols"],
@@ -73,6 +82,8 @@ class ProposeAutonomousAgentTool(BaseTool):
             watch_interval_min=kwargs.get("watch_interval_min"),
             research_interval_min=kwargs.get("research_interval_min"),
             mode=kwargs.get("mode"),
+            execution_market=kwargs.get("execution_market"),
+            user_text=kwargs.get("user_text"),
             orchestrator_session_id=session_id,
         )
         if result.get("status") == "ready" and isinstance(result.get("proposal"), dict):

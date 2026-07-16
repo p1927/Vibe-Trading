@@ -5,8 +5,9 @@ import { PredictionSummary } from "@/components/prediction/PredictionSummary";
 import { FactorImpactWorkbench } from "@/components/prediction/FactorImpactWorkbench";
 import { FactorCompositionTable } from "@/components/prediction/FactorCompositionTable";
 import { EquationCard } from "@/components/prediction/EquationCard";
-import { IndexFactorAnalysis } from "@/components/prediction/IndexFactorAnalysis";
+import { CausalFactorExplorer } from "@/components/prediction/CausalFactorExplorer";
 import { BacktestEvaluationPanel } from "@/components/prediction/BacktestEvaluationPanel";
+import { PredictionMissAnalysisPanel } from "@/components/prediction/PredictionMissAnalysisPanel";
 import { IndexFactorLedgerPanel } from "@/components/prediction/IndexFactorLedgerPanel";
 import { ForecastHistorySection } from "@/components/prediction/ForecastHistorySection";
 import { IndexFactorTimelineChart } from "@/components/charts/IndexFactorTimelineChart";
@@ -28,13 +29,15 @@ import { useIndexPredictionLive } from "@/hooks/useIndexPredictionLive";
 import {
   api,
   type IndexBacktestReport,
+  type IndexMissAnalysisReport,
   type IndexFactorHistoryPoint,
   type IndexPredictionHistoryMeta,
   type IndexPredictionHistoryRow,
   type IndexSimulationResult,
 } from "@/lib/api";
 
-import { MACRO_DRIFT_FACTORS, pivotFactorHistoryWide } from "@/lib/factorHistoryUtils";
+import { MACRO_DRIFT_FACTORS, niftyCloseSeries, pivotFactorHistoryWide } from "@/lib/factorHistoryUtils";
+import { mergePriceSeries } from "@/lib/forecastReplayUtils";
 
 const POLL_STORAGE_KEY = "vibe-prediction-poll-ms";
 const DEFAULT_POLL_MS = 300_000;
@@ -56,9 +59,13 @@ export function Prediction() {
   const [factorCoverageNotes, setFactorCoverageNotes] = useState<string[]>([]);
   const [backtest, setBacktest] = useState<IndexBacktestReport | null>(null);
   const [backtestLoading, setBacktestLoading] = useState(false);
+  const [missAnalysis, setMissAnalysis] = useState<IndexMissAnalysisReport | null>(null);
+  const [missAnalysisLoading, setMissAnalysisLoading] = useState(false);
+  const [missHighlightDate, setMissHighlightDate] = useState<string | null>(null);
   const [simulation, setSimulation] = useState<IndexSimulationResult | null>(null);
   const [refreshConstituents, setRefreshConstituents] = useState(false);
   const [backtestError, setBacktestError] = useState<string | null>(null);
+  const [missAnalysisError, setMissAnalysisError] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [factorHistoryError, setFactorHistoryError] = useState<string | null>(null);
   const [derivativesSeriesCount, setDerivativesSeriesCount] = useState(0);
@@ -95,7 +102,11 @@ export function Prediction() {
   const loadFactorHistory = useCallback(async () => {
     setFactorHistoryError(null);
     try {
-      const res = await api.getIndexFactorHistory("NIFTY", 365, [...MACRO_DRIFT_FACTORS]);
+      const res = await api.getIndexFactorHistory("NIFTY", 365, [
+        ...MACRO_DRIFT_FACTORS,
+        "dii_net_5d",
+        "nifty_pcr",
+      ]);
       if (res.series) setFactorHistory(res.series);
       setFactorCoverageNotes(res.coverage_notes ?? []);
     } catch (e) {
@@ -108,7 +119,7 @@ export function Prediction() {
       setBacktestLoading(true);
       setBacktestError(null);
       try {
-        const res = await api.getIndexPredictionBacktest("NIFTY", refresh, 180, horizonDays);
+        const res = await api.getIndexPredictionBacktest("NIFTY", refresh, 365, horizonDays);
         if (res.report) setBacktest(res.report);
         else if (res.status !== "ok") setBacktestError(res.message || "Backtest unavailable");
       } catch (e) {
@@ -123,6 +134,27 @@ export function Prediction() {
   useEffect(() => {
     void loadBacktest(false);
   }, [loadBacktest]);
+
+  const loadMissAnalysis = useCallback(
+    async (refresh = false) => {
+      setMissAnalysisLoading(true);
+      setMissAnalysisError(null);
+      try {
+        const res = await api.getIndexPredictionMissAnalysis("NIFTY", refresh, 365, horizonDays);
+        if (res.report) setMissAnalysis(res.report);
+        else if (res.status !== "ok") setMissAnalysisError(res.message || "Miss analysis unavailable");
+      } catch (e) {
+        setMissAnalysisError(e instanceof Error ? e.message : "Miss analysis request failed");
+      } finally {
+        setMissAnalysisLoading(false);
+      }
+    },
+    [horizonDays],
+  );
+
+  useEffect(() => {
+    void loadMissAnalysis(false);
+  }, [loadMissAnalysis]);
 
   useEffect(() => {
     void loadHistory();
@@ -189,15 +221,19 @@ export function Prediction() {
 
   const niftyPriceSeries = useMemo(() => {
     const wide = pivotFactorHistoryWide(factorHistory);
-    const fromFactors = wide
-      .filter((r) => typeof r.nifty_close === "number" && Number.isFinite(r.nifty_close))
-      .map((r) => ({ date: String(r.date), close: r.nifty_close as number }));
+    const fromFactors = niftyCloseSeries(wide)
+      .filter((r) => r.close != null)
+      .map((r) => ({ date: r.date, close: r.close as number }));
     const fromBacktest = (backtest?.nifty_series ?? []).map((p) => ({
       date: p.date,
       close: p.close,
     }));
-    return [...fromBacktest, ...fromFactors];
-  }, [factorHistory, backtest?.nifty_series]);
+    const merged = mergePriceSeries([fromBacktest, fromFactors]);
+    if (!merged.length && artifact?.spot != null && artifact.as_of) {
+      return [{ date: String(artifact.as_of).slice(0, 10), close: artifact.spot }];
+    }
+    return merged;
+  }, [factorHistory, backtest?.nifty_series, artifact?.spot, artifact?.as_of]);
 
   return (
     <div className="mx-auto flex w-full max-w-[90rem] flex-col gap-4 p-4 pb-10 lg:flex-row lg:items-start lg:gap-5 md:p-6">
@@ -290,6 +326,7 @@ export function Prediction() {
                 ledgerRows={dailyHistory}
                 backtestEvals={backtest?.daily_evaluations ?? []}
                 priceSeries={niftyPriceSeries}
+                priceLoading={backtestLoading && !niftyPriceSeries.length}
                 liveForecast={
                   artifact
                     ? {
@@ -402,14 +439,16 @@ export function Prediction() {
             </section>
 
             <section className="space-y-3">
-              <details className="rounded-xl border bg-card p-4 shadow-sm">
-                <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                  Advanced factor & event sensitivity (static curves)
-                </summary>
-                <div className="mt-3">
-                  <IndexFactorAnalysis artifact={artifact} />
-                </div>
-              </details>
+              <PredictionSectionHeader
+                title="Causal factor sensitivity"
+                subtitle="Per-driver news, shock sweep, and downstream effects on Nifty (reconciled Ridge curves + cascade)."
+                modelRole="display"
+              />
+              <CausalFactorExplorer
+                artifact={artifact}
+                horizonDays={horizonDays}
+                factorHistory={factorHistory}
+              />
             </section>
 
             <section className="space-y-3">
@@ -446,6 +485,25 @@ export function Prediction() {
                 loading={backtestLoading}
                 error={backtestError}
                 onRefresh={() => void loadBacktest(true)}
+                onMissSelect={(date) => {
+                  setMissHighlightDate(date);
+                  document.getElementById("prediction-miss-analysis")?.scrollIntoView({ behavior: "smooth" });
+                }}
+              />
+            </section>
+
+            <section id="prediction-miss-analysis" className="space-y-3">
+              <PredictionSectionHeader
+                title="Why predictions miss"
+                subtitle="T0 vs maturity factor drift, headlines, and categorized learning notes for every wrong direction call."
+                modelRole="verify"
+              />
+              <PredictionMissAnalysisPanel
+                report={missAnalysis}
+                loading={missAnalysisLoading}
+                error={missAnalysisError}
+                highlightDate={missHighlightDate}
+                onRefresh={() => void loadMissAnalysis(true)}
               />
             </section>
 

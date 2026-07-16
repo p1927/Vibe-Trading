@@ -115,9 +115,11 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
 
   const expired = useMemo(() => isProposalExpired(proposal), [proposal]);
   const market = proposal.execution_market;
+  const routingErrors = proposal.routing_errors ?? [];
+  const hasRoutingErrors = routingErrors.length > 0;
 
   const handleCommit = useCallback(async () => {
-    if (busy || expired) return;
+    if (busy || expired || hasRoutingErrors) return;
     setBusy(true);
     try {
       const result = await api.commitAutonomousAgent({
@@ -126,13 +128,19 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
         session_id: proposal.session_id ?? proposal.orchestrator_session_id,
       });
       toast.success(`Agent "${result.agent.name}" is now running`);
+      if (result.paper_session_warnings?.length) {
+        for (const warning of result.paper_session_warnings) {
+          toast.warning(warning);
+        }
+      }
       window.dispatchEvent(new Event("autonomous-agents-refresh"));
       onCommitted?.(result.agent.id, result.vibe_session_id);
+      setBusy(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to create agent");
       setBusy(false);
     }
-  }, [busy, expired, onCommitted, proposal.orchestrator_session_id, proposal.proposal_id, proposal.session_id]);
+  }, [busy, expired, hasRoutingErrors, onCommitted, proposal.orchestrator_session_id, proposal.proposal_id, proposal.session_id]);
 
   if (committed) {
     return (
@@ -172,6 +180,17 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
           health={proposal.stack_health}
         />
 
+        {hasRoutingErrors ? (
+          <div className="rounded-lg border border-red-500/40 bg-red-500/5 px-3 py-2 text-[11px] text-red-700 dark:text-red-300">
+            <p className="font-medium">Routing error — cannot start agent until fixed:</p>
+            <ul className="mt-1 list-disc pl-4">
+              {routingErrors.map((err) => (
+                <li key={err}>{err}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
           <div className="col-span-2">
             <dt className="text-muted-foreground">Symbols</dt>
@@ -196,6 +215,13 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
           <div>
             <dt className="text-muted-foreground">Mode</dt>
             <dd>{constraints.mode || "paper"}</dd>
+          </div>
+          <div className="col-span-2">
+            <dt className="text-muted-foreground">Instruments</dt>
+            <dd className="font-medium">
+              {(proposal.mandate_config?.allowed_instruments as string[] | undefined)?.join(", ") ||
+                (market === "US" ? "equity" : "options")}
+            </dd>
           </div>
           <div>
             <dt className="text-muted-foreground">Watch</dt>
@@ -280,7 +306,7 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
             <button
               type="button"
               onClick={() => setConfirmOpen(true)}
-              disabled={busy}
+              disabled={busy || hasRoutingErrors}
               className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-40"
             >
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}

@@ -14,12 +14,32 @@ function AgentRuntimeStrip({ agent }: { agent: AutonomousAgentInstance }) {
   if (!runtime) return null;
 
   const sched = runtime.scheduler_health ?? "unknown";
+  const nautilusState = runtime.nautilus_state;
   const nautilusOn = runtime.nautilus_watch_enabled !== false;
-  const nautilusAlive = runtime.nautilus_process_alive;
   const lastDecision = runtime.last_decision as { decision?: string } | null;
+  const isBootstrapping =
+    agent.streaming ||
+    sched === "initializing" ||
+    agent.bootstrap_status === "pending" ||
+    agent.bootstrap_status === "running";
+  const bootstrapFailed =
+    sched === "bootstrap_failed" || agent.bootstrap_status === "failed";
+
+  const nautilusLabel =
+    !nautilusOn
+      ? "off"
+      : nautilusState === "node_on"
+        ? "on"
+        : nautilusState === "poll_ok"
+          ? "poll"
+          : nautilusState === "stale"
+            ? "stale"
+            : "expected";
 
   return (
     <div className="ml-auto flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+      {bootstrapFailed && <span className="font-medium text-red-600">bootstrap failed</span>}
+      {isBootstrapping && !bootstrapFailed && <span className="font-medium text-primary">starting…</span>}
       {lastDecision?.decision && (
         <span className="font-medium text-foreground/80">last {lastDecision.decision}</span>
       )}
@@ -27,6 +47,8 @@ function AgentRuntimeStrip({ agent }: { agent: AutonomousAgentInstance }) {
         className={cn(
           "rounded border px-1.5 py-0.5",
           sched === "ok" && "border-emerald-500/40 text-emerald-700",
+          sched === "initializing" && "border-primary/40 text-primary",
+          sched === "bootstrap_failed" && "border-red-500/40 text-red-700",
           sched === "stale" && "border-amber-500/40 text-amber-700",
         )}
       >
@@ -36,14 +58,19 @@ function AgentRuntimeStrip({ agent }: { agent: AutonomousAgentInstance }) {
         className={cn(
           "rounded border px-1.5 py-0.5",
           !nautilusOn && "text-muted-foreground",
-          nautilusOn && nautilusAlive && "border-emerald-500/40 text-emerald-700",
-          nautilusOn && !nautilusAlive && "border-amber-500/40 text-amber-700",
+          nautilusState === "node_on" && "border-emerald-500/40 text-emerald-700",
+          nautilusState === "poll_ok" && "border-emerald-500/40 text-emerald-700",
+          nautilusState === "expected" && "text-muted-foreground",
+          nautilusState === "stale" && "border-amber-500/40 text-amber-700",
         )}
       >
-        nautilus {nautilusOn ? (nautilusAlive ? "on" : "expected") : "off"}
+        nautilus {nautilusLabel}
       </span>
-      {runtime.handoff_active && (
+      {runtime.position_tracked && (
         <span className="rounded border border-primary/30 px-1.5 py-0.5 text-primary">position</span>
+      )}
+      {runtime.watch_configured && !runtime.position_tracked && (
+        <span className="rounded border px-1.5 py-0.5 text-muted-foreground">watch ready</span>
       )}
     </div>
   );

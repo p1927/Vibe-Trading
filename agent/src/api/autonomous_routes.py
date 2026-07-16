@@ -92,6 +92,10 @@ def commit_autonomous_agent_route(body: CommitAutonomousAgentRequest) -> Dict[st
         )
         register_agent_jobs(result["agent"])
         agent = result.get("agent") or {}
+        if not result.get("already_committed") and agent.get("id"):
+            from src.scheduled_research.autonomous_bootstrap import schedule_agent_bootstrap
+
+            schedule_agent_bootstrap(str(agent["id"]))
         committed_payload = {
             "agent_id": agent.get("id"),
             "vibe_session_id": result.get("vibe_session_id"),

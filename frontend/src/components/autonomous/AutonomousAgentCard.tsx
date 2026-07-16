@@ -17,16 +17,36 @@ function statusColor(status: string): string {
   }
 }
 
-function healthChip(label: string, state: "ok" | "warn" | "off" | "unknown"): string {
+function schedulerChip(state: string | undefined): string {
   switch (state) {
     case "ok":
-      return `${label} ok`;
-    case "warn":
-      return `${label} stale`;
-    case "off":
-      return `${label} off`;
+      return "scheduler ok";
+    case "initializing":
+      return "initializing";
+    case "bootstrap_failed":
+      return "bootstrap failed";
+    case "stale":
+      return "scheduler stale";
+    case "disabled":
+      return "scheduler off";
     default:
-      return `${label} —`;
+      return "scheduler —";
+  }
+}
+
+function nautilusChip(state: string | undefined, enabled: boolean | undefined): string {
+  if (enabled === false) return "nautilus off";
+  switch (state) {
+    case "node_on":
+      return "nautilus ok";
+    case "poll_ok":
+      return "nautilus poll";
+    case "expected":
+      return "nautilus expected";
+    case "stale":
+      return "nautilus stale";
+    default:
+      return "nautilus stale";
   }
 }
 
@@ -53,27 +73,25 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
   const mandate = runtime?.mandate_summary;
   const lastDecision = (runtime?.last_decision || agent.last_decision) as { decision?: string } | null;
 
-  const schedState: "ok" | "warn" | "off" | "unknown" =
-    runtime?.scheduler_health === "ok"
-      ? "ok"
-      : runtime?.scheduler_health === "stale"
-        ? "warn"
-        : runtime?.scheduler_health === "disabled"
-          ? "off"
-          : "unknown";
-
-  const nautilusState: "ok" | "warn" | "off" | "unknown" =
-    !runtime?.nautilus_watch_enabled
-      ? "off"
-      : runtime.nautilus_process_alive
-        ? "ok"
-        : "warn";
+  const schedState = runtime?.scheduler_health ?? "unknown";
+  const nautilusState = runtime?.nautilus_state;
+  const isBootstrapping =
+    agent.streaming ||
+    schedState === "initializing" ||
+    agent.bootstrap_status === "pending" ||
+    agent.bootstrap_status === "running" ||
+    runtime?.bootstrap_status === "pending" ||
+    runtime?.bootstrap_status === "running";
+  const bootstrapFailed =
+    schedState === "bootstrap_failed" ||
+    agent.bootstrap_status === "failed" ||
+    runtime?.bootstrap_status === "failed";
 
   return (
     <div
       className={cn(
         "rounded-xl border bg-card p-4 shadow-sm transition-colors hover:border-primary/40",
-        agent.streaming && "ring-1 ring-primary/30",
+        isBootstrapping && "ring-1 ring-primary/30",
       )}
     >
       <button type="button" onClick={onOpen} className="w-full text-left">
@@ -84,10 +102,11 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
               <p className="truncate text-sm font-semibold text-foreground">{agent.name}</p>
               <p className="truncate text-xs text-muted-foreground">
                 {agent.symbols.join(" · ")} · {agent.status}
+                {bootstrapFailed ? " · bootstrap failed" : isBootstrapping ? " · starting" : ""}
               </p>
             </div>
           </div>
-          {agent.streaming ? (
+          {isBootstrapping ? (
             <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
           ) : (
             <Radio className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -104,6 +123,11 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
                 flatten: {mandate.flatten_policy.replace("_", " ")}
               </span>
             )}
+            {mandate.allowed_instruments?.length ? (
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                {mandate.allowed_instruments.join(", ")}
+              </span>
+            ) : null}
           </div>
         )}
 
@@ -121,26 +145,37 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
             className={cn(
               "rounded border px-1.5 py-0.5",
               schedState === "ok" && "border-emerald-500/40 text-emerald-600",
-              schedState === "warn" && "border-amber-500/40 text-amber-600",
-              schedState === "off" && "text-muted-foreground",
+              schedState === "initializing" && "border-primary/40 text-primary",
+              schedState === "bootstrap_failed" && "border-red-500/40 text-red-600",
+              schedState === "stale" && "border-amber-500/40 text-amber-600",
+              schedState === "disabled" && "text-muted-foreground",
             )}
           >
-            {healthChip("scheduler", schedState)}
+            {schedulerChip(schedState)}
           </span>
           <span
             className={cn(
               "rounded border px-1.5 py-0.5",
-              nautilusState === "ok" && "border-emerald-500/40 text-emerald-600",
-              nautilusState === "warn" && "border-amber-500/40 text-amber-600",
-              nautilusState === "off" && "text-muted-foreground",
+              nautilusState === "node_on" && "border-emerald-500/40 text-emerald-600",
+              nautilusState === "poll_ok" && "border-emerald-500/40 text-emerald-600",
+              nautilusState === "expected" && "border-muted text-muted-foreground",
+              nautilusState === "stale" && "border-amber-500/40 text-amber-600",
+              nautilusState !== "node_on" &&
+                nautilusState !== "poll_ok" &&
+                nautilusState !== "expected" &&
+                nautilusState !== "stale" &&
+                runtime?.nautilus_watch_enabled !== false &&
+                "border-amber-500/40 text-amber-600",
+              runtime?.nautilus_watch_enabled === false && "text-muted-foreground",
             )}
           >
-            {healthChip("nautilus", nautilusState)}
+            {nautilusChip(nautilusState, runtime?.nautilus_watch_enabled)}
           </span>
-          {runtime?.handoff_active && (
-            <span className="rounded border border-primary/30 px-1.5 py-0.5 text-primary">
-              position tracked
-            </span>
+          {runtime?.watch_configured && !runtime?.position_tracked && (
+            <span className="rounded border border-muted px-1.5 py-0.5 text-muted-foreground">watch ready</span>
+          )}
+          {runtime?.position_tracked && (
+            <span className="rounded border border-primary/30 px-1.5 py-0.5 text-primary">position tracked</span>
           )}
         </div>
       </button>

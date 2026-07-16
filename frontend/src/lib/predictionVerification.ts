@@ -303,7 +303,7 @@ export function runPredictionUiAudit(
 
   rows.push({
     id: "sensitivity",
-    component: "IndexFactorAnalysis",
+    component: "CausalFactorExplorer",
     section: "Sensitivity",
     modelRole: "display",
     status: statusFrom({
@@ -311,7 +311,7 @@ export function runPredictionUiAudit(
       warn: (artifact.factor_sensitivity?.length ?? 0) > 0,
       empty: !(artifact.factor_sensitivity?.length ?? 0),
     }),
-    source: "explain.py factor_sensitivity + event_impact_curves",
+    source: "explain.py factor_sensitivity (reconciled) + cascade simulate",
     userValue: `${artifact.factor_sensitivity?.length ?? 0} sensitivity curves`,
     feedsForecast: false,
     detail: "Derived from trained Ridge — explains marginal shocks",

@@ -513,6 +513,20 @@ class IndexBacktestResponse(BaseModel):
     message: str = ""
 
 
+class IndexMissAnalysisResponse(BaseModel):
+    status: str
+    ticker: str = ""
+    report: Dict[str, Any] | None = None
+    message: str = ""
+
+
+class IndexDataAuditResponse(BaseModel):
+    status: str
+    ticker: str = ""
+    report: Dict[str, Any] | None = None
+    message: str = ""
+
+
 class IndexPredictionJobsResponse(BaseModel):
     status: str
     env: Dict[str, Any] = Field(default_factory=dict)
@@ -773,6 +787,115 @@ def get_index_prediction_backtest(
         return IndexBacktestResponse(status=status, ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction backtest failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/index-prediction/miss-analysis", response_model=IndexMissAnalysisResponse)
+def get_index_prediction_miss_analysis(
+    ticker: str = "NIFTY",
+    refresh: bool = False,
+    days: int = 365,
+    horizon_days: int | None = None,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexMissAnalysisResponse:
+    """Load cached prediction miss RCA or recompute from backtest eval rows."""
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from trade_integrations.dataflows.index_research.prediction_miss_analysis import (
+            load_miss_analysis_report,
+            run_and_save_miss_analysis,
+        )
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        if refresh:
+            report = run_and_save_miss_analysis(
+                days=days,
+                horizon_days=horizon_days,
+                ticker=key,
+            )
+        else:
+            report = load_miss_analysis_report(key)
+            if report is None:
+                report = run_and_save_miss_analysis(
+                    days=days,
+                    horizon_days=horizon_days,
+                    ticker=key,
+                )
+        status = str(report.get("status") or "ok")
+        return IndexMissAnalysisResponse(status=status, ticker=key, report=report)
+    except Exception as exc:
+        logger.exception("index-prediction miss-analysis failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.post("/index-prediction/miss-analysis/run", response_model=IndexMissAnalysisResponse)
+def run_index_prediction_miss_analysis(
+    ticker: str = "NIFTY",
+    days: int = 365,
+    horizon_days: int | None = None,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexMissAnalysisResponse:
+    """Recompute prediction miss RCA from walk-forward backtest."""
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from trade_integrations.dataflows.index_research.backtest_runner import run_and_save_backtest
+        from trade_integrations.dataflows.index_research.prediction_miss_analysis import (
+            run_and_save_miss_analysis,
+        )
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        backtest = run_and_save_backtest(days=days, horizon_days=horizon_days)
+        report = run_and_save_miss_analysis(
+            days=days,
+            horizon_days=horizon_days,
+            ticker=key,
+            backtest_report=backtest,
+        )
+        status = str(report.get("status") or "ok")
+        return IndexMissAnalysisResponse(status=status, ticker=key, report=report)
+    except Exception as exc:
+        logger.exception("index-prediction miss-analysis run failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/index-prediction/data-audit", response_model=IndexDataAuditResponse)
+def get_index_prediction_data_audit(
+    ticker: str = "NIFTY",
+    refresh: bool = False,
+    days: int = 365,
+    horizon_days: int = 14,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexDataAuditResponse:
+    """Load hub data completeness audit for prediction RCA."""
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from trade_integrations.dataflows.index_research.hub_data_audit import (
+            load_data_audit_report,
+            run_and_save_data_audit,
+        )
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        if refresh:
+            report = run_and_save_data_audit(
+                days=days,
+                horizon_days=horizon_days,
+                ticker=key,
+            )
+        else:
+            report = load_data_audit_report(key)
+            if report is None:
+                report = run_and_save_data_audit(
+                    days=days,
+                    horizon_days=horizon_days,
+                    ticker=key,
+                )
+        status = str(report.get("status") or "ok")
+        return IndexDataAuditResponse(status=status, ticker=key, report=report)
+    except Exception as exc:
+        logger.exception("index-prediction data-audit failed for %s", key)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

@@ -131,6 +131,40 @@ export function buildForecastIndex(
   return map;
 }
 
+export interface ForecastAnchorPoint {
+  date: string;
+  price: number;
+  expectedReturnPct: number;
+  source?: ForecastSnapshot["source"];
+}
+
+/** All dates with a recorded forecast, aligned to Nifty close when available. */
+export function listForecastAnchorPoints(
+  index: Map<string, ForecastSnapshot>,
+  prices: PricePoint[],
+  firstDate?: string,
+  lastDate?: string,
+): ForecastAnchorPoint[] {
+  const closeByDate = new Map(prices.map((p) => [p.date, p.close]));
+  const from = firstDate ?? "";
+  const to = lastDate ?? "9999-12-31";
+  const points: ForecastAnchorPoint[] = [];
+
+  for (const snap of index.values()) {
+    if (snap.date < from || snap.date > to) continue;
+    const price = closeByDate.get(snap.date) ?? snap.spot;
+    if (!Number.isFinite(price)) continue;
+    points.push({
+      date: snap.date,
+      price,
+      expectedReturnPct: snap.expectedReturnPct,
+      source: snap.source,
+    });
+  }
+
+  return points.sort((a, b) => a.date.localeCompare(b.date));
+}
+
 /** Only return a forecast when one was recorded for this exact trading day (no stale carry-forward). */
 export function resolveForecastForDate(
   date: string,
