@@ -89,6 +89,82 @@ export const FACTOR_RESEARCH_NOTES: Record<string, FactorResearchNote> = {
     expectedDirection: "mixed",
     summary: "Trend vs mean-reversion distance from 20d MA.",
   },
+  nifty_ma50_distance_pct: {
+    expectedDirection: "mixed",
+    summary: "Medium-term trend distance; structural horizon B/C signal.",
+  },
+  nifty_ma200_distance_pct: {
+    expectedDirection: "mixed",
+    summary: "Long-term trend; golden/death cross context for horizon C.",
+  },
+  nifty_macd_histogram: {
+    expectedDirection: "mixed",
+    summary: "Momentum turning: positive hist = bullish impulse; zero cross = direction change watch.",
+  },
+  nifty_macd_line: {
+    expectedDirection: "mixed",
+    summary: "Fast EMA minus slow EMA; above signal line = bullish momentum.",
+  },
+  nifty_macd_signal: {
+    expectedDirection: "mixed",
+    summary: "9-period EMA of MACD; cross above = buy impulse, below = sell impulse.",
+  },
+  nifty_bb_percent_b: {
+    expectedDirection: "mixed",
+    summary: "Bollinger position: >1 overbought, <0 oversold, 0.5 mid-band.",
+  },
+  nifty_bb_width_pct: {
+    expectedDirection: "context",
+    summary: "Band squeeze when width compresses; expansion signals breakout risk.",
+  },
+  nifty_stoch_k: {
+    expectedDirection: "mixed",
+    summary: "Close vs 14d range; >80 overbought, <20 oversold.",
+  },
+  nifty_stoch_d: {
+    expectedDirection: "mixed",
+    summary: "3-period SMA of %K; cross confirms momentum turns.",
+  },
+  nifty_williams_r: {
+    expectedDirection: "mixed",
+    summary: "Inverted stochastic scale; -20 overbought, -80 oversold.",
+  },
+  nifty_cci_20: {
+    expectedDirection: "mixed",
+    summary: "Typical price vs mean deviation; >100 extended up, <-100 extended down.",
+  },
+  nifty_adx_14: {
+    expectedDirection: "context",
+    summary: "Trend strength; ADX > 25 trending, < 20 range-bound.",
+  },
+  nifty_atr_pct: {
+    expectedDirection: "negative",
+    summary: "Normalized volatility expansion; widen scenario ranges when elevated.",
+  },
+  nifty_golden_cross_signal: {
+    expectedDirection: "positive",
+    summary: "MA50 above MA200 binary; structural bullish regime flag.",
+  },
+  qfinindia_skew: {
+    expectedDirection: "mixed",
+    summary: "Options chain skew; negative skew = put demand / fear.",
+  },
+  qfinindia_expected_move: {
+    expectedDirection: "context",
+    summary: "ATM-implied range into expiry; anchors scenario width.",
+  },
+  qfinindia_tail_risk: {
+    expectedDirection: "negative",
+    summary: "OTM wing demand; elevated = hedge demand / downside fear.",
+  },
+  dii_absorption_ratio: {
+    expectedDirection: "positive",
+    summary: "DII offset when FII selling; >1 means full absorption.",
+  },
+  institutional_net_5d: {
+    expectedDirection: "mixed",
+    summary: "Combined FII+DII impulse on index liquidity.",
+  },
   constituent_momentum_7d: {
     expectedDirection: "positive",
     summary: "Bottom-up price trend rollup; aligns with constituent-driven index modeling literature.",

@@ -3,7 +3,9 @@ import { cn } from "@/lib/utils";
 
 export const HORIZON_OPTIONS = [
   { label: "Tactical (2d)", days: 2, name: "A" },
+  { label: "Short (7d)", days: 7, name: "A" },
   { label: "Default (14d)", days: 14, name: "B" },
+  { label: "Swing (30d)", days: 30, name: "B" },
   { label: "Structural (60d)", days: 60, name: "C" },
 ] as const;
 
