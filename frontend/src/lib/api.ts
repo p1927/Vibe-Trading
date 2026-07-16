@@ -2210,11 +2210,12 @@ export interface AutonomousAgentRuntime {
   mandate_summary?: AutonomousAgentMandateSummary;
   alert_rules_summary?: Record<string, unknown>;
   bootstrap_status?: "pending" | "running" | "done" | "failed" | null;
+  bootstrap_error?: string | null;
   scheduler_health?: "ok" | "stale" | "disabled" | "unknown" | "initializing" | "bootstrap_failed";
   market_open?: boolean;
   nautilus_watch_enabled?: boolean;
   nautilus_process_alive?: boolean;
-  nautilus_state?: "node_on" | "poll_ok" | "expected" | "off";
+  nautilus_state?: "node_on" | "poll_ok" | "expected" | "stale" | "off";
   watch_configured?: boolean;
   position_tracked?: boolean;
   handoff_active?: boolean;
@@ -2228,7 +2229,7 @@ export interface AutonomousAgentRuntime {
 export interface AutonomousStackHealth {
   nautilus_watch_enabled?: boolean;
   nautilus_process_alive?: boolean;
-  nautilus_state?: "node_on" | "poll_ok" | "expected" | "off";
+  nautilus_state?: "node_on" | "poll_ok" | "expected" | "stale" | "off";
   scheduler_health?: string;
   market_open?: boolean;
   paper_session_enabled?: boolean;
@@ -2266,6 +2267,7 @@ export interface AutonomousAgentInstance {
   last_decision?: Record<string, unknown> | null;
   streaming?: boolean;
   bootstrap_status?: "pending" | "running" | "done" | "failed" | null;
+  bootstrap_error?: string | null;
   runtime?: AutonomousAgentRuntime;
   created_at?: string;
 }
