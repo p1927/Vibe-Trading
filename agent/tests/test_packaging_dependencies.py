@@ -136,3 +136,10 @@ def test_channel_optional_extras_cover_all_sdk_backed_adapters() -> None:
         "wecom-aibot-sdk",
     }
     assert expected_packages.issubset(channel_extra)
+def test_development_extra_includes_bounded_style_tools() -> None:
+    """Contributor style commands should be installed by the dev extra."""
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    dev_extra = pyproject["project"]["optional-dependencies"]["dev"]
+
+    assert "black>=24.0,<27" in dev_extra
+    assert "ruff>=0.9,<1" in dev_extra
