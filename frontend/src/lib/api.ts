@@ -402,6 +402,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ session_id, broker, reason }),
     }),
+  resumeLive: (session_id?: string, broker?: string) =>
+    request<HaltLiveResponse>("/live/resume", {
+      method: "POST",
+      body: JSON.stringify({ session_id, broker }),
+    }),
   // Read the persistent runtime status across all authorized brokers (SPEC §7.5).
   // Polled by the RunnerStatus panel; a plain authenticated GET, never a chat message.
   getLiveStatus: (signal?: AbortSignal) => request<LiveStatus>("/live/status", { signal }),

@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { useAgentStore } from "@/stores/agent";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useSSE } from "@/hooks/useSSE";
-import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource, type AutonomousAgentProposal } from "@/lib/api";
+import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource, type AutonomousAgentProposal, type TradingConnectorsResponse } from "@/lib/api";
 import { isReportWorthyRun } from "@/lib/runReports";
 import type { AgentMessage, ToolCallEntry } from "@/types/agent";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
@@ -286,6 +286,9 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
   /* The status endpoint is not wired on every backend; a 404/501 hides the panel
    * and removes status from the kill-switch visibility condition. */
   const [liveStatusUnavailable, setLiveStatusUnavailable] = useState(false);
+  const [tradingConnectors, setTradingConnectors] = useState<TradingConnectorsResponse | null>(null);
+  const [connectorCheck, setConnectorCheck] = useState<{ status: string; error?: string } | null>(null);
+  const clearedStaleOAuthHaltRef = useRef(false);
 
   /* Trade-stack research side panel (hub plan + TradingAgents debate) */
   const [researchTicker, setResearchTicker] = useState<string | null>(null);
@@ -1028,8 +1031,6 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
       ));
       setLiveStatusUnavailable(false);
     } catch (error) {
-      // A 404/501 means the runtime endpoint is not wired on this backend; treat the
-      // status source as unavailable. Any other failure keeps the last snapshot.
       if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
         setLiveStatus(null);
         setLiveStatusUnavailable(true);
@@ -1037,16 +1038,55 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
     }
   }, []);
 
+  const refreshTradingConnectors = useCallback(async () => {
+    try {
+      const payload = await api.getTradingConnectors();
+      setTradingConnectors(payload);
+      const selected = payload.profiles.find((p) => p.selected);
+      if (!selected) {
+        setConnectorCheck(null);
+        return payload;
+      }
+      const check = await api.checkTradingConnector(selected.id);
+      setConnectorCheck({ status: check.status, error: typeof check.error === "string" ? check.error : undefined });
+      return payload;
+    } catch (error) {
+      console.warn("Failed to load trading connectors", error);
+      return null;
+    }
+  }, []);
+
+  const refreshConnectorRuntime = useCallback(async () => {
+    await Promise.all([refreshLiveStatus(), refreshTradingConnectors()]);
+  }, [refreshLiveStatus, refreshTradingConnectors]);
+
   useEffect(() => {
-    refreshLiveStatus();
-    const timer = setInterval(refreshLiveStatus, LIVE_STATUS_POLL_INTERVAL_MS);
+    refreshConnectorRuntime();
+    const timer = setInterval(refreshConnectorRuntime, LIVE_STATUS_POLL_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, [refreshLiveStatus]);
+  }, [refreshConnectorRuntime]);
+
+  /* Clear a stale global OAuth halt when the user runs an SDK connector (e.g. OpenAlgo paper). */
+  useEffect(() => {
+    if (clearedStaleOAuthHaltRef.current) return;
+    const selected = tradingConnectors?.profiles.find((p) => p.selected);
+    if (!selected || selected.transport !== "broker_sdk") return;
+    if (connectorCheck?.status !== "ok") return;
+    if (!liveStatus?.global_halted) return;
+    const oauthEngaged = liveStatus.brokers.some((b) => (
+      b.auth.oauth_token_present || b.runner?.alive || b.mandate != null
+    ));
+    if (oauthEngaged) return;
+    clearedStaleOAuthHaltRef.current = true;
+    api.resumeLive().then(() => refreshConnectorRuntime()).catch(() => {
+      clearedStaleOAuthHaltRef.current = false;
+    });
+  }, [tradingConnectors, connectorCheck, liveStatus, refreshConnectorRuntime]);
 
   // Force an immediate re-poll when a live event bumps refreshKey (commit/halt/resume).
   useEffect(() => {
-    if (liveStatusRefresh > 0) refreshLiveStatus();
-  }, [liveStatusRefresh, refreshLiveStatus]);
+    if (liveStatusRefresh > 0) refreshConnectorRuntime();
+  }, [liveStatusRefresh, refreshConnectorRuntime]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -1397,8 +1437,15 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
    * in-session SSE artifacts AND the shared `/live/status` snapshot, so a runner
    * started from the CLI or another browser session still surfaces the halt button
    * in a freshly-loaded web session. */
+  const selectedConnectorProfile = tradingConnectors?.profiles.find((p) => p.selected) ?? null;
+  const oauthRuntimeEngaged = liveStatus != null && liveStatus.brokers.some((b) => (
+    b.auth.oauth_token_present || b.runner?.alive || b.mandate != null
+  ));
+  const showOAuthRuntime = selectedConnectorProfile?.transport === "remote_mcp" || oauthRuntimeEngaged;
+
   const liveStatusActive =
     liveStatus != null &&
+    showOAuthRuntime &&
     (liveStatus.global_halted ||
       liveStatus.brokers.some((b) => b.auth.oauth_token_present || b.runner?.alive || b.mandate != null));
   const liveActive =
@@ -1406,9 +1453,9 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
     Object.keys(committedMandates).length > 0 ||
     liveHalted != null ||
     liveStatusActive;
-  /* The global kill switch reflects only a global halt from either an in-session SSE
-   * event or the polled status; broker-scoped halts stay on their broker row. */
-  const liveIsHalted = isGlobalLiveHalt(liveHalted) || (liveStatus?.global_halted ?? false);
+  const liveIsHalted =
+    showOAuthRuntime &&
+    (isGlobalLiveHalt(liveHalted) || (liveStatus?.global_halted ?? false));
 
   return (
     <div className="flex flex-1 min-w-0 overflow-hidden h-full relative">
@@ -1749,9 +1796,11 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
               badges (SPEC §7.5 + audit C2). Self-hides when no broker is configured. */}
           <RunnerStatus
             status={liveStatus}
+            connectors={tradingConnectors}
+            connectorCheck={connectorCheck}
             unavailable={liveStatusUnavailable}
             halted={liveIsHalted}
-            onRefresh={refreshLiveStatus}
+            onRefresh={refreshConnectorRuntime}
           />
           {/* Attachment badge */}
           {attachment && (
@@ -1782,7 +1831,7 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
               {liveIsHalted ? (
                 <span className="inline-flex items-center gap-1.5 rounded-lg bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive">
                   <OctagonX className="h-3 w-3" />
-                  {t("agent.connectorHalted")}
+                  {t("agent.oauthRuntimeHalted")}
                 </span>
               ) : (
                 <button
