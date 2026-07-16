@@ -332,6 +332,39 @@ def test_apply_filter_date_range() -> None:
     assert out.iloc[0]["symbol"] == "AAPL"
 
 
+def test_apply_filter_month_range_includes_entire_leap_month() -> None:
+    df = _df(
+        [
+            _rec("2024-01-31 10:00:00", "JAN", "buy", 1, 10),
+            _rec("2024-02-01 10:00:00", "FEB1", "buy", 1, 10),
+            _rec("2024-02-29 10:00:00", "FEB29", "buy", 1, 10),
+            _rec("2024-03-01 10:00:00", "MAR", "buy", 1, 10),
+        ]
+    )
+
+    out = _apply_filter(df, "2024-01 to 2024-02")
+
+    assert list(out["symbol"]) == ["JAN", "FEB1", "FEB29"]
+
+
+def test_apply_filter_preserves_full_date_and_mixed_precision() -> None:
+    df = _df(
+        [
+            _rec("2024-02-01 10:00:00", "START", "buy", 1, 10),
+            _rec("2024-02-15 10:00:00", "MIDDLE", "buy", 1, 10),
+            _rec("2024-02-29 10:00:00", "END", "buy", 1, 10),
+        ]
+    )
+
+    dates = _apply_filter(df, "2024-02-01 to 2024-02-15")
+    mixed = _apply_filter(df, "2024-02-15 to 2024-02")
+    reversed_range = _apply_filter(df, "2024-03 to 2024-02")
+
+    assert list(dates["symbol"]) == ["START", "MIDDLE"]
+    assert list(mixed["symbol"]) == ["MIDDLE", "END"]
+    assert reversed_range.empty
+
+
 def test_apply_filter_symbol_equals() -> None:
     out = _apply_filter(_filter_df(), "symbol=600519.SH")
     assert len(out) == 2

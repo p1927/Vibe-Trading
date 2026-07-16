@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import defaultdict, deque
 from typing import Any
 
@@ -376,8 +377,17 @@ def _apply_filter(df: pd.DataFrame, expr: str) -> pd.DataFrame:
     if " to " in expr:
         try:
             lo_raw, hi_raw = (p.strip() for p in expr.split(" to ", 1))
-            lo = pd.to_datetime(lo_raw)
-            hi = pd.to_datetime(hi_raw) + pd.Timedelta(days=1)
+            lo_month = re.fullmatch(r"\d{4}-\d{2}", lo_raw) is not None
+            hi_month = re.fullmatch(r"\d{4}-\d{2}", hi_raw) is not None
+            lo_format = "%Y-%m" if lo_month else "%Y-%m-%d"
+            hi_format = "%Y-%m" if hi_month else "%Y-%m-%d"
+            lo = pd.to_datetime(lo_raw, format=lo_format, errors="raise")
+            hi_base = pd.to_datetime(hi_raw, format=hi_format, errors="raise")
+            hi = (
+                hi_base + pd.offsets.MonthBegin(1)
+                if hi_month
+                else hi_base + pd.Timedelta(days=1)
+            )
             return df[(df["datetime"] >= lo) & (df["datetime"] < hi)]
         except Exception as exc:
             logger.warning("filter date parse failed: %s", exc)
