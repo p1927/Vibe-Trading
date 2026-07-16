@@ -1159,6 +1159,8 @@ export interface TradePlanRecommended {
   score?: number;
   rationale?: string;
   legs?: TradePlanLeg[];
+  target?: number;
+  stop?: number;
   max_profit?: number;
   max_loss?: number;
   net_max_profit?: number;
@@ -1236,6 +1238,16 @@ export interface TradePlanWidget {
     view?: string;
     iv_regime?: string;
     confidence?: number;
+    horizon_days?: number;
+    expected_return_pct?: number;
+    range?: { low?: number; high?: number };
+    provenance?: {
+      direction?: string;
+      range?: string;
+      targets?: string;
+      debate_as_of?: string;
+      quant_source?: string;
+    };
     signals?: Record<string, unknown>;
   };
   scenarios?: TradePlanScenario[];

@@ -49,9 +49,12 @@ interface Props {
   widget: TradePlanWidget;
 }
 
-function formatInr(value: unknown): string {
+function formatInr(value: unknown, *, precise = false): string {
   const n = Number(value);
-  if (!Number.isFinite(n)) return "—";
+  if (value == null || !Number.isFinite(n)) return "—";
+  if (precise || (Math.abs(n) > 0 && Math.abs(n) < 100)) {
+    return `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
   return `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 }
 
@@ -531,6 +534,38 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
           </p>
         )}
 
+        {!showPayoff && pred && (pred.range || pred.expected_return_pct != null) && (
+          <div className="rounded-lg border border-border/50 bg-muted/15 p-3 text-xs space-y-1">
+            <p className="font-semibold text-foreground">Forecast</p>
+            <p className="text-muted-foreground">
+              {viewLabel}
+              {pred.horizon_days != null ? ` · ${pred.horizon_days}d horizon` : ""}
+              {pred.expected_return_pct != null
+                ? ` · expected ${Number(pred.expected_return_pct) >= 0 ? "+" : ""}${pred.expected_return_pct}%`
+                : ""}
+              {pred.confidence != null && pred.confidence > 0.05
+                ? ` · confidence ${pred.confidence}`
+                : ""}
+            </p>
+            {pred.range?.low != null && pred.range?.high != null && (
+              <p className="font-mono text-[11px] text-muted-foreground">
+                Range {formatInr(pred.range.low, precise)} – {formatInr(pred.range.high, precise)}
+              </p>
+            )}
+            {pred.provenance && (
+              <p className="text-[10px] text-muted-foreground">
+                Sources:{" "}
+                {[
+                  pred.provenance.direction ? `direction (${pred.provenance.direction})` : null,
+                  pred.provenance.range ? `range (${pred.provenance.range})` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            )}
+          </div>
+        )}
+
         {scenarios.length > 0 && (
           <div>
             <p className="text-[11px] font-medium text-muted-foreground mb-1.5">
@@ -688,6 +723,13 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
               </p>
             )}
             {displayRec.rationale && <p className="text-muted-foreground">{displayRec.rationale}</p>}
+            {(displayRec.target != null || displayRec.stop != null) && (
+              <p className="font-mono text-[11px] text-muted-foreground">
+                {displayRec.target != null ? `Target ${formatInr(displayRec.target, precise)}` : ""}
+                {displayRec.target != null && displayRec.stop != null ? " · " : ""}
+                {displayRec.stop != null ? `Stop ${formatInr(displayRec.stop, precise)}` : ""}
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
               <div>
                 Max P:{" "}
@@ -734,7 +776,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
             <ul className="mt-2 space-y-0.5 text-[10px] text-muted-foreground">
               {(charges.per_leg || []).slice(0, 4).map((row, i) => (
                 <li key={`${String(row.symbol || row.leg)}-${i}`}>
-                  {String(row.symbol || row.leg)}: brokerage {formatInr(row.brokerage)} · STT {formatInr(row.stt)} · GST {formatInr(row.gst)}
+                  {String(row.symbol || row.leg)}: brokerage {formatInr(row.brokerage, precise)} · STT {formatInr(row.stt, precise)} · GST {formatInr(row.gst, precise)}
                 </li>
               ))}
             </ul>
