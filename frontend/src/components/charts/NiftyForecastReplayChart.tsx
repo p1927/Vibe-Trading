@@ -14,6 +14,7 @@ import type { IndexBacktestDailyEval, IndexPredictionHistoryRow } from "@/lib/ap
 import {
   buildForecastIndex,
   buildForwardPaths,
+  forecastVisibleRange,
   mergePriceSeries,
   resolveForecastForDate,
   type LiveForecastInput,
@@ -71,13 +72,22 @@ export function NiftyForecastReplayChart({
   const { dark } = useDarkMode();
 
   const prices = useMemo(() => mergePriceSeries([priceSeries]), [priceSeries]);
-  const forecastIndex = useMemo(
-    () => buildForecastIndex(ledgerRows, backtestEvals, liveForecast),
-    [ledgerRows, backtestEvals, liveForecast],
-  );
-
   const lastPriceDate = prices.length ? prices[prices.length - 1].date : "";
   const firstPriceDate = prices.length ? prices[0].date : "";
+
+  const forecastIndex = useMemo(
+    () =>
+      buildForecastIndex(ledgerRows, backtestEvals, liveForecast, {
+        horizonDays,
+        lastPriceDate,
+      }),
+    [ledgerRows, backtestEvals, liveForecast, horizonDays, lastPriceDate],
+  );
+
+  const forecastDates = useMemo(
+    () => new Set([...forecastIndex.keys()].filter((d) => d >= firstPriceDate && d <= lastPriceDate)),
+    [forecastIndex, firstPriceDate, lastPriceDate],
+  );
 
   const [anchorDate, setAnchorDate] = useState<string>(() => lastPriceDate);
 
@@ -91,14 +101,28 @@ export function NiftyForecastReplayChart({
   }, [lastPriceDate, firstPriceDate]);
 
   const anchorForecast = useMemo(
-    () => (anchorDate ? resolveForecastForDate(anchorDate, forecastIndex, prices) : null),
-    [anchorDate, forecastIndex, prices],
+    () => (anchorDate ? resolveForecastForDate(anchorDate, forecastIndex) : null),
+    [anchorDate, forecastIndex],
   );
 
   const paths = useMemo(() => {
     if (!anchorForecast || !lastPriceDate) return null;
     return buildForwardPaths(anchorForecast, horizonDays, prices, lastPriceDate);
   }, [anchorForecast, horizonDays, prices, lastPriceDate]);
+
+  const focusAnchor = useCallback(() => {
+    if (!chartRef.current || !anchorDate) return;
+    const range = forecastVisibleRange(prices, anchorDate, horizonDays);
+    if (!range) return;
+    try {
+      chartRef.current.timeScale().setVisibleRange({
+        from: range.from as Time,
+        to: range.to as Time,
+      });
+    } catch {
+      chartRef.current.timeScale().fitContent();
+    }
+  }, [anchorDate, horizonDays, prices]);
 
   const initChart = useCallback(() => {
     if (!containerRef.current) return;
@@ -221,7 +245,15 @@ export function NiftyForecastReplayChart({
   }, [prices]);
 
   useEffect(() => {
-    if (!paths || !predictedRef.current || !actualRef.current) return;
+    if (!predictedRef.current || !actualRef.current) return;
+
+    if (!paths) {
+      predictedRef.current.setData([]);
+      actualRef.current.setData([]);
+      bandHighRef.current?.setData([]);
+      bandLowRef.current?.setData([]);
+      return;
+    }
 
     predictedRef.current.setData(toLineData(paths.predicted));
     actualRef.current.setData(toLineData(paths.actual));
@@ -235,11 +267,15 @@ export function NiftyForecastReplayChart({
         bandLowRef.current.setData([]);
       }
     }
-
   }, [paths]);
+
+  useEffect(() => {
+    focusAnchor();
+  }, [focusAnchor, paths]);
 
   const anchorIdx = prices.findIndex((p) => p.date === anchorDate);
   const isLiveAnchor = anchorDate === lastPriceDate;
+  const hasForecast = Boolean(anchorForecast);
   const errorPct =
     paths?.maturedActualReturnPct != null && anchorForecast
       ? paths.maturedActualReturnPct - anchorForecast.expectedReturnPct
@@ -277,10 +313,20 @@ export function NiftyForecastReplayChart({
           />
           <span className="shrink-0 tabular-nums font-medium">{anchorDate}</span>
         </label>
+        <span className="text-muted-foreground">
+          {forecastDates.size} day{forecastDates.size === 1 ? "" : "s"} with recorded forecasts
+        </span>
       </div>
 
+      {!hasForecast ? (
+        <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
+          No {horizonDays}d forecast was recorded for {anchorDate}. Pick a day with a ledger snapshot or
+          backtest evaluation (every ~5 trading days in walk-forward history).
+        </div>
+      ) : null}
+
       {anchorForecast && paths ? (
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-[11px]">
+        <div className="grid gap-2 text-[11px] sm:grid-cols-2 lg:grid-cols-4">
           <div>
             <span className="text-muted-foreground">Spot at anchor</span>
             <p className="font-semibold tabular-nums">{fmtLevel(anchorForecast.spot)}</p>
@@ -318,9 +364,9 @@ export function NiftyForecastReplayChart({
       ) : null}
 
       <p className="text-[10px] text-muted-foreground">
-        Scroll or pinch to move through history. Drag the slider or click the chart to pick an anchor
-        — dashed orange is the {horizonDays}d forecast from that day; green is what Nifty actually
-        did over the same window.
+        Drag the slider or click the chart to pick an anchor — dashed orange is the {horizonDays}d forecast
+        from that day; green is what Nifty actually did over the same window. The view auto-focuses on the
+        anchor and forward path.
       </p>
     </div>
   );

@@ -153,8 +153,8 @@ export function runPredictionUiAudit(
       ok: spotOk && pred.expected_return_pct != null,
       empty: !spotOk,
     }),
-    source: "prediction.range + upcoming_events + scenarios",
-    userValue: `${(artifact.upcoming_events ?? []).length} events · ${(artifact.scenarios ?? []).length} scenario paths`,
+    source: "ledger history + backtest daily_evaluations + live artifact",
+    userValue: `${(external.dailyHistoryCount ?? 0) + (external.backtest?.daily_evaluations?.length ?? 0)} forecast anchors`,
     feedsForecast: false,
   });
 
