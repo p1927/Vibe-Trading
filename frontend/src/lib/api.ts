@@ -865,6 +865,7 @@ export interface TradePlanWidget {
     net_max_profit?: number;
     net_max_loss?: number;
   };
+  browse_summary?: { spot?: number };
   payoff?: {
     samples?: Array<{ spot: number; pnl: number; net_pnl?: number }>;
     gross_max_profit?: number;
@@ -873,6 +874,7 @@ export interface TradePlanWidget {
     net_max_loss?: number;
     breakevens?: unknown;
   };
+  payoff_over_time?: { samples?: Array<{ days_to_expiry?: number; pnl: number; net_pnl?: number }> };
   charges?: {
     per_leg?: Array<Record<string, unknown>>;
     net_debit_credit?: number;

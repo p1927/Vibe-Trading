@@ -87,6 +87,7 @@ export function useSSE(config?: SSEConfig) {
       "message.received", "session.created",
       "goal.created", "goal.evidence", "goal.updated",
       "mandate.proposal", "mandate.committed", "live.halted", "live.resumed", "live.action",
+      "trade_plan.widget",
       "heartbeat", "done",
     ];
 

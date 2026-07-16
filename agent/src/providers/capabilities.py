@@ -36,6 +36,7 @@ class ProviderCapabilities:
     gemini_thought_signatures: bool = False
     normalize_assistant_content: bool = False
     openrouter_reasoning_body: bool = False
+    minimax_reasoning_split: bool = False
     default_headers: Mapping[str, str] = field(default_factory=dict)
     native_adapter_package: Optional[str] = None
 
@@ -146,7 +147,15 @@ _PROVIDERS: dict[str, ProviderCapabilities] = {
     "moonshot": _MOONSHOT_CAPABILITIES,
     "kimi": _MOONSHOT_CAPABILITIES,
     "kimi-coding": _KIMI_CODING_CAPABILITIES,
-    "minimax": ProviderCapabilities("minimax", "MINIMAX_API_KEY", "MINIMAX_BASE_URL"),
+    "minimax": ProviderCapabilities(
+        "minimax",
+        "MINIMAX_API_KEY",
+        "MINIMAX_BASE_URL",
+        capture_reasoning=True,
+        send_reasoning_content=True,
+        normalize_assistant_content=True,
+        minimax_reasoning_split=True,
+    ),
     "mimo": ProviderCapabilities("mimo", "MIMO_API_KEY", "MIMO_BASE_URL"),
     "zai": ProviderCapabilities("zai", "ZAI_API_KEY", "ZAI_BASE_URL"),
     "ollama": ProviderCapabilities("ollama", None, "OLLAMA_BASE_URL"),

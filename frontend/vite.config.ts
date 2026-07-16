@@ -31,6 +31,10 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    // plotly.js UMD wrapper references Node's `global`; map to browser globalThis.
+    define: {
+      global: "globalThis",
+    },
     resolve: {
       alias: { "@": path.resolve(__dirname, "./src") },
     },
@@ -53,7 +57,7 @@ export default defineConfig(({ mode }) => {
         output: {
           manualChunks: {
             "vendor-react": ["react", "react-dom", "react-router-dom"],
-            "vendor-charts": ["echarts"],
+            "vendor-charts": ["echarts", "plotly.js", "react-plotly.js"],
           },
         },
       },

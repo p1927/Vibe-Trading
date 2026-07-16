@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   Check,
@@ -10,6 +10,7 @@ import {
 import { toast } from "sonner";
 import {
   api,
+  type TradePlanLeg,
   type TradePlanScenario,
   type TradePlanStrategyVariant,
   type TradePlanWidget,
@@ -17,8 +18,21 @@ import {
 } from "@/lib/api";
 import { AgentAvatar } from "./AgentAvatar";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
-import { MiniPayoffChart } from "@/components/charts/MiniPayoffChart";
+import { PayoffChart } from "@/components/charts/PayoffChart";
 import { MiniPnlOverTimeChart } from "@/components/charts/MiniPnlOverTimeChart";
+import { buildOptionSymbol, type StrategyLeg } from "@/lib/strategyMath";
+import {
+  inferStrikeStep,
+  resolveWidgetSpot,
+  strategyLegsToTradePlanLegs,
+  tradePlanLegsToStrategyLegs,
+  widgetPayoffInputs,
+} from "@/lib/tradePlanLegs";
+import {
+  isTradeWidgetModified,
+  setTradeWidgetAdjustment,
+  type TradeWidgetAdjustment,
+} from "@/lib/tradeWidgetContext";
 
 interface Props {
   widget: TradePlanWidget;
@@ -83,6 +97,9 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [executed, setExecuted] = useState(false);
   const [execMode, setExecMode] = useState<TradeExecutionMode | null>(null);
+  const [legs, setLegs] = useState<StrategyLeg[]>([]);
+  const baselineLegsRef = useRef<TradePlanLeg[]>([]);
+  const widgetIdRef = useRef(widget.widget_id);
 
   useEffect(() => {
     api.getTradeExecutionMode().then(setExecMode).catch(() => null);
@@ -92,6 +109,8 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
   const ranked = widget.ranked_strategies || [];
   const pred = widget.prediction || {};
   const agentPick = widget.agent_recommended_strategy || widget.recommended?.name || "";
+  const isOptions =
+    widget.asset_type !== "stock" && widget.instrument_type !== "stock";
 
   const activeScenario = scenarios[selectedScenario];
   const scenarioVariant = useMemo(
@@ -101,36 +120,152 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
 
   const rec = scenarioVariant?.recommended || widget.recommended || {};
   const charges = scenarioVariant?.charges || widget.charges || {};
-  const payoff = scenarioVariant?.payoff || widget.payoff || {};
   const pnlOverTime = scenarioVariant?.payoff_over_time || widget.payoff_over_time || {};
   const steps = scenarioVariant?.implementation_steps || widget.implementation_steps || [];
+
+  const originalTradeLegs = useMemo(
+    () => (rec.legs || []) as TradePlanLeg[],
+    [rec.legs],
+  );
+
+  const resolvedSpot = resolveWidgetSpot(widget);
+
+  useEffect(() => {
+    if (!isOptions || !resolvedSpot || originalTradeLegs.length === 0) {
+      setLegs([]);
+      baselineLegsRef.current = [];
+      return;
+    }
+    const expiry = widget.expiry || "";
+    const next = tradePlanLegsToStrategyLegs(
+      originalTradeLegs,
+      widget.underlying,
+      expiry,
+    );
+    setLegs(next);
+    baselineLegsRef.current = originalTradeLegs.map((l) => ({ ...l }));
+  }, [
+    isOptions,
+    widget.widget_id,
+    widget.underlying,
+    widget.expiry,
+    widget.spot,
+    resolvedSpot,
+    originalTradeLegs,
+    selectedScenario,
+  ]);
+
+  const payoffInputs = useMemo(
+    () => (legs.length && resolvedSpot ? widgetPayoffInputs(widget, legs) : null),
+    [widget, legs, resolvedSpot],
+  );
+
+  const strikeStep = useMemo(
+    () => inferStrikeStep(widget.underlying, strategyLegsToTradePlanLegs(legs)),
+    [widget.underlying, legs],
+  );
+
+  const legsModified = useMemo(() => {
+    const adj: TradeWidgetAdjustment = {
+      widget_id: widget.widget_id,
+      underlying: widget.underlying,
+      agent_recommended: agentPick,
+      strategy_name: rec.name || agentPick,
+      original_legs: baselineLegsRef.current,
+      adjusted_legs: strategyLegsToTradePlanLegs(legs),
+      payoff_summary: payoffInputs
+        ? {
+            max_profit: payoffInputs.payoff.maxProfit,
+            max_loss: payoffInputs.payoff.maxLoss,
+            breakevens: payoffInputs.payoff.breakevens,
+          }
+        : undefined,
+    };
+    return isTradeWidgetModified(adj);
+  }, [widget, agentPick, rec.name, legs, payoffInputs]);
+
+  useEffect(() => {
+    if (!isOptions || legs.length === 0) {
+      if (widgetIdRef.current === widget.widget_id) {
+        setTradeWidgetAdjustment(null);
+      }
+      return;
+    }
+    const adj: TradeWidgetAdjustment = {
+      widget_id: widget.widget_id,
+      underlying: widget.underlying,
+      agent_recommended: agentPick,
+      strategy_name: rec.name || agentPick,
+      original_legs: baselineLegsRef.current,
+      adjusted_legs: strategyLegsToTradePlanLegs(legs),
+      payoff_summary: payoffInputs
+        ? {
+            max_profit: payoffInputs.payoff.maxProfit,
+            max_loss: payoffInputs.payoff.maxLoss,
+            breakevens: payoffInputs.payoff.breakevens,
+          }
+        : undefined,
+    };
+    widgetIdRef.current = widget.widget_id;
+    setTradeWidgetAdjustment(adj);
+    return () => setTradeWidgetAdjustment(null);
+  }, [isOptions, widget.widget_id, widget.underlying, agentPick, rec.name, legs, payoffInputs]);
+
+  const handleStrikeChange = useCallback(
+    (legId: string, strike: number) => {
+      setLegs((prev) =>
+        prev.map((leg) => {
+          if (leg.id !== legId || leg.segment !== "OPTION" || !leg.optionType) return leg;
+          const expiry = widget.expiry || leg.expiry;
+          const symbol = buildOptionSymbol(
+            widget.underlying,
+            expiry,
+            strike,
+            leg.optionType,
+          );
+          return { ...leg, strike, expiry, symbol };
+        }),
+      );
+    },
+    [widget.underlying, widget.expiry],
+  );
+
+  const resetStrikes = useCallback(() => {
+    if (!resolvedSpot || baselineLegsRef.current.length === 0) return;
+    setLegs(
+      tradePlanLegsToStrategyLegs(
+        baselineLegsRef.current,
+        widget.underlying,
+        widget.expiry || "",
+      ),
+    );
+  }, [widget.underlying, widget.expiry, resolvedSpot]);
 
   const isScenarioOverride = Boolean(
     scenarioVariant && rec.name && rec.name !== agentPick,
   );
   const isPaper = execMode?.mode === "paper" || execMode?.paper_env;
-  const assetLabel = widget.asset_type === "stock" || widget.instrument_type === "stock"
-    ? "Stock"
-    : "Options";
-
-  const payoffSamples = useMemo(
-    () => (payoff.samples || []).filter((s) => s.spot != null && (s.pnl != null || s.net_pnl != null)),
-    [payoff.samples],
-  );
+  const assetLabel = isOptions ? "Options" : "Stock";
 
   const pnlTimeSamples = useMemo(
-    () => (pnlOverTime.samples || []).filter((s) => s.pnl != null || s.net_pnl != null),
+    () =>
+      (pnlOverTime.samples || []).filter(
+        (s: { pnl?: number; net_pnl?: number }) => s.pnl != null || s.net_pnl != null,
+      ),
     [pnlOverTime.samples],
   );
 
   const executeOrders = useMemo(() => {
+    if (legsModified && legs.length > 0) {
+      return strategyLegsToTradePlanLegs(legs) as Record<string, unknown>[];
+    }
     for (const step of steps) {
       if (step.action === "execute_basket" && step.payload?.orders) {
         return step.payload.orders as Record<string, unknown>[];
       }
     }
     return (rec.legs || []) as Record<string, unknown>[];
-  }, [steps, rec.legs]);
+  }, [legsModified, legs, steps, rec.legs]);
 
   const handleExecute = useCallback(async () => {
     setExecuting(true);
@@ -183,6 +318,11 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
                 {rec.tier}
               </span>
             )}
+            {legsModified && (
+              <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sky-700 dark:text-sky-400">
+                Legs modified
+              </span>
+            )}
           </div>
         </div>
 
@@ -204,12 +344,24 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
           </div>
         )}
 
-        {payoffSamples.length >= 2 && (
+        {isOptions && payoffInputs && legs.length > 0 && (
           <div>
             <p className="text-[11px] font-medium text-muted-foreground mb-1">
-              Payoff at expiry{isScenarioOverride ? ` — ${rec.name}` : " (recommended)"}
+              Interactive payoff{isScenarioOverride ? ` — ${rec.name}` : " (recommended)"}
             </p>
-            <MiniPayoffChart samples={payoffSamples} spot={widget.spot} height={120} />
+            <PayoffChart
+              title={`${widget.underlying} — ${widget.expiry || "—"}`}
+              spot={payoffInputs.spot}
+              atmIv={payoffInputs.atmIv}
+              tYears={payoffInputs.tYears}
+              payoff={payoffInputs.payoff}
+              legs={legs}
+              strikeStep={strikeStep}
+              onStrikeChange={handleStrikeChange}
+              onResetStrikes={resetStrikes}
+              canResetStrikes={legsModified}
+              height={280}
+            />
           </div>
         )}
 
@@ -236,18 +388,28 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
             )}
             {rec.rationale && <p className="text-muted-foreground">{rec.rationale}</p>}
             <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
-              <div>Gross max P: {formatInr(payoff.gross_max_profit ?? rec.max_profit)}</div>
-              <div>Gross max L: {formatInr(payoff.gross_max_loss ?? rec.max_loss)}</div>
-              <div>Net max P: {formatInr(payoff.net_max_profit ?? rec.net_max_profit)}</div>
-              <div>Net max L: {formatInr(payoff.net_max_loss ?? rec.net_max_loss)}</div>
+              <div>
+                Max P:{" "}
+                {formatInr(
+                  payoffInputs?.payoff.maxProfit ?? rec.net_max_profit ?? rec.max_profit,
+                )}
+              </div>
+              <div>
+                Max L:{" "}
+                {formatInr(
+                  payoffInputs?.payoff.maxLoss ?? rec.net_max_loss ?? rec.max_loss,
+                )}
+              </div>
             </div>
-            {(rec.legs || []).length > 0 && (
+            {(legs.length > 0 ? strategyLegsToTradePlanLegs(legs) : rec.legs || []).length > 0 && (
               <ul className="space-y-0.5 text-[11px]">
-                {(rec.legs || []).map((leg, i) => (
+                {(legs.length > 0 ? strategyLegsToTradePlanLegs(legs) : rec.legs || []).map(
+                  (leg, i) => (
                   <li key={`${leg.symbol}-${i}`} className="font-mono">
                     {leg.side} {leg.quantity}× {leg.symbol} @ {leg.price}
                   </li>
-                ))}
+                  ),
+                )}
               </ul>
             )}
           </div>
@@ -265,8 +427,8 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
           {(charges.per_leg || []).length > 0 && (
             <ul className="mt-2 space-y-0.5 text-[10px] text-muted-foreground">
               {(charges.per_leg || []).slice(0, 4).map((row, i) => (
-                <li key={`${row.symbol || row.leg}-${i}`}>
-                  {row.symbol || row.leg}: brokerage {formatInr(row.brokerage)} · STT {formatInr(row.stt)} · GST {formatInr(row.gst)}
+                <li key={`${String(row.symbol || row.leg)}-${i}`}>
+                  {String(row.symbol || row.leg)}: brokerage {formatInr(row.brokerage)} · STT {formatInr(row.stt)} · GST {formatInr(row.gst)}
                 </li>
               ))}
             </ul>

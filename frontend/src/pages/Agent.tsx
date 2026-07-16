@@ -16,6 +16,11 @@ import { ConversationTimeline } from "@/components/chat/ConversationTimeline";
 import { ToolProgressIndicator } from "@/components/chat/ToolProgressIndicator";
 import { MandateProposalCard } from "@/components/chat/MandateProposalCard";
 import { TradePlanWidgetCard } from "@/components/chat/TradePlanWidgetCard";
+import {
+  formatTradeWidgetContextBlock,
+  getTradeWidgetAdjustment,
+  isTradeWidgetModified,
+} from "@/lib/tradeWidgetContext";
 import { RunnerStatus } from "@/components/chat/RunnerStatus";
 import { SwarmStatusCard } from "@/components/chat/SwarmStatusCard";
 import {
@@ -912,8 +917,20 @@ export function Agent() {
       finalPrompt = `[Uploaded file: ${attachment.filename}, path: ${attachment.filePath}]\n\n${finalPrompt}`;
       setAttachment(null);
     }
+
+    const widgetContext = formatTradeWidgetContextBlock();
+    const displayPrompt = finalPrompt;
+    const apiPrompt = widgetContext ? `${widgetContext}\n\n${finalPrompt}` : finalPrompt;
+
     setInput("");
-    act().addMessage({ id: "", type: "user", content: finalPrompt, timestamp: Date.now() });
+    act().addMessage({
+      id: "",
+      type: "user",
+      content: isTradeWidgetModified(getTradeWidgetAdjustment())
+        ? `${displayPrompt}\n\n_(includes your trade plan leg adjustments)_`
+        : displayPrompt,
+      timestamp: Date.now(),
+    });
     act().setStatus("streaming");
     forceScrollToBottom();
     inputRef.current?.focus();
@@ -927,7 +944,7 @@ export function Agent() {
         setSearchParams({ session: sid }, { replace: true });
       }
       setupSSE(sid);
-      const sent = await api.sendMessage(sid, finalPrompt);
+      const sent = await api.sendMessage(sid, apiPrompt);
       void syncCompletedAttempt(sid, sent.attempt_id);
     } catch (error) {
       act().setStatus("error");
