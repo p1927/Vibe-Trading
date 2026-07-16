@@ -133,6 +133,7 @@ def _read_pdf(path: Path, pages: str, min_text_per_page: int = _MIN_TEXT_PER_PAG
         total_targets = len(targets)
         chunks: list[str] = []
         ocr_pages = 0
+        ocr_attempted_pages = 0  # pages where OCR ran but returned empty
         skipped_pages = 0
         for idx, i in enumerate(targets, start=1):
             if not 0 <= i < total_pages:
@@ -164,7 +165,12 @@ def _read_pdf(path: Path, pages: str, min_text_per_page: int = _MIN_TEXT_PER_PAG
                 chunks.append(f"--- Page {i + 1} [OCR] ---\n{ocr_text}")
                 ocr_pages += 1
             elif text:
+                # OCR empty but page had some (sub-threshold) native text
                 chunks.append(f"--- Page {i + 1} ---\n{text}")
+                ocr_attempted_pages += 1
+            else:
+                # OCR attempted, returned empty, no native text either
+                ocr_attempted_pages += 1
             emit_progress(
                 "reading_pdf",
                 current=idx,
@@ -186,7 +192,13 @@ def _read_pdf(path: Path, pages: str, min_text_per_page: int = _MIN_TEXT_PER_PAG
         text_density = len(full) / max(pages_read, 1)
 
         if ocr_pages == 0:
-            quality_flag = "no_ocr_needed" if not skipped_pages else "no_ocr_engine"
+            if ocr_attempted_pages > 0:
+                # OCR was attempted but returned no usable text
+                quality_flag = "degraded"
+            elif skipped_pages:
+                quality_flag = "no_ocr_engine"
+            else:
+                quality_flag = "no_ocr_needed"
         elif skipped_pages > 0:
             quality_flag = "degraded"
         else:
@@ -315,7 +327,7 @@ def _read_image(path: Path) -> str:
     # Image = 1 page; text_density is total chars (matches PDF chars/page).
     ocr_quality = {
         "ocr_pages": 1,
-        "text_density": round(len(text) / 1, 1),
+        "text_density": float(len(text)),  # single page; no division needed
         "quality_flag": "good",
     }
     return _envelope(

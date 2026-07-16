@@ -87,7 +87,23 @@ Do not translate.
 
 _OCR_USER_PROMPT = "Extract all text and structured content from this image."
 
-_OCR_TIMEOUT = 90  # seconds — vision models are slower than text
+# Vision models are 3-10x slower than text-only; 90s covers network latency
+# and complex multi-column layouts (typical single-page OCR: 5-30s).
+_OCR_TIMEOUT = 90  # seconds
+
+# Dense A4 page ≈ 2000-4000 tokens; tables/formulas push higher.
+# 8192 is a safe upper bound supported by all mainstream vision models
+# (GPT-4o, Claude, Gemini, Qwen-VL).
+_OCR_MAX_TOKENS = 8192
+
+# OCR is faithful extraction requiring maximum determinism.
+# Temperature 0 is the industry standard for extraction/structured-output tasks.
+_OCR_TEMPERATURE = 0.0
+
+# Industry-standard "high quality" threshold. JPEG quality ≥70 has negligible
+# impact on OCR accuracy; 85 balances file size (5-10x smaller than PNG) with
+# text readability. Higher values (90+) increase upload cost with marginal gain.
+_OCR_JPEG_QUALITY = 85
 
 
 def _resolve_provider_config() -> dict[str, str]:
@@ -216,8 +232,8 @@ class LlmVisionOcrEngine:
                             ],
                         },
                     ],
-                    max_tokens=8192,
-                    temperature=0.0,
+                    max_tokens=_OCR_MAX_TOKENS,
+                    temperature=_OCR_TEMPERATURE,
                 )
                 text = response.choices[0].message.content or ""
                 return text.strip()
@@ -244,7 +260,7 @@ class LlmVisionOcrEngine:
 
         pil_img = Image.fromarray(image)
         buffer = io.BytesIO()
-        pil_img.save(buffer, format="JPEG", quality=85)
+        pil_img.save(buffer, format="JPEG", quality=_OCR_JPEG_QUALITY)
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
