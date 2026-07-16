@@ -34,6 +34,7 @@ from src.swarm.models import (
 from src.swarm.store import SwarmStore
 from src.swarm.worker import (
     _classify_deliverable,
+    _collect_artifacts,
     _is_data_agent,
     _is_error_result,
     _report_written,
@@ -297,3 +298,34 @@ def test_tool_result_event_status_and_evidence_credit_agree(
     tool_result = next(event for event in events if event.type == "tool_result")
     assert tool_result.data["status"] == expected_event_status
     assert worker_result.status == expected_worker_status
+
+
+def test_collect_artifacts_recurses_and_returns_sorted_run_relative_paths(
+    tmp_path: Path,
+) -> None:
+    artifact_dir = tmp_path / "run" / "artifacts" / "analyst"
+    (artifact_dir / "nested").mkdir(parents=True)
+    (artifact_dir / "other").mkdir()
+    (artifact_dir / "summary.md").write_text("summary", encoding="utf-8")
+    (artifact_dir / "nested" / "report.json").write_text("{}", encoding="utf-8")
+    (artifact_dir / "other" / "report.json").write_text("{}", encoding="utf-8")
+
+    assert _collect_artifacts(artifact_dir) == [
+        "artifacts/analyst/nested/report.json",
+        "artifacts/analyst/other/report.json",
+        "artifacts/analyst/summary.md",
+    ]
+
+
+def test_collect_artifacts_rejects_symlink_escape(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "run" / "artifacts" / "analyst"
+    artifact_dir.mkdir(parents=True)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("private", encoding="utf-8")
+    escape = artifact_dir / "escape.txt"
+    try:
+        escape.symlink_to(outside)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available on this platform")
+
+    assert _collect_artifacts(artifact_dir) == []
