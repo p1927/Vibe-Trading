@@ -23,6 +23,12 @@ function statusBadge(status?: string) {
           <CheckCircle2 className="h-3 w-3" /> Partial
         </span>
       );
+    case "rejected":
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-400">
+          <ShieldAlert className="h-3 w-3" /> Rejected
+        </span>
+      );
     default:
       return (
         <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
@@ -42,13 +48,19 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled }: Pro
   const [report, setReport] = useState<IndexNewsImpactReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showRejected, setShowRejected] = useState(false);
 
   const load = useCallback(
     async (refresh = false) => {
       setLoading(true);
       setError(null);
       try {
-        const res = await api.getIndexPredictionNewsImpact("NIFTY", refresh, horizonDays);
+        const res = await api.getIndexPredictionNewsImpact(
+          "NIFTY",
+          refresh,
+          horizonDays,
+          showRejected,
+        );
         setReport(res.report ?? null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load news impact");
@@ -56,7 +68,7 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled }: Pro
         setLoading(false);
       }
     },
-    [horizonDays],
+    [horizonDays, showRejected],
   );
 
   useEffect(() => {
@@ -72,6 +84,7 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled }: Pro
   const items = report?.items ?? [];
   const summary = report?.summary;
   const debate = report?.debate_summary;
+  const rejectedCount = summary?.rejected_count ?? summary?.rejected_skipped ?? 0;
 
   return (
     <div className="space-y-3">
@@ -80,20 +93,30 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled }: Pro
           <Newspaper className="h-4 w-4" />
           <span>
             {summary?.approved_count ?? 0} verified · {summary?.partial_count ?? 0} partial
-            {(summary?.rejected_skipped ?? 0) > 0
-              ? ` · ${summary?.rejected_skipped} rejected (not shown)`
-              : ""}
+            {rejectedCount > 0 && !showRejected ? ` · ${rejectedCount} rejected (hidden)` : ""}
+            {summary?.source === "hub_records" ? " · hub cache" : ""}
           </span>
         </div>
-        <button
-          type="button"
-          onClick={() => void load(true)}
-          disabled={loading}
-          className="inline-flex items-center gap-1 rounded-md border px-2 py-1 hover:bg-muted/60 disabled:opacity-50"
-        >
-          {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <label className="inline-flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showRejected}
+              onChange={(e) => setShowRejected(e.target.checked)}
+              className="h-3 w-3"
+            />
+            Show rejected
+          </label>
+          <button
+            type="button"
+            onClick={() => void load(true)}
+            disabled={loading}
+            className="inline-flex items-center gap-1 rounded-md border px-2 py-1 hover:bg-muted/60 disabled:opacity-50"
+          >
+            {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+            Ingest new
+          </button>
+        </div>
       </div>
 
       {debate?.view ? (
@@ -109,16 +132,19 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled }: Pro
 
       {!items.length && !loading ? (
         <div className="rounded-xl border border-dashed bg-muted/20 px-4 py-6 text-center text-[12px] text-muted-foreground">
-          No verified headlines yet — run analysis or wait for material news. Headlines that fail data
-          checks are hidden.
+          No verified headlines in hub yet — click Ingest new or run analysis. Rejected clickbait stays
+          in hub but is hidden unless you enable Show rejected.
         </div>
       ) : null}
 
       <div className="grid gap-3">
         {items.map((item) => {
-          const predicted = item.predicted;
+          const predicted = item.predicted ?? item.predicted_impact;
+          const actual = item.actual ?? item.actual_impact;
           const verification = item.verification;
+          const vStatus = verification?.status ?? item.verification_status;
           const facts = item.structured_summary?.facts ?? [];
+          const sources = item.sources ?? [];
           return (
             <article
               key={item.id ?? item.title}
@@ -134,10 +160,11 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled }: Pro
                   ) : null}
                   <p className="text-[11px] text-muted-foreground">
                     {item.source}
+                    {sources.length > 1 ? ` · ${sources.length} sources merged` : ""}
                     {item.published_at ? ` · ${item.published_at.slice(0, 16).replace("T", " ")}` : ""}
                   </p>
                 </div>
-                {statusBadge(verification?.status)}
+                {statusBadge(vStatus)}
               </div>
 
               {item.content_summary ? (
@@ -152,6 +179,20 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled }: Pro
                 </ul>
               ) : null}
 
+              {sources.length ? (
+                <details className="mt-2 text-[10px] text-muted-foreground">
+                  <summary className="cursor-pointer">Sources ({sources.length})</summary>
+                  <ul className="mt-1 space-y-0.5">
+                    {sources.map((s) => (
+                      <li key={`${s.vendor}-${s.url}`}>
+                        {s.publisher || s.vendor}
+                        {s.url ? ` — ${s.url.slice(0, 60)}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {(item.tagged_factors ?? []).map((t) => (
                   <span
@@ -163,30 +204,36 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled }: Pro
                 ))}
               </div>
 
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                <div className="rounded-lg bg-muted/40 px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Model predicted</p>
-                  <p
-                    className={cn(
-                      "text-[14px] font-semibold tabular-nums",
-                      (predicted?.nifty_points ?? 0) < 0 ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400",
-                    )}
-                  >
-                    {formatPts(predicted?.nifty_points)}
-                    {predicted?.return_pct != null ? ` (${predicted.return_pct > 0 ? "+" : ""}${predicted.return_pct.toFixed(2)}%)` : ""}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground">
-                    Horizon: {item.horizon_trading_days ?? horizonDays} sessions
-                    {item.maturity_date ? ` → ${item.maturity_date}` : ""}
-                  </p>
+              {vStatus !== "rejected" ? (
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <div className="rounded-lg bg-muted/40 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Model predicted</p>
+                    <p
+                      className={cn(
+                        "text-[14px] font-semibold tabular-nums",
+                        (predicted?.nifty_points ?? 0) < 0
+                          ? "text-red-600 dark:text-red-400"
+                          : "text-emerald-700 dark:text-emerald-400",
+                      )}
+                    >
+                      {formatPts(predicted?.nifty_points)}
+                      {predicted?.return_pct != null
+                        ? ` (${predicted.return_pct > 0 ? "+" : ""}${predicted.return_pct.toFixed(2)}%)`
+                        : ""}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      Horizon: {item.horizon_trading_days ?? horizonDays} sessions
+                      {item.maturity_date ? ` → ${item.maturity_date}` : ""}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-muted/40 px-3 py-2">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Actual (at maturity)</p>
+                    <p className="text-[14px] font-semibold tabular-nums text-muted-foreground">
+                      {actual ? formatPts(actual.nifty_points) : "Pending"}
+                    </p>
+                  </div>
                 </div>
-                <div className="rounded-lg bg-muted/40 px-3 py-2">
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Actual (at maturity)</p>
-                  <p className="text-[14px] font-semibold tabular-nums text-muted-foreground">
-                    {item.actual ? formatPts(item.actual.nifty_points) : "Pending"}
-                  </p>
-                </div>
-              </div>
+              ) : null}
 
               {(verification?.claims ?? []).length ? (
                 <details className="mt-3 text-[11px]">
