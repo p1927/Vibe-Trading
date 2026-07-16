@@ -322,12 +322,7 @@ def get_quote(
         _assert_profile(cfg, accounts)
         contract = _make_contract(symbol, exchange=exchange, currency=currency, sec_type=sec_type)
         _qualify_contract(ib, contract)
-        ticker = ib.reqMktData(contract, "", False, False)
-        _sleep(ib, 2.0)
-        try:
-            ib.cancelMktData(contract)
-        except Exception:
-            pass
+        ticker = ib.reqMktData(contract, "", True, False)
         return {
             "status": "ok",
             "symbol": symbol.upper(),
@@ -385,75 +380,80 @@ def get_historical_bars(
     finally:
         _pool.release()
 
-class _TwsPool:
-    """Thread-safe shared IB connection with reference counting.
+import itertools
 
-    Holds a single ``ib_async.IB`` instance.  Callers acquire a reference
-    (connecting lazily once) and release when done.  The underlying socket
-    is disconnected only when the last caller releases — no resource leak,
-    no client-ID collision across parallel agent tool calls.
+class _TwsPool:
+    """Thread-local IB connection pool with per-thread reference counting.
+
+    Each worker thread gets its own ``ib_async.IB`` socket with a unique
+    client ID.  The connection is lazily created and reused across
+    multiple tool calls within the same thread; it is disconnected only
+    when the refcount drops to zero (balanced acquire/release).
+
+    This avoids client-ID collisions in the agent's parallel tool
+    executor while respecting ``ib_async``'s single-thread-per-socket
+    design — no socket is shared across threads.
     """
+
+    _counter = itertools.count(1)
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._refcount = 0
-        self._ib: Any = None
-        self._config: IBKRLocalConfig | None = None
+        self._local = threading.local()
+
+    @staticmethod
+    def _new_client_id(base: int) -> int:
+        return base + next(_TwsPool._counter)
 
     def acquire(self, config: IBKRLocalConfig) -> Any:
-        with self._lock:
-            if self._refcount == 0:
-                if not tcp_port_open(config.host, config.port):
-                    raise IBKRConnectionError(
-                        f"No TWS / IB Gateway socket is listening at {config.host}:{config.port}. "
-                        "Open TWS or IB Gateway, log in, and enable API socket clients."
-                    )
-                module = _require_ib_async()
-                self._config = config
-                self._ib = module.IB()
-                try:
-                    self._ib.connect(
-                        config.host,
-                        config.port,
-                        clientId=config.client_id,
-                        timeout=config.timeout,
-                        readonly=config.readonly,
-                        account=config.account or "",
-                    )
-                except TypeError:
-                    self._ib.connect(
-                        config.host, config.port, clientId=config.client_id, timeout=config.timeout
-                    )
-                except Exception as exc:
-                    raise IBKRConnectionError(
-                        f"Could not connect to TWS / IB Gateway at {config.host}:{config.port}: {exc}"
-                    ) from exc
-            elif self._config is not None and (
-                self._config.host != config.host
-                or self._config.port != config.port
-                or self._config.profile != config.profile
-            ):
-                raise IBKRConnectionError(
-                    f"IBKR connection pool already in use by profile '{self._config.profile}' "
-                    f"at {self._config.host}:{self._config.port}.  "
-                    f"Cannot switch to profile '{config.profile}' at {config.host}:{config.port} "
-                    "while the first operation is still in flight."
-                )
-            self._refcount += 1
-            return self._ib
+        refcount = getattr(self._local, "refcount", 0)
+        if refcount > 0:
+            self._local.refcount = refcount + 1
+            return self._local.ib
+
+        if not tcp_port_open(config.host, config.port):
+            raise IBKRConnectionError(
+                f"No TWS / IB Gateway socket is listening at {config.host}:{config.port}. "
+                "Open TWS or IB Gateway, log in, and enable API socket clients."
+            )
+        module = _require_ib_async()
+        ib = module.IB()
+        unique_id = self._new_client_id(config.client_id)
+        try:
+            ib.connect(
+                config.host,
+                config.port,
+                clientId=unique_id,
+                timeout=config.timeout,
+                readonly=config.readonly,
+                account=config.account or "",
+            )
+        except TypeError:
+            ib.connect(config.host, config.port, clientId=unique_id, timeout=config.timeout)
+        except Exception as exc:
+            raise IBKRConnectionError(
+                f"Could not connect to TWS / IB Gateway at {config.host}:{config.port}: {exc}"
+            ) from exc
+        self._local.ib = ib
+        self._local.refcount = 1
+        return ib
 
     def release(self) -> None:
-        with self._lock:
-            self._refcount -= 1
-            if self._refcount <= 0:
-                self._refcount = 0
-                if self._ib is not None:
-                    try:
-                        self._ib.disconnect()
-                    except Exception:
-                        pass
-                self._ib = None
-                self._config = None
+        refcount = getattr(self._local, "refcount", 0)
+        if refcount <= 0:
+            return
+        refcount -= 1
+        if refcount > 0:
+            self._local.refcount = refcount
+            return
+        self._local.refcount = 0
+        ib = getattr(self._local, "ib", None)
+        if ib is not None:
+            try:
+                ib.disconnect()
+            except Exception:
+                pass
+            self._local.ib = None
 
 
 _pool = _TwsPool()
