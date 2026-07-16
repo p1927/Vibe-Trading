@@ -11,6 +11,7 @@ import {
   CircleDot,
   CircleSlash,
   OctagonX,
+  CheckCircle2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -19,15 +20,25 @@ import {
   type LiveBrokerStatus,
   type LiveMandateLimits,
   type LiveAuthorizeResponse,
+  type TradingConnectorsResponse,
+  type TradingConnectorProfile,
 } from "@/lib/api";
 
+interface ConnectorCheckSnapshot {
+  status: string;
+  error?: string;
+}
+
 interface Props {
-  /** Shared `GET /live/status` snapshot, polled once by the parent (Agent.tsx).
-   * `null` until the first poll resolves. */
+  /** Shared `GET /live/status` snapshot (OAuth live runners). */
   status: LiveStatus | null;
-  /** True when the status endpoint is not wired on this backend (404/501) — hide. */
+  /** Selected trading connector profiles (`GET /trading/connectors`). */
+  connectors?: TradingConnectorsResponse | null;
+  /** Latest health check for the selected profile. */
+  connectorCheck?: ConnectorCheckSnapshot | null;
+  /** True when the live status endpoint is not wired on this backend (404/501) — hide OAuth section only. */
   unavailable?: boolean;
-  /** When true, every broker's halted banner reflects the global kill switch. */
+  /** When true, OAuth live runners reflect the global kill switch. */
   halted?: boolean;
   /** Forces the parent to re-poll immediately (e.g. after a runner start/stop). */
   onRefresh: () => void;
@@ -78,6 +89,54 @@ function summarizeLimits(limits: LiveMandateLimits | undefined): string {
 
 function fallbackAuthorizeInstruction(): string {
   return "Run `vibe-trading connector list`, choose the broker profile, then run `vibe-trading connector authorize <profile>` from the desktop session that will hold the broker connection.";
+}
+
+function connectorDisplayName(profile: TradingConnectorProfile): string {
+  if (profile.connector === "openalgo") return "OpenAlgo";
+  return profile.connector;
+}
+
+function SdkProfileRow({
+  profile,
+  check,
+}: {
+  profile: TradingConnectorProfile;
+  check: ConnectorCheckSnapshot | null | undefined;
+}) {
+  const ready = check?.status === "ok";
+  const envLabel = profile.environment === "paper"
+    ? i18n.t("runnerStatus.paperMode")
+    : i18n.t("runnerStatus.liveMode");
+
+  return (
+    <div className="grid gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-xs font-semibold text-foreground">{connectorDisplayName(profile)}</span>
+        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+          {profile.selected ? i18n.t("runnerStatus.selectedProfile") : profile.id}
+        </span>
+        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+          {envLabel}
+        </span>
+        {ready ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 className="h-2.5 w-2.5" />
+            {i18n.t("runnerStatus.sdkReady")}
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+            <CircleSlash className="h-2.5 w-2.5" />
+            {i18n.t("runnerStatus.sdkNotReady")}
+          </span>
+        )}
+      </div>
+      <p className="font-mono text-[10px] text-muted-foreground">{profile.id}</p>
+      {profile.notes ? <p className="text-[10px] leading-relaxed text-muted-foreground">{profile.notes}</p> : null}
+      {check?.error ? (
+        <p className="text-[10px] text-amber-700 dark:text-amber-300">{check.error}</p>
+      ) : null}
+    </div>
+  );
 }
 
 function BrokerRow({
@@ -142,28 +201,28 @@ function BrokerRow({
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="truncate text-xs font-semibold capitalize text-foreground">{brokerKey}</span>
+          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+            {i18n.t("runnerStatus.oauthLive")}
+          </span>
           {authorized ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
               <ShieldCheck className="h-2.5 w-2.5" />
-              Authorized
+              {i18n.t("runnerStatus.authorized")}
             </span>
           ) : (
             <span className="inline-flex items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
               <CircleSlash className="h-2.5 w-2.5" />
-              Not connected
+              {i18n.t("runnerStatus.notConnected")}
             </span>
           )}
         </div>
       </div>
 
-      {/* Connect-profile on-ramp for unauthorized brokers (C2). The OAuth bootstrap
-          is a desktop-only CLI step (SPEC §4 headless behavior), so the web surface
-          surfaces the discoverable instruction rather than driving the browser flow. */}
       {!authorized ? (
         <div className="grid gap-1.5 rounded-md border border-dashed border-primary/30 bg-primary/5 p-2">
           <div className="flex items-center gap-1.5 text-[11px] font-medium text-primary">
             <PlugZap className="h-3 w-3 shrink-0" />
-            Connect this profile to enable connector runtime
+            {i18n.t("runnerStatus.connectProfile")}
           </div>
           <p className="text-[10px] leading-relaxed text-muted-foreground">
             {authorizeInstruction}
@@ -180,16 +239,16 @@ function BrokerRow({
             <div className="rounded-md border bg-background/60 p-2">
               <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 <CircleDot className={["h-2.5 w-2.5", runnerAlive ? "text-emerald-500" : "text-muted-foreground"].join(" ")} />
-                Runner
+                {i18n.t("runnerStatus.runner")}
               </div>
               <div className={["mt-0.5 text-xs font-semibold", runnerAlive ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"].join(" ")}>
-                {runnerAlive ? "Running" : "Stopped"}
+                {runnerAlive ? i18n.t("runnerStatus.runnerRunning") : i18n.t("runnerStatus.runnerStopped")}
               </div>
             </div>
             <div className="rounded-md border bg-background/60 p-2">
               <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 <Activity className="h-2.5 w-2.5" />
-                Last tick
+                {i18n.t("runnerStatus.lastTick")}
               </div>
               <div className="mt-0.5 text-xs font-medium text-foreground">
                 {formatRelative(broker.runner?.last_tick)}
@@ -202,7 +261,7 @@ function BrokerRow({
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                   <ShieldCheck className="h-2.5 w-2.5" />
-                  Active mandate
+                  {i18n.t("runnerStatus.activeMandate")}
                 </div>
                 {mandate.expires_at && (
                   <span
@@ -217,17 +276,17 @@ function BrokerRow({
                     title={`Expires ${new Date(mandate.expires_at).toLocaleString()}`}
                   >
                     <Clock className="h-2.5 w-2.5" />
-                    {countdown.expired ? "expired" : `expires in ${countdown.label}`}
+                    {countdown.expired ? i18n.t("runnerStatus.expired") : i18n.t("runnerStatus.expiresIn", { time: countdown.label })}
                   </span>
                 )}
               </div>
               <div className="mt-0.5 font-mono text-[11px] text-foreground">
-                {summarizeLimits(mandate.limits) || "limits unavailable"}
+                {summarizeLimits(mandate.limits) || i18n.t("runnerStatus.limitsUnavailable")}
               </div>
             </div>
           ) : (
             <div className="rounded-md border border-dashed bg-background/40 p-2 text-[10px] text-muted-foreground">
-              No active mandate. Ask the agent to propose one, then commit it before starting the connector runtime.
+              {i18n.t("runnerStatus.noActiveMandate")}
             </div>
           )}
 
@@ -235,11 +294,11 @@ function BrokerRow({
             {halted ? (
               <span className="inline-flex items-center gap-1 text-[10px] font-medium text-destructive">
                 <OctagonX className="h-3 w-3" />
-                Halted — runner controls disabled
+                {i18n.t("runnerStatus.oauthHalted")}
               </span>
             ) : (
               <span className="text-[10px] text-muted-foreground">
-                {runnerAlive ? "Runtime active inside mandate" : "Idle"}
+                {runnerAlive ? i18n.t("runnerStatus.runtimeActive") : i18n.t("runnerStatus.idle")}
               </span>
             )}
             <button
@@ -255,7 +314,7 @@ function BrokerRow({
               title={runnerAlive ? "Stop the persistent runner" : "Start the persistent runner"}
             >
               {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Power className="h-3 w-3" />}
-              {runnerAlive ? "Stop runner" : "Start runner"}
+              {runnerAlive ? i18n.t("runnerStatus.stopRunner") : i18n.t("runnerStatus.startRunner")}
             </button>
           </div>
         </>
@@ -264,26 +323,42 @@ function BrokerRow({
   );
 }
 
-/**
- * Persistent live-runtime status panel (SPEC §7.5 + audit C2).
- *
- * Renders the shared `GET /live/status` snapshot (polled once by Agent.tsx and passed
- * in as `status`, so the kill switch and this panel share a single poller). Per authorized
- * profile: runner running state, last heartbeat tick, the active mandate's limits, and an
- * expiry countdown. `onRefresh` asks the parent to re-poll after a runner start/stop. Unauthorized
- * profiles get a connector on-ramp so a web user can discover how to enable connector
- * runtime execution. Runner start/stop are privileged surface fetches (`api.startLiveRunner` /
- * `api.stopLiveRunner`), never chat messages. Collapses to a compact toggle.
- */
-export const RunnerStatus = memo(function RunnerStatus({ status, unavailable, halted, onRefresh }: Props) {
+export const RunnerStatus = memo(function RunnerStatus({
+  status,
+  connectors,
+  connectorCheck,
+  unavailable,
+  halted,
+  onRefresh,
+}: Props) {
   const [open, setOpen] = useState(false);
 
-  if (unavailable) return null;
-  if (!status || status.brokers.length === 0) return null;
+  const selectedProfile = connectors?.profiles.find((p) => p.selected) ?? null;
+  const sdkReady = connectorCheck?.status === "ok";
+  const brokers = status?.brokers ?? [];
+  const oauthAuthorizedCount = brokers.filter((b) => b.auth.oauth_token_present).length;
+  const anyRunning = brokers.some((b) => b.runner?.alive);
+  const oauthEngaged = oauthAuthorizedCount > 0 || anyRunning || brokers.some((b) => b.mandate != null);
+  const showOAuthSection = !unavailable && (
+    selectedProfile?.transport === "remote_mcp" || oauthEngaged
+  );
+  const oauthBrokers = showOAuthSection
+    ? brokers.filter((b) => (
+      selectedProfile?.transport === "remote_mcp"
+      || b.auth.oauth_token_present
+      || b.runner?.alive
+      || b.mandate != null
+    ))
+    : [];
 
-  const isHalted = halted ?? status.global_halted;
-  const anyRunning = status.brokers.some((b) => b.runner?.alive);
-  const authorizedCount = status.brokers.filter((b) => b.auth.oauth_token_present).length;
+  if (!selectedProfile && oauthBrokers.length === 0) return null;
+
+  const isOAuthHalted = (halted ?? status?.global_halted) && showOAuthSection;
+  const summary = sdkReady && selectedProfile
+    ? i18n.t("runnerStatus.sdkConnectedSummary", { name: connectorDisplayName(selectedProfile) })
+    : oauthAuthorizedCount > 0
+      ? i18n.t("runnerStatus.connected", { count: oauthAuthorizedCount })
+      : i18n.t("runnerStatus.pickConnector");
 
   return (
     <div className="grid gap-2">
@@ -296,19 +371,23 @@ export const RunnerStatus = memo(function RunnerStatus({ status, unavailable, ha
       >
         <Activity className="h-3 w-3 shrink-0" />
         <span className="shrink-0">{i18n.t("runnerStatus.connectorRuntime")}</span>
-        <span className="truncate text-muted-foreground">
-          {authorizedCount > 0 ? i18n.t("runnerStatus.connected", { count: authorizedCount }) : i18n.t("runnerStatus.noConnector")}
-        </span>
-        {anyRunning && !isHalted && (
+        <span className="truncate text-muted-foreground">{summary}</span>
+        {anyRunning && !isOAuthHalted && (
           <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
             <CircleDot className="h-2.5 w-2.5" />
             {i18n.t("runnerStatus.running")}
           </span>
         )}
-        {isHalted && (
+        {sdkReady && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 className="h-2.5 w-2.5" />
+            {i18n.t("runnerStatus.sdkReady")}
+          </span>
+        )}
+        {isOAuthHalted && (
           <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">
             <OctagonX className="h-2.5 w-2.5" />
-            {i18n.t("runnerStatus.halted")}
+            {i18n.t("runnerStatus.oauthHaltedShort")}
           </span>
         )}
         <ChevronDown className={["h-3 w-3 shrink-0 transition-transform", open ? "rotate-180" : ""].join(" ")} aria-hidden="true" />
@@ -316,9 +395,26 @@ export const RunnerStatus = memo(function RunnerStatus({ status, unavailable, ha
 
       {open && (
         <div className="grid gap-2 rounded-xl border border-primary/20 bg-background/95 p-3 shadow-sm">
-          {status.brokers.map((broker) => (
-            <BrokerRow key={broker.auth.broker} broker={broker} halted={isHalted || broker.halted} onRefresh={onRefresh} />
-          ))}
+          {selectedProfile ? (
+            <SdkProfileRow profile={selectedProfile} check={connectorCheck} />
+          ) : null}
+          {oauthBrokers.length > 0 ? (
+            <>
+              {selectedProfile ? (
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {i18n.t("runnerStatus.oauthLiveSection")}
+                </div>
+              ) : null}
+              {oauthBrokers.map((broker) => (
+                <BrokerRow
+                  key={broker.auth.broker}
+                  broker={broker}
+                  halted={isOAuthHalted || broker.halted}
+                  onRefresh={onRefresh}
+                />
+              ))}
+            </>
+          ) : null}
         </div>
       )}
     </div>
