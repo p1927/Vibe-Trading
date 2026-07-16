@@ -55,13 +55,16 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
     store = ScheduledResearchJobStore()
     now_ms = int(time.time() * 1000)
     watch_id, research_id = _job_ids(agent_id)
+    # Post-commit bootstrap runs an immediate watch tick; defer the first scheduled one.
+    bootstrap = str(agent.get("bootstrap_status") or "")
+    watch_next_run = now_ms + int(watch_ms) if bootstrap in {"pending", "running"} else now_ms
 
     store.upsert(
         ScheduledResearchJob(
             id=watch_id,
             prompt=f"Autonomous watch tick for {agent.get('name') or agent_id}",
             schedule=watch_ms,
-            next_run_at=now_ms,
+            next_run_at=watch_next_run,
             status=JobStatus.PENDING,
             created_at=now_ms,
             config={"job_type": JOB_TYPE_WATCH, "autonomous_agent_id": agent_id},
