@@ -531,7 +531,9 @@ class TestProposalPickIntercept:
         assert handled is True
         assert ctx.pending_proposal is not None
 
-    def test_commit_posts_to_endpoint_with_consent_ack(self) -> None:
+    def test_commit_posts_to_endpoint_with_consent_ack(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """_commit_mandate POSTs to /mandate/commit — the surface, not the model."""
         captured: Dict[str, Any] = {}
 
@@ -542,11 +544,18 @@ class TestProposalPickIntercept:
             def json(self) -> Dict[str, Any]:
                 return {"status": "ok", "mandate_id": "m1"}
 
-        def _fake_post(url: str, json: Dict[str, Any], timeout: float) -> _Resp:  # noqa: A002
+        def _fake_post(
+            url: str,
+            json: Dict[str, Any],  # noqa: A002
+            headers: Dict[str, str],
+            timeout: float,
+        ) -> _Resp:
             captured["url"] = url
             captured["body"] = json
+            captured["headers"] = headers
             return _Resp()
 
+        monkeypatch.setenv("API_AUTH_KEY", "cli-secret")
         with patch("httpx.post", _fake_post):
             result = _commit_mandate(_proposal(), 2)
 
@@ -555,6 +564,7 @@ class TestProposalPickIntercept:
         assert captured["body"]["selected_ordinal"] == 2
         assert captured["body"]["proposal_id"] == "mp_" + "3" * 32
         assert captured["body"]["consent_ack"] is True
+        assert captured["headers"] == {"Authorization": "Bearer cli-secret"}
 
 
 # ---------------------------------------------------------------------------
