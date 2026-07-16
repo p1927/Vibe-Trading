@@ -245,6 +245,7 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
   const isComposingRef = useRef(false);
   const lastCompositionEndRef = useRef(0);
   const sseSessionRef = useRef<string | null>(null);
+  const sseAgentRef = useRef<string | null>(null);
   const prevSseStatusRef = useRef<string>("disconnected");
   const genRef = useRef(0);
   const pendingGoalSessionRef = useRef<string | null>(null);
@@ -405,6 +406,7 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
   const doDisconnect = useCallback(() => {
     disconnect();
     sseSessionRef.current = null;
+    sseAgentRef.current = null;
   }, [disconnect]);
 
   const loadGoalSnapshot = useCallback(async (sid?: string | null) => {
@@ -525,9 +527,10 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
   }, [refreshSessionMessages]);
 
   const setupSSE = useCallback((sid: string) => {
-    if (sseSessionRef.current === sid) return;
+    if (sseSessionRef.current === sid && sseAgentRef.current === urlAgentId) return;
     disconnect();
     sseSessionRef.current = sid;
+    sseAgentRef.current = urlAgentId;
 
     const touch = () => { lastEventRef.current = Date.now(); };
 
@@ -975,7 +978,7 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
       heartbeat: () => {},
       reconnect: (d) => { act().setSseStatus("reconnecting", Number(d.attempt ?? 0)); },
     });
-  }, [connect, disconnect, isOrchestratorView, loadGoalSnapshot, onAutonomousAgentCommitted, scrollToBottom]);
+  }, [connect, disconnect, isOrchestratorView, loadGoalSnapshot, onAutonomousAgentCommitted, scrollToBottom, urlAgentId]);
 
   useEffect(() => {
     const { sessionId: curSid, messages: curMsgs, cacheSession, reset, getCachedSession, switchSession } = act();
@@ -1016,6 +1019,10 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
       switchSession(urlSessionId, seed);
       loadSessionMessages(urlSessionId, gen);
       setupSSE(urlSessionId);
+    } else if (urlSessionId && urlSessionId === curSid && sseAgentRef.current !== urlAgentId) {
+      // Session promotion keeps the same vibe_session_id; re-bind SSE so handlers
+      // (e.g. attempt.completed orchestrator proposal poll) see the new agent param.
+      setupSSE(urlSessionId);
     } else if (!urlSessionId && curSid) {
       genRef.current += 1;
       doDisconnect();
@@ -1026,7 +1033,7 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
       if (curSid && curMsgs.length > 0) cacheSession(curSid, curMsgs);
       reset();
     }
-  }, [urlSessionId, doDisconnect, loadSessionMessages, setupSSE, forceScrollToBottom]);
+  }, [urlSessionId, urlAgentId, doDisconnect, loadSessionMessages, setupSSE, forceScrollToBottom]);
 
   useEffect(() => {
     if (!autoPaperMode || autoPaperBootstrappedRef.current) return;
