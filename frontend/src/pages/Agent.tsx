@@ -747,6 +747,28 @@ export function Agent() {
         scrollToBottom();
       },
 
+      "plan.stale": (d) => {
+        touch();
+        const ticker = String(d.ticker || "");
+        const status = String(d.status || "stale");
+        const reasons = Array.isArray(d.reasons) ? (d.reasons as string[]) : [];
+        if (ticker) setResearchTicker(ticker);
+        const reasonText = reasons.length ? reasons.join(", ") : "market moved";
+        toast.warning(`Plan for ${ticker} may be outdated (${status}: ${reasonText})`);
+        setPlanArtifact((prev) => {
+          const prevTicker = (prev?.ticker || prev?.underlying || "").toUpperCase();
+          if (!prev || prevTicker !== ticker.toUpperCase()) return prev;
+          return {
+            ...prev,
+            staleness: {
+              status,
+              reasons,
+              suggested_action: String(d.suggested_action || "refresh"),
+            },
+          };
+        });
+      },
+
       "research.artifact": (d) => {
         touch();
         const ticker = String(d.ticker || "");
