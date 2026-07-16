@@ -309,8 +309,22 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
 
   const urlSessionId = searchParams.get("session");
   const autoPaperMode = searchParams.get("auto_paper");
-  const isOrchestratorView = searchParams.get("agent") === "orchestrator";
+  const urlAgentId = searchParams.get("agent");
+  const isOrchestratorView = urlAgentId === "orchestrator";
   const autoPaperBootstrappedRef = useRef(false);
+
+  useEffect(() => {
+    if (urlAgentId && urlAgentId !== "orchestrator") {
+      // Stop showing orchestrator welcome/proposal poll state after promotion.
+      setLiveItems((items) =>
+        items.filter(
+          (item) =>
+            item.kind !== "autonomous_proposal" ||
+            committedAutonomous[item.proposal.proposal_id] != null,
+        ),
+      );
+    }
+  }, [urlAgentId]);
 
   /* Smart scroll — only auto-scroll when near bottom */
   const isNearBottom = useCallback(() => {
@@ -808,6 +822,14 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
         onAutonomousAgentCommitted?.(payload.agent_id, payload.vibe_session_id);
       },
 
+      "session.promoted": (d) => {
+        touch();
+        const payload = d as { agent_id?: string; session_id?: string };
+        if (payload.agent_id && payload.session_id) {
+          onAutonomousAgentCommitted?.(payload.agent_id, payload.session_id);
+        }
+      },
+
       "trade_plan.widget": (d) => {
         touch();
         const widget = d as unknown as TradePlanWidget;
@@ -953,7 +975,7 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
       heartbeat: () => {},
       reconnect: (d) => { act().setSseStatus("reconnecting", Number(d.attempt ?? 0)); },
     });
-  }, [connect, disconnect, loadGoalSnapshot, scrollToBottom]);
+  }, [connect, disconnect, isOrchestratorView, loadGoalSnapshot, onAutonomousAgentCommitted, scrollToBottom]);
 
   useEffect(() => {
     const { sessionId: curSid, messages: curMsgs, cacheSession, reset, getCachedSession, switchSession } = act();
