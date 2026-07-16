@@ -17,6 +17,7 @@ import { ConversationTimeline } from "@/components/chat/ConversationTimeline";
 import { ToolProgressIndicator } from "@/components/chat/ToolProgressIndicator";
 import { MandateProposalCard } from "@/components/chat/MandateProposalCard";
 import { AutonomousAgentProposalCard } from "@/components/autonomous/AutonomousAgentProposalCard";
+import { OrchestratorWelcome } from "@/components/autonomous/OrchestratorWelcome";
 import { TradePlanWidgetCard } from "@/components/chat/TradePlanWidgetCard";
 import { ContextDrawer } from "@/components/research/ContextDrawer";
 import {
@@ -305,6 +306,7 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
 
   const urlSessionId = searchParams.get("session");
   const autoPaperMode = searchParams.get("auto_paper");
+  const isOrchestratorView = searchParams.get("agent") === "orchestrator";
   const autoPaperBootstrappedRef = useRef(false);
 
   /* Smart scroll — only auto-scroll when near bottom */
@@ -676,6 +678,33 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
           }
         } else if (shadowId) {
           s.addMessage({ id: "", type: "run_complete", content: "", shadowId, timestamp: Date.now() });
+        }
+
+        if (isOrchestratorView && sid) {
+          try {
+            const latest = await api.getLatestAutonomousProposal(sid);
+            const proposal = latest.proposal;
+            if (proposal?.proposal_id && proposal.status === "ready") {
+              setLiveItems((items) => {
+                if (
+                  items.some(
+                    (item) =>
+                      item.kind === "autonomous_proposal" &&
+                      item.proposal.proposal_id === proposal.proposal_id,
+                  )
+                ) {
+                  return items;
+                }
+                return [
+                  ...items,
+                  { kind: "autonomous_proposal", timestamp: Date.now(), proposal },
+                ];
+              });
+              scrollToBottom();
+            }
+          } catch {
+            /* proposal poll fallback is best-effort */
+          }
         }
 
         // Reset
@@ -1399,7 +1428,13 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
               ))}
             </div>
           )}
-          {!sessionLoading && messages.length === 0 && <WelcomeScreen onExample={runPrompt} />}
+          {!sessionLoading && messages.length === 0 && (
+            isOrchestratorView ? (
+              <OrchestratorWelcome onExample={runPrompt} />
+            ) : (
+              <WelcomeScreen onExample={runPrompt} />
+            )
+          )}
 
           {timelineRows.map((row, rowIdx) => {
             if (row.render === "live") {

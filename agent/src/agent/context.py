@@ -17,6 +17,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_ORCHESTRATOR_SYSTEM_PROMPT = """You are the **autonomous-agent orchestrator** for Vibe Trading.
+Your job is to help users define persistent paper (or live) trading agents and call `propose_autonomous_agent`.
+You do **not** execute trades, watch markets, build widgets, or configure brokers in chat.
+
+## Tools
+
+{tool_descriptions}
+
+## Skills
+
+{skill_descriptions}
+
+Load `autonomous-orchestrator` via `load_skill` on your first turn for the full workflow.
+
+## Policy
+
+1. **Clear intent** → call `propose_autonomous_agent` immediately with smart defaults for missing fields.
+2. **Genuine ambiguity** (symbol, IN vs US, intraday vs swing) → ask **one** concise question, then propose on the next turn.
+3. When `status=ready`, tell the user to **Confirm the proposal card** above. Never commit agents yourself.
+4. Never role-play trading, watch ticks, or broker setup homework.
+
+{memory_section}
+Current time: {current_datetime}
+"""
+
 # Post-backtest attribution thresholds (Sharpe/MaxDD bands, ≥60-day OLS window,
 # holding-period buckets, p≤0.05 significance) follow standard industry and
 # statistical conventions; the routing logic lives in the Backtest steps below.
@@ -150,7 +175,8 @@ class ContextBuilder:
 
     def __init__(self, registry: ToolRegistry, memory: WorkspaceMemory,
                  skills_loader: Optional[SkillsLoader] = None,
-                 persistent_memory: Optional[PersistentMemory] = None) -> None:
+                 persistent_memory: Optional[PersistentMemory] = None,
+                 session_config: Optional[Dict[str, Any]] = None) -> None:
         """Initialize ContextBuilder.
 
         Args:
@@ -158,11 +184,13 @@ class ContextBuilder:
             memory: Workspace memory.
             skills_loader: Skills loader (auto-created if not provided).
             persistent_memory: PersistentMemory instance for cross-session recall.
+            session_config: Optional vibe session.config (session_kind, system_note, …).
         """
         self.registry = registry
         self.memory = memory
         self.skills_loader = skills_loader or SkillsLoader()
         self._persistent_memory = persistent_memory
+        self._session_config = dict(session_config or {})
 
     def build_system_prompt(self, user_message: str = "") -> str:
         """Build system prompt.
@@ -185,16 +213,30 @@ class ContextBuilder:
                 snapshot=self._persistent_memory.snapshot,
             )
 
-        return _SYSTEM_PROMPT.format(
-            tool_count=len(self.registry._tools),
-            skill_count=len(self.skills_loader.skills),
-            data_source_count=self._count_data_sources(),
-            tool_descriptions=self._format_tool_descriptions(),
-            skill_descriptions=self.skills_loader.get_descriptions(),
-            memory_summary=self.memory.to_summary(),
-            memory_section=memory_section,
-            current_datetime=now.strftime("%A, %B %d, %Y %H:%M UTC"),
-        )
+        session_kind = str(self._session_config.get("session_kind") or "")
+        if session_kind == "autonomous_orchestrator":
+            base = _ORCHESTRATOR_SYSTEM_PROMPT.format(
+                tool_descriptions=self._format_tool_descriptions(),
+                skill_descriptions=self.skills_loader.get_descriptions(),
+                memory_section=memory_section,
+                current_datetime=now.strftime("%A, %B %d, %Y %H:%M UTC"),
+            )
+        else:
+            base = _SYSTEM_PROMPT.format(
+                tool_count=len(self.registry._tools),
+                skill_count=len(self.skills_loader.skills),
+                data_source_count=self._count_data_sources(),
+                tool_descriptions=self._format_tool_descriptions(),
+                skill_descriptions=self.skills_loader.get_descriptions(),
+                memory_summary=self.memory.to_summary(),
+                memory_section=memory_section,
+                current_datetime=now.strftime("%A, %B %d, %Y %H:%M UTC"),
+            )
+
+        system_note = str(self._session_config.get("system_note") or "").strip()
+        if system_note:
+            base = f"{base}\n\n## Session instructions\n{system_note}\n"
+        return base
 
     @staticmethod
     def _count_data_sources() -> int:

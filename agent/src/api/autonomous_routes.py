@@ -54,6 +54,16 @@ def autonomous_stack_health() -> Dict[str, Any]:
     return build_stack_health()
 
 
+@autonomous_router.get("/proposals/latest")
+def get_latest_autonomous_proposal(orchestrator_session_id: str) -> Dict[str, Any]:
+    from trade_integrations.autonomous_agents.store import load_latest_proposal_for_orchestrator
+
+    proposal = load_latest_proposal_for_orchestrator(orchestrator_session_id)
+    if proposal is None:
+        return {"status": "not_found", "proposal": None}
+    return {"status": "ok", "proposal": proposal}
+
+
 @autonomous_router.get("/{agent_id}")
 def get_autonomous_agent(agent_id: str) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.runtime_status import enrich_agent

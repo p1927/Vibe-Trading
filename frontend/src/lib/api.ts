@@ -372,6 +372,10 @@ export const api = {
     request<OrchestratorSessionResponse>("/autonomous-agents/orchestrator/session", {
       method: "POST",
     }),
+  getLatestAutonomousProposal: (orchestratorSessionId: string) =>
+    request<{ status: string; proposal: AutonomousAgentProposal | null }>(
+      `/autonomous-agents/proposals/latest?orchestrator_session_id=${encodeURIComponent(orchestratorSessionId)}`,
+    ),
   pauseAutonomousAgent: (agentId: string) =>
     request<{ status: string; agent: AutonomousAgentInstance }>(
       `/autonomous-agents/${encodeURIComponent(agentId)}/pause`,
