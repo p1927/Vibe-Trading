@@ -59,8 +59,27 @@ def _emit(event_bus: EventBus | None, session_id: str, event_type: str, data: di
         return
     try:
         event_bus.emit(session_id, event_type, data)
+        _emit_provenance(event_bus, session_id, event_type, data)
     except Exception:
         logger.exception("Failed to emit %s for session %s", event_type, session_id)
+
+
+def _emit_provenance(
+    event_bus: EventBus,
+    session_id: str,
+    event_type: str,
+    data: dict[str, Any],
+) -> None:
+    if event_type not in {"research.artifact", "research.debate"}:
+        return
+    try:
+        from src.provenance.hook import record_from_event
+
+        source = record_from_event(session_id, event_type, data)
+        if source:
+            event_bus.emit(session_id, "provenance.source", {"source": source.to_dict()})
+    except Exception:
+        logger.exception("Failed to record provenance for %s", event_type)
 
 
 def prefetch_hub_plan(ticker: str, asset_type: str) -> dict[str, Any] | None:
@@ -256,26 +275,32 @@ def run_agent_debate_sync(ticker: str, *, asset_type: str = "stock") -> dict[str
     try:
         ensure_trade_stack_path()
         from trade_integrations.bridge.agent_debate import run_agent_debate
+        from trade_integrations.bridge.hub_context import infer_debate_asset_type
 
-        return run_agent_debate(key, asset_type=asset_type)
+        resolved_asset = infer_debate_asset_type(key, asset_type)
+        return run_agent_debate(key, asset_type=resolved_asset)
     finally:
         _debate_running.discard(key)
 
 
-def handle_user_message_research(
+def prefetch_research_for_message(
     session_id: str,
     content: str,
     event_bus: EventBus | None = None,
-) -> None:
-    """Prefetch hub plan on symbol mention; run TradingAgents debate on finalize intent."""
+) -> str:
+    """Prefetch hub plan, emit SSE artifact, return agent context block (may be empty)."""
     try:
         ensure_trade_stack_path()
     except RuntimeError:
         logger.debug("Trade stack path unavailable for research prefetch")
+        return ""
+
     ticker = extract_primary_ticker(content)
     if not ticker:
-        return
+        return ""
+
     asset_type = infer_asset_type(content, ticker)
+    artifact: dict[str, Any] | None = None
     try:
         artifact = prefetch_hub_plan(ticker, asset_type)
         if artifact:
@@ -288,12 +313,26 @@ def handle_user_message_research(
     except Exception:
         logger.exception("Hub prefetch failed for %s", ticker)
 
-    if not detect_finalize_intent(content):
-        return
+    from trade_integrations.bridge.hub_context import format_research_context_for_agent
 
+    context = format_research_context_for_agent(artifact)
+    if detect_finalize_intent(content):
+        _maybe_start_debate(session_id, ticker, asset_type, event_bus)
+    return context
+
+
+def _maybe_start_debate(
+    session_id: str,
+    ticker: str,
+    asset_type: str,
+    event_bus: EventBus | None,
+) -> None:
     cached = load_debate_artifact(ticker)
-    ensure_trade_stack_path()
-    from trade_integrations.context.hub import is_agent_debate_cache_fresh
+    try:
+        ensure_trade_stack_path()
+        from trade_integrations.context.hub import is_agent_debate_cache_fresh
+    except RuntimeError:
+        return
 
     if cached and is_agent_debate_cache_fresh(ticker):
         _emit(
@@ -339,3 +378,12 @@ def handle_user_message_research(
             )
 
     threading.Thread(target=_debate_worker, daemon=True, name=f"debate-{ticker}").start()
+
+
+def handle_user_message_research(
+    session_id: str,
+    content: str,
+    event_bus: EventBus | None = None,
+) -> None:
+    """Prefetch hub plan on symbol mention; run TradingAgents debate on finalize intent."""
+    prefetch_research_for_message(session_id, content, event_bus)

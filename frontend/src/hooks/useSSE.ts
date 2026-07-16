@@ -89,6 +89,7 @@ export function useSSE(config?: SSEConfig) {
       "mandate.proposal", "mandate.committed", "live.halted", "live.resumed", "live.action",
       "trade_plan.widget",
       "research.artifact", "research.debate",
+      "provenance.source",
       "heartbeat", "done",
     ];
 

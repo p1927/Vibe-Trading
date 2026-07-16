@@ -4,8 +4,9 @@ import { useSearchParams } from "react-router-dom";
 import { Send, Loader2, ArrowDown, Square, Download, Plus, Paperclip, X, Users, Target, ChevronDown, Pencil, Check, Play, OctagonX, Activity, Ban, CheckCircle2, Landmark } from "lucide-react";
 import { toast } from "sonner";
 import { useAgentStore } from "@/stores/agent";
+import { useProvenanceStore } from "@/stores/provenance";
 import { useSSE } from "@/hooks/useSSE";
-import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact } from "@/lib/api";
+import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource } from "@/lib/api";
 import { isReportWorthyRun } from "@/lib/runReports";
 import type { AgentMessage, ToolCallEntry } from "@/types/agent";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
@@ -16,7 +17,7 @@ import { ConversationTimeline } from "@/components/chat/ConversationTimeline";
 import { ToolProgressIndicator } from "@/components/chat/ToolProgressIndicator";
 import { MandateProposalCard } from "@/components/chat/MandateProposalCard";
 import { TradePlanWidgetCard } from "@/components/chat/TradePlanWidgetCard";
-import { ResearchArtifactSidebar } from "@/components/research/ResearchArtifactSidebar";
+import { ContextDrawer } from "@/components/research/ContextDrawer";
 import {
   formatTradeWidgetContextBlock,
   getTradeWidgetAdjustment,
@@ -777,6 +778,14 @@ export function Agent() {
         }
       },
 
+      "provenance.source": (d) => {
+        touch();
+        const source = d.source as ProvenanceSource | undefined;
+        if (source?.ref_id) {
+          useProvenanceStore.getState().upsertSource(source);
+        }
+      },
+
       "mandate.committed": (d) => {
         touch();
         const committed = d as unknown as MandateCommitted;
@@ -839,6 +848,7 @@ export function Agent() {
       setCommittedMandates({});
       setLiveHalted(null);
       setLiveStatusRefresh((n) => n + 1);
+      useProvenanceStore.getState().reset();
       if (curSid && curMsgs.length > 0) cacheSession(curSid, curMsgs);
 
       // Atomic switch: cache hit = instant, cache miss = show loading skeleton
@@ -1791,7 +1801,8 @@ export function Agent() {
         </div>
       </form>
     </div>
-    <ResearchArtifactSidebar
+    <ContextDrawer
+      sessionId={sessionId}
       ticker={researchTicker}
       assetType={researchAssetType}
       planArtifact={planArtifact}
