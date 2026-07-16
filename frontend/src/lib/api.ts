@@ -1995,6 +1995,12 @@ export interface CaptureRegistryResponse {
     entity_id?: string;
     capture_enabled?: boolean;
     total_rows?: number;
+    channel?: {
+      date?: string;
+      hub_hits?: number;
+      vendor_fetches?: number;
+      by_series?: Record<string, { hub_hits?: number; vendor_fetches?: number }>;
+    };
     series?: Record<
       string,
       { path?: string; days?: number; rows?: number; last_capture_at?: string | null }
