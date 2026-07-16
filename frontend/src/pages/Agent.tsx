@@ -782,7 +782,13 @@ export function Agent() {
         touch();
         const source = d.source as ProvenanceSource | undefined;
         if (source?.ref_id) {
-          useProvenanceStore.getState().upsertSource(source);
+          const store = useProvenanceStore.getState();
+          const wasEmpty = store.sources.length === 0;
+          store.upsertSource(source);
+          if (wasEmpty) {
+            store.setDrawerOpen(true);
+            store.setActiveSection("sources");
+          }
         }
       },
 

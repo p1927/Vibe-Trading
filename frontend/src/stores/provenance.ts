@@ -20,11 +20,21 @@ interface ProvenanceState {
   reset: () => void;
 }
 
+function readDrawerOpen(): boolean {
+  try {
+    if (localStorage.getItem("vibe-context-panel") === "expanded") return true;
+    if (localStorage.getItem("vibe-research-panel") === "expanded") return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
 const initialState = {
   sources: [] as ProvenanceSource[],
   focusedRefId: null as string | null,
   expandedRefIds: new Set<string>(),
-  drawerOpen: false,
+  drawerOpen: readDrawerOpen(),
   drawerWide: false,
   activeSection: "sources" as ContextSection,
 };
@@ -62,7 +72,12 @@ export const useProvenanceStore = create<ProvenanceState>((set, get) => ({
   setDrawerOpen: (open) => set({ drawerOpen: open, drawerWide: open ? get().drawerWide : false }),
   setDrawerWide: (wide) => set({ drawerWide: wide }),
   setActiveSection: (section) => set({ activeSection: section }),
-  reset: () => set({ ...initialState, expandedRefIds: new Set() }),
+  reset: () =>
+    set({
+      ...initialState,
+      drawerOpen: readDrawerOpen(),
+      expandedRefIds: new Set(),
+    }),
 }));
 
 export function preprocessCitationLinks(content: string): string {

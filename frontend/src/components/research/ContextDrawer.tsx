@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { useProvenanceStore, type ContextSection } from "@/stores/provenance";
 
 const STORAGE_KEY = "vibe-context-panel";
+const LEGACY_STORAGE_KEY = "vibe-research-panel";
 
 const SECTIONS: { id: ContextSection; label: string }[] = [
   { id: "sources", label: "Sources" },
@@ -50,6 +51,13 @@ export function ContextDrawer({
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, drawerOpen ? "expanded" : "collapsed");
+    if (drawerOpen) {
+      try {
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+      } catch {
+        /* ignore */
+      }
+    }
   }, [drawerOpen]);
 
   useEffect(() => {
@@ -115,7 +123,6 @@ export function ContextDrawer({
   }, [ticker, assetType, onDebateUpdate, setActiveSection, setDrawerOpen]);
 
   const sourceCount = sources.length;
-  const showResearch = Boolean(ticker);
   const panelWidth = drawerWide ? "w-[min(560px,45vw)]" : "w-80";
 
   const sectionSubtitle = useMemo(() => {
@@ -124,15 +131,13 @@ export function ContextDrawer({
     return ticker ? `${ticker} agent debate` : "Multi-agent debate";
   }, [activeSection, sourceCount, ticker]);
 
-  if (!sessionId && !showResearch && sourceCount === 0) return null;
-
   return (
     <>
       {!drawerOpen && (
         <button
           type="button"
           onClick={() => setDrawerOpen(true)}
-          className="absolute right-0 top-1/2 z-20 flex -translate-y-1/2 items-center gap-1 rounded-l-lg border border-r-0 bg-background px-1.5 py-3 text-[10px] font-medium text-muted-foreground shadow-sm hover:text-foreground"
+          className="absolute right-0 top-1/2 z-30 flex -translate-y-1/2 items-center gap-1 rounded-l-lg border border-r-0 bg-background px-1.5 py-3 text-[10px] font-medium text-muted-foreground shadow-sm hover:text-foreground"
           title="Show context panel"
         >
           <PanelRightOpen className="h-3.5 w-3.5" />
