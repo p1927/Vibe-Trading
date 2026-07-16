@@ -17,7 +17,12 @@ import pytest
 # Stub futu before importing loader
 # ---------------------------------------------------------------------------
 
+
 class _KLType:
+    K_1M = "K_1M"
+    K_5M = "K_5M"
+    K_15M = "K_15M"
+    K_30M = "K_30M"
     K_DAY = "K_DAY"
     K_60M = "K_60M"
     K_240M = "K_240M"
@@ -30,13 +35,18 @@ _futu_stub.RET_OK = 0
 _futu_stub.KLType = _KLType
 sys.modules.setdefault("futu", _futu_stub)
 
-from backtest.loaders.futu import FutuLoader, _normalize_frame, _to_futu_symbol, _to_futu_ktype  # noqa: E402
+from backtest.loaders.futu import (  # noqa: E402
+    FutuLoader,
+    _normalize_frame,
+    _to_futu_symbol,
+    _to_futu_ktype,
+)
 from backtest.loaders.base import NoAvailableSourceError  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def reset_futu_mock():
@@ -89,23 +99,34 @@ class TestSymbolMapping:
 # Interval mapping
 # ---------------------------------------------------------------------------
 
+
 class TestIntervalMapping:
-    def test_daily(self):
-        assert _to_futu_ktype("1D") == "K_DAY"
+    @pytest.mark.parametrize(
+        ("interval", "expected"),
+        [
+            ("1m", "K_1M"),
+            ("5m", "K_5M"),
+            ("15m", "K_15M"),
+            ("30m", "K_30M"),
+            ("1H", "K_60M"),
+            ("4H", "K_240M"),
+            ("1D", "K_DAY"),
+            ("1W", "K_WEEK"),
+            ("1M", "K_MON"),
+        ],
+    )
+    def test_supported_intervals(self, interval, expected):
+        assert _to_futu_ktype(interval) == expected
 
-    def test_hourly(self):
-        assert _to_futu_ktype("1H") == "K_60M"
-
-    def test_four_hourly(self):
-        assert _to_futu_ktype("4H") == "K_240M"
-
-    def test_unknown_defaults_to_daily(self):
-        assert _to_futu_ktype("999X") == "K_DAY"
+    def test_unknown_fails_closed(self):
+        with pytest.raises(NoAvailableSourceError, match="unsupported Futu interval"):
+            _to_futu_ktype("999X")
 
 
 # ---------------------------------------------------------------------------
 # _normalize_frame
 # ---------------------------------------------------------------------------
+
 
 class TestNormalizeFrame:
     def test_ohlcv_columns(self):
@@ -233,3 +254,8 @@ class TestFetch:
         mock_ctx.request_history_kline.return_value = (0, _make_kline_df())
         loader.fetch(["700.HK"], "2024-01-01", "2024-01-31")
         mock_ctx.close.assert_called_once()
+
+    def test_fetch_unknown_interval_fails_before_opening_context(self, loader):
+        with pytest.raises(NoAvailableSourceError, match="unsupported Futu interval"):
+            loader.fetch(["700.HK"], "2024-01-01", "2024-01-31", interval="2m")
+        _futu_stub.OpenQuoteContext.assert_not_called()
