@@ -38,6 +38,7 @@ import {
   setTradeWidgetAdjustment,
   type TradeWidgetAdjustment,
 } from "@/lib/tradeWidgetContext";
+import { useLivePlanContext } from "@/hooks/useLivePlanContext";
 
 const PayoffChart = lazy(() =>
   import("@/components/charts/PayoffChart").then((m) => ({ default: m.PayoffChart })),
@@ -309,8 +310,15 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
   const liveBlocked = Boolean(execMode?.paper_env && !execMode?.live_allowed);
   const assetLabel = isOptions ? "Options" : "Stock";
   const planWarnings = widget.data_warnings ?? [];
-  const staleness = widget.staleness;
-  const liveContext = widget.live_context;
+  const livePlan = useLivePlanContext(widget.underlying);
+  const staleness =
+    livePlan.monitorEnabled && livePlan.staleness
+      ? { ...widget.staleness, ...livePlan.staleness }
+      : widget.staleness;
+  const liveContext =
+    livePlan.monitorEnabled && livePlan.liveContext
+      ? { ...widget.live_context, ...livePlan.liveContext }
+      : widget.live_context;
   const isStale = staleness?.status === "stale";
   const showFreshStrip = staleness?.status === "fresh";
   const spotDriftPct = staleness?.spot_drift_pct;
