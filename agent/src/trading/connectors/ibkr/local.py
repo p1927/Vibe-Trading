@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import socket
+import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import ModuleType
@@ -239,7 +240,7 @@ def tcp_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
 def get_account_snapshot(config: IBKRLocalConfig | None = None) -> dict[str, Any]:
     """Fetch account codes and account summary values."""
     cfg = config or load_config()
-    ib = _connect(cfg)
+    ib = _pool.acquire(cfg)
     try:
         accounts = _managed_accounts(ib)
         summary = [_account_value_to_dict(item) for item in _account_summary(ib, cfg.account)]
@@ -252,13 +253,13 @@ def get_account_snapshot(config: IBKRLocalConfig | None = None) -> dict[str, Any
             "summary": summary,
         }
     finally:
-        _disconnect(ib)
+        _pool.release()
 
 
 def get_positions(config: IBKRLocalConfig | None = None) -> dict[str, Any]:
     """Fetch current IBKR positions."""
     cfg = config or load_config()
-    ib = _connect(cfg)
+    ib = _pool.acquire(cfg)
     try:
         accounts = _managed_accounts(ib)
         _assert_profile(cfg, accounts)
@@ -283,13 +284,13 @@ def get_positions(config: IBKRLocalConfig | None = None) -> dict[str, Any]:
             )
         return {"status": "ok", "profile": cfg.profile, "positions": rows}
     finally:
-        _disconnect(ib)
+        _pool.release()
 
 
 def get_open_orders(config: IBKRLocalConfig | None = None, *, include_executions: bool = False) -> dict[str, Any]:
     """Fetch open orders and optionally recent executions."""
     cfg = config or load_config()
-    ib = _connect(cfg)
+    ib = _pool.acquire(cfg)
     try:
         accounts = _managed_accounts(ib)
         _assert_profile(cfg, accounts)
@@ -302,7 +303,7 @@ def get_open_orders(config: IBKRLocalConfig | None = None, *, include_executions
             result["executions"] = [_execution_to_dict(item) for item in _executions(ib)]
         return result
     finally:
-        _disconnect(ib)
+        _pool.release()
 
 
 def get_quote(
@@ -315,7 +316,7 @@ def get_quote(
 ) -> dict[str, Any]:
     """Fetch a top-of-book quote snapshot."""
     cfg = config or load_config()
-    ib = _connect(cfg)
+    ib = _pool.acquire(cfg)
     try:
         accounts = _managed_accounts(ib)
         _assert_profile(cfg, accounts)
@@ -342,7 +343,7 @@ def get_quote(
             },
         }
     finally:
-        _disconnect(ib)
+        _pool.release()
 
 
 def get_historical_bars(
@@ -359,7 +360,7 @@ def get_historical_bars(
 ) -> dict[str, Any]:
     """Fetch historical bars from local TWS / IB Gateway."""
     cfg = config or load_config()
-    ib = _connect(cfg)
+    ib = _pool.acquire(cfg)
     try:
         accounts = _managed_accounts(ib)
         _assert_profile(cfg, accounts)
@@ -382,38 +383,80 @@ def get_historical_bars(
             "bars": [_bar_to_dict(bar) for bar in bars],
         }
     finally:
-        _disconnect(ib)
+        _pool.release()
+
+class _TwsPool:
+    """Thread-safe shared IB connection with reference counting.
+
+    Holds a single ``ib_async.IB`` instance.  Callers acquire a reference
+    (connecting lazily once) and release when done.  The underlying socket
+    is disconnected only when the last caller releases — no resource leak,
+    no client-ID collision across parallel agent tool calls.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._refcount = 0
+        self._ib: Any = None
+        self._config: IBKRLocalConfig | None = None
+
+    def acquire(self, config: IBKRLocalConfig) -> Any:
+        with self._lock:
+            if self._refcount == 0:
+                if not tcp_port_open(config.host, config.port):
+                    raise IBKRConnectionError(
+                        f"No TWS / IB Gateway socket is listening at {config.host}:{config.port}. "
+                        "Open TWS or IB Gateway, log in, and enable API socket clients."
+                    )
+                module = _require_ib_async()
+                self._config = config
+                self._ib = module.IB()
+                try:
+                    self._ib.connect(
+                        config.host,
+                        config.port,
+                        clientId=config.client_id,
+                        timeout=config.timeout,
+                        readonly=config.readonly,
+                        account=config.account or "",
+                    )
+                except TypeError:
+                    self._ib.connect(
+                        config.host, config.port, clientId=config.client_id, timeout=config.timeout
+                    )
+                except Exception as exc:
+                    raise IBKRConnectionError(
+                        f"Could not connect to TWS / IB Gateway at {config.host}:{config.port}: {exc}"
+                    ) from exc
+            elif self._config is not None and (
+                self._config.host != config.host
+                or self._config.port != config.port
+                or self._config.profile != config.profile
+            ):
+                raise IBKRConnectionError(
+                    f"IBKR connection pool already in use by profile '{self._config.profile}' "
+                    f"at {self._config.host}:{self._config.port}.  "
+                    f"Cannot switch to profile '{config.profile}' at {config.host}:{config.port} "
+                    "while the first operation is still in flight."
+                )
+            self._refcount += 1
+            return self._ib
+
+    def release(self) -> None:
+        with self._lock:
+            self._refcount -= 1
+            if self._refcount <= 0:
+                self._refcount = 0
+                if self._ib is not None:
+                    try:
+                        self._ib.disconnect()
+                    except Exception:
+                        pass
+                self._ib = None
+                self._config = None
 
 
-def _connect(config: IBKRLocalConfig):
-    if not tcp_port_open(config.host, config.port):
-        raise IBKRConnectionError(
-            f"No TWS / IB Gateway socket is listening at {config.host}:{config.port}. "
-            "Open TWS or IB Gateway, log in, and enable API socket clients."
-        )
-    module = _require_ib_async()
-    ib = module.IB()
-    try:
-        ib.connect(
-            config.host,
-            config.port,
-            clientId=config.client_id,
-            timeout=config.timeout,
-            readonly=config.readonly,
-            account=config.account or "",
-        )
-    except TypeError:
-        ib.connect(config.host, config.port, clientId=config.client_id, timeout=config.timeout)
-    except Exception as exc:
-        raise IBKRConnectionError(f"Could not connect to TWS / IB Gateway at {config.host}:{config.port}: {exc}") from exc
-    return ib
-
-
-def _disconnect(ib: Any) -> None:
-    try:
-        ib.disconnect()
-    except Exception:
-        pass
+_pool = _TwsPool()
 
 
 def _require_ib_async() -> ModuleType:
