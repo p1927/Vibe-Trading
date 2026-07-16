@@ -64,10 +64,14 @@ async def _dispatch_scheduled_research_job(job) -> None:
     "pipeline finished" respectively.
     """
     from src.scheduled_research.index_jobs import INDEX_JOB_TYPES, dispatch_index_job
+    from src.scheduled_research.options_jobs import OPTIONS_JOB_TYPES, dispatch_options_job
 
     job_type = str(job.config.get("job_type") or "")
     if job_type in INDEX_JOB_TYPES:
         await dispatch_index_job(job)
+        return
+    if job_type in OPTIONS_JOB_TYPES:
+        await dispatch_options_job(job)
         return
 
     host = _sys.modules.get("api_server") or _sys.modules.get("agent.api_server")
@@ -107,9 +111,15 @@ def _start_scheduled_research_executor() -> None:
         is_index_scheduler_enabled,
         register_default_index_jobs,
     )
+    from src.scheduled_research.options_jobs import (
+        is_options_scheduler_enabled,
+        register_default_options_jobs,
+    )
 
     if is_index_scheduler_enabled():
         register_default_index_jobs(_get_scheduled_research_store())
+    if is_options_scheduler_enabled():
+        register_default_options_jobs(_get_scheduled_research_store())
     if not _scheduled_research_scheduler_enabled():
         return
     _get_scheduled_research_executor().start()
