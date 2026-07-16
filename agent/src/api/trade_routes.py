@@ -162,6 +162,24 @@ def _openalgo_analyzer_status(host: str, api_key: str) -> bool:
     return bool(data.get("analyze_mode"))
 
 
+def _ensure_openalgo_analyzer_mode(host: str, api_key: str) -> bool:
+    """Enable OpenAlgo analyzer (paper) mode when OPENALGO_PAPER_MODE is on."""
+    if _openalgo_analyzer_status(host, api_key):
+        return True
+    try:
+        response = requests.post(
+            f"{host}/api/v1/analyzer/toggle",
+            json={"apikey": api_key, "mode": True},
+            timeout=15,
+        )
+        body = response.json() if response.content else {}
+    except requests.RequestException as exc:
+        logger.warning("OpenAlgo analyzer toggle failed: %s", exc)
+        return False
+    data = body.get("data") if isinstance(body.get("data"), dict) else body
+    return bool(data.get("analyze_mode", True))
+
+
 def _assert_execution_allowed(analyze: bool) -> None:
     """Block live basket execution from Vibe when OPENALGO_PAPER_MODE safety lock is on."""
     if not analyze and _paper_mode_env_enabled():
@@ -208,6 +226,8 @@ def execute_basket(
         raise HTTPException(status_code=400, detail="No orders to execute")
 
     host, api_key = _openalgo_config()
+    if _paper_mode_env_enabled():
+        _ensure_openalgo_analyzer_mode(host, api_key)
     analyze = _openalgo_analyzer_status(host, api_key)
     _assert_execution_allowed(analyze)
     execution_mode = "paper" if analyze else "live"
@@ -505,3 +525,173 @@ def run_debate(
         logger.exception("run-debate failed for %s", key)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return AgentDebateResponse(status="running", ticker=key, running=True)
+
+
+class AutoPaperStatusResponse(BaseModel):
+    enabled: bool
+    env_enabled: bool
+    halted: bool = False
+    halt_reason: str | None = None
+    budget_inr: float = 20_000.0
+    watchlist: List[str] = Field(default_factory=list)
+    open_positions: int = 0
+    trades_today: int = 0
+    last_tick_at: str | None = None
+    last_tick: Dict[str, Any] | None = None
+    market_open: bool = False
+
+
+class AutoPaperStartRequest(BaseModel):
+    budget_inr: float | None = None
+    watchlist: List[str] | None = None
+    primary_ticker: str | None = None
+    goal: str | None = None
+    mandate: str | None = None
+    max_daily_loss_inr: float | None = None
+    agent_mode: bool = True
+
+
+@trade_router.get("/auto-paper/status", response_model=AutoPaperStatusResponse)
+def auto_paper_status(
+    _auth: None = Depends(require_local_or_auth),
+) -> AutoPaperStatusResponse:
+    """Return automated paper trading session state."""
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.auto_paper.config import get_auto_paper_config, is_auto_paper_active
+        from trade_integrations.auto_paper.engine import is_market_session_open
+        from trade_integrations.auto_paper.session_store import load_session
+        from trade_integrations.monitor.execution_ledger import list_open_entries
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    cfg = get_auto_paper_config()
+    session = load_session()
+    return AutoPaperStatusResponse(
+        enabled=is_auto_paper_active() or bool(session.get("enabled")),
+        env_enabled=cfg.enabled,
+        halted=bool(session.get("halted")),
+        halt_reason=session.get("halt_reason"),
+        budget_inr=float(session.get("budget_inr") or cfg.budget_inr),
+        watchlist=session.get("watchlist") or list(cfg.watchlist),
+        open_positions=len(list_open_entries()),
+        trades_today=int(session.get("trades_today") or 0),
+        last_tick_at=session.get("last_tick_at"),
+        last_tick=session.get("last_tick"),
+        market_open=is_market_session_open(cfg),
+    )
+
+
+@trade_router.post("/auto-paper/start", response_model=AutoPaperStatusResponse)
+def auto_paper_start(
+    body: AutoPaperStartRequest | None = None,
+    _auth: None = Depends(require_local_or_auth),
+) -> AutoPaperStatusResponse:
+    """Start automated intraday paper trading for today's session."""
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.auto_paper.config import get_auto_paper_config
+        from trade_integrations.auto_paper.openalgo_client import OpenAlgoClient
+        from trade_integrations.auto_paper.session_store import save_session, start_session
+        from trade_integrations.auto_paper.agent_mandate import DEFAULT_GOAL
+        from src.scheduled_research.auto_paper_jobs import ensure_vibe_research_jobs
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    cfg = get_auto_paper_config()
+    budget = float(body.budget_inr) if body and body.budget_inr is not None else cfg.budget_inr
+    watchlist = (
+        [item.strip().upper() for item in body.watchlist if item.strip()]
+        if body and body.watchlist
+        else list(cfg.watchlist)
+    )
+    primary = (
+        (body.primary_ticker or "").strip().upper()
+        if body and body.primary_ticker
+        else (watchlist[0] if watchlist else "NIFTY")
+    )
+    if primary and primary not in watchlist:
+        watchlist.insert(0, primary)
+    try:
+        client = OpenAlgoClient()
+        client.ensure_analyzer_mode()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    start_session(budget_inr=budget, watchlist=watchlist)
+    session_patch = {
+        "agent_mode": body.agent_mode if body else True,
+        "primary_ticker": primary,
+        "goal": (body.goal if body and body.goal else DEFAULT_GOAL),
+        "mandate": body.mandate if body and body.mandate else None,
+        "max_daily_loss_inr": (
+            float(body.max_daily_loss_inr)
+            if body and body.max_daily_loss_inr is not None
+            else cfg.max_daily_loss_inr
+        ),
+    }
+    from trade_integrations.auto_paper.session_store import load_session
+
+    session = load_session()
+    session.update({k: v for k, v in session_patch.items() if v is not None})
+    from trade_integrations.auto_paper.lifecycle import default_lifecycle
+
+    if not session.get("lifecycle"):
+        session["lifecycle"] = default_lifecycle()
+    save_session(session)
+
+    if session.get("agent_mode", True):
+        ensure_vibe_research_jobs()
+
+    return auto_paper_status()
+
+
+@trade_router.post("/auto-paper/stop", response_model=AutoPaperStatusResponse)
+def auto_paper_stop(
+    _auth: None = Depends(require_local_or_auth),
+) -> AutoPaperStatusResponse:
+    """Stop automated paper trading."""
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.auto_paper.mcp_actions import stop_auto_paper
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    stop_auto_paper()
+    return auto_paper_status()
+
+
+@trade_router.post("/auto-paper/tick")
+def auto_paper_tick(
+    dry_run: bool = False,
+    agent: bool = False,
+    _auth: None = Depends(require_local_or_auth),
+) -> Dict[str, Any]:
+    """Run one auto paper cycle or one agent turn when agent=true."""
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        if agent:
+            import asyncio
+
+            from trade_integrations.auto_paper.runner import resolve_runner
+
+            vibe_url = os.getenv(
+                "VIBE_BACKEND_URL",
+                f"http://127.0.0.1:{os.getenv('VIBE_BACKEND_PORT', '8899')}",
+            )
+            runner = resolve_runner(vibe_url=vibe_url)
+            result = asyncio.run(runner.run_once())
+            return result.to_dict()
+        from trade_integrations.auto_paper.engine import run_auto_paper_tick
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return run_auto_paper_tick(dry_run=dry_run)

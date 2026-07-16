@@ -235,6 +235,7 @@ def _trade_plan_widget_frame_from_tool_result(event: Any) -> Optional[str]:
 
 
 _LIVE_ACTION_ID_RE = re.compile(r'"audit_id"\s*:\s*"(la_[0-9a-zA-Z]+)"')
+_PAPER_ACTION_ID_RE = re.compile(r'"audit_id"\s*:\s*"(pa_[0-9a-f]+)"')
 
 
 def _load_live_action_record(audit_id: str) -> Optional[Dict[str, Any]]:
@@ -257,6 +258,44 @@ def _load_live_action_record(audit_id: str) -> Optional[Dict[str, Any]]:
     except Exception:  # pragma: no cover - relay must never break the stream
         logger.debug("live.action reload failed for %s", audit_id, exc_info=True)
     return None
+
+
+def _load_paper_action_record(audit_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.auto_paper.audit import load_paper_action
+
+        return load_paper_action(audit_id)
+    except Exception:
+        logger.debug("paper.action reload failed for %s", audit_id, exc_info=True)
+    return None
+
+
+def _paper_action_frame_from_tool_result(event: Any) -> Optional[str]:
+    """Build a paper.action SSE frame from auto-paper MCP tool_result."""
+    data = getattr(event, "data", None)
+    if getattr(event, "event_type", None) != "tool_result" or not isinstance(data, dict):
+        return None
+    preview = str(data.get("preview") or "")
+    if '"paper_action"' not in preview and '"audit_id"' not in preview:
+        return None
+    match = _PAPER_ACTION_ID_RE.search(preview)
+    if not match:
+        return None
+    record = _load_paper_action_record(match.group(1))
+    if record is None:
+        return None
+
+    from src.session.events import SSEEvent
+
+    frame = SSEEvent(
+        event_type="paper.action",
+        data=record,
+        session_id=getattr(event, "session_id", "") or "",
+    )
+    return frame.to_sse()
 
 
 def _live_action_frame_from_tool_result(event: Any) -> Optional[str]:
@@ -726,6 +765,9 @@ def register_sessions_routes(app: FastAPI) -> None:
                 live_action = _live_action_frame_from_tool_result(event)
                 if live_action is not None:
                     yield live_action
+                paper_action = _paper_action_frame_from_tool_result(event)
+                if paper_action is not None:
+                    yield paper_action
                 trade_widget = _trade_plan_widget_frame_from_tool_result(event)
                 if trade_widget is not None:
                     yield trade_widget
