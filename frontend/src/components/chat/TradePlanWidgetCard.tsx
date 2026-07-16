@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import {
   api,
   type TradePlanLeg,
+  type TradePlanRecommended,
   type TradePlanScenario,
   type TradePlanStrategyVariant,
   type TradePlanWidget,
@@ -143,6 +144,13 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
     widget.asset_type !== "index" &&
     widget.instrument_type !== "stock";
   const isIndex = widget.asset_type === "index";
+  const presentationMode =
+    widget.presentation_mode ??
+    (isIndex ? "index_outlook" : isOptions ? "options_strategy" : "stock_trade");
+  const showPayoff = presentationMode === "options_strategy";
+  const showCharges =
+    presentationMode === "options_strategy" || presentationMode === "stock_trade";
+  const showIndexChart = presentationMode === "index_outlook";
 
   const strategyIndex = useMemo(() => {
     if (!ranked.length) return 0;
@@ -163,9 +171,9 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
   );
   const activeVariant = strategyVariant || scenarioVariant;
 
-  const rec = activeVariant?.recommended || widget.recommended || {};
+  const rec: TradePlanRecommended = activeVariant?.recommended || widget.recommended || {};
   const rankedRow = ranked[strategyIndex] || ranked[0];
-  const displayRec = rec.name
+  const displayRec: TradePlanRecommended = rec.name
     ? rec
     : rankedRow
       ? {
@@ -308,7 +316,12 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
   );
   const isPaper = execMode?.mode === "paper";
   const liveBlocked = Boolean(execMode?.paper_env && !execMode?.live_allowed);
-  const assetLabel = isOptions ? "Options" : "Stock";
+  const assetLabel =
+    presentationMode === "index_outlook"
+      ? "Index outlook"
+      : presentationMode === "stock_trade"
+        ? "Stock"
+        : "Options";
   const planWarnings = widget.data_warnings ?? [];
   const livePlan = useLivePlanContext(widget.underlying);
   const staleness =
@@ -409,6 +422,23 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
   const executeDisabled =
     executing || executed || executeOrders.length === 0 || (!isPaper && liveBlocked);
   const openAlgoUrl = execMode?.switch_url || "";
+
+  if (
+    showPayoff &&
+    legs.length === 0 &&
+    ranked.length === 0 &&
+    !(widget.payoff?.samples?.length)
+  ) {
+    return null;
+  }
+
+  if (
+    showIndexChart &&
+    !widget.factor_explanation?.contributors?.length &&
+    !(widget.scenarios?.length)
+  ) {
+    return null;
+  }
 
   return (
     <div className="flex gap-3">
@@ -567,7 +597,10 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
           </div>
         )}
 
-        {isIndex && (widget.factor_sensitivity?.length || widget.event_impact_curves?.length) ? (
+        {showIndexChart &&
+        (widget.factor_sensitivity?.length ||
+          widget.event_impact_curves?.length ||
+          widget.factor_explanation?.contributors?.length) ? (
           <div>
             <p className="text-[11px] font-medium text-muted-foreground mb-1">
               Index vs factor / event shocks
@@ -602,7 +635,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
           </div>
         ) : null}
 
-        {isOptions && payoffInputs && legs.length > 0 && (
+        {showPayoff && payoffInputs && legs.length > 0 && (
           <div>
             <p className="text-[11px] font-medium text-muted-foreground mb-1">
               Interactive payoff{isScenarioOverride ? ` — ${displayRec.name}` : " (recommended)"}
@@ -625,7 +658,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
           </div>
         )}
 
-        {widget.asset_type !== "stock" && (
+        {showPayoff && widget.asset_type !== "stock" && (
           <div>
             <p className="text-[11px] font-medium text-muted-foreground mb-1">
               P&amp;L vs days to expiry (current spot)
@@ -687,6 +720,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
           </div>
         )}
 
+        {showCharges ? (
         <div className="rounded-lg border border-border/50 p-3 text-xs">
           <div className="flex items-center gap-2 font-semibold mb-1">
             <Wallet className="h-3.5 w-3.5" />
@@ -706,6 +740,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
             </ul>
           )}
         </div>
+        ) : null}
 
         {ranked.length > 1 && (
           <div className="text-[10px] text-muted-foreground">

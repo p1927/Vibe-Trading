@@ -1,0 +1,166 @@
+"""HTTP routes for autonomous trading agents."""
+
+from __future__ import annotations
+
+import logging
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
+
+autonomous_router = APIRouter(prefix="/autonomous-agents", tags=["autonomous-agents"])
+
+_TRADE_ROOT = Path(__file__).resolve().parents[4]
+_INTEGRATIONS = _TRADE_ROOT / "integrations"
+if _INTEGRATIONS.is_dir() and str(_INTEGRATIONS) not in sys.path:
+    sys.path.insert(0, str(_INTEGRATIONS))
+
+
+def _session_service():
+    host = sys.modules.get("api_server") or sys.modules.get("agent.api_server")
+    if host is None:
+        return None
+    return host._get_session_service()
+
+
+class CommitAutonomousAgentRequest(BaseModel):
+    proposal_id: str = Field(..., min_length=1)
+    consent_ack: bool = False
+    session_id: Optional[str] = None
+
+
+class OrchestratorSessionResponse(BaseModel):
+    session_id: str
+    title: str
+
+
+@autonomous_router.get("")
+def list_autonomous_agents() -> Dict[str, Any]:
+    from trade_integrations.autonomous_agents.runtime_status import build_stack_health, enrich_agent
+    from trade_integrations.autonomous_agents.store import list_agents
+
+    agents = [enrich_agent(a) for a in list_agents()]
+    return {"agents": agents, "stack_health": build_stack_health()}
+
+
+@autonomous_router.get("/stack-health")
+def autonomous_stack_health() -> Dict[str, Any]:
+    from trade_integrations.autonomous_agents.runtime_status import build_stack_health
+
+    return build_stack_health()
+
+
+@autonomous_router.get("/{agent_id}")
+def get_autonomous_agent(agent_id: str) -> Dict[str, Any]:
+    from trade_integrations.autonomous_agents.runtime_status import enrich_agent
+    from trade_integrations.autonomous_agents.store import get_agent
+
+    agent = get_agent(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="agent not found")
+    return enrich_agent(agent)
+
+
+@autonomous_router.post("/commit")
+def commit_autonomous_agent_route(body: CommitAutonomousAgentRequest) -> Dict[str, Any]:
+    from trade_integrations.autonomous_agents.proposals import commit_autonomous_agent
+    from src.scheduled_research.autonomous_agent_jobs import register_agent_jobs
+
+    svc = _session_service()
+    if svc is None:
+        raise HTTPException(status_code=503, detail="session runtime not enabled")
+    try:
+        result = commit_autonomous_agent(
+            proposal_id=body.proposal_id,
+            consent_ack=body.consent_ack,
+            session_service=svc,
+            orchestrator_session_id=body.session_id,
+        )
+        register_agent_jobs(result["agent"])
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@autonomous_router.post("/orchestrator/session", response_model=OrchestratorSessionResponse)
+def get_or_create_orchestrator_session() -> OrchestratorSessionResponse:
+    from trade_integrations.autonomous_agents.store import get_orchestrator_meta, save_orchestrator_meta
+    from trade_integrations.autonomous_agents.turns import build_orchestrator_system_note
+
+    svc = _session_service()
+    if svc is None:
+        raise HTTPException(status_code=503, detail="session runtime not enabled")
+
+    meta = get_orchestrator_meta()
+    existing_id = str(meta.get("vibe_session_id") or "").strip()
+    if existing_id:
+        existing = svc.get_session(existing_id)
+        if existing is not None:
+            return OrchestratorSessionResponse(session_id=existing_id, title=existing.title or "Orchestrator")
+
+    session = svc.create_session(
+        title="autonomous:orchestrator",
+        config={
+            "session_kind": "autonomous_orchestrator",
+            "orchestrator": True,
+            "system_note": build_orchestrator_system_note(),
+        },
+    )
+    save_orchestrator_meta({"vibe_session_id": session.session_id})
+    return OrchestratorSessionResponse(session_id=session.session_id, title=session.title)
+
+
+@autonomous_router.post("/{agent_id}/pause")
+def pause_agent(agent_id: str) -> Dict[str, Any]:
+    from trade_integrations.autonomous_agents.proposals import pause_autonomous_agent
+    from src.scheduled_research.autonomous_agent_jobs import unregister_agent_jobs
+
+    try:
+        unregister_agent_jobs(agent_id)
+        return pause_autonomous_agent(agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@autonomous_router.post("/{agent_id}/resume")
+def resume_agent(agent_id: str) -> Dict[str, Any]:
+    from trade_integrations.autonomous_agents.proposals import resume_autonomous_agent
+    from trade_integrations.autonomous_agents.store import get_agent
+    from src.scheduled_research.autonomous_agent_jobs import register_agent_jobs
+
+    try:
+        result = resume_autonomous_agent(agent_id)
+        agent = get_agent(agent_id)
+        if agent:
+            register_agent_jobs(agent)
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@autonomous_router.post("/{agent_id}/stop")
+def stop_agent(agent_id: str) -> Dict[str, Any]:
+    from trade_integrations.autonomous_agents.proposals import stop_autonomous_agent
+    from src.scheduled_research.autonomous_agent_jobs import unregister_agent_jobs
+
+    try:
+        unregister_agent_jobs(agent_id)
+        return stop_autonomous_agent(agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@autonomous_router.delete("/{agent_id}")
+def delete_agent_route(agent_id: str) -> Dict[str, Any]:
+    from trade_integrations.autonomous_agents.proposals import delete_autonomous_agent
+    from src.scheduled_research.autonomous_agent_jobs import unregister_agent_jobs
+
+    try:
+        unregister_agent_jobs(agent_id)
+        return delete_autonomous_agent(agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

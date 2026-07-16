@@ -190,6 +190,15 @@ def test_is_spa_html_route_correlation():
     assert helpers._is_spa_html_route("/correlation") is True
 
 
+def test_is_spa_html_route_prediction():
+    assert helpers._is_spa_html_route("/prediction") is True
+
+
+def test_should_spa_static_fallback_blocks_trade_api():
+    assert helpers._should_spa_static_fallback("trade/index-prediction") is False
+    assert helpers._should_spa_static_fallback("prediction") is True
+
+
 def test_is_spa_html_route_runs_detail():
     assert helpers._is_spa_html_route("/runs/abc123") is True
     assert helpers._is_spa_html_route("/runs/abc123/") is True

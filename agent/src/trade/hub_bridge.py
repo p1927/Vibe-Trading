@@ -59,12 +59,12 @@ def ensure_trade_stack_path() -> Path:
 
 
 def _options_auto_widget_enabled() -> bool:
-    val = os.getenv("OPTIONS_AUTO_WIDGET_ON_PREFETCH", "true").strip().lower()
+    val = os.getenv("OPTIONS_AUTO_WIDGET_ON_PREFETCH", "false").strip().lower()
     return val not in ("0", "false", "no", "off")
 
 
 def _index_auto_widget_enabled() -> bool:
-    val = os.getenv("INDEX_AUTO_WIDGET_ON_PREFETCH", "true").strip().lower()
+    val = os.getenv("INDEX_AUTO_WIDGET_ON_PREFETCH", "false").strip().lower()
     return val not in ("0", "false", "no", "off")
 
 
@@ -96,10 +96,18 @@ def _record_widget_emitted(
     session_widget_emitted.setdefault(session_id, {})[key] = now
 
 
+def _annotate_widget_intent(widget: dict[str, Any], widget_intent: str) -> dict[str, Any]:
+    from trade_integrations.trade_widgets.presentability import apply_widget_metadata
+
+    return apply_widget_metadata(widget, widget_intent)
+
+
 def _maybe_emit_options_widget(
     event_bus: EventBus | None,
     session_id: str,
     ticker: str,
+    *,
+    widget_intent: str = "options_strategy",
 ) -> None:
     now = time.time()
     if not _should_emit_widget(session_id, ticker, now, widget_kind="options"):
@@ -109,8 +117,15 @@ def _maybe_emit_options_widget(
         from trade_integrations.dataflows.options_research.widget_payload import (
             build_options_trade_widget,
         )
+        from trade_integrations.trade_widgets.presentability import is_widget_presentable
+        from trade_integrations.trade_widgets.store import persist_trade_widget
 
-        widget = build_options_trade_widget(ticker, refresh=False)
+        refresh = widget_intent == "execute_refresh"
+        widget = build_options_trade_widget(ticker, refresh=refresh, widget_intent=widget_intent)
+        _annotate_widget_intent(widget, widget_intent)
+        if not is_widget_presentable(widget, widget_intent):
+            return
+        persist_trade_widget(widget)
         _emit(event_bus, session_id, "trade_plan.widget", widget)
         _record_widget_emitted(session_id, ticker, now, widget_kind="options")
     except Exception:
@@ -121,6 +136,8 @@ def _maybe_emit_index_widget(
     event_bus: EventBus | None,
     session_id: str,
     ticker: str,
+    *,
+    widget_intent: str = "index_outlook",
 ) -> None:
     now = time.time()
     if not _should_emit_widget(session_id, ticker, now, widget_kind="index"):
@@ -130,8 +147,15 @@ def _maybe_emit_index_widget(
         from trade_integrations.dataflows.index_research.widget_payload import (
             build_index_trade_widget,
         )
+        from trade_integrations.trade_widgets.presentability import is_widget_presentable
+        from trade_integrations.trade_widgets.store import persist_trade_widget
 
-        widget = build_index_trade_widget(ticker, refresh=False)
+        refresh = widget_intent == "execute_refresh"
+        widget = build_index_trade_widget(ticker, refresh=refresh, widget_intent=widget_intent)
+        _annotate_widget_intent(widget, widget_intent)
+        if not is_widget_presentable(widget, widget_intent):
+            return
+        persist_trade_widget(widget)
         _emit(event_bus, session_id, "trade_plan.widget", widget)
         _record_widget_emitted(session_id, ticker, now, widget_kind="index")
     except Exception:
@@ -227,6 +251,8 @@ def prefetch_hub_plan(ticker: str, asset_type: str) -> dict[str, Any] | None:
     from trade_integrations.dataflows.options_research.market import is_options_research_eligible
 
     key = ticker.strip().upper()
+    if asset_type == "index":
+        return prefetch_index_hub_plan(key)
     if asset_type == "options" and is_options_research_eligible(key):
         from trade_integrations.tools.options_research_tools import fetch_options_research_report
 
@@ -299,6 +325,36 @@ def _index_doc_to_panel(doc) -> dict[str, Any]:
     if not contributors:
         warnings.append("Factor attribution not available yet — run index research refresh.")
 
+    pipeline_log = list(doc.pipeline_log or [])
+    if not pipeline_log and doc.stages:
+        for stage in doc.stages:
+            status = getattr(stage, "status", "ok")
+            vendor = getattr(stage, "vendor", "") or getattr(stage, "stage", "stage")
+            msg = f"{getattr(stage, 'stage', 'stage')}: {status}"
+            if status == "error" and getattr(stage, "errors", None):
+                msg = f"{msg} — {'; '.join(stage.errors[:2])}"
+            pipeline_log.append(
+                {
+                    "stage": str(getattr(stage, "stage", "stage")),
+                    "message": msg,
+                    "level": "error" if status == "error" else "warn" if status == "partial" else "info",
+                    "at": getattr(stage, "fetched_at", doc.as_of).isoformat()
+                    if hasattr(getattr(stage, "fetched_at", None), "isoformat")
+                    else str(doc.as_of),
+                    "detail": {"vendor": vendor, "status": status},
+                }
+            )
+    if not pipeline_log and pred.get("view"):
+        pipeline_log.append(
+            {
+                "stage": "cached",
+                "message": f"Loaded hub artifact from {doc.as_of}",
+                "level": "info",
+                "at": doc.as_of.isoformat() if hasattr(doc.as_of, "isoformat") else str(doc.as_of),
+                "detail": {},
+            }
+        )
+
     status = "ready" if pred.get("view") and contributors else (
         "partial" if pred.get("view") or contributors else "incomplete"
     )
@@ -316,12 +372,16 @@ def _index_doc_to_panel(doc) -> dict[str, Any]:
         "factor_explanation": factor_exp,
         "factor_sensitivity": doc.factor_sensitivity or [],
         "event_impact_curves": doc.event_impact_curves or [],
-        "constituent_signals": doc.constituent_signals[:10] if doc.constituent_signals else [],
+        "upcoming_events": doc.upcoming_events or [],
+        "global_factors": doc.global_factors or [],
+        "sector_breadth": doc.sector_breadth or {},
+        "constituent_signals": doc.constituent_signals or [],
         "top_factors": contributors[:8],
         "accuracy": doc.accuracy or {},
         "plan_status": status,
         "data_warnings": warnings,
         "stage_errors": errors[:3],
+        "pipeline_log": pipeline_log,
     }
 
 
@@ -435,6 +495,11 @@ def load_hub_plan_artifact(ticker: str, asset_type: str = "options") -> dict[str
     from trade_integrations.dataflows.options_research.market import is_options_research_eligible
 
     key = ticker.strip().upper()
+    if asset_type == "index":
+        from trade_integrations.context.hub import load_index_research_json
+
+        doc = load_index_research_json(key)
+        return _index_doc_to_panel(doc) if doc else None
     if asset_type == "stock":
         doc = load_stock_research_json(key)
         return _stock_doc_to_panel(doc) if doc else None
@@ -499,6 +564,9 @@ def prefetch_research_for_message(
     if not ticker:
         return ""
 
+    from src.trade.widget_intent import classify_widget_intent
+
+    widget_intent = classify_widget_intent(content)
     asset_type = infer_asset_type(content, ticker)
     artifact: dict[str, Any] | None = None
     index_artifact: dict[str, Any] | None = None
@@ -519,8 +587,14 @@ def prefetch_research_for_message(
                 and artifact.get("plan_status") in ("ready", "partial")
                 and has_strategy_options_to_present(artifact)
                 and _options_auto_widget_enabled()
+                and widget_intent in ("options_strategy", "execute_refresh")
             ):
-                _maybe_emit_options_widget(event_bus, session_id, ticker)
+                _maybe_emit_options_widget(
+                    event_bus,
+                    session_id,
+                    ticker,
+                    widget_intent=widget_intent,
+                )
 
         from trade_integrations.tools.index_research_tools import is_index_research_eligible
 
@@ -536,14 +610,24 @@ def prefetch_research_for_message(
                 if (
                     index_artifact.get("plan_status") in ("ready", "partial")
                     and _index_auto_widget_enabled()
+                    and widget_intent == "index_outlook"
                 ):
-                    _maybe_emit_index_widget(event_bus, session_id, ticker)
+                    _maybe_emit_index_widget(
+                        event_bus,
+                        session_id,
+                        ticker,
+                        widget_intent=widget_intent,
+                    )
     except Exception:
         logger.exception("Hub prefetch failed for %s", ticker)
 
     from trade_integrations.bridge.hub_context import format_research_context_for_agent
 
-    context = format_research_context_for_agent(artifact, index_artifact=index_artifact)
+    context = format_research_context_for_agent(
+        artifact,
+        index_artifact=index_artifact,
+        widget_intent=widget_intent,
+    )
     if detect_finalize_intent(content):
         _maybe_start_debate(session_id, ticker, asset_type, event_bus)
     return context

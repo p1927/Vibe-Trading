@@ -47,6 +47,11 @@ def needs_widget_guard(
     """Return True when agent likely presented options strategy without widget tool."""
     if not _guard_enabled():
         return False
+    from src.trade.widget_intent import classify_widget_intent
+
+    intent = classify_widget_intent(user_message)
+    if intent not in ("options_strategy", "execute_refresh"):
+        return False
     if not assistant_text or not _STRATEGY_KEYWORDS.search(assistant_text):
         return False
     called = {t.strip() for t in tools_called if t}
@@ -94,15 +99,18 @@ def maybe_inject_widget(
     try:
         from trade_integrations.dataflows.options_research.market import is_options_research_eligible
         from trade_integrations.dataflows.options_research.widget_payload import build_options_trade_widget
+        from trade_integrations.trade_widgets.presentability import is_widget_presentable
+        from trade_integrations.trade_widgets.store import persist_trade_widget
+        from src.trade.widget_intent import classify_widget_intent
 
         if not is_options_research_eligible(ticker):
             return False
 
-        widget = build_options_trade_widget(ticker, refresh=False)
-        ranked = widget.get("ranked_strategies") or []
-        variants = widget.get("strategy_variants") or {}
-        if not ranked and not variants:
+        intent = classify_widget_intent(user_message)
+        widget = build_options_trade_widget(ticker, refresh=False, widget_intent=intent)
+        if not is_widget_presentable(widget, intent):
             return False
+        persist_trade_widget(widget)
         if event_bus is not None and session_id:
             event_bus.emit(session_id, "trade_plan.widget", widget)
         logger.info("Widget guard injected trade_plan.widget for %s session=%s", ticker, session_id)

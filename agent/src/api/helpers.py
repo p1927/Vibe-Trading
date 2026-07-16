@@ -6,10 +6,12 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 
 from fastapi import HTTPException, Request, status
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.api._compat import host_attr as _host_attr
 
@@ -35,10 +37,49 @@ ENV_EXAMPLE_PATH = AGENT_DIR / ".env.example"
 # ============================================================================
 
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
-_SPA_HTML_EXACT_PATHS: frozenset[str] = frozenset({"/correlation"})
+_SPA_HTML_EXACT_PATHS: frozenset[str] = frozenset({"/correlation", "/prediction"})
 _SPA_HTML_PATH_REGEX: tuple[re.Pattern[str], ...] = (
     re.compile(r"^/runs/[^/]+/?$"),
 )
+# When the SPA static mount catches a 404, do not serve index.html for API paths.
+_SPA_FALLBACK_BLOCK_PREFIXES: tuple[str, ...] = (
+    "trade/",
+    "sessions/",
+    "runs/",
+    "swarm/",
+    "settings/",
+    "channels/",
+    "mandate/",
+    "live/",
+    "upload/",
+    "alpha/",
+    "qveris/",
+    "docs",
+    "redoc",
+    "openapi.json",
+)
+
+
+def _should_spa_static_fallback(path: str) -> bool:
+    """Return False when a missing path should stay a real 404 (API namespace)."""
+    normalized = (path or "").lstrip("/")
+    if not normalized:
+        return True
+    return not any(normalized.startswith(prefix) for prefix in _SPA_FALLBACK_BLOCK_PREFIXES)
+
+
+class SPAStaticFiles(StaticFiles):
+    """Serve index.html for SPA routes; keep API 404s as JSON/plain 404."""
+
+    async def get_response(self, path: str, scope: Dict[str, Any]):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != status.HTTP_404_NOT_FOUND:
+                raise
+            if not _should_spa_static_fallback(path):
+                raise
+            return await super().get_response("index.html", scope)
 
 
 def _is_spa_html_route(path: str) -> bool:

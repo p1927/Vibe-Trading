@@ -157,9 +157,36 @@ from src.api.scheduled_routes import (  # noqa: E402
 async def _run_startup_preflight() -> None:
     """Run preflight checks on server startup."""
     from src.preflight import run_preflight
+    import asyncio
 
     run_preflight(console)
     _start_scheduled_research_executor()
+
+    try:
+        from src.api.state import _get_session_service
+        from src.session.recovery import maybe_resume_auto_paper_session, recover_stale_running_attempts
+
+        svc = _get_session_service()
+        if svc is not None:
+            recovered = recover_stale_running_attempts(svc.store)
+            if recovered:
+                logger.info("Recovered %d stale running session attempts", len(recovered))
+
+            async def _startup_paper_resume() -> None:
+                try:
+                    result = await maybe_resume_auto_paper_session(svc.store, svc)
+                    if result and result.get("ui_url"):
+                        logger.info(
+                            "Auto-resumed paper session in Vibe UI: %s",
+                            result.get("ui_url"),
+                        )
+                except Exception:
+                    logger.exception("Auto paper resume dispatch failed")
+
+            asyncio.create_task(_startup_paper_resume())
+    except Exception:
+        logger.exception("Session recovery / auto paper resume failed")
+
     from src.config.accessor import get_env_config
 
     if get_env_config().agent_tuning.vibe_trading_channels_auto_start:
@@ -232,6 +259,10 @@ from src.api.qveris_routes import qveris_router  # noqa: E402  # QVERIS-INTEGRAT
 app.include_router(qveris_router)  # QVERIS-INTEGRATION
 from src.api.trade_routes import trade_router  # noqa: E402
 app.include_router(trade_router)  # Trade-stack widgets + OpenAlgo execute proxy
+from src.api.trading_connector_routes import router as trading_connector_router  # noqa: E402
+app.include_router(trading_connector_router)
+from src.api.autonomous_routes import autonomous_router  # noqa: E402
+app.include_router(autonomous_router)
 
 from src.api.channels_routes import (  # noqa: F401, E402
     ChannelPairingCommandRequest,
@@ -281,13 +312,7 @@ from src.api.auth_routes import register_auth_routes  # noqa: E402
 register_auth_routes(app)
 
 
-# ============================================================================
-# Scheduled Research Routes - defined in src/api/scheduled_routes.py
-# ============================================================================
-#
-# Lightweight CRUD endpoints backed by ScheduledResearchJobStore. The endpoint
-# handlers only record and expose jobs; the optional executor lifecycle is
-# guarded separately by VIBE_TRADING_ENABLE_SCHEDULER.
+# Scheduled Research Routes — see src/api/scheduled_routes.py
 
 from src.api.scheduled_routes import register_scheduled_routes  # noqa: E402
 register_scheduled_routes(app)
@@ -311,19 +336,7 @@ def serve_main(argv: list[str] | None = None) -> int:
     import argparse
     import subprocess
     import uvicorn
-    from fastapi.staticfiles import StaticFiles
-    from starlette.exceptions import HTTPException as StarletteHTTPException
-
-    class SPAStaticFiles(StaticFiles):
-        """Serve index.html for browser refreshes on client-side routes."""
-
-        async def get_response(self, path: str, scope: Dict[str, Any]):
-            try:
-                return await super().get_response(path, scope)
-            except StarletteHTTPException as exc:
-                if exc.status_code != status.HTTP_404_NOT_FOUND:
-                    raise
-                return await super().get_response("index.html", scope)
+    from src.api.helpers import SPAStaticFiles
 
     parser = argparse.ArgumentParser(description="Vibe-Trading Server")
     parser.add_argument("--port", type=int, default=8000, help="Listen port (default 8000)")

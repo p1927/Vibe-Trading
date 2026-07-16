@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -123,16 +124,30 @@ class ScheduledResearchJobStore:
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(self._envelope(jobs), ensure_ascii=False, indent=2)
 
-        tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            os.write(fd, payload.encode("utf-8"))
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+        last_exc: OSError | None = None
+        for attempt in range(5):
+            tmp = target.with_name(f".{target.name}.{os.getpid()}.{attempt}.tmp")
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, payload.encode("utf-8"))
+                os.fsync(fd)
+            finally:
+                os.close(fd)
 
-        os.replace(tmp, target)
-        self._fsync_dir(target.parent)
+            try:
+                os.replace(tmp, target)
+                self._fsync_dir(target.parent)
+                return
+            except OSError as exc:
+                last_exc = exc
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                time.sleep(0.05 * (attempt + 1))
+
+        if last_exc is not None:
+            raise last_exc
 
     def upsert(self, job: ScheduledResearchJob) -> None:
         """Insert or replace a job by id.

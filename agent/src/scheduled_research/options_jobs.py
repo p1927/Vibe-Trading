@@ -260,6 +260,38 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
                 )
                 paper_session["urgent_alerts"] = urgent[-20:]
                 save_session(paper_session)
+
+                try:
+                    from src.scheduled_research.auto_paper_jobs import dispatch_thesis_break_agent_turn
+
+                    asyncio.get_event_loop().create_task(
+                        dispatch_thesis_break_agent_turn(
+                            underlying,
+                            widget_id,
+                            list(report.reasons or []),
+                        )
+                    )
+                except RuntimeError:
+                    asyncio.run(
+                        dispatch_thesis_break_agent_turn(
+                            underlying,
+                            widget_id,
+                            list(report.reasons or []),
+                        )
+                    )
+                except Exception:
+                    logger.debug("thesis break agent dispatch failed", exc_info=True)
+
+                agent_id = str(paper_session.get("autonomous_agent_id") or "").strip()
+                if agent_id:
+                    try:
+                        from trade_integrations.autonomous_agents.watch import dispatch_full_reasoning
+
+                        asyncio.get_event_loop().create_task(
+                            dispatch_full_reasoning(agent_id, turn_kind="strategy_revision")
+                        )
+                    except Exception:
+                        logger.debug("autonomous agent thesis revision skipped", exc_info=True)
         except Exception:
             logger.debug("auto paper urgent alert skipped", exc_info=True)
 

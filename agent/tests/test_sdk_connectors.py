@@ -24,6 +24,8 @@ from src.trading.connectors.longbridge import sdk as lb
 from src.trading.connectors.longbridge.classification import LONGBRIDGE_TOOL_CLASS
 from src.trading.connectors.okx import sdk as ox
 from src.trading.connectors.okx.classification import OKX_TOOL_CLASS
+from src.trading.connectors.openalgo import sdk as oa
+from src.trading.connectors.openalgo.classification import OPENALGO_TOOL_CLASS
 from src.trading.connectors.shoonya import sdk as sh
 from src.trading.connectors.shoonya.classification import SHOONYA_TOOL_CLASS
 from src.trading.connectors.tiger import sdk as tg
@@ -49,6 +51,7 @@ def test_sdk_profiles_registered() -> None:
         "futu-paper-sdk", "futu-live-sdk-readonly",
         "dhan-paper-sdk", "dhan-live-sdk-readonly",
         "shoonya-paper-sdk", "shoonya-live-sdk-readonly",
+        "openalgo-paper-sdk", "openalgo-live-sdk-readonly", "openalgo-paper-trade",
     } <= ids
 
 
@@ -584,3 +587,41 @@ def test_shoonya_service_unconfigured(monkeypatch, tmp_path) -> None:
     assert result["status"] == "error"
     assert result["connector"] == "shoonya"
     assert result["transport"] == "broker_sdk"
+
+
+def test_openalgo_profiles() -> None:
+    paper = profiles.profile_by_id("openalgo-paper-sdk")
+    live = profiles.profile_by_id("openalgo-live-sdk-readonly")
+    trade = profiles.profile_by_id("openalgo-paper-trade")
+    assert paper.connector == "openalgo"
+    assert paper.environment == "paper"
+    assert paper.readonly is True
+    assert live.environment == "live"
+    assert trade.readonly is False
+    assert "orders.place" in trade.capabilities
+
+
+def test_openalgo_mode_guard() -> None:
+    cfg = oa.OpenAlgoConfig(profile="paper")
+    err = oa._assert_mode(cfg, analyze=False)
+    assert err is not None
+    assert "Analyze mode is OFF" in err["error"]
+    live_cfg = oa.OpenAlgoConfig(profile="live-readonly")
+    err_live = oa._assert_mode(live_cfg, analyze=True)
+    assert err_live is not None
+    assert "Analyze mode is ON" in err_live["error"]
+
+
+def test_openalgo_us_symbol_detection() -> None:
+    assert oa._is_us_symbol("AAPL") is True
+    assert oa._is_us_symbol("RELIANCE") is False
+    assert oa._is_us_symbol("RELIANCE.NS") is False
+
+
+def test_openalgo_service_unconfigured(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("OPENALGO_API_KEY", "")
+    monkeypatch.setattr(oa, "get_runtime_root", lambda: tmp_path)
+    result = service.check_connection("openalgo-paper-sdk")
+    assert result["status"] == "error"
+    assert result["connector"] == "openalgo"
+    assert "api_key" in result["error"].lower()

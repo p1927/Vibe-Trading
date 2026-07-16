@@ -15,7 +15,7 @@ import {
   Wifi,
   WifiOff,
 } from "lucide-react";
-import { api, type LiveBrokerStatus, type LiveMandateLimits, type LiveStatus } from "@/lib/api";
+import { api, type LiveBrokerStatus, type LiveMandateLimits, type LiveStatus, type TradingConnectorProfile, type TradingConnectorsResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const RUNTIME_POLL_INTERVAL_MS = 15_000;
@@ -24,6 +24,11 @@ const RUNTIME_CLOCK_INTERVAL_MS = 1_000;
 export function Runtime() {
   const { t } = useTranslation();
   const [status, setStatus] = useState<LiveStatus | null>(null);
+  const [connectors, setConnectors] = useState<TradingConnectorsResponse | null>(null);
+  const [connectorChecks, setConnectorChecks] = useState<Record<string, { status: string; error?: string }>>({});
+  const [checkingProfile, setCheckingProfile] = useState<string | null>(null);
+  const [selectingProfile, setSelectingProfile] = useState<string | null>(null);
+  const [connectorsError, setConnectorsError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +52,15 @@ export function Runtime() {
     if (mode === "initial") setLoading(true);
     else setRefreshing(true);
     setError(null);
+    setConnectorsError(null);
+
+    const connectorsPromise = api.getTradingConnectors(controller.signal).catch((err) => {
+      if (controller.signal.aborted) throw err;
+      console.warn("Failed to load trading connectors", err);
+      setConnectorsError(err instanceof Error ? err.message : tRef.current("runtime.connectorProfilesUnavailable"));
+      return null;
+    });
+
     try {
       const next = await api.getLiveStatus(controller.signal);
       if (!mountedRef.current || !isCurrentStatusRequest(activeRequestRef.current, requestId, controller)) return;
@@ -57,6 +71,14 @@ export function Runtime() {
       console.warn("Failed to load runtime status", err);
       setStatus(null);
       setError(err instanceof Error ? err.message : tRef.current("runtime.statusUnavailable"));
+    }
+
+    try {
+      const connectorPayload = await connectorsPromise;
+      if (!mountedRef.current || !isCurrentStatusRequest(activeRequestRef.current, requestId, controller)) return;
+      if (connectorPayload) setConnectors(connectorPayload);
+    } catch {
+      // aborted or handled in connectorsPromise
     } finally {
       if (!mountedRef.current || !isCurrentStatusRequest(activeRequestRef.current, requestId, controller)) return;
       activeRequestRef.current = null;
@@ -81,6 +103,46 @@ export function Runtime() {
   }, [loadStatus]);
 
   const summary = useMemo(() => summarizeRuntime(status), [status]);
+
+  const connectorGroups = useMemo(() => groupConnectorProfiles(connectors?.profiles ?? []), [connectors]);
+
+  const handleSelectProfile = useCallback(async (profileId: string) => {
+    if (selectingProfile) return;
+    setSelectingProfile(profileId);
+    try {
+      const result = await api.selectTradingConnector(profileId);
+      setConnectors((prev) => {
+        if (!prev) return prev;
+        return {
+          selected_profile: result.selected_profile,
+          profiles: prev.profiles.map((p) => ({ ...p, selected: p.id === result.selected_profile })),
+        };
+      });
+    } catch (err) {
+      console.warn("Failed to select connector profile", err);
+    } finally {
+      setSelectingProfile(null);
+    }
+  }, [selectingProfile]);
+
+  const handleCheckProfile = useCallback(async (profileId: string) => {
+    if (checkingProfile) return;
+    setCheckingProfile(profileId);
+    try {
+      const result = await api.checkTradingConnector(profileId);
+      setConnectorChecks((prev) => ({
+        ...prev,
+        [profileId]: { status: result.status, error: typeof result.error === "string" ? result.error : undefined },
+      }));
+    } catch (err) {
+      setConnectorChecks((prev) => ({
+        ...prev,
+        [profileId]: { status: "error", error: err instanceof Error ? err.message : "check failed" },
+      }));
+    } finally {
+      setCheckingProfile(null);
+    }
+  }, [checkingProfile]);
 
   return (
     <div className="min-h-screen p-6 lg:p-8">
@@ -116,6 +178,32 @@ export function Runtime() {
               <div key={item} className="h-24 animate-pulse rounded-md border bg-muted/40" />
             ))}
           </div>
+        ) : null}
+
+        {!loading && connectors ? (
+          <section className="grid gap-4">
+            <div>
+              <h2 className="text-lg font-semibold">{t("runtime.connectorProfilesTitle")}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">{t("runtime.connectorProfilesBody")}</p>
+            </div>
+            {connectorGroups.map(([connectorKey, profiles]) => (
+              <ConnectorGroupCard
+                key={connectorKey}
+                connectorKey={connectorKey}
+                profiles={profiles}
+                checks={connectorChecks}
+                checkingProfile={checkingProfile}
+                selectingProfile={selectingProfile}
+                onSelect={handleSelectProfile}
+                onCheck={handleCheckProfile}
+                t={t}
+              />
+            ))}
+          </section>
+        ) : !loading && connectorsError ? (
+          <section className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+            {connectorsError}
+          </section>
         ) : null}
 
         {!loading && error ? (
@@ -420,4 +508,103 @@ function normalizeEpochMs(value: number): number {
   if (value >= 1_000_000_000_000) return value;
   if (value >= 946_684_800 && value <= 4_102_444_800) return value * 1000;
   return Number.NaN;
+}
+
+function groupConnectorProfiles(profiles: TradingConnectorProfile[]): Array<[string, TradingConnectorProfile[]]> {
+  const groups = new Map<string, TradingConnectorProfile[]>();
+  for (const profile of profiles) {
+    const key = profile.connector;
+    const bucket = groups.get(key) ?? [];
+    bucket.push(profile);
+    groups.set(key, bucket);
+  }
+  const order = ["openalgo", "alpaca", "robinhood", "ibkr", "dhan", "shoonya"];
+  return [...groups.entries()].sort(([a], [b]) => {
+    const ai = order.indexOf(a);
+    const bi = order.indexOf(b);
+    if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+    return a.localeCompare(b);
+  });
+}
+
+function ConnectorGroupCard({
+  connectorKey,
+  profiles,
+  checks,
+  checkingProfile,
+  selectingProfile,
+  onSelect,
+  onCheck,
+  t,
+}: {
+  connectorKey: string;
+  profiles: TradingConnectorProfile[];
+  checks: Record<string, { status: string; error?: string }>;
+  checkingProfile: string | null;
+  selectingProfile: string | null;
+  onSelect: (profileId: string) => void;
+  onCheck: (profileId: string) => void;
+  t: TFunction;
+}) {
+  return (
+    <article className="rounded-md border p-4">
+      <h3 className="font-semibold capitalize">{connectorKey === "openalgo" ? "OpenAlgo" : connectorKey}</h3>
+      <div className="mt-3 grid gap-2">
+        {profiles.map((profile) => {
+          const check = checks[profile.id];
+          const canTrade = profile.capabilities.some((cap) => cap.includes("orders.place"));
+          return (
+            <div key={profile.id} className="rounded-md border bg-muted/20 p-3">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{profile.label}</span>
+                    {profile.selected ? (
+                      <StatusPill label={t("runtime.connectorSelected")} tone="success" />
+                    ) : null}
+                    <StatusPill
+                      label={profile.environment === "paper" ? t("runtime.connectorPaper") : t("runtime.connectorLive")}
+                      tone="neutral"
+                    />
+                    <StatusPill
+                      label={canTrade ? t("runtime.connectorTrade") : t("runtime.connectorReadOnly")}
+                      tone={canTrade ? "success" : "neutral"}
+                    />
+                  </div>
+                  <p className="font-mono text-xs text-muted-foreground">{profile.id}</p>
+                  {profile.notes ? <p className="text-xs text-muted-foreground">{profile.notes}</p> : null}
+                  {check ? (
+                    <p className={cn("text-xs", check.status === "ok" ? "text-success" : "text-amber-700 dark:text-amber-300")}>
+                      {check.status === "ok" ? t("runtime.connectorCheckOk") : t("runtime.connectorCheckError")}
+                      {check.error ? ` — ${check.error}` : ""}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  {!profile.selected ? (
+                    <button
+                      type="button"
+                      onClick={() => onSelect(profile.id)}
+                      disabled={selectingProfile === profile.id}
+                      className="rounded-md border px-3 py-1.5 text-xs font-medium transition hover:bg-muted disabled:opacity-50"
+                    >
+                      {selectingProfile === profile.id ? t("runtime.refresh") : t("runtime.connectorUseProfile")}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => onCheck(profile.id)}
+                    disabled={checkingProfile === profile.id}
+                    className="rounded-md border px-3 py-1.5 text-xs font-medium transition hover:bg-muted disabled:opacity-50"
+                  >
+                    {checkingProfile === profile.id ? t("runtime.connectorChecking") : t("runtime.connectorCheck")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </article>
+  );
 }

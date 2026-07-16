@@ -184,6 +184,8 @@ def _get_goal_store():
 
 _PROPOSAL_TOOL_NAME = "propose_mandate_profiles"
 _PROPOSAL_ID_RE = re.compile(r'"proposal_id"\s*:\s*"(mp_[0-9a-f]{32})"')
+_AUTONOMOUS_PROPOSAL_TOOL_NAME = "propose_autonomous_agent"
+_AUTONOMOUS_PROPOSAL_ID_RE = re.compile(r'"proposal_id"\s*:\s*"(aap_[0-9a-f]{32})"')
 
 
 def _load_full_proposal(proposal_id: str) -> Optional[Dict[str, Any]]:
@@ -221,6 +223,49 @@ def _mandate_proposal_frame_from_tool_result(event: Any) -> Optional[str]:
 
     frame = SSEEvent(
         event_type="mandate.proposal",
+        data=proposal,
+        session_id=getattr(event, "session_id", "") or "",
+    )
+    return frame.to_sse()
+
+
+def _load_autonomous_proposal(proposal_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        import sys
+        from pathlib import Path
+
+        trade_root = Path(__file__).resolve().parents[4]
+        integrations = trade_root / "integrations"
+        if integrations.is_dir() and str(integrations) not in sys.path:
+            sys.path.insert(0, str(integrations))
+        from trade_integrations.autonomous_agents.store import load_proposal
+
+        data = load_proposal(proposal_id)
+        if isinstance(data, dict) and data.get("type") == "autonomous_agent.proposal":
+            return data
+    except Exception:
+        logger.debug("autonomous_agent.proposal reload failed for %s", proposal_id, exc_info=True)
+    return None
+
+
+def _autonomous_agent_proposal_frame_from_tool_result(event: Any) -> Optional[str]:
+    """Build autonomous_agent.proposal SSE frame from propose tool_result."""
+    data = getattr(event, "data", None)
+    if getattr(event, "event_type", None) != "tool_result" or not isinstance(data, dict):
+        return None
+    if data.get("tool") != _AUTONOMOUS_PROPOSAL_TOOL_NAME or data.get("status") != "ok":
+        return None
+    match = _AUTONOMOUS_PROPOSAL_ID_RE.search(str(data.get("preview") or ""))
+    if not match:
+        return None
+    proposal = _load_autonomous_proposal(match.group(1))
+    if proposal is None or proposal.get("status") != "ready":
+        return None
+
+    from src.session.events import SSEEvent
+
+    frame = SSEEvent(
+        event_type="autonomous_agent.proposal",
         data=proposal,
         session_id=getattr(event, "session_id", "") or "",
     )
@@ -762,6 +807,9 @@ def register_sessions_routes(app: FastAPI) -> None:
                 relayed = _mandate_proposal_frame_from_tool_result(event)
                 if relayed is not None:
                     yield relayed
+                autonomous_proposal = _autonomous_agent_proposal_frame_from_tool_result(event)
+                if autonomous_proposal is not None:
+                    yield autonomous_proposal
                 live_action = _live_action_frame_from_tool_result(event)
                 if live_action is not None:
                     yield live_action

@@ -1,6 +1,7 @@
 import { authHeaders, withAuthTicket } from "@/lib/apiAuth";
+import { resolveApiBase } from "@/lib/apiBase";
 
-const BASE = "";
+const BASE = resolveApiBase();
 
 export class ApiError extends Error {
   status: number;
@@ -57,8 +58,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const contentType = res.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
     const preview = text.slice(0, 80).replace(/\s+/g, " ");
+    const looksLikeHtml = /^\s*</.test(text);
+    const hint = looksLikeHtml
+      ? " Open http://127.0.0.1:5899 for the UI (Vite) or restart the API on port 8899."
+      : "";
     throw new ApiError(
-      `Expected JSON from ${path}, got ${contentType || "unknown content type"}: ${preview}`,
+      `Expected JSON from ${path}, got ${contentType || "unknown content type"}: ${preview}${hint}`,
       res.status,
     );
   }
@@ -85,6 +90,148 @@ async function uploadFile(file: File): Promise<UploadResult> {
 function appendQueryParam(url: string, key: string, value: string): string {
   const sep = url.includes("?") ? "&" : "?";
   return `${url}${sep}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
+function parseSseChunk(
+  buffer: string,
+  onEvent: (eventType: string, data: Record<string, unknown>) => void,
+): string {
+  const parts = buffer.split("\n\n");
+  const remainder = parts.pop() ?? "";
+  for (const block of parts) {
+    if (!block.trim()) continue;
+    let eventType = "message";
+    let dataLine = "";
+    for (const line of block.split("\n")) {
+      if (line.startsWith("event:")) eventType = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLine += line.slice(5).trim();
+    }
+    if (!dataLine) continue;
+    try {
+      onEvent(eventType, JSON.parse(dataLine) as Record<string, unknown>);
+    } catch {
+      /* ignore malformed chunk */
+    }
+  }
+  return remainder;
+}
+
+export interface StreamIndexPredictionHandlers {
+  onLog?: (entry: PipelineLogEntry) => void;
+  onDone?: (artifact: IndexPredictionArtifact) => void;
+  onError?: (message: string) => void;
+}
+
+export async function streamIndexPredictionRun(
+  body: RunIndexPredictionRequest,
+  handlers: StreamIndexPredictionHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const now = () => new Date().toISOString();
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/trade/index-prediction/run/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    const hint =
+      BASE.includes(":8899") || !BASE
+        ? " Check the Vibe API is running on port 8899."
+        : " Check your network connection and API URL.";
+    throw new ApiError(
+      `Network error reaching analysis API.${hint} ${err instanceof Error ? err.message : ""}`.trim(),
+      0,
+    );
+  }
+
+  if (!res.ok) {
+    // Older API builds lack SSE stream route — fall back to blocking POST /run.
+    if (res.status === 404 || res.status === 405) {
+      handlers.onLog?.({
+        stage: "start",
+        message: "Streaming unavailable — running full analysis via standard API…",
+        level: "warn",
+        at: now(),
+      });
+      if (body.refresh_constituents) {
+        handlers.onLog?.({
+          stage: "constituents",
+          message: "Refreshing all 50 constituents — this can take several minutes…",
+          level: "info",
+          at: now(),
+        });
+      }
+      let fallback: Response;
+      try {
+        fallback = await fetch(`${BASE}/trade/index-prediction/run`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify(body),
+          signal,
+        });
+      } catch (err) {
+        throw new ApiError(
+          `Network error during analysis.${body.refresh_constituents ? " Try unchecking “Refresh all constituents” for a faster run (~1 min)." : ""} ${err instanceof Error ? err.message : ""}`.trim(),
+          0,
+        );
+      }
+      if (!fallback.ok) {
+        throw await errorFromResponse(fallback);
+      }
+      const payload = (await fallback.json()) as IndexPredictionResponse;
+      if (payload.status !== "ok" || !payload.artifact) {
+        handlers.onError?.(payload.message || "Analysis failed");
+        return;
+      }
+      handlers.onLog?.({
+        stage: "done",
+        message: "Analysis complete",
+        level: "info",
+        at: now(),
+      });
+      handlers.onDone?.(payload.artifact);
+      return;
+    }
+    throw await errorFromResponse(res);
+  }
+
+  if (!res.body) {
+    throw new ApiError("Empty stream body", res.status);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let gotDone = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    buffer = parseSseChunk(buffer, (eventType, data) => {
+      if (eventType === "log" && data.entry) {
+        handlers.onLog?.(data.entry as PipelineLogEntry);
+        return;
+      }
+      if (eventType === "done" && data.artifact) {
+        gotDone = true;
+        handlers.onDone?.(data.artifact as IndexPredictionArtifact);
+        return;
+      }
+      if (eventType === "error") {
+        gotDone = true;
+        handlers.onError?.(String(data.message ?? "Analysis failed"));
+      }
+    });
+  }
+  if (!gotDone) {
+    handlers.onError?.(
+      "Analysis stream ended without a result — the server may have timed out. Try without “Refresh all constituents”.",
+    );
+  }
 }
 
 export const api = {
@@ -211,6 +358,41 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  listAutonomousAgents: () =>
+    request<AutonomousAgentsListResponse>("/autonomous-agents"),
+  getAutonomousAgent: (agentId: string) =>
+    request<AutonomousAgentInstance>(`/autonomous-agents/${encodeURIComponent(agentId)}`),
+  commitAutonomousAgent: (body: CommitAutonomousAgentRequest) =>
+    request<CommitAutonomousAgentResponse>("/autonomous-agents/commit", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getOrchestratorSession: () =>
+    request<OrchestratorSessionResponse>("/autonomous-agents/orchestrator/session", {
+      method: "POST",
+    }),
+  pauseAutonomousAgent: (agentId: string) =>
+    request<{ status: string; agent: AutonomousAgentInstance }>(
+      `/autonomous-agents/${encodeURIComponent(agentId)}/pause`,
+      { method: "POST" },
+    ),
+  resumeAutonomousAgent: (agentId: string) =>
+    request<{ status: string; agent: AutonomousAgentInstance }>(
+      `/autonomous-agents/${encodeURIComponent(agentId)}/resume`,
+      { method: "POST" },
+    ),
+  stopAutonomousAgent: (agentId: string) =>
+    request<{ status: string; agent: AutonomousAgentInstance }>(
+      `/autonomous-agents/${encodeURIComponent(agentId)}/stop`,
+      { method: "POST" },
+    ),
+  deleteAutonomousAgent: (agentId: string) =>
+    request<{ status: string; deleted: string }>(
+      `/autonomous-agents/${encodeURIComponent(agentId)}`,
+      { method: "DELETE" },
+    ),
+
   haltLive: (session_id?: string, broker?: string, reason?: string) =>
     request<HaltLiveResponse>("/live/halt", {
       method: "POST",
@@ -219,6 +401,18 @@ export const api = {
   // Read the persistent runtime status across all authorized brokers (SPEC §7.5).
   // Polled by the RunnerStatus panel; a plain authenticated GET, never a chat message.
   getLiveStatus: (signal?: AbortSignal) => request<LiveStatus>("/live/status", { signal }),
+  getTradingConnectors: (signal?: AbortSignal) =>
+    request<TradingConnectorsResponse>("/trading/connectors", { signal }),
+  selectTradingConnector: (profileId: string) =>
+    request<SelectTradingConnectorResponse>("/trading/connectors/select", {
+      method: "POST",
+      body: JSON.stringify({ profile_id: profileId }),
+    }),
+  checkTradingConnector: (profileId: string, signal?: AbortSignal) =>
+    request<TradingConnectorCheckResponse>(
+      `/trading/connectors/${encodeURIComponent(profileId)}/check`,
+      { signal },
+    ),
   authorizeLive: (broker: string) =>
     request<LiveAuthorizeResponse>("/live/authorize", {
       method: "POST",
@@ -256,6 +450,98 @@ export const api = {
     request<AgentDebateResponse>("/trade/run-debate", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  getIndexPrediction: (ticker = "NIFTY", horizonDays?: number, refresh = false) => {
+    const params = new URLSearchParams({ ticker });
+    if (horizonDays != null) params.set("horizon_days", String(horizonDays));
+    if (refresh) params.set("refresh", "true");
+    return request<IndexPredictionResponse>(`/trade/index-prediction?${params}`);
+  },
+  runIndexPrediction: (body: RunIndexPredictionRequest) =>
+    request<IndexPredictionResponse>("/trade/index-prediction/run", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getIndexPredictionFactors: () =>
+    request<IndexFactorCatalogResponse>("/trade/index-prediction/factors"),
+  streamIndexPredictionRun: streamIndexPredictionRun,
+  simulateIndexPrediction: (body: SimulateIndexPredictionRequest) =>
+    request<SimulateIndexPredictionResponse>("/trade/index-prediction/simulate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getIndexPlaygroundContext: (ticker = "NIFTY") =>
+    request<IndexPlaygroundContextResponse>(
+      `/trade/index-prediction/playground-context?ticker=${encodeURIComponent(ticker)}`,
+    ),
+  refreshIndexPrediction: (body: RefreshIndexPredictionRequest) =>
+    request<IndexPredictionRefreshResponse>("/trade/index-prediction/refresh", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getIndexPredictionHistory: (ticker = "NIFTY", limit = 50, horizonDays?: number, dailyLast = true) => {
+    const params = new URLSearchParams({
+      ticker,
+      limit: String(limit),
+      daily_last: String(dailyLast),
+    });
+    if (horizonDays != null) params.set("horizon_days", String(horizonDays));
+    return request<IndexPredictionHistoryResponse>(`/trade/index-prediction/history?${params}`);
+  },
+  getIndexFactorHistory: (ticker = "NIFTY", days = 90, factors?: string[]) => {
+    const params = new URLSearchParams({ ticker, days: String(days) });
+    if (factors?.length) params.set("factors", factors.join(","));
+    return request<IndexFactorHistoryResponse>(`/trade/index-prediction/factor-history?${params}`);
+  },
+  getIndexDerivativesHistory: (days = 365, factors?: string[]) => {
+    const factorList =
+      factors ?? ["nifty_pcr", "fii_net_5d", "dii_net_5d", "fii_fut_long_short_ratio"];
+    const params = new URLSearchParams({ ticker: "NIFTY", days: String(days), factors: factorList.join(",") });
+    return request<IndexFactorHistoryResponse>(`/trade/index-prediction/factor-history?${params}`);
+  },
+  getIndexDayAttribution: (date: string, days = 365) =>
+    request<DayAttributionResponse>(
+      `/trade/index-prediction/day-attribution?date=${encodeURIComponent(date)}&days=${days}`,
+    ),
+  getConstituentHistory: (symbol: string, days = 90, weight?: number) => {
+    const params = new URLSearchParams({ symbol, days: String(days) });
+    if (weight != null && Number.isFinite(weight)) params.set("weight", String(weight));
+    return request<ConstituentHistoryResponse>(
+      `/trade/index-prediction/constituent-history?${params}`,
+    );
+  },
+  getIndexPredictionSnapshots: (ticker = "NIFTY", limit = 10) =>
+    request<IndexPredictionSnapshotsResponse>(
+      `/trade/index-prediction/snapshots?ticker=${encodeURIComponent(ticker)}&limit=${limit}`,
+    ),
+  getIndexPredictionBacktest: (ticker = "NIFTY", refresh = false, days = 180, horizonDays?: number) => {
+    const params = new URLSearchParams({
+      ticker,
+      refresh: String(refresh),
+      days: String(days),
+    });
+    if (horizonDays != null) params.set("horizon_days", String(horizonDays));
+    return request<IndexBacktestResponse>(`/trade/index-prediction/backtest?${params}`);
+  },
+  getIndexPredictionJobs: () =>
+    request<IndexPredictionJobsResponse>("/trade/index-prediction/jobs"),
+  pauseIndexPredictionJob: (jobId: string) =>
+    request<IndexPredictionJobsResponse>(`/trade/index-prediction/jobs/${encodeURIComponent(jobId)}/pause`, {
+      method: "POST",
+    }),
+  resumeIndexPredictionJob: (jobId: string) =>
+    request<IndexPredictionJobsResponse>(`/trade/index-prediction/jobs/${encodeURIComponent(jobId)}/resume`, {
+      method: "POST",
+    }),
+  bootstrapAutoPaper: (body: AutoPaperBootstrapRequest) =>
+    request<AutoPaperBootstrapResponse>("/trade/auto-paper/bootstrap", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  resumeAutoPaper: (body?: AutoPaperResumeRequest) =>
+    request<AutoPaperBootstrapResponse>("/trade/auto-paper/resume", {
+      method: "POST",
+      body: JSON.stringify(body ?? { dispatch: true, fresh_session: true }),
     }),
 };
 
@@ -833,8 +1119,31 @@ export interface TradePlanScenario {
   strategy_hint?: string;
 }
 
+export interface TradePlanRecommended {
+  name?: string;
+  tier?: string;
+  score?: number;
+  rationale?: string;
+  legs?: TradePlanLeg[];
+  max_profit?: number;
+  max_loss?: number;
+  net_max_profit?: number;
+  net_max_loss?: number;
+}
+
+export interface RankedStrategy {
+  name?: string;
+  tier?: string;
+  score?: number;
+  rationale?: string;
+  max_profit?: number;
+  max_loss?: number;
+  net_max_profit?: number;
+  net_max_loss?: number;
+}
+
 export interface TradePlanStrategyVariant {
-  recommended?: TradePlanWidget["recommended"];
+  recommended?: TradePlanRecommended;
   payoff?: TradePlanWidget["payoff"];
   charges?: TradePlanWidget["charges"];
   payoff_over_time?: { samples?: Array<{ days_to_expiry?: number; pnl: number; net_pnl?: number }> };
@@ -871,9 +1180,16 @@ export interface PlanContextResponse {
   open_position?: boolean;
 }
 
+export type WidgetPresentationMode =
+  | "options_strategy"
+  | "index_outlook"
+  | "stock_trade";
+
 export interface TradePlanWidget {
   type: "trade_plan.widget";
   widget_id: string;
+  presentation_mode?: WidgetPresentationMode;
+  widget_intent?: string;
   asset_type?: "options" | "stock" | "index";
   underlying: string;
   instrument_type?: string;
@@ -889,18 +1205,8 @@ export interface TradePlanWidget {
     signals?: Record<string, unknown>;
   };
   scenarios?: TradePlanScenario[];
-  ranked_strategies?: Array<Record<string, unknown>>;
-  recommended?: {
-    name?: string;
-    tier?: string;
-    score?: number;
-    rationale?: string;
-    legs?: TradePlanLeg[];
-    max_profit?: number;
-    max_loss?: number;
-    net_max_profit?: number;
-    net_max_loss?: number;
-  };
+  ranked_strategies?: RankedStrategy[];
+  recommended?: TradePlanRecommended;
   browse_summary?: { spot?: number };
   payoff?: {
     samples?: Array<{ spot: number; pnl: number; net_pnl?: number }>;
@@ -967,13 +1273,593 @@ export interface TradeExecutionMode {
   switch_url?: string;
 }
 
+export interface AutoPaperBootstrapRequest {
+  prompt?: string | null;
+  ticker?: string;
+  budget_inr?: number;
+  watchlist?: string[];
+  resume?: boolean;
+  fresh_session?: boolean;
+  dispatch?: boolean;
+  vibe_session_id?: string;
+}
+
+export interface AutoPaperResumeRequest {
+  vibe_session_id?: string;
+  dispatch?: boolean;
+  fresh_session?: boolean;
+  prompt?: string;
+}
+
+export interface AutoPaperBootstrapResponse {
+  status: string;
+  vibe_session_id?: string;
+  ui_url?: string;
+  attempt_id?: string;
+  message_id?: string;
+  prompt_injected?: boolean;
+  paper_session?: Record<string, unknown>;
+}
+
 export interface PlanPrediction {
   view?: string | null;
   iv_regime?: string | null;
   confidence?: number | null;
   expected_move_pct?: number | null;
+  expected_return_pct?: number | null;
+  bottom_up_return_pct?: number | null;
+  macro_delta_pct?: number | null;
+  range?: { low?: number; high?: number; confidence?: number } | null;
+  equation?: {
+    form?: string;
+    coefficients?: Record<string, number>;
+    intercept?: number;
+    r2_walk_forward?: number;
+  } | null;
+  top_drivers?: Array<Record<string, unknown>>;
   pcr?: number | null;
   source?: string | null;
+  reconciled_with_scenarios?: boolean;
+  scenario_anchor_return_pct?: number | null;
+  raw_expected_return_pct?: number | null;
+  raw_macro_delta_pct?: number | null;
+  reconciliation_blend?: { model_weight?: number; scenario_weight?: number };
+  momentum_coverage?: { with_momentum?: number; total?: number; coverage_pct?: number };
+  direction_hit_rate_oos?: number | null;
+}
+
+export interface IndexGlobalFactor {
+  factor?: string;
+  label?: string;
+  value?: number;
+  z_score?: number | null;
+  source?: string;
+}
+
+export interface IndexFactorContributor {
+  factor?: string;
+  label?: string;
+  contribution_pct?: number;
+  share_of_macro?: number;
+  index_points?: number;
+  marginal_impact_pct?: number;
+  contribution_index_pts?: number;
+  value?: number;
+  share_of_total_equation?: number;
+}
+
+export interface IndexScenario {
+  event?: string;
+  outcome?: string;
+  label?: string;
+  description?: string;
+  index_range?: number[];
+  probability?: number;
+  midpoint_return_pct?: number;
+}
+
+export interface IndexUpcomingEvent {
+  date?: string;
+  days_from_now?: number;
+  event_type?: string;
+  label?: string;
+  symbol?: string;
+  weight?: number;
+  sector?: string;
+  impact?: string;
+  category?: string;
+}
+
+export interface IndexSimulationResult {
+  expected_return_pct?: number;
+  baseline_return_pct?: number;
+  macro_delta_pct?: number;
+  bottom_up_return_pct?: number;
+  index_level?: number;
+  baseline_index_level?: number;
+  horizon_days?: number;
+  range?: { low?: number; high?: number };
+  view?: string;
+  factor_explanation?: { contributors?: IndexFactorContributor[] };
+  baseline_factor_explanation?: { contributors?: IndexFactorContributor[] };
+  factor_sensitivity?: Array<Record<string, unknown>>;
+  factor_overrides?: Record<string, number>;
+  cascade_applied?: CascadeAppliedRow[];
+  cascade_method?: "heuristic" | "data_calibrated";
+  cascade_regime?: "calm" | "elevated" | "crisis";
+  cascade_calibration_as_of?: string | null;
+  forecast_path?: ForecastPathPoint[];
+}
+
+export interface CascadeAppliedRow {
+  factor?: string;
+  before?: number;
+  after?: number;
+  reason?: string;
+  source?: "heuristic" | "var" | "blended";
+  var_implied_after?: number;
+  heuristic_after?: number;
+}
+
+export interface CascadeCalibrationSummary {
+  status?: string;
+  as_of?: string;
+  method?: string;
+  regime?: "calm" | "elevated" | "crisis";
+  blend_alpha?: number;
+}
+
+export interface ForecastPathPoint {
+  day?: number;
+  baseline_level?: number;
+  scenario_level?: number;
+  baseline_return_pct?: number;
+  scenario_return_pct?: number;
+}
+
+export interface IndexRegime {
+  label?: string;
+  regime?: string;
+  india_vix?: number;
+  trend_20d?: string;
+  [key: string]: unknown;
+}
+
+export interface SectorBreadth {
+  mean_sentiment?: number | null;
+  by_sector?: Record<string, number>;
+  sector_count?: number;
+  [key: string]: unknown;
+}
+
+export interface IndexAccuracy {
+  sample_count?: number;
+  mae_pct?: number | null;
+  mae_14d_pct?: number | null;
+  direction_hit_rate?: number | null;
+  direction_hit_rate_14d?: number | null;
+  window_days?: number;
+  retrained?: boolean;
+  [key: string]: unknown;
+}
+
+export interface ConstituentEvent {
+  symbol?: string;
+  company?: string;
+  type?: string;
+  purpose?: string;
+  description?: string;
+  date?: string;
+  source?: string;
+}
+
+export interface ConstituentFactor {
+  type?: string;
+  factor?: string;
+  macro_link?: string;
+  score?: number;
+  headline?: string;
+  date?: string;
+  impact?: string;
+  event?: string;
+  note?: string;
+  source?: string;
+}
+
+export interface ConstituentSignal {
+  symbol?: string;
+  weight?: number;
+  sector?: string;
+  sentiment_score?: number | null;
+  contribution_to_index_pct?: number | null;
+  events?: ConstituentEvent[];
+  factors?: ConstituentFactor[];
+  [key: string]: unknown;
+}
+
+export interface IndexPredictionArtifact extends Omit<HubPlanArtifact, "regime" | "accuracy"> {
+  asset_type?: "index";
+  horizon?: { name?: string; days?: number };
+  regime?: IndexRegime;
+  global_factors?: IndexGlobalFactor[];
+  sector_breadth?: SectorBreadth;
+  factor_explanation?: {
+    contributors?: IndexFactorContributor[];
+    method?: string;
+    macro_delta_pct?: number;
+    ridge_macro_delta_pct?: number;
+    attribution_rescaled?: boolean;
+  };
+  factor_sensitivity?: Array<Record<string, unknown>>;
+  event_impact_curves?: Array<Record<string, unknown>>;
+  upcoming_events?: IndexUpcomingEvent[];
+  constituent_signals?: ConstituentSignal[];
+  top_factors?: IndexFactorContributor[];
+  accuracy?: IndexAccuracy;
+  cascade_calibration?: CascadeCalibrationSummary;
+  stage_errors?: string[];
+  pipeline_log?: PipelineLogEntry[];
+}
+
+export interface PipelineLogEntry {
+  stage: string;
+  message: string;
+  level: string;
+  detail?: Record<string, unknown>;
+  at: string;
+}
+
+export interface IndexFactorCatalogEntry {
+  key: string;
+  label: string;
+  category: string;
+  source: string;
+  role: string;
+}
+
+export interface IndexFactorCatalogResponse {
+  status: string;
+  macro_and_technical?: IndexFactorCatalogEntry[];
+  bottom_up?: IndexFactorCatalogEntry[];
+  constituent_research?: IndexFactorCatalogEntry[];
+  constituent_market_data?: IndexFactorCatalogEntry[];
+  news_and_sentiment?: IndexFactorCatalogEntry[];
+  derivatives?: IndexFactorCatalogEntry[];
+  pipeline_modules?: IndexFactorCatalogEntry[];
+  model_layers?: IndexFactorCatalogEntry[];
+  total_macro_keys?: number;
+  message?: string;
+}
+
+export interface IndexPredictionResponse {
+  status: string;
+  ticker?: string;
+  artifact?: IndexPredictionArtifact | null;
+  message?: string;
+}
+
+export interface RunIndexPredictionRequest {
+  ticker?: string;
+  horizon_days?: number;
+  refresh_constituents?: boolean;
+}
+
+export interface SimulateIndexPredictionRequest {
+  ticker?: string;
+  horizon_days?: number;
+  factor_overrides?: Record<string, number>;
+  primary_factor?: string;
+  primary_shock_pct?: number;
+  cascade?: boolean;
+  event_preset_id?: string;
+}
+
+export interface SimulateIndexPredictionResponse {
+  status: string;
+  ticker?: string;
+  simulation?: IndexSimulationResult;
+  message?: string;
+}
+
+export interface PlaygroundTrigger {
+  id?: string;
+  title?: string;
+  label?: string;
+  source?: string;
+  kind?: string;
+  date?: string;
+  days_from_now?: number;
+  event_type?: string;
+  primary_factor?: string;
+  suggested_factors?: string[];
+  suggested_shock_pct?: number;
+  why?: string;
+  probability?: number | null;
+  event_preset_id?: string;
+  factor_shocks?: Record<string, number>;
+  keywords?: string[];
+}
+
+export interface PlaygroundRankedFactor {
+  factor?: string;
+  label?: string;
+  contribution_pct?: number;
+  value?: number;
+  share_of_macro?: number;
+}
+
+export interface IndexPlaygroundContext {
+  ticker?: string;
+  as_of?: string;
+  spot?: number;
+  horizon_days?: number;
+  headlines?: PlaygroundTrigger[];
+  events?: PlaygroundTrigger[];
+  ranked_factors?: PlaygroundRankedFactor[];
+  event_impact_curves?: Array<Record<string, unknown>>;
+  global_factors?: Record<string, number>;
+  baseline_return_pct?: number;
+  cascade_calibration?: CascadeCalibrationSummary;
+}
+
+export interface IndexPlaygroundContextResponse {
+  status: string;
+  ticker?: string;
+  context?: IndexPlaygroundContext;
+  message?: string;
+}
+
+export interface RefreshIndexPredictionRequest {
+  ticker?: string;
+  horizon_days?: number;
+  force?: boolean;
+}
+
+export interface IndexPredictionRefreshResponse {
+  status: string;
+  ticker?: string;
+  reason?: string;
+  artifact?: IndexPredictionArtifact | null;
+  message?: string;
+}
+
+export interface IndexPredictionHistoryRow {
+  predicted_at: string;
+  horizon_days: number;
+  spot_at_prediction: number;
+  expected_return_pct: number;
+  implied_level: number;
+  range_low: number;
+  range_high: number;
+  actual_return_pct?: number | null;
+  direction_correct?: boolean | null;
+  horizon_name?: string;
+  bottom_up_return_pct?: number | null;
+  macro_delta_pct?: number | null;
+  refresh?: string;
+}
+
+export interface IndexPredictionHistoryMeta {
+  unique_days?: number;
+  intraday_revisions?: number;
+  granularity?: string;
+  needs_more_days?: boolean;
+}
+
+export interface IndexPredictionHistoryResponse {
+  status: string;
+  ticker?: string;
+  rows?: IndexPredictionHistoryRow[];
+  daily?: IndexPredictionHistoryRow[];
+  intraday?: IndexPredictionHistoryRow[];
+  meta?: IndexPredictionHistoryMeta;
+  message?: string;
+}
+
+export interface IndexFactorHistoryPoint {
+  date: string;
+  factor?: string;
+  value?: number;
+  [key: string]: string | number | undefined;
+}
+
+export interface IndexFactorHistoryResponse {
+  status: string;
+  ticker?: string;
+  series?: IndexFactorHistoryPoint[];
+  factors?: string[];
+  coverage?: Record<string, number>;
+  coverage_notes?: string[];
+  message?: string;
+}
+
+export interface ConstituentHistoryPoint {
+  date: string;
+  sentiment_score?: number | null;
+  contribution_proxy_pct?: number | null;
+  return_7d_pct?: number | null;
+  close?: number | null;
+  source?: string;
+}
+
+export interface ConstituentHistoryResponse {
+  status: string;
+  symbol?: string;
+  days?: number;
+  snapshot_count?: number;
+  has_research_archive?: boolean;
+  points?: ConstituentHistoryPoint[];
+  message?: string;
+}
+
+export interface IndexPredictionSnapshot {
+  as_of?: string;
+  spot?: number;
+  expected_return_pct?: number;
+  bottom_up_return_pct?: number;
+  macro_delta_pct?: number;
+  view?: string;
+  constituent_count?: number;
+  path?: string;
+  horizon_days?: number;
+  range_low?: number;
+  range_high?: number;
+}
+
+export interface IndexPredictionSnapshotsResponse {
+  status: string;
+  ticker?: string;
+  snapshots?: IndexPredictionSnapshot[];
+  message?: string;
+}
+
+export interface IndexBacktestFactorAudit {
+  factor?: string;
+  label?: string;
+  rows_present?: number;
+  rows_total?: number;
+  coverage_pct?: number;
+  is_static?: boolean;
+  in_macro_keys?: boolean;
+}
+
+export interface IndexBacktestDailyEval {
+  date?: string;
+  spot?: number;
+  realized_1d_pct?: number;
+  predicted_return_pct?: number;
+  actual_forward_return_pct?: number;
+  error_pct?: number;
+  direction_correct?: boolean;
+  macro_delta_pct?: number;
+  factor_drivers?: Array<{
+    factor?: string;
+    label?: string;
+    prev?: number;
+    current?: number;
+    change_pct?: number;
+  }>;
+  calendar_events?: Array<{ type?: string; event?: string; description?: string }>;
+  implied_level?: number;
+}
+
+export interface IndexBacktestConstituentMover {
+  symbol?: string;
+  weight_pct?: number;
+  return_1d_pct?: number;
+  index_contribution_pct?: number;
+  headlines?: Array<{ title?: string; source?: string }>;
+}
+
+export interface IndexBacktestDrawdown {
+  date?: string;
+  spot?: number;
+  realized_1d_pct?: number;
+  factor_drivers?: Array<{
+    factor?: string;
+    label?: string;
+    prev?: number;
+    current?: number;
+    change_pct?: number;
+  }>;
+  calendar_events?: Array<{ type?: string; event?: string; description?: string }>;
+  constituent_movers?: IndexBacktestConstituentMover[];
+  worst_contributors?: IndexBacktestConstituentMover[];
+  causal_hypotheses?: CausalHypothesis[];
+  index_headlines?: Array<{ title?: string; source?: string }>;
+}
+
+export interface IndexBacktestReport {
+  status?: string;
+  as_of?: string;
+  ticker?: string;
+  horizon_days?: number;
+  history_start?: string;
+  history_end?: string;
+  history_rows?: number;
+  eval_count?: number;
+  metrics?: {
+    mae_pct?: number | null;
+    direction_hit_rate?: number | null;
+    in_sample_mae_pct?: number | null;
+    in_sample_r2?: number | null;
+    in_sample_direction_hit_rate?: number | null;
+  };
+  factor_audit?: IndexBacktestFactorAudit[];
+  factor_correlations?: Array<{ factor?: string; label?: string; corr_forward_return?: number }>;
+  major_drawdowns?: IndexBacktestDrawdown[];
+  nifty_series?: Array<{ date: string; close: number; realized_1d_pct?: number | null }>;
+  daily_evaluations?: IndexBacktestDailyEval[];
+  limitations?: string[];
+}
+
+export interface CausalHypothesis {
+  title?: string;
+  explanation?: string;
+  category?: string;
+  confidence?: number;
+  linked_factors?: string[];
+  evidence?: string[];
+  source?: string;
+}
+
+export interface IndexDayAttribution {
+  status?: string;
+  date?: string;
+  close?: number;
+  realized_1d_pct?: number | null;
+  factor_drivers?: Array<{
+    factor?: string;
+    label?: string;
+    prev?: number;
+    current?: number;
+    change_pct?: number;
+  }>;
+  calendar_events?: Array<{ type?: string; event?: string; description?: string }>;
+  narrative?: string[];
+  causal_hypotheses?: CausalHypothesis[];
+  index_headlines?: Array<{ title?: string; source?: string }>;
+  constituent_headlines?: Array<{ title?: string; source?: string; symbol?: string }>;
+}
+
+export interface DayAttributionResponse {
+  status: string;
+  date?: string;
+  attribution?: IndexDayAttribution;
+  message?: string;
+}
+
+export interface IndexPredictionJob {
+  id?: string;
+  label?: string;
+  description?: string;
+  schedule?: string;
+  status?: string;
+  paused?: boolean;
+  enabled?: boolean;
+  job_type?: string;
+  next_run_at?: number;
+  last_run_at?: number | null;
+}
+
+export interface IndexPredictionJobsResponse {
+  status: string;
+  env?: {
+    vibe_trading_enable_scheduler?: boolean;
+    index_research_enable_scheduler?: boolean;
+    index_monitor_enable_scheduler?: boolean;
+  };
+  master_scheduler_running?: boolean;
+  jobs?: IndexPredictionJob[];
+  job?: IndexPredictionJob | null;
+  message?: string;
+}
+
+export interface IndexBacktestResponse {
+  status: string;
+  ticker?: string;
+  report?: IndexBacktestReport | null;
+  message?: string;
 }
 
 export interface ProvenanceSource {
@@ -1032,6 +1918,16 @@ export interface HubPlanArtifact {
   recommended_legs?: TradePlanLeg[];
   max_profit?: number | null;
   max_loss?: number | null;
+  horizon?: { name?: string; days?: number };
+  regime?: Record<string, unknown>;
+  global_factors?: IndexGlobalFactor[];
+  sector_breadth?: Record<string, unknown>;
+  factor_explanation?: { contributors?: IndexFactorContributor[] };
+  factor_sensitivity?: Array<Record<string, unknown>>;
+  event_impact_curves?: Array<Record<string, unknown>>;
+  constituent_signals?: Array<Record<string, unknown>>;
+  top_factors?: IndexFactorContributor[];
+  accuracy?: Record<string, unknown>;
 }
 
 export interface HubPlanResponse {
@@ -1170,6 +2066,118 @@ export interface CommitMandateResponse {
   expires_at?: string;
 }
 
+export interface AutonomousAgentConstraints {
+  mode?: string;
+  budget_inr?: number;
+  max_daily_loss_inr?: number;
+  confidence_threshold?: number;
+  market_hours_only?: boolean;
+  max_open_positions?: number;
+}
+
+export interface AutonomousAgentMandateSummary {
+  holding_period?: string;
+  flatten_policy?: string;
+  product_type?: string;
+  revision_policy?: string;
+  confidence_threshold?: number;
+}
+
+export interface AutonomousAgentRuntime {
+  mandate_summary?: AutonomousAgentMandateSummary;
+  alert_rules_summary?: Record<string, unknown>;
+  scheduler_health?: "ok" | "stale" | "disabled" | "unknown";
+  market_open?: boolean;
+  nautilus_watch_enabled?: boolean;
+  nautilus_process_alive?: boolean;
+  handoff_active?: boolean;
+  paper_session_linked?: boolean;
+  last_decision?: Record<string, unknown> | null;
+  last_revision_at?: string | null;
+  last_bridge_alert_at?: string | null;
+  open_positions?: number | null;
+}
+
+export interface AutonomousStackHealth {
+  nautilus_watch_enabled?: boolean;
+  nautilus_process_alive?: boolean;
+  scheduler_health?: string;
+  market_open?: boolean;
+  paper_session_enabled?: boolean;
+}
+
+export interface AutonomousAgentSchedules {
+  watch_ms?: number;
+  research_ms?: number;
+}
+
+export interface AutonomousAgentThesis {
+  direction?: string;
+  strategy?: string;
+  confidence?: number;
+  rationale?: string;
+  updated_at?: string;
+}
+
+export interface AutonomousAgentInstance {
+  id: string;
+  type?: string;
+  name: string;
+  status: string;
+  vibe_session_id?: string;
+  symbols: string[];
+  mandate?: string;
+  mandate_config?: Record<string, unknown>;
+  constraints?: AutonomousAgentConstraints;
+  schedules?: AutonomousAgentSchedules;
+  alert_rules?: Record<string, unknown>;
+  thesis?: AutonomousAgentThesis;
+  last_watch_at?: string | null;
+  last_full_reasoning_at?: string | null;
+  last_revision_at?: string | null;
+  last_decision?: Record<string, unknown> | null;
+  streaming?: boolean;
+  runtime?: AutonomousAgentRuntime;
+  created_at?: string;
+}
+
+export interface AutonomousAgentProposal {
+  type: "autonomous_agent.proposal";
+  proposal_id: string;
+  status: string;
+  missing_fields?: string[];
+  symbols: string[];
+  name: string;
+  mandate?: string;
+  constraints?: AutonomousAgentConstraints;
+  schedules?: AutonomousAgentSchedules;
+  alert_rules?: Record<string, unknown>;
+  session_id?: string;
+  expires_at_ms?: number;
+}
+
+export interface AutonomousAgentsListResponse {
+  agents: AutonomousAgentInstance[];
+  stack_health?: AutonomousStackHealth;
+}
+
+export interface CommitAutonomousAgentRequest {
+  proposal_id: string;
+  consent_ack: boolean;
+  session_id?: string;
+}
+
+export interface CommitAutonomousAgentResponse {
+  status: string;
+  agent: AutonomousAgentInstance;
+  vibe_session_id: string;
+}
+
+export interface OrchestratorSessionResponse {
+  session_id: string;
+  title: string;
+}
+
 export interface HaltLiveResponse {
   halted: boolean;
   broker?: string | null;
@@ -1226,6 +2234,41 @@ export interface LiveBrokerAuthStatus {
   broker: string;
   oauth_token_present: boolean;
   is_live_broker: boolean;
+}
+
+/** Built-in trading connector profile (`GET /trading/connectors`). */
+export interface TradingConnectorProfile {
+  id: string;
+  connector: string;
+  label: string;
+  environment: string;
+  transport: string;
+  capabilities: string[];
+  readonly: boolean;
+  config: Record<string, unknown>;
+  notes: string;
+  selected: boolean;
+}
+
+export interface TradingConnectorsResponse {
+  selected_profile: string;
+  profiles: TradingConnectorProfile[];
+}
+
+export interface SelectTradingConnectorResponse {
+  status: string;
+  selected_profile: string;
+}
+
+export interface TradingConnectorCheckResponse {
+  status: string;
+  profile_id?: string;
+  connector?: string;
+  environment?: string;
+  transport?: string;
+  error?: string;
+  analyze_mode?: boolean;
+  [key: string]: unknown;
 }
 
 /** One broker entry in the `GET /live/status` response. */

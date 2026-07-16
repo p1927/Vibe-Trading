@@ -81,24 +81,123 @@ def _first_str(data: Any, *keys: str) -> str | None:
     return None
 
 
+_GENERIC_STATUS_VALUES = frozenset({"ok", "success", "completed", "done", "ready", "running"})
+_GENERIC_SUMMARIES = frozenset(
+    {
+        "data retrieved",
+        "hub plan loaded",
+        "evidence recorded",
+        "multi-agent bull/bear debate",
+    }
+)
+
+
+def is_meaningful_summary(summary: str) -> bool:
+    """True when summary conveys concrete information worth showing in the UI."""
+    text = (summary or "").strip()
+    if not text:
+        return False
+    lower = text.lower()
+    if lower in _GENERIC_SUMMARIES:
+        return False
+    if lower.startswith("status:"):
+        status_val = lower.split(":", 1)[1].strip()
+        if status_val in _GENERIC_STATUS_VALUES:
+            return False
+    # Require some substance: length, digits, or multiple clauses.
+    if len(text) >= 12:
+        return True
+    if any(ch.isdigit() for ch in text):
+        return True
+    if " · " in text or ", " in text or " @ " in text:
+        return True
+    return False
+
+
+def _nested_payload(data: dict[str, Any]) -> dict[str, Any] | None:
+    for key in ("browse_summary", "chain_snapshot", "data", "result", "response", "payload"):
+        nested = data.get(key)
+        if isinstance(nested, dict) and nested:
+            return nested
+    return None
+
+
+def _summarize_market_payload(data: dict[str, Any]) -> str | None:
+    symbol = _first_str(data, "symbol", "underlying", "ticker", "instrument")
+    spot = _first_str(data, "spot", "ltp", "last_price", "close", "underlying_ltp")
+    expiry = _first_str(data, "expiry", "expiry_date", "expiration")
+    atm = _first_str(data, "atm_strike")
+    pcr = data.get("pcr")
+    chain = data.get("chain") or data.get("strikes")
+    chain_rows = data.get("chain_rows")
+    expiries = data.get("expiries")
+
+    if symbol and spot:
+        parts = [f"{symbol} @ {spot}"]
+        if expiry:
+            parts.append(f"exp {expiry}")
+        if atm:
+            parts.append(f"ATM {atm}")
+        if pcr is not None:
+            parts.append(f"PCR {pcr}")
+        if isinstance(chain, list) and chain:
+            parts.append(f"{len(chain)} strikes")
+        elif chain_rows is not None:
+            parts.append(f"{chain_rows} strikes")
+        elif isinstance(expiries, list) and expiries:
+            parts.append(f"{len(expiries)} expiries")
+        return " · ".join(parts)[:180]
+
+    if symbol:
+        parts = [symbol]
+        if expiry:
+            parts.append(f"exp {expiry}")
+        if isinstance(chain, list) and chain:
+            parts.append(f"{len(chain)} strikes")
+        return " · ".join(parts)[:180]
+
+    bid = _first_str(data, "bid", "best_bid")
+    ask = _first_str(data, "ask", "best_ask")
+    if symbol and (bid or ask):
+        parts = [symbol]
+        if bid and ask:
+            parts.append(f"bid {bid} / ask {ask}")
+        return " · ".join(parts)[:180]
+
+    return None
+
+
 def _summarize_parsed(tool: str, data: Any, raw: str) -> str:
     if isinstance(data, dict):
         if data.get("error"):
             return f"Error: {str(data['error'])[:120]}"
-        if data.get("message") and len(data) <= 3:
-            return str(data["message"])[:160]
 
-        symbol = _first_str(data, "symbol", "underlying", "ticker", "instrument")
-        spot = _first_str(data, "spot", "ltp", "last_price", "close")
-        expiry = _first_str(data, "expiry", "expiry_date", "expiration")
-        strikes = data.get("strikes") or data.get("chain")
-        if symbol and spot:
-            parts = [f"{symbol} @ {spot}"]
-            if expiry:
-                parts.append(f"exp {expiry}")
-            if isinstance(strikes, list):
-                parts.append(f"{len(strikes)} strikes")
-            return " · ".join(parts)[:180]
+        nested = _nested_payload(data)
+        if nested:
+            market = _summarize_market_payload(nested)
+            if market:
+                return market
+            inner_summary = _summarize_parsed(tool, nested, raw)
+            if is_meaningful_summary(inner_summary):
+                return inner_summary
+
+        markdown = data.get("markdown")
+        if isinstance(markdown, str) and markdown.strip():
+            for line in markdown.splitlines():
+                cleaned = line.strip().lstrip("#").strip()
+                if cleaned and not cleaned.startswith("|") and not cleaned.startswith("-"):
+                    if cleaned.startswith("_") and cleaned.endswith("_"):
+                        continue
+                    return cleaned[:180]
+
+        market = _summarize_market_payload(data)
+        if market:
+            return market
+
+        if data.get("message") and len(data) <= 3:
+            message = str(data["message"])[:160]
+            if is_meaningful_summary(message):
+                return message
 
         strategies = data.get("ranked_strategies") or data.get("strategies")
         if isinstance(strategies, list) and strategies:
@@ -134,15 +233,14 @@ def _summarize_parsed(tool: str, data: Any, raw: str) -> str:
         if isinstance(results, list) and results:
             return f"{len(results)} results"[:180]
 
-        status = _first_str(data, "status")
-        if status:
-            return f"Status: {status}"[:180]
-
-    if isinstance(data, list):
+    if isinstance(data, list) and data:
         return f"{len(data)} items"[:180]
 
     cleaned = re.sub(r"\s+", " ", raw).strip()
-    return cleaned[:160] if cleaned else "Data retrieved"
+    if cleaned and is_meaningful_summary(cleaned[:160]):
+        return cleaned[:160]
+
+    return ""
 
 
 def summarize_tool_result(tool: str, raw: str, *, status: str = "ok") -> tuple[str, str, str]:
@@ -175,7 +273,8 @@ def summarize_hub_artifact(ticker: str, artifact: dict[str, Any]) -> tuple[str, 
     if rec:
         parts.append(f"pick: {rec}")
     if not parts:
-        parts.append(str(artifact.get("plan_status") or "Hub plan loaded"))
+        fallback = str(artifact.get("plan_status") or "").strip()
+        return display, fallback if is_meaningful_summary(fallback) else ""
     return display, " · ".join(parts)[:180]
 
 
@@ -184,7 +283,9 @@ def summarize_goal_evidence(evidence: dict[str, Any]) -> tuple[str, str]:
     provider = str(evidence.get("source_provider") or "research").strip()
     text = str(evidence.get("text") or "").strip()
     display = provider.replace("_", " ").title()
-    summary = text[:180] if text else "Evidence recorded"
+    summary = text[:180] if text else ""
+    if not is_meaningful_summary(summary):
+        summary = ""
     return display, summary
 
 
@@ -198,4 +299,4 @@ def summarize_debate_artifact(ticker: str, debate: dict[str, Any]) -> tuple[str,
         return display, verdict[:180]
     if bull and bear:
         return display, f"Bull vs bear — {bull[:60]}… / {bear[:60]}…"[:180]
-    return display, "Multi-agent bull/bear debate"
+    return display, ""

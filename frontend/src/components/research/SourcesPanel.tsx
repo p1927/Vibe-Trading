@@ -1,6 +1,8 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useMemo } from "react";
+import { SourceContentView } from "@/components/research/SourceContentView";
 import { cn } from "@/lib/utils";
+import { resolveSourceSummary } from "@/lib/sourceSummary";
 import type { ProvenanceSource } from "@/lib/api";
 import { useProvenanceStore } from "@/stores/provenance";
 
@@ -73,15 +75,17 @@ function SourceRow({ source }: { source: ProvenanceSource }) {
   const expanded = expandedRefIds.has(source.ref_id);
   const focused = focusedRefId === source.ref_id;
   const meta = formatMeta(source.provider, source.retrieved_at, source.freshness_status);
+  const summary = resolveSourceSummary(source);
 
   return (
-    <li id={`source-row-${source.ref_id}`}>
+    <li id={`source-row-${source.ref_id}`} className="rounded-md border border-transparent hover:border-border/40">
       <button
         type="button"
         onClick={() => toggleExpanded(source.ref_id)}
         className={cn(
-          "flex w-full items-start gap-1.5 rounded-md px-2 py-2 text-left text-[11px] transition hover:bg-muted/40",
+          "flex w-full items-start gap-1.5 rounded-t-md px-2 py-2 text-left text-[11px] transition hover:bg-muted/40",
           focused && "bg-muted/50",
+          !expanded && "rounded-b-md",
         )}
       >
         {expanded ? (
@@ -91,17 +95,25 @@ function SourceRow({ source }: { source: ProvenanceSource }) {
         )}
         <span className="min-w-0 flex-1">
           <span className="block font-medium text-foreground">{source.display_name}</span>
-          <span className="block text-muted-foreground">{source.summary}</span>
           {meta && (
             <span className="mt-0.5 block text-[10px] text-muted-foreground/70">{meta}</span>
           )}
         </span>
       </button>
 
+      {summary && (
+        <div className="border-t border-border/30 bg-muted/15 px-3 py-2">
+          <div className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            What this tells you
+          </div>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-foreground">{summary}</p>
+        </div>
+      )}
+
       {expanded && source.raw_data && (
-        <pre className="mx-2 mb-2 max-h-64 overflow-auto rounded border bg-muted/20 p-2 text-[10px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words">
-          {source.raw_data}
-        </pre>
+        <div className="border-t border-border/30">
+          <SourceContentView raw={source.raw_data} source={source} />
+        </div>
       )}
     </li>
   );

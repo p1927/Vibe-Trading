@@ -77,6 +77,14 @@ async def _dispatch_scheduled_research_job(job) -> None:
     if job_type in AUTO_PAPER_JOB_TYPES:
         await dispatch_auto_paper_job(job)
         return
+    from src.scheduled_research.autonomous_agent_jobs import (
+        AUTONOMOUS_JOB_TYPES,
+        dispatch_autonomous_job,
+    )
+
+    if job_type in AUTONOMOUS_JOB_TYPES:
+        await dispatch_autonomous_job(job)
+        return
 
     host = _sys.modules.get("api_server") or _sys.modules.get("agent.api_server")
     svc = host._get_session_service()
@@ -109,6 +117,25 @@ def _get_scheduled_research_executor():
     return _scheduled_research_executor
 
 
+def _register_persisted_autonomous_agent_jobs() -> None:
+    """Re-register scheduler jobs for running autonomous agents after API restart."""
+    try:
+        from pathlib import Path
+
+        trade_root = Path(__file__).resolve().parents[4]
+        integrations = trade_root / "integrations"
+        if integrations.is_dir() and str(integrations) not in _sys.path:
+            _sys.path.insert(0, str(integrations))
+        from trade_integrations.autonomous_agents.store import list_agents
+        from src.scheduled_research.autonomous_agent_jobs import register_agent_jobs
+
+        for agent in list_agents():
+            if str(agent.get("status")) == "running":
+                register_agent_jobs(agent)
+    except Exception:
+        logger.exception("failed to register persisted autonomous agent jobs")
+
+
 def _start_scheduled_research_executor() -> None:
     """Start scheduled research execution when explicitly enabled."""
     from src.scheduled_research.index_jobs import (
@@ -130,6 +157,7 @@ def _start_scheduled_research_executor() -> None:
         register_default_options_jobs(_get_scheduled_research_store())
     if is_auto_paper_scheduler_enabled():
         register_default_auto_paper_job(_get_scheduled_research_store())
+    _register_persisted_autonomous_agent_jobs()
     if not _scheduled_research_scheduler_enabled():
         return
     _get_scheduled_research_executor().start()

@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { useAgentStore } from "@/stores/agent";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useSSE } from "@/hooks/useSSE";
-import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource } from "@/lib/api";
+import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource, type AutonomousAgentProposal } from "@/lib/api";
 import { isReportWorthyRun } from "@/lib/runReports";
 import type { AgentMessage, ToolCallEntry } from "@/types/agent";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
@@ -16,6 +16,7 @@ import { ThinkingTimeline } from "@/components/chat/ThinkingTimeline";
 import { ConversationTimeline } from "@/components/chat/ConversationTimeline";
 import { ToolProgressIndicator } from "@/components/chat/ToolProgressIndicator";
 import { MandateProposalCard } from "@/components/chat/MandateProposalCard";
+import { AutonomousAgentProposalCard } from "@/components/autonomous/AutonomousAgentProposalCard";
 import { TradePlanWidgetCard } from "@/components/chat/TradePlanWidgetCard";
 import { ContextDrawer } from "@/components/research/ContextDrawer";
 import {
@@ -85,7 +86,12 @@ interface TradePlanWidgetItem {
   timestamp: number;
   widget: TradePlanWidget;
 }
-type LiveItem = ProposalItem | LiveActionItem | TradePlanWidgetItem;
+interface AutonomousProposalItem {
+  kind: "autonomous_proposal";
+  timestamp: number;
+  proposal: AutonomousAgentProposal;
+}
+type LiveItem = ProposalItem | LiveActionItem | TradePlanWidgetItem | AutonomousProposalItem;
 
 function normalizeBrokerScope(broker: string | null | undefined): string | null {
   const normalized = broker?.trim().toLowerCase();
@@ -223,7 +229,13 @@ function goalContinuePrompt(snapshot: GoalSnapshot): string {
 }
 
 /* ---------- Component ---------- */
-export function Agent() {
+interface AgentProps {
+  embedded?: boolean;
+  backToAutonomous?: () => void;
+  onAutonomousAgentCommitted?: (agentId: string, sessionId: string) => void;
+}
+
+export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous, onAutonomousAgentCommitted }: AgentProps = {}) {
   const { t } = useTranslation();
   const [input, setInput] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
@@ -258,6 +270,7 @@ export function Agent() {
   /* Connector runtime channel state (SPEC Consent §1/§4/§5) */
   const [liveItems, setLiveItems] = useState<LiveItem[]>([]);
   const [committedMandates, setCommittedMandates] = useState<Record<string, MandateCommitted>>({});
+  const [committedAutonomous, setCommittedAutonomous] = useState<Record<string, { agent_id?: string; name?: string }>>({});
   const [liveHalted, setLiveHalted] = useState<LiveHalted | null>(null);
   const [halting, setHalting] = useState(false);
   /* Bumped to force an immediate live-status re-poll on a live event
@@ -291,6 +304,8 @@ export function Agent() {
   const { connect, disconnect, onStatusChange } = useSSE();
 
   const urlSessionId = searchParams.get("session");
+  const autoPaperMode = searchParams.get("auto_paper");
+  const autoPaperBootstrappedRef = useRef(false);
 
   /* Smart scroll — only auto-scroll when near bottom */
   const isNearBottom = useCallback(() => {
@@ -734,16 +749,41 @@ export function Agent() {
         scrollToBottom();
       },
 
+      "autonomous_agent.proposal": (d) => {
+        touch();
+        const proposal = d as unknown as AutonomousAgentProposal;
+        if (!proposal.proposal_id || proposal.status !== "ready") return;
+        setLiveItems((items) => [...items, { kind: "autonomous_proposal", timestamp: Date.now(), proposal }]);
+        scrollToBottom();
+      },
+
       "trade_plan.widget": (d) => {
         touch();
         const widget = d as unknown as TradePlanWidget;
         if (!widget.widget_id || widget.type !== "trade_plan.widget") return;
         setResearchTicker(widget.underlying);
-        setResearchAssetType(widget.asset_type === "stock" ? "stock" : "options");
-        setLiveItems((items) => [
-          ...items,
-          { kind: "trade_plan_widget", timestamp: Date.now(), widget },
-        ]);
+        setResearchAssetType(
+          widget.asset_type === "stock"
+            ? "stock"
+            : widget.asset_type === "index"
+              ? "index"
+              : "options",
+        );
+        setLiveItems((items) => {
+          if (
+            items.some(
+              (item) =>
+                item.kind === "trade_plan_widget" &&
+                item.widget.widget_id === widget.widget_id,
+            )
+          ) {
+            return items;
+          }
+          return [
+            ...items,
+            { kind: "trade_plan_widget", timestamp: Date.now(), widget },
+          ];
+        });
         scrollToBottom();
       },
 
@@ -914,6 +954,38 @@ export function Agent() {
       reset();
     }
   }, [urlSessionId, doDisconnect, loadSessionMessages, setupSSE, forceScrollToBottom]);
+
+  useEffect(() => {
+    if (!autoPaperMode || autoPaperBootstrappedRef.current) return;
+    autoPaperBootstrappedRef.current = true;
+
+    const run = async () => {
+      try {
+        const result =
+          autoPaperMode === "resume"
+            ? await api.resumeAutoPaper({ dispatch: true, fresh_session: true })
+            : await api.bootstrapAutoPaper({
+                ticker: "NIFTY",
+                dispatch: true,
+                fresh_session: autoPaperMode === "fresh",
+              });
+        const sid = result.vibe_session_id;
+        if (!sid) {
+          toast.error(t("agent.failedToSend"));
+          return;
+        }
+        setSearchParams({ session: sid }, { replace: true });
+        toast.success(
+          autoPaperMode === "resume"
+            ? "Paper session resumed — agent turn started"
+            : "Paper session started in chat",
+        );
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : t("agent.failedToSend"));
+      }
+    };
+    void run();
+  }, [autoPaperMode, setSearchParams, t]);
 
   /* Single shared poller for `GET /live/status`. RunnerStatus consumes this snapshot
    * as a prop rather than polling independently, and the global kill switch reads it
@@ -1281,6 +1353,8 @@ export function Agent() {
     for (const item of liveItems) {
       const key = item.kind === "proposal"
         ? `lp_${item.proposal.proposal_id}`
+        : item.kind === "autonomous_proposal"
+          ? `ap_${item.proposal.proposal_id}`
         : item.kind === "trade_plan_widget"
           ? `tw_${item.widget.widget_id}`
           : `la_${item.action.audit_id || item.timestamp}`;
@@ -1336,6 +1410,24 @@ export function Agent() {
                     proposal={row.item.proposal}
                     committed={committedMandates[row.item.proposal.proposal_id] ?? null}
                     onAdjust={runPrompt}
+                  />
+                );
+              }
+              if (row.item.kind === "autonomous_proposal") {
+                const ap = row.item;
+                return (
+                  <AutonomousAgentProposalCard
+                    key={row.key}
+                    proposal={ap.proposal}
+                    committed={committedAutonomous[ap.proposal.proposal_id] ?? null}
+                    onAdjust={runPrompt}
+                    onCommitted={(agentId, sessionId) => {
+                      setCommittedAutonomous((prev) => ({
+                        ...prev,
+                        [ap.proposal.proposal_id]: { agent_id: agentId, name: ap.proposal.name },
+                      }));
+                      onAutonomousAgentCommitted?.(agentId, sessionId);
+                    }}
                   />
                 );
               }
