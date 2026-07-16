@@ -435,6 +435,8 @@ run from a clone (`pip install -e .`).
 | `global_allocation_committee` | A-shares + crypto + HK/US → cross-market allocation |
 
 <sub>Plus 20+ additional specialist presets — run vibe-trading --swarm-presets to explore all.
+Bring your own: drop preset YAMLs into <code>~/.vibe-trading/swarm/presets/</code> — they are listed
+alongside the bundled roster (same-name files override it, like user skills) and survive upgrades.
 
 </sub>
 
