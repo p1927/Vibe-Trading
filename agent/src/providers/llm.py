@@ -17,7 +17,6 @@ from src.config.accessor import get_env_config, reset_env_config
 from src.providers.capabilities import (
     get_llm_credentials,
     get_provider_capabilities,
-    provider_env_names,
 )
 
 try:
@@ -429,15 +428,9 @@ def _build_native_deepseek(
         )
         return None
 
-    key_env, base_env = provider_env_names("deepseek", model)
-    api_key = os.getenv(key_env or "", "") or os.getenv(
-        "OPENAI_API_KEY", ""
-    )  # noqa: env-gate — dynamic provider key resolution
-    base_url = (
-        os.getenv(base_env, "")
-        or os.getenv("OPENAI_BASE_URL", "")
-        or os.getenv("OPENAI_API_BASE", "")
-    )  # noqa: env-gate — dynamic provider URL resolution
+    creds = get_llm_credentials("deepseek", model)
+    api_key = creds["api_key"]
+    base_url = creds["base_url"]
     return chat_deepseek(
         model=model,
         temperature=temperature,
