@@ -30,12 +30,15 @@ JOB_TYPE_INDEX_PLAN_REFRESH = "index_plan_refresh"
 JOB_TYPE_INDEX_CALIBRATION = "index_calibration"
 JOB_TYPE_COMPANY_RESEARCH_ARCHIVE = "company_research_archive"
 
+JOB_TYPE_INDEX_PREDICTION_POST_CLOSE = "index_prediction_post_close"
+
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
     JOB_TYPE_INDEX_RESEARCH,
     JOB_TYPE_INDEX_PLAN_REFRESH,
     JOB_TYPE_INDEX_CALIBRATION,
     JOB_TYPE_COMPANY_RESEARCH_ARCHIVE,
+    JOB_TYPE_INDEX_PREDICTION_POST_CLOSE,
 })
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -167,6 +170,36 @@ def run_company_research_archive_job(config: dict[str, Any] | None = None) -> di
     return archive_company_research_snapshots(as_of_date=as_of_date)
 
 
+def run_index_prediction_post_close_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Post-close: enrich flows, backtest, counterfactual, data audit."""
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.dataflows.index_research.factor_backfill_enrichment import enrich_factor_history
+    from trade_integrations.dataflows.index_research.hub_data_audit import run_and_save_data_audit
+    from trade_integrations.dataflows.index_research.backtest_runner import run_and_save_backtest
+    from trade_integrations.dataflows.index_research.nse_browser_refresh import refresh_nse_browser_for_prediction
+    from trade_integrations.dataflows.index_research.prediction_counterfactual import run_and_save_counterfactual
+
+    cfg = config or {}
+    days = int(cfg.get("days") or 365)
+    horizon_days = int(cfg.get("horizon_days") or 14)
+    nse_browser = refresh_nse_browser_for_prediction(
+        days=days,
+        refresh=bool(cfg.get("refresh_nse_browser", True)),
+        refresh_cookies=bool(cfg.get("refresh_cookies", False)),
+    )
+    return {
+        "nse_browser": nse_browser,
+        "factor_enrichment": enrich_factor_history(days=days),
+        "backtest": run_and_save_backtest(
+            days=days,
+            horizon_days=horizon_days,
+            include_bottom_up=bool(cfg.get("include_bottom_up")),
+        ),
+        "counterfactual": run_and_save_counterfactual(days=days, horizon_days=horizon_days),
+        "data_audit": run_and_save_data_audit(days=days, horizon_days=horizon_days),
+    }
+
+
 def run_index_calibration_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Reconcile ledger, update accuracy, retrain macro model on drift."""
     _ensure_trade_integrations_on_path()
@@ -201,6 +234,10 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
     if job_type == JOB_TYPE_COMPANY_RESEARCH_ARCHIVE:
         summary = run_company_research_archive_job(job.config)
         logger.info("company research archive completed for job %s: %s", job.id, summary)
+        return
+    if job_type == JOB_TYPE_INDEX_PREDICTION_POST_CLOSE:
+        summary = run_index_prediction_post_close_job(job.config)
+        logger.info("index prediction post-close completed for job %s: %s", job.id, summary)
         return
     raise ValueError(f"unsupported index job_type: {job_type!r}")
 
@@ -272,6 +309,21 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             status=JobStatus.PENDING,
             created_at=now_ms,
             config={"job_type": JOB_TYPE_COMPANY_RESEARCH_ARCHIVE, "ticker": "NIFTY"},
+        ),
+        ScheduledResearchJob(
+            id="nifty-index-prediction-post-close",
+            prompt="Weekly post-close prediction pipeline refresh (flows, backtest, counterfactual)",
+            schedule="0 4 * * 6",
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_INDEX_PREDICTION_POST_CLOSE,
+                "ticker": "NIFTY",
+                "days": 365,
+                "horizon_days": 14,
+                "include_bottom_up": True,
+            },
         ),
     ]
 

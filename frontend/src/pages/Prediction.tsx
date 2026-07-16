@@ -26,6 +26,8 @@ import { NewsTriggerPanel } from "@/components/prediction/NewsTriggerPanel";
 import { NewsImpactPanel } from "@/components/prediction/NewsImpactPanel";
 import { PredictionVerificationPanel } from "@/components/prediction/PredictionVerificationPanel";
 import { PredictionSectionHeader } from "@/components/prediction/PredictionSectionHeader";
+import { TechnicalContextStrip } from "@/components/prediction/TechnicalContextStrip";
+import { QuantReviewPanel } from "@/components/prediction/QuantReviewPanel";
 import { useIndexPrediction } from "@/hooks/useIndexPrediction";
 import { useIndexPredictionLive } from "@/hooks/useIndexPredictionLive";
 import {
@@ -325,6 +327,14 @@ export function Prediction() {
               />
               <PredictionSummary artifact={artifact} flashReturn={flashReturn} horizonDays={horizonDays} />
 
+              <TechnicalContextStrip
+                interpretation={
+                  (artifact.prediction as { interpretation?: Record<string, unknown> } | undefined)
+                    ?.interpretation as Parameters<typeof TechnicalContextStrip>[0]["interpretation"]
+                }
+                horizonDays={horizonDays}
+              />
+
               <div className="space-y-3">
                 <PredictionSectionHeader
                   title="Where Nifty is heading"
@@ -531,6 +541,15 @@ export function Prediction() {
                 highlightDate={missHighlightDate}
                 onRefresh={() => void loadMissAnalysis(true)}
               />
+            </section>
+
+            <section className="space-y-3">
+              <PredictionSectionHeader
+                title="Quant review"
+                subtitle="Rule-based second opinion from playbooks + live TA — labeled separately from the Ridge headline."
+                modelRole="verify"
+              />
+              <QuantReviewPanel ticker="NIFTY" horizonDays={horizonDays} />
             </section>
 
             <PredictionLearningPanel artifact={artifact} history={dailyHistory} />
