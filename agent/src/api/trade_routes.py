@@ -589,6 +589,13 @@ class IndexPlaygroundContextResponse(BaseModel):
     message: str = ""
 
 
+class IndexNewsImpactResponse(BaseModel):
+    status: str
+    ticker: str = ""
+    report: Dict[str, Any] | None = None
+    message: str = ""
+
+
 @trade_router.get("/index-prediction", response_model=IndexPredictionResponse)
 def get_index_prediction(
     ticker: str = "NIFTY",
@@ -942,6 +949,58 @@ def get_index_prediction_counterfactual(
         return IndexCounterfactualResponse(status=status, ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction counterfactual failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/index-prediction/news-impact", response_model=IndexNewsImpactResponse)
+def get_index_prediction_news_impact(
+    ticker: str = "NIFTY",
+    refresh: bool = False,
+    horizon_days: int = 14,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexNewsImpactResponse:
+    """Verified news → Nifty impact snapshot (summarized + data-checked headlines)."""
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from trade_integrations.context.hub import load_index_research_json
+        from trade_integrations.dataflows.index_research.news_impact_engine import (
+            build_news_impact_snapshot,
+            load_news_impact_snapshot,
+            save_news_impact_snapshot,
+        )
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        if refresh:
+            doc = load_index_research_json(key)
+            spot = float((doc or {}).get("spot") or 0) if isinstance(doc, dict) else float(getattr(doc, "spot", 0) or 0)
+            macro = {}
+            gf = (doc or {}).get("global_factors") if isinstance(doc, dict) else getattr(doc, "global_factors", None)
+            for row in gf or []:
+                if row.get("factor") is not None and row.get("value") is not None:
+                    macro[str(row["factor"])] = float(row["value"])
+            report = build_news_impact_snapshot(
+                ticker=key,
+                horizon_days=horizon_days,
+                spot=spot,
+                macro_factors=macro,
+            )
+            save_news_impact_snapshot(report, ticker=key)
+        else:
+            report = load_news_impact_snapshot(key)
+            if report is None:
+                cached = load_index_research_json(key)
+                if cached and getattr(cached, "news_impact", None):
+                    report = cached.news_impact
+                elif isinstance(cached, dict) and cached.get("news_impact"):
+                    report = cached["news_impact"]
+            if report is None:
+                report = build_news_impact_snapshot(ticker=key, horizon_days=horizon_days)
+                save_news_impact_snapshot(report, ticker=key)
+        status = str((report or {}).get("status") or "ok")
+        return IndexNewsImpactResponse(status=status, ticker=key, report=report)
+    except Exception as exc:
+        logger.exception("index-prediction news-impact failed for %s", key)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

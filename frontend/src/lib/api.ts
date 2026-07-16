@@ -566,6 +566,14 @@ export const api = {
     });
     return request<IndexCounterfactualResponse>(`/trade/index-prediction/counterfactual?${params}`);
   },
+  getIndexPredictionNewsImpact: (ticker = "NIFTY", refresh = false, horizonDays = 14) => {
+    const params = new URLSearchParams({
+      ticker,
+      refresh: String(refresh),
+      horizon_days: String(horizonDays),
+    });
+    return request<IndexNewsImpactResponse>(`/trade/index-prediction/news-impact?${params}`);
+  },
   getIndexPredictionJobs: () =>
     request<IndexPredictionJobsResponse>("/trade/index-prediction/jobs"),
   pauseIndexPredictionJob: (jobId: string) =>
@@ -1933,6 +1941,78 @@ export interface IndexBacktestResponse {
   status: string;
   ticker?: string;
   report?: IndexBacktestReport | null;
+  message?: string;
+}
+
+export interface NewsImpactVerificationClaim {
+  claim?: string;
+  factor?: string;
+  verdict?: string;
+  evidence?: string;
+  data_as_of?: string;
+}
+
+export interface NewsImpactItem {
+  id?: string;
+  published_at?: string;
+  title?: string;
+  raw_headline?: string;
+  url?: string;
+  source?: string;
+  content_summary?: string;
+  structured_summary?: {
+    facts?: string[];
+    entities?: string[];
+    implied_factors?: string[];
+  };
+  verification?: {
+    status?: string;
+    verified_at?: string;
+    claims?: NewsImpactVerificationClaim[];
+    approval_note?: string;
+  };
+  status?: string;
+  tagged_factors?: Array<{ factor?: string; confidence?: number; method?: string }>;
+  horizon_trading_days?: number;
+  maturity_date?: string | null;
+  predicted?: {
+    return_pct?: number;
+    nifty_points?: number;
+    model?: string;
+  };
+  actual?: {
+    return_pct?: number;
+    nifty_points?: number;
+    attribution_share_pct?: number;
+  } | null;
+  timeline?: Array<{ day?: number; label?: string; nifty_level?: number }>;
+  confidence_note?: string;
+}
+
+export interface IndexNewsImpactReport {
+  status?: string;
+  as_of?: string;
+  ticker?: string;
+  horizon_days?: number;
+  spot?: number;
+  debate_summary?: {
+    view?: string;
+    confidence?: number;
+    excerpt?: string;
+  } | null;
+  items?: NewsImpactItem[];
+  summary?: {
+    live_count?: number;
+    approved_count?: number;
+    partial_count?: number;
+    rejected_skipped?: number;
+  };
+}
+
+export interface IndexNewsImpactResponse {
+  status: string;
+  ticker?: string;
+  report?: IndexNewsImpactReport | null;
   message?: string;
 }
 

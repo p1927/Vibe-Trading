@@ -22,6 +22,7 @@ import { PredictionPipelinePanel } from "@/components/prediction/PredictionPipel
 import { DerivativesFactorsPanel } from "@/components/prediction/DerivativesFactorsPanel";
 import { PredictionScheduledJobsPanel } from "@/components/prediction/PredictionScheduledJobsPanel";
 import { NewsTriggerPanel } from "@/components/prediction/NewsTriggerPanel";
+import { NewsImpactPanel } from "@/components/prediction/NewsImpactPanel";
 import { PredictionVerificationPanel } from "@/components/prediction/PredictionVerificationPanel";
 import { PredictionSectionHeader } from "@/components/prediction/PredictionSectionHeader";
 import { useIndexPrediction } from "@/hooks/useIndexPrediction";
@@ -454,6 +455,19 @@ export function Prediction() {
                 artifact={artifact}
                 horizonDays={horizonDays}
                 factorHistory={factorHistory}
+              />
+            </section>
+
+            <section id="news-impact" className="space-y-3">
+              <PredictionSectionHeader
+                title="News → Nifty impact"
+                subtitle="Summarized headlines verified against factor data — predicted vs actual Nifty points; rejected clickbait hidden."
+                modelRole="display"
+              />
+              <NewsImpactPanel
+                horizonDays={horizonDays}
+                pollMs={pollMs}
+                monitorEnabled={pollMs > 0}
               />
             </section>
 
