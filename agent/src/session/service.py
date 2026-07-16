@@ -278,6 +278,14 @@ class SessionService:
             )
             if attempt.status == AttemptStatus.COMPLETED:
                 await asyncio.to_thread(
+                    self._maybe_orchestrator_auto_propose,
+                    session.session_id,
+                    attempt.prompt,
+                    attempt.summary or "",
+                    result.get("tools_called") or [],
+                    dict(session.config),
+                )
+                await asyncio.to_thread(
                     self._maybe_widget_guard,
                     session.session_id,
                     attempt.prompt,
@@ -401,6 +409,44 @@ class SessionService:
 
         result["tools_called"] = sorted(tools_called)
         return result
+
+    def _maybe_orchestrator_auto_propose(
+        self,
+        session_id: str,
+        user_message: str,
+        assistant_text: str,
+        tools_called: set[str] | list[str],
+        session_config: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        from src.session.orchestrator_profile import is_orchestrator_session
+
+        if not is_orchestrator_session(session_config):
+            return
+        try:
+            import sys
+            from pathlib import Path
+
+            trade_root = Path(__file__).resolve().parents[4]
+            integrations = trade_root / "integrations"
+            if integrations.is_dir() and str(integrations) not in sys.path:
+                sys.path.insert(0, str(integrations))
+            from trade_integrations.autonomous_agents.orchestrator_intent import (
+                maybe_auto_propose_after_orchestrator_turn,
+            )
+
+            result = maybe_auto_propose_after_orchestrator_turn(
+                orchestrator_session_id=session_id,
+                user_message=user_message,
+                assistant_text=assistant_text,
+                tools_called=tools_called,
+            )
+            proposal = (result or {}).get("proposal")
+            if isinstance(proposal, dict) and proposal.get("status") == "ready":
+                self.event_bus.emit(session_id, "autonomous_agent.proposal", proposal)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Orchestrator auto-propose fallback failed")
 
     def _maybe_widget_guard(
         self,
