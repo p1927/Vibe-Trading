@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _debate_running: set[str] = set()
+
+session_widget_emitted: dict[str, dict[str, float]] = {}
+WIDGET_EMIT_DEDUP_SECONDS = 10 * 60
 
 
 def trade_repo_root() -> Path | None:
@@ -52,6 +56,50 @@ def ensure_trade_stack_path() -> Path:
     if os.getenv("TRADE_INTEGRATIONS_SKIP_APPLY") != "1":
         import trade_integrations  # noqa: F401
     return root
+
+
+def _options_auto_widget_enabled() -> bool:
+    val = os.getenv("OPTIONS_AUTO_WIDGET_ON_PREFETCH", "true").strip().lower()
+    return val not in ("0", "false", "no", "off")
+
+
+def _should_emit_widget(session_id: str, ticker: str, now: float) -> bool:
+    if not session_id:
+        return False
+    key = ticker.strip().upper()
+    session_emits = session_widget_emitted.get(session_id, {})
+    last = session_emits.get(key)
+    if last is not None and (now - last) < WIDGET_EMIT_DEDUP_SECONDS:
+        return False
+    return True
+
+
+def _record_widget_emitted(session_id: str, ticker: str, now: float) -> None:
+    if not session_id:
+        return
+    key = ticker.strip().upper()
+    session_widget_emitted.setdefault(session_id, {})[key] = now
+
+
+def _maybe_emit_options_widget(
+    event_bus: EventBus | None,
+    session_id: str,
+    ticker: str,
+) -> None:
+    now = time.time()
+    if not _should_emit_widget(session_id, ticker, now):
+        return
+    try:
+        ensure_trade_stack_path()
+        from trade_integrations.dataflows.options_research.widget_payload import (
+            build_options_trade_widget,
+        )
+
+        widget = build_options_trade_widget(ticker, refresh=False)
+        _emit(event_bus, session_id, "trade_plan.widget", widget)
+        _record_widget_emitted(session_id, ticker, now)
+    except Exception:
+        logger.exception("Failed to auto-emit options widget for %s", ticker)
 
 
 def _emit(event_bus: EventBus | None, session_id: str, event_type: str, data: dict[str, Any]) -> None:
@@ -310,6 +358,12 @@ def prefetch_research_for_message(
                 "research.artifact",
                 {"ticker": ticker, "asset_type": asset_type, "artifact": artifact},
             )
+            if (
+                asset_type == "options"
+                and artifact.get("plan_status") in ("ready", "partial")
+                and _options_auto_widget_enabled()
+            ):
+                _maybe_emit_options_widget(event_bus, session_id, ticker)
     except Exception:
         logger.exception("Hub prefetch failed for %s", ticker)
 
