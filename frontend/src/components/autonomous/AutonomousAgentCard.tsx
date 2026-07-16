@@ -68,12 +68,13 @@ interface Props {
 
 export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete }: Props) {
   const [expanded, setExpanded] = useState(false);
-  const confidence =
-    agent.thesis?.confidence ??
-    (lastDecision as { confidence?: number } | null)?.confidence;
   const runtime = agent.runtime;
   const mandate = runtime?.mandate_summary;
-  const lastDecision = (runtime?.last_decision || agent.last_decision) as { decision?: string } | null;
+  const lastDecision = (runtime?.last_decision || agent.last_decision) as {
+    decision?: string;
+    confidence?: number;
+  } | null;
+  const confidence = agent.thesis?.confidence ?? lastDecision?.confidence;
 
   const schedState = runtime?.scheduler_health ?? "unknown";
   const nautilusState = runtime?.nautilus_state;
