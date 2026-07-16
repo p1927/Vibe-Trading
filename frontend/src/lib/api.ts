@@ -848,6 +848,18 @@ export interface TradePlanLeg {
   option_type?: string;
 }
 
+export interface TradePlanStaleness {
+  status: "fresh" | "stale" | "broken" | "monitor_off" | string;
+  reasons?: string[];
+  spot_drift_pct?: number | null;
+}
+
+export interface TradePlanLiveContext {
+  spot?: number | null;
+  plan_spot?: number | null;
+  fetched_at?: string;
+}
+
 export interface TradePlanWidget {
   type: "trade_plan.widget";
   widget_id: string;
@@ -903,6 +915,8 @@ export interface TradePlanWidget {
   }>;
   plan_status?: "ready" | "partial" | "incomplete" | string;
   data_warnings?: string[];
+  staleness?: TradePlanStaleness;
+  live_context?: TradePlanLiveContext;
   error?: string;
   regime?: Record<string, unknown>;
   factor_explanation?: {
@@ -973,6 +987,17 @@ export interface ProvenanceListResponse {
   sources: ProvenanceSource[];
 }
 
+export interface PlanStaleness {
+  status?: "fresh" | "stale" | "broken" | string;
+  reasons?: string[];
+  suggested_action?: string;
+  plan_spot?: number | null;
+  live_spot?: number | null;
+  spot_drift_pct?: number | null;
+  age_minutes?: number | null;
+  as_of?: string | null;
+}
+
 export interface HubPlanArtifact {
   ticker?: string;
   underlying?: string;
@@ -980,6 +1005,7 @@ export interface HubPlanArtifact {
   as_of?: string;
   expiry?: string | null;
   spot?: number | null;
+  staleness?: PlanStaleness | null;
   plan_status?: "ready" | "partial" | "incomplete" | string;
   data_warnings?: string[];
   stage_errors?: string[];

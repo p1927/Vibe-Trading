@@ -309,6 +309,11 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
   const liveBlocked = Boolean(execMode?.paper_env && !execMode?.live_allowed);
   const assetLabel = isOptions ? "Options" : "Stock";
   const planWarnings = widget.data_warnings ?? [];
+  const staleness = widget.staleness;
+  const liveContext = widget.live_context;
+  const isStale = staleness?.status === "stale";
+  const showFreshStrip = staleness?.status === "fresh";
+  const spotDriftPct = staleness?.spot_drift_pct;
   const planIncomplete = widget.plan_status === "incomplete" || widget.plan_status === "partial";
   const viewLabel = formatViewLabel(pred.view) || "Neutral / range-bound";
   const strategyLabel =
@@ -454,6 +459,31 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
         {widget.error && (
           <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
             {widget.error}
+          </p>
+        )}
+
+        {isStale && (
+          <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+            Plan may be outdated
+            {spotDriftPct != null && Number.isFinite(spotDriftPct)
+              ? ` · spot moved ${spotDriftPct.toFixed(1)}%`
+              : ""}
+            {liveContext?.spot != null && liveContext?.plan_spot != null ? (
+              <span className="mt-1 block font-mono text-[10px] text-amber-800/90 dark:text-amber-300/90">
+                Live {formatInr(liveContext.spot)} vs plan {formatInr(liveContext.plan_spot)}
+              </span>
+            ) : null}
+          </p>
+        )}
+
+        {showFreshStrip && (
+          <p className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-900 dark:text-emerald-200">
+            Plan current
+            {liveContext?.spot != null && liveContext?.plan_spot != null ? (
+              <span className="ml-1 font-mono text-[10px] text-emerald-800/90 dark:text-emerald-300/90">
+                · Live {formatInr(liveContext.spot)} vs plan {formatInr(liveContext.plan_spot)}
+              </span>
+            ) : null}
           </p>
         )}
 
