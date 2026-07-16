@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -158,12 +159,82 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
 
 
 def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Stub for Phase 3 position-aware thesis-break monitoring."""
+    """Evaluate thesis breaks for open ledger entries and refresh superseding widgets."""
     if not is_options_monitor_active():
         logger.info("options position monitor skipped: monitor or scheduler disabled")
         return {"skipped": True, "reason": "monitor_disabled"}
-    _ = config
-    return {"skipped": True, "reason": "not_implemented"}
+
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.context.hub import save_options_research
+    from trade_integrations.dataflows.options_research.aggregator import run_options_research
+    from trade_integrations.dataflows.options_research.widget_payload import (
+        build_options_trade_widget_from_doc,
+    )
+    from trade_integrations.monitor.execution_ledger import list_open_entries
+    from trade_integrations.monitor.service import MonitorService
+
+    cfg = config or {}
+    service = MonitorService()
+    broken: list[dict[str, Any]] = []
+    refreshed: list[dict[str, Any]] = []
+
+    for entry in list_open_entries():
+        widget_id = str(entry.get("widget_id") or "").strip()
+        underlying = str(entry.get("underlying") or "").strip().upper()
+        if not widget_id or not underlying:
+            continue
+
+        report = service.evaluate_position_thesis(widget_id)
+        if report is None or not report.broken:
+            continue
+
+        broken.append(
+            {
+                "widget_id": widget_id,
+                "underlying": underlying,
+                "reasons": report.reasons,
+                "severity": report.severity,
+            }
+        )
+
+        doc = run_options_research(
+            underlying,
+            expiry_date=cfg.get("expiry_date"),
+            lookahead_days=cfg.get("lookahead_days"),
+        )
+        save_options_research(doc)
+        revision_reason = "; ".join(report.reasons)
+        widget = build_options_trade_widget_from_doc(
+            doc,
+            supersedes=widget_id,
+            revision_reason=revision_reason,
+        )
+        new_widget_id = widget.get("widget_id")
+        if new_widget_id:
+            widget_dir = Path.home() / ".vibe-trading" / "trade_widgets"
+            widget_dir.mkdir(parents=True, exist_ok=True)
+            widget_path = widget_dir / f"{new_widget_id}.json"
+            widget_path.write_text(
+                json.dumps(widget, indent=2, default=str),
+                encoding="utf-8",
+            )
+
+        refreshed.append(
+            {
+                "old_widget_id": widget_id,
+                "new_widget_id": new_widget_id,
+                "underlying": underlying,
+                "revision_reason": revision_reason,
+            }
+        )
+        logger.info(
+            "thesis break for %s (%s) — refreshed widget %s",
+            underlying,
+            revision_reason,
+            new_widget_id,
+        )
+
+    return {"skipped": False, "broken": broken, "refreshed": refreshed}
 
 
 def dispatch_options_job_sync(job: ScheduledResearchJob) -> None:
