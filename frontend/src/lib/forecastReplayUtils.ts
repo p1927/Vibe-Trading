@@ -14,6 +14,7 @@ export interface ForecastSnapshot {
   expectedReturnPct: number;
   rangeLow?: number;
   rangeHigh?: number;
+  source?: "ledger" | "backtest" | "live";
 }
 
 export interface LiveForecastInput {
@@ -32,6 +33,12 @@ export interface ForwardPaths {
   bandLow: PricePoint[];
   horizonTarget: number;
   maturedActualReturnPct: number | null;
+}
+
+export interface BuildForecastIndexOptions {
+  horizonDays?: number;
+  /** Last trading day in the price series — live forecast is aliased here when as_of is newer. */
+  lastPriceDate?: string;
 }
 
 function isoDay(raw: string | undefined): string {
@@ -69,7 +76,9 @@ export function buildForecastIndex(
   ledger: IndexPredictionHistoryRow[],
   backtestEvals: IndexBacktestDailyEval[],
   live?: LiveForecastInput,
+  options: BuildForecastIndexOptions = {},
 ): Map<string, ForecastSnapshot> {
+  const { horizonDays, lastPriceDate } = options;
   const map = new Map<string, ForecastSnapshot>();
 
   for (const ev of backtestEvals) {
@@ -79,10 +88,14 @@ export function buildForecastIndex(
       date: d,
       spot: ev.spot,
       expectedReturnPct: ev.predicted_return_pct,
+      source: "backtest",
     });
   }
 
   for (const row of ledger) {
+    if (horizonDays != null && row.horizon_days != null && row.horizon_days !== horizonDays) {
+      continue;
+    }
     const d = isoDay(row.predicted_at);
     if (!d) continue;
     map.set(d, {
@@ -91,46 +104,39 @@ export function buildForecastIndex(
       expectedReturnPct: row.expected_return_pct,
       rangeLow: row.range_low,
       rangeHigh: row.range_high,
+      source: "ledger",
     });
   }
 
   if (live?.spot != null && Number.isFinite(live.spot)) {
-    const d = isoDay(live.asOf) || isoDay(new Date().toISOString());
+    const asOfDay = isoDay(live.asOf) || isoDay(new Date().toISOString());
     const ret =
       live.simulatedReturnPct != null && Number.isFinite(live.simulatedReturnPct)
         ? live.simulatedReturnPct
         : live.expectedReturnPct;
-    map.set(d, {
-      date: d,
+    const entry: ForecastSnapshot = {
+      date: asOfDay,
       spot: live.spot,
       expectedReturnPct: ret,
       rangeLow: live.rangeLow ?? undefined,
       rangeHigh: live.rangeHigh ?? undefined,
-    });
+      source: "live",
+    };
+    map.set(asOfDay, entry);
+    if (lastPriceDate && lastPriceDate !== asOfDay) {
+      map.set(lastPriceDate, { ...entry, date: lastPriceDate });
+    }
   }
 
   return map;
 }
 
+/** Only return a forecast when one was recorded for this exact trading day (no stale carry-forward). */
 export function resolveForecastForDate(
   date: string,
   index: Map<string, ForecastSnapshot>,
-  prices: PricePoint[],
 ): ForecastSnapshot | null {
-  const direct = index.get(date);
-  if (direct) return direct;
-
-  const sorted = [...index.keys()].sort();
-  let fallback: ForecastSnapshot | null = null;
-  for (const d of sorted) {
-    if (d <= date) fallback = index.get(d) ?? fallback;
-    else break;
-  }
-  if (fallback) return fallback;
-
-  const spot = prices.find((p) => p.date === date)?.close;
-  if (spot == null) return null;
-  return { date, spot, expectedReturnPct: 0 };
+  return index.get(date) ?? null;
 }
 
 export function buildForwardPaths(
@@ -200,5 +206,24 @@ export function buildForwardPaths(
     bandLow,
     horizonTarget,
     maturedActualReturnPct,
+  };
+}
+
+/** Visible window: history before anchor + full forward forecast (including dates beyond last close). */
+export function forecastVisibleRange(
+  prices: PricePoint[],
+  anchorDate: string,
+  horizonDays: number,
+): { from: string; to: string } | null {
+  if (!prices.length) return null;
+  const anchorIdx = prices.findIndex((p) => p.date === anchorDate);
+  if (anchorIdx < 0) return null;
+  const padBefore = 40;
+  const fromIdx = Math.max(0, anchorIdx - padBefore);
+  const forwardEnd = addBusinessDays(anchorDate, Math.max(horizonDays, 1));
+  const lastClose = prices[prices.length - 1].date;
+  return {
+    from: prices[fromIdx].date,
+    to: forwardEnd > lastClose ? forwardEnd : prices[Math.min(prices.length - 1, anchorIdx + horizonDays + 5)].date,
   };
 }

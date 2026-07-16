@@ -22,6 +22,7 @@ import { DerivativesFactorsPanel } from "@/components/prediction/DerivativesFact
 import { PredictionScheduledJobsPanel } from "@/components/prediction/PredictionScheduledJobsPanel";
 import { NewsTriggerPanel } from "@/components/prediction/NewsTriggerPanel";
 import { PredictionVerificationPanel } from "@/components/prediction/PredictionVerificationPanel";
+import { PredictionSectionHeader } from "@/components/prediction/PredictionSectionHeader";
 import { useIndexPrediction } from "@/hooks/useIndexPrediction";
 import { useIndexPredictionLive } from "@/hooks/useIndexPredictionLive";
 import {
@@ -34,44 +35,9 @@ import {
 } from "@/lib/api";
 
 import { MACRO_DRIFT_FACTORS, pivotFactorHistoryWide } from "@/lib/factorHistoryUtils";
-import { MODEL_ROLE_LABELS, type ModelRole } from "@/lib/predictionVerification";
 
 const POLL_STORAGE_KEY = "vibe-prediction-poll-ms";
 const DEFAULT_POLL_MS = 300_000;
-
-function SectionHeader({
-  title,
-  subtitle,
-  modelRole,
-}: {
-  title: string;
-  subtitle?: string;
-  modelRole?: ModelRole;
-}) {
-  return (
-    <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
-      <div>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{title}</p>
-        {subtitle ? <p className="mt-0.5 text-[11px] text-muted-foreground">{subtitle}</p> : null}
-      </div>
-      {modelRole ? (
-        <span
-          className={`rounded px-2 py-0.5 text-[10px] font-medium ${
-            modelRole === "feeds"
-              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-              : modelRole === "display"
-                ? "bg-primary/10 text-primary"
-                : modelRole === "verify"
-                  ? "bg-violet-500/15 text-violet-700 dark:text-violet-400"
-                  : "bg-muted text-muted-foreground"
-          }`}
-        >
-          {MODEL_ROLE_LABELS[modelRole]}
-        </span>
-      ) : null}
-    </div>
-  );
-}
 
 export function Prediction() {
   const [horizonDays, setHorizonDays] = useState(14);
@@ -306,15 +272,20 @@ export function Prediction() {
               }}
             />
 
-            <PredictionSummary artifact={artifact} flashReturn={flashReturn} horizonDays={horizonDays} />
-
-            <section className="space-y-3">
-              <SectionHeader
-                title="Where Nifty is heading"
-                subtitle={`Scroll history, pick any day, and see the ${horizonDays}d forecast from that point vs what Nifty actually did. Orange dashed = forecast; green = actual path.`}
+            <section className="space-y-4">
+              <PredictionSectionHeader
+                title="Forecast output"
+                subtitle="Headline target and historical replay — what the model predicted vs what Nifty did."
                 modelRole="display"
               />
-              <NiftyForecastReplayChart
+              <PredictionSummary artifact={artifact} flashReturn={flashReturn} horizonDays={horizonDays} />
+
+              <div className="space-y-3">
+                <PredictionSectionHeader
+                  title="Where Nifty is heading"
+                  subtitle={`Pick any day with a recorded forecast and compare the ${horizonDays}d path to actual Nifty. Orange dashed = forecast; green = actual path.`}
+                />
+                <NiftyForecastReplayChart
                 horizonDays={horizonDays}
                 ledgerRows={dailyHistory}
                 backtestEvals={backtest?.daily_evaluations ?? []}
@@ -332,11 +303,12 @@ export function Prediction() {
                     : undefined
                 }
                 height={380}
-              />
+                />
+              </div>
             </section>
 
             <section className="space-y-3">
-              <SectionHeader
+              <PredictionSectionHeader
                 title="What moves the forecast"
                 subtitle="Factor workbench: shock one driver (or pick news/event), see Nifty path + cascade; forecast chart above updates when anchor is today."
                 modelRole="feeds"
@@ -349,7 +321,7 @@ export function Prediction() {
             </section>
 
             <section className="space-y-3">
-              <SectionHeader
+              <PredictionSectionHeader
                 title="Scenario outcomes"
                 subtitle="Most likely left → least likely right. Probability-weighted ranges anchor the headline when the model diverges."
                 modelRole="feeds"
@@ -362,7 +334,7 @@ export function Prediction() {
             </section>
 
             <section className="space-y-3">
-              <SectionHeader
+              <PredictionSectionHeader
                 title="Constituent drivers"
                 subtitle="Expand any stock to see drivers, upcoming events, and sentiment history (archived daily)."
                 modelRole="feeds"
@@ -371,7 +343,7 @@ export function Prediction() {
             </section>
 
             <section className="space-y-3">
-              <SectionHeader
+              <PredictionSectionHeader
                 title="Macro factor levels"
                 subtitle="Current readings and each factor's contribution to the macro overlay."
                 modelRole="feeds"
@@ -384,7 +356,7 @@ export function Prediction() {
             </section>
 
             <section className="space-y-3">
-              <SectionHeader
+              <PredictionSectionHeader
                 title="Derivatives &amp; institutional flows"
                 subtitle="PCR, FII/DII nets, and FII futures vs Nifty 50 (right axis) — see if flows led index moves."
                 modelRole="context"
@@ -393,7 +365,7 @@ export function Prediction() {
             </section>
 
             <section className="space-y-3">
-              <SectionHeader
+              <PredictionSectionHeader
                 title="Macro factor drift (12 months)"
                 subtitle="How key inputs moved vs Nifty 50 (% change from period start) — bold line is the index."
                 modelRole="context"
@@ -411,11 +383,11 @@ export function Prediction() {
 
             <div className="grid gap-4 lg:grid-cols-2">
               <section className="space-y-3">
-                <SectionHeader title="Sector breadth" subtitle="Sentiment dispersion across Nifty sectors." modelRole="context" />
+                <PredictionSectionHeader title="Sector breadth" subtitle="Sentiment dispersion across Nifty sectors." modelRole="context" />
                 <SectorBreadthPanel breadth={artifact.sector_breadth} />
               </section>
               <section className="space-y-3">
-                <SectionHeader title="Market context" subtitle="Nifty level vs macro factor history." modelRole="context" />
+                <PredictionSectionHeader title="Market context" subtitle="Nifty level vs macro factor history." modelRole="context" />
                 <NiftyMarketContextChart
                   series={factorHistory}
                   forecastTarget={forecastTarget}
@@ -425,7 +397,7 @@ export function Prediction() {
             </div>
 
             <section className="space-y-3">
-              <SectionHeader title="Forecast equation" subtitle="Bottom-up constituents + macro ridge overlay." modelRole="display" />
+              <PredictionSectionHeader title="Forecast equation" subtitle="Bottom-up constituents + macro ridge overlay." modelRole="display" />
               <EquationCard prediction={artifact.prediction} spot={artifact.spot} horizonDays={horizonDays} />
             </section>
 
@@ -441,7 +413,7 @@ export function Prediction() {
             </section>
 
             <section className="space-y-3">
-              <SectionHeader
+              <PredictionSectionHeader
                 title="Forecast track record"
                 subtitle="Past predictions vs realised Nifty moves."
                 modelRole="verify"
@@ -464,7 +436,7 @@ export function Prediction() {
             </section>
 
             <section className="space-y-3">
-              <SectionHeader
+              <PredictionSectionHeader
                 title="Walk-forward backtest"
                 subtitle="Out-of-sample MAE and direction hit rate — validates the model, not the live headline."
                 modelRole="verify"
