@@ -66,11 +66,18 @@ def resolve_benchmark(
     if ticker is None:
         return None
 
+    offline = source == "local"
+    if offline and getattr(loader, "name", None) != source:
+        # The runtime fallback chain in fetch_data_map() may have swapped in a
+        # network loader while config["source"] still says local — never fetch
+        # the benchmark through it. Fail closed instead.
+        loader = None
+
     try:
         bench_df = _fetch_benchmark(
             ticker, start_date, end_date, interval,
             loader=loader,
-            allow_fallback=source != "local",
+            allow_fallback=not offline,
         )
     except Exception:
         return None

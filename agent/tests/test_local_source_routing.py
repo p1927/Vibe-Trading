@@ -37,6 +37,8 @@ class TestLocalSourceEngineRouting:
 class _FakeLoader:
     """Loader stub returning a fixed close series for any requested code."""
 
+    name = "local"
+
     def __init__(self, closes: List[float]) -> None:
         self._closes = closes
         self.fetched: List[str] = []
@@ -50,13 +52,27 @@ class _FakeLoader:
 
 
 class _EmptyLoader:
+    name = "local"
+
     def fetch(self, *args: object, **kwargs: object) -> Dict[str, pd.DataFrame]:
         return {}
 
 
 class _RaisingLoader:
+    name = "local"
+
     def fetch(self, *args: object, **kwargs: object) -> Dict[str, pd.DataFrame]:
         raise RuntimeError("boom")
+
+
+class _SwappedNetworkLoader:
+    """Simulates fetch_data_map's runtime fallback swapping in a network
+    loader while config['source'] still says local."""
+
+    name = "yahoo"
+
+    def fetch(self, *args: object, **kwargs: object) -> Dict[str, pd.DataFrame]:
+        raise AssertionError("network loader must not be fetched for source=local")
 
 
 class TestBenchmarkLoaderForwarding:
@@ -83,12 +99,15 @@ class TestBenchmarkLoaderForwarding:
         assert loader.fetched == ["AAPL.US"]
         assert result.total_ret == pytest.approx(0.1)
 
-    @pytest.mark.parametrize("loader", [_EmptyLoader(), _RaisingLoader(), None])
+    @pytest.mark.parametrize(
+        "loader", [_EmptyLoader(), _RaisingLoader(), _SwappedNetworkLoader(), None],
+    )
     def test_local_source_fails_closed_without_yfinance(
         self, monkeypatch: pytest.MonkeyPatch, loader: object,
     ) -> None:
-        """source=local must never construct a yfinance loader, even when the
-        local loader yields no benchmark data or raises."""
+        """source=local must never touch the network, even when the local
+        loader yields no benchmark data, raises, or was silently swapped for
+        a network loader by fetch_data_map's runtime fallback chain."""
 
         def _no_network() -> None:
             raise AssertionError("yfinance loader must not be created")
