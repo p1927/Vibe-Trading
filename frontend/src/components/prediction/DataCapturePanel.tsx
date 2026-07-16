@@ -141,6 +141,24 @@ export function DataCapturePanel() {
         </button>
       </div>
 
+      {data?.stats?.channel ? (
+        <div className="mb-4 rounded-lg border bg-muted/10 px-3 py-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Hub channel today
+          </p>
+          <div className="mt-1 flex flex-wrap gap-4 text-sm">
+            <span>
+              <span className="text-muted-foreground">Hub hits:</span>{" "}
+              <span className="font-semibold tabular-nums">{data.stats.channel.hub_hits ?? 0}</span>
+            </span>
+            <span>
+              <span className="text-muted-foreground">Vendor fetches:</span>{" "}
+              <span className="font-semibold tabular-nums">{data.stats.channel.vendor_fetches ?? 0}</span>
+            </span>
+          </div>
+        </div>
+      ) : null}
+
       {data?.stats?.series ? (
         <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {Object.entries(data.stats.series).map(([name, row]) => (
