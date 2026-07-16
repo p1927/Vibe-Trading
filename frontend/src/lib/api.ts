@@ -242,6 +242,17 @@ export const api = {
   getTradeWidget: (widgetId: string) =>
     request<TradePlanWidget>(`/trade/widget/${encodeURIComponent(widgetId)}`),
   getTradeExecutionMode: () => request<TradeExecutionMode>("/trade/execution-mode"),
+  getHubPlan: (ticker: string, asset = "options", refresh = false) =>
+    request<HubPlanResponse>(
+      `/trade/hub-plan?ticker=${encodeURIComponent(ticker)}&asset=${encodeURIComponent(asset)}&refresh=${refresh}`,
+    ),
+  getAgentDebate: (ticker: string) =>
+    request<AgentDebateResponse>(`/trade/agent-debate?ticker=${encodeURIComponent(ticker)}`),
+  runAgentDebate: (body: RunAgentDebateRequest) =>
+    request<AgentDebateResponse>("/trade/run-debate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };
 
 // --- Swarm types ---
@@ -912,6 +923,81 @@ export interface TradeExecutionMode {
   mode: "paper" | "live" | string;
   analyze_mode: boolean;
   paper_env: boolean;
+}
+
+export interface PlanPrediction {
+  view?: string | null;
+  iv_regime?: string | null;
+  confidence?: number | null;
+  expected_move_pct?: number | null;
+  pcr?: number | null;
+  source?: string | null;
+}
+
+export interface HubPlanArtifact {
+  ticker?: string;
+  underlying?: string;
+  asset_type?: string;
+  as_of?: string;
+  expiry?: string | null;
+  spot?: number | null;
+  plan_status?: "ready" | "partial" | "incomplete" | string;
+  data_warnings?: string[];
+  stage_errors?: string[];
+  prediction?: PlanPrediction | null;
+  events?: Array<Record<string, unknown>>;
+  scenarios?: TradePlanScenario[];
+  ranked_strategies?: Array<Record<string, unknown>>;
+  recommended?: TradePlanWidget["recommended"];
+  recommended_name?: string;
+  recommended_rationale?: string;
+  recommended_tier?: string;
+  recommended_score?: number;
+  recommended_legs?: TradePlanLeg[];
+  max_profit?: number | null;
+  max_loss?: number | null;
+}
+
+export interface HubPlanResponse {
+  status: string;
+  ticker?: string;
+  asset_type?: string;
+  artifact?: HubPlanArtifact | null;
+  message?: string;
+}
+
+export interface AgentDebateArtifact {
+  ticker?: string;
+  rating?: string;
+  trade_date?: string;
+  as_of?: string;
+  investment_debate?: {
+    bull_summary?: string;
+    bear_summary?: string;
+    judge_decision?: string;
+  };
+  risk_debate?: {
+    aggressive_summary?: string;
+    conservative_summary?: string;
+    neutral_summary?: string;
+    judge_decision?: string;
+  };
+  final_trade_decision?: string;
+}
+
+export interface AgentDebateResponse {
+  status: string;
+  ticker?: string;
+  running?: boolean;
+  debate?: AgentDebateArtifact | null;
+  message?: string;
+}
+
+export interface RunAgentDebateRequest {
+  ticker: string;
+  asset_type?: string;
+  session_id?: string;
+  refresh?: boolean;
 }
 
 // --- Connector runtime channel types ---

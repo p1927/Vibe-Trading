@@ -5,7 +5,7 @@ import { Send, Loader2, ArrowDown, Square, Download, Plus, Paperclip, X, Users, 
 import { toast } from "sonner";
 import { useAgentStore } from "@/stores/agent";
 import { useSSE } from "@/hooks/useSSE";
-import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type LiveHalted, type LiveStatus, type TradePlanWidget } from "@/lib/api";
+import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact } from "@/lib/api";
 import { isReportWorthyRun } from "@/lib/runReports";
 import type { AgentMessage, ToolCallEntry } from "@/types/agent";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
@@ -16,6 +16,7 @@ import { ConversationTimeline } from "@/components/chat/ConversationTimeline";
 import { ToolProgressIndicator } from "@/components/chat/ToolProgressIndicator";
 import { MandateProposalCard } from "@/components/chat/MandateProposalCard";
 import { TradePlanWidgetCard } from "@/components/chat/TradePlanWidgetCard";
+import { ResearchArtifactSidebar } from "@/components/research/ResearchArtifactSidebar";
 import {
   formatTradeWidgetContextBlock,
   getTradeWidgetAdjustment,
@@ -271,6 +272,14 @@ export function Agent() {
    * and removes status from the kill-switch visibility condition. */
   const [liveStatusUnavailable, setLiveStatusUnavailable] = useState(false);
 
+  /* Trade-stack research side panel (hub plan + TradingAgents debate) */
+  const [researchTicker, setResearchTicker] = useState<string | null>(null);
+  const [researchAssetType, setResearchAssetType] = useState("options");
+  const [planArtifact, setPlanArtifact] = useState<HubPlanArtifact | null>(null);
+  const [debateArtifact, setDebateArtifact] = useState<AgentDebateArtifact | null>(null);
+  const [debateRunning, setDebateRunning] = useState(false);
+  const [debateError, setDebateError] = useState<string | null>(null);
+
   const messages = useAgentStore(s => s.messages);
   const streamingText = useAgentStore(s => s.streamingText);
   const status = useAgentStore(s => s.status);
@@ -327,6 +336,36 @@ export function Agent() {
       prevSseStatusRef.current = s;
     });
   }, [onStatusChange]);
+
+  const handleDebateUpdate = useCallback(
+    (debate: AgentDebateArtifact | null, running: boolean, error?: string | null) => {
+      setDebateArtifact(debate);
+      setDebateRunning(running);
+      setDebateError(error ?? null);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!debateRunning || !researchTicker) return;
+    const poll = async () => {
+      try {
+        const res = await api.getAgentDebate(researchTicker);
+        if (res.debate) {
+          setDebateArtifact(res.debate);
+          setDebateRunning(false);
+          setDebateError(null);
+        } else if (!res.running && res.status !== "running") {
+          setDebateRunning(Boolean(res.running));
+        }
+      } catch {
+        /* ignore transient poll errors */
+      }
+    };
+    const id = window.setInterval(poll, 8000);
+    void poll();
+    return () => window.clearInterval(id);
+  }, [debateRunning, researchTicker]);
 
   const doDisconnect = useCallback(() => {
     disconnect();
@@ -698,11 +737,44 @@ export function Agent() {
         touch();
         const widget = d as unknown as TradePlanWidget;
         if (!widget.widget_id || widget.type !== "trade_plan.widget") return;
+        setResearchTicker(widget.underlying);
+        setResearchAssetType(widget.asset_type === "stock" ? "stock" : "options");
         setLiveItems((items) => [
           ...items,
           { kind: "trade_plan_widget", timestamp: Date.now(), widget },
         ]);
         scrollToBottom();
+      },
+
+      "research.artifact": (d) => {
+        touch();
+        const ticker = String(d.ticker || "");
+        const artifact = d.artifact as HubPlanArtifact | undefined;
+        if (ticker) setResearchTicker(ticker);
+        if (d.asset_type) setResearchAssetType(String(d.asset_type));
+        if (artifact) setPlanArtifact(artifact);
+      },
+
+      "research.debate": (d) => {
+        touch();
+        const ticker = String(d.ticker || "");
+        if (ticker) setResearchTicker(ticker);
+        const status = String(d.status || "");
+        if (status === "started" || status === "running") {
+          setDebateRunning(true);
+          setDebateError(null);
+          return;
+        }
+        if (status === "error") {
+          setDebateRunning(false);
+          setDebateError(String(d.message || "Agent debate failed"));
+          return;
+        }
+        if (status === "ready" && d.debate) {
+          setDebateRunning(false);
+          setDebateError(null);
+          setDebateArtifact(d.debate as AgentDebateArtifact);
+        }
       },
 
       "mandate.committed": (d) => {
@@ -1198,7 +1270,8 @@ export function Agent() {
   const liveIsHalted = isGlobalLiveHalt(liveHalted) || (liveStatus?.global_halted ?? false);
 
   return (
-    <div className="flex flex-col flex-1 min-w-0 overflow-hidden h-full">
+    <div className="flex flex-1 min-w-0 overflow-hidden h-full relative">
+    <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
       <div ref={listRef} className="flex-1 overflow-auto p-6 scroll-smooth relative">
         <div className="max-w-3xl mx-auto space-y-4">
           {sessionLoading && (
@@ -1717,6 +1790,16 @@ export function Agent() {
           <p className="px-1 text-[11px] text-muted-foreground">{t("agent.inputHint")}</p>
         </div>
       </form>
+    </div>
+    <ResearchArtifactSidebar
+      ticker={researchTicker}
+      assetType={researchAssetType}
+      planArtifact={planArtifact}
+      debateArtifact={debateArtifact}
+      debateRunning={debateRunning}
+      debateError={debateError}
+      onDebateUpdate={handleDebateUpdate}
+    />
     </div>
   );
 }

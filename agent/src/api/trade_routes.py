@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -233,3 +234,148 @@ def get_widget(
     if widget is None:
         raise HTTPException(status_code=404, detail="Widget not found")
     return widget
+
+
+class HubPlanResponse(BaseModel):
+    status: str
+    ticker: str = ""
+    asset_type: str = "options"
+    artifact: Dict[str, Any] | None = None
+    message: str = ""
+
+
+class AgentDebateResponse(BaseModel):
+    status: str
+    ticker: str = ""
+    running: bool = False
+    debate: Dict[str, Any] | None = None
+    message: str = ""
+
+
+class RunDebateRequest(BaseModel):
+    ticker: str
+    asset_type: str = "options"
+    session_id: str | None = None
+    refresh: bool = False
+
+
+@trade_router.get("/hub-plan", response_model=HubPlanResponse)
+def get_hub_plan(
+    ticker: str,
+    asset: str = "options",
+    refresh: bool = False,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubPlanResponse:
+    """Load structured trade plan from the shared hub for the research side panel."""
+    key = (ticker or "").strip().upper()
+    if not key:
+        raise HTTPException(status_code=400, detail="ticker required")
+    asset_type = (asset or "options").strip().lower()
+    try:
+        from src.trade.hub_bridge import load_hub_plan_artifact, prefetch_hub_plan
+
+        if refresh:
+            artifact = prefetch_hub_plan(key, asset_type)
+        else:
+            artifact = load_hub_plan_artifact(key, asset_type)
+            if artifact is None:
+                artifact = prefetch_hub_plan(key, asset_type)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("hub-plan failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if artifact is None:
+        return HubPlanResponse(status="not_found", ticker=key, asset_type=asset_type, message="No hub plan")
+    return HubPlanResponse(status="ok", ticker=key, asset_type=artifact.get("asset_type", asset_type), artifact=artifact)
+
+
+@trade_router.get("/agent-debate", response_model=AgentDebateResponse)
+def get_agent_debate(
+    ticker: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> AgentDebateResponse:
+    """Load cached TradingAgents debate summary from the hub."""
+    key = (ticker or "").strip().upper()
+    if not key:
+        raise HTTPException(status_code=400, detail="ticker required")
+    try:
+        from src.trade.hub_bridge import is_debate_running, load_debate_artifact
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if is_debate_running(key):
+        return AgentDebateResponse(status="running", ticker=key, running=True)
+    debate = load_debate_artifact(key)
+    if debate is None:
+        return AgentDebateResponse(status="not_found", ticker=key, message="No agent debate yet")
+    return AgentDebateResponse(status="ok", ticker=key, debate=debate)
+
+
+@trade_router.post("/run-debate", response_model=AgentDebateResponse)
+def run_debate(
+    body: RunDebateRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> AgentDebateResponse:
+    """Start TradingAgents multi-agent debate (async) or return cached hub summary."""
+    key = (body.ticker or "").strip().upper()
+    if not key:
+        raise HTTPException(status_code=400, detail="ticker required")
+    asset_type = (body.asset_type or "options").strip().lower()
+    try:
+        from src.trade.hub_bridge import (
+            ensure_trade_stack_path,
+            is_debate_running,
+            load_debate_artifact,
+            run_agent_debate_sync,
+        )
+
+        ensure_trade_stack_path()
+        if not body.refresh:
+            from trade_integrations.context.hub import is_agent_debate_cache_fresh
+
+            cached = load_debate_artifact(key)
+            if cached and is_agent_debate_cache_fresh(key):
+                return AgentDebateResponse(status="ok", ticker=key, debate=cached)
+        if is_debate_running(key):
+            return AgentDebateResponse(status="running", ticker=key, running=True)
+
+        session_id = (body.session_id or "").strip()
+
+        def _worker() -> None:
+            try:
+                debate = run_agent_debate_sync(key, asset_type=asset_type)
+                if session_id:
+                    from src.api.state import _get_session_service  # noqa: PLC0415
+
+                    svc = _get_session_service()
+                    if svc:
+                        svc.event_bus.emit(
+                            session_id,
+                            "research.debate",
+                            {"ticker": key, "status": "ready", "debate": debate},
+                        )
+            except Exception as exc:
+                logger.exception("Background run-debate failed for %s", key)
+                if session_id:
+                    try:
+                        from src.api.state import _get_session_service  # noqa: PLC0415
+
+                        svc = _get_session_service()
+                        if svc:
+                            svc.event_bus.emit(
+                                session_id,
+                                "research.debate",
+                                {"ticker": key, "status": "error", "message": str(exc)},
+                            )
+                    except Exception:
+                        pass
+
+        threading.Thread(target=_worker, daemon=True, name=f"debate-{key}").start()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("run-debate failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return AgentDebateResponse(status="running", ticker=key, running=True)
