@@ -851,7 +851,7 @@ export interface TradePlanLeg {
 export interface TradePlanWidget {
   type: "trade_plan.widget";
   widget_id: string;
-  asset_type?: "options" | "stock";
+  asset_type?: "options" | "stock" | "index";
   underlying: string;
   instrument_type?: string;
   market?: string;
@@ -904,6 +904,16 @@ export interface TradePlanWidget {
   plan_status?: "ready" | "partial" | "incomplete" | string;
   data_warnings?: string[];
   error?: string;
+  regime?: Record<string, unknown>;
+  factor_explanation?: {
+    method?: string;
+    macro_delta_pct?: number;
+    contributors?: Array<Record<string, unknown>>;
+  };
+  factor_sensitivity?: Array<Record<string, unknown>>;
+  event_impact_curves?: Array<Record<string, unknown>>;
+  constituent_signals?: Array<Record<string, unknown>>;
+  accuracy?: Record<string, unknown>;
   meta?: {
     strategy_builder_url?: string;
     strategy_builder_pnl_url?: string;
@@ -928,6 +938,8 @@ export interface TradeExecutionMode {
   mode: "paper" | "live" | string;
   analyze_mode: boolean;
   paper_env: boolean;
+  live_allowed?: boolean;
+  switch_url?: string;
 }
 
 export interface PlanPrediction {
