@@ -77,7 +77,8 @@ def _normalize_frame(df: pd.DataFrame) -> pd.DataFrame:
     result = result.apply(pd.to_numeric, errors="coerce")
     result["volume"] = result["volume"].fillna(0.0)
     result = result.dropna(subset=["open", "high", "low", "close"])
-    return result.sort_index()
+    result = result.sort_index()
+    return result[~result.index.duplicated(keep="last")]
 
 
 @register
@@ -158,7 +159,7 @@ class FutuLoader:
                 end_date=end_date,
                 fields=None,
             )
-            if cached is not None:
+            if cached is not None and not cached.empty:
                 results[code] = cached.copy()
             else:
                 pending.append(code)
@@ -178,17 +179,35 @@ class FutuLoader:
         try:
             for code in pending:
                 futu_code = _to_futu_symbol(code)
-                ret, data = ctx.request_history_kline(
-                    futu_code,
-                    start=start_date,
-                    end=end_date,
-                    ktype=ktype,
-                    max_count=10_000,
-                )
-                if ret != futu.RET_OK:
-                    logger.warning("Futu returned error for %s: %s", futu_code, data)
+                page_key = None
+                pages: List[pd.DataFrame] = []
+                failed = False
+                while True:
+                    ret, data, next_page_key = ctx.request_history_kline(
+                        futu_code,
+                        start=start_date,
+                        end=end_date,
+                        ktype=ktype,
+                        max_count=10_000,
+                        page_req_key=page_key,
+                    )
+                    if ret != futu.RET_OK:
+                        logger.warning(
+                            "Futu returned error for %s: %s", futu_code, data
+                        )
+                        failed = True
+                        break
+                    if isinstance(data, pd.DataFrame) and not data.empty:
+                        pages.append(data)
+                    if not next_page_key:
+                        break
+                    page_key = next_page_key
+
+                if failed or not pages:
                     continue
-                normalized = _normalize_frame(data)
+                normalized = _normalize_frame(pd.concat(pages, ignore_index=True))
+                if normalized.empty:
+                    continue
                 loader_cache_put(
                     source=self.name,
                     symbol=code,
