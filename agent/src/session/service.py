@@ -318,6 +318,7 @@ class SessionService:
             integrations = trade_root / "integrations"
             if integrations.is_dir() and str(integrations) not in sys.path:
                 sys.path.insert(0, str(integrations))
+            from trade_integrations.autonomous_agents.bootstrap import finalize_bootstrap_if_ready
             from trade_integrations.autonomous_agents.store import get_agent, save_agent
 
             agent = get_agent(agent_id)
@@ -326,6 +327,7 @@ class SessionService:
             if agent.get("streaming"):
                 agent["streaming"] = False
                 save_agent(agent)
+            finalize_bootstrap_if_ready(agent_id)
         except Exception:
             logging.getLogger(__name__).debug(
                 "clear agent streaming failed for %s", agent_id, exc_info=True

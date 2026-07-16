@@ -957,9 +957,10 @@ def get_index_prediction_news_impact(
     ticker: str = "NIFTY",
     refresh: bool = False,
     horizon_days: int = 14,
+    include_rejected: bool = False,
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexNewsImpactResponse:
-    """Verified news → Nifty impact snapshot (summarized + data-checked headlines)."""
+    """Verified news → Nifty impact snapshot from hub SSOT; refresh ingests cache misses only."""
     key = (ticker or "NIFTY").strip().upper()
     try:
         from trade_integrations.context.hub import load_index_research_json
@@ -971,32 +972,47 @@ def get_index_prediction_news_impact(
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
-        if refresh:
-            doc = load_index_research_json(key)
-            spot = float((doc or {}).get("spot") or 0) if isinstance(doc, dict) else float(getattr(doc, "spot", 0) or 0)
-            macro = {}
-            gf = (doc or {}).get("global_factors") if isinstance(doc, dict) else getattr(doc, "global_factors", None)
-            for row in gf or []:
+        spot: float | None = None
+        macro: dict[str, float] = {}
+        doc = load_index_research_json(key)
+        if doc is not None:
+            spot = float(getattr(doc, "spot", 0) or 0) or None
+            for row in getattr(doc, "global_factors", None) or []:
                 if row.get("factor") is not None and row.get("value") is not None:
                     macro[str(row["factor"])] = float(row["value"])
+
+        if refresh:
             report = build_news_impact_snapshot(
                 ticker=key,
                 horizon_days=horizon_days,
                 spot=spot,
-                macro_factors=macro,
+                macro_factors=macro or None,
+                refresh_ingest=True,
+                include_rejected=include_rejected,
             )
             save_news_impact_snapshot(report, ticker=key)
         else:
             report = load_news_impact_snapshot(key)
+            if report is None and doc is not None and getattr(doc, "news_impact", None):
+                report = doc.news_impact
             if report is None:
-                cached = load_index_research_json(key)
-                if cached and getattr(cached, "news_impact", None):
-                    report = cached.news_impact
-                elif isinstance(cached, dict) and cached.get("news_impact"):
-                    report = cached["news_impact"]
-            if report is None:
-                report = build_news_impact_snapshot(ticker=key, horizon_days=horizon_days)
-                save_news_impact_snapshot(report, ticker=key)
+                report = build_news_impact_snapshot(
+                    ticker=key,
+                    horizon_days=horizon_days,
+                    spot=spot,
+                    macro_factors=macro or None,
+                    refresh_ingest=False,
+                    include_rejected=include_rejected,
+                )
+            else:
+                report = build_news_impact_snapshot(
+                    ticker=key,
+                    horizon_days=horizon_days,
+                    spot=spot,
+                    refresh_ingest=False,
+                    include_rejected=include_rejected,
+                )
+            save_news_impact_snapshot(report, ticker=key)
         status = str((report or {}).get("status") or "ok")
         return IndexNewsImpactResponse(status=status, ticker=key, report=report)
     except Exception as exc:

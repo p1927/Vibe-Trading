@@ -566,11 +566,17 @@ export const api = {
     });
     return request<IndexCounterfactualResponse>(`/trade/index-prediction/counterfactual?${params}`);
   },
-  getIndexPredictionNewsImpact: (ticker = "NIFTY", refresh = false, horizonDays = 14) => {
+  getIndexPredictionNewsImpact: (
+    ticker = "NIFTY",
+    refresh = false,
+    horizonDays = 14,
+    includeRejected = false,
+  ) => {
     const params = new URLSearchParams({
       ticker,
       refresh: String(refresh),
       horizon_days: String(horizonDays),
+      include_rejected: String(includeRejected),
     });
     return request<IndexNewsImpactResponse>(`/trade/index-prediction/news-impact?${params}`);
   },
@@ -1952,6 +1958,13 @@ export interface NewsImpactVerificationClaim {
   data_as_of?: string;
 }
 
+export interface NewsSourceAttribution {
+  vendor?: string;
+  publisher?: string;
+  url?: string;
+  fetched_at?: string;
+}
+
 export interface NewsImpactItem {
   id?: string;
   published_at?: string;
@@ -1973,6 +1986,8 @@ export interface NewsImpactItem {
   };
   status?: string;
   tagged_factors?: Array<{ factor?: string; confidence?: number; method?: string }>;
+  sources?: NewsSourceAttribution[];
+  verification_status?: string;
   horizon_trading_days?: number;
   maturity_date?: string | null;
   predicted?: {
@@ -1980,7 +1995,17 @@ export interface NewsImpactItem {
     nifty_points?: number;
     model?: string;
   };
+  predicted_impact?: {
+    return_pct?: number;
+    nifty_points?: number;
+    model?: string;
+  };
   actual?: {
+    return_pct?: number;
+    nifty_points?: number;
+    attribution_share_pct?: number;
+  } | null;
+  actual_impact?: {
     return_pct?: number;
     nifty_points?: number;
     attribution_share_pct?: number;
@@ -2005,7 +2030,9 @@ export interface IndexNewsImpactReport {
     live_count?: number;
     approved_count?: number;
     partial_count?: number;
+    rejected_count?: number;
     rejected_skipped?: number;
+    source?: string;
   };
 }
 
