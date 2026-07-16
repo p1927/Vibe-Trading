@@ -87,16 +87,24 @@ def test_qualify_a_share(code: str, expected: str) -> None:
         ("证券买入", "buy"),
         ("B", "buy"),
         ("long", "buy"),
+        (" Purchase ", "buy"),
+        ("buy-to-cover", "buy"),
         ("卖出", "sell"),
         ("证券卖出", "sell"),
         ("融券卖出", "sell"),
         ("S", "sell"),
         ("short", "sell"),
-        ("hold", "buy"),  # no buy/sell token substring -> documented fallback
+        (" SELL-SHORT ", "sell"),
     ],
 )
 def test_normalize_side(raw: str, expected: str) -> None:
     assert _normalize_side(raw) == expected
+
+
+@pytest.mark.parametrize("raw", [None, "", "hold", "strong buy"])
+def test_normalize_side_rejects_missing_or_unknown(raw: object) -> None:
+    with pytest.raises(ValueError, match="side"):
+        _normalize_side(raw)
 
 
 @pytest.mark.parametrize(
@@ -189,6 +197,23 @@ def test_parse_file_unknown_raises(tmp_path: Path) -> None:
     csv = tmp_path / "weird.csv"
     csv.write_text("foo,bar\n1,2\n", encoding="utf-8")
     with pytest.raises(ValueError, match="Unrecognized"):
+        parse_file(csv)
+
+
+@pytest.mark.parametrize(
+    "header,value,error",
+    [
+        ("datetime,symbol,quantity,price", "2026-01-02,AAPL,10,180", "requires a side"),
+        ("datetime,symbol,side,quantity,price", "2026-01-02,AAPL,hold,10,180", "Unsupported trade side"),
+    ],
+)
+def test_parse_file_rejects_missing_or_unknown_side(
+    tmp_path: Path, header: str, value: str, error: str
+) -> None:
+    csv = tmp_path / "invalid_side.csv"
+    csv.write_text(f"{header}\n{value}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=error):
         parse_file(csv)
 
 
