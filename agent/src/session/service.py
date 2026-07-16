@@ -294,6 +294,11 @@ class SessionService:
                     result.get("tools_called") or [],
                     dict(session.config),
                 )
+                await self._maybe_autonomous_decision_guard(
+                    session,
+                    attempt.prompt,
+                    result.get("tools_called") or [],
+                )
 
         except Exception as exc:
             attempt.mark_failed(error=str(exc))
@@ -513,6 +518,31 @@ class SessionService:
             import logging
 
             logging.getLogger(__name__).exception("Widget guard hook failed")
+
+    async def _maybe_autonomous_decision_guard(
+        self,
+        session: Session,
+        user_message: str,
+        tools_called: set[str] | list[str],
+    ) -> None:
+        from src.session.orchestrator_profile import is_orchestrator_session
+
+        if is_orchestrator_session(session.config):
+            return
+        try:
+            from src.trade.autonomous_decision_guard import maybe_retry_autonomous_decision
+
+            await maybe_retry_autonomous_decision(
+                self,
+                session.session_id,
+                user_message=user_message,
+                tools_called=tools_called,
+                session_config=dict(session.config),
+            )
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Autonomous decision guard hook failed")
 
     @staticmethod
     def _convert_messages_to_history(

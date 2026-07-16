@@ -564,6 +564,32 @@ class IndexFactorCatalogResponse(BaseModel):
     message: str = ""
 
 
+class CaptureRegistryEntityPatch(BaseModel):
+    capture_enabled: bool | None = None
+    factor_groups: List[str] | None = None
+    retention_days: Dict[str, int] | None = None
+    schedules: Dict[str, str] | None = None
+
+
+class CaptureRegistryUpdateRequest(BaseModel):
+    entity_id: str = "NIFTY"
+    patch: CaptureRegistryEntityPatch
+
+
+class CaptureRegistryBackfillRequest(BaseModel):
+    entity_id: str = "NIFTY"
+    days: int = 365
+
+
+class CaptureRegistryResponse(BaseModel):
+    status: str
+    registry: Dict[str, Any] = Field(default_factory=dict)
+    factor_tree: List[Dict[str, Any]] = Field(default_factory=list)
+    stats: Dict[str, Any] = Field(default_factory=dict)
+    coverage: Dict[str, Any] = Field(default_factory=dict)
+    message: str = ""
+
+
 class SimulateIndexPredictionRequest(BaseModel):
     ticker: str = "NIFTY"
     horizon_days: int | None = None
@@ -669,6 +695,109 @@ def get_index_prediction_factors(
         return IndexFactorCatalogResponse(status="ok", **payload)
     except Exception as exc:
         logger.exception("index-prediction factors catalog failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/capture-registry", response_model=CaptureRegistryResponse)
+def get_capture_registry(
+    entity_id: str = "NIFTY",
+    _auth: None = Depends(require_local_or_auth),
+) -> CaptureRegistryResponse:
+    """Return hub capture registry, factor tiers, and storage stats."""
+    key = entity_id.strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.hub_capture.registry import (
+            build_capture_stats,
+            build_factor_tree,
+            load_registry,
+        )
+        from trade_integrations.hub_capture.rollup import capture_coverage_stats
+
+        reg = load_registry(create=True)
+        return CaptureRegistryResponse(
+            status="ok",
+            registry=reg,
+            factor_tree=build_factor_tree(),
+            stats=build_capture_stats(key),
+            coverage=capture_coverage_stats(key),
+        )
+    except Exception as exc:
+        logger.exception("capture-registry get failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.put("/capture-registry", response_model=CaptureRegistryResponse)
+def update_capture_registry(
+    body: CaptureRegistryUpdateRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> CaptureRegistryResponse:
+    """Update capture settings for an entity (v1: NIFTY)."""
+    key = body.entity_id.strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.hub_capture.registry import (
+            build_capture_stats,
+            build_factor_tree,
+            load_registry,
+            update_entity,
+        )
+        from trade_integrations.hub_capture.rollup import capture_coverage_stats
+
+        patch = body.patch.model_dump(exclude_none=True)
+        update_entity(key, patch)
+        reg = load_registry(create=False)
+        return CaptureRegistryResponse(
+            status="ok",
+            registry=reg,
+            factor_tree=build_factor_tree(),
+            stats=build_capture_stats(key),
+            coverage=capture_coverage_stats(key),
+        )
+    except Exception as exc:
+        logger.exception("capture-registry update failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.post("/capture-registry/backfill")
+def run_capture_registry_backfill(
+    body: CaptureRegistryBackfillRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> Dict[str, Any]:
+    """Backfill proprietary NIFTY factor history (participant OI, flows)."""
+    key = body.entity_id.strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.hub_capture.intraday import run_capture_backfill
+
+        return run_capture_backfill(entity_id=key, days=max(30, min(body.days, 730)))
+    except Exception as exc:
+        logger.exception("capture-registry backfill failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.post("/capture-registry/intraday")
+def run_capture_registry_intraday(
+    entity_id: str = "NIFTY",
+    _auth: None = Depends(require_local_or_auth),
+) -> Dict[str, Any]:
+    """Run one intraday chain capture now (OpenAlgo → hub)."""
+    key = entity_id.strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.hub_capture.intraday import run_intraday_capture
+
+        return run_intraday_capture(entity_id=key)
+    except Exception as exc:
+        logger.exception("capture-registry intraday failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

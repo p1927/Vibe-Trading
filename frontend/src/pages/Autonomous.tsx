@@ -16,7 +16,8 @@ function AgentRuntimeStrip({ agent }: { agent: AutonomousAgentInstance }) {
   const sched = runtime.scheduler_health ?? "unknown";
   const nautilusState = runtime.nautilus_state;
   const nautilusOn = runtime.nautilus_watch_enabled !== false;
-  const lastDecision = runtime.last_decision as { decision?: string } | null;
+  const lastDecision = runtime.last_decision as { decision?: string; confidence?: number } | null;
+  const confidence = agent.thesis?.confidence ?? lastDecision?.confidence;
   const isBootstrapping =
     agent.streaming ||
     sched === "initializing" ||
@@ -51,7 +52,10 @@ function AgentRuntimeStrip({ agent }: { agent: AutonomousAgentInstance }) {
       )}
       {isBootstrapping && !bootstrapFailed && <span className="font-medium text-primary">starting…</span>}
       {lastDecision?.decision && (
-        <span className="font-medium text-foreground/80">last {lastDecision.decision}</span>
+        <span className="font-medium text-foreground/80">
+          last {lastDecision.decision}
+          {confidence != null ? ` · conf ${confidence}%` : ""}
+        </span>
       )}
       <span
         className={cn(

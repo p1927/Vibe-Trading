@@ -590,6 +590,23 @@ export const api = {
     request<IndexPredictionJobsResponse>(`/trade/index-prediction/jobs/${encodeURIComponent(jobId)}/resume`, {
       method: "POST",
     }),
+  getCaptureRegistry: (entityId = "NIFTY") =>
+    request<CaptureRegistryResponse>(`/trade/capture-registry?entity_id=${encodeURIComponent(entityId)}`),
+  updateCaptureRegistry: (body: CaptureRegistryUpdateRequest) =>
+    request<CaptureRegistryResponse>("/trade/capture-registry", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  runCaptureBackfill: (body: CaptureRegistryBackfillRequest) =>
+    request<Record<string, unknown>>("/trade/capture-registry/backfill", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  runCaptureIntraday: (entityId = "NIFTY") =>
+    request<Record<string, unknown>>(
+      `/trade/capture-registry/intraday?entity_id=${encodeURIComponent(entityId)}`,
+      { method: "POST" },
+    ),
   bootstrapAutoPaper: (body: AutoPaperBootstrapRequest) =>
     request<AutoPaperBootstrapResponse>("/trade/auto-paper/bootstrap", {
       method: "POST",
@@ -1941,6 +1958,66 @@ export interface IndexPredictionJobsResponse {
   jobs?: IndexPredictionJob[];
   job?: IndexPredictionJob | null;
   message?: string;
+}
+
+export interface CaptureFactorTreeGroup {
+  category: string;
+  factors: Array<{
+    key: string;
+    label?: string;
+    category?: string;
+    source?: string;
+    role?: string;
+    tier: "capture" | "scalar" | "ephemeral";
+  }>;
+}
+
+export interface CaptureRegistryEntity {
+  id: string;
+  kind?: string;
+  capture_enabled?: boolean;
+  factor_groups?: string[];
+  schedules?: Record<string, string>;
+  retention_days?: Record<string, number>;
+}
+
+export interface CaptureRegistryResponse {
+  status: string;
+  registry?: {
+    version?: number;
+    entities?: CaptureRegistryEntity[];
+    updated_at?: string;
+  };
+  factor_tree?: CaptureFactorTreeGroup[];
+  stats?: {
+    entity_id?: string;
+    capture_enabled?: boolean;
+    total_rows?: number;
+    series?: Record<
+      string,
+      { path?: string; days?: number; rows?: number; last_capture_at?: string | null }
+    >;
+  };
+  coverage?: {
+    entity_id?: string;
+    series?: Record<string, { days_captured?: number; fill_rate_pct?: number }>;
+  };
+  message?: string;
+}
+
+export interface CaptureRegistryUpdateRequest {
+  entity_id?: string;
+  patch: {
+    capture_enabled?: boolean;
+    factor_groups?: string[];
+    retention_days?: Record<string, number>;
+    schedules?: Record<string, string>;
+  };
+}
+
+export interface CaptureRegistryBackfillRequest {
+  entity_id?: string;
+  days?: number;
 }
 
 export interface IndexBacktestResponse {
