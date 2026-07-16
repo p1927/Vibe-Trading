@@ -52,12 +52,24 @@ def _get_scheduled_research_store():
 
 
 async def _dispatch_scheduled_research_job(job) -> None:
-    """Enqueue one scheduled research job through the session runtime.
+    """Dispatch a scheduled research job.
+
+    Jobs with ``config.job_type`` in ``index_factor_snapshot`` or
+    ``index_research`` run the index research pipeline directly. All other
+    jobs enqueue an agent session (legacy path).
 
     ``send_message`` queues the agent attempt and returns once accepted; it
     does not wait for that agent run to reach a terminal status. The executor's
-    ``COMPLETED`` state for this dispatch path means "successfully enqueued."
+    ``COMPLETED`` state for those paths means "successfully enqueued" or
+    "pipeline finished" respectively.
     """
+    from src.scheduled_research.index_jobs import INDEX_JOB_TYPES, dispatch_index_job
+
+    job_type = str(job.config.get("job_type") or "")
+    if job_type in INDEX_JOB_TYPES:
+        await dispatch_index_job(job)
+        return
+
     host = _sys.modules.get("api_server") or _sys.modules.get("agent.api_server")
     svc = host._get_session_service()
     if not svc:
@@ -91,6 +103,13 @@ def _get_scheduled_research_executor():
 
 def _start_scheduled_research_executor() -> None:
     """Start scheduled research execution when explicitly enabled."""
+    from src.scheduled_research.index_jobs import (
+        is_index_scheduler_enabled,
+        register_default_index_jobs,
+    )
+
+    if is_index_scheduler_enabled():
+        register_default_index_jobs(_get_scheduled_research_store())
     if not _scheduled_research_scheduler_enabled():
         return
     _get_scheduled_research_executor().start()
@@ -124,7 +143,12 @@ class CreateScheduledRunRequest(BaseModel):
         None, description="Epoch-ms for next run; defaults to now"
     )
     config: Dict[str, Any] = Field(
-        default_factory=dict, description="Optional backtest parameters"
+        default_factory=dict,
+        description=(
+            "Optional job parameters. Use job_type "
+            "'index_factor_snapshot' or 'index_research' for Nifty index "
+            "pipeline jobs (see scheduled_research.index_jobs)."
+        ),
     )
 
 
