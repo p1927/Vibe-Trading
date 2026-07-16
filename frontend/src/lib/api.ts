@@ -244,6 +244,8 @@ export const api = {
   getTradeWidget: (widgetId: string) =>
     request<TradePlanWidget>(`/trade/widget/${encodeURIComponent(widgetId)}`),
   getTradeExecutionMode: () => request<TradeExecutionMode>("/trade/execution-mode"),
+  getPlanContext: (ticker: string) =>
+    request<PlanContextResponse>(`/trade/plan-context/${encodeURIComponent(ticker)}`),
   getHubPlan: (ticker: string, asset = "options", refresh = false) =>
     request<HubPlanResponse>(
       `/trade/hub-plan?ticker=${encodeURIComponent(ticker)}&asset=${encodeURIComponent(asset)}&refresh=${refresh}`,
@@ -858,6 +860,15 @@ export interface TradePlanLiveContext {
   spot?: number | null;
   plan_spot?: number | null;
   fetched_at?: string;
+}
+
+export interface PlanContextResponse {
+  ticker?: string;
+  monitor_enabled: boolean;
+  staleness?: TradePlanStaleness;
+  live_context?: TradePlanLiveContext;
+  material_news_count?: number;
+  open_position?: boolean;
 }
 
 export interface TradePlanWidget {

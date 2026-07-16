@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -105,6 +106,30 @@ class ExecutionModeResponse(BaseModel):
     mode: str
     analyze_mode: bool
     paper_env: bool
+    live_allowed: bool
+    switch_url: str = ""
+
+
+def _openalgo_switch_url(host: str) -> str:
+    return f"{host.rstrip('/')}/"
+
+
+def _resolve_execution_mode(analyze: bool, paper_env: bool) -> ExecutionModeResponse:
+    """OpenAlgo UI is authoritative; paper_env only blocks live from Vibe."""
+    mode = "paper" if analyze else "live"
+    live_allowed = not paper_env
+    try:
+        host, _ = _openalgo_config()
+        switch_url = _openalgo_switch_url(host)
+    except HTTPException:
+        switch_url = ""
+    return ExecutionModeResponse(
+        mode=mode,
+        analyze_mode=analyze,
+        paper_env=paper_env,
+        live_allowed=live_allowed,
+        switch_url=switch_url,
+    )
 
 
 def _openalgo_config() -> tuple[str, str]:
@@ -137,37 +162,31 @@ def _openalgo_analyzer_status(host: str, api_key: str) -> bool:
     return bool(data.get("analyze_mode"))
 
 
-def _ensure_openalgo_paper_mode(host: str, api_key: str) -> None:
-    """Enable OpenAlgo analyzer/sandbox mode when OPENALGO_PAPER_MODE is set."""
-    if not _paper_mode_env_enabled():
-        return
-    if _openalgo_analyzer_status(host, api_key):
-        return
-    try:
-        response = requests.post(
-            f"{host}/api/v1/analyzer/toggle",
-            json={"apikey": api_key, "mode": True},
-            timeout=15,
+def _assert_execution_allowed(analyze: bool) -> None:
+    """Block live basket execution from Vibe when OPENALGO_PAPER_MODE safety lock is on."""
+    if not analyze and _paper_mode_env_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Live execution is disabled (OPENALGO_PAPER_MODE=true). "
+                "Switch OpenAlgo to Analyze mode, or set OPENALGO_PAPER_MODE=false in .env "
+                "after you are ready for real orders."
+            ),
         )
-        if not response.ok:
-            logger.warning("OpenAlgo paper toggle failed: %s", response.text[:200])
-    except requests.RequestException as exc:
-        logger.warning("OpenAlgo paper toggle request failed: %s", exc)
 
 
 @trade_router.get("/execution-mode", response_model=ExecutionModeResponse)
 def execution_mode(
     _auth: None = Depends(require_local_or_auth),
 ) -> ExecutionModeResponse:
-    """Return whether Vibe will route executes through OpenAlgo paper/analyzer mode."""
+    """Return OpenAlgo paper/live mode (toggle lives in OpenAlgo UI only)."""
     paper_env = _paper_mode_env_enabled()
     try:
         host, api_key = _openalgo_config()
         analyze = _openalgo_analyzer_status(host, api_key)
     except HTTPException:
         analyze = paper_env
-    mode = "paper" if (paper_env or analyze) else "live"
-    return ExecutionModeResponse(mode=mode, analyze_mode=analyze, paper_env=paper_env)
+    return _resolve_execution_mode(analyze, paper_env)
 
 
 @trade_router.post("/execute-basket", response_model=ExecuteBasketResponse)
@@ -189,10 +208,9 @@ def execute_basket(
         raise HTTPException(status_code=400, detail="No orders to execute")
 
     host, api_key = _openalgo_config()
-    _ensure_openalgo_paper_mode(host, api_key)
-    paper_env = _paper_mode_env_enabled()
     analyze = _openalgo_analyzer_status(host, api_key)
-    execution_mode = "paper" if (paper_env or analyze) else "live"
+    _assert_execution_allowed(analyze)
+    execution_mode = "paper" if analyze else "live"
 
     payload = {"apikey": api_key, "strategy": body.strategy, "orders": orders}
     try:
@@ -215,10 +233,34 @@ def execute_basket(
     results = body_json.get("results") or body_json.get("data") or []
     if isinstance(results, dict):
         results = [results]
+    if not isinstance(results, list):
+        results = []
+
+    if body.widget_id:
+        widget = load_trade_widget(body.widget_id)
+        if widget:
+            try:
+                from src.trade.hub_bridge import ensure_trade_stack_path
+
+                ensure_trade_stack_path()
+                from trade_integrations.monitor.execution_ledger import record_execution_from_widget
+
+                record_execution_from_widget(
+                    widget,
+                    results,
+                    execution_mode=execution_mode,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to record execution ledger for widget %s",
+                    body.widget_id,
+                    exc_info=True,
+                )
+
     mode_label = "Paper" if execution_mode == "paper" else "Live"
     return ExecuteBasketResponse(
         status=str(body_json.get("status") or "success"),
-        results=results if isinstance(results, list) else [],
+        results=results,
         message=str(body_json.get("message") or f"Basket submitted ({mode_label})"),
         execution_mode=execution_mode,
     )
@@ -234,6 +276,90 @@ def get_widget(
     if widget is None:
         raise HTTPException(status_code=404, detail="Widget not found")
     return widget
+
+
+def _widget_staleness_from_report(report: Any) -> dict[str, Any]:
+    return {
+        "status": report.status,
+        "reasons": list(report.reasons or []),
+        "spot_drift_pct": report.spot_drift_pct,
+    }
+
+
+def _live_context_from_report(report: Any) -> dict[str, Any]:
+    return {
+        "spot": report.live_spot,
+        "plan_spot": report.plan_spot,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _material_news_count(ticker: str) -> int:
+    try:
+        from trade_integrations.monitor.news_watcher import check_material_news
+        from trade_integrations.monitor.service import MonitorService
+
+        since = MonitorService._news_since(ticker)
+        return len(check_material_news(ticker, since))
+    except Exception:
+        logger.exception("Material news count failed for %s", ticker)
+        return 0
+
+
+def _has_open_plan_position(ticker: str) -> bool:
+    try:
+        from trade_integrations.monitor.execution_ledger import has_open_position_for_underlying
+
+        return bool(has_open_position_for_underlying(ticker))
+    except ImportError:
+        return False
+    except Exception:
+        logger.exception("Execution ledger lookup failed for %s", ticker)
+        return False
+
+
+@trade_router.get("/plan-context/{ticker}")
+def get_plan_context(
+    ticker: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> Dict[str, Any]:
+    """Live staleness, spot drift, and news context for mounted trade widgets."""
+    key = (ticker or "").strip().upper()
+    if not key:
+        raise HTTPException(status_code=400, detail="ticker required")
+
+    try:
+        from trade_integrations.monitor.service import MonitorService
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if not MonitorService.is_enabled():
+        return {"monitor_enabled": False}
+
+    try:
+        report = MonitorService().evaluate_ticker(key)
+    except Exception as exc:
+        logger.exception("plan-context failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if report is None:
+        return {
+            "ticker": key,
+            "monitor_enabled": True,
+            "staleness": {"status": "broken", "reasons": ["monitor_unavailable"], "spot_drift_pct": None},
+            "live_context": {"spot": None, "plan_spot": None, "fetched_at": datetime.now(timezone.utc).isoformat()},
+            "material_news_count": 0,
+            "open_position": False,
+        }
+
+    return {
+        "ticker": key,
+        "monitor_enabled": True,
+        "staleness": _widget_staleness_from_report(report),
+        "live_context": _live_context_from_report(report),
+        "material_news_count": _material_news_count(key),
+        "open_position": _has_open_plan_position(key),
+    }
 
 
 class HubPlanResponse(BaseModel):
