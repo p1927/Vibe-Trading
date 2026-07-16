@@ -63,12 +63,16 @@ def needs_widget_guard(
     return True
 
 
-def _extract_ticker(user_message: str, assistant_text: str) -> str | None:
+def _extract_ticker(
+    user_message: str,
+    assistant_text: str,
+    session_config: dict | None = None,
+) -> str | None:
     try:
-        from src.trade.symbol_detect import extract_primary_ticker
+        from src.trade.session_context import resolve_prefetch_ticker
 
         for text in (user_message, assistant_text):
-            ticker = extract_primary_ticker(text)
+            ticker = resolve_prefetch_ticker(session_config, text)
             if ticker:
                 return ticker
     except Exception:
@@ -87,12 +91,13 @@ def maybe_inject_widget(
     user_message: str,
     assistant_text: str,
     tools_called: set[str] | list[str],
+    session_config: dict | None = None,
 ) -> bool:
     """Build and emit trade_plan.widget if guard triggers. Returns True if emitted."""
     if not needs_widget_guard(user_message, assistant_text, tools_called):
         return False
 
-    ticker = _extract_ticker(user_message, assistant_text)
+    ticker = _extract_ticker(user_message, assistant_text, session_config)
     if not ticker:
         return False
 
