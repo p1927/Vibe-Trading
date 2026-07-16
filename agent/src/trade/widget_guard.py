@@ -99,6 +99,10 @@ def maybe_inject_widget(
             return False
 
         widget = build_options_trade_widget(ticker, refresh=False)
+        ranked = widget.get("ranked_strategies") or []
+        variants = widget.get("strategy_variants") or {}
+        if not ranked and not variants:
+            return False
         if event_bus is not None and session_id:
             event_bus.emit(session_id, "trade_plan.widget", widget)
         logger.info("Widget guard injected trade_plan.widget for %s session=%s", ticker, session_id)

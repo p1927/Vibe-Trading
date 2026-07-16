@@ -512,9 +512,12 @@ def prefetch_research_for_message(
                 "research.artifact",
                 {"ticker": ticker, "asset_type": asset_type, "artifact": artifact},
             )
+            from trade_integrations.bridge.hub_context import has_strategy_options_to_present
+
             if (
                 asset_type == "options"
                 and artifact.get("plan_status") in ("ready", "partial")
+                and has_strategy_options_to_present(artifact)
                 and _options_auto_widget_enabled()
             ):
                 _maybe_emit_options_widget(event_bus, session_id, ticker)
