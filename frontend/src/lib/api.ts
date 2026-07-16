@@ -233,6 +233,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ broker }),
     }),
+
+  executeTradeBasket: (body: ExecuteTradeBasketRequest) =>
+    request<ExecuteTradeBasketResponse>("/trade/execute-basket", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getTradeWidget: (widgetId: string) =>
+    request<TradePlanWidget>(`/trade/widget/${encodeURIComponent(widgetId)}`),
 };
 
 // --- Swarm types ---
@@ -798,6 +806,91 @@ export interface AlphaCompareResult {
   winner: string;
   ranking: AlphaCompareRow[];
   skipped: AlphaCompareSkip[];
+}
+
+// --- Trade plan widget (OpenAlgo / trade-stack) ---
+
+export interface TradePlanScenario {
+  name: string;
+  probability?: number;
+  trigger?: string;
+  strategy_hint?: string;
+}
+
+export interface TradePlanLeg {
+  side?: string;
+  symbol?: string;
+  quantity?: number;
+  price?: number;
+  strike?: number;
+  option_type?: string;
+}
+
+export interface TradePlanWidget {
+  type: "trade_plan.widget";
+  widget_id: string;
+  underlying: string;
+  instrument_type?: string;
+  market?: string;
+  spot?: number | null;
+  expiry?: string;
+  prediction?: {
+    view?: string;
+    iv_regime?: string;
+    confidence?: number;
+    signals?: Record<string, unknown>;
+  };
+  scenarios?: TradePlanScenario[];
+  ranked_strategies?: Array<Record<string, unknown>>;
+  recommended?: {
+    name?: string;
+    tier?: string;
+    score?: number;
+    rationale?: string;
+    legs?: TradePlanLeg[];
+    max_profit?: number;
+    max_loss?: number;
+    net_max_profit?: number;
+    net_max_loss?: number;
+  };
+  payoff?: {
+    samples?: Array<{ spot: number; pnl: number; net_pnl?: number }>;
+    gross_max_profit?: number;
+    gross_max_loss?: number;
+    net_max_profit?: number;
+    net_max_loss?: number;
+    breakevens?: unknown;
+  };
+  charges?: {
+    per_leg?: Array<Record<string, unknown>>;
+    net_debit_credit?: number;
+    round_trip_charges?: number;
+    total?: Record<string, unknown>;
+  };
+  implementation_steps?: Array<{
+    step?: number;
+    action?: string;
+    description?: string;
+    mcp_tool?: string | null;
+    payload?: Record<string, unknown>;
+  }>;
+  meta?: {
+    strategy_builder_url?: string;
+    strategy_builder_pnl_url?: string;
+    strategy_builder_execute_url?: string;
+  };
+}
+
+export interface ExecuteTradeBasketRequest {
+  widget_id?: string;
+  orders?: Array<Record<string, unknown>>;
+  strategy?: string;
+}
+
+export interface ExecuteTradeBasketResponse {
+  status: string;
+  results?: Array<Record<string, unknown>>;
+  message?: string;
 }
 
 // --- Connector runtime channel types ---

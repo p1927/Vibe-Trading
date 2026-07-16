@@ -5,7 +5,7 @@ import { Send, Loader2, ArrowDown, Square, Download, Plus, Paperclip, X, Users, 
 import { toast } from "sonner";
 import { useAgentStore } from "@/stores/agent";
 import { useSSE } from "@/hooks/useSSE";
-import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type LiveHalted, type LiveStatus } from "@/lib/api";
+import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type LiveHalted, type LiveStatus, type TradePlanWidget } from "@/lib/api";
 import { isReportWorthyRun } from "@/lib/runReports";
 import type { AgentMessage, ToolCallEntry } from "@/types/agent";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
@@ -15,6 +15,7 @@ import { ThinkingTimeline } from "@/components/chat/ThinkingTimeline";
 import { ConversationTimeline } from "@/components/chat/ConversationTimeline";
 import { ToolProgressIndicator } from "@/components/chat/ToolProgressIndicator";
 import { MandateProposalCard } from "@/components/chat/MandateProposalCard";
+import { TradePlanWidgetCard } from "@/components/chat/TradePlanWidgetCard";
 import { RunnerStatus } from "@/components/chat/RunnerStatus";
 import { SwarmStatusCard } from "@/components/chat/SwarmStatusCard";
 import {
@@ -72,7 +73,12 @@ interface LiveActionItem {
   timestamp: number;
   action: LiveAction;
 }
-type LiveItem = ProposalItem | LiveActionItem;
+interface TradePlanWidgetItem {
+  kind: "trade_plan_widget";
+  timestamp: number;
+  widget: TradePlanWidget;
+}
+type LiveItem = ProposalItem | LiveActionItem | TradePlanWidgetItem;
 
 function normalizeBrokerScope(broker: string | null | undefined): string | null {
   const normalized = broker?.trim().toLowerCase();
@@ -683,6 +689,17 @@ export function Agent() {
         scrollToBottom();
       },
 
+      "trade_plan.widget": (d) => {
+        touch();
+        const widget = d as unknown as TradePlanWidget;
+        if (!widget.widget_id || widget.type !== "trade_plan.widget") return;
+        setLiveItems((items) => [
+          ...items,
+          { kind: "trade_plan_widget", timestamp: Date.now(), widget },
+        ]);
+        scrollToBottom();
+      },
+
       "mandate.committed": (d) => {
         touch();
         const committed = d as unknown as MandateCommitted;
@@ -1135,7 +1152,11 @@ export function Agent() {
       return { sort: ts, render: "group", group: g, key };
     });
     for (const item of liveItems) {
-      const key = item.kind === "proposal" ? `lp_${item.proposal.proposal_id}` : `la_${item.action.audit_id || item.timestamp}`;
+      const key = item.kind === "proposal"
+        ? `lp_${item.proposal.proposal_id}`
+        : item.kind === "trade_plan_widget"
+          ? `tw_${item.widget.widget_id}`
+          : `la_${item.action.audit_id || item.timestamp}`;
       rows.push({ sort: item.timestamp, render: "live", item, key });
     }
     return rows.sort((a, b) => a.sort - b.sort);
@@ -1189,6 +1210,9 @@ export function Agent() {
                     onAdjust={runPrompt}
                   />
                 );
+              }
+              if (row.item.kind === "trade_plan_widget") {
+                return <TradePlanWidgetCard key={row.key} widget={row.item.widget} />;
               }
               return <LiveActionChip key={row.key} action={row.item.action} />;
             }
