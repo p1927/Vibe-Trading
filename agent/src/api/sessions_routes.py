@@ -442,6 +442,15 @@ def register_sessions_routes(app: FastAPI) -> None:
         if not svc:
             raise HTTPException(status_code=501, detail="Session runtime not enabled")
         sessions = svc.list_sessions(limit=limit)
+        visible = []
+        for s in sessions:
+            cfg = s.config if isinstance(s.config, dict) else {}
+            kind = str(cfg.get("session_kind") or "")
+            if kind in {"autonomous_orchestrator", "autonomous_agent"}:
+                continue
+            if (s.title or "").startswith("autonomous:"):
+                continue
+            visible.append(s)
         return [
             SessionResponse(
                 session_id=s.session_id,
@@ -451,7 +460,7 @@ def register_sessions_routes(app: FastAPI) -> None:
                 updated_at=s.updated_at,
                 last_attempt_id=s.last_attempt_id,
             )
-            for s in sessions
+            for s in visible
         ]
 
     @app.get("/sessions/{session_id}", response_model=SessionResponse, dependencies=[Depends(require_auth)])

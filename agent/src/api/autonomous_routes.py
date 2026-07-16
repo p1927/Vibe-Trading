@@ -91,6 +91,18 @@ def commit_autonomous_agent_route(body: CommitAutonomousAgentRequest) -> Dict[st
             orchestrator_session_id=body.session_id,
         )
         register_agent_jobs(result["agent"])
+        agent = result.get("agent") or {}
+        committed_payload = {
+            "agent_id": agent.get("id"),
+            "vibe_session_id": result.get("vibe_session_id"),
+            "name": agent.get("name"),
+        }
+        orch_sid = body.session_id or agent.get("orchestrator_session_id")
+        if orch_sid:
+            svc.event_bus.emit(str(orch_sid), "autonomous_agent.committed", committed_payload)
+        vibe_sid = result.get("vibe_session_id")
+        if vibe_sid and str(vibe_sid) != str(orch_sid or ""):
+            svc.event_bus.emit(str(vibe_sid), "autonomous_agent.committed", committed_payload)
         return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
