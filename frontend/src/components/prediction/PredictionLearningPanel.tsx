@@ -9,7 +9,10 @@ export function PredictionLearningPanel({ artifact, history }: Props) {
   const accuracy = (artifact.accuracy || {}) as IndexAccuracy;
   const eq = artifact.prediction?.equation;
   const sampleCount = accuracy.sample_count ?? 0;
-  const hitRate = accuracy.direction_hit_rate_14d ?? accuracy.direction_hit_rate;
+  const hitRate =
+    accuracy.direction_hit_rate_walk_forward ??
+    accuracy.direction_hit_rate_14d ??
+    accuracy.direction_hit_rate;
   const mae = accuracy.mae_14d_pct ?? accuracy.mae_pct;
 
   const totalForecasts = history.length;
