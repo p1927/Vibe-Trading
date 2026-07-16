@@ -86,7 +86,20 @@ class TestSyncProviderEnv:
         import src.providers.llm as llm_mod
         llm_mod._dotenv_loaded = True  # pretend already loaded
 
-        clean = {k: v for k, v in os.environ.items() if not k.startswith(("OPENAI_", "LANGCHAIN_", "DEEPSEEK_", "GROQ_", "OLLAMA_", "DASHSCOPE_", "ZAI_"))}
+        clean = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith((
+                "OPENAI_",
+                "LANGCHAIN_",
+                "DEEPSEEK_",
+                "GROQ_",
+                "OLLAMA_",
+                "DASHSCOPE_",
+                "ZAI_",
+                "SILICONFLOW_",
+            ))
+        }
         clean.update(env)
         with patch.dict(os.environ, clean, clear=True):
             _sync_provider_env()
@@ -118,6 +131,39 @@ class TestSyncProviderEnv:
         })
         assert result["OPENAI_API_KEY"] == "ds-key-123"
         assert result["OPENAI_API_BASE"] == "https://api.deepseek.com/v1"
+
+    @pytest.mark.parametrize(
+        ("provider", "key_env", "base_env", "base_url"),
+        [
+            (
+                "siliconflow-cn",
+                "SILICONFLOW_API_KEY",
+                "SILICONFLOW_BASE_URL",
+                "https://api.siliconflow.cn/v1",
+            ),
+            (
+                "siliconflow-global",
+                "SILICONFLOW_GLOBAL_API_KEY",
+                "SILICONFLOW_GLOBAL_BASE_URL",
+                "https://api.siliconflow.com/v1",
+            ),
+        ],
+    )
+    def test_siliconflow_providers(
+        self,
+        provider: str,
+        key_env: str,
+        base_env: str,
+        base_url: str,
+    ) -> None:
+        result = self._run_sync({
+            "LANGCHAIN_PROVIDER": provider,
+            key_env: "sf-key-123",
+            base_env: base_url,
+        })
+
+        assert result["OPENAI_API_KEY"] == "sf-key-123"
+        assert result["OPENAI_API_BASE"] == base_url
 
     def test_groq_provider(self) -> None:
         result = self._run_sync({

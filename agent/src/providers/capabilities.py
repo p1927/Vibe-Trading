@@ -130,6 +130,16 @@ _PROVIDERS: dict[str, ProviderCapabilities] = {
         capture_reasoning=True,
         native_adapter_package="langchain-deepseek",
     ),
+    "siliconflow-cn": ProviderCapabilities(
+        "siliconflow-cn",
+        "SILICONFLOW_API_KEY",
+        "SILICONFLOW_BASE_URL",
+    ),
+    "siliconflow-global": ProviderCapabilities(
+        "siliconflow-global",
+        "SILICONFLOW_GLOBAL_API_KEY",
+        "SILICONFLOW_GLOBAL_BASE_URL",
+    ),
     "nvidia": _NVIDIA_CAPABILITIES,
     "nvidia-nim": _NVIDIA_CAPABILITIES,
     "gemini": ProviderCapabilities(

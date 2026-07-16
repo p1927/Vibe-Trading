@@ -139,6 +139,48 @@ def test_update_deepseek_settings_uses_exact_reported_payload(
     assert "DEEPSEEK_BASE_URL=https://api.deepseek.com/v1" in env_text
 
 
+@pytest.mark.parametrize(
+    ("provider", "api_key_env", "base_url_env", "base_url"),
+    [
+        (
+            "siliconflow-cn",
+            "SILICONFLOW_API_KEY",
+            "SILICONFLOW_BASE_URL",
+            "https://api.siliconflow.cn/v1",
+        ),
+        (
+            "siliconflow-global",
+            "SILICONFLOW_GLOBAL_API_KEY",
+            "SILICONFLOW_GLOBAL_BASE_URL",
+            "https://api.siliconflow.com/v1",
+        ),
+    ],
+)
+def test_update_siliconflow_settings_uses_provider_namespace(
+    client: TestClient,
+    tmp_path: Path,
+    provider: str,
+    api_key_env: str,
+    base_url_env: str,
+    base_url: str,
+) -> None:
+    response = client.put(
+        "/settings/llm",
+        json={
+            "provider": provider,
+            "model_name": "deepseek-ai/DeepSeek-V3.1-Terminus",
+            "base_url": base_url,
+            "api_key": "sk-siliconflow-test",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == provider
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert f"{api_key_env}=sk-siliconflow-test" in env_text
+    assert f"{base_url_env}={base_url}" in env_text
+
+
 def test_settings_write_migrates_legacy_env_to_canonical_path(
     client: TestClient, tmp_path: Path,
 ) -> None:
