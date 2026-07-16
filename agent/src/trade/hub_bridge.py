@@ -63,10 +63,19 @@ def _options_auto_widget_enabled() -> bool:
     return val not in ("0", "false", "no", "off")
 
 
-def _should_emit_widget(session_id: str, ticker: str, now: float) -> bool:
+def _index_auto_widget_enabled() -> bool:
+    val = os.getenv("INDEX_AUTO_WIDGET_ON_PREFETCH", "true").strip().lower()
+    return val not in ("0", "false", "no", "off")
+
+
+def _widget_dedup_key(ticker: str, widget_kind: str) -> str:
+    return f"{ticker.strip().upper()}:{widget_kind.strip().lower()}"
+
+
+def _should_emit_widget(session_id: str, ticker: str, now: float, *, widget_kind: str = "options") -> bool:
     if not session_id:
         return False
-    key = ticker.strip().upper()
+    key = _widget_dedup_key(ticker, widget_kind)
     session_emits = session_widget_emitted.get(session_id, {})
     last = session_emits.get(key)
     if last is not None and (now - last) < WIDGET_EMIT_DEDUP_SECONDS:
@@ -74,10 +83,16 @@ def _should_emit_widget(session_id: str, ticker: str, now: float) -> bool:
     return True
 
 
-def _record_widget_emitted(session_id: str, ticker: str, now: float) -> None:
+def _record_widget_emitted(
+    session_id: str,
+    ticker: str,
+    now: float,
+    *,
+    widget_kind: str = "options",
+) -> None:
     if not session_id:
         return
-    key = ticker.strip().upper()
+    key = _widget_dedup_key(ticker, widget_kind)
     session_widget_emitted.setdefault(session_id, {})[key] = now
 
 
@@ -87,7 +102,7 @@ def _maybe_emit_options_widget(
     ticker: str,
 ) -> None:
     now = time.time()
-    if not _should_emit_widget(session_id, ticker, now):
+    if not _should_emit_widget(session_id, ticker, now, widget_kind="options"):
         return
     try:
         ensure_trade_stack_path()
@@ -97,9 +112,30 @@ def _maybe_emit_options_widget(
 
         widget = build_options_trade_widget(ticker, refresh=False)
         _emit(event_bus, session_id, "trade_plan.widget", widget)
-        _record_widget_emitted(session_id, ticker, now)
+        _record_widget_emitted(session_id, ticker, now, widget_kind="options")
     except Exception:
         logger.exception("Failed to auto-emit options widget for %s", ticker)
+
+
+def _maybe_emit_index_widget(
+    event_bus: EventBus | None,
+    session_id: str,
+    ticker: str,
+) -> None:
+    now = time.time()
+    if not _should_emit_widget(session_id, ticker, now, widget_kind="index"):
+        return
+    try:
+        ensure_trade_stack_path()
+        from trade_integrations.dataflows.index_research.widget_payload import (
+            build_index_trade_widget,
+        )
+
+        widget = build_index_trade_widget(ticker, refresh=False)
+        _emit(event_bus, session_id, "trade_plan.widget", widget)
+        _record_widget_emitted(session_id, ticker, now, widget_kind="index")
+    except Exception:
+        logger.exception("Failed to auto-emit index widget for %s", ticker)
 
 
 def _staleness_report_to_dict(report: Any) -> dict[str, Any]:
@@ -220,6 +256,73 @@ def prefetch_hub_plan(ticker: str, asset_type: str) -> dict[str, Any] | None:
     if is_options_research_eligible(key):
         return prefetch_hub_plan(key, "options")
     return None
+
+
+def prefetch_index_hub_plan(ticker: str) -> dict[str, Any] | None:
+    """Load or generate structured index research for the side-panel artifact."""
+    ensure_trade_stack_path()
+    from trade_integrations.context.hub import (
+        is_index_research_cache_fresh,
+        load_index_research_json,
+    )
+    from trade_integrations.tools.index_research_tools import (
+        fetch_index_research_report,
+        is_index_research_eligible,
+    )
+
+    key = ticker.strip().upper()
+    if not is_index_research_eligible(key):
+        return None
+
+    use_cache = is_index_research_cache_fresh(key)
+    fetch_index_research_report(key, use_cache=use_cache)
+    doc = load_index_research_json(key)
+    if doc is None:
+        return None
+    payload = _index_doc_to_panel(doc)
+    payload["asset_type"] = "index"
+    return payload
+
+
+def _index_doc_to_panel(doc) -> dict[str, Any]:
+    pred = doc.prediction or {}
+    factor_exp = doc.factor_explanation or {}
+    contributors = factor_exp.get("contributors") or []
+    errors = []
+    for stage in doc.stages or []:
+        if getattr(stage, "status", None) == "error":
+            errors.extend(getattr(stage, "errors", None) or [])
+
+    warnings: list[str] = []
+    if not pred.get("view"):
+        warnings.append("Index prediction incomplete — refresh index research.")
+    if not contributors:
+        warnings.append("Factor attribution not available yet — run index research refresh.")
+
+    status = "ready" if pred.get("view") and contributors else (
+        "partial" if pred.get("view") or contributors else "incomplete"
+    )
+
+    return {
+        "ticker": doc.ticker,
+        "underlying": doc.ticker,
+        "asset_type": "index",
+        "as_of": doc.as_of.isoformat() if hasattr(doc.as_of, "isoformat") else str(doc.as_of),
+        "horizon": doc.horizon or {},
+        "spot": doc.spot,
+        "prediction": pred,
+        "regime": doc.regime or {},
+        "scenarios": doc.scenarios or [],
+        "factor_explanation": factor_exp,
+        "factor_sensitivity": doc.factor_sensitivity or [],
+        "event_impact_curves": doc.event_impact_curves or [],
+        "constituent_signals": doc.constituent_signals[:10] if doc.constituent_signals else [],
+        "top_factors": contributors[:8],
+        "accuracy": doc.accuracy or {},
+        "plan_status": status,
+        "data_warnings": warnings,
+        "stage_errors": errors[:3],
+    }
 
 
 def _options_doc_to_panel(doc) -> dict[str, Any]:
@@ -398,6 +501,7 @@ def prefetch_research_for_message(
 
     asset_type = infer_asset_type(content, ticker)
     artifact: dict[str, Any] | None = None
+    index_artifact: dict[str, Any] | None = None
     try:
         artifact = prefetch_hub_plan(ticker, asset_type)
         if artifact:
@@ -414,12 +518,29 @@ def prefetch_research_for_message(
                 and _options_auto_widget_enabled()
             ):
                 _maybe_emit_options_widget(event_bus, session_id, ticker)
+
+        from trade_integrations.tools.index_research_tools import is_index_research_eligible
+
+        if is_index_research_eligible(ticker):
+            index_artifact = prefetch_index_hub_plan(ticker)
+            if index_artifact:
+                _emit(
+                    event_bus,
+                    session_id,
+                    "research.artifact",
+                    {"ticker": ticker, "asset_type": "index", "artifact": index_artifact},
+                )
+                if (
+                    index_artifact.get("plan_status") in ("ready", "partial")
+                    and _index_auto_widget_enabled()
+                ):
+                    _maybe_emit_index_widget(event_bus, session_id, ticker)
     except Exception:
         logger.exception("Hub prefetch failed for %s", ticker)
 
     from trade_integrations.bridge.hub_context import format_research_context_for_agent
 
-    context = format_research_context_for_agent(artifact)
+    context = format_research_context_for_agent(artifact, index_artifact=index_artifact)
     if detect_finalize_intent(content):
         _maybe_start_debate(session_id, ticker, asset_type, event_bus)
     return context
