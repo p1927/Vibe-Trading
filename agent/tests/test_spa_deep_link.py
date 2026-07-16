@@ -20,6 +20,7 @@ class TestSpaHtmlRouteMatcher:
         "path",
         [
             "/correlation",        # Correlation page
+            "/prediction",         # Nifty prediction page
             "/runs/abc",           # RunDetail (no trailing slash)
             "/runs/abc-123",       # RunDetail with dashes
             "/runs/abc/",          # RunDetail (trailing slash)

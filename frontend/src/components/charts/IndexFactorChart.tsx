@@ -47,11 +47,19 @@ export function IndexFactorChart({
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const { dark } = useDarkMode();
-  const [mode, setMode] = useState<"factor" | "event">("factor");
+  const [mode, setMode] = useState<"factor" | "event">(() =>
+    sensitivity.length > 0 ? "factor" : eventCurves.length > 0 ? "event" : "factor",
+  );
   const [factorIdx, setFactorIdx] = useState(0);
+  const [eventIdx, setEventIdx] = useState(0);
+
+  useEffect(() => {
+    if (!sensitivity.length && eventCurves.length > 0) setMode("event");
+    else if (sensitivity.length && !eventCurves.length) setMode("factor");
+  }, [sensitivity.length, eventCurves.length]);
 
   const activeFactor = sensitivity[factorIdx] ?? sensitivity[0];
-  const activeEvent = eventCurves[0];
+  const activeEvent = eventCurves[eventIdx] ?? eventCurves[0];
 
   const factorOption = useMemo(() => {
     const t = getChartTheme();
@@ -59,7 +67,10 @@ export function IndexFactorChart({
     if (points.length < 2) return null;
     const xs = points.map((p) => Number(p.factor_delta_pct ?? 0));
     const ys = points.map((p) => Number(p.index_level ?? 0));
-    const spotLine = spot && spot > 0 ? spot : null;
+    const baseline =
+      points.find((p) => Number(p.factor_delta_pct ?? 0) === 0)?.index_level ??
+      (spot && spot > 0 ? spot * 1.01 : null);
+    const baselineLine = baseline && Number(baseline) > 0 ? Number(baseline) : null;
     return {
       backgroundColor: "transparent",
       title: {
@@ -91,12 +102,12 @@ export function IndexFactorChart({
           symbolSize: 5,
           lineStyle: { color: t.infoColor, width: 2 },
           itemStyle: { color: t.infoColor },
-          markLine: spotLine
+          markLine: baselineLine
             ? {
                 silent: true,
                 symbol: "none",
                 lineStyle: { type: "dashed", color: t.textColor },
-                data: [{ yAxis: spotLine, name: "Spot" }],
+                data: [{ yAxis: baselineLine, name: "Current forecast" }],
               }
             : undefined,
         },
@@ -161,24 +172,37 @@ export function IndexFactorChart({
     };
   }, [factorOption, eventOption, mode, dark]);
 
-  if (!sensitivity.length && !eventCurves.length) return null;
+  if (!sensitivity.length && !eventCurves.length) {
+    return (
+      <div
+        className="flex items-center justify-center rounded-lg border border-dashed text-[12px] text-muted-foreground"
+        style={{ height }}
+      >
+        No sensitivity data for this view.
+      </div>
+    );
+  }
+
+  const activeOption = mode === "factor" ? factorOption : eventOption;
 
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setMode("factor")}
-          className={[
-            "rounded-md px-2 py-1 text-[10px] border",
-            mode === "factor"
-              ? "border-primary/60 bg-primary/10 text-foreground"
-              : "border-border/60 text-muted-foreground",
-          ].join(" ")}
-        >
-          Factor sweep
-        </button>
-        {eventCurves.length > 0 && (
+        {sensitivity.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => setMode("factor")}
+            className={[
+              "rounded-md px-2 py-1 text-[10px] border",
+              mode === "factor"
+                ? "border-primary/60 bg-primary/10 text-foreground"
+                : "border-border/60 text-muted-foreground",
+            ].join(" ")}
+          >
+            Factor sweep
+          </button>
+        ) : null}
+        {eventCurves.length > 0 ? (
           <button
             type="button"
             onClick={() => setMode("event")}
@@ -191,8 +215,8 @@ export function IndexFactorChart({
           >
             Event path
           </button>
-        )}
-        {mode === "factor" && sensitivity.length > 1 && (
+        ) : null}
+        {mode === "factor" && sensitivity.length > 1 ? (
           <select
             value={factorIdx}
             onChange={(e) => setFactorIdx(Number(e.target.value))}
@@ -204,13 +228,35 @@ export function IndexFactorChart({
               </option>
             ))}
           </select>
-        )}
+        ) : null}
+        {mode === "event" && eventCurves.length > 1 ? (
+          <select
+            value={eventIdx}
+            onChange={(e) => setEventIdx(Number(e.target.value))}
+            className="ml-auto rounded-md border border-border/60 bg-background px-2 py-1 text-[10px]"
+          >
+            {eventCurves.map((curve, i) => (
+              <option key={`${curve.event}-${curve.outcome}-${i}`} value={i}>
+                {[curve.event, curve.outcome].filter(Boolean).join(" — ")}
+              </option>
+            ))}
+          </select>
+        ) : null}
       </div>
-      <div
-        ref={ref}
-        style={{ height }}
-        className="rounded-lg overflow-hidden border border-border/40 bg-muted/10"
-      />
+      {activeOption ? (
+        <div
+          ref={ref}
+          style={{ height }}
+          className="rounded-lg overflow-hidden border border-border/40 bg-muted/10"
+        />
+      ) : (
+        <div
+          className="flex items-center justify-center rounded-lg border border-dashed text-[12px] text-muted-foreground"
+          style={{ height }}
+        >
+          {mode === "factor" ? "No sensitivity curve for this factor." : "No event path data."}
+        </div>
+      )}
     </div>
   );
 }

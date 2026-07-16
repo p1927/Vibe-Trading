@@ -1,6 +1,10 @@
 import { AlertTriangle, ChevronDown, Sparkles } from "lucide-react";
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
+import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
+import { unescapeLiteralEscapes } from "@/lib/sourceContent";
 import type { HubPlanArtifact, PlanPrediction, TradePlanScenario } from "@/lib/api";
 import {
   buildPlanHeadline,
@@ -10,6 +14,23 @@ import {
   formatLegsSummary,
   shouldShowConfidence,
 } from "@/lib/planDisplay";
+
+const remarkPlugins = [remarkGfm];
+const rehypePlugins = [rehypeHighlight];
+
+const researchProseClass =
+  "prose prose-sm dark:prose-invert max-w-none text-[12px] leading-relaxed prose-p:my-1 prose-headings:my-1.5";
+
+function FormattedText({ text, className }: { text: string; className?: string }) {
+  const normalized = unescapeLiteralEscapes(text);
+  return (
+    <div className={cn(researchProseClass, className)}>
+      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins}>
+        {normalized}
+      </ReactMarkdown>
+    </div>
+  );
+}
 
 export type { PlanPrediction };
 
@@ -132,7 +153,7 @@ export function ResearchContextPanel({
             <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
               What this means
             </div>
-            <p className="leading-relaxed text-foreground">{summary}</p>
+            <FormattedText text={summary} className="text-foreground" />
             {legsSummary && (
               <p className="text-[11px] text-muted-foreground">
                 <span className="font-medium text-foreground">Suggested legs:</span> {legsSummary}
@@ -207,7 +228,9 @@ export function ResearchContextPanel({
                       )}
                     </div>
                     {s.rationale && (
-                      <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{s.rationale}</p>
+                      <div className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                        <FormattedText text={s.rationale} className="text-[11px] text-muted-foreground" />
+                      </div>
                     )}
                   </li>
                 ))}
@@ -234,7 +257,9 @@ export function ResearchContextPanel({
                       )}
                     </div>
                     {sc.trigger && (
-                      <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{sc.trigger}</p>
+                      <div className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                        <FormattedText text={sc.trigger} className="text-[11px] text-muted-foreground" />
+                      </div>
                     )}
                   </li>
                 ))}

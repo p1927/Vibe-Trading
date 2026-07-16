@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useSearchParams } from "react-router-dom";
-import { Activity, BarChart3, Bot, Check, ChevronDown, FileText, Languages, Moon, Sun, Plus, Trash2, Pencil, MessageSquare, ChevronsLeft, ChevronsRight, Settings, Layers, Loader2 } from "lucide-react";
+import { Activity, BarChart3, Bot, Check, ChevronDown, FileText, Languages, Moon, Sun, Plus, Trash2, Pencil, MessageSquare, ChevronsLeft, ChevronsRight, Settings, Layers, Loader2, TrendingUp, Radio } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { api, type SessionItem } from "@/lib/api";
@@ -18,6 +18,8 @@ export function Layout() {
   const NAV = [
     { to: "/", icon: BarChart3, label: t('layout.home') },
     { to: "/agent", icon: Bot, label: t('layout.agent') },
+    { to: "/autonomous", icon: Radio, label: t('layout.autonomous') },
+    { to: "/prediction", icon: TrendingUp, label: "Prediction" },
     { to: "/runtime", icon: Activity, label: t('layout.runtime') },
     { to: "/reports", icon: FileText, label: t('layout.reports') },
     { to: "/alpha-zoo", icon: Layers, label: t('layout.alphaZoo') },

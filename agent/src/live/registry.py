@@ -30,6 +30,7 @@ from src.trading.connectors.futu.classification import FUTU_TOOL_CLASS
 from src.trading.connectors.ibkr.classification import IBKR_TOOL_CLASS
 from src.trading.connectors.longbridge.classification import LONGBRIDGE_TOOL_CLASS
 from src.trading.connectors.okx.classification import OKX_TOOL_CLASS
+from src.trading.connectors.openalgo.classification import OPENALGO_TOOL_CLASS
 from src.trading.connectors.robinhood.classification import ROBINHOOD_TOOL_CLASS
 from src.trading.connectors.shoonya.classification import SHOONYA_TOOL_CLASS
 from src.trading.connectors.tiger.classification import TIGER_TOOL_CLASS
@@ -53,6 +54,7 @@ _BROKER_CURATED_MAPS = {
     "dhan": DHAN_TOOL_CLASS,
     "shoonya": SHOONYA_TOOL_CLASS,
     "trading212": TRADING212_TOOL_CLASS,
+    "openalgo": OPENALGO_TOOL_CLASS,
 }
 
 

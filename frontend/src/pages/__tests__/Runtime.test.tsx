@@ -4,6 +4,9 @@ import type { LiveStatus } from "@/lib/api";
 
 const apiMock = vi.hoisted(() => ({
   getLiveStatus: vi.fn(),
+  getTradingConnectors: vi.fn(),
+  selectTradingConnector: vi.fn(),
+  checkTradingConnector: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -64,6 +67,26 @@ function makeStatus(overrides: Partial<LiveStatus> = {}): LiveStatus {
   };
 }
 
+function makeConnectors() {
+  return {
+    selected_profile: "openalgo-paper-sdk",
+    profiles: [
+      {
+        id: "openalgo-paper-sdk",
+        connector: "openalgo",
+        label: "OpenAlgo Paper · Analyzer (India + US data)",
+        environment: "paper",
+        transport: "broker_sdk",
+        capabilities: ["account.read", "positions.read"],
+        readonly: true,
+        config: { profile: "paper" },
+        notes: "Reads via OpenAlgo analyzer.",
+        selected: true,
+      },
+    ],
+  };
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -77,6 +100,8 @@ function deferred<T>() {
 describe("Runtime page", () => {
   beforeEach(() => {
     apiMock.getLiveStatus.mockReset();
+    apiMock.getTradingConnectors.mockReset();
+    apiMock.getTradingConnectors.mockResolvedValue(makeConnectors());
   });
 
   it("renders broker auth, runner, mandate, and risk state from live status", async () => {
@@ -85,6 +110,8 @@ describe("Runtime page", () => {
     render(<Runtime />);
 
     expect(await screen.findByText("Live / Paper Runtime Status")).toBeInTheDocument();
+    expect(screen.getByText("Trading connector profiles")).toBeInTheDocument();
+    expect(screen.getByText("OpenAlgo")).toBeInTheDocument();
     expect(screen.getByText("Clear")).toBeInTheDocument();
     expect(screen.getByText("paper")).toBeInTheDocument();
     expect(screen.getByText("auth present")).toBeInTheDocument();

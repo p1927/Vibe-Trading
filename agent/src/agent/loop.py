@@ -50,6 +50,22 @@ from src.tools.redaction import redact_payload
 RUNS_DIR = Path(__file__).resolve().parents[2] / "runs"
 SESSIONS_DIR = Path(__file__).resolve().parents[2] / "sessions"
 KEEP_RECENT = 3
+_PROTECTED_TOOL_NAMES = frozenset(
+    {
+        "get_autonomous_agent_status",
+        "get_auto_paper_status",
+        "get_auto_paper_market_feedback",
+        "get_options_trade_widget",
+        "get_stock_trade_widget",
+        "record_autonomous_decision",
+        "record_auto_paper_decision",
+        "execute_auto_paper_basket",
+        "get_us_quote",
+        "get_stock_browse",
+        "place_order",
+        "set_agent_watch_spec",
+    }
+)
 TOOL_RESULT_LIMIT = 10_000
 LLM_USAGE_ARTIFACT = "llm_usage.json"
 
@@ -240,6 +256,14 @@ def estimate_tokens(messages: list) -> int:
     return len(json.dumps(messages, default=str, ensure_ascii=False)) // 4
 
 
+def _is_protected_tool(name: str | None) -> bool:
+    if not name:
+        return False
+    if name in _PROTECTED_TOOL_NAMES:
+        return True
+    return any(name.endswith(f"_{protected}") or name == protected for protected in _PROTECTED_TOOL_NAMES)
+
+
 def _microcompact(messages: list) -> None:
     """Layer 1: silently prune old tool results, keeping the most recent N intact.
 
@@ -250,6 +274,8 @@ def _microcompact(messages: list) -> None:
     if len(tool_msgs) <= KEEP_RECENT:
         return
     for msg in tool_msgs[:-KEEP_RECENT]:
+        if _is_protected_tool(msg.get("name")):
+            continue
         content = msg.get("content", "")
         if isinstance(content, str) and len(content) > 100:
             msg["content"] = "[cleared]"
@@ -508,6 +534,31 @@ def _normalize_tool_run_dir(args: dict[str, Any], memory_run_dir: str | None) ->
     candidate = Path(run_dir_value)
     if not candidate.is_absolute():
         normalized["run_dir"] = str((Path(memory_run_dir) / candidate).resolve())
+    return normalized
+
+
+_AUTO_PAPER_SESSION_TOOLS = frozenset(
+    {
+        "start_auto_paper_trading",
+        "resume_auto_paper_trading",
+        "mcp_openalgo_start_auto_paper_trading",
+        "mcp_openalgo_resume_auto_paper_trading",
+    }
+)
+
+
+def _inject_auto_paper_session_context(
+    args: dict[str, Any],
+    *,
+    session_id: str,
+    tool_name: str,
+) -> dict[str, Any]:
+    """Wire Vibe chat session id into auto-paper MCP tools for crash recovery."""
+    if not session_id or tool_name not in _AUTO_PAPER_SESSION_TOOLS:
+        return args
+    normalized = dict(args)
+    if not normalized.get("vibe_session_id"):
+        normalized["vibe_session_id"] = session_id
     return normalized
 
 
@@ -1196,13 +1247,14 @@ class AgentLoop:
         runnable: list[tuple] = []
         for tc in tool_calls:
             args = _normalize_tool_run_dir(tc.arguments, self.memory.run_dir)
+            args = _inject_auto_paper_session_context(
+                args, session_id=self._session_id, tool_name=tc.name
+            )
             redacted_args = redact_payload(args)
             event_args = {k: str(v)[:200] for k, v in redacted_args.items()}
             self._emit("tool_call", {"tool": tc.name, "arguments": event_args, "iter": iteration})
             trace.write({"type": "tool_call", "iter": iteration, "tool": tc.name, "call_id": tc.id, "args": redacted_args})
             runnable.append((tc, args))
-
-        # Execute in parallel — each worker gets its own heartbeat + progress emitter.
         def _run(tc_args: tuple) -> tuple:
             tc, args = tc_args
             result, elapsed_ms = self._invoke_tool(tc.name, args)
@@ -1242,6 +1294,9 @@ class AgentLoop:
             iteration: Current iteration.
         """
         args = _normalize_tool_run_dir(tc.arguments, self.memory.run_dir)
+        args = _inject_auto_paper_session_context(
+            args, session_id=self._session_id, tool_name=tc.name
+        )
 
         redacted_args = redact_payload(args)
         event_args = {k: str(v)[:200] for k, v in redacted_args.items()}

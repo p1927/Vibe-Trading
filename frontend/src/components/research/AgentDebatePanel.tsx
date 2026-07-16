@@ -1,7 +1,17 @@
 import { ChevronDown, Loader2, Users } from "lucide-react";
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
+import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
+import { unescapeLiteralEscapes } from "@/lib/sourceContent";
 import type { AgentDebateArtifact } from "@/lib/api";
+
+const remarkPlugins = [remarkGfm];
+const rehypePlugins = [rehypeHighlight];
+
+const debateProseClass =
+  "prose prose-sm dark:prose-invert max-w-none text-[11px] leading-relaxed prose-p:my-1 prose-headings:my-1.5";
 
 interface Props {
   ticker: string;
@@ -13,10 +23,15 @@ interface Props {
 
 function DebateSection({ title, body }: { title: string; body?: string | null }) {
   if (!body?.trim()) return null;
+  const text = unescapeLiteralEscapes(body);
   return (
     <div className="space-y-1">
       <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{title}</div>
-      <p className="whitespace-pre-wrap text-[11px] leading-relaxed text-foreground">{body}</p>
+      <div className={debateProseClass}>
+        <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins}>
+          {text}
+        </ReactMarkdown>
+      </div>
     </div>
   );
 }

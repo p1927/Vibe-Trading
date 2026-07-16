@@ -13,16 +13,29 @@ logger = logging.getLogger(__name__)
 
 JOB_TYPE_AUTO_PAPER_INTRADAY = "auto_paper_intraday_tick"
 JOB_TYPE_AUTO_PAPER_AGENT = "auto_paper_agent_turn"
-AUTO_PAPER_JOB_TYPES = frozenset({JOB_TYPE_AUTO_PAPER_INTRADAY, JOB_TYPE_AUTO_PAPER_AGENT})
+JOB_TYPE_SCHEDULER_HEALTH = "auto_paper_scheduler_health"
+JOB_TYPE_SESSION_CLOSE_FLATTEN = "auto_paper_session_close_flatten"
+AUTO_PAPER_JOB_TYPES = frozenset(
+    {
+        JOB_TYPE_AUTO_PAPER_INTRADAY,
+        JOB_TYPE_AUTO_PAPER_AGENT,
+        JOB_TYPE_SCHEDULER_HEALTH,
+        JOB_TYPE_SESSION_CLOSE_FLATTEN,
+    }
+)
 
 DEFAULT_AUTO_PAPER_POLL_CRON = "*/5 * * * *"
 AUTO_PAPER_AGENT_JOB_ID = "auto-paper-agent-turn"
 AUTO_PAPER_INTRADAY_JOB_ID = "auto-paper-intraday"
 AUTO_PAPER_THESIS_BREAK_JOB_ID = "auto-paper-thesis-break"
+AUTO_PAPER_SCHEDULER_HEALTH_JOB_ID = "auto-paper-scheduler-health"
+AUTO_PAPER_SESSION_CLOSE_FLATTEN_JOB_ID = "auto-paper-session-close-flatten"
 AUTO_PAPER_SCHEDULER_JOB_IDS = (
     AUTO_PAPER_AGENT_JOB_ID,
     AUTO_PAPER_INTRADAY_JOB_ID,
     AUTO_PAPER_THESIS_BREAK_JOB_ID,
+    AUTO_PAPER_SCHEDULER_HEALTH_JOB_ID,
+    AUTO_PAPER_SESSION_CLOSE_FLATTEN_JOB_ID,
 )
 
 
@@ -49,6 +62,13 @@ def run_auto_paper_job_sync(config: dict | None = None) -> dict:
     _ensure_trade_integrations_on_path()
     from trade_integrations.auto_paper.config import is_auto_paper_active
     from trade_integrations.auto_paper.engine import run_auto_paper_tick
+    from trade_integrations.auto_paper.session_store import load_session
+    from trade_integrations.execution.enforce import is_bridge_autonomous_agent
+
+    session = load_session()
+    agent_id = str(session.get("autonomous_agent_id") or "").strip()
+    if is_bridge_autonomous_agent(agent_id) or session.get("nautilus_bridge_mode"):
+        return {"skipped": True, "reason": "nautilus_bridge_owns_execution"}
 
     if not is_auto_paper_active() and not is_auto_paper_scheduler_enabled():
         return {"skipped": True, "reason": "auto_paper_disabled"}
@@ -107,6 +127,16 @@ async def dispatch_auto_paper_agent_turn(
         logger.info("auto paper agent turn skipped: session inactive or halted")
         return
 
+    session = load_session()
+    agent_id = str(session.get("autonomous_agent_id") or "").strip()
+    if agent_id or session.get("nautilus_bridge_mode"):
+        _ensure_trade_integrations_on_path()
+        from trade_integrations.execution.enforce import is_bridge_autonomous_agent
+
+        if is_bridge_autonomous_agent(agent_id) or session.get("nautilus_bridge_mode"):
+            logger.info("auto paper agent turn skipped: Nautilus bridge owns watch for %s", agent_id or "bridge session")
+            return
+
     cfg = get_auto_paper_config()
     if not is_market_session_open(cfg):
         logger.info("auto paper agent turn skipped: outside market hours")
@@ -125,6 +155,9 @@ async def dispatch_auto_paper_agent_turn(
         session = load_session()
         ticker = str(session.get("primary_ticker") or (session.get("watchlist") or ["NIFTY"])[0])
         vibe_session = _resolve_vibe_session(svc, ticker, job.config or {})
+        from src.trade.auto_paper_bootstrap import prepare_fresh_vibe_turn
+
+        await prepare_fresh_vibe_turn(svc, vibe_session.session_id)
         await svc.send_message(vibe_session.session_id, prompt_override)
         return
 
@@ -156,10 +189,124 @@ async def dispatch_auto_paper_agent_turn(
         save_session(session)
 
 
+def run_scheduler_health_sync() -> dict:
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.auto_paper.audit import write_paper_action
+    from trade_integrations.auto_paper.config import get_auto_paper_config
+    from trade_integrations.auto_paper.session_store import load_session
+
+    session = load_session()
+    if not session.get("enabled"):
+        return {"status": "disabled"}
+
+    cfg = get_auto_paper_config()
+    last = session.get("last_agent_turn_at")
+    stale = True
+    if last:
+        from datetime import datetime, timezone
+
+        try:
+            last_dt = datetime.fromisoformat(str(last).replace("Z", "+00:00"))
+            age_min = (datetime.now(timezone.utc) - last_dt).total_seconds() / 60.0
+            stale_after = max(10.0, (cfg.poll_interval_ms or 300_000) / 60_000 * 2)
+            stale = age_min > stale_after
+        except ValueError:
+            stale = True
+
+    health = "stale" if stale else "ok"
+    if stale and session.get("agent_mode", True):
+        ensure_agent_job_registered()
+        write_paper_action("scheduler_stale", detail={"last_agent_turn_at": last, "health": health})
+    return {"status": health, "last_agent_turn_at": last}
+
+
+def run_session_close_flatten_sync() -> dict:
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.auto_paper.audit import write_paper_action
+    from trade_integrations.auto_paper.mandate_config import mandate_config_from_session
+    from trade_integrations.auto_paper.openalgo_client import OpenAlgoClient
+    from trade_integrations.auto_paper.outcome_ledger import append_outcome
+    from trade_integrations.auto_paper.session_store import load_session
+    from trade_integrations.monitor.execution_ledger import list_open_entries
+
+    session = load_session()
+    if not session.get("enabled"):
+        return {"skipped": True, "reason": "session_inactive"}
+
+    mc = mandate_config_from_session(session)
+    if not mc.needs_session_close_flatten():
+        return {"skipped": True, "reason": "flatten_not_in_mandate"}
+
+    open_entries = list_open_entries()
+    if not open_entries:
+        return {"skipped": True, "reason": "no_open_positions"}
+
+    client = OpenAlgoClient()
+    if not client.ensure_analyzer_mode():
+        return {"status": "error", "reason": "analyzer_mode_failed"}
+
+    result = client.close_all_positions(strategy="auto_paper_session_close")
+    append_outcome(
+        symbol=str(session.get("primary_ticker") or "NIFTY"),
+        strategy=(session.get("lifecycle") or {}).get("active_strategy"),
+        action="EXIT",
+        intent_source="session_close_flatten",
+        agent_id=session.get("autonomous_agent_id"),
+        mandate_snapshot=mc.to_dict(),
+    )
+    write_paper_action("session_close_flatten", detail={"positions_closed": len(open_entries), "result": result})
+    return {"status": "flattened", "positions": len(open_entries), "result": result}
+
+
+def register_mandate_scheduler_jobs(store, mandate) -> int:
+    """Register mandate-specific cron jobs (health + optional session-close flatten)."""
+    from trade_integrations.auto_paper.mandate_config import scheduled_actions_for
+
+    created = 0
+    actions = scheduled_actions_for(mandate)
+    now_ms = int(time.time() * 1000)
+
+    if "scheduler_health" in actions:
+        health_job = ScheduledResearchJob(
+            id=AUTO_PAPER_SCHEDULER_HEALTH_JOB_ID,
+            prompt="Auto paper scheduler health check",
+            schedule="*/5 * * * *",
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={"job_type": JOB_TYPE_SCHEDULER_HEALTH},
+        )
+        store.upsert(health_job)
+        created += 1
+
+    if "session_close_flatten" in actions:
+        flatten_job = ScheduledResearchJob(
+            id=AUTO_PAPER_SESSION_CLOSE_FLATTEN_JOB_ID,
+            prompt="Session close flatten (mandate-driven)",
+            schedule="10 15 * * 1-5",
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={"job_type": JOB_TYPE_SESSION_CLOSE_FLATTEN},
+        )
+        store.upsert(flatten_job)
+        created += 1
+
+    if created:
+        logger.info("registered %s mandate scheduler jobs", created)
+    return created
+
+
 async def dispatch_auto_paper_job(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_AUTO_PAPER_AGENT:
         await dispatch_auto_paper_agent_turn(job)
+        return
+    if job_type == JOB_TYPE_SCHEDULER_HEALTH:
+        await asyncio.to_thread(run_scheduler_health_sync)
+        return
+    if job_type == JOB_TYPE_SESSION_CLOSE_FLATTEN:
+        await asyncio.to_thread(run_session_close_flatten_sync)
         return
     await asyncio.to_thread(run_auto_paper_job_sync, job.config)
 
@@ -168,6 +315,12 @@ def dispatch_auto_paper_job_sync(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_AUTO_PAPER_AGENT:
         asyncio.run(dispatch_auto_paper_agent_turn(job))
+        return
+    if job_type == JOB_TYPE_SCHEDULER_HEALTH:
+        run_scheduler_health_sync()
+        return
+    if job_type == JOB_TYPE_SESSION_CLOSE_FLATTEN:
+        run_session_close_flatten_sync()
         return
     run_auto_paper_job_sync(job.config)
 

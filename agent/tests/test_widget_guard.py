@@ -22,10 +22,10 @@ class TestWidgetGuard:
             ["get_options_trade_widget"],
         )
 
-    def test_skips_non_strategy_answer(self):
+    def test_skips_when_user_intent_none(self):
         assert not needs_widget_guard(
-            "Hello",
-            "How can I help you today?",
+            "What's NIFTY doing?",
+            "Iron condor max loss is limited at these strikes.",
             [],
         )
 
