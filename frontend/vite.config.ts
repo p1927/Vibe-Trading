@@ -39,7 +39,9 @@ export default defineConfig(({ mode }) => {
       alias: { "@": path.resolve(__dirname, "./src") },
     },
     server: {
+      host: "127.0.0.1",
       port: 5899,
+      strictPort: true,
       proxy: {
         ...Object.fromEntries(PROXY_PATHS.map((p) => [p, apiProxy])),
         // SPA RunDetail page — only the two-segment ``/runs/{id}``

@@ -5301,7 +5301,7 @@ def cmd_dev(
     # with ``FileNotFoundError`` even though ``shutil.which("npm")`` returned
     # a path. Use the resolved executable path directly.
     npm_executable = npm if _is_windows() else "npm"
-    frontend_cmd = [npm_executable, "run", "dev", "--", "--port", str(frontend_port)]
+    frontend_cmd = [npm_executable, "run", "dev", "--", "--port", str(frontend_port), "--host", "127.0.0.1"]
 
     console.print(
         Panel(
