@@ -49,7 +49,7 @@ interface Props {
   widget: TradePlanWidget;
 }
 
-function formatInr(value: unknown, *, precise = false): string {
+function formatInr(value: unknown, precise = false): string {
   const n = Number(value);
   if (value == null || !Number.isFinite(n)) return "—";
   if (precise || (Math.abs(n) > 0 && Math.abs(n) < 100)) {
@@ -549,7 +549,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
             </p>
             {pred.range?.low != null && pred.range?.high != null && (
               <p className="font-mono text-[11px] text-muted-foreground">
-                Range {formatInr(pred.range.low, precise)} – {formatInr(pred.range.high, precise)}
+                Range {formatInr(pred.range.low)} – {formatInr(pred.range.high)}
               </p>
             )}
             {pred.provenance && (
@@ -725,9 +725,9 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
             {displayRec.rationale && <p className="text-muted-foreground">{displayRec.rationale}</p>}
             {(displayRec.target != null || displayRec.stop != null) && (
               <p className="font-mono text-[11px] text-muted-foreground">
-                {displayRec.target != null ? `Target ${formatInr(displayRec.target, precise)}` : ""}
+                {displayRec.target != null ? `Target ${formatInr(displayRec.target)}` : ""}
                 {displayRec.target != null && displayRec.stop != null ? " · " : ""}
-                {displayRec.stop != null ? `Stop ${formatInr(displayRec.stop, precise)}` : ""}
+                {displayRec.stop != null ? `Stop ${formatInr(displayRec.stop)}` : ""}
               </p>
             )}
             <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
@@ -776,7 +776,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
             <ul className="mt-2 space-y-0.5 text-[10px] text-muted-foreground">
               {(charges.per_leg || []).slice(0, 4).map((row, i) => (
                 <li key={`${String(row.symbol || row.leg)}-${i}`}>
-                  {String(row.symbol || row.leg)}: brokerage {formatInr(row.brokerage, precise)} · STT {formatInr(row.stt, precise)} · GST {formatInr(row.gst, precise)}
+                  {String(row.symbol || row.leg)}: brokerage {formatInr(row.brokerage)} · STT {formatInr(row.stt)} · GST {formatInr(row.gst)}
                 </li>
               ))}
             </ul>
