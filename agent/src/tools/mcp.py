@@ -611,7 +611,7 @@ class MCPRemoteTool(BaseTool):
             self._filter_arguments(kwargs),
             local_name=self.name,
         )
-        return json.dumps(payload, ensure_ascii=False, default=_json_default)
+        return _safe_json_dumps(payload)
 
     def _filter_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Drop local-only arguments before forwarding to the remote tool.
@@ -920,10 +920,10 @@ def _normalize_call_tool_result(result: CallToolResult) -> dict[str, Any]:
         }
 
     payload: dict[str, Any] = {"status": "ok"}
-    if result.data is not None:
-        payload["data"] = _make_jsonable(result.data)
     if result.structured_content is not None:
         payload["structured_content"] = _make_jsonable(result.structured_content)
+    elif result.data is not None:
+        payload["data"] = _make_jsonable(result.data)
     if result.content:
         payload["content"] = [_make_jsonable(block) for block in result.content]
         text = _extract_text_content(result.content)
@@ -1022,22 +1022,62 @@ def _format_exception_message(exc: Exception) -> str:
     return str(exc) or type(exc).__name__
 
 
-def _make_jsonable(value: Any) -> Any:
+def _make_jsonable(value: Any, *, _seen: set[int] | None = None) -> Any:
     """Convert FastMCP response payloads into JSON-serializable objects.
 
     Args:
         value: Arbitrary response value.
+        _seen: Object ids already being serialized (cycle guard).
 
     Returns:
         JSON-serializable equivalent.
     """
+    if _seen is None:
+        _seen = set()
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    oid = id(value)
+    if oid in _seen:
+        return "<circular>"
+
     if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json", by_alias=True, exclude_none=True)
-    if isinstance(value, list):
-        return [_make_jsonable(item) for item in value]
+        _seen.add(oid)
+        try:
+            return _make_jsonable(
+                value.model_dump(mode="json", by_alias=True, exclude_none=True),
+                _seen=_seen,
+            )
+        finally:
+            _seen.discard(oid)
+
     if isinstance(value, dict):
-        return {str(key): _make_jsonable(item) for key, item in value.items()}
-    return value
+        _seen.add(oid)
+        try:
+            return {str(key): _make_jsonable(item, _seen=_seen) for key, item in value.items()}
+        finally:
+            _seen.discard(oid)
+
+    if isinstance(value, list):
+        _seen.add(oid)
+        try:
+            return [_make_jsonable(item, _seen=_seen) for item in value]
+        finally:
+            _seen.discard(oid)
+
+    if hasattr(value, "item") and callable(value.item):
+        try:
+            return _make_jsonable(value.item(), _seen=_seen)
+        except Exception:
+            pass
+
+    return str(value)
+
+
+def _safe_json_dumps(value: Any) -> str:
+    """Serialize a payload without circular-reference failures."""
+    return json.dumps(_make_jsonable(value), ensure_ascii=False)
 
 
 def _json_default(value: Any) -> Any:
