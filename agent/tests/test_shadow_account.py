@@ -1378,6 +1378,52 @@ def _daily_index(start: str = "2026-01-02", periods: int = 30) -> pd.DatetimeInd
 
 
 @pytest.mark.unit
+def test_generated_engine_keeps_unmatched_markets_flat() -> None:
+    rule = ShadowRule(
+        rule_id="R1",
+        human_text="US time-only rule",
+        entry_condition={
+            "market": "us",
+            "entry_hour": {"min": 0, "max": 23},
+        },
+        exit_condition={"holding_days": {"min": 2, "max": 5}},
+        holding_days_range=(3, 3),
+        support_count=10,
+        coverage_rate=0.5,
+        sample_trades=("AAPL@2026-01-10",),
+    )
+    profile = ShadowProfile(
+        shadow_id="shadow_us_only",
+        created_at="2026-01-01T00:00:00",
+        journal_hash="test",
+        source_market="us",
+        profitable_roundtrips=10,
+        total_roundtrips=20,
+        date_range=("2025-01-01", "2026-01-01"),
+        profile_text="test",
+        rules=(rule,),
+        preferred_markets=("us",),
+        typical_holding_days=(3.0,),
+    )
+    index = _daily_index(periods=20)
+    frame = pd.DataFrame({"close": range(20, 40)}, index=index)
+
+    signals = _generate_signals(
+        profile,
+        {
+            "AAPL": frame,
+            "600519.SH": frame,
+            "0700.HK": frame,
+            "BTC-USDT": frame,
+        },
+    )
+
+    assert signals["AAPL"].ne(0).any()
+    for code in ("600519.SH", "0700.HK", "BTC-USDT"):
+        assert signals[code].eq(0).all(), code
+
+
+@pytest.mark.unit
 def test_conditional_entry_emits_signal_when_rsi_in_range() -> None:
     """RSI in [25, 45] → signal fires."""
     rule = _rule_with_rsi(25.0, 45.0)
@@ -1645,5 +1691,4 @@ def test_conditional_entry_rsi_nan_bars_are_skipped() -> None:
         assert series.iloc[i] == 0.0, f"bar {i} should be zero (RSI warmup)"
     # At least one entry after warmup.
     assert (series.iloc[14:] > 0).any(), "no entry after RSI warmup"
-
 
