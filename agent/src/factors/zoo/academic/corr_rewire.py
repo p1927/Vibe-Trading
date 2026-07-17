@@ -171,7 +171,10 @@ def compute(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
         DataFrame shaped like ``panel['close']`` with the factor values.
     """
     close = panel["close"]
-    returns = close.pct_change()
+    # fill_method=None: a missing price must yield a missing return (pandas 2.x
+    # would otherwise forward-fill and defeat the coverage guard). Matches the
+    # bench's own forward-return convention.
+    returns = close.pct_change(fill_method=None)
 
     scores = _rewiring_scores(
         returns.to_numpy(dtype=float),
