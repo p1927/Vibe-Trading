@@ -1043,9 +1043,13 @@ def _commit_mandate(proposal: Dict[str, Any], selected_ordinal: int) -> Dict[str
     """
     import httpx
 
-    from src.config.accessor import get_env_config
+    from src.config.accessor import get_env_config, reset_env_config
 
-    base = get_env_config().api.vibe_trading_api_url.rstrip("/")
+    reset_env_config()
+    api_config = get_env_config().api
+    base = api_config.vibe_trading_api_url.rstrip("/")
+    key = api_config.api_auth_key.strip()
+    headers = {"Authorization": f"Bearer {key}"} if key else {}
     body = {
         "proposal_id": proposal.get("proposal_id"),
         "selected_ordinal": selected_ordinal,
@@ -1054,7 +1058,12 @@ def _commit_mandate(proposal: Dict[str, Any], selected_ordinal: int) -> Dict[str
         "consent_ack": True,
     }
     try:
-        response = httpx.post(f"{base}/mandate/commit", json=body, timeout=30.0)
+        response = httpx.post(
+            f"{base}/mandate/commit",
+            json=body,
+            headers=headers,
+            timeout=30.0,
+        )
         response.raise_for_status()
         return response.json()
     except Exception as exc:  # noqa: BLE001 — surface a clean error to the user
