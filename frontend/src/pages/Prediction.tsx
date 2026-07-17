@@ -7,6 +7,7 @@ import { FactorImpactWorkbench } from "@/components/prediction/FactorImpactWorkb
 import { FactorCompositionTable } from "@/components/prediction/FactorCompositionTable";
 import { EquationCard } from "@/components/prediction/EquationCard";
 import { CausalFactorExplorer } from "@/components/prediction/CausalFactorExplorer";
+import { TrackScoreboardPanel } from "@/components/prediction/TrackScoreboardPanel";
 import { BacktestEvaluationPanel } from "@/components/prediction/BacktestEvaluationPanel";
 import { PredictionMissAnalysisPanel } from "@/components/prediction/PredictionMissAnalysisPanel";
 import { IndexFactorLedgerPanel } from "@/components/prediction/IndexFactorLedgerPanel";
@@ -41,6 +42,7 @@ import {
   type IndexPredictionHistoryMeta,
   type IndexPredictionHistoryRow,
   type IndexSimulationResult,
+  type IndexTrackScoreboardReport,
   type NewsScenarioDateRange,
   type TradePlanWidget,
 } from "@/lib/api";
@@ -58,10 +60,16 @@ import { mergePriceSeries } from "@/lib/forecastReplayUtils";
 const POLL_STORAGE_KEY = "vibe-prediction-poll-ms";
 const DEFAULT_POLL_MS = 300_000;
 const NEWS_SCENARIO_MODE = "news-scenarios";
+const SCOREBOARD_MODE = "scoreboard";
 
 export function Prediction() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const predictionMode = searchParams.get("mode") === NEWS_SCENARIO_MODE ? NEWS_SCENARIO_MODE : "analysis";
+  const predictionMode =
+    searchParams.get("mode") === NEWS_SCENARIO_MODE
+      ? NEWS_SCENARIO_MODE
+      : searchParams.get("mode") === SCOREBOARD_MODE
+        ? SCOREBOARD_MODE
+        : "analysis";
   const [newsSessionError, setNewsSessionError] = useState<string | null>(null);
   const [boundPipelineAsOf, setBoundPipelineAsOf] = useState<string | null>(null);
   const [newsScenarioWidget, setNewsScenarioWidget] = useState<TradePlanWidget | null>(null);
@@ -93,6 +101,9 @@ export function Prediction() {
   const [simulation, setSimulation] = useState<IndexSimulationResult | null>(null);
   const [refreshConstituents, setRefreshConstituents] = useState(false);
   const [backtestError, setBacktestError] = useState<string | null>(null);
+  const [trackScoreboard, setTrackScoreboard] = useState<IndexTrackScoreboardReport | null>(null);
+  const [trackScoreboardLoading, setTrackScoreboardLoading] = useState(false);
+  const [trackScoreboardError, setTrackScoreboardError] = useState<string | null>(null);
   const [missAnalysisError, setMissAnalysisError] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [factorHistoryError, setFactorHistoryError] = useState<string | null>(null);
@@ -206,12 +217,15 @@ export function Prediction() {
   );
 
   const setPredictionMode = useCallback(
-    (mode: "analysis" | typeof NEWS_SCENARIO_MODE) => {
+    (mode: "analysis" | typeof NEWS_SCENARIO_MODE | typeof SCOREBOARD_MODE) => {
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
           if (mode === NEWS_SCENARIO_MODE) {
             next.set("mode", NEWS_SCENARIO_MODE);
+          } else if (mode === SCOREBOARD_MODE) {
+            next.set("mode", SCOREBOARD_MODE);
+            next.delete("session");
           } else {
             next.delete("mode");
             next.delete("session");
@@ -313,6 +327,36 @@ export function Prediction() {
   useEffect(() => {
     void loadBacktest(false);
   }, [loadBacktest]);
+
+  const loadTrackScoreboard = useCallback(
+    async (refresh = false) => {
+      setTrackScoreboardLoading(true);
+      setTrackScoreboardError(null);
+      try {
+        const fetchScoreboard = api.getIndexTrackScoreboard;
+        if (typeof fetchScoreboard !== "function") {
+          throw new Error(
+            "Track scoreboard API client is missing — hard-refresh the page (frontend update required).",
+          );
+        }
+        const res = await fetchScoreboard("NIFTY", refresh, 730, horizonDays);
+        if (res.report) setTrackScoreboard(res.report);
+        else if (res.status !== "ok") {
+          setTrackScoreboardError(res.message || "Track scoreboard unavailable");
+        }
+      } catch (e) {
+        setTrackScoreboardError(e instanceof Error ? e.message : "Track scoreboard request failed");
+      } finally {
+        setTrackScoreboardLoading(false);
+      }
+    },
+    [horizonDays],
+  );
+
+  useEffect(() => {
+    if (predictionMode !== SCOREBOARD_MODE) return;
+    void loadTrackScoreboard(false);
+  }, [predictionMode, horizonDays, loadTrackScoreboard]);
 
   const loadMissAnalysis = useCallback(
     async (refresh = false) => {
@@ -449,9 +493,30 @@ export function Prediction() {
           >
             News Predictions
           </button>
+          <button
+            type="button"
+            onClick={() => setPredictionMode(SCOREBOARD_MODE)}
+            className={cn(
+              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+              predictionMode === SCOREBOARD_MODE
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Track Scoreboard
+          </button>
         </div>
 
-        {predictionMode === NEWS_SCENARIO_MODE ? (
+        {predictionMode === SCOREBOARD_MODE ? (
+          <TrackScoreboardPanel
+            report={trackScoreboard}
+            loading={trackScoreboardLoading}
+            error={trackScoreboardError}
+            horizonDays={horizonDays}
+            onHorizonChange={setHorizonDays}
+            onRefresh={() => void loadTrackScoreboard(true)}
+          />
+        ) : predictionMode === NEWS_SCENARIO_MODE ? (
           <>
             {pipelineStale ? (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
