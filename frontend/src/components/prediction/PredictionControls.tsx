@@ -105,15 +105,20 @@ export function PredictionControls({
           ))}
         </select>
 
-        <label className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border bg-background px-2 text-[11px]">
-          <input
-            type="checkbox"
-            checked={refreshConstituents}
-            onChange={(e) => onRefreshConstituentsChange(e.target.checked)}
-            className="rounded border-border"
-          />
-          Refresh all 50 constituents
-        </label>
+        <div className="flex flex-col gap-0.5">
+          <label className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border bg-background px-2 text-[11px]">
+            <input
+              type="checkbox"
+              checked={refreshConstituents}
+              onChange={(e) => onRefreshConstituentsChange(e.target.checked)}
+              className="rounded border-border"
+            />
+            Refresh all 50 constituents
+          </label>
+          <p className="max-w-[220px] px-1 text-[10px] leading-snug text-muted-foreground">
+            Unchecked: cached constituents + live momentum (~1–3 min). Checked: full 50-stock research + news enqueue (long run).
+          </p>
+        </div>
 
         <button
           type="button"

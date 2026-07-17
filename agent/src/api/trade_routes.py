@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 trade_router = APIRouter(prefix="/trade", tags=["trade"])
 
-_WIDGET_ID_RE = re.compile(r"(?:tp|ts|ti)_[A-Z][A-Z0-9]*_[0-9a-f]{12}")
-_WIDGET_ID_INLINE_RE = re.compile(r"((?:tp|ts|ti)_[A-Z][A-Z0-9]*_[0-9a-f]{12})")
+_WIDGET_ID_RE = re.compile(r"(?:tp|ts|ti|ns)_[A-Z][A-Z0-9]*_[0-9a-f]{12}")
+_WIDGET_ID_INLINE_RE = re.compile(r"((?:tp|ts|ti|ns)_[A-Z][A-Z0-9]*_[0-9a-f]{12})")
 _WIDGET_TOOL_NAMES = frozenset(
     {
         "get_options_trade_widget",
@@ -33,6 +33,8 @@ _WIDGET_TOOL_NAMES = frozenset(
         "mcp_openalgo_get_stock_trade_widget",
         "get_index_trade_widget",
         "mcp_openalgo_get_index_trade_widget",
+        "get_news_scenario_widget",
+        "mcp_openalgo_get_news_scenario_widget",
     }
 )
 
@@ -62,7 +64,7 @@ def _widget_id_from_preview(preview: str) -> Optional[str]:
     inline = _WIDGET_ID_INLINE_RE.search(text)
     if inline:
         return inline.group(1)
-    match = re.search(r'"widget_id"\s*:\s*"((?:tp|ts)_[^"]+)"', text)
+    match = re.search(r'"widget_id"\s*:\s*"((?:tp|ts|ti|ns)_[^"]+)"', text)
     if match and _WIDGET_ID_RE.fullmatch(match.group(1)):
         return match.group(1)
     return None
@@ -75,6 +77,7 @@ def trade_plan_widget_frame_from_tool_result(event: Any) -> Optional[str]:
         return None
     tool = str(data.get("tool") or "")
     if tool not in _WIDGET_TOOL_NAMES or data.get("status") != "ok":
+        return None
         return None
     preview = str(data.get("preview") or "")
     widget_id = _widget_id_from_preview(preview)
@@ -318,17 +321,53 @@ def _live_context_from_report(report: Any) -> dict[str, Any]:
     }
 
 
+def _count_verified_headlines_since(ticker: str, since: datetime) -> int:
+    """Canonical verified hub stories ingested or published since analysis as_of."""
+    from trade_integrations.dataflows.news_hub_bridge import query_verified_news
+
+    since_day = since.astimezone(timezone.utc).strftime("%Y-%m-%d")
+    records = query_verified_news(ticker=ticker, since=since_day, limit=200)
+    if not records:
+        return 0
+
+    since_iso = since.astimezone(timezone.utc).isoformat()
+    seen_ids: set[str] = set()
+    count = 0
+    for rec in records:
+        story_id = str(rec.get("canonical_story_id") or "").strip()
+        if story_id and story_id in seen_ids:
+            continue
+
+        first_seen = str(rec.get("first_seen_at") or "")
+        if first_seen and first_seen >= since_iso:
+            if story_id:
+                seen_ids.add(story_id)
+            count += 1
+            continue
+
+        tags = rec.get("tags") if isinstance(rec.get("tags"), dict) else {}
+        pub_day = str(tags.get("publish_day") or rec.get("published_at") or "")[:10]
+        if pub_day and pub_day >= since_day:
+            if story_id:
+                seen_ids.add(story_id)
+            count += 1
+    return count
+
+
 def _material_news_count(ticker: str) -> int:
     try:
         from trade_integrations.dataflows.company_research.india_symbols import india_index_tickers
-        from trade_integrations.monitor.news_watcher import check_material_news
+        from trade_integrations.monitor.news_watcher import count_material_headlines_since
         from trade_integrations.monitor.service import MonitorService
 
         key = ticker.strip().upper()
         since = MonitorService._news_since(key)
         if key in india_index_tickers():
             since = _index_news_since(key, fallback=since)
-        return len(check_material_news(key, since))
+            hub_count = _count_verified_headlines_since(key, since)
+            if hub_count:
+                return hub_count
+        return count_material_headlines_since(key, since)
     except Exception:
         logger.exception("Material news count failed for %s", ticker)
         return 0
@@ -653,6 +692,18 @@ class CaptureRegistryResponse(BaseModel):
     message: str = ""
 
 
+class HubStatusResponse(BaseModel):
+    status: str = "ok"
+    hub: Dict[str, Any] = Field(default_factory=dict)
+    message: str = ""
+
+
+class HubStagingDrainResponse(BaseModel):
+    status: str = "ok"
+    summary: Dict[str, Any] = Field(default_factory=dict)
+    message: str = ""
+
+
 class SimulateIndexPredictionRequest(BaseModel):
     ticker: str = "NIFTY"
     horizon_days: int | None = None
@@ -913,6 +964,46 @@ def run_capture_registry_intraday(
         return run_intraday_capture(entity_id=key)
     except Exception as exc:
         logger.exception("capture-registry intraday failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/hub/status", response_model=HubStatusResponse)
+def get_hub_status(
+    entity_id: str = "NIFTY",
+    _auth: None = Depends(require_local_or_auth),
+) -> HubStatusResponse:
+    """Return hub inventory: staging queue, verified news, cache health, capture stats."""
+    key = entity_id.strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.hub_storage.hub_status import build_hub_status
+
+        return HubStatusResponse(status="ok", hub=build_hub_status(entity_id=key))
+    except Exception as exc:
+        logger.exception("hub status failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.post("/hub/staging/drain", response_model=HubStagingDrainResponse)
+def drain_hub_staging(
+    entity_id: str = "NIFTY",
+    limit: int = 20,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubStagingDrainResponse:
+    """Manually process a batch of queued staging news refs."""
+    key = entity_id.strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.dataflows.news_hub_bridge import process_staging_batch
+
+        summary = process_staging_batch(ticker=key, limit=max(1, min(limit, 100)))
+        return HubStagingDrainResponse(status="ok", summary=summary)
+    except Exception as exc:
+        logger.exception("hub staging drain failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -1326,16 +1417,34 @@ def create_news_scenario_session(
         if svc is None:
             raise HTTPException(status_code=503, detail="session runtime not enabled")
 
+        bound = normalize_as_of(pipeline_as_of)
+
         if body.session_id:
             existing = svc.get_session(body.session_id)
-            bound = normalize_as_of(pipeline_as_of)
-            existing_as_of = normalize_as_of((existing.config or {}).get("pipeline_as_of") if existing else "")
-            if existing and existing_as_of == bound:
+            if existing is None:
+                raise HTTPException(status_code=404, detail="session not found")
+            if str((existing.config or {}).get("session_kind") or "") != "news_scenario_advisor":
+                raise HTTPException(status_code=403, detail="not a news scenario session")
+            existing_as_of = normalize_as_of((existing.config or {}).get("pipeline_as_of"))
+            if existing_as_of == bound:
                 return NewsScenarioSessionResponse(
                     session_id=existing.session_id,
                     pipeline_as_of=pipeline_as_of,
                     ticker=key,
                 )
+        else:
+            for existing in svc.list_sessions(limit=200):
+                cfg = existing.config or {}
+                if str(cfg.get("session_kind") or "") != "news_scenario_advisor":
+                    continue
+                if str(cfg.get("pipeline_ticker") or "NIFTY").upper() != key:
+                    continue
+                if normalize_as_of(cfg.get("pipeline_as_of")) == bound:
+                    return NewsScenarioSessionResponse(
+                        session_id=existing.session_id,
+                        pipeline_as_of=pipeline_as_of,
+                        ticker=key,
+                    )
 
         session = svc.create_session(
             title=f"news-scenario:{key}",
@@ -1389,8 +1498,14 @@ def patch_news_scenario_session(
         if session is None:
             raise HTTPException(status_code=404, detail="session not found")
         cfg = dict(session.config or {})
+        if str(cfg.get("session_kind") or "") != "news_scenario_advisor":
+            raise HTTPException(status_code=403, detail="not a news scenario session")
         if body.date_range is not None:
-            cfg["date_range"] = body.date_range
+            from trade_integrations.dataflows.index_research.news_event_scenarios import (
+                validate_scenario_date_range,
+            )
+
+            cfg["date_range"] = validate_scenario_date_range(body.date_range)
         if body.selected_outcome_id is not None:
             cfg["selected_outcome_id"] = body.selected_outcome_id
         if body.active_draft_id is not None:
@@ -1407,6 +1522,10 @@ def patch_news_scenario_session(
     except HTTPException:
         raise
     except Exception as exc:
+        from trade_integrations.dataflows.index_research.news_event_scenarios import NewsScenarioError
+
+        if isinstance(exc, NewsScenarioError):
+            raise HTTPException(status_code=400, detail=exc.to_dict()) from exc
         logger.exception("news-scenario session patch failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

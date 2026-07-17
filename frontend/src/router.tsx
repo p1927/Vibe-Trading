@@ -29,6 +29,7 @@ const Correlation = lazy(() =>
 const Prediction = lazy(() =>
   import("@/pages/Prediction").then((m) => ({ default: m.Prediction })),
 );
+const Hub = lazy(() => import("@/pages/Hub").then((m) => ({ default: m.Hub })));
 const AlphaZoo = lazy(() =>
   import("@/pages/AlphaZoo").then((m) => ({ default: m.AlphaZoo })),
 );
@@ -64,6 +65,7 @@ export const router = createBrowserRouter([
       { path: "/compare", element: wrap(Compare) },
       { path: "/correlation", element: wrap(Correlation) },
       { path: "/prediction", element: wrap(Prediction) },
+      { path: "/hub", element: wrap(Hub) },
       { path: "/alpha-zoo", element: wrap(AlphaZoo) },
       { path: "/alpha-zoo/bench", element: wrap(AlphaZoo) },
       { path: "/alpha-zoo/compare", element: wrap(AlphaZoo) },

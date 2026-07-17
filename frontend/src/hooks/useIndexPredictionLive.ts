@@ -30,9 +30,12 @@ export function useIndexPredictionLive({
       if (res.status === "ok") {
         setLastReason(res.reason || "scheduled_poll");
         onUpdateRef.current?.(res.artifact ?? null);
+      } else {
+        setLastReason(res.message || "refresh_failed");
       }
-    } catch {
-      setLastReason("refresh_failed");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "refresh_failed";
+      setLastReason(msg.length > 80 ? "refresh_failed" : msg);
     }
   }, [ticker, horizonDays]);
 

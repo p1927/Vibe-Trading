@@ -709,6 +709,13 @@ export const api = {
       `/trade/capture-registry/intraday?entity_id=${encodeURIComponent(entityId)}`,
       { method: "POST" },
     ),
+  getHubStatus: (entityId = "NIFTY") =>
+    request<HubStatusResponse>(`/trade/hub/status?entity_id=${encodeURIComponent(entityId)}`),
+  drainHubStaging: (entityId = "NIFTY", limit = 20) =>
+    request<HubStagingDrainResponse>(
+      `/trade/hub/staging/drain?entity_id=${encodeURIComponent(entityId)}&limit=${encodeURIComponent(String(limit))}`,
+      { method: "POST" },
+    ),
   bootstrapAutoPaper: (body: AutoPaperBootstrapRequest) =>
     request<AutoPaperBootstrapResponse>("/trade/auto-paper/bootstrap", {
       method: "POST",
@@ -1382,6 +1389,7 @@ export interface NewsScenarioBaseline {
   macro_delta_pct?: number | null;
   range?: { low?: number; high?: number };
   path?: NewsScenarioPathPoint[];
+  equation_ref?: { bottom_up?: number; macro_delta?: number; overlay?: number | null };
 }
 
 export interface NewsScenarioOutcome {
@@ -1401,6 +1409,8 @@ export interface NewsScenarioOutcome {
 export interface NewsScenarioFanBand {
   low?: number | null;
   high?: number | null;
+  low_path?: NewsScenarioPathPoint[];
+  high_path?: NewsScenarioPathPoint[];
 }
 
 export interface NewsScenarioSessionRequest {
@@ -2263,6 +2273,101 @@ export interface CaptureRegistryUpdateRequest {
 export interface CaptureRegistryBackfillRequest {
   entity_id?: string;
   days?: number;
+}
+
+export interface HubNewsReference {
+  ref_id?: string;
+  title?: string;
+  url?: string;
+  source?: string;
+  published_at?: string;
+  vendor?: string;
+  publisher?: string;
+}
+
+export interface HubNewsItem {
+  id?: string;
+  ref_id?: string;
+  title?: string;
+  summary?: string;
+  url?: string;
+  source?: string;
+  published_at?: string;
+  created_at?: string;
+  ticker?: string;
+  provenance?: "staging" | "distilled" | string;
+  verification_status?: string;
+  sources?: HubNewsReference[];
+  references?: HubNewsReference[];
+  ref_count?: number;
+  tags?: { topics?: string[]; themes?: string[]; factors?: string[] };
+}
+
+export interface HubStatusPayload {
+  generated_at?: string;
+  entity_id?: string;
+  hub_dir?: string;
+  paths?: Record<string, string>;
+  news_staging?: {
+    entity_pipeline_enabled?: boolean;
+    queued?: number;
+    by_ticker?: Array<{ ticker: string; queued: number }>;
+    worker_last?: {
+      processed?: number;
+      errors?: number;
+      created?: number;
+      updated?: number;
+      finished_at?: string;
+    };
+  };
+  news_inventory?: {
+    pending_count?: number;
+    union_count?: number;
+    staging_in_union?: number;
+    distilled_in_union?: number;
+    items?: HubNewsItem[];
+    staging_queue?: HubNewsItem[];
+  };
+  verified_news?: Record<
+    string,
+    { total?: number; by_status?: Record<string, number> }
+  >;
+  index_research?: {
+    present?: boolean;
+    as_of?: string;
+    horizon?: { name?: string; days?: number };
+    last_pipeline_stage?: string;
+    last_pipeline_message?: string;
+  };
+  constituent_cache?: {
+    total?: number;
+    fresh?: number;
+    stale?: number;
+    missing?: number;
+  };
+  capture?: {
+    stats?: CaptureRegistryResponse["stats"];
+    coverage?: CaptureRegistryResponse["coverage"];
+  };
+  factor_coverage?: {
+    trading_days?: number;
+    min_pct?: number;
+    passes_gate?: boolean;
+    start?: string;
+    end?: string;
+  };
+}
+
+export interface HubStatusResponse {
+  status: string;
+  hub?: HubStatusPayload;
+  message?: string;
+}
+
+export interface HubStagingDrainResponse {
+  status: string;
+  summary?: Record<string, number | string | boolean>;
+  message?: string;
 }
 
 export interface IndexBacktestResponse {

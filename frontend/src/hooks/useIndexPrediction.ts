@@ -254,7 +254,7 @@ export function useIndexPrediction(
   }, []);
 
   const runAnalysis = useCallback(
-    async (days: number, refreshConstituents = true) => {
+    async (days: number, refreshConstituents = false) => {
       abortRef.current?.abort();
       fetchGenRef.current += 1;
       const gen = ++attachGenRef.current;

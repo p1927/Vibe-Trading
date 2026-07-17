@@ -206,14 +206,23 @@ def _start_scheduled_research_executor() -> None:
     try:
         from pathlib import Path
 
-        trade_root = Path(__file__).resolve().parents[3]
-        integrations = trade_root / "integrations"
-        if integrations.is_dir() and str(integrations) not in _sys.path:
-            _sys.path.insert(0, str(integrations))
-        from trade_integrations.autonomous_agents.nautilus_watch import ensure_nautilus_watch_for_running_agents
+        if os.getenv("STACK_DEV", "").strip().lower() in {"1", "true", "yes", "on"}:
+            logger.debug("skipping Nautilus watch ensure in dev mode (use: trade reload nautilus)")
+        else:
+            trade_root = Path(__file__).resolve().parents[3]
+            integrations = trade_root / "integrations"
+            if integrations.is_dir() and str(integrations) not in _sys.path:
+                _sys.path.insert(0, str(integrations))
+            from trade_integrations.autonomous_agents.nautilus_watch import (
+                ensure_nautilus_watch_for_running_agents,
+                get_watch_process_status,
+            )
 
-        if ensure_nautilus_watch_for_running_agents():
-            logger.info("ensured Nautilus watch for running India bridge agent(s)")
+            status = get_watch_process_status(reconcile=True)
+            if status.get("alive") and status.get("registry_agent_ids"):
+                logger.debug("Nautilus watch already alive with registry — skipping startup ensure")
+            elif ensure_nautilus_watch_for_running_agents():
+                logger.info("ensured Nautilus watch for running India bridge agent(s)")
     except Exception:
         logger.exception("failed to ensure Nautilus watch on startup")
     if not _scheduled_research_scheduler_enabled():

@@ -38,6 +38,14 @@ def is_news_scenario_session(session_config: dict[str, Any] | None) -> bool:
     return kind == SESSION_KIND_NEWS_SCENARIO
 
 
+def is_news_scenario_pipeline_tool(tool_name: str) -> bool:
+    """True when tool_name is an allowed news-scenario MCP pipeline tool."""
+    name = str(tool_name or "")
+    if not name.startswith("mcp_"):
+        return False
+    return any(sub in name for sub in _NEWS_SCENARIO_MCP_TOOL_SUBSTRINGS)
+
+
 def filter_registry_for_news_scenario(registry: ToolRegistry) -> ToolRegistry:
     """Keep pipeline read/simulate tools; block execution and refresh paths."""
     filtered = ToolRegistry()

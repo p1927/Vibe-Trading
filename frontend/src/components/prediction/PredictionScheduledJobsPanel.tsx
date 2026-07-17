@@ -50,7 +50,7 @@ export function PredictionScheduledJobsPanel() {
     setBusyId(id);
     setError(null);
     try {
-      if (job.paused || job.status === "cancelled") {
+      if (job.paused || job.status === "cancelled" || job.status === "failed") {
         await api.resumeIndexPredictionJob(id);
       } else {
         await api.pauseIndexPredictionJob(id);
@@ -116,19 +116,28 @@ export function PredictionScheduledJobsPanel() {
         <div className="space-y-2">
           {jobs.map((job) => {
             const paused = job.paused || job.status === "cancelled";
+            const failed = job.status === "failed";
+            const showResume = paused || failed;
             return (
               <div
                 key={job.id}
                 className={cn(
                   "flex flex-col gap-2 rounded-lg border px-3 py-2 sm:flex-row sm:items-center sm:justify-between",
-                  paused && "opacity-70",
+                  showResume && "opacity-70",
+                  failed && "border-red-500/30",
                 )}
               >
                 <div className="min-w-0 flex-1">
                   <p className="text-[12px] font-medium">{job.label || job.id}</p>
                   <p className="text-[10px] text-muted-foreground">{job.description}</p>
-                  <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">
+                  <p
+                    className={cn(
+                      "mt-0.5 font-mono text-[10px]",
+                      failed ? "text-red-600 dark:text-red-400" : "text-muted-foreground",
+                    )}
+                  >
                     {job.schedule} · next {fmtNextRun(job.next_run_at)} · {job.status}
+                    {failed ? " — click Resume to re-enable polling" : ""}
                   </p>
                 </div>
                 <button
@@ -137,13 +146,13 @@ export function PredictionScheduledJobsPanel() {
                   onClick={() => void toggle(job)}
                   className={cn(
                     "inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[10px]",
-                    paused
+                    showResume
                       ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-400"
                       : "border-amber-500/40 text-amber-800 dark:text-amber-300",
                   )}
                 >
-                  {paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
-                  {paused ? "Resume" : "Pause"}
+                  {showResume ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
+                  {showResume ? "Resume" : "Pause"}
                 </button>
               </div>
             );
