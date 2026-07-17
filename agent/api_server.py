@@ -347,6 +347,7 @@ def serve_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Vibe-Trading Server")
     parser.add_argument("--port", type=int, default=8000, help="Listen port (default 8000)")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address")
+    parser.add_argument("--reload", action="store_true", help="Auto-reload on code changes (dev only)")
     parser.add_argument("--dev", action="store_true", help="Dev mode: spawn Vite on :5173")
     try:
         args = parser.parse_args(argv)
@@ -394,7 +395,28 @@ def serve_main(argv: list[str] | None = None) -> int:
     install_access_log_redaction_filter()
 
     try:
-        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+        reload_dirs: list[str] | None = None
+        app_target: Any = app
+        if args.reload:
+            trade_root = Path(__file__).resolve().parents[2]
+            integrations = trade_root / "integrations"
+            agents = trade_root / "tradingagents"
+            reload_dirs = [str(frontend_root.parent / "agent")]
+            if integrations.is_dir():
+                reload_dirs.append(str(integrations))
+            if agents.is_dir():
+                reload_dirs.append(str(agents))
+            print(f"[dev] API auto-reload watching: {', '.join(reload_dirs)}")
+            # uvicorn requires an import string (not an app instance) for --reload
+            app_target = "api_server:app"
+        uvicorn.run(
+            app_target,
+            host=args.host,
+            port=args.port,
+            log_level="info",
+            reload=args.reload,
+            reload_dirs=reload_dirs,
+        )
     finally:
         if vite_proc:
             vite_proc.terminate()
