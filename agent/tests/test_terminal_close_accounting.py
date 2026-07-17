@@ -25,6 +25,17 @@ class _TerminalCostEngine(BaseEngine):
         return price + direction if self.positions else price
 
 
+def test_composite_routes_futures_rules_by_submarket() -> None:
+    engine = CompositeEngine(
+        {"initial_cash": 1_000_000, "codes": ["IF2406.CFFEX", "ESZ4"]},
+        ["IF2406.CFFEX", "ESZ4"],
+    )
+
+    assert isinstance(engine._rule_for("IF2406.CFFEX"), ChinaFuturesEngine)
+    assert isinstance(engine._rule_for("ESZ4"), GlobalFuturesEngine)
+    assert engine._calc_raw_size("ESZ4", 500_000.0, 5_000.0) == pytest.approx(2.0)
+
+
 @pytest.mark.parametrize(
     ("target_weight", "expected_exit"),
     [(0.5, 99.0), (-0.5, 101.0)],
