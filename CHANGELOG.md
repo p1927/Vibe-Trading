@@ -48,6 +48,10 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   of silently returning daily bars (#467, thanks @Shizoqua).
 
 ### Fixed
+- Explicit `source: local` backtests now route US/HK equities to the
+  global-equity engine instead of the crypto default, and explicit benchmarks
+  are fetched through the configured source's loader — `local` fails closed
+  (no yfinance fallback) so offline runs stay offline (#550).
 - Loading `.env` now invalidates an `EnvConfig` singleton cached during early
   CLI imports, so the welcome panel, `/settings`, and dotenv diagnostic report
   the configured provider and model consistently (#541).
