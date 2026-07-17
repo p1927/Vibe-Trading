@@ -2469,6 +2469,8 @@ export interface IndexNewsImpactReport {
     partial_count?: number;
     rejected_count?: number;
     rejected_skipped?: number;
+    pending_count?: number;
+    hint?: string;
     source?: string;
   };
 }
