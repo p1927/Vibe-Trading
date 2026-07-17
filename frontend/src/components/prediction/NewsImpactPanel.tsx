@@ -86,6 +86,8 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shock
   const summary = report?.summary;
   const debate = report?.debate_summary;
   const rejectedCount = summary?.rejected_count ?? summary?.rejected_skipped ?? 0;
+  const hubEmpty = report?.status === "hub_empty" || (!items.length && report?.status !== "ok");
+  const pendingCount = (summary as { pending_count?: number } | undefined)?.pending_count ?? 0;
 
   return (
     <div className="space-y-3">
@@ -156,9 +158,25 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shock
       {error ? <p className="text-[11px] text-red-600 dark:text-red-400">{error}</p> : null}
 
       {!items.length && !loading ? (
-        <div className="rounded-xl border border-dashed bg-muted/20 px-4 py-6 text-center text-[12px] text-muted-foreground">
-          No verified headlines in hub yet — click Ingest new or run analysis. Rejected clickbait stays
-          in hub but is hidden unless you enable Show rejected.
+        <div className="rounded-xl border border-dashed bg-muted/20 px-4 py-6 text-center text-[12px] text-muted-foreground space-y-2">
+          <p>
+            {hubEmpty
+              ? "No verified headlines in hub yet."
+              : "No headlines match the current filters."}
+          </p>
+          <p>
+            Run analysis with <span className="font-medium text-foreground">Refresh all 50 constituents</span>{" "}
+            checked to ingest per-stock news, or click <span className="font-medium text-foreground">Ingest new</span>{" "}
+            for index-level NIFTY news only.
+          </p>
+          {pendingCount > 0 ? (
+            <p className="text-[11px]">
+              {pendingCount} staging ref{pendingCount === 1 ? "" : "s"} queued — distillation may still be running.
+            </p>
+          ) : null}
+          <p className="text-[10px] opacity-80">
+            Rejected clickbait stays in hub but is hidden unless you enable Show rejected.
+          </p>
         </div>
       ) : null}
 

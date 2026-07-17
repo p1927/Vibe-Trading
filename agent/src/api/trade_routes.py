@@ -1348,7 +1348,11 @@ def get_index_prediction_news_impact(
     include_rejected: bool = False,
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexNewsImpactResponse:
-    """Verified news → Nifty impact snapshot from hub SSOT; refresh ingests cache misses only."""
+    """Verified news → Nifty impact snapshot from hub SSOT.
+
+    Default load is hub-read-only (``resolve_news_impact``). ``refresh=true`` runs
+    index-level ingest for NIFTY only (tiered sources allowed) — not Nifty-50 batch.
+    """
     key = (ticker or "NIFTY").strip().upper()
     try:
         from trade_integrations.context.hub import load_index_research_json
@@ -1376,15 +1380,6 @@ def get_index_prediction_news_impact(
             )
         else:
             report = news_hub_bridge.resolve_news_impact(ticker=key, doc=doc, limit=12)
-            if not (report.get("items") or []):
-                report = news_hub_bridge.refresh_news_impact(
-                    ticker=key,
-                    horizon_days=horizon_days,
-                    spot=spot,
-                    macro_factors=macro or None,
-                    refresh_ingest=False,
-                    include_rejected=include_rejected,
-                )
         status = str((report or {}).get("status") or "ok")
         return IndexNewsImpactResponse(status=status, ticker=key, report=report)
     except Exception as exc:
