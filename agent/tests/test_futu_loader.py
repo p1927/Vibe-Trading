@@ -227,7 +227,7 @@ class TestFetch:
         assert loader.fetch([], "2024-01-01", "2024-01-31") == {}
 
     def test_returns_normalized_dataframe(self, loader, mock_ctx):
-        mock_ctx.request_history_kline.return_value = (0, _make_kline_df())
+        mock_ctx.request_history_kline.return_value = (0, _make_kline_df(), None)
         result = loader.fetch(["700.HK"], "2024-01-01", "2024-01-31")
         assert "700.HK" in result
         df = result["700.HK"]
@@ -235,7 +235,7 @@ class TestFetch:
         assert df.index.name == "trade_date"
 
     def test_futu_symbol_converted_correctly(self, loader, mock_ctx):
-        mock_ctx.request_history_kline.return_value = (0, _make_kline_df())
+        mock_ctx.request_history_kline.return_value = (0, _make_kline_df(), None)
         loader.fetch(["700.HK"], "2024-01-01", "2024-01-31")
         args, _ = mock_ctx.request_history_kline.call_args
         assert args[0] == "HK.00700"
@@ -246,12 +246,12 @@ class TestFetch:
             loader.fetch(["700.HK"], "2024-01-01", "2024-01-31")
 
     def test_skips_symbol_on_non_ret_ok(self, loader, mock_ctx):
-        mock_ctx.request_history_kline.return_value = (1, "error message")
+        mock_ctx.request_history_kline.return_value = (1, "error message", None)
         result = loader.fetch(["700.HK"], "2024-01-01", "2024-01-31")
         assert "700.HK" not in result
 
     def test_context_always_closed(self, loader, mock_ctx):
-        mock_ctx.request_history_kline.return_value = (0, _make_kline_df())
+        mock_ctx.request_history_kline.return_value = (0, _make_kline_df(), None)
         loader.fetch(["700.HK"], "2024-01-01", "2024-01-31")
         mock_ctx.close.assert_called_once()
 
@@ -259,3 +259,74 @@ class TestFetch:
         with pytest.raises(NoAvailableSourceError, match="unsupported Futu interval"):
             loader.fetch(["700.HK"], "2024-01-01", "2024-01-31", interval="2m")
         _futu_stub.OpenQuoteContext.assert_not_called()
+
+    def test_forwards_page_key_and_normalizes_all_pages_once(
+        self, loader, mock_ctx, monkeypatch
+    ):
+        import backtest.loaders.futu as futu_loader
+
+        first = _make_kline_df(["2024-01-02 00:00:00"])
+        second = _make_kline_df(["2024-01-03 00:00:00"])
+        mock_ctx.request_history_kline.side_effect = [
+            (0, first, b"next-page"),
+            (0, second, None),
+        ]
+        normalize = MagicMock(side_effect=_normalize_frame)
+        monkeypatch.setattr(futu_loader, "_normalize_frame", normalize)
+
+        result = loader.fetch(["700.HK"], "2024-01-01", "2024-01-31")
+
+        assert len(result["700.HK"]) == 2
+        assert normalize.call_count == 1
+        assert len(normalize.call_args.args[0]) == 2
+        assert (
+            mock_ctx.request_history_kline.call_args_list[0].kwargs["page_req_key"]
+            is None
+        )
+        assert (
+            mock_ctx.request_history_kline.call_args_list[1].kwargs["page_req_key"]
+            == b"next-page"
+        )
+
+    def test_later_page_failure_discards_symbol(self, loader, mock_ctx, monkeypatch):
+        import backtest.loaders.futu as futu_loader
+
+        mock_ctx.request_history_kline.side_effect = [
+            (0, _make_kline_df(["2024-01-02 00:00:00"]), b"next-page"),
+            (1, "page failed", None),
+        ]
+        cache_put = MagicMock()
+        monkeypatch.setattr(futu_loader, "loader_cache_put", cache_put)
+
+        result = loader.fetch(["700.HK"], "2024-01-01", "2024-01-31")
+
+        assert "700.HK" not in result
+        cache_put.assert_not_called()
+
+    def test_empty_success_is_not_returned_or_cached(
+        self, loader, mock_ctx, monkeypatch
+    ):
+        import backtest.loaders.futu as futu_loader
+
+        mock_ctx.request_history_kline.return_value = (0, pd.DataFrame(), None)
+        cache_put = MagicMock()
+        monkeypatch.setattr(futu_loader, "loader_cache_put", cache_put)
+
+        result = loader.fetch(["700.HK"], "2024-01-01", "2024-01-31")
+
+        assert "700.HK" not in result
+        cache_put.assert_not_called()
+
+    def test_duplicate_timestamps_keep_last_page_value(self, loader, mock_ctx):
+        first = _make_kline_df(["2024-01-02 00:00:00"])
+        second = _make_kline_df(["2024-01-02 00:00:00"])
+        second.loc[0, "close"] = 360.0
+        mock_ctx.request_history_kline.side_effect = [
+            (0, first, b"next-page"),
+            (0, second, None),
+        ]
+
+        result = loader.fetch(["700.HK"], "2024-01-01", "2024-01-31")
+
+        assert len(result["700.HK"]) == 1
+        assert result["700.HK"].iloc[0]["close"] == 360.0
