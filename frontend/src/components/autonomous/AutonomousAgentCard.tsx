@@ -180,6 +180,23 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
           {runtime?.position_tracked && (
             <span className="rounded border border-primary/30 px-1.5 py-0.5 text-primary">position tracked</span>
           )}
+          {runtime?.watch_path && (
+            <span
+              className={cn(
+                "rounded border px-1.5 py-0.5",
+                runtime.nautilus_in_registry
+                  ? "border-emerald-500/40 text-emerald-600"
+                  : "border-amber-500/40 text-amber-600",
+              )}
+              title={
+                runtime.nautilus_in_registry
+                  ? "Detached Nautilus watch active for this agent"
+                  : "Not in Nautilus registry — scheduler poll fallback"
+              }
+            >
+              {runtime.watch_path.replace(/_/g, " ")}
+            </span>
+          )}
         </div>
       </button>
 

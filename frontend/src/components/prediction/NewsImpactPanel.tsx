@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Loader2, Newspaper, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, type IndexNewsImpactReport } from "@/lib/api";
+import { api, type IndexNewsImpactReport, type IndexPredictionArtifact } from "@/lib/api";
 
 interface Props {
   horizonDays: number;
   pollMs?: number;
   monitorEnabled?: boolean;
+  shockCalibration?: IndexPredictionArtifact["news_shock_calibration"];
 }
 
 function statusBadge(status?: string) {
@@ -44,7 +45,7 @@ function formatPts(n?: number) {
   return `${sign}${n.toFixed(0)} pts`;
 }
 
-export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled }: Props) {
+export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shockCalibration }: Props) {
   const [report, setReport] = useState<IndexNewsImpactReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -125,6 +126,30 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled }: Pro
           {debate.excerpt ? (
             <p className="mt-1 text-muted-foreground line-clamp-2">{debate.excerpt}</p>
           ) : null}
+        </div>
+      ) : null}
+
+      {shockCalibration?.topics && Object.keys(shockCalibration.topics).length ? (
+        <div className="rounded-lg border bg-muted/10 px-3 py-2 text-[11px]">
+          <p className="font-medium text-foreground">Calibrated topic shocks (reconciled ledger)</p>
+          <p className="text-muted-foreground">
+            {shockCalibration.reconciled_total ?? 0} matured stories · overlay{" "}
+            {shockCalibration.news_event_overlay_status ?? "pending"}
+          </p>
+          <ul className="mt-2 space-y-1">
+            {Object.entries(shockCalibration.topics)
+              .filter(([, v]) => v.overlay_eligible)
+              .slice(0, 6)
+              .map(([topic, row]) => (
+                <li key={topic} className="flex justify-between gap-2 tabular-nums">
+                  <span className="capitalize">{topic.replace(/_/g, " ")}</span>
+                  <span>
+                    med err {row.median_calibration_error != null ? `${row.median_calibration_error.toFixed(2)}%` : "—"}
+                    {" · "}n={row.sample_count}
+                  </span>
+                </li>
+              ))}
+          </ul>
         </div>
       ) : null}
 
