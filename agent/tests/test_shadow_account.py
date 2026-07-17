@@ -693,8 +693,25 @@ def test_price_features_as_of_reads_only_past_bars() -> None:
 
     feats = _price_features_as_of(frame, buy_dt)
     assert not pd.isna(feats["entry_rsi14"])
-    # prior_5d_return over a +0.1/step ramp ending at 11.9 vs 5 steps back (11.4)
-    assert feats["prior_5d_return"] == pytest.approx((11.9 - 11.4) / 11.4, rel=1e-6)
+    # Buy-day close is unavailable. The last completed close is 11.8, with
+    # 11.3 five sessions earlier.
+    assert feats["prior_5d_return"] == pytest.approx((11.8 - 11.3) / 11.3, rel=1e-6)
+
+
+@pytest.mark.unit
+def test_price_features_ignore_incomplete_buy_day_close() -> None:
+    dates = [f"2026-02-{d:02d}" for d in range(1, 21)]
+    completed_closes = [10.0 + 0.1 * i for i in range(19)]
+    buy_dt = pd.Timestamp("2026-02-20 10:30:00")
+
+    ordinary = _price_frame(dates, completed_closes + [11.9])
+    unavailable_spike = _price_frame(dates, completed_closes + [1000.0])
+
+    expected = _price_features_as_of(ordinary, buy_dt)
+    actual = _price_features_as_of(unavailable_spike, buy_dt)
+
+    assert actual["entry_rsi14"] == pytest.approx(expected["entry_rsi14"])
+    assert actual["prior_5d_return"] == pytest.approx(expected["prior_5d_return"])
 
 
 @pytest.mark.unit
@@ -1691,4 +1708,3 @@ def test_conditional_entry_rsi_nan_bars_are_skipped() -> None:
         assert series.iloc[i] == 0.0, f"bar {i} should be zero (RSI warmup)"
     # At least one entry after warmup.
     assert (series.iloc[14:] > 0).any(), "no entry after RSI warmup"
-
