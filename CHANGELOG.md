@@ -6,6 +6,14 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **User swarm-presets directory**: preset YAMLs dropped into
+  `~/.vibe-trading/swarm/presets/` are discovered alongside the bundled
+  roster (same-name files override it — the same rule as user skills) and
+  survive `pip install -U`. `list_presets()` entries now carry a
+  `source: "user" | "bundled"` field; explicitly named user presets run
+  through `run_swarm(preset_name=...)`, while keyword auto-routing stays
+  limited to the curated table. Preset names are validated to a single path
+  segment before any filesystem lookup.
 - **Security hardening**: all 10 findings from the 2026-07-10 external audit
   closed (#476, tracking discussion #468) — Docker multi-stage rebuild with
   digest-pinned base images, AST-hardened backtest sandbox (blocks
