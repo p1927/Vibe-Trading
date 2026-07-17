@@ -1,5 +1,7 @@
 /** Track scoreboard colors and helpers. */
 
+import type { IndexTrackScoreboardReport } from "@/lib/api";
+
 export const TRACK_CHART_COLORS: Record<string, string> = {
   actual: "#22c55e",
   quant_ridge: "#3b82f6",
@@ -31,4 +33,37 @@ export function fmtPct(v: number | null | undefined): string {
 export function fmtHitRate(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return `${Math.round(v * 100)}%`;
+}
+
+export function fmtNum(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
+}
+
+export interface TrackEvalStats {
+  evalCount: number;
+  hitCount: number;
+  missCount: number;
+  hitRate: number | null;
+  maePct: number | null;
+}
+
+export function computeTrackEvalStats(
+  daily: IndexTrackScoreboardReport["daily_evaluations"],
+  trackId: string,
+): TrackEvalStats {
+  const rows = (daily ?? []).filter((r) => r.track_id === trackId);
+  const hitCount = rows.filter((r) => r.direction_hit).length;
+  const evalCount = rows.length;
+  const missCount = evalCount - hitCount;
+  const maeValues = rows
+    .map((r) => Math.abs(Number(r.error_pct)))
+    .filter((v) => Number.isFinite(v));
+  return {
+    evalCount,
+    hitCount,
+    missCount,
+    hitRate: evalCount > 0 ? hitCount / evalCount : null,
+    maePct: maeValues.length ? maeValues.reduce((a, b) => a + b, 0) / maeValues.length : null,
+  };
 }
