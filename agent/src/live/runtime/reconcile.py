@@ -463,10 +463,12 @@ def _diff_positions(
     }
 
     deltas: list[ReconcileDelta] = []
+    broker_symbols: set[str] = set()
     for position in broker_positions:
         symbol = _position_symbol(position)
         if symbol is None:
             continue
+        broker_symbols.add(symbol)
         broker_qty = _position_qty(position)
         recorded_qty = recorded_by_symbol.get(symbol)
         if recorded_qty is not None and recorded_qty == broker_qty:
@@ -501,6 +503,25 @@ def _diff_positions(
                     broker=dict(position),
                 )
             )
+
+    for symbol, recorded_qty in recorded_by_symbol.items():
+        if symbol in broker_symbols or recorded_qty == 0:
+            continue
+        deltas.append(
+            ReconcileDelta(
+                kind=DeltaKind.UNKNOWN_FILL,
+                subject="position",
+                identity=symbol,
+                client_order_id=None,
+                detail=(
+                    "recorded nonzero position is absent from broker truth "
+                    f"(recorded={recorded_qty}, broker=absent); real money "
+                    "moved without a matching audit record"
+                ),
+                recorded={"symbol": symbol, "qty": recorded_qty},
+                broker=None,
+            )
+        )
     return deltas
 
 
