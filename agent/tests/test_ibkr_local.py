@@ -477,3 +477,64 @@ def test_pool_release_idempotent_no_connection(fake_ib_async) -> None:
     local._pool._local.ib = None
     # Must not raise.
     local._pool.release()
+# ── NaN rejection tests ─────────────────────────────────────────────────
+
+class _NaNTickerIB(_FakeIB):
+    """Fake IB whose ticker fields are NaN (not None) -- simulates after-hours."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._sleep_count = 0
+
+    def reqMktData(self, contract, genericTickList, snapshot, regulatorySnapshot):
+        import math
+        return SimpleNamespace(
+            bid=float("nan"), ask=float("nan"), last=float("nan"),
+            close=float("nan"), volume=float("nan"), time=""
+        )
+
+    def sleep(self, seconds):
+        self._sleep_count += 1
+
+    def waitOnUpdate(self, timeout=0):
+        self._sleep_count += 1
+        return True
+
+
+def test_quote_rejects_nan_and_waits_for_real_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_quote must not exit with NaN -- it must wait for real numeric data."""
+    import math
+
+    pump_count = [0]
+
+    class _NaNFillIB(_FakeIB):
+        def reqMktData(self, contract, genericTickList, snapshot, regulatorySnapshot):
+            return SimpleNamespace(
+                bid=float("nan"), ask=float("nan"), last=float("nan"),
+                close=float("nan"), volume=float("nan"), time=""
+            )
+
+        def sleep(self, seconds):
+            pump_count[0] += 1
+
+        def waitOnUpdate(self, timeout=0):
+            pump_count[0] += 1
+            return pump_count[0] >= 3
+
+    module = types.ModuleType("ib_async")
+    module.IB = _NaNFillIB
+    module.Stock = _FakeStock
+    module.Contract = _FakeContract
+    monkeypatch.setitem(sys.modules, "ib_async", module)
+    monkeypatch.setattr(local, "tcp_port_open", lambda *_, **__: True)
+    monkeypatch.setattr(local._pool._local, "refcount", 0)
+    monkeypatch.setattr(local._pool._local, "ib", None)
+
+    # Even after pumps, the mock always returns NaN -- so the final fields
+    # should stay NaN (no real data arrived). The key assertion: the function
+    # did NOT exit early -- it pumped until timeout.
+    result = local.get_quote("AAPL", config=local.IBKRLocalConfig(profile="paper"))
+    assert result["status"] == "ok"
+    assert pump_count[0] >= 3, f"Expected at least 3 pumps (NaN loop), got {pump_count[0]}"
+    # Fields stay NaN since mock never provides real data
+    assert math.isnan(float(result["quote"]["bid"]))

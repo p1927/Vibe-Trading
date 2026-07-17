@@ -308,6 +308,24 @@ def get_open_orders(config: IBKRLocalConfig | None = None, *, include_executions
 
 
 
+
+def _tick_has_data(ticker: Any) -> bool:
+    """Return True if the ticker has received at least one real price field.
+
+    ib_async tickers start with None and populate to either a float or
+    ``float('nan')`` (when no trade has occurred in the current session).
+    This function rejects both None and NaN so the wait loop continues
+    pumping until actual market data arrives.
+    """
+    import math
+
+    for field in ("bid", "ask", "last"):
+        value = _obj_get(ticker, field)
+        if value is not None and not (isinstance(value, float) and math.isnan(value)):
+            return True
+    return False
+
+
 def _wait_for_tick(ib: Any, ticker: Any, *, max_wait: float = 2.0, poll_interval: float = 0.1) -> None:
     """Pump the ib_async event loop until the snapshot ticker fills.
 
@@ -321,7 +339,7 @@ def _wait_for_tick(ib: Any, ticker: Any, *, max_wait: float = 2.0, poll_interval
 
     deadline = _time.monotonic() + max_wait
     while _time.monotonic() < deadline:
-        if _obj_get(ticker, "bid") is not None or _obj_get(ticker, "ask") is not None or _obj_get(ticker, "last") is not None:
+        if _tick_has_data(ticker):
             return
         if hasattr(ib, "waitOnUpdate"):
             ib.waitOnUpdate(timeout=poll_interval)
