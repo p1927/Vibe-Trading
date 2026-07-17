@@ -250,6 +250,8 @@ def categorise_strict(
         - ``alpha_t_train`` (Optional[float])  — None when no OOS split was run
         - ``alpha_t_test`` (Optional[float])   — None when no OOS split was run
         - ``ic_count`` (int)
+        - ``ic_count_train`` / ``ic_count_test`` (Optional[int]) — split
+          sample counts when OOS was run
 
     Rules:
         - ``alpha_t_full <= -thr``                          → ``reversed_strict``
@@ -274,6 +276,17 @@ def categorise_strict(
     t_train = row.get("alpha_t_train")
     t_test = row.get("alpha_t_test")
     thr = thresholds.alpha_t_threshold
+
+    if t_test is not None:
+        train_count = row.get("ic_count_train")
+        test_count = row.get("ic_count_test")
+        if (
+            train_count is None
+            or test_count is None
+            or train_count < thresholds.min_ic_count
+            or test_count < thresholds.min_ic_count
+        ):
+            return "noise"
 
     # Strict reversed: full sample alpha is significantly negative.
     if t_full <= -thr:
