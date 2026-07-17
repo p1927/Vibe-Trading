@@ -16,7 +16,10 @@ logger = logging.getLogger(__name__)
 JOB_TYPE_WATCH = "autonomous_agent_watch"
 JOB_TYPE_RESEARCH = "autonomous_agent_research"
 JOB_TYPE_QUANT = "autonomous_agent_quant"
-AUTONOMOUS_JOB_TYPES = frozenset({JOB_TYPE_WATCH, JOB_TYPE_RESEARCH, JOB_TYPE_QUANT})
+JOB_TYPE_INFRA_HEAL = "autonomous_agent_infra_heal"
+AUTONOMOUS_JOB_TYPES = frozenset({JOB_TYPE_WATCH, JOB_TYPE_RESEARCH, JOB_TYPE_QUANT, JOB_TYPE_INFRA_HEAL})
+
+_INFRA_HEAL_MS = 60_000
 
 
 def is_autonomous_scheduler_enabled() -> bool:
@@ -42,15 +45,53 @@ def _is_index_agent(agent: dict[str, Any]) -> bool:
     return any(s in {"NIFTY", "NIFTY50", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "^NSEI"} for s in symbols)
 
 
+def _infra_heal_job_id(agent_id: str) -> str:
+    return f"{agent_id}-infra-heal"
+
+
+def register_infra_heal_job(agent_id: str) -> None:
+    if not is_autonomous_scheduler_enabled():
+        return
+    from src.scheduled_research.store import ScheduledResearchJobStore
+
+    store = ScheduledResearchJobStore()
+    now_ms = int(time.time() * 1000)
+    job_id = _infra_heal_job_id(agent_id)
+    store.upsert(
+        ScheduledResearchJob(
+            id=job_id,
+            prompt=f"Infra heal for autonomous agent {agent_id}",
+            schedule=str(_INFRA_HEAL_MS),
+            next_run_at=now_ms + _INFRA_HEAL_MS,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={"job_type": JOB_TYPE_INFRA_HEAL, "autonomous_agent_id": agent_id},
+        )
+    )
+    logger.info("registered infra heal job for %s", agent_id)
+
+
+def unregister_infra_heal_job(agent_id: str) -> bool:
+    from src.scheduled_research.store import ScheduledResearchJobStore
+
+    return ScheduledResearchJobStore().delete(_infra_heal_job_id(agent_id))
+
+
 def register_agent_jobs(agent: dict[str, Any]) -> None:
     if not is_autonomous_scheduler_enabled():
         return
 
-    from src.scheduled_research.store import ScheduledResearchJobStore
-
     agent_id = str(agent.get("id") or "")
     if not agent_id:
         return
+
+    if str(agent.get("pause_reason") or "") == "infra":
+        register_infra_heal_job(agent_id)
+        return
+
+    from src.scheduled_research.store import ScheduledResearchJobStore
+
+    unregister_infra_heal_job(agent_id)
 
     schedules = dict(agent.get("schedules") or {})
     watch_ms = str(int(schedules.get("watch_ms") or 420_000))
@@ -135,7 +176,23 @@ def unregister_agent_jobs(agent_id: str) -> dict[str, bool]:
         watch_id: store.delete(watch_id),
         research_id: store.delete(research_id),
         quant_id: store.delete(quant_id),
+        _infra_heal_job_id(agent_id): store.delete(_infra_heal_job_id(agent_id)),
     }
+
+
+def finalize_infra_heal(agent_id: str) -> None:
+    """After infra heal succeeds: swap heal job for watch/research/bootstrap."""
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.autonomous_agents.store import get_agent
+
+    agent = get_agent(agent_id)
+    if not agent or str(agent.get("status") or "") != "running":
+        return
+    unregister_infra_heal_job(agent_id)
+    register_agent_jobs(agent)
+    from src.scheduled_research.autonomous_bootstrap import schedule_agent_bootstrap
+
+    schedule_agent_bootstrap(agent_id)
 
 
 async def dispatch_autonomous_job(job: ScheduledResearchJob) -> None:
@@ -148,6 +205,13 @@ async def dispatch_autonomous_job(job: ScheduledResearchJob) -> None:
         return
 
     job_type = str((job.config or {}).get("job_type") or "")
+    if job_type == JOB_TYPE_INFRA_HEAL:
+        from trade_integrations.autonomous_agents.infra_startup import attempt_infra_heal
+
+        updated = await asyncio.to_thread(attempt_infra_heal, agent_id)
+        if updated and str(updated.get("status") or "") == "running":
+            await asyncio.to_thread(finalize_infra_heal, agent_id)
+        return
     if job_type == JOB_TYPE_WATCH:
         await run_watch_tick(agent_id)
         return

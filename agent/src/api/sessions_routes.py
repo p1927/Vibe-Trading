@@ -256,6 +256,27 @@ def _is_autonomous_propose_tool(tool_name: str | None) -> bool:
     return name == _AUTONOMOUS_PROPOSAL_TOOL_NAME or "propose_autonomous_agent" in name
 
 
+def _extract_autonomous_proposal_id_from_tool_result(data: dict[str, Any]) -> str | None:
+    preview = str(data.get("preview") or "")
+    match = _AUTONOMOUS_PROPOSAL_ID_RE.search(preview)
+    if match:
+        return match.group(1)
+    try:
+        parsed = json.loads(preview)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if isinstance(parsed, dict):
+        pid = parsed.get("proposal_id")
+        if isinstance(pid, str) and pid.startswith("aap_"):
+            return pid
+        nested = parsed.get("proposal")
+        if isinstance(nested, dict):
+            pid = nested.get("proposal_id")
+            if isinstance(pid, str) and pid.startswith("aap_"):
+                return pid
+    return None
+
+
 def _autonomous_agent_proposal_frame_from_tool_result(event: Any) -> Optional[str]:
     """Build autonomous_agent.proposal SSE frame from propose tool_result."""
     data = getattr(event, "data", None)
@@ -263,11 +284,13 @@ def _autonomous_agent_proposal_frame_from_tool_result(event: Any) -> Optional[st
         return None
     if not _is_autonomous_propose_tool(data.get("tool")) or data.get("status") != "ok":
         return None
-    match = _AUTONOMOUS_PROPOSAL_ID_RE.search(str(data.get("preview") or ""))
-    if not match:
+    proposal_id = _extract_autonomous_proposal_id_from_tool_result(data)
+    if not proposal_id:
         return None
-    proposal = _load_autonomous_proposal(match.group(1))
-    if proposal is None or proposal.get("status") != "ready":
+    proposal = _load_autonomous_proposal(proposal_id)
+    if proposal is None:
+        return None
+    if str(proposal.get("status") or "") not in {"ready", "incomplete"}:
         return None
 
     from src.session.events import SSEEvent

@@ -106,7 +106,7 @@ function upsertAutonomousProposalItems(
   proposal: AutonomousAgentProposal,
   sessionId: string,
 ): LiveItem[] {
-  if (!proposal.proposal_id || proposal.status !== "ready") return items;
+  if (!proposal.proposal_id || !["ready", "incomplete"].includes(proposal.status ?? "")) return items;
   const orchSid = proposalSessionId(proposal, sessionId);
 
   const marked = items.map((item) => {
@@ -777,7 +777,7 @@ export function Agent({
 
         if (isOrchestratorView && sid) {
           const applyLatestProposal = (proposal: AutonomousAgentProposal | null | undefined) => {
-            if (!proposal?.proposal_id || proposal.status !== "ready") return false;
+            if (!proposal?.proposal_id || !["ready", "incomplete"].includes(proposal.status ?? "")) return false;
             setLiveItems((items) => upsertAutonomousProposalItems(items, proposal, sid));
             scrollToBottom();
             return true;
@@ -868,7 +868,7 @@ export function Agent({
       "autonomous_agent.proposal": (d) => {
         touch();
         const proposal = d as unknown as AutonomousAgentProposal;
-        if (!proposal.proposal_id || proposal.status !== "ready") return;
+        if (!proposal.proposal_id || !["ready", "incomplete"].includes(proposal.status ?? "")) return;
         setLiveItems((items) => upsertAutonomousProposalItems(items, proposal, sid));
         scrollToBottom();
       },

@@ -89,6 +89,9 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
     schedState === "bootstrap_failed" ||
     agent.bootstrap_status === "failed" ||
     runtime?.bootstrap_status === "failed";
+  const waitingForInfra =
+    agent.pause_reason === "infra" ||
+    (Array.isArray(agent.infra_pending) && agent.infra_pending.length > 0);
 
   return (
     <div
@@ -105,6 +108,7 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
               <p className="truncate text-sm font-semibold text-foreground">{agent.name}</p>
               <p className="truncate text-xs text-muted-foreground">
                 {(agent.symbols ?? []).join(" · ") || "—"} · {agent.status}
+                {waitingForInfra ? " · waiting for infra" : ""}
                 {bootstrapFailed ? " · bootstrap failed" : isBootstrapping ? " · starting" : ""}
               </p>
             </div>
@@ -144,6 +148,12 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
         </div>
 
         <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px]">
+          {waitingForInfra ? (
+            <span className="rounded border border-amber-500/40 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">
+              waiting for infra
+              {agent.infra_pending?.[0] ? `: ${agent.infra_pending[0]}` : ""}
+            </span>
+          ) : null}
           <span
             className={cn(
               "rounded border px-1.5 py-0.5",
