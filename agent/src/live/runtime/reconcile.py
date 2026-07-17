@@ -71,6 +71,10 @@ ReadList = Callable[[], Sequence[Mapping[str, Any]]]
 ReadDict = Callable[[], Mapping[str, Any]]
 
 
+class CorruptRuntimeState(RuntimeError):
+    """Raised when an existing durable runtime state cannot be trusted."""
+
+
 class DeltaKind:
     """Classification labels for a single reconciliation delta.
 
@@ -533,16 +537,19 @@ def _state_path(broker: str) -> Path:
 def _load_state(broker: str) -> dict[str, Any] | None:
     """Load the durable last-known runtime state for ``broker``.
 
-    Loading is fail-open-to-cold-start: a missing file means a first/cold start
-    (``None``). A *corrupt* file is NOT silently treated as cold start — that
-    would hide a partial write — it is renamed aside and surfaced as a fresh
-    start so the diff can never run against a half-truth.
+    A missing file means a first/cold start (``None``). An existing unreadable
+    or malformed file raises :class:`CorruptRuntimeState` and remains untouched
+    so the runner blocks until an operator repairs the safety baseline.
 
     Args:
         broker: Broker key.
 
     Returns:
-        The decoded state dict, or ``None`` on cold start / unreadable state.
+        The decoded state dict, or ``None`` on a genuine first start.
+
+    Raises:
+        CorruptRuntimeState: If the existing state cannot be read or decoded as
+            a JSON object.
     """
     path = _state_path(broker)
     if not path.is_file():
@@ -550,21 +557,13 @@ def _load_state(broker: str) -> dict[str, Any] | None:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        corrupt = path.with_name(f"{path.name}.corrupt-{int(datetime.now().timestamp())}")
-        try:
-            os.replace(path, corrupt)
-        except OSError:
-            pass
-        logger.warning(
-            "reconcile(%s): runtime_state.json unreadable (%s); renamed to %s, cold start",
-            broker,
-            exc,
-            corrupt.name,
-        )
-        return None
+        raise CorruptRuntimeState(
+            f"reconcile({broker}): runtime_state.json is unreadable; repair is required"
+        ) from exc
     if not isinstance(raw, dict):
-        logger.warning("reconcile(%s): runtime_state.json is not an object; cold start", broker)
-        return None
+        raise CorruptRuntimeState(
+            f"reconcile({broker}): runtime_state.json is not an object; repair is required"
+        )
     return raw
 
 
