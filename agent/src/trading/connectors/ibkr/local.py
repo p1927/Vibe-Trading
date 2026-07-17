@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import socket
+import itertools
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -306,6 +307,28 @@ def get_open_orders(config: IBKRLocalConfig | None = None, *, include_executions
         _pool.release()
 
 
+
+def _wait_for_tick(ib: Any, ticker: Any, *, max_wait: float = 2.0, poll_interval: float = 0.1) -> None:
+    """Pump the ib_async event loop until the snapshot ticker fills.
+
+    ``reqMktData(..., snapshot=True)`` returns immediately but the ticker
+    fields (bid, ask, last, ...) only populate after the event loop
+    processes the incoming tick.  This helper runs ``ib.sleep()`` in
+    short increments until at least one price field is non-None or the
+    timeout is reached.
+    """
+    import time as _time
+
+    deadline = _time.monotonic() + max_wait
+    while _time.monotonic() < deadline:
+        if _obj_get(ticker, "bid") is not None or _obj_get(ticker, "ask") is not None or _obj_get(ticker, "last") is not None:
+            return
+        if hasattr(ib, "waitOnUpdate"):
+            ib.waitOnUpdate(timeout=poll_interval)
+        else:
+            _sleep(ib, poll_interval)
+
+
 def get_quote(
     symbol: str,
     *,
@@ -323,6 +346,7 @@ def get_quote(
         contract = _make_contract(symbol, exchange=exchange, currency=currency, sec_type=sec_type)
         _qualify_contract(ib, contract)
         ticker = ib.reqMktData(contract, "", True, False)
+        _wait_for_tick(ib, ticker)
         return {
             "status": "ok",
             "symbol": symbol.upper(),
