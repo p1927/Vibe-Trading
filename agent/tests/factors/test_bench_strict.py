@@ -156,6 +156,11 @@ def test_categorise_confirmed_alive_when_oos_also_passes() -> None:
     assert categorise_strict(row) == "confirmed_alive"
 
 
+def test_categorise_rejects_oos_confirmation_when_training_fails() -> None:
+    row = _row(alpha_t_full=2.5, alpha_t_train=-1.0, alpha_t_test=4.0)
+    assert categorise_strict(row) == "noise"
+
+
 def test_categorise_short_ic_count_is_noise() -> None:
     # Below min_ic_count even strong t-stats are downgraded.
     row = _row(alpha_t_full=10.0, ic_count=10)
