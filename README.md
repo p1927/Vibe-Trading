@@ -315,6 +315,7 @@ One `get_market_data` call, **20 free market-data sources** (plus the optional *
 | `tushare` | A / futures / fund / macro | token | richest A-share |
 | `yahoo` · `sina` · `stooq` | US (/HK) | none | direct chart/quotes/options · K-line to 1984 · EOD CSV |
 | `yfinance` | US / HK | none | wrapper |
+| `longbridge` | US / HK | App Key + App Secret + Access Token | optional historical OHLCV source; install the optional SDK |
 | `finnhub` · `alphavantage` · `tiingo` · `fmp` | US | key | optional providers |
 | `feitu` | A / HK | none | optional [FTShare SDK](https://github.com/FTShare-Lab/FTShare-python-sdk) (`pip install "ftshare @ git+https://github.com/FTShare-Lab/FTShare-python-sdk.git@v0.1.1"`) |
 | `qveris` | global multi-asset | key · credits | **premium marketplace** — 63+ providers via one key (explicit-only, never in auto fallback) |
@@ -326,10 +327,40 @@ One `get_market_data` call, **20 free market-data sources** (plus the optional *
 **Fallback chains (by IP-ban risk):**
 
 - **A-share** → `tencent` · `mootdx` · `eastmoney` · `baostock` · `feitu` · `akshare` · `tushare` · `local`
-- **US** → `yahoo` · `stooq` · `sina` · `eastmoney` · `yfinance` · `tiingo` · `fmp` · `finnhub` · `alphavantage` · `akshare` · `local`
-- **HK** → `eastmoney` · `yahoo` · `feitu` · `futu` · `yfinance` · `akshare` · `local`
+- **US** → `yahoo` · `stooq` · `sina` · `eastmoney` · `yfinance` · `tiingo` · `fmp` · `finnhub` · `alphavantage` · `longbridge` · `akshare` · `local`
+- **HK** → `eastmoney` · `yahoo` · `feitu` · `futu` · `yfinance` · `akshare` · `longbridge` · `local`
 - **India (NSE/BSE)** → `yahoo` · `yfinance` · `india_broker` · `local`
 - **Crypto** → `okx` · `ccxt` · `yfinance` · `local` &nbsp;·&nbsp; *(futures / fund / macro / forex → `tushare`/`akshare` → `local`)*
+
+### Using Longbridge explicitly
+
+Longbridge is an optional US/HK historical OHLCV loader. Install its SDK with:
+
+```bash
+pip install "vibe-trading-ai[longbridge]"
+```
+
+Configure the three credentials in `.env`:
+
+```dotenv
+LONGBRIDGE_APP_KEY=...
+LONGBRIDGE_APP_SECRET=...
+LONGBRIDGE_ACCESS_TOKEN=...
+```
+
+For a backtest, set `source` in `config.json`:
+
+```json
+{
+  "codes": ["QQQ.US"],
+  "start_date": "2025-01-01",
+  "end_date": "2025-01-10",
+  "interval": "1D",
+  "source": "longbridge"
+}
+```
+
+In an Agent conversation, ask explicitly: **"Use Longbridge to fetch QQQ.US historical data."** The explicit source request is separate from `source: "auto"`; `auto` keeps the normal per-market fallback chain.
 
 Beyond OHLCV, **18 read-only data tools** reach into fundamentals & flow — fund flow, dragon-tiger, northbound, margin, block trades, shareholder count, lockup, sector, research reports, news, SEC filings, financial statements, options chains, institutional holdings, market screening, symbol search, and macro — all exposed over MCP. An explicit `local:` symbol never silently falls back to a network source.
 

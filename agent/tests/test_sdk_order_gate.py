@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.config.accessor import reset_env_config
 from src.live import sdk_order_gate as gate
 from src.live.enforcement import OrderIntent
 from src.live.mandate.model import (
@@ -20,8 +21,22 @@ from src.live.mandate.model import (
     UniverseConstraint,
 )
 from src.trading import service
+from src.trading.connectors.longbridge import credentials as lb_credentials
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _isolate_longbridge_credentials(monkeypatch, tmp_path):
+    """Never let Longbridge cases consume workstation env/file credentials."""
+    for env_name in (
+        "LONGBRIDGE_APP_KEY",
+        "LONGBRIDGE_APP_SECRET",
+        "LONGBRIDGE_ACCESS_TOKEN",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+    reset_env_config()
+    monkeypatch.setattr(lb_credentials, "get_runtime_root", lambda: tmp_path)
 
 
 class _FakeConnector:
