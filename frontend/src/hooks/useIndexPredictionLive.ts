@@ -6,6 +6,7 @@ interface Props {
   horizonDays?: number;
   pollMs: number;
   enabled?: boolean;
+  pauseWhileRunning?: boolean;
   onUpdate?: (artifact: IndexPredictionArtifact | null) => void;
 }
 
@@ -14,6 +15,7 @@ export function useIndexPredictionLive({
   horizonDays = 14,
   pollMs,
   enabled = true,
+  pauseWhileRunning = false,
   onUpdate,
 }: Props) {
   const [lastReason, setLastReason] = useState<string | null>(null);
@@ -44,7 +46,7 @@ export function useIndexPredictionLive({
   }, [ticker]);
 
   useEffect(() => {
-    if (!enabled || pollMs <= 0) {
+    if (!enabled || pollMs <= 0 || pauseWhileRunning) {
       setCountdownSec(0);
       return;
     }
@@ -69,7 +71,7 @@ export function useIndexPredictionLive({
       window.clearInterval(pollId);
       window.clearInterval(tickId);
     };
-  }, [enabled, pollMs, refreshLight, loadContext]);
+  }, [enabled, pollMs, pauseWhileRunning, refreshLight, loadContext]);
 
-  return { lastReason, countdownSec, materialNewsCount };
+  return { lastReason, countdownSec, materialNewsCount, pausedForAnalysis: pauseWhileRunning };
 }

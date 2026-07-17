@@ -248,12 +248,20 @@ def _load_autonomous_proposal(proposal_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _is_autonomous_propose_tool(tool_name: str | None) -> bool:
+    """Match local and MCP-wrapped propose_autonomous_agent tool names."""
+    name = str(tool_name or "").strip()
+    if not name:
+        return False
+    return name == _AUTONOMOUS_PROPOSAL_TOOL_NAME or "propose_autonomous_agent" in name
+
+
 def _autonomous_agent_proposal_frame_from_tool_result(event: Any) -> Optional[str]:
     """Build autonomous_agent.proposal SSE frame from propose tool_result."""
     data = getattr(event, "data", None)
     if getattr(event, "event_type", None) != "tool_result" or not isinstance(data, dict):
         return None
-    if data.get("tool") != _AUTONOMOUS_PROPOSAL_TOOL_NAME or data.get("status") != "ok":
+    if not _is_autonomous_propose_tool(data.get("tool")) or data.get("status") != "ok":
         return None
     match = _AUTONOMOUS_PROPOSAL_ID_RE.search(str(data.get("preview") or ""))
     if not match:

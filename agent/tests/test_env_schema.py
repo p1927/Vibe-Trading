@@ -135,7 +135,7 @@ class TestEnvConfigDefaults:
         assert c.agent_tuning.vibe_trading_sse_timeout == 90
         assert c.agent_tuning.content_filter_warning_threshold == 0.05
         assert c.agent_tuning.vibe_trading_enable_advisory is False
-        assert c.agent_tuning.vibe_trading_enable_scheduler is False
+        assert c.agent_tuning.vibe_trading_enable_scheduler is True
         assert c.agent_tuning.vibe_trading_channels_auto_start is False
         assert c.agent_tuning.vibe_trading_disable_bottleneck is False
         assert c.agent_tuning.vibe_trading_bench_workers == 0

@@ -408,9 +408,15 @@ class SessionService:
 
         if session_config:
             from src.session.orchestrator_profile import filter_registry_for_orchestrator, is_orchestrator_session
+            from src.session.news_scenario_profile import (
+                filter_registry_for_news_scenario,
+                is_news_scenario_session,
+            )
 
             if is_orchestrator_session(session_config):
                 registry = filter_registry_for_orchestrator(registry)
+            elif is_news_scenario_session(session_config):
+                registry = filter_registry_for_news_scenario(registry)
 
         agent = AgentLoop(
             registry=registry,

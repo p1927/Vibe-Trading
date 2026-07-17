@@ -27,6 +27,14 @@ function isProposalExpired(proposal: AutonomousAgentProposal): boolean {
   return Boolean(expires && Date.now() > expires);
 }
 
+function formatInstruments(proposal: AutonomousAgentProposal, market?: "IN" | "US"): string {
+  const raw = proposal.mandate_config?.allowed_instruments as string[] | undefined;
+  if (raw?.length) {
+    return raw.map((x) => x.charAt(0).toUpperCase() + x.slice(1)).join(" · ");
+  }
+  return market === "US" ? "Equity" : "Equity";
+}
+
 function formatMoney(amount: number | undefined, market: "IN" | "US" | undefined): string {
   const value = amount ?? 0;
   if (market === "US") {
@@ -114,12 +122,14 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const expired = useMemo(() => isProposalExpired(proposal), [proposal]);
+  const superseded = Boolean(proposal.superseded);
   const market = proposal.execution_market;
   const routingErrors = proposal.routing_errors ?? [];
   const hasRoutingErrors = routingErrors.length > 0;
+  const blocked = expired || superseded || hasRoutingErrors;
 
   const handleCommit = useCallback(async () => {
-    if (busy || expired || hasRoutingErrors) return;
+    if (busy || blocked) return;
     setBusy(true);
     try {
       const result = await api.commitAutonomousAgent({
@@ -140,7 +150,7 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
       toast.error(error instanceof Error ? error.message : "Failed to create agent");
       setBusy(false);
     }
-  }, [busy, expired, hasRoutingErrors, onCommitted, proposal.orchestrator_session_id, proposal.proposal_id, proposal.session_id]);
+  }, [blocked, busy, onCommitted, proposal.orchestrator_session_id, proposal.proposal_id, proposal.session_id]);
 
   if (committed) {
     return (
@@ -160,7 +170,12 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
   return (
     <div className="flex gap-3">
       <AgentAvatar />
-      <div className="flex-1 min-w-0 space-y-3 rounded-2xl border border-primary/20 bg-background/95 p-4 shadow-sm">
+      <div
+        className={cn(
+          "flex-1 min-w-0 space-y-3 rounded-2xl border border-primary/20 bg-background/95 p-4 shadow-sm",
+          superseded && "opacity-60",
+        )}
+      >
         <div className="flex items-start gap-2">
           <Radio className="h-4 w-4 shrink-0 text-primary" />
           <div className="min-w-0 flex-1">
@@ -169,6 +184,11 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
             {expired ? (
               <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">
                 Proposal expired — re-propose or dismiss.
+              </p>
+            ) : null}
+            {superseded ? (
+              <p className="mt-1 text-xs font-medium text-muted-foreground">
+                Superseded — use the latest proposal card above.
               </p>
             ) : null}
           </div>
@@ -194,7 +214,7 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
         <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
           <div className="col-span-2">
             <dt className="text-muted-foreground">Symbols</dt>
-            <dd className="font-medium">{proposal.symbols.join(", ")}</dd>
+            <dd className="font-medium">{(proposal.symbols ?? []).join(", ") || "—"}</dd>
           </div>
           <div className="col-span-2">
             <dt className="text-muted-foreground">Mandate</dt>
@@ -218,10 +238,7 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
           </div>
           <div className="col-span-2">
             <dt className="text-muted-foreground">Instruments</dt>
-            <dd className="font-medium">
-              {(proposal.mandate_config?.allowed_instruments as string[] | undefined)?.join(", ") ||
-                (market === "US" ? "equity" : "options")}
-            </dd>
+            <dd className="font-medium">{formatInstruments(proposal, market)}</dd>
           </div>
           <div>
             <dt className="text-muted-foreground">Watch</dt>
@@ -239,11 +256,17 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
           ) : null}
         </dl>
 
-        {expired ? (
+        {expired || superseded ? (
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => onAdjust("Please refresh this proposal with the same settings.")}
+              onClick={() =>
+                onAdjust(
+                  superseded
+                    ? "Please re-propose with the latest settings."
+                    : "Please refresh this proposal with the same settings.",
+                )
+              }
               className="rounded-lg border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/50"
             >
               Re-propose

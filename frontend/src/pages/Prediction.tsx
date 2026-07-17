@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { AlertTriangle } from "lucide-react";
 import { PredictionControls } from "@/components/prediction/PredictionControls";
 import { PredictionSummary } from "@/components/prediction/PredictionSummary";
@@ -28,6 +29,7 @@ import { PredictionVerificationPanel } from "@/components/prediction/PredictionV
 import { PredictionSectionHeader } from "@/components/prediction/PredictionSectionHeader";
 import { TechnicalContextStrip } from "@/components/prediction/TechnicalContextStrip";
 import { QuantReviewPanel } from "@/components/prediction/QuantReviewPanel";
+import { NewsScenarioCanvas } from "@/components/prediction/NewsScenarioCanvas";
 import { useIndexPrediction } from "@/hooks/useIndexPrediction";
 import { useIndexPredictionLive } from "@/hooks/useIndexPredictionLive";
 import {
@@ -39,15 +41,29 @@ import {
   type IndexPredictionHistoryMeta,
   type IndexPredictionHistoryRow,
   type IndexSimulationResult,
+  type TradePlanWidget,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
+
+const EmbeddedAgent = lazy(() =>
+  import("@/pages/Agent").then((m) => ({ default: m.Agent })),
+);
 
 import { MACRO_DRIFT_FACTORS, niftyCloseSeries, pivotFactorHistoryWide } from "@/lib/factorHistoryUtils";
 import { mergePriceSeries } from "@/lib/forecastReplayUtils";
 
 const POLL_STORAGE_KEY = "vibe-prediction-poll-ms";
 const DEFAULT_POLL_MS = 300_000;
+const NEWS_SCENARIO_MODE = "news-scenarios";
 
 export function Prediction() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const predictionMode = searchParams.get("mode") === NEWS_SCENARIO_MODE ? NEWS_SCENARIO_MODE : "analysis";
+  const [newsSessionError, setNewsSessionError] = useState<string | null>(null);
+  const [boundPipelineAsOf, setBoundPipelineAsOf] = useState<string | null>(null);
+  const [newsScenarioWidget, setNewsScenarioWidget] = useState<TradePlanWidget | null>(null);
+  const newsSessionBootstrappingRef = useRef(false);
+
   const [horizonDays, setHorizonDays] = useState(14);
   const [pollMs, setPollMs] = useState(() => {
     try {
@@ -83,6 +99,8 @@ export function Prediction() {
     artifact,
     loading,
     running,
+    runJobId,
+    reattached,
     error,
     runAnalysis,
     applyArtifact,
@@ -92,6 +110,78 @@ export function Prediction() {
     catalogLoading,
     setPipelinePanelOpen,
   } = useIndexPrediction("NIFTY", horizonDays);
+
+  const hasArtifact = Boolean(artifact);
+  const pipelineStale =
+    predictionMode === NEWS_SCENARIO_MODE &&
+    hasArtifact &&
+    boundPipelineAsOf != null &&
+    artifact?.as_of != null &&
+    boundPipelineAsOf !== artifact.as_of;
+
+  const handleNewsScenarioWidget = useCallback((widget: TradePlanWidget) => {
+    setNewsScenarioWidget(widget);
+  }, []);
+
+  const setPredictionMode = useCallback(
+    (mode: "analysis" | typeof NEWS_SCENARIO_MODE) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (mode === NEWS_SCENARIO_MODE) {
+            next.set("mode", NEWS_SCENARIO_MODE);
+          } else {
+            next.delete("mode");
+            next.delete("session");
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const urlNewsSessionId = searchParams.get("session");
+
+  useEffect(() => {
+    if (predictionMode !== NEWS_SCENARIO_MODE || !artifact?.as_of) return;
+    if (newsSessionBootstrappingRef.current) return;
+
+    const pipelineAsOf = artifact.as_of;
+    if (!pipelineAsOf) return;
+
+    const bootstrap = async () => {
+      newsSessionBootstrappingRef.current = true;
+      setNewsSessionError(null);
+      try {
+        const res = await api.createNewsScenarioSession({
+          ticker: "NIFTY",
+          pipeline_as_of: pipelineAsOf,
+          horizon_days: horizonDays,
+          session_id: urlNewsSessionId || undefined,
+        });
+        setBoundPipelineAsOf(res.pipeline_as_of);
+        if (res.session_id && res.session_id !== urlNewsSessionId) {
+          setSearchParams(
+            (prev) => {
+              const next = new URLSearchParams(prev);
+              next.set("mode", NEWS_SCENARIO_MODE);
+              next.set("session", res.session_id);
+              return next;
+            },
+            { replace: true },
+          );
+        }
+      } catch (e) {
+        setNewsSessionError(e instanceof Error ? e.message : "News scenario session failed");
+      } finally {
+        newsSessionBootstrappingRef.current = false;
+      }
+    };
+
+    void bootstrap();
+  }, [predictionMode, artifact?.as_of, horizonDays, urlNewsSessionId, setSearchParams]);
 
   const loadHistory = useCallback(async () => {
     setHistoryError(null);
@@ -189,11 +279,12 @@ export function Prediction() {
     [applyArtifact, loadHistory],
   );
 
-  const { lastReason, countdownSec, materialNewsCount } = useIndexPredictionLive({
+  const { lastReason, countdownSec, materialNewsCount, pausedForAnalysis } = useIndexPredictionLive({
     ticker: "NIFTY",
     horizonDays,
     pollMs,
     enabled: pollMs > 0,
+    pauseWhileRunning: running,
     onUpdate: handleLiveUpdate,
   });
 
@@ -248,6 +339,77 @@ export function Prediction() {
   return (
     <div className="mx-auto flex w-full max-w-[90rem] flex-col gap-4 p-4 pb-10 lg:flex-row lg:items-start lg:gap-5 md:p-6">
       <div className="flex min-w-0 flex-1 flex-col gap-6">
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-card/40 p-1">
+          <button
+            type="button"
+            onClick={() => setPredictionMode("analysis")}
+            className={cn(
+              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+              predictionMode === "analysis"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Analysis
+          </button>
+          <button
+            type="button"
+            disabled={!hasArtifact}
+            title={!hasArtifact ? "Run Analysis first to freeze a pipeline snapshot" : undefined}
+            onClick={() => setPredictionMode(NEWS_SCENARIO_MODE)}
+            className={cn(
+              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+              predictionMode === NEWS_SCENARIO_MODE
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            News Predictions
+          </button>
+        </div>
+
+        {predictionMode === NEWS_SCENARIO_MODE ? (
+          <>
+            {pipelineStale ? (
+              <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                Analysis snapshot updated ({artifact?.as_of?.slice(0, 16)}). Re-run Analysis or start a
+                new advisor session to bind the latest pipeline.
+              </div>
+            ) : null}
+            {newsSessionError ? (
+              <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-700 dark:text-red-300">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                {newsSessionError}
+              </div>
+            ) : null}
+            <div className="grid min-h-[calc(100vh-12rem)] gap-4 lg:grid-cols-2">
+              <div className="flex min-h-[420px] flex-col overflow-hidden rounded-xl border border-border/60 bg-background">
+                <div className="border-b border-border/60 px-3 py-2 text-[11px] font-medium text-muted-foreground">
+                  News scenario advisor
+                </div>
+                <div className="min-h-0 flex-1">
+                  <Suspense
+                    fallback={
+                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                        Loading advisor…
+                      </div>
+                    }
+                  >
+                    <EmbeddedAgent
+                      embedded
+                      newsScenarioMode
+                      boundPipelineAsOf={boundPipelineAsOf ?? artifact?.as_of ?? undefined}
+                      onNewsScenarioWidget={handleNewsScenarioWidget}
+                    />
+                  </Suspense>
+                </div>
+              </div>
+              <NewsScenarioCanvas widget={newsScenarioWidget} />
+            </div>
+          </>
+        ) : (
+          <>
         <PredictionControls
           horizonDays={horizonDays}
           onHorizonChange={setHorizonDays}
@@ -257,6 +419,7 @@ export function Prediction() {
           onRefreshConstituentsChange={setRefreshConstituents}
           onRun={handleRun}
           running={running}
+          runJobId={runJobId}
           lastUpdated={artifact?.as_of}
           spot={artifact?.spot}
           regime={regimeLabel}
@@ -270,6 +433,7 @@ export function Prediction() {
           countdownSec={countdownSec}
           pollMs={pollMs}
           monitorEnabled={pollMs > 0}
+          pausedForAnalysis={pausedForAnalysis}
         />
 
         <PredictionScheduledJobsPanel />
@@ -556,16 +720,22 @@ export function Prediction() {
             <PredictionLearningPanel artifact={artifact} history={dailyHistory} />
           </>
         ) : null}
+          </>
+        )}
       </div>
 
+      {predictionMode === "analysis" ? (
       <PredictionPipelinePanel
         open={pipelinePanelOpen}
         running={running}
+        reattached={reattached}
+        runJobId={runJobId}
         logs={pipelineLogs}
         artifact={artifact}
         factorCatalog={factorCatalog}
         catalogLoading={catalogLoading}
       />
+      ) : null}
     </div>
   );
 }

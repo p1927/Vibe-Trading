@@ -25,7 +25,17 @@ export function Runtime() {
   const { t } = useTranslation();
   const [status, setStatus] = useState<LiveStatus | null>(null);
   const [connectors, setConnectors] = useState<TradingConnectorsResponse | null>(null);
-  const [connectorChecks, setConnectorChecks] = useState<Record<string, { status: string; error?: string }>>({});
+  const [connectorChecks, setConnectorChecks] = useState<Record<string, {
+    status: string;
+    error?: string;
+    broker?: string;
+    broker_display?: string;
+    host?: string;
+    analyze_mode?: boolean;
+    warning?: string;
+    token_sync_warning?: string;
+    switch_url?: string;
+  }>>({});
   const [checkingProfile, setCheckingProfile] = useState<string | null>(null);
   const [selectingProfile, setSelectingProfile] = useState<string | null>(null);
   const [connectorsError, setConnectorsError] = useState<string | null>(null);
@@ -132,7 +142,17 @@ export function Runtime() {
       const result = await api.checkTradingConnector(profileId);
       setConnectorChecks((prev) => ({
         ...prev,
-        [profileId]: { status: result.status, error: typeof result.error === "string" ? result.error : undefined },
+        [profileId]: {
+          status: result.status,
+          error: typeof result.error === "string" ? result.error : undefined,
+          broker: typeof result.broker === "string" ? result.broker : undefined,
+          broker_display: typeof result.broker_display === "string" ? result.broker_display : undefined,
+          host: typeof result.host === "string" ? result.host : undefined,
+          analyze_mode: typeof result.analyze_mode === "boolean" ? result.analyze_mode : undefined,
+          warning: typeof result.warning === "string" ? result.warning : undefined,
+          token_sync_warning: typeof result.token_sync_warning === "string" ? result.token_sync_warning : undefined,
+          switch_url: typeof result.switch_url === "string" ? result.switch_url : undefined,
+        },
       }));
     } catch (err) {
       setConnectorChecks((prev) => ({
@@ -527,6 +547,22 @@ function groupConnectorProfiles(profiles: TradingConnectorProfile[]): Array<[str
   });
 }
 
+function openalgoGroupTitle(
+  connectorKey: string,
+  profiles: TradingConnectorProfile[],
+  checks: Record<string, { status: string; error?: string; broker_display?: string }>,
+): string {
+  if (connectorKey !== "openalgo") {
+    return connectorKey;
+  }
+  const selected = profiles.find((profile) => profile.selected) ?? profiles[0];
+  const check = selected ? checks[selected.id] : undefined;
+  if (check?.broker_display) {
+    return `OpenAlgo · ${check.broker_display}`;
+  }
+  return "OpenAlgo";
+}
+
 function ConnectorGroupCard({
   connectorKey,
   profiles,
@@ -539,16 +575,54 @@ function ConnectorGroupCard({
 }: {
   connectorKey: string;
   profiles: TradingConnectorProfile[];
-  checks: Record<string, { status: string; error?: string }>;
+  checks: Record<string, {
+    status: string;
+    error?: string;
+    broker_display?: string;
+    host?: string;
+    analyze_mode?: boolean;
+    warning?: string;
+    token_sync_warning?: string;
+    switch_url?: string;
+  }>;
   checkingProfile: string | null;
   selectingProfile: string | null;
   onSelect: (profileId: string) => void;
   onCheck: (profileId: string) => void;
   t: TFunction;
 }) {
+  const selectedProfile = profiles.find((profile) => profile.selected) ?? null;
+  const selectedCheck = selectedProfile ? checks[selectedProfile.id] : undefined;
+
   return (
     <article className="rounded-md border p-4">
-      <h3 className="font-semibold capitalize">{connectorKey === "openalgo" ? "OpenAlgo" : connectorKey}</h3>
+      <h3 className="font-semibold capitalize">{openalgoGroupTitle(connectorKey, profiles, checks)}</h3>
+      {connectorKey === "openalgo" ? (
+        <p className="mt-1 text-xs text-muted-foreground">{t("runtime.openalgoIndiaHint")}</p>
+      ) : null}
+      {connectorKey === "openalgo" && selectedCheck ? (
+        <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
+          {selectedCheck.host ? (
+            <p>{t("runtime.openalgoHost")}: <span className="font-mono text-foreground">{selectedCheck.host}</span></p>
+          ) : null}
+          {selectedCheck.broker_display ? (
+            <p>{t("runtime.openalgoBroker")}: <span className="text-foreground">{selectedCheck.broker_display}</span></p>
+          ) : null}
+          {selectedCheck.analyze_mode != null ? (
+            <p>
+              {t("runtime.openalgoAnalyzeMode")}:{" "}
+              <span className="text-foreground">
+                {selectedCheck.analyze_mode ? t("runtime.openalgoAnalyzeOn") : t("runtime.openalgoAnalyzeOff")}
+              </span>
+            </p>
+          ) : null}
+          {selectedCheck.warning || selectedCheck.token_sync_warning ? (
+            <p className="text-amber-700 dark:text-amber-300">
+              {t("runtime.openalgoTokenSyncWarning")}: {selectedCheck.warning || selectedCheck.token_sync_warning}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <div className="mt-3 grid gap-2">
         {profiles.map((profile) => {
           const check = checks[profile.id];

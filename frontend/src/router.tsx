@@ -1,6 +1,7 @@
 import { Suspense, lazy, type ComponentType } from "react";
 import { createBrowserRouter } from "react-router-dom";
 import { Layout } from "@/components/layout/Layout";
+import { RouteErrorFallback } from "@/components/common/RouteErrorFallback";
 import { Agent } from "@/pages/Agent";
 
 const Home = lazy(() => import("@/pages/Home").then((m) => ({ default: m.Home })));
@@ -51,6 +52,7 @@ function wrap(Component: ComponentType) {
 export const router = createBrowserRouter([
   {
     element: <Layout />,
+    errorElement: <RouteErrorFallback />,
     children: [
       { path: "/", element: wrap(Home) },
       { path: "/agent", element: <Agent /> },

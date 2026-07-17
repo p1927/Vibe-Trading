@@ -919,6 +919,27 @@ class AgentLoop:
                 if not response.has_tool_calls:
                     final_content = response.content or ""
                     if not final_content:
+                        reasoning = str(getattr(response, "reasoning_content", None) or "").strip()
+                        if reasoning and empty_model_response_iter is None:
+                            trace.write(
+                                {
+                                    "type": "empty_model_response_retry",
+                                    "iter": current_iter,
+                                    "reason": "reasoning_only",
+                                }
+                            )
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "Your prior turn had reasoning only. "
+                                        "Respond now with your final trader-facing decision and call "
+                                        "`record_autonomous_decision` (or other required tools). "
+                                        "Do not reply with thinking-only text."
+                                    ),
+                                }
+                            )
+                            continue
                         empty_model_response_iter = iteration
                         trace.write(
                             {

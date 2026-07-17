@@ -51,8 +51,8 @@ export function Layout() {
 
   // Load sessions on mount. Also refresh when navigating TO /agent or when
   // the active session changes (covers new session creation from Agent).
-  const isAgentPage = pathname.startsWith("/agent");
-  useEffect(() => { loadSessions(); }, [isAgentPage, activeSessionId]);
+  const isChatPage = pathname.startsWith("/agent") || pathname.startsWith("/autonomous");
+  useEffect(() => { loadSessions(); }, [isChatPage, activeSessionId]);
 
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<string | null>(null);

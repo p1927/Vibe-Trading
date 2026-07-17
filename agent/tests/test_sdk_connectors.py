@@ -625,3 +625,34 @@ def test_openalgo_service_unconfigured(monkeypatch, tmp_path) -> None:
     assert result["status"] == "error"
     assert result["connector"] == "openalgo"
     assert "api_key" in result["error"].lower()
+
+
+def test_openalgo_check_status_includes_broker(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("OPENALGO_API_KEY", "test-key")
+    monkeypatch.setattr(oa, "get_runtime_root", lambda: tmp_path)
+    cfg = oa.OpenAlgoConfig(api_key="test-key", host="http://127.0.0.1:5001")
+
+    class _FakeClient:
+        def analyzer_status(self) -> bool:
+            return True
+
+        def funds(self) -> dict[str, str]:
+            return {"availablecash": "1000"}
+
+    monkeypatch.setattr(oa, "_client", lambda _cfg: _FakeClient())
+    monkeypatch.setattr(
+        oa,
+        "_brokerinfo",
+        lambda _client: {
+            "broker": "indmoney",
+            "broker_display": "INDmoney",
+            "token_sync_ok": True,
+            "token_sync_warning": None,
+        },
+    )
+
+    result = oa.check_status(cfg)
+    assert result["status"] == "ok"
+    assert result["broker"] == "indmoney"
+    assert result["broker_display"] == "INDmoney"
+    assert result["switch_url"] == "http://127.0.0.1:5001/"

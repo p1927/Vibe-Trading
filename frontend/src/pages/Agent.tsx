@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { useAgentStore } from "@/stores/agent";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useSSE } from "@/hooks/useSSE";
-import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource, type AutonomousAgentProposal, type TradingConnectorsResponse } from "@/lib/api";
+import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource, type AutonomousAgentProposal, type AutonomousAgentInstance, type TradingConnectorsResponse } from "@/lib/api";
 import { isReportWorthyRun } from "@/lib/runReports";
 import type { AgentMessage, ToolCallEntry } from "@/types/agent";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
@@ -93,6 +93,57 @@ interface AutonomousProposalItem {
   proposal: AutonomousAgentProposal;
 }
 type LiveItem = ProposalItem | LiveActionItem | TradePlanWidgetItem | AutonomousProposalItem;
+
+function proposalSessionId(
+  proposal: AutonomousAgentProposal,
+  fallbackSessionId: string,
+): string {
+  return proposal.orchestrator_session_id || proposal.session_id || fallbackSessionId;
+}
+
+function upsertAutonomousProposalItems(
+  items: LiveItem[],
+  proposal: AutonomousAgentProposal,
+  sessionId: string,
+): LiveItem[] {
+  if (!proposal.proposal_id || proposal.status !== "ready") return items;
+  const orchSid = proposalSessionId(proposal, sessionId);
+
+  const marked = items.map((item) => {
+    if (item.kind !== "autonomous_proposal") return item;
+    const itemSid = proposalSessionId(item.proposal, sessionId);
+    if (
+      itemSid === orchSid &&
+      item.proposal.proposal_id !== proposal.proposal_id &&
+      !item.proposal.committed_agent_id
+    ) {
+      return {
+        ...item,
+        proposal: { ...item.proposal, superseded: true },
+      };
+    }
+    return item;
+  });
+
+  const existingIdx = marked.findIndex(
+    (item) =>
+      item.kind === "autonomous_proposal" &&
+      item.proposal.proposal_id === proposal.proposal_id,
+  );
+  if (existingIdx >= 0) {
+    const next = [...marked];
+    const existing = next[existingIdx];
+    if (existing.kind === "autonomous_proposal") {
+      next[existingIdx] = {
+        ...existing,
+        proposal: { ...proposal, superseded: proposal.superseded ?? false },
+      };
+    }
+    return next;
+  }
+
+  return [...marked, { kind: "autonomous_proposal", timestamp: Date.now(), proposal }];
+}
 
 function normalizeBrokerScope(broker: string | null | undefined): string | null {
   const normalized = broker?.trim().toLowerCase();
@@ -234,9 +285,21 @@ interface AgentProps {
   embedded?: boolean;
   backToAutonomous?: () => void;
   onAutonomousAgentCommitted?: (agentId: string, sessionId: string) => void;
+  autonomousAgent?: AutonomousAgentInstance | null;
+  newsScenarioMode?: boolean;
+  onNewsScenarioWidget?: (widget: TradePlanWidget) => void;
+  boundPipelineAsOf?: string;
 }
 
-export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous, onAutonomousAgentCommitted }: AgentProps = {}) {
+export function Agent({
+  embedded: _embedded,
+  backToAutonomous: _backToAutonomous,
+  onAutonomousAgentCommitted,
+  autonomousAgent,
+  newsScenarioMode = false,
+  onNewsScenarioWidget,
+  boundPipelineAsOf: _boundPipelineAsOf,
+}: AgentProps = {}) {
   const { t } = useTranslation();
   const [input, setInput] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
@@ -288,7 +351,17 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
    * and removes status from the kill-switch visibility condition. */
   const [liveStatusUnavailable, setLiveStatusUnavailable] = useState(false);
   const [tradingConnectors, setTradingConnectors] = useState<TradingConnectorsResponse | null>(null);
-  const [connectorCheck, setConnectorCheck] = useState<{ status: string; error?: string } | null>(null);
+  const [connectorCheck, setConnectorCheck] = useState<{
+    status: string;
+    error?: string;
+    broker?: string;
+    broker_display?: string;
+    analyze_mode?: boolean;
+    host?: string;
+    switch_url?: string;
+    warning?: string;
+    token_sync_warning?: string;
+  } | null>(null);
   const clearedStaleOAuthHaltRef = useRef(false);
 
   /* Trade-stack research side panel (hub plan + TradingAgents debate) */
@@ -701,26 +774,18 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
         }
 
         if (isOrchestratorView && sid) {
+          const applyLatestProposal = (proposal: AutonomousAgentProposal | null | undefined) => {
+            if (!proposal?.proposal_id || proposal.status !== "ready") return false;
+            setLiveItems((items) => upsertAutonomousProposalItems(items, proposal, sid));
+            scrollToBottom();
+            return true;
+          };
           try {
             const latest = await api.getLatestAutonomousProposal(sid);
-            const proposal = latest.proposal;
-            if (proposal?.proposal_id && proposal.status === "ready") {
-              setLiveItems((items) => {
-                if (
-                  items.some(
-                    (item) =>
-                      item.kind === "autonomous_proposal" &&
-                      item.proposal.proposal_id === proposal.proposal_id,
-                  )
-                ) {
-                  return items;
-                }
-                return [
-                  ...items,
-                  { kind: "autonomous_proposal", timestamp: Date.now(), proposal },
-                ];
-              });
-              scrollToBottom();
+            if (!applyLatestProposal(latest.proposal)) {
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+              const retry = await api.getLatestAutonomousProposal(sid);
+              applyLatestProposal(retry.proposal);
             }
           } catch {
             /* proposal poll fallback is best-effort */
@@ -802,18 +867,7 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
         touch();
         const proposal = d as unknown as AutonomousAgentProposal;
         if (!proposal.proposal_id || proposal.status !== "ready") return;
-        setLiveItems((items) => {
-          if (
-            items.some(
-              (item) =>
-                item.kind === "autonomous_proposal" &&
-                item.proposal.proposal_id === proposal.proposal_id,
-            )
-          ) {
-            return items;
-          }
-          return [...items, { kind: "autonomous_proposal", timestamp: Date.now(), proposal }];
-        });
+        setLiveItems((items) => upsertAutonomousProposalItems(items, proposal, sid));
         scrollToBottom();
       },
 
@@ -837,6 +891,13 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
         touch();
         const widget = d as unknown as TradePlanWidget;
         if (!widget.widget_id || widget.type !== "trade_plan.widget") return;
+        if (widget.widget_kind === "news_event_scenario") {
+          onNewsScenarioWidget?.(widget);
+          if (newsScenarioMode) {
+            scrollToBottom();
+            return;
+          }
+        }
         setResearchTicker(widget.underlying);
         setResearchAssetType(
           widget.asset_type === "stock"
@@ -845,6 +906,8 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
               ? "index"
               : "options",
         );
+        const isAutonomousSession =
+          Boolean(_embedded && urlAgentId && urlAgentId !== "orchestrator");
         setLiveItems((items) => {
           if (
             items.some(
@@ -855,12 +918,39 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
           ) {
             return items;
           }
+          if (isAutonomousSession) {
+            const withoutSameUnderlying = items.filter(
+              (item) =>
+                !(
+                  item.kind === "trade_plan_widget" &&
+                  item.widget.underlying === widget.underlying
+                ),
+            );
+            return [
+              ...withoutSameUnderlying,
+              {
+                kind: "trade_plan_widget",
+                timestamp: Date.now(),
+                widget: { ...widget, meta: { ...widget.meta, superseded: false } },
+              },
+            ];
+          }
           return [
             ...items,
             { kind: "trade_plan_widget", timestamp: Date.now(), widget },
           ];
         });
         scrollToBottom();
+      },
+
+      "autonomous_agent.plan_ready": () => {
+        touch();
+        window.dispatchEvent(new Event("autonomous-agents-refresh"));
+      },
+
+      "autonomous_agent.plan_approved": () => {
+        touch();
+        window.dispatchEvent(new Event("autonomous-agents-refresh"));
       },
 
       "plan.stale": (d) => {
@@ -978,7 +1068,7 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
       heartbeat: () => {},
       reconnect: (d) => { act().setSseStatus("reconnecting", Number(d.attempt ?? 0)); },
     });
-  }, [connect, disconnect, isOrchestratorView, loadGoalSnapshot, onAutonomousAgentCommitted, scrollToBottom, urlAgentId]);
+  }, [connect, disconnect, isOrchestratorView, loadGoalSnapshot, newsScenarioMode, onAutonomousAgentCommitted, onNewsScenarioWidget, scrollToBottom, urlAgentId]);
 
   useEffect(() => {
     const { sessionId: curSid, messages: curMsgs, cacheSession, reset, getCachedSession, switchSession } = act();
@@ -1096,7 +1186,17 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
         return payload;
       }
       const check = await api.checkTradingConnector(selected.id);
-      setConnectorCheck({ status: check.status, error: typeof check.error === "string" ? check.error : undefined });
+      setConnectorCheck({
+        status: check.status,
+        error: typeof check.error === "string" ? check.error : undefined,
+        broker: typeof check.broker === "string" ? check.broker : undefined,
+        broker_display: typeof check.broker_display === "string" ? check.broker_display : undefined,
+        analyze_mode: typeof check.analyze_mode === "boolean" ? check.analyze_mode : undefined,
+        host: typeof check.host === "string" ? check.host : undefined,
+        switch_url: typeof check.switch_url === "string" ? check.switch_url : undefined,
+        warning: typeof check.warning === "string" ? check.warning : undefined,
+        token_sync_warning: typeof check.token_sync_warning === "string" ? check.token_sync_warning : undefined,
+      });
       return payload;
     } catch (error) {
       console.warn("Failed to load trading connectors", error);
@@ -1573,7 +1673,17 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
                 );
               }
               if (row.item.kind === "trade_plan_widget") {
-                return <TradePlanWidgetCard key={row.key} widget={row.item.widget} />;
+                return (
+                  <TradePlanWidgetCard
+                    key={row.key}
+                    widget={row.item.widget}
+                    autonomousMode={Boolean(_embedded && urlAgentId && urlAgentId !== "orchestrator")}
+                    planApproved={
+                      Boolean(autonomousAgent?.plan_approved_at) ||
+                      autonomousAgent?.bootstrap_status === "done"
+                    }
+                  />
+                );
               }
               return <LiveActionChip key={row.key} action={row.item.action} />;
             }
@@ -1885,7 +1995,7 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
               Given a top border + extra top padding so this safety-critical
               control visually separates from the lighter decorative chips
               (swarm/goal/attachment) stacked above it. */}
-          {liveActive && (
+          {liveActive && showOAuthRuntime && (
             <div className="flex items-center gap-2 border-t border-border/60 pt-2">
               {liveIsHalted ? (
                 <span className="inline-flex items-center gap-1.5 rounded-lg bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive">
@@ -2066,12 +2176,12 @@ export function Agent({ embedded: _embedded, backToAutonomous: _backToAutonomous
     </div>
     <ContextDrawer
       sessionId={sessionId}
-      ticker={researchTicker}
+      ticker={newsScenarioMode ? null : researchTicker}
       assetType={researchAssetType}
-      planArtifact={planArtifact}
-      debateArtifact={debateArtifact}
-      debateRunning={debateRunning}
-      debateError={debateError}
+      planArtifact={newsScenarioMode ? null : planArtifact}
+      debateArtifact={newsScenarioMode ? null : debateArtifact}
+      debateRunning={newsScenarioMode ? false : debateRunning}
+      debateError={newsScenarioMode ? null : debateError}
       onDebateUpdate={handleDebateUpdate}
     />
     </div>

@@ -47,6 +47,11 @@ class ProposeAutonomousAgentTool(BaseTool):
                 "type": "string",
                 "description": "Original user message for market hint resolution (auto-filled).",
             },
+            "allowed_instruments": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["equity", "options"]},
+                "description": "equity for stocks, options for F&O — omit to auto-infer from mandate.",
+            },
             "session_id": {"type": "string", "description": "Orchestrator vibe session id (auto-filled)."},
         },
         "required": ["symbols"],
@@ -84,6 +89,7 @@ class ProposeAutonomousAgentTool(BaseTool):
             mode=kwargs.get("mode"),
             execution_market=kwargs.get("execution_market"),
             user_text=kwargs.get("user_text"),
+            allowed_instruments=kwargs.get("allowed_instruments"),
             orchestrator_session_id=session_id,
         )
         if result.get("status") == "ready" and isinstance(result.get("proposal"), dict):

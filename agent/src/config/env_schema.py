@@ -283,7 +283,7 @@ class AgentTuningConfig(_EnvBase):
         alias="VIBE_TRADING_ENABLE_ADVISORY", default=False,
     )
     vibe_trading_enable_scheduler: EnvBool = Field(
-        alias="VIBE_TRADING_ENABLE_SCHEDULER", default=False,
+        alias="VIBE_TRADING_ENABLE_SCHEDULER", default=True,
     )
     vibe_trading_channels_auto_start: EnvBool = Field(
         alias="VIBE_TRADING_CHANNELS_AUTO_START", default=False,

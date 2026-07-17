@@ -104,7 +104,7 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-foreground">{agent.name}</p>
               <p className="truncate text-xs text-muted-foreground">
-                {agent.symbols.join(" · ")} · {agent.status}
+                {(agent.symbols ?? []).join(" · ") || "—"} · {agent.status}
                 {bootstrapFailed ? " · bootstrap failed" : isBootstrapping ? " · starting" : ""}
               </p>
             </div>

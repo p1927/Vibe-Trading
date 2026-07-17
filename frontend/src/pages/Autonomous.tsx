@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { api, type AutonomousAgentInstance } from "@/lib/api";
-import { Agent } from "@/pages/Agent";
 import { AutonomousAgentHub } from "@/components/autonomous/AutonomousAgentHub";
+import { PlanApprovalBanner } from "@/components/autonomous/PlanApprovalBanner";
 import { cn } from "@/lib/utils";
+
+const EmbeddedAgent = lazy(() =>
+  import("@/pages/Agent").then((m) => ({ default: m.Agent })),
+);
 
 const RUNTIME_POLL_MS = 15_000;
 
@@ -165,12 +169,24 @@ export function Autonomous() {
           <span className="text-sm font-medium text-foreground">{title}</span>
           {agent && agentId !== "orchestrator" && <AgentRuntimeStrip agent={agent} />}
         </header>
+        {agent && agentId !== "orchestrator" && (
+          <PlanApprovalBanner agent={agent} onApproved={() => void loadAgent()} />
+        )}
         <div className="min-h-0 flex-1">
-          <Agent
-            embedded
-            backToAutonomous={goBack}
-            onAutonomousAgentCommitted={onAgentCommitted}
-          />
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                Loading agent chat…
+              </div>
+            }
+          >
+            <EmbeddedAgent
+              embedded
+              backToAutonomous={goBack}
+              onAutonomousAgentCommitted={onAgentCommitted}
+              autonomousAgent={agent}
+            />
+          </Suspense>
         </div>
       </div>
     );

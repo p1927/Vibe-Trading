@@ -122,6 +122,77 @@ export interface StreamIndexPredictionHandlers {
   onError?: (message: string) => void;
 }
 
+async function consumeIndexPredictionSse(
+  res: Response,
+  handlers: StreamIndexPredictionHandlers,
+): Promise<boolean> {
+  if (!res.body) {
+    throw new ApiError("Empty stream body", res.status);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let gotDone = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    buffer = parseSseChunk(buffer, (eventType, data) => {
+      if (eventType === "log" && data.entry) {
+        handlers.onLog?.(data.entry as PipelineLogEntry);
+        return;
+      }
+      if (eventType === "done" && data.artifact) {
+        gotDone = true;
+        handlers.onDone?.(data.artifact as IndexPredictionArtifact);
+        return;
+      }
+      if (eventType === "error") {
+        gotDone = true;
+        handlers.onError?.(String(data.message ?? "Analysis failed"));
+      }
+    });
+  }
+  return gotDone;
+}
+
+export async function streamIndexPredictionJob(
+  jobId: string,
+  handlers: StreamIndexPredictionHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `${BASE}/trade/index-prediction/run/${encodeURIComponent(jobId)}/stream`,
+      {
+        headers: authHeaders(),
+        signal,
+      },
+    );
+  } catch (err) {
+    const hint =
+      BASE.includes(":8899") || !BASE
+        ? " Check the Vibe API is running on port 8899."
+        : " Check your network connection and API URL.";
+    throw new ApiError(
+      `Network error reaching analysis stream.${hint} ${err instanceof Error ? err.message : ""}`.trim(),
+      0,
+    );
+  }
+  if (!res.ok) {
+    throw await errorFromResponse(res);
+  }
+  const gotDone = await consumeIndexPredictionSse(res, handlers);
+  if (!gotDone) {
+    handlers.onError?.(
+      "Analysis stream ended without a result — the server may have timed out. Try without “Refresh all constituents”.",
+    );
+  }
+}
+
 export async function streamIndexPredictionRun(
   body: RunIndexPredictionRequest,
   handlers: StreamIndexPredictionHandlers,
@@ -198,35 +269,7 @@ export async function streamIndexPredictionRun(
     throw await errorFromResponse(res);
   }
 
-  if (!res.body) {
-    throw new ApiError("Empty stream body", res.status);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let gotDone = false;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    buffer = parseSseChunk(buffer, (eventType, data) => {
-      if (eventType === "log" && data.entry) {
-        handlers.onLog?.(data.entry as PipelineLogEntry);
-        return;
-      }
-      if (eventType === "done" && data.artifact) {
-        gotDone = true;
-        handlers.onDone?.(data.artifact as IndexPredictionArtifact);
-        return;
-      }
-      if (eventType === "error") {
-        gotDone = true;
-        handlers.onError?.(String(data.message ?? "Analysis failed"));
-      }
-    });
-  }
+  const gotDone = await consumeIndexPredictionSse(res, handlers);
   if (!gotDone) {
     handlers.onError?.(
       "Analysis stream ended without a result — the server may have timed out. Try without “Refresh all constituents”.",
@@ -396,6 +439,20 @@ export const api = {
       `/autonomous-agents/${encodeURIComponent(agentId)}`,
       { method: "DELETE" },
     ),
+  approveAutonomousPlan: (agentId: string) =>
+    request<{ status: string; agent: AutonomousAgentInstance }>(
+      `/autonomous-agents/${encodeURIComponent(agentId)}/approve-plan`,
+      { method: "POST" },
+    ),
+  rejectAutonomousPlan: (agentId: string, note?: string) =>
+    request<{ status: string; agent: AutonomousAgentInstance }>(
+      `/autonomous-agents/${encodeURIComponent(agentId)}/reject-plan`,
+      { method: "POST", body: JSON.stringify({ note: note || "" }) },
+    ),
+  clearAllAutonomousAgents: () =>
+    request<ClearAllAutonomousAgentsResponse>("/autonomous-agents/clear-all", {
+      method: "POST",
+    }),
 
   haltLive: (session_id?: string, broker?: string, reason?: string) =>
     request<HaltLiveResponse>("/live/halt", {
@@ -471,6 +528,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  startIndexPredictionRun: (body: RunIndexPredictionRequest) =>
+    request<IndexPredictionRunStartResponse>("/trade/index-prediction/run/start", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getActiveIndexPredictionRun: (ticker = "NIFTY") =>
+    request<IndexPredictionRunActiveResponse>(
+      `/trade/index-prediction/run/active?ticker=${encodeURIComponent(ticker)}`,
+    ),
+  getIndexPredictionRunJob: (jobId: string) =>
+    request<IndexPredictionRunJobResponse>(
+      `/trade/index-prediction/run/${encodeURIComponent(jobId)}`,
+    ),
+  streamIndexPredictionJob: streamIndexPredictionJob,
   getIndexPredictionFactors: () =>
     request<IndexFactorCatalogResponse>("/trade/index-prediction/factors"),
   streamIndexPredictionRun: streamIndexPredictionRun,
@@ -590,6 +661,27 @@ export const api = {
     });
     return request<IndexNewsImpactResponse>(`/trade/index-prediction/news-impact?${params}`);
   },
+  createNewsScenarioSession: (body: NewsScenarioSessionRequest) =>
+    request<NewsScenarioSessionResponse>("/trade/index-prediction/news-scenarios/session", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  patchNewsScenarioSession: (sessionId: string, body: NewsScenarioSessionPatchRequest) =>
+    request<NewsScenarioSessionResponse>(
+      `/trade/index-prediction/news-scenarios/session/${encodeURIComponent(sessionId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      },
+    ),
+  getNewsScenario: (scenarioId: string, ticker = "NIFTY") =>
+    request<NewsEventScenarioResponse>(
+      `/trade/index-prediction/news-scenarios/${encodeURIComponent(scenarioId)}?ticker=${encodeURIComponent(ticker)}`,
+    ),
+  listRecentNewsScenarios: (ticker = "NIFTY", limit = 10) =>
+    request<NewsEventScenarioResponse>(
+      `/trade/index-prediction/news-scenarios/recent?ticker=${encodeURIComponent(ticker)}&limit=${encodeURIComponent(String(limit))}`,
+    ),
   getIndexPredictionJobs: () =>
     request<IndexPredictionJobsResponse>("/trade/index-prediction/jobs"),
   pauseIndexPredictionJob: (jobId: string) =>
@@ -1271,9 +1363,80 @@ export type WidgetPresentationMode =
   | "index_outlook"
   | "stock_trade";
 
+export interface NewsScenarioDateRange {
+  start?: string;
+  end?: string;
+}
+
+export interface NewsScenarioPathPoint {
+  day?: number;
+  date?: string;
+  spot?: number;
+  return_pct?: number;
+}
+
+export interface NewsScenarioBaseline {
+  spot?: number | null;
+  expected_return_pct?: number | null;
+  bottom_up_return_pct?: number | null;
+  macro_delta_pct?: number | null;
+  range?: { low?: number; high?: number };
+  path?: NewsScenarioPathPoint[];
+}
+
+export interface NewsScenarioOutcome {
+  id?: string;
+  label?: string;
+  intensity?: string;
+  probability_hint?: string;
+  expected_return_pct?: number | null;
+  macro_delta_pct?: number | null;
+  bottom_up_return_pct?: number | null;
+  range?: { low?: number; high?: number };
+  path?: NewsScenarioPathPoint[];
+  contributors?: Array<Record<string, unknown>>;
+  factor_overrides_applied?: Record<string, unknown>;
+}
+
+export interface NewsScenarioFanBand {
+  low?: number | null;
+  high?: number | null;
+}
+
+export interface NewsScenarioSessionRequest {
+  ticker?: string;
+  pipeline_as_of: string;
+  horizon_days?: number;
+  session_id?: string | null;
+}
+
+export interface NewsScenarioSessionPatchRequest {
+  date_range?: NewsScenarioDateRange | null;
+  selected_outcome_id?: string | null;
+  active_draft_id?: string | null;
+  active_scenario_id?: string | null;
+}
+
+export interface NewsScenarioSessionResponse {
+  status: string;
+  session_id: string;
+  pipeline_as_of: string;
+  ticker: string;
+  message?: string;
+}
+
+export interface NewsEventScenarioResponse {
+  status: string;
+  ticker: string;
+  scenario?: Record<string, unknown> | null;
+  scenarios?: Array<Record<string, unknown>>;
+  message?: string;
+}
+
 export interface TradePlanWidget {
   type: "trade_plan.widget";
   widget_id: string;
+  widget_kind?: string;
   presentation_mode?: WidgetPresentationMode;
   widget_intent?: string;
   asset_type?: "options" | "stock" | "index";
@@ -1345,7 +1508,16 @@ export interface TradePlanWidget {
     strategy_builder_url?: string;
     strategy_builder_pnl_url?: string;
     strategy_builder_execute_url?: string;
+    superseded?: boolean;
   };
+  date_range?: NewsScenarioDateRange;
+  event?: Record<string, unknown>;
+  baseline?: NewsScenarioBaseline;
+  outcomes?: NewsScenarioOutcome[];
+  fan_band?: NewsScenarioFanBand;
+  selected_outcome_id?: string | null;
+  scenario_id?: string;
+  pipeline_as_of?: string;
 }
 
 export interface ExecuteTradeBasketRequest {
@@ -1666,6 +1838,35 @@ export interface RunIndexPredictionRequest {
   ticker?: string;
   horizon_days?: number;
   refresh_constituents?: boolean;
+}
+
+export interface IndexPredictionRunStartResponse {
+  status: string;
+  job_id: string;
+  job_status: string;
+  reused?: boolean;
+}
+
+export interface IndexPredictionRunJobSnapshot {
+  job_id: string;
+  status: string;
+  ticker?: string;
+  horizon_days?: number | null;
+  refresh_constituents?: boolean;
+  created_at?: string | null;
+  error?: string | null;
+  logs?: PipelineLogEntry[];
+  artifact?: IndexPredictionArtifact | null;
+}
+
+export interface IndexPredictionRunActiveResponse {
+  status: string;
+  job?: IndexPredictionRunJobSnapshot | null;
+}
+
+export interface IndexPredictionRunJobResponse {
+  status: string;
+  job?: IndexPredictionRunJobSnapshot | null;
 }
 
 export interface SimulateIndexPredictionRequest {
@@ -2584,8 +2785,11 @@ export interface AutonomousAgentInstance {
   last_revision_at?: string | null;
   last_decision?: Record<string, unknown> | null;
   streaming?: boolean;
-  bootstrap_status?: "pending" | "running" | "done" | "failed" | null;
+  bootstrap_status?: "pending" | "running" | "awaiting_plan_approval" | "done" | "failed" | "plan_rejected" | null;
   bootstrap_error?: string | null;
+  plan_approved_at?: string | null;
+  plan_approval_required?: boolean;
+  watch_spec?: { rules?: Array<Record<string, unknown>>; strategy?: string };
   runtime?: AutonomousAgentRuntime;
   created_at?: string;
 }
@@ -2611,11 +2815,28 @@ export interface AutonomousAgentProposal {
   stack_health?: AutonomousStackHealth;
   mandate_config?: Record<string, unknown>;
   committed_agent_id?: string;
+  superseded?: boolean;
+  superseded_by?: string;
 }
 
 export interface AutonomousAgentsListResponse {
   agents: AutonomousAgentInstance[];
   stack_health?: AutonomousStackHealth;
+}
+
+export interface ClearAllAutonomousAgentsResponse {
+  status: string;
+  stopped: string[];
+  deleted: string[];
+  remaining_count: number;
+  flatten?: {
+    openalgo?: { status?: string; remaining_positions?: number; error?: string } | null;
+    alpaca?: Array<{ symbol: string; status?: string; error?: string }>;
+  };
+  auto_paper_stopped?: boolean;
+  artifacts_cleared?: Record<string, number>;
+  nautilus?: Record<string, unknown>;
+  errors?: Array<{ agent_id: string; phase: string; error: string }>;
 }
 
 export interface CommitAutonomousAgentRequest {
@@ -2727,6 +2948,13 @@ export interface TradingConnectorCheckResponse {
   transport?: string;
   error?: string;
   analyze_mode?: boolean;
+  broker?: string;
+  broker_display?: string;
+  host?: string;
+  switch_url?: string;
+  warning?: string;
+  token_sync_warning?: string;
+  token_sync_ok?: boolean;
   [key: string]: unknown;
 }
 

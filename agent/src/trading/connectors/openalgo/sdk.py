@@ -151,6 +151,61 @@ def _public_config(cfg: OpenAlgoConfig) -> dict[str, Any]:
     return data
 
 
+def _broker_display_name(broker: str | None) -> str | None:
+    if not broker:
+        return None
+    try:
+        from trade_integrations.dataflows.broker_charges.calculate import load_presets, normalize_broker_id
+
+        broker_id = normalize_broker_id(broker)
+        presets = load_presets()
+        display = presets.get("brokers", {}).get(broker_id, {}).get("display_name")
+        if display:
+            return str(display)
+        return broker_id.replace("_", " ").title()
+    except Exception:  # noqa: BLE001
+        return broker.replace("_", " ").title()
+
+
+def _brokerinfo(client: "_RestClient") -> dict[str, Any]:
+    try:
+        body = client.post("brokerinfo", {})
+    except RuntimeError:
+        ping = client.post("ping", {})
+        data = ping.get("data") if isinstance(ping.get("data"), dict) else {}
+        broker = str(data.get("broker") or "").strip().lower() or None
+        return {
+            "broker": broker,
+            "broker_display": _broker_display_name(broker),
+            "token_sync_ok": None,
+            "token_sync_warning": None,
+        }
+
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    broker = str(data.get("broker") or data.get("session_broker") or data.get("configured_broker") or "").strip().lower()
+    broker = broker or None
+    token_sync_ok = data.get("token_sync_ok")
+    warning: str | None = None
+    if data.get("is_env_token_broker"):
+        if token_sync_ok is False:
+            warning = (
+                f"{_broker_display_name(broker) or broker} access token in OpenAlgo .env "
+                "does not match the auth database — sync token in OpenAlgo UI."
+            )
+        elif not data.get("env_secret_set"):
+            warning = (
+                f"{_broker_display_name(broker) or broker} access token missing in OpenAlgo .env "
+                "(BROKER_API_SECRET)."
+            )
+    return {
+        "broker": broker,
+        "broker_display": _broker_display_name(broker),
+        "configured_broker": data.get("configured_broker"),
+        "token_sync_ok": token_sync_ok,
+        "token_sync_warning": warning,
+    }
+
+
 def _resolve_india(symbol: str) -> tuple[str, str]:
     try:
         from trade_integrations.dataflows.openalgo import resolve_openalgo_symbol
@@ -292,6 +347,9 @@ def check_status(config: OpenAlgoConfig | None = None) -> dict[str, Any]:
             report["error"] = mode_error["error"]
             return report
         funds = client.funds()
+        broker_meta = _brokerinfo(client)
+        report.update(broker_meta)
+        report["switch_url"] = f"{cfg.host.rstrip('/')}/"
         report["account"] = {
             "profile": cfg.profile,
             "is_paper": cfg.is_paper,
@@ -299,6 +357,8 @@ def check_status(config: OpenAlgoConfig | None = None) -> dict[str, Any]:
             "availablecash": funds.get("availablecash") or funds.get("available_cash"),
             "utiliseddebits": funds.get("utiliseddebits") or funds.get("utilised_debits"),
         }
+        if broker_meta.get("token_sync_warning"):
+            report["warning"] = broker_meta["token_sync_warning"]
     except Exception as exc:  # noqa: BLE001
         report["status"] = "error"
         report["error"] = str(exc)

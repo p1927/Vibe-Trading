@@ -25,6 +25,9 @@ from typing import Any, Dict, Optional
 #     Each field may be: number, *, or */n
 _INTERVAL_MS_RE = re.compile(r"^[1-9][0-9]*$")
 _CRON_FIELD_RE = re.compile(r"^(\*|\*/[1-9][0-9]*|[0-9]+)$")
+_CRON_LIST_RE = re.compile(
+    r"^(\*|\*/[1-9][0-9]*|[0-9]+(?:-[0-9]+)?(?:,[0-9]+(?:-[0-9]+)?)*)$"
+)
 _CRON_PARTS = 5
 # Inclusive (low, high) bounds per cron field: minute hour day-of-month month
 # day-of-week. A bare number and a ``*/n`` step are both validated against the
@@ -52,13 +55,30 @@ def validate_schedule(schedule: str) -> None:
     if len(parts) != _CRON_PARTS:
         raise ValueError(f"schedule must be a positive integer (ms) or a 5-field cron string; got: {schedule!r}")
     for part, (low, high) in zip(parts, _CRON_BOUNDS):
-        if not _CRON_FIELD_RE.fullmatch(part):
-            raise ValueError(f"cron field {part!r} is not valid; each field must be *, */n, or a number")
+        if not _CRON_LIST_RE.fullmatch(part):
+            raise ValueError(
+                f"cron field {part!r} is not valid; each field must be *, */n, a number, "
+                "a comma list, or a range (e.g. 1-5)"
+            )
         if part == "*":
             continue
-        value = int(part[2:]) if part.startswith("*/") else int(part)
-        if not low <= value <= high:
-            raise ValueError(f"cron field {part!r} is out of range; expected {low}-{high}")
+        if part.startswith("*/"):
+            value = int(part[2:])
+            if not low <= value <= high:
+                raise ValueError(f"cron field {part!r} is out of range; expected {low}-{high}")
+            continue
+        for segment in part.split(","):
+            if "-" in segment:
+                start_s, end_s = segment.split("-", 1)
+                start, end = int(start_s), int(end_s)
+                if start > end:
+                    raise ValueError(f"cron range {segment!r} is invalid; start must be <= end")
+                if start < low or end > high:
+                    raise ValueError(f"cron field {part!r} is out of range; expected {low}-{high}")
+            else:
+                value = int(segment)
+                if not low <= value <= high:
+                    raise ValueError(f"cron field {part!r} is out of range; expected {low}-{high}")
 
 
 # ---------------------------------------------------------------------------

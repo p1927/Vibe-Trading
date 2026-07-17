@@ -204,4 +204,24 @@ describe("Runtime page", () => {
 
     expect(await screen.findByText("45s")).toBeInTheDocument();
   });
+
+  it("shows OpenAlgo broker details after connector check", async () => {
+    apiMock.getLiveStatus.mockResolvedValue(makeStatus({ brokers: [] }));
+    apiMock.checkTradingConnector.mockResolvedValue({
+      status: "ok",
+      broker: "indmoney",
+      broker_display: "INDmoney",
+      host: "http://127.0.0.1:5001",
+      analyze_mode: true,
+    });
+
+    render(<Runtime />);
+    expect(await screen.findByText("OpenAlgo")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Check" }));
+
+    expect(await screen.findByText("OpenAlgo · INDmoney")).toBeInTheDocument();
+    expect(screen.getByText("http://127.0.0.1:5001")).toBeInTheDocument();
+    expect(screen.getByText("INDmoney")).toBeInTheDocument();
+  });
 });
