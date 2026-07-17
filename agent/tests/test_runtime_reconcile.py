@@ -145,6 +145,27 @@ def test_unknown_fill_on_quantity_drift(live_runtime: Path) -> None:
     assert report.requires_halt is True
 
 
+@pytest.mark.parametrize("quantity", [3, -3])
+def test_recorded_position_missing_at_broker_forces_halt(
+    live_runtime: Path,
+    quantity: int,
+) -> None:
+    """A recorded long or short cannot disappear without a halting delta."""
+    state_path = _seed_state(
+        "robinhood",
+        positions=[{"symbol": "NVDA", "qty": quantity}],
+    )
+    before = state_path.read_text(encoding="utf-8")
+    rp, rb, ro = _readers(positions=[])
+
+    report = reconcile("robinhood", rp, rb, ro)
+
+    assert DeltaKind.UNKNOWN_FILL in _kinds(report)
+    assert report.requires_halt is True
+    assert report.state_persisted is False
+    assert state_path.read_text(encoding="utf-8") == before
+
+
 # ---------------------------------------------------------------------------
 # orphan_order  (we recorded a CONFIRMED order the broker no longer shows)
 # ---------------------------------------------------------------------------
