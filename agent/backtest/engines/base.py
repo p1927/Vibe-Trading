@@ -611,8 +611,10 @@ class BaseEngine(ABC):
     ) -> None:
         """Bar-by-bar execution with market rule enforcement."""
         # Pre-extract numpy arrays for O(1) indexed access instead of DataFrame.at[]
-        _target_arr = target_pos.values  # (n_dates, n_codes) ndarray
-        _close_arr = close_df.values  # (n_dates, n_codes) ndarray
+        # Explicit column reindex ensures array column order matches codes parameter,
+        # regardless of DataFrame internal column ordering (which may be alphabetical).
+        _target_arr = target_pos[codes].values  # (n_dates, n_codes) ndarray
+        _close_arr = close_df[codes].values  # (n_dates, n_codes) ndarray
         _code_to_col = {c: j for j, c in enumerate(codes)}
         # Store as instance attrs for use in _calc_equity / _safe_price
         self._close_arr = _close_arr
