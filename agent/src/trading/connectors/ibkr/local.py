@@ -309,15 +309,44 @@ def get_open_orders(config: IBKRLocalConfig | None = None, *, include_executions
 
 
 
-def _wait_for_tick(ib: Any, ticker: Any, *, wait_seconds: float = 2.0) -> None:
-    """Pump the ib_async event loop so the snapshot ticker fills.
+def _tick_has_data(ticker: Any) -> bool:
+    """Return True if the ticker has received at least one real price field.
+
+    ib_async tickers start with None and populate to either a float or
+    ``float('nan')`` (when no trade has occurred in the current session).
+    This function rejects both None and NaN so polling continues
+    until actual market data arrives.
+    """
+    import math
+
+    for field in ("bid", "ask", "last"):
+        value = _obj_get(ticker, field)
+        if value is not None and not (isinstance(value, float) and math.isnan(value)):
+            return True
+    return False
+
+
+def _wait_for_tick(ib: Any, ticker: Any, *, timeout: float = 5.0, poll_interval: float = 0.1) -> None:
+    """Pump the ib_async event loop until the snapshot ticker fills.
 
     ``reqMktData(..., snapshot=True)`` returns immediately but the ticker
-    fields only populate after the event loop processes the incoming tick.
-    A single ``ib.sleep()`` call processes all pending socket messages,
-    which is more reliable than incremental ``waitOnUpdate`` polling.
+    fields (bid, ask, last, ...) only populate after the event loop
+    processes the incoming tick.  This helper calls ``ib.sleep()`` in
+    short increments, checking ``_tick_has_data`` on each cycle, and
+    exits as soon as real market data arrives.
+
+    Uses ``ib.sleep()`` (not ``waitOnUpdate``) because ``ib.sleep``
+    reliably processes all pending socket messages on each call, while
+    ``waitOnUpdate`` can return True for unrelated messages, causing
+    premature exit with NaN fields.
     """
-    _sleep(ib, wait_seconds)
+    import time as _time
+
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        if _tick_has_data(ticker):
+            return
+        _sleep(ib, poll_interval)
 
 
 def get_quote(
