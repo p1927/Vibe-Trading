@@ -480,6 +480,7 @@ export function Prediction() {
                 horizonDays={horizonDays}
                 pollMs={pollMs}
                 monitorEnabled={pollMs > 0}
+                shockCalibration={artifact.news_shock_calibration}
               />
             </section>
 

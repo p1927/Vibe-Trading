@@ -55,24 +55,38 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
   const accuracy = artifact.accuracy || {};
   const regime = artifact.regime || {};
   const view = String(pred.view || "neutral");
-  const conf = range.confidence ?? pred.confidence;
+  const rangeConf = range.confidence ?? pred.confidence;
+  const directionConf = pred.direction_confidence;
   const hitRate =
     accuracy.direction_hit_rate_walk_forward ??
     accuracy.direction_hit_rate_14d ??
     accuracy.direction_hit_rate;
   const mae = accuracy.mae_14d_pct ?? accuracy.mae_pct;
   const sampleCount = accuracy.sample_count ?? 0;
+  const evalCount = pred.direction_eval_count ?? accuracy.eval_count;
   const spot = artifact.spot;
   const expected = pred.expected_return_pct;
+  const directionView = String(pred.direction_view || pred.view || "neutral");
+  const lowDirectionConf =
+    directionConf != null &&
+    Number.isFinite(Number(directionConf)) &&
+    Number(directionConf) < 0.55;
+  const directionReturnConflict =
+    expected != null &&
+    Number.isFinite(expected) &&
+    ((directionView.includes("bull") && expected < -0.15) ||
+      (directionView.includes("bear") && expected > 0.15));
   const targetLevel =
     spot != null && expected != null && Number.isFinite(spot) && Number.isFinite(expected)
       ? spot * (1 + expected / 100)
       : null;
 
   const accuracySub =
-    sampleCount > 0
-      ? `${sampleCount} reconciled · MAE ${mae != null ? `${mae.toFixed(2)}%` : "—"}`
-      : "Forecasts need horizon to mature; calibration runs nightly";
+    evalCount != null && Number(evalCount) > 0
+      ? `${evalCount} eval rows · walk-forward OOS · MAE ${mae != null ? `${mae.toFixed(2)}%` : "—"}`
+      : sampleCount > 0
+        ? `${sampleCount} reconciled · MAE ${mae != null ? `${mae.toFixed(2)}%` : "—"}`
+        : "Forecasts need horizon to mature; calibration runs nightly";
 
   const regimeSub = [
     regime.india_vix != null ? `VIX ${regime.india_vix.toFixed(2)}` : null,
@@ -105,7 +119,18 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
           constituents — forecast leans on sentiment only. Run full analysis to refresh price momentum.
         </div>
       ) : null}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      {pred.sign_conflict ? (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
+          Macro Ridge and scenario anchor disagree on direction — forecast held neutral with reduced confidence.
+        </div>
+      ) : null}
+      {(lowDirectionConf || directionReturnConflict) && !pred.sign_conflict ? (
+        <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
+          Direction confidence is modest ({directionConf != null ? `${Math.round(Number(directionConf) * 100)}%` : "—"}) —
+          walk-forward OOS accuracy is the calibration reference, not raw model score.
+        </div>
+      ) : null}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
         <StatCard
         label={`${horizonDays}d target (Nifty)`}
         value={fmtNum(targetLevel)}
@@ -119,8 +144,25 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
         sub="Index points at horizon"
       />
       <StatCard
-        label="Confidence"
-        value={conf != null && Number.isFinite(Number(conf)) ? `${Math.round(Number(conf) * (Number(conf) <= 1 ? 100 : 1))}%` : "—"}
+        label="Direction confidence"
+        value={
+          directionConf != null && Number.isFinite(Number(directionConf))
+            ? `${Math.round(Number(directionConf) * 100)}%`
+            : "—"
+        }
+        sub={
+          pred.direction_view
+            ? `View ${String(pred.direction_view)} · calibrated to OOS`
+            : "Calibrated to walk-forward OOS"
+        }
+      />
+      <StatCard
+        label="Range band (MAE)"
+        value={
+          rangeConf != null && Number.isFinite(Number(rangeConf))
+            ? `${Math.round(Number(rangeConf) * (Number(rangeConf) <= 1 ? 100 : 1))}%`
+            : "—"
+        }
         sub={
           pred.bottom_up_return_pct != null || pred.macro_delta_pct != null
             ? `Bottom-up ${fmtPct(pred.bottom_up_return_pct)} · Macro ${fmtPct(pred.macro_delta_pct)}`

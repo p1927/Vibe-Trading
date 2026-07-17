@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 JOB_TYPE_WATCH = "autonomous_agent_watch"
 JOB_TYPE_RESEARCH = "autonomous_agent_research"
-AUTONOMOUS_JOB_TYPES = frozenset({JOB_TYPE_WATCH, JOB_TYPE_RESEARCH})
+JOB_TYPE_QUANT = "autonomous_agent_quant"
+AUTONOMOUS_JOB_TYPES = frozenset({JOB_TYPE_WATCH, JOB_TYPE_RESEARCH, JOB_TYPE_QUANT})
 
 
 def is_autonomous_scheduler_enabled() -> bool:
@@ -32,8 +33,13 @@ def _ensure_trade_integrations_on_path() -> None:
         sys.path.insert(0, str(integrations))
 
 
-def _job_ids(agent_id: str) -> tuple[str, str]:
-    return f"{agent_id}-watch", f"{agent_id}-research"
+def _job_ids(agent_id: str) -> tuple[str, str, str]:
+    return f"{agent_id}-watch", f"{agent_id}-research", f"{agent_id}-quant"
+
+
+def _is_index_agent(agent: dict[str, Any]) -> bool:
+    symbols = [str(s).upper() for s in (agent.get("symbols") or [])]
+    return any(s in {"NIFTY", "NIFTY50", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "^NSEI"} for s in symbols)
 
 
 def register_agent_jobs(agent: dict[str, Any]) -> None:
@@ -54,7 +60,7 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
 
     store = ScheduledResearchJobStore()
     now_ms = int(time.time() * 1000)
-    watch_id, research_id = _job_ids(agent_id)
+    watch_id, research_id, quant_id = _job_ids(agent_id)
     # Post-commit bootstrap runs an immediate watch tick; defer the first scheduled one.
     bootstrap = str(agent.get("bootstrap_status") or "")
     watch_next_run = now_ms + int(watch_ms)
@@ -86,6 +92,19 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
             config={"job_type": JOB_TYPE_RESEARCH, "autonomous_agent_id": agent_id},
         )
     )
+    if _is_index_agent(agent):
+        quant_ms = str(int(schedules.get("quant_ms") or watch_ms))
+        store.upsert(
+            ScheduledResearchJob(
+                id=quant_id,
+                prompt=f"Quant monitor tick for {agent.get('name') or agent_id}",
+                schedule=quant_ms,
+                next_run_at=watch_next_run,
+                status=JobStatus.PENDING,
+                created_at=now_ms,
+                config={"job_type": JOB_TYPE_QUANT, "autonomous_agent_id": agent_id},
+            )
+        )
     logger.info("registered autonomous jobs for %s", agent_id)
 
 
@@ -111,8 +130,12 @@ def unregister_agent_jobs(agent_id: str) -> dict[str, bool]:
     from src.scheduled_research.store import ScheduledResearchJobStore
 
     store = ScheduledResearchJobStore()
-    watch_id, research_id = _job_ids(agent_id)
-    return {watch_id: store.delete(watch_id), research_id: store.delete(research_id)}
+    watch_id, research_id, quant_id = _job_ids(agent_id)
+    return {
+        watch_id: store.delete(watch_id),
+        research_id: store.delete(research_id),
+        quant_id: store.delete(quant_id),
+    }
 
 
 async def dispatch_autonomous_job(job: ScheduledResearchJob) -> None:
@@ -127,6 +150,11 @@ async def dispatch_autonomous_job(job: ScheduledResearchJob) -> None:
     job_type = str((job.config or {}).get("job_type") or "")
     if job_type == JOB_TYPE_WATCH:
         await run_watch_tick(agent_id)
+        return
+    if job_type == JOB_TYPE_QUANT:
+        from trade_integrations.monitor.quant_monitor import run_quant_monitor_tick
+
+        await asyncio.to_thread(run_quant_monitor_tick, agent_id)
         return
     if job_type == JOB_TYPE_RESEARCH:
         await dispatch_full_reasoning(agent_id, turn_kind="research")

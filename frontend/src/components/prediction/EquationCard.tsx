@@ -107,6 +107,19 @@ export function EquationCard({ prediction, spot, horizonDays = 14 }: Props) {
               : "—"}
           </p>
         </div>
+        {(prediction as { event_overlay_pct?: number })?.event_overlay_pct != null &&
+        Math.abs((prediction as { event_overlay_pct?: number }).event_overlay_pct ?? 0) > 0.001 ? (
+          <div className="text-[11px] sm:col-span-2">
+            <span className="text-muted-foreground">News event overlay</span>
+            <p className="font-medium tabular-nums">
+              {(prediction as { event_overlay_pct?: number }).event_overlay_pct! >= 0 ? "+" : ""}
+              {(prediction as { event_overlay_pct?: number }).event_overlay_pct!.toFixed(2)}%
+              <span className="ml-2 text-[10px] font-normal text-muted-foreground">
+                (calibrated from reconciled headlines)
+              </span>
+            </p>
+          </div>
+        ) : null}
       </div>
       <div className="mt-2 text-[11px]">
         <span className="text-muted-foreground">Walk-forward R² </span>

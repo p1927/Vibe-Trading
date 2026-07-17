@@ -1422,6 +1422,12 @@ export interface PlanPrediction {
   reconciliation_blend?: { model_weight?: number; scenario_weight?: number };
   momentum_coverage?: { with_momentum?: number; total?: number; coverage_pct?: number };
   direction_hit_rate_oos?: number | null;
+  direction_hit_rate_walk_forward?: number | null;
+  direction_confidence?: number | null;
+  direction_confidence_raw?: number | null;
+  direction_view?: string | null;
+  direction_eval_count?: number | null;
+  sign_conflict?: boolean;
 }
 
 export interface IndexGlobalFactor {
@@ -1595,6 +1601,26 @@ export interface IndexPredictionArtifact extends Omit<HubPlanArtifact, "regime" 
   top_factors?: IndexFactorContributor[];
   accuracy?: IndexAccuracy;
   cascade_calibration?: CascadeCalibrationSummary;
+  event_overlay?: {
+    return_pct?: number;
+    active_topics?: Array<{ topic?: string; contribution_pct?: number; sample_count?: number }>;
+    method?: string;
+    calibration_as_of?: string;
+  };
+  news_shock_calibration?: {
+    news_event_features_status?: string;
+    news_event_overlay_status?: string;
+    reconciled_total?: number;
+    topics?: Record<
+      string,
+      {
+        sample_count?: number;
+        median_calibration_error?: number;
+        calibrated_shock_pct?: number;
+        overlay_eligible?: boolean;
+      }
+    >;
+  };
   stage_errors?: string[];
   pipeline_log?: PipelineLogEntry[];
 }
@@ -2503,6 +2529,9 @@ export interface AutonomousAgentRuntime {
   nautilus_process_alive?: boolean;
   nautilus_state?: "node_on" | "poll_ok" | "expected" | "stale" | "off";
   nautilus_bound_agent_id?: string | null;
+  nautilus_registry_agent_ids?: string[];
+  nautilus_in_registry?: boolean;
+  watch_path?: string;
   watch_configured?: boolean;
   position_tracked?: boolean;
   handoff_active?: boolean;
@@ -2518,6 +2547,7 @@ export interface AutonomousStackHealth {
   nautilus_process_alive?: boolean;
   nautilus_state?: "node_on" | "poll_ok" | "expected" | "stale" | "off";
   nautilus_bound_agent_id?: string | null;
+  nautilus_registry_agent_ids?: string[];
   scheduler_health?: string;
   market_open?: boolean;
   paper_session_enabled?: boolean;
