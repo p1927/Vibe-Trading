@@ -124,6 +124,14 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
           Macro Ridge and scenario anchor disagree on direction — forecast held neutral with reduced confidence.
         </div>
       ) : null}
+      {pred.data_quality_warning?.message ? (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
+          {pred.data_quality_warning.message}
+          {pred.data_quality_warning.min_pct != null
+            ? ` (${pred.data_quality_warning.min_pct}% vs ${pred.data_quality_warning.threshold_pct ?? 90}% gate).`
+            : "."}
+        </div>
+      ) : null}
       {(lowDirectionConf || directionReturnConflict) && !pred.sign_conflict ? (
         <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
           Direction confidence is modest ({directionConf != null ? `${Math.round(Number(directionConf) * 100)}%` : "—"}) —

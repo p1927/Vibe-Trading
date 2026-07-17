@@ -45,6 +45,28 @@ function formatPts(n?: number) {
   return `${sign}${n.toFixed(0)} pts`;
 }
 
+function consensusBadge(consensus?: {
+  direction?: string;
+  confidence?: number;
+  ref_count?: number;
+}) {
+  if (!consensus?.direction) return null;
+  const direction = consensus.direction;
+  const tone =
+    direction === "bullish"
+      ? "text-emerald-700 dark:text-emerald-400 bg-emerald-500/10"
+      : direction === "bearish"
+        ? "text-red-700 dark:text-red-400 bg-red-500/10"
+        : "text-muted-foreground bg-muted";
+  return (
+    <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium capitalize", tone)}>
+      {direction}
+      {consensus.confidence != null ? ` · ${Math.round(consensus.confidence * 100)}%` : ""}
+      {consensus.ref_count ? ` · ${consensus.ref_count} refs` : ""}
+    </span>
+  );
+}
+
 export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shockCalibration }: Props) {
   const [report, setReport] = useState<IndexNewsImpactReport | null>(null);
   const [loading, setLoading] = useState(false);
@@ -97,7 +119,7 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shock
           <span>
             {summary?.approved_count ?? 0} verified · {summary?.partial_count ?? 0} partial
             {rejectedCount > 0 && !showRejected ? ` · ${rejectedCount} rejected (hidden)` : ""}
-            {summary?.source === "hub_records" ? " · hub cache" : ""}
+            {summary?.source === "hub_events" ? " · hub events" : ""}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -187,7 +209,24 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shock
           const verification = item.verification;
           const vStatus = verification?.status ?? item.verification_status;
           const facts = item.structured_summary?.facts ?? [];
+          const eventMeta = item.event_meta ?? item.structured_summary?.event_meta;
+          const consensus = item.consensus ?? eventMeta?.consensus;
+          const eventTimeline = eventMeta?.timeline ?? [];
+          const references = item.references ?? eventMeta?.references ?? [];
           const sources = item.sources ?? [];
+          const attributionRows =
+            sources.length > 0
+              ? sources.map((s) => ({
+                  key: `${s.vendor}-${s.url}`,
+                  label: s.publisher || s.vendor,
+                  url: s.url,
+                }))
+              : references.map((ref) => ({
+                  key: ref.ref_id || ref.url || ref.raw_title,
+                  label: ref.publisher || ref.vendor || "source",
+                  url: ref.url,
+                  subtitle: ref.raw_title,
+                }));
           return (
             <article
               key={item.id ?? item.title}
@@ -207,7 +246,10 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shock
                     {item.published_at ? ` · ${item.published_at.slice(0, 16).replace("T", " ")}` : ""}
                   </p>
                 </div>
-                {statusBadge(vStatus)}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {consensusBadge(consensus)}
+                  {statusBadge(vStatus)}
+                </div>
               </div>
 
               {item.content_summary ? (
@@ -222,14 +264,35 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shock
                 </ul>
               ) : null}
 
-              {sources.length ? (
+              {attributionRows.length ? (
                 <details className="mt-2 text-[10px] text-muted-foreground">
-                  <summary className="cursor-pointer">Sources ({sources.length})</summary>
+                  <summary className="cursor-pointer">
+                    References ({attributionRows.length}
+                    {sources.length > 1 ? " sources merged" : ""})
+                  </summary>
                   <ul className="mt-1 space-y-0.5">
-                    {sources.map((s) => (
-                      <li key={`${s.vendor}-${s.url}`}>
-                        {s.publisher || s.vendor}
-                        {s.url ? ` — ${s.url.slice(0, 60)}` : ""}
+                    {attributionRows.map((row) => (
+                      <li key={row.key}>
+                        {row.label}
+                        {"subtitle" in row && row.subtitle ? ` — ${row.subtitle.slice(0, 80)}` : ""}
+                        {row.url ? ` · ${row.url.slice(0, 60)}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+
+              {eventTimeline.length ? (
+                <details className="mt-2 text-[10px] text-muted-foreground">
+                  <summary className="cursor-pointer">Event timeline ({eventTimeline.length})</summary>
+                  <ul className="mt-1 space-y-1">
+                    {eventTimeline.slice(-5).map((entry, idx) => (
+                      <li key={`${entry.at}-${idx}`}>
+                        <span className="font-medium capitalize text-foreground/80">
+                          {entry.kind ?? "update"}
+                        </span>
+                        {entry.at ? ` · ${entry.at.slice(0, 16).replace("T", " ")}` : ""}
+                        {entry.summary ? ` — ${entry.summary.slice(0, 120)}` : ""}
                       </li>
                     ))}
                   </ul>

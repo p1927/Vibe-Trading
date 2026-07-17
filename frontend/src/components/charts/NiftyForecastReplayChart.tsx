@@ -21,6 +21,7 @@ import {
   mergePriceSeries,
   resolveForecastForDate,
   type ForecastAnchorPoint,
+  type ForecastSnapshot,
   type LiveForecastInput,
   type PricePoint,
 } from "@/lib/forecastReplayUtils";
@@ -31,6 +32,11 @@ interface Props {
   backtestEvals?: IndexBacktestDailyEval[];
   priceSeries?: Array<{ date?: string; close?: number | null }>;
   liveForecast?: LiveForecastInput;
+  /** When set, uses this index instead of ledger/backtest/live builders (track scoreboard). */
+  forecastIndex?: Map<string, ForecastSnapshot>;
+  predictedLineColor?: string;
+  legendBacktestLabel?: string;
+  emptyForecastHint?: string;
   priceLoading?: boolean;
   height?: number;
 }
@@ -118,6 +124,10 @@ export function NiftyForecastReplayChart({
   backtestEvals = [],
   priceSeries = [],
   liveForecast,
+  forecastIndex: forecastIndexOverride,
+  predictedLineColor,
+  legendBacktestLabel = "Walk-forward backtest",
+  emptyForecastHint,
   priceLoading = false,
   height = 380,
 }: Props) {
@@ -136,14 +146,20 @@ export function NiftyForecastReplayChart({
   const lastPriceDate = prices.length ? prices[prices.length - 1].date : "";
   const firstPriceDate = prices.length ? prices[0].date : "";
 
-  const forecastIndex = useMemo(
-    () =>
-      buildForecastIndex(ledgerRows, backtestEvals, liveForecast, {
-        horizonDays,
-        lastPriceDate,
-      }),
-    [ledgerRows, backtestEvals, liveForecast, horizonDays, lastPriceDate],
-  );
+  const forecastIndex = useMemo(() => {
+    if (forecastIndexOverride) return forecastIndexOverride;
+    return buildForecastIndex(ledgerRows, backtestEvals, liveForecast, {
+      horizonDays,
+      lastPriceDate,
+    });
+  }, [
+    forecastIndexOverride,
+    ledgerRows,
+    backtestEvals,
+    liveForecast,
+    horizonDays,
+    lastPriceDate,
+  ]);
 
   const forecastAnchors = useMemo(
     () => listForecastAnchorPoints(forecastIndex, prices, firstPriceDate, lastPriceDate),
@@ -303,7 +319,7 @@ export function NiftyForecastReplayChart({
       });
 
       predictedRef.current = chart.addSeries(LineSeries, {
-        color: t.warningColor,
+        color: predictedLineColor ?? t.warningColor,
         lineWidth: 2,
         lineStyle: 2,
         title: "Forecast",
@@ -330,7 +346,7 @@ export function NiftyForecastReplayChart({
       setChartEpoch((v) => v + 1);
       return true;
     },
-    [height, dark],
+    [height, dark, predictedLineColor],
   );
 
   useEffect(() => {
@@ -449,7 +465,7 @@ export function NiftyForecastReplayChart({
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
           <span className="inline-flex items-center gap-1">
             <span className="inline-block h-2 w-2 rounded-full bg-primary/70" />
-            Walk-forward backtest
+            {legendBacktestLabel}
           </span>
           <span className="inline-flex items-center gap-1">
             <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
@@ -464,8 +480,8 @@ export function NiftyForecastReplayChart({
 
       {!hasForecast ? (
         <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
-          No {horizonDays}d forecast was recorded for {anchorDate}. Pick a day with a ledger snapshot or
-          backtest evaluation (every ~5 trading days in walk-forward history).
+          {emptyForecastHint ??
+            `No ${horizonDays}d forecast was recorded for ${anchorDate}. Pick a day with a ledger snapshot or backtest evaluation (every ~5 trading days in walk-forward history).`}
         </div>
       ) : null}
 

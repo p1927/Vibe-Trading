@@ -615,6 +615,20 @@ class IndexBacktestResponse(BaseModel):
     message: str = ""
 
 
+class IndexForecastLabResponse(BaseModel):
+    status: str
+    ticker: str = ""
+    result: Dict[str, Any] | None = None
+    message: str = ""
+
+
+class IndexTrackScoreboardResponse(BaseModel):
+    status: str
+    ticker: str = ""
+    report: Dict[str, Any] | None = None
+    message: str = ""
+
+
 class IndexMissAnalysisResponse(BaseModel):
     status: str
     ticker: str = ""
@@ -838,6 +852,28 @@ def run_index_prediction(
             refresh_constituents=body.refresh_constituents,
         )
         save_index_research(doc)
+        try:
+            from trade_integrations.dataflows.index_research.prediction_algorithms.config import (
+                lab_enabled,
+                scoreboard_auto_refresh,
+            )
+            from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.scoreboard import (
+                load_scoreboard,
+            )
+            from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.walk_forward import (
+                run_track_walk_forward,
+            )
+
+            if lab_enabled() and scoreboard_auto_refresh():
+                cached = load_scoreboard(key)
+                if not cached or int(cached.get("eval_count") or 0) == 0:
+                    run_track_walk_forward(
+                        ticker=key,
+                        days=365,
+                        horizon_days=body.horizon_days,
+                    )
+        except Exception as exc:
+            logger.debug("track scoreboard auto-refresh skipped for %s: %s", key, exc)
         artifact = _index_doc_to_panel(doc)
         artifact["asset_type"] = "index"
     except RuntimeError as exc:
@@ -1001,6 +1037,12 @@ def drain_hub_staging(
         from trade_integrations.dataflows.news_hub_bridge import process_staging_batch
 
         summary = process_staging_batch(ticker=key, limit=max(1, min(limit, 100)))
+        if summary.get("pipeline_paused") or summary.get("paused"):
+            return HubStagingDrainResponse(
+                status="paused",
+                summary=summary,
+                message=str(summary.get("pause_reason") or "News distillation pipeline is paused."),
+            )
         return HubStagingDrainResponse(status="ok", summary=summary)
     except Exception as exc:
         logger.exception("hub staging drain failed")
@@ -1136,6 +1178,116 @@ def get_index_prediction_backtest(
         return IndexBacktestResponse(status=status, ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction backtest failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/index-prediction/forecast-lab", response_model=IndexForecastLabResponse)
+@trade_router.post("/index-prediction/forecast-lab", response_model=IndexForecastLabResponse)
+def index_prediction_forecast_lab(
+    ticker: str = "NIFTY",
+    horizon_days: int = 14,
+    mode: str = "tracks_only",
+    combiner_id: str | None = None,
+    use_hub_cache: bool = True,
+    body: Dict[str, Any] | None = None,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexForecastLabResponse:
+    """Plug-and-play forecast lab — independent tracks + optional combiner."""
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from trade_integrations.dataflows.index_research.prediction_algorithms.api import run_forecast_lab
+        from trade_integrations.dataflows.index_research.prediction_algorithms.config import lab_enabled
+        from trade_integrations.dataflows.index_research.prediction_algorithms.context_builder import (
+            build_track_context,
+            context_from_hub,
+        )
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        if not lab_enabled():
+            return IndexForecastLabResponse(
+                status="disabled",
+                ticker=key,
+                message="INDEX_PREDICTION_LAB_ENABLED=0",
+            )
+
+        payload = body or {}
+        hz = int(payload.get("horizon_days") or horizon_days)
+        run_mode = str(payload.get("mode") or mode or "tracks_only")
+        combiner = payload.get("combiner_id") or combiner_id
+        use_cache = payload.get("use_hub_cache", use_hub_cache)
+
+        ctx = None
+        if use_cache:
+            ctx = context_from_hub(key, horizon_days=hz)
+        if ctx is None:
+            ctx = build_track_context(ticker=key, spot=0.0, horizon_days=hz)
+            return IndexForecastLabResponse(
+                status="error",
+                ticker=key,
+                message="hub_cache_unavailable",
+            )
+
+        lab_mode_val = "combine" if run_mode == "combine" else "tracks_only"
+        result = run_forecast_lab(ctx, mode=lab_mode_val, combiner_id=combiner)
+        return IndexForecastLabResponse(status="ok", ticker=key, result=result.to_dict())
+    except Exception as exc:
+        logger.exception("index-prediction forecast-lab failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/index-prediction/track-scoreboard", response_model=IndexTrackScoreboardResponse)
+def get_index_track_scoreboard(
+    ticker: str = "NIFTY",
+    refresh: bool = False,
+    days: int = 365,
+    horizon_days: int | None = None,
+    eval_step: int = 5,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexTrackScoreboardResponse:
+    """Load cached per-track scoreboard or recompute walk-forward."""
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.scoreboard import (
+            load_scoreboard,
+            normalize_scoreboard_report,
+            scoreboard_needs_refresh,
+        )
+        from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.walk_forward import (
+            run_track_walk_forward,
+        )
+        from trade_integrations.dataflows.index_research.prediction_algorithms.promotion import (
+            enrich_scoreboard_with_live,
+        )
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        if refresh:
+            report = run_track_walk_forward(
+                ticker=key,
+                days=days,
+                horizon_days=horizon_days,
+                eval_step=eval_step,
+            )
+        else:
+            report = load_scoreboard(key)
+            if scoreboard_needs_refresh(
+                report,
+                horizon_days=horizon_days,
+                history_days=max(days, 730),
+            ):
+                report = run_track_walk_forward(
+                    ticker=key,
+                    days=max(days, 730),
+                    horizon_days=horizon_days,
+                    eval_step=eval_step,
+                )
+        report = normalize_scoreboard_report(report or {})
+        report = enrich_scoreboard_with_live(report, ticker=key)
+        status = str(report.get("status") or "ok")
+        return IndexTrackScoreboardResponse(status=status, ticker=key, report=report)
+    except Exception as exc:
+        logger.exception("index-prediction track-scoreboard failed for %s", key)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

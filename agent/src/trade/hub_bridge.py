@@ -460,6 +460,10 @@ def prediction_action(prediction: dict) -> str | None:
         return "buy"
     if view in {"bearish", "sell"}:
         return "sell"
+    if "bear" in view:
+        return "sell"
+    if "bull" in view:
+        return "buy"
     if view:
         return "hold"
     return None

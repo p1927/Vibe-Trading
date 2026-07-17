@@ -603,6 +603,22 @@ export const api = {
     if (horizonDays != null) params.set("horizon_days", String(horizonDays));
     return request<IndexBacktestResponse>(`/trade/index-prediction/backtest?${params}`);
   },
+  getIndexTrackScoreboard: (
+    ticker = "NIFTY",
+    refresh = false,
+    days = 365,
+    horizonDays?: number,
+    evalStep = 5,
+  ) => {
+    const params = new URLSearchParams({
+      ticker,
+      refresh: String(refresh),
+      days: String(days),
+      eval_step: String(evalStep),
+    });
+    if (horizonDays != null) params.set("horizon_days", String(horizonDays));
+    return request<IndexTrackScoreboardResponse>(`/trade/index-prediction/track-scoreboard?${params}`);
+  },
   getIndexPredictionMissAnalysis: (ticker = "NIFTY", refresh = false, days = 365, horizonDays?: number) => {
     const params = new URLSearchParams({
       ticker,
@@ -2388,6 +2404,129 @@ export interface IndexBacktestResponse {
   status: string;
   ticker?: string;
   report?: IndexBacktestReport | null;
+  message?: string;
+}
+
+export interface IndexTrackChartActualPoint {
+  date: string;
+  actual_pct?: number | null;
+  close?: number | null;
+}
+
+export interface IndexTrackChartTrackPoint {
+  date: string;
+  predicted_pct?: number;
+  error_pct?: number;
+  direction_hit?: boolean;
+}
+
+export interface IndexTrackChartSeries {
+  track_id: string;
+  label?: string;
+  points?: IndexTrackChartTrackPoint[];
+}
+
+export interface IndexTrackChartLivePoint {
+  date: string;
+  spot?: number | null;
+  tracks?: Record<string, number>;
+  is_live?: boolean;
+}
+
+export interface IndexTrackChartPayload {
+  horizon_days?: number;
+  eval_dates?: string[];
+  actual_series?: IndexTrackChartActualPoint[];
+  track_series?: IndexTrackChartSeries[];
+  nifty_close_series?: Array<{ date: string; close: number }>;
+  live_point?: IndexTrackChartLivePoint | null;
+  track_ids?: string[];
+}
+
+export interface IndexTrackMetrics {
+  track_id?: string;
+  eval_count?: number;
+  mae_pct?: number | null;
+  direction_hit_rate?: number | null;
+  backtest_eligible?: boolean;
+}
+
+export interface IndexTrackPromotionVerdict {
+  promoted?: boolean;
+  direction_hit_rate?: number;
+  delta_vs_quant_pp?: number;
+  eval_count?: number;
+  insufficient_evidence?: boolean;
+}
+
+export interface IndexTrackPromotion {
+  eval_count?: number;
+  quant_direction_hit_rate?: number;
+  verdicts?: Record<string, IndexTrackPromotionVerdict>;
+  promoted_combiners?: string[];
+  auto_promote_allowed?: boolean;
+  min_eval_count_required?: number;
+}
+
+export interface IndexTrackLiveSnapshot {
+  as_of?: string;
+  spot?: number | null;
+  forecast_tracks?: Record<
+    string,
+    { expected_return_pct?: number; view?: string; available?: boolean }
+  >;
+  cause_stress_index?: number | null;
+  cause_stress_label?: string | null;
+  active_combiner?: string | null;
+  headline_source?: string | null;
+  combiner_preview?: Record<string, unknown> | null;
+}
+
+export interface IndexTrackScoreboardReport {
+  status?: string;
+  message?: string;
+  ticker?: string;
+  horizon_days?: number;
+  history_days?: number;
+  history_start?: string;
+  history_end?: string;
+  history_rows?: number;
+  eval_count?: number;
+  hybrid_eval_count?: number;
+  limitations?: string[];
+  tracks?: Record<string, IndexTrackMetrics>;
+  combiners?: Record<string, IndexTrackMetrics>;
+  chart?: IndexTrackChartPayload | null;
+  promotion?: IndexTrackPromotion | null;
+  live?: IndexTrackLiveSnapshot | null;
+  live_enrichment_error?: string | null;
+  live_enrichment_note?: string | null;
+  nifty_series?: Array<{ date: string; close: number; realized_1d_pct?: number | null }>;
+  daily_evaluations?: Array<{
+    date: string;
+    track_id: string;
+    predicted_pct?: number;
+    actual_pct?: number;
+    error_pct?: number;
+    direction_hit?: boolean;
+    close?: number;
+  }>;
+  track_catalog?: Record<
+    string,
+    {
+      label?: string;
+      implementation?: string;
+      backtest_eligible?: boolean;
+      metrics?: IndexTrackMetrics;
+    }
+  >;
+  schema_version?: number;
+}
+
+export interface IndexTrackScoreboardResponse {
+  status: string;
+  ticker?: string;
+  report?: IndexTrackScoreboardReport | null;
   message?: string;
 }
 

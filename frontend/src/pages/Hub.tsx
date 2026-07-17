@@ -204,7 +204,10 @@ export function Hub() {
     setBusy("drain");
     setError(null);
     try {
-      await api.drainHubStaging("NIFTY", 20);
+      const res = await api.drainHubStaging("NIFTY", 20);
+      if (res.status === "paused") {
+        setError(res.message || "News distillation pipeline is paused — configure MiniMax first.");
+      }
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Staging drain failed");
@@ -241,6 +244,22 @@ export function Hub() {
       </div>
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
+
+      {staging?.pipeline_paused ? (
+        <div
+          role="status"
+          className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
+        >
+          <p className="font-medium">News distillation paused</p>
+          <p className="mt-1 text-[13px] leading-relaxed opacity-90">
+            {staging.pause_reason ||
+              "Configure MINIMAX_API_KEY and MINIMAX_BASE_URL in .env, then use Drain staging to process queued headlines."}
+          </p>
+          <p className="mt-2 text-[12px] tabular-nums opacity-80">
+            {newsInventory?.pending_count ?? staging.queued ?? 0} headline(s) waiting in staging queue.
+          </p>
+        </div>
+      ) : null}
 
       {loading && !hub ? (
         <div className="flex items-center gap-2 text-muted-foreground">
