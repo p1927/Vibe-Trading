@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 _OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
 
 _INTERVAL_MAP: dict[str, str] = {
+    "1m": "K_1M",
+    "5m": "K_5M",
+    "15m": "K_15M",
+    "30m": "K_30M",
     "1D": "K_DAY",
     "1H": "K_60M",
     "4H": "K_240M",
@@ -51,10 +55,24 @@ def _to_futu_ktype(interval: str):
     """Map project interval string to a futu KLType enum value.
 
     Lazy-imports futu so the module can be imported without futu installed.
-    Unknown intervals fall back to K_DAY.
+    Unsupported intervals fail explicitly so requested bar fidelity is never
+    changed silently.
     """
     from futu import KLType  # noqa: PLC0415
-    return getattr(KLType, _INTERVAL_MAP.get(interval.strip(), "K_DAY"))
+
+    token = interval.strip()
+    attr = _INTERVAL_MAP.get(token)
+    if attr is None:
+        raise NoAvailableSourceError(
+            f"unsupported Futu interval: {interval!r}; "
+            f"supported intervals: {sorted(_INTERVAL_MAP)}"
+        )
+    try:
+        return getattr(KLType, attr)
+    except AttributeError as exc:
+        raise NoAvailableSourceError(
+            f"installed Futu SDK does not expose KLType.{attr}"
+        ) from exc
 
 
 def _normalize_frame(df: pd.DataFrame) -> pd.DataFrame:
@@ -129,7 +147,7 @@ class FutuLoader:
             codes: Project symbols such as ``700.HK`` or ``000001.SZ``.
             start_date: Start date in ``YYYY-MM-DD`` format.
             end_date: End date in ``YYYY-MM-DD`` format.
-            interval: Backtest interval — ``1D``, ``1H``, or ``4H``.
+            interval: Backtest interval supported by :data:`_INTERVAL_MAP`.
             fields: Ignored; included for interface compatibility.
 
         Returns:
@@ -142,6 +160,11 @@ class FutuLoader:
         if not codes:
             return {}
         validate_date_range(start_date, end_date)
+        if interval.strip() not in _INTERVAL_MAP:
+            raise NoAvailableSourceError(
+                f"unsupported Futu interval: {interval!r}; "
+                f"supported intervals: {sorted(_INTERVAL_MAP)}"
+            )
 
         results: Dict[str, pd.DataFrame] = {}
 
@@ -168,6 +191,7 @@ class FutuLoader:
 
         try:
             import futu  # noqa: PLC0415
+
             ktype = _to_futu_ktype(interval)
             ctx = futu.OpenQuoteContext(host=self._host, port=self._port)
         except Exception as exc:
