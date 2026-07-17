@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -48,6 +49,16 @@ class TestProviderCapabilityAliases:
             assert caps.capture_reasoning is True
             assert caps.send_reasoning_content is False
             assert caps.normalize_assistant_content is False
+
+    def test_anthropic_uses_native_env_namespace(self) -> None:
+        caps = get_provider_capabilities("anthropic")
+
+        assert caps.name == "anthropic"
+        assert provider_env_names("anthropic") == (
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_BASE_URL",
+        )
+        assert caps.native_adapter_package == "langchain-anthropic"
 
     def test_kimi_coding_uses_own_env_namespace(self) -> None:
         caps = get_provider_capabilities("kimi-coding")
@@ -204,6 +215,41 @@ class TestSyncProviderEnv:
             "MINIMAX_BASE_URL": "https://api.minimax.io/v1",
         })
         assert "minimax.io" in result["OPENAI_BASE_URL"]
+
+
+def test_build_anthropic_uses_messages_api_proxy() -> None:
+    import src.providers.llm as llm_mod
+
+    llm_mod._dotenv_loaded = True
+    captured: dict[str, object] = {}
+
+    class _FakeChatAnthropic:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    env = {
+        "LANGCHAIN_PROVIDER": "anthropic",
+        "LANGCHAIN_MODEL_NAME": "claude-sonnet-4-6[1M]",
+        "LANGCHAIN_TEMPERATURE": "0",
+        "ANTHROPIC_API_KEY": "PROXY_MANAGED",
+        "ANTHROPIC_BASE_URL": "http://host.docker.internal:15721",
+        "TIMEOUT_SECONDS": "600",
+        "MAX_RETRIES": "2",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        with patch.object(
+            llm_mod,
+            "import_module",
+            return_value=SimpleNamespace(ChatAnthropic=_FakeChatAnthropic),
+        ):
+            result = build_llm()
+
+    assert isinstance(result, _FakeChatAnthropic)
+    assert captured["model"] == "claude-sonnet-4-6[1M]"
+    assert captured["api_key"] == "PROXY_MANAGED"
+    assert captured["base_url"] == "http://host.docker.internal:15721"
+    assert captured["timeout"] == 600
+    assert captured["max_retries"] == 2
 
 
 # ---------------------------------------------------------------------------

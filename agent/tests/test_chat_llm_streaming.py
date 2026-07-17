@@ -146,6 +146,30 @@ def test_stream_dsml_tool_call_content_is_not_emitted_as_text() -> None:
     assert response.tool_calls[0].name == "bash"
 
 
+def test_anthropic_content_blocks_stream_with_native_tool_call() -> None:
+    chunk = _FakeChunk()
+    chunk.content = [
+        {"type": "text", "text": "Checking quote"},
+        {"type": "tool_use", "id": "toolu_1", "name": "quote", "input": {}},
+    ]
+    chunk.tool_calls = [
+        {"id": "toolu_1", "name": "quote", "args": {"symbol": "AAPL"}},
+    ]
+    chunk.response_metadata = {"stop_reason": "tool_use"}
+    text_chunks: list[str] = []
+
+    response = _client(_FakeStreamingLLM([chunk])).stream_chat(
+        [{"role": "user", "content": "quote AAPL"}],
+        on_text_chunk=text_chunks.append,
+    )
+
+    assert text_chunks == ["Checking quote"]
+    assert response.content == "Checking quote"
+    assert response.finish_reason == "tool_calls"
+    assert response.tool_calls[0].id == "toolu_1"
+    assert response.tool_calls[0].arguments == {"symbol": "AAPL"}
+
+
 def test_should_cancel_stops_stream_early() -> None:
     """A should_cancel predicate breaks the chunk loop; later chunks are dropped."""
     fake = _FakeStreamingLLM([

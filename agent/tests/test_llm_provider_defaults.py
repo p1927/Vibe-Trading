@@ -13,6 +13,7 @@ EXPECTED_PROVIDER_DEFAULTS = {
     "openrouter": "deepseek/deepseek-v4-pro",
     "requesty": "openai/gpt-4o-mini",
     "openai": "gpt-5.5",
+    "anthropic": "claude-sonnet-4-6",
     "openai-codex": "openai-codex/gpt-5.4",
     "deepseek": "deepseek-v4-pro",
     "nvidia": "nvidia/nemotron-3-ultra-550b-a55b",
@@ -77,6 +78,7 @@ def test_interactive_onboard_suggests_current_primary_models() -> None:
 
     assert onboard_defaults["openrouter"] == "deepseek/deepseek-v4-pro"
     assert onboard_defaults["openai"] == "gpt-5.5"
+    assert onboard_defaults["anthropic"] == "claude-sonnet-4-6"
     assert onboard_defaults["openai-codex"] == "openai-codex/gpt-5.4"
     assert onboard_defaults["deepseek"] == "deepseek-v4-pro"
     assert onboard_defaults["nvidia"] == "nvidia/nemotron-3-ultra-550b-a55b"

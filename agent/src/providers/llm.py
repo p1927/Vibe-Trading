@@ -415,6 +415,37 @@ def _build_native_deepseek(
     )
 
 
+def _build_anthropic(
+    *,
+    model: str,
+    temperature: float,
+    callbacks: Any = None,
+) -> Any:
+    """Build the native Anthropic Messages API adapter."""
+    try:
+        module = import_module("langchain_anthropic")
+        chat_anthropic = getattr(module, "ChatAnthropic")
+    except Exception as exc:  # noqa: BLE001 - dependency error with install hint
+        raise RuntimeError(
+            "Anthropic provider requires langchain-anthropic. Rebuild the image or run: "
+            "pip install langchain-anthropic"
+        ) from exc
+
+    return chat_anthropic(
+        model=model,
+        temperature=temperature,
+        timeout=get_env_config().llm.timeout_seconds,
+        max_retries=get_env_config().llm.max_retries,
+        callbacks=callbacks,
+        api_key=os.getenv("ANTHROPIC_API_KEY") or None,  # noqa: env-gate — native provider credential
+        base_url=(
+            os.getenv("ANTHROPIC_BASE_URL")  # noqa: env-gate — native provider endpoint
+            or os.getenv("ANTHROPIC_API_URL")  # noqa: env-gate — SDK-compatible alias
+            or None
+        ),
+    )
+
+
 def _load_env_file(path: Path) -> None:
     """Load a single .env file into os.environ (setdefault, no override)."""
     if load_dotenv is not None:
@@ -519,18 +550,29 @@ def provider_diagnostics() -> dict[str, Any]:
     key_env, base_env = provider_env_names(provider, model)
     base_url = os.getenv(base_env, "") or os.getenv("OPENAI_BASE_URL", "") or os.getenv("OPENAI_API_BASE", "")  # noqa: env-gate — dynamic provider URL resolution
     proxy_names = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"]
-    package_names = ["langchain-openai", "langchain-core", "langchain", "openai", "langchain-deepseek"]
+    package_names = ["langchain-openai", "langchain-anthropic", "langchain-core", "langchain", "openai", "langchain-deepseek"]
     native_package_version = (
         _package_version(caps.native_adapter_package)
         if caps.native_adapter_package
         else None
     )
-    adapter_mode = _deepseek_adapter_mode() if caps.name == "deepseek" else "openai-compatible"
+    adapter_mode = (
+        _deepseek_adapter_mode()
+        if caps.name == "deepseek"
+        else "native"
+        if caps.name == "anthropic"
+        else "openai-compatible"
+    )
     adapter_type = (
         "native"
-        if caps.name == "deepseek"
-        and adapter_mode != "openai-compatible"
-        and native_package_version not in {None, "not_installed"}
+        if (
+            caps.name == "anthropic"
+            or (
+                caps.name == "deepseek"
+                and adapter_mode != "openai-compatible"
+                and native_package_version not in {None, "not_installed"}
+            )
+        )
         else "openai-compatible"
     )
     return {
@@ -570,14 +612,14 @@ def provider_diagnostics() -> dict[str, Any]:
 
 
 def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any:
-    """Construct a ChatOpenAI instance.
+    """Construct the configured LangChain chat model.
 
     Args:
         model_name: Model name; defaults to LANGCHAIN_MODEL_NAME.
         callbacks: Optional LangChain callbacks.
 
     Returns:
-        ChatOpenAI instance.
+        Provider-specific LangChain chat model.
 
     Raises:
         RuntimeError: If langchain-openai is missing or LANGCHAIN_MODEL_NAME is unset.
@@ -598,6 +640,13 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
             temperature=temperature,
             timeout=get_env_config().llm.timeout_seconds,
             reasoning_effort=effort or None,
+        )
+
+    if provider == "anthropic":
+        return _build_anthropic(
+            model=name,
+            temperature=temperature,
+            callbacks=callbacks,
         )
 
     if provider == "deepseek":
