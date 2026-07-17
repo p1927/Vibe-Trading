@@ -1,8 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ColorType,
-  CrosshairMode,
-  createChart,
   createSeriesMarkers,
   LineSeries,
   type IChartApi,
@@ -11,7 +8,9 @@ import {
   type SeriesMarker,
   type Time,
 } from "lightweight-charts";
+import { LightweightChartZoomBar } from "@/components/charts/LightweightChartZoomBar";
 import { getChartTheme } from "@/lib/chart-theme";
+import { createLightweightChart } from "@/lib/lightweightChartOptions";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import {
   buildForwardPaths,
@@ -91,6 +90,7 @@ export function MultiTrackForecastReplayChart({
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const { dark } = useDarkMode();
   const [chartEpoch, setChartEpoch] = useState(0);
+  const [activeChart, setActiveChart] = useState<IChartApi | null>(null);
 
   const lastPriceDate = prices.length ? prices[prices.length - 1].date : "";
   const firstPriceDate = prices.length ? prices[0].date : "";
@@ -209,30 +209,8 @@ export function MultiTrackForecastReplayChart({
       if (width <= 0) return false;
 
       const t = getChartTheme();
-      const chart = createChart(container, {
-        width,
-        height,
-        layout: {
-          background: { type: ColorType.Solid, color: "transparent" },
-          textColor: t.textColor,
-        },
-        grid: {
-          vertLines: { color: `${t.gridColor}88`, visible: true },
-          horzLines: { color: `${t.gridColor}88`, visible: true },
-        },
-        rightPriceScale: {
-          borderColor: `${t.axisColor}55`,
-          scaleMargins: { top: 0.08, bottom: 0.08 },
-        },
-        timeScale: {
-          borderColor: `${t.axisColor}55`,
-          timeVisible: true,
-          secondsVisible: false,
-        },
-        crosshair: { mode: CrosshairMode.Normal },
-        handleScroll: { mouseWheel: true, pressedMouseMove: true },
-        handleScale: { mouseWheel: true, pinch: true },
-      });
+      const chart = createLightweightChart(container, height);
+      chart.applyOptions({ width });
 
       historyRef.current = chart.addSeries(LineSeries, {
         color: t.infoColor,
@@ -263,6 +241,7 @@ export function MultiTrackForecastReplayChart({
       );
 
       chartRef.current = chart;
+      setActiveChart(chart);
       chart.subscribeClick((param) => {
         if (!param.time) return;
         const d = timeToIsoDay(param.time);
@@ -291,6 +270,7 @@ export function MultiTrackForecastReplayChart({
       ro.disconnect();
       chartRef.current?.remove();
       chartRef.current = null;
+      setActiveChart(null);
     };
   }, [mountChart]);
 
@@ -314,6 +294,7 @@ export function MultiTrackForecastReplayChart({
   return (
     <div className="space-y-3">
       <div ref={containerRef} className="w-full" style={{ height }} />
+      <LightweightChartZoomBar chart={activeChart} />
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px]">
         <label className="flex min-w-[200px] flex-1 items-center gap-2">

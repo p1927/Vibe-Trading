@@ -8,6 +8,7 @@ import { FactorCompositionTable } from "@/components/prediction/FactorCompositio
 import { EquationCard } from "@/components/prediction/EquationCard";
 import { CausalFactorExplorer } from "@/components/prediction/CausalFactorExplorer";
 import { TrackScoreboardPanel } from "@/components/prediction/TrackScoreboardPanel";
+import { TrackScoreboardProgressPanel } from "@/components/prediction/TrackScoreboardProgressPanel";
 import { BacktestEvaluationPanel } from "@/components/prediction/BacktestEvaluationPanel";
 import { PredictionMissAnalysisPanel } from "@/components/prediction/PredictionMissAnalysisPanel";
 import { IndexFactorLedgerPanel } from "@/components/prediction/IndexFactorLedgerPanel";
@@ -103,6 +104,9 @@ export function Prediction() {
   const [backtestError, setBacktestError] = useState<string | null>(null);
   const [trackScoreboard, setTrackScoreboard] = useState<IndexTrackScoreboardReport | null>(null);
   const [trackScoreboardLoading, setTrackScoreboardLoading] = useState(false);
+  const [trackScoreboardRecomputing, setTrackScoreboardRecomputing] = useState(false);
+  const [trackScoreboardStartedAt, setTrackScoreboardStartedAt] = useState<number | null>(null);
+  const [trackScoreboardPanelOpen, setTrackScoreboardPanelOpen] = useState(true);
   const [trackScoreboardError, setTrackScoreboardError] = useState<string | null>(null);
   const [missAnalysisError, setMissAnalysisError] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -329,9 +333,12 @@ export function Prediction() {
   }, [loadBacktest]);
 
   const loadTrackScoreboard = useCallback(
-    async (refresh = false) => {
+    async (forceRefresh = false) => {
       setTrackScoreboardLoading(true);
+      setTrackScoreboardStartedAt(Date.now());
+      setTrackScoreboardPanelOpen(true);
       setTrackScoreboardError(null);
+
       try {
         const fetchScoreboard = api.getIndexTrackScoreboard;
         if (typeof fetchScoreboard !== "function") {
@@ -339,15 +346,34 @@ export function Prediction() {
             "Track scoreboard API client is missing — hard-refresh the page (frontend update required).",
           );
         }
-        const res = await fetchScoreboard("NIFTY", refresh, 730, horizonDays);
-        if (res.report) setTrackScoreboard(res.report);
-        else if (res.status !== "ok") {
-          setTrackScoreboardError(res.message || "Track scoreboard unavailable");
+
+        let needsFullRun = forceRefresh;
+
+        if (!forceRefresh) {
+          const cachedRes = await fetchScoreboard("NIFTY", false, 730, horizonDays, 5, true);
+          const cached = cachedRes.report;
+          if (cached && (cached.eval_count ?? 0) > 0) {
+            setTrackScoreboard(cached);
+            needsFullRun = Boolean(cached.needs_refresh);
+            if (!needsFullRun) return;
+          } else {
+            needsFullRun = true;
+          }
+        }
+
+        if (needsFullRun) {
+          setTrackScoreboardRecomputing(true);
+          const res = await fetchScoreboard("NIFTY", true, 730, horizonDays);
+          if (res.report) setTrackScoreboard(res.report);
+          else if (res.status !== "ok") {
+            setTrackScoreboardError(res.message || "Track scoreboard unavailable");
+          }
         }
       } catch (e) {
         setTrackScoreboardError(e instanceof Error ? e.message : "Track scoreboard request failed");
       } finally {
         setTrackScoreboardLoading(false);
+        setTrackScoreboardRecomputing(false);
       }
     },
     [horizonDays],
@@ -355,6 +381,7 @@ export function Prediction() {
 
   useEffect(() => {
     if (predictionMode !== SCOREBOARD_MODE) return;
+    setTrackScoreboardPanelOpen(true);
     void loadTrackScoreboard(false);
   }, [predictionMode, horizonDays, loadTrackScoreboard]);
 
@@ -511,10 +538,13 @@ export function Prediction() {
           <TrackScoreboardPanel
             report={trackScoreboard}
             loading={trackScoreboardLoading}
+            recomputing={trackScoreboardRecomputing}
             error={trackScoreboardError}
             horizonDays={horizonDays}
             onHorizonChange={setHorizonDays}
             onRefresh={() => void loadTrackScoreboard(true)}
+            progressPanelOpen={trackScoreboardPanelOpen}
+            onToggleProgressPanel={() => setTrackScoreboardPanelOpen((v) => !v)}
           />
         ) : predictionMode === NEWS_SCENARIO_MODE ? (
           <>
@@ -902,6 +932,16 @@ export function Prediction() {
         artifact={artifact}
         factorCatalog={factorCatalog}
         catalogLoading={catalogLoading}
+      />
+      ) : predictionMode === SCOREBOARD_MODE ? (
+      <TrackScoreboardProgressPanel
+        open={trackScoreboardPanelOpen}
+        loading={trackScoreboardLoading}
+        recomputing={trackScoreboardRecomputing}
+        startedAt={trackScoreboardStartedAt}
+        report={trackScoreboard}
+        horizonDays={horizonDays}
+        error={trackScoreboardError}
       />
       ) : null}
     </div>

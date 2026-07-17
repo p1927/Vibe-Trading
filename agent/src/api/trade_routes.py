@@ -1240,6 +1240,7 @@ def index_prediction_forecast_lab(
 def get_index_track_scoreboard(
     ticker: str = "NIFTY",
     refresh: bool = False,
+    cache_only: bool = False,
     days: int = 365,
     horizon_days: int | None = None,
     eval_step: int = 5,
@@ -1262,26 +1263,38 @@ def get_index_track_scoreboard(
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
-        if refresh:
+        history_days = max(days, 730)
+        if cache_only:
+            report = load_scoreboard(key)
+            report = normalize_scoreboard_report(report or {"status": "empty", "ticker": key})
+            report["needs_refresh"] = scoreboard_needs_refresh(
+                report,
+                horizon_days=horizon_days,
+                history_days=history_days,
+            )
+        elif refresh:
             report = run_track_walk_forward(
                 ticker=key,
                 days=days,
                 horizon_days=horizon_days,
                 eval_step=eval_step,
             )
+            report["needs_refresh"] = False
         else:
             report = load_scoreboard(key)
             if scoreboard_needs_refresh(
                 report,
                 horizon_days=horizon_days,
-                history_days=max(days, 730),
+                history_days=history_days,
             ):
                 report = run_track_walk_forward(
                     ticker=key,
-                    days=max(days, 730),
+                    days=history_days,
                     horizon_days=horizon_days,
                     eval_step=eval_step,
                 )
+            report = normalize_scoreboard_report(report or {})
+            report["needs_refresh"] = False
         report = normalize_scoreboard_report(report or {})
         report = enrich_scoreboard_with_live(report, ticker=key)
         status = str(report.get("status") or "ok")

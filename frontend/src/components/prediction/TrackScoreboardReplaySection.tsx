@@ -96,8 +96,7 @@ export function TrackScoreboardReplaySection({ report, horizonDays }: Props) {
         <div>
           <p className="text-[11px] font-semibold">Track forecast replay vs Nifty 50</p>
           <p className="text-[10px] text-muted-foreground">
-            Same lightweight-charts replay as Analysis — dashed = track forecast from anchor; solid green = actual
-            Nifty path. Use arrows to switch tracks or compare several at once.
+            Same TradingView lightweight-charts replay as Analysis — scroll/wheel to zoom; dashed = track forecast; solid green = actual Nifty.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -160,7 +159,7 @@ export function TrackScoreboardReplaySection({ report, horizonDays }: Props) {
               <p className="text-[10px] text-muted-foreground">
                 {safeTrackIdx + 1} / {activeTrackList.length}
                 {selectedMetrics
-                  ? ` · MAE ${fmtPct(selectedMetrics.mae_pct)} · direction ${fmtHitRate(selectedMetrics.direction_hit_rate)}`
+                  ? ` · MAE ${fmtPct(selectedMetrics.mae_pct)} · direction ${fmtHitRate(selectedMetrics.direction_hit_rate)} · ${selectedMetrics.direction_hit_count ?? "—"}✓ / ${selectedMetrics.direction_miss_count ?? "—"}✗`
                   : ""}
               </p>
             </div>

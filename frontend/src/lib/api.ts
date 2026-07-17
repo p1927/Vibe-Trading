@@ -609,6 +609,7 @@ export const api = {
     days = 365,
     horizonDays?: number,
     evalStep = 5,
+    cacheOnly = false,
   ) => {
     const params = new URLSearchParams({
       ticker,
@@ -617,6 +618,7 @@ export const api = {
       eval_step: String(evalStep),
     });
     if (horizonDays != null) params.set("horizon_days", String(horizonDays));
+    if (cacheOnly) params.set("cache_only", "true");
     return request<IndexTrackScoreboardResponse>(`/trade/index-prediction/track-scoreboard?${params}`);
   },
   getIndexPredictionMissAnalysis: (ticker = "NIFTY", refresh = false, days = 365, horizonDays?: number) => {
@@ -2448,6 +2450,8 @@ export interface IndexTrackMetrics {
   eval_count?: number;
   mae_pct?: number | null;
   direction_hit_rate?: number | null;
+  direction_hit_count?: number | null;
+  direction_miss_count?: number | null;
   backtest_eligible?: boolean;
 }
 
@@ -2510,6 +2514,7 @@ export interface IndexTrackScoreboardReport {
     error_pct?: number;
     direction_hit?: boolean;
     close?: number;
+    implied_level?: number | null;
   }>;
   track_catalog?: Record<
     string,
@@ -2521,6 +2526,8 @@ export interface IndexTrackScoreboardReport {
     }
   >;
   schema_version?: number;
+  needs_refresh?: boolean;
+  as_of?: string;
 }
 
 export interface IndexTrackScoreboardResponse {

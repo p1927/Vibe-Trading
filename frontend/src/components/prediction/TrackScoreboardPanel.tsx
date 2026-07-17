@@ -1,3 +1,4 @@
+import { Loader2, PanelRight } from "lucide-react";
 import { useState } from "react";
 import type { IndexTrackScoreboardReport } from "@/lib/api";
 import { fmtHitRate, fmtPct } from "@/lib/trackScoreboardUtils";
@@ -6,36 +7,77 @@ import {
   CANONICAL_TRACK_IDS,
 } from "@/lib/trackScoreboardReplayUtils";
 import { TrackScoreboardChart } from "@/components/charts/TrackScoreboardChart";
+import { TrackScoreboardEvalPanel } from "@/components/prediction/TrackScoreboardEvalPanel";
 import { TrackScoreboardReplaySection } from "@/components/prediction/TrackScoreboardReplaySection";
 import { cn } from "@/lib/utils";
 
 interface Props {
   report: IndexTrackScoreboardReport | null;
   loading?: boolean;
+  recomputing?: boolean;
   error?: string | null;
   onRefresh?: () => void;
   horizonDays?: number;
   onHorizonChange?: (days: number) => void;
+  progressPanelOpen?: boolean;
+  onToggleProgressPanel?: () => void;
 }
 
 export function TrackScoreboardPanel({
   report,
   loading,
+  recomputing,
   error,
   onRefresh,
   horizonDays = 14,
   onHorizonChange,
+  progressPanelOpen,
+  onToggleProgressPanel,
 }: Props) {
   const [showCombiners, setShowCombiners] = useState(false);
 
   const promo = report?.promotion;
   const insufficient = promo?.auto_promote_allowed === false;
   const evalCount = report?.eval_count ?? promo?.eval_count ?? 0;
+  const showInitialLoad = loading && !report;
+  const showStaleWhileRefresh = recomputing && Boolean(report);
 
-  if (loading && !report) {
+  if (showInitialLoad) {
     return (
-      <div className="rounded-xl border bg-card p-6 text-[12px] text-muted-foreground">
-        Running per-track walk-forward scoreboard…
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4 shadow-sm">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              Forecast track lab — scoreboard
+            </p>
+            <p className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+              Loading cached scoreboard, then running walk-forward if needed…
+            </p>
+          </div>
+          {onToggleProgressPanel ? (
+            <button
+              type="button"
+              onClick={onToggleProgressPanel}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[11px] font-medium",
+                progressPanelOpen ? "border-primary/40 bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/50",
+              )}
+            >
+              <PanelRight className="h-3.5 w-3.5" />
+              Activity
+            </button>
+          ) : null}
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="h-64 animate-pulse rounded-xl border bg-muted/30 lg:col-span-2" />
+          <div className="h-48 animate-pulse rounded-xl border bg-muted/20" />
+          <div className="h-48 animate-pulse rounded-xl border bg-muted/20" />
+        </div>
+        <p className="text-center text-[11px] text-muted-foreground">
+          See the <span className="font-medium text-foreground">Scoreboard activity</span> panel on the right for
+          live progress (2–3 min for a full recompute).
+        </p>
       </div>
     );
   }
@@ -68,13 +110,27 @@ export function TrackScoreboardPanel({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+        {onToggleProgressPanel ? (
+          <button
+            type="button"
+            onClick={onToggleProgressPanel}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[11px] font-medium",
+              progressPanelOpen ? "border-primary/40 bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/50",
+            )}
+          >
+            <PanelRight className="h-3.5 w-3.5" />
+            Activity
+          </button>
+        ) : null}
         {onRefresh ? (
           <button
             type="button"
             onClick={onRefresh}
-            className="rounded-md border border-border/60 px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/50"
+            disabled={loading}
+            className="rounded-md border border-border/60 px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/50 disabled:opacity-50"
           >
-            Recompute scoreboard
+            {loading ? "Recomputing…" : "Recompute scoreboard"}
           </button>
         ) : null}
         {onHorizonChange ? (
@@ -95,6 +151,14 @@ export function TrackScoreboardPanel({
         ) : null}
         </div>
       </div>
+
+      {showStaleWhileRefresh ? (
+        <div className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-[11px] text-foreground">
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+          Refreshing walk-forward scoreboard ({horizonDays}d horizon, 730d history) — showing last cached results
+          until the new run finishes.
+        </div>
+      ) : null}
 
       {insufficient ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
@@ -125,12 +189,15 @@ export function TrackScoreboardPanel({
 
       <TrackScoreboardReplaySection report={report} horizonDays={horizonDays} />
 
+      <TrackScoreboardEvalPanel report={report} horizonDays={horizonDays} />
+
       <div className="rounded-xl border bg-card p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
             <p className="text-[11px] font-semibold">Return % scoreboard (all tracks)</p>
             <p className="text-[10px] text-muted-foreground">
-              OOS predicted vs realised {horizonDays}d return at each eval date — green diamond = actual Nifty move.
+              TradingView lightweight-charts — scroll/wheel to zoom · In/Out/Fit on each chart. OOS predicted vs
+              realised {horizonDays}d return at each eval date.
             </p>
           </div>
           <label className="flex items-center gap-2 text-[10px] text-muted-foreground">
@@ -243,6 +310,8 @@ export function TrackScoreboardPanel({
                   <th className="py-1 pr-2">Track</th>
                   <th className="py-1 pr-2">MAE</th>
                   <th className="py-1 pr-2">Direction</th>
+                  <th className="py-1 pr-2">Hits</th>
+                  <th className="py-1 pr-2">Misses</th>
                   <th className="py-1">n</th>
                 </tr>
               </thead>
@@ -259,6 +328,12 @@ export function TrackScoreboardPanel({
                     </td>
                     <td className="py-1.5 pr-2 tabular-nums">{fmtPct(row.mae_pct)}</td>
                     <td className="py-1.5 pr-2 tabular-nums">{fmtHitRate(row.direction_hit_rate)}</td>
+                    <td className="py-1.5 pr-2 tabular-nums text-emerald-600 dark:text-emerald-400">
+                      {row.direction_hit_count ?? "—"}
+                    </td>
+                    <td className="py-1.5 pr-2 tabular-nums text-red-600 dark:text-red-400">
+                      {row.direction_miss_count ?? "—"}
+                    </td>
                     <td className="py-1.5 tabular-nums">{row.eval_count ?? "—"}</td>
                   </tr>
                 ))}

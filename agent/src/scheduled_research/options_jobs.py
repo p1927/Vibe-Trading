@@ -75,19 +75,26 @@ def _parse_as_of(value: Any) -> datetime | None:
     return None
 
 
-def refresh_options_research(ticker: str, *, config: dict[str, Any] | None = None) -> None:
-    """Run the options research pipeline and persist to hub."""
+def refresh_options_research(ticker: str, *, config: dict[str, Any] | None = None) -> bool:
+    """Run the options research pipeline and persist to hub when eligible."""
     _ensure_trade_integrations_on_path()
     from trade_integrations.context.hub import save_options_research
     from trade_integrations.dataflows.options_research.aggregator import run_options_research
+    from trade_integrations.dataflows.options_research.market import is_options_research_eligible
+
+    sym = str(ticker).strip().upper()
+    if not sym or not is_options_research_eligible(sym):
+        logger.debug("options research refresh skipped for %s: not eligible", sym or ticker)
+        return False
 
     cfg = config or {}
     doc = run_options_research(
-        ticker,
+        sym,
         expiry_date=cfg.get("expiry_date"),
         lookahead_days=cfg.get("lookahead_days"),
     )
     save_options_research(doc)
+    return True
 
 
 def _news_since_for_ticker(ticker: str) -> datetime:
@@ -143,15 +150,19 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
     if not watchlist:
         watchlist = list(get_monitor_config().watchlist)
     try:
+        from trade_integrations.autonomous_agents.market import agent_execution_market
         from trade_integrations.autonomous_agents.store import list_agents
+        from trade_integrations.dataflows.options_research.market import is_options_research_eligible
 
         extra: set[str] = set()
         for agent in list_agents() or []:
             if str(agent.get("status") or "") not in ("running", "paused"):
                 continue
+            if agent_execution_market(agent) == "US":
+                continue
             for sym in agent.get("symbols") or []:
                 s = str(sym).strip().upper()
-                if s:
+                if s and is_options_research_eligible(s):
                     extra.add(s)
         if extra:
             watchlist = sorted(set(watchlist) | extra)
@@ -160,10 +171,17 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
 
     refreshed: list[dict[str, Any]] = []
     skipped: list[str] = []
+    ineligible: list[str] = []
 
     for raw_ticker in watchlist:
         ticker = str(raw_ticker).strip().upper()
         if not ticker:
+            continue
+
+        from trade_integrations.dataflows.options_research.market import is_options_research_eligible
+
+        if not is_options_research_eligible(ticker):
+            ineligible.append(ticker)
             continue
 
         needs_refresh, reasons = _ticker_needs_refresh(ticker, config=cfg)
@@ -171,15 +189,16 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
             skipped.append(ticker)
             continue
 
-        refresh_options_research(ticker, config=cfg)
-        refreshed.append({"ticker": ticker, "reasons": reasons})
-        logger.info("options plan refreshed for %s (%s)", ticker, ", ".join(reasons))
+        if refresh_options_research(ticker, config=cfg):
+            refreshed.append({"ticker": ticker, "reasons": reasons})
+            logger.info("options plan refreshed for %s (%s)", ticker, ", ".join(reasons))
 
     return {
         "skipped": False,
         "reconciled_predictions": reconciled,
         "refreshed": refreshed,
         "unchanged": skipped,
+        "ineligible": ineligible,
     }
 
 
@@ -221,6 +240,11 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
                 "severity": report.severity,
             }
         )
+
+        from trade_integrations.dataflows.options_research.market import is_options_research_eligible
+
+        if not is_options_research_eligible(underlying):
+            continue
 
         doc = run_options_research(
             underlying,

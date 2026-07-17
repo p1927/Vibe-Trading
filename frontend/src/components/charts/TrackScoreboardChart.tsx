@@ -1,9 +1,20 @@
-import { useEffect, useMemo, useRef } from "react";
-import { echarts } from "@/lib/echarts";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createSeriesMarkers,
+  LineSeries,
+  LineStyle,
+  type IChartApi,
+  type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type SeriesMarker,
+  type Time,
+} from "lightweight-charts";
+import type { IndexTrackChartPayload } from "@/lib/api";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
-import type { IndexTrackChartPayload } from "@/lib/api";
 import { fmtPct, trackColor } from "@/lib/trackScoreboardUtils";
+import { createLightweightChart, fitLightweightChart } from "@/lib/lightweightChartOptions";
+import { LightweightChartZoomBar } from "@/components/charts/LightweightChartZoomBar";
 
 interface Props {
   chart: IndexTrackChartPayload | null | undefined;
@@ -11,111 +22,176 @@ interface Props {
   showCombiners?: boolean;
 }
 
+function toTime(date: string): Time {
+  return date.slice(0, 10) as Time;
+}
+
 export function TrackScoreboardChart({ chart, height = 360, showCombiners = false }: Props) {
-  const ref = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const actualRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const trackRefs = useRef<ISeriesApi<"Line">[]>([]);
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const { dark } = useDarkMode();
-  const theme = getChartTheme();
+  const [chartEpoch, setChartEpoch] = useState(0);
+  const [activeChart, setActiveChart] = useState<IChartApi | null>(null);
 
-  const option = useMemo(() => {
-    if (!chart?.eval_dates?.length) return null;
+  const visibleTracks = useMemo(() => {
+    if (!chart?.track_series) return [];
+    return chart.track_series.filter(
+      (t) => showCombiners || !t.track_id.startsWith("combiner:"),
+    );
+  }, [chart?.track_series, showCombiners]);
 
-    let dates = [...chart.eval_dates];
-    const live = chart.live_point;
-    if (live?.date && !dates.includes(live.date)) {
-      dates = [...dates, live.date];
+  const dates = useMemo(() => {
+    if (!chart?.eval_dates?.length) return [];
+    const out = [...chart.eval_dates];
+    const liveDate = chart.live_point?.date;
+    if (liveDate && !out.includes(liveDate)) out.push(liveDate);
+    return out.sort();
+  }, [chart?.eval_dates, chart?.live_point?.date]);
+
+  const legendItems = useMemo(() => {
+    const items: Array<{ id: string; label: string; color: string; dashed?: boolean }> = [
+      { id: "actual", label: "Actual Nifty (forward return)", color: trackColor("actual") },
+    ];
+    for (const track of visibleTracks) {
+      items.push({
+        id: track.track_id,
+        label: track.label ?? track.track_id,
+        color: trackColor(track.track_id),
+        dashed: track.track_id.startsWith("combiner:"),
+      });
     }
+    return items;
+  }, [visibleTracks]);
 
-    const series: object[] = [];
-    const actual = chart.actual_series ?? [];
-    series.push({
-      name: "Actual Nifty (forward return)",
-      type: "line",
-      data: dates.map((d) => actual.find((r) => r.date === d)?.actual_pct ?? null),
-      lineStyle: { width: 3, color: trackColor("actual") },
-      itemStyle: { color: trackColor("actual") },
-      symbol: "diamond",
-      symbolSize: 7,
-      z: 10,
+  const mountChart = useCallback(
+    (container: HTMLDivElement) => {
+      if (chartRef.current) {
+        chartRef.current.remove();
+        chartRef.current = null;
+        actualRef.current = null;
+        trackRefs.current = [];
+        markersRef.current = null;
+      }
+
+      if (container.clientWidth <= 0) return false;
+
+      const t = getChartTheme();
+      const instance = createLightweightChart(container, height);
+      chartRef.current = instance;
+      setActiveChart(instance);
+
+      actualRef.current = instance.addSeries(LineSeries, {
+        color: trackColor("actual"),
+        lineWidth: 3,
+        title: "Actual",
+        lastValueVisible: true,
+        priceLineVisible: false,
+      });
+      markersRef.current = createSeriesMarkers(actualRef.current, []);
+
+      actualRef.current.createPriceLine({
+        price: 0,
+        color: `${t.textColor}44`,
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "0%",
+      });
+
+      trackRefs.current = visibleTracks.map((track) =>
+        instance.addSeries(LineSeries, {
+          color: trackColor(track.track_id),
+          lineWidth: track.track_id.startsWith("combiner:") ? 1 : 2,
+          lineStyle: track.track_id.startsWith("combiner:") ? LineStyle.Dashed : LineStyle.Solid,
+          title: track.label ?? track.track_id,
+          lastValueVisible: false,
+          priceLineVisible: false,
+        }),
+      );
+
+      setChartEpoch((v) => v + 1);
+      return true;
+    },
+    [height, dark, visibleTracks],
+  );
+
+  const syncData = useCallback(() => {
+    const instance = chartRef.current;
+    const actualSeries = actualRef.current;
+    if (!instance || !actualSeries || !chart?.eval_dates?.length) return;
+
+    const actualMap = new Map(
+      (chart.actual_series ?? []).map((p) => [p.date, p.actual_pct]),
+    );
+    const live = chart.live_point;
+
+    const actualData = dates
+      .map((d) => {
+        const v = actualMap.get(d);
+        if (v == null || !Number.isFinite(v)) return null;
+        return { time: toTime(d), value: v };
+      })
+      .filter(Boolean) as Array<{ time: Time; value: number }>;
+
+    actualSeries.setData(actualData);
+
+    const markers: SeriesMarker<Time>[] = actualData.map((pt) => ({
+      time: pt.time,
+      position: "inBar",
+      shape: "circle",
+      color: trackColor("actual"),
+      size: 1,
+    }));
+    markersRef.current?.setMarkers(markers);
+
+    trackRefs.current.forEach((series, idx) => {
+      const track = visibleTracks[idx];
+      if (!track) return;
+      const pointMap = new Map((track.points ?? []).map((p) => [p.date, p.predicted_pct]));
+      const data = dates
+        .map((d) => {
+          let v = pointMap.get(d);
+          if (v == null && live?.date === d && live.tracks?.[track.track_id] != null) {
+            v = live.tracks[track.track_id];
+          }
+          if (v == null || !Number.isFinite(v)) return null;
+          return { time: toTime(d), value: v };
+        })
+        .filter(Boolean) as Array<{ time: Time; value: number }>;
+      series.setData(data);
     });
 
-    for (const track of chart.track_series ?? []) {
-      if (!showCombiners && track.track_id.startsWith("combiner:")) continue;
-      const lineData = dates.map((d) => {
-        const pt = track.points?.find((p) => p.date === d);
-        if (pt) return pt.predicted_pct;
-        if (live?.date === d && live.tracks?.[track.track_id] != null) {
-          return live.tracks[track.track_id];
-        }
-        return null;
-      });
-      series.push({
-        name: track.label ?? track.track_id,
-        type: "line",
-        data: lineData,
-        lineStyle: {
-          width: track.track_id.startsWith("combiner:") ? 1.5 : 2,
-          type: track.track_id.startsWith("combiner:") ? "dashed" : "solid",
-          color: trackColor(track.track_id),
-        },
-        itemStyle: { color: trackColor(track.track_id) },
-        symbol: live?.tracks?.[track.track_id] != null ? "triangle" : "circle",
-        symbolSize: live?.tracks?.[track.track_id] != null ? 8 : 4,
-      });
-    }
-
-    return {
-      backgroundColor: "transparent",
-      textStyle: { color: theme.textColor, fontSize: 11 },
-      grid: { left: 48, right: 16, top: 36, bottom: 56 },
-      tooltip: {
-        trigger: "axis",
-        formatter: (params: unknown) => {
-          const rows = Array.isArray(params) ? params : [params];
-          const axis = rows[0] as { axisValue?: string };
-          const day = axis?.axisValue ?? "";
-          const body = rows
-            .filter((p) => (p as { value?: number | null }).value != null)
-            .map((p) => {
-              const row = p as { seriesName?: string; value?: number };
-              return `${row.seriesName}: ${fmtPct(row.value)}`;
-            })
-            .join("<br/>");
-          return `${body}<br/><span style="opacity:0.7">${day}</span>`;
-        },
-      },
-      legend: {
-        type: "scroll",
-        bottom: 0,
-        textStyle: { color: theme.textColor, fontSize: 10 },
-      },
-      xAxis: {
-        type: "category",
-        data: dates,
-        axisLabel: { color: theme.textColor, rotate: 35, fontSize: 9 },
-        axisLine: { lineStyle: { color: theme.gridColor } },
-      },
-      yAxis: {
-        type: "value",
-        name: `${chart.horizon_days ?? 14}d return %`,
-        nameTextStyle: { color: theme.textColor, fontSize: 10 },
-        axisLabel: { color: theme.textColor, formatter: (v: number) => `${v}%` },
-        splitLine: { lineStyle: { color: theme.gridColor } },
-      },
-      series,
-    };
-  }, [chart, showCombiners, theme]);
+    fitLightweightChart(instance);
+  }, [chart, dates, visibleTracks]);
 
   useEffect(() => {
-    if (!ref.current || !option) return;
-    const instance = echarts.init(ref.current, dark ? "dark" : undefined);
-    instance.setOption(option);
-    const onResize = () => instance.resize();
-    window.addEventListener("resize", onResize);
+    const container = containerRef.current;
+    if (!container) return;
+    mountChart(container);
+
+    const ro = new ResizeObserver(() => {
+      if (!containerRef.current) return;
+      const el = containerRef.current;
+      if (!chartRef.current && el.clientWidth > 0) mountChart(el);
+      else if (chartRef.current && el.clientWidth > 0) {
+        chartRef.current.applyOptions({ width: el.clientWidth });
+      }
+    });
+    ro.observe(container);
     return () => {
-      window.removeEventListener("resize", onResize);
-      instance.dispose();
+      ro.disconnect();
+      chartRef.current?.remove();
+      chartRef.current = null;
+      setActiveChart(null);
     };
-  }, [option, dark]);
+  }, [mountChart]);
+
+  useEffect(() => {
+    syncData();
+  }, [syncData, chartEpoch]);
 
   if (!chart?.eval_dates?.length) {
     return (
@@ -128,5 +204,29 @@ export function TrackScoreboardChart({ chart, height = 360, showCombiners = fals
     );
   }
 
-  return <div ref={ref} style={{ width: "100%", height }} />;
+  return (
+    <div className="space-y-2">
+      <div ref={containerRef} className="w-full rounded-lg border border-border/40" style={{ height }} />
+      <LightweightChartZoomBar chart={activeChart} />
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+        {legendItems.map((item) => (
+          <span key={item.id} className="inline-flex items-center gap-1">
+            <span
+              className="inline-block h-0.5 w-4"
+              style={{
+                backgroundColor: item.color,
+                borderBottom: item.dashed ? `2px dashed ${item.color}` : undefined,
+                height: item.dashed ? 0 : undefined,
+              }}
+            />
+            {item.label}
+          </span>
+        ))}
+      </div>
+      <p className="text-[10px] text-muted-foreground">
+        {chart.horizon_days ?? 14}d forward return % at each OOS eval date · {fmtPct(0).replace("+", "")} dashed
+        reference line
+      </p>
+    </div>
+  );
 }
