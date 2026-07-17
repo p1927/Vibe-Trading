@@ -919,9 +919,10 @@ def main(run_dir: Path) -> None:
     else:
         bars_per_year = calc_bars_per_year(interval, effective_source)
 
-    # Auto mode: wrap preloaded data in a dummy loader
-    if source == "auto":
-        loader = _AutoLoader(data_map)
+    # Every source has already been fetched, sanitized, and enriched above.
+    # Reuse that exact snapshot so provider costs and run-card provenance stay
+    # aligned with the data consumed by the engine.
+    loader = _AutoLoader(data_map)
 
     if engine_type == "options":
         from backtest.engines.options_portfolio import run_options_backtest
@@ -1159,7 +1160,7 @@ def _sanitize_data_map(data_map: dict) -> dict:
 
 
 class _AutoLoader:
-    """Dummy loader for auto mode: returns pre-fetched data maps."""
+    """Loader adapter that returns a pre-fetched data map."""
 
     def __init__(self, data_map: dict):
         self._data = data_map

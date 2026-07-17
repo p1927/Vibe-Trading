@@ -174,3 +174,68 @@ def test_fetch_data_map_delegates_auto_routing(
     assert calls == [(["AAPL.US"], config, "1D")]
     assert result.source == "auto"
     assert result.effective_sources == ["yfinance"]
+
+
+def test_main_reuses_explicit_source_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = tmp_path / "run"
+    (run_dir / "code").mkdir(parents=True)
+    (run_dir / "code" / "signal_engine.py").write_text(
+        "class SignalEngine:\n    pass\n", encoding="utf-8"
+    )
+    (run_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "codes": ["AAPL.US"],
+                "start_date": "2026-01-01",
+                "end_date": "2026-01-02",
+                "source": "yahoo",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VIBE_TRADING_ALLOWED_RUN_ROOTS", str(tmp_path))
+
+    first = pd.DataFrame(
+        {"open": [10.0], "high": [10.0], "low": [10.0], "close": [10.0]},
+        index=pd.DatetimeIndex([pd.Timestamp("2026-01-01")]),
+    )
+    second = first.assign(open=20.0, high=20.0, low=20.0, close=20.0)
+
+    class CountingLoader:
+        name = "yahoo"
+        calls = 0
+
+        def fetch(self, codes, start_date, end_date, **kwargs):
+            del start_date, end_date, kwargs
+            type(self).calls += 1
+            frame = first if type(self).calls == 1 else second
+            return {codes[0]: frame}
+
+    observed: dict[str, float] = {}
+
+    class CapturingEngine:
+        def run_backtest(self, config, loader, signal_engine, path, **kwargs):
+            del signal_engine, path, kwargs
+            data = loader.fetch(
+                config["codes"], config["start_date"], config["end_date"]
+            )
+            observed["close"] = float(data["AAPL.US"]["close"].iloc[0])
+
+    monkeypatch.setattr(runner, "_get_loader", lambda source: CountingLoader)
+    monkeypatch.setattr(
+        runner,
+        "_load_module_from_file",
+        lambda path, name: SimpleNamespace(SignalEngine=type("SignalEngine", (), {})),
+    )
+    monkeypatch.setattr(runner, "_validate_signal_engine_class", lambda cls: None)
+    monkeypatch.setattr(
+        runner, "_create_market_engine", lambda source, config, codes: CapturingEngine()
+    )
+
+    runner.main(run_dir)
+
+    assert CountingLoader.calls == 1
+    assert observed["close"] == 10.0
