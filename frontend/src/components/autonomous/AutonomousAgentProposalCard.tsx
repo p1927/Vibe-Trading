@@ -125,8 +125,11 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
   const superseded = Boolean(proposal.superseded);
   const market = proposal.execution_market;
   const routingErrors = proposal.routing_errors ?? [];
+  const missingFields = proposal.missing_fields ?? [];
   const hasRoutingErrors = routingErrors.length > 0;
-  const blocked = expired || superseded || hasRoutingErrors;
+  const hasMissingFields = missingFields.length > 0;
+  const notReady = proposal.status !== "ready";
+  const blocked = expired || superseded || hasRoutingErrors || hasMissingFields || notReady;
 
   const handleCommit = useCallback(async () => {
     if (busy || blocked) return;
@@ -137,7 +140,13 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
         consent_ack: true,
         session_id: proposal.session_id ?? proposal.orchestrator_session_id,
       });
-      toast.success(`Agent "${result.agent.name}" is now running`);
+      if (result.infra_paused) {
+        toast.warning(
+          `Agent "${result.agent.name}" created — waiting for infra (${result.agent.infra_pending?.[0] ?? "check stack"})`,
+        );
+      } else {
+        toast.success(`Agent "${result.agent.name}" is now running`);
+      }
       if (result.paper_session_warnings?.length) {
         for (const warning of result.paper_session_warnings) {
           toast.warning(warning);
@@ -200,6 +209,17 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
           health={proposal.stack_health}
         />
 
+        {hasMissingFields ? (
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-200">
+            <p className="font-medium">Missing details — confirm is disabled until resolved:</p>
+            <ul className="mt-1 list-disc pl-4">
+              {missingFields.map((field) => (
+                <li key={field}>{field}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         {hasRoutingErrors ? (
           <div className="rounded-lg border border-red-500/40 bg-red-500/5 px-3 py-2 text-[11px] text-red-700 dark:text-red-300">
             <p className="font-medium">Routing error — cannot start agent until fixed:</p>
@@ -221,11 +241,11 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
             <dd className="font-medium text-foreground">{proposal.mandate || "—"}</dd>
           </div>
           <div>
-            <dt className="text-muted-foreground">Budget</dt>
+            <dt className="text-muted-foreground">{market === "US" ? "Budget (USD est.)" : "Budget"}</dt>
             <dd className="font-mono">{formatMoney(constraints.budget_inr, market)}</dd>
           </div>
           <div>
-            <dt className="text-muted-foreground">Max loss</dt>
+            <dt className="text-muted-foreground">{market === "US" ? "Max loss (USD est.)" : "Max loss"}</dt>
             <dd className="font-mono">{formatMoney(constraints.max_daily_loss_inr, market)}</dd>
           </div>
           <div>
@@ -329,7 +349,7 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
             <button
               type="button"
               onClick={() => setConfirmOpen(true)}
-              disabled={busy || hasRoutingErrors}
+              disabled={busy || blocked}
               className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-40"
             >
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}

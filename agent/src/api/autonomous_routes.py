@@ -40,8 +40,29 @@ class OrchestratorSessionResponse(BaseModel):
 
 @autonomous_router.get("")
 def list_autonomous_agents() -> Dict[str, Any]:
+    from trade_integrations.autonomous_agents.infra_startup import maybe_heal_infra_paused_agents
     from trade_integrations.autonomous_agents.runtime_status import build_stack_health, enrich_agent
     from trade_integrations.autonomous_agents.store import list_agents
+
+    try:
+        from src.scheduled_research.autonomous_agent_jobs import finalize_infra_heal
+
+        before = {
+            str(a.get("id") or ""): str(a.get("status") or "")
+            for a in list_agents()
+            if str(a.get("pause_reason") or "") == "infra"
+        }
+        maybe_heal_infra_paused_agents()
+        for agent_id, prev_status in before.items():
+            if not agent_id or prev_status != "paused":
+                continue
+            from trade_integrations.autonomous_agents.store import get_agent
+
+            updated = get_agent(agent_id)
+            if updated and str(updated.get("status") or "") == "running":
+                finalize_infra_heal(agent_id)
+    except Exception:
+        logger.debug("infra heal on list failed", exc_info=True)
 
     agents = [enrich_agent(a) for a in list_agents()]
     return {"agents": agents, "stack_health": build_stack_health()}
@@ -105,7 +126,11 @@ def commit_autonomous_agent_route(body: CommitAutonomousAgentRequest) -> Dict[st
         )
         register_agent_jobs(result["agent"])
         agent = result.get("agent") or {}
-        if not result.get("already_committed") and agent.get("id"):
+        if (
+            not result.get("already_committed")
+            and agent.get("id")
+            and not result.get("infra_paused")
+        ):
             from src.scheduled_research.autonomous_bootstrap import schedule_agent_bootstrap
 
             schedule_agent_bootstrap(str(agent["id"]))
@@ -127,11 +152,23 @@ def commit_autonomous_agent_route(body: CommitAutonomousAgentRequest) -> Dict[st
 
 @autonomous_router.post("/orchestrator/session", response_model=OrchestratorSessionResponse)
 def get_or_create_orchestrator_session() -> OrchestratorSessionResponse:
+    from trade_integrations.autonomous_agents.store import (
+        get_active_orchestrator_session_id,
+        set_active_orchestrator_session_id,
+    )
     from trade_integrations.autonomous_agents.turns import build_orchestrator_system_note
 
     svc = _session_service()
     if svc is None:
         raise HTTPException(status_code=503, detail="session runtime not enabled")
+
+    from src.session.orchestrator_profile import is_orchestrator_session
+
+    active_sid = get_active_orchestrator_session_id()
+    if active_sid:
+        existing = svc.get_session(active_sid)
+        if existing is not None and is_orchestrator_session(existing.config):
+            return OrchestratorSessionResponse(session_id=existing.session_id, title=existing.title)
 
     session = svc.create_session(
         title="autonomous:orchestrator",
@@ -141,6 +178,7 @@ def get_or_create_orchestrator_session() -> OrchestratorSessionResponse:
             "system_note": build_orchestrator_system_note(),
         },
     )
+    set_active_orchestrator_session_id(session.session_id)
     return OrchestratorSessionResponse(session_id=session.session_id, title=session.title)
 
 

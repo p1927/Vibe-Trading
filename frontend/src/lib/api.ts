@@ -1610,6 +1610,17 @@ export interface PlanPrediction {
   direction_view?: string | null;
   direction_eval_count?: number | null;
   sign_conflict?: boolean;
+  data_quality_warning?: {
+    gate?: string;
+    min_pct?: number | null;
+    threshold_pct?: number | null;
+    message?: string;
+    macro_trust_multiplier?: number | null;
+  } | null;
+  flow_coverage?: {
+    passes_gate?: boolean;
+    min_pct?: number | null;
+  } | null;
 }
 
 export interface IndexGlobalFactor {
@@ -2310,6 +2321,9 @@ export interface HubStatusPayload {
   paths?: Record<string, string>;
   news_staging?: {
     entity_pipeline_enabled?: boolean;
+    pipeline_paused?: boolean;
+    pause_reason?: string;
+    minimax_configured?: boolean;
     queued?: number;
     by_ticker?: Array<{ ticker: string; queued: number }>;
     worker_last?: {
@@ -2413,6 +2427,7 @@ export interface NewsImpactItem {
     facts?: string[];
     entities?: string[];
     implied_factors?: string[];
+    event_meta?: NewsImpactItem["event_meta"];
   };
   verification?: {
     status?: string;
@@ -2448,6 +2463,50 @@ export interface NewsImpactItem {
     attribution_share_pct?: number;
   } | null;
   timeline?: Array<{ day?: number; label?: string; nifty_level?: number }>;
+  event_meta?: {
+    event_id?: string;
+    distilled?: boolean;
+    ref_count?: number;
+    timeline?: Array<{
+      at?: string;
+      kind?: string;
+      summary?: string;
+      publisher?: string;
+      raw_title?: string;
+    }>;
+    references?: Array<{
+      ref_id?: string;
+      publisher?: string;
+      vendor?: string;
+      url?: string;
+      raw_title?: string;
+      raw_summary?: string;
+      published_at?: string;
+    }>;
+    consensus?: {
+      direction?: string;
+      confidence?: number;
+      ref_count?: number;
+      narrative?: string;
+      topics?: string[];
+      factors?: string[];
+    };
+  };
+  consensus?: {
+    direction?: string;
+    confidence?: number;
+    ref_count?: number;
+    narrative?: string;
+  };
+  references?: Array<{
+    ref_id?: string;
+    publisher?: string;
+    vendor?: string;
+    url?: string;
+    raw_title?: string;
+    raw_summary?: string;
+    published_at?: string;
+  }>;
   confidence_note?: string;
 }
 
@@ -2879,6 +2938,8 @@ export interface AutonomousAgentInstance {
   type?: string;
   name: string;
   status: string;
+  pause_reason?: "user" | "infra" | null;
+  infra_pending?: string[];
   vibe_session_id?: string;
   symbols: string[];
   mandate?: string;
@@ -2958,6 +3019,7 @@ export interface CommitAutonomousAgentResponse {
   vibe_session_id: string;
   paper_session_warnings?: string[];
   already_committed?: boolean;
+  infra_paused?: boolean;
 }
 
 export interface OrchestratorSessionResponse {
