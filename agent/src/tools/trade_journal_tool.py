@@ -78,6 +78,7 @@ def pair_trades_fifo(df: pd.DataFrame) -> list[dict[str, Any]]:
                 "pnl": round(pnl, 2),
                 "pnl_pct": round(pnl_pct, 4),
             })
+            lot["fee"] -= buy_fee
             lot["qty"] -= take
             remaining -= take
             if lot["qty"] <= 1e-9:

@@ -245,6 +245,38 @@ def test_fifo_partial_fill_splits_into_two_roundtrips() -> None:
     assert rts[1]["pnl"] == 500.0  # (30-20)*50
 
 
+@pytest.mark.parametrize("exit_quantities", [[5, 5], [4, 4, 4]])
+def test_fifo_partial_exits_conserve_entry_fee(exit_quantities: list[int]) -> None:
+    entry_qty = sum(exit_quantities)
+    records = [
+        _rec(
+            "2026-01-01 10:00:00",
+            "X.SH",
+            "buy",
+            entry_qty,
+            10,
+            fee=entry_qty,
+        )
+    ]
+    records.extend(
+        _rec(
+            f"2026-01-0{day} 10:00:00",
+            "X.SH",
+            "sell",
+            qty,
+            11,
+        )
+        for day, qty in enumerate(exit_quantities, start=2)
+    )
+
+    rts = pair_trades_fifo(_df(records))
+    gross_pnl = sum((trip["sell_price"] - trip["buy_price"]) * trip["qty"] for trip in rts)
+    allocated_entry_fee = gross_pnl - sum(trip["pnl"] for trip in rts)
+
+    assert allocated_entry_fee == pytest.approx(entry_qty)
+    assert sum(trip["pnl"] for trip in rts) == pytest.approx(0.0)
+
+
 def test_fifo_unmatched_sell_ignored() -> None:
     rts = pair_trades_fifo(
         _df([_rec("2026-01-01 10:00:00", "X.SH", "sell", 100, 12)])
