@@ -4398,6 +4398,11 @@ def _build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--host", default="0.0.0.0", help="Bind address")
     serve_parser.add_argument("--port", type=int, default=8000, help="Listen port")
     serve_parser.add_argument("--dev", action="store_true", help="Start the Vite dev server")
+    serve_parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Auto-reload on code changes (integrations/, agent/)",
+    )
 
     provider_parser = subparsers.add_parser("provider", help="Manage OAuth providers")
     provider_subparsers = provider_parser.add_subparsers(dest="provider_command")
@@ -4483,8 +4488,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=str(AGENT_DIR.parent / "frontend"),
         help="Path to the frontend directory (default: <repo>/frontend)",
     )
-
-    memory_parser = subparsers.add_parser("memory", help="Inspect persistent memory")
+    dev_parser.add_argument(
+        "--reload-api",
+        action="store_true",
+        help="Enable Vibe API auto-reload (integrations + agent code)",
+    )
+    memory_parser = subparsers.add_parser("memory", help="Manage persistent agent memory")
     memory_subparsers = memory_parser.add_subparsers(dest="memory_command")
 
     memory_list_parser = memory_subparsers.add_parser("list", help="List memory entries")
@@ -5238,6 +5247,7 @@ def cmd_dev(
     backend_port: int = 8899,
     frontend_port: int = 5899,
     frontend_dir: Optional[Path] = None,
+    reload_api: bool = False,
 ) -> int:
     """Start backend + Vite dev server in one foreground process.
 
@@ -5296,6 +5306,8 @@ def cmd_dev(
         return EXIT_USAGE_ERROR
 
     backend_cmd = [sys.executable, "-m", "cli._legacy", "serve", "--port", str(backend_port)]
+    if reload_api or os.getenv("STACK_DEV_RELOAD", "").strip().lower() in ("1", "true", "yes", "on"):
+        backend_cmd.append("--reload")
     # On Windows, ``npm`` is typically ``npm.cmd``. ``subprocess.Popen`` does
     # not consult ``PATHEXT`` for bare command names, so the call would fail
     # with ``FileNotFoundError`` even though ``shutil.which("npm")`` returned
@@ -5392,6 +5404,7 @@ def main(argv: list[str] | None = None) -> int:
                 backend_port=args.port,
                 frontend_port=args.frontend_port,
                 frontend_dir=Path(args.frontend_dir),
+                reload_api=getattr(args, "reload_api", False),
             )
         )
     if args.command == "serve":
