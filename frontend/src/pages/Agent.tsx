@@ -289,6 +289,7 @@ interface AgentProps {
   newsScenarioMode?: boolean;
   onNewsScenarioWidget?: (widget: TradePlanWidget) => void;
   boundPipelineAsOf?: string;
+  pipelineStale?: boolean;
 }
 
 export function Agent({
@@ -299,6 +300,7 @@ export function Agent({
   newsScenarioMode = false,
   onNewsScenarioWidget,
   boundPipelineAsOf: _boundPipelineAsOf,
+  pipelineStale = false,
 }: AgentProps = {}) {
   const { t } = useTranslation();
   const [input, setInput] = useState("");
@@ -893,10 +895,6 @@ export function Agent({
         if (!widget.widget_id || widget.type !== "trade_plan.widget") return;
         if (widget.widget_kind === "news_event_scenario") {
           onNewsScenarioWidget?.(widget);
-          if (newsScenarioMode) {
-            scrollToBottom();
-            return;
-          }
         }
         setResearchTicker(widget.underlying);
         setResearchAssetType(
@@ -2131,13 +2129,15 @@ export function Agent({
                 }
               }}
               placeholder={
-                goalComposerActive
-                  ? t("agent.describeGoal")
-                  : t("agent.placeholder")
+                newsScenarioMode && pipelineStale
+                  ? "Restart the advisor session to use the refreshed Analysis snapshot."
+                  : goalComposerActive
+                    ? t("agent.describeGoal")
+                    : t("agent.placeholder")
               }
               aria-label={t("agent.messageInputLabel")}
               className="flex-1 px-4 py-2.5 rounded-xl border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 transition-shadow resize-none max-h-32 overflow-y-auto"
-              disabled={status === "streaming"}
+              disabled={status === "streaming" || (newsScenarioMode && pipelineStale)}
             />
             {messages.length > 0 && (
               <button
@@ -2161,7 +2161,10 @@ export function Agent({
             ) : (
               <button
                 type="submit"
-                disabled={goalComposerActive ? !input.trim() : (!input.trim() && !attachment)}
+                disabled={
+                  (newsScenarioMode && pipelineStale) ||
+                  (goalComposerActive ? !input.trim() : !input.trim() && !attachment)
+                }
                 className="px-4 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium disabled:opacity-40 hover:opacity-90 transition-opacity"
                 title={t("agent.send")}
                 aria-label={t("agent.send")}

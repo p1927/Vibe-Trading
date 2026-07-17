@@ -562,6 +562,35 @@ def _inject_auto_paper_session_context(
     return normalized
 
 
+def _inject_news_scenario_session_context(
+    args: dict[str, Any],
+    *,
+    session_id: str,
+    tool_name: str,
+    session_config: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Inject bound pipeline_as_of / session_id into news-scenario MCP tools."""
+    from src.session.news_scenario_profile import (
+        SESSION_KIND_NEWS_SCENARIO,
+        is_news_scenario_pipeline_tool,
+    )
+
+    if not session_config or session_config.get("session_kind") != SESSION_KIND_NEWS_SCENARIO:
+        return args
+    if not is_news_scenario_pipeline_tool(tool_name):
+        return args
+    normalized = dict(args)
+    if not normalized.get("pipeline_as_of"):
+        bound = session_config.get("pipeline_as_of")
+        if bound:
+            normalized["pipeline_as_of"] = bound
+    if not normalized.get("ticker"):
+        normalized["ticker"] = session_config.get("pipeline_ticker") or "NIFTY"
+    if "run_news_event_scenario" in tool_name and session_id and not normalized.get("session_id"):
+        normalized["session_id"] = session_id
+    return normalized
+
+
 class AgentLoop:
     """ReAct Agent core loop.
 
@@ -635,6 +664,7 @@ class AgentLoop:
         self._called_ok = set()
         self._previous_summary = ""
         self._session_id = session_id
+        self._session_config: dict[str, Any] = dict(session_config or {})
 
         state_store = RunStateStore()
         RUNS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1282,6 +1312,12 @@ class AgentLoop:
             args = _inject_auto_paper_session_context(
                 args, session_id=self._session_id, tool_name=tc.name
             )
+            args = _inject_news_scenario_session_context(
+                args,
+                session_id=self._session_id,
+                tool_name=tc.name,
+                session_config=self._session_config,
+            )
             redacted_args = redact_payload(args)
             event_args = {k: str(v)[:200] for k, v in redacted_args.items()}
             self._emit("tool_call", {"tool": tc.name, "arguments": event_args, "iter": iteration})
@@ -1328,6 +1364,12 @@ class AgentLoop:
         args = _normalize_tool_run_dir(tc.arguments, self.memory.run_dir)
         args = _inject_auto_paper_session_context(
             args, session_id=self._session_id, tool_name=tc.name
+        )
+        args = _inject_news_scenario_session_context(
+            args,
+            session_id=self._session_id,
+            tool_name=tc.name,
+            session_config=self._session_config,
         )
 
         redacted_args = redact_payload(args)
@@ -1552,6 +1594,9 @@ class AgentLoop:
         preview = trace_result[:200]
         react_trace.append({"type": "tool_call", "tool": tc.name, "result_preview": preview})
         self._emit("tool_result", {"tool": tc.name, "status": status, "elapsed_ms": elapsed_ms, "preview": preview})
+        from src.session.news_scenario_session import sync_news_scenario_session_from_tool_result
+
+        sync_news_scenario_session_from_tool_result(self._session_id, tc.name, result)
         source = self._emit_tool_provenance(tc, trace_result, status)
         if source and success:
             cite = f"\n\n[Source: [[{source.ref_id}|{source.display_name}]]]"

@@ -68,7 +68,19 @@ _UNIVERSE_TAG = {
     "csi300": "equity_cn",
     "sp500": "equity_us",
     "btc-usdt": "crypto",
+    "nifty50": "equity_in",
 }
+
+# Hand-picked Nifty 50 representatives when nselib constituent list is unavailable.
+_NIFTY50_FALLBACK_CODES = [
+    "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "INFY", "ITC", "SBIN", "BHARTIARTL",
+    "KOTAKBANK", "LT", "HINDUNILVR", "AXISBANK", "BAJFINANCE", "ASIANPAINT", "MARUTI",
+    "SUNPHARMA", "TITAN", "ULTRACEMCO", "NESTLEIND", "WIPRO", "HCLTECH", "POWERGRID",
+    "NTPC", "TATAMOTORS", "M&M", "ADANIENT", "JSWSTEEL", "TATASTEEL", "COALINDIA",
+    "ONGC", "GRASIM", "TECHM", "HDFCLIFE", "SBILIFE", "BAJAJFINSV", "INDUSINDBK",
+    "CIPLA", "DRREDDY", "APOLLOHOSP", "EICHERMOT", "HEROMOTOCO", "BRITANNIA",
+    "DIVISLAB", "TATACONSUM", "BPCL", "HINDALCO", "ADANIPORTS", "LTIM", "BEL",
+]
 
 
 def _parse_period(period: str) -> tuple[str, str]:
@@ -96,7 +108,7 @@ def _load_universe_panel(
     with one column per instrument.
 
     Args:
-        universe: ``csi300`` | ``sp500`` | ``btc-usdt``.
+        universe: ``csi300`` | ``sp500`` | ``btc-usdt`` | ``nifty50``.
         period: ``YYYY-YYYY`` or ``YYYY-MM-DD/YYYY-MM-DD``.
         use_cache: When True (default) reuse a pickle in
             ``~/.vibe-trading/cache/`` if the same universe+period was fetched
@@ -126,6 +138,8 @@ def _load_universe_panel(
         panel = _load_sp500_panel(start, end)
     elif universe == "btc-usdt":
         panel = _load_btc_panel(start, end)
+    elif universe == "nifty50":
+        panel = _load_nifty50_panel(start, end)
     else:  # pragma: no cover — guarded above
         raise ValueError(f"unhandled universe {universe!r}")
 
@@ -454,6 +468,66 @@ def _fetch_sp500_constituents() -> list[str]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("sp500 Wikipedia fetch failed: %s", exc)
     return []
+
+
+def _load_nifty50_panel(start: str, end: str) -> dict[str, pd.DataFrame]:
+    """Nifty 50 panel via trade_integrations OpenAlgo/yfinance history."""
+    symbols: list[str] = []
+    constituent_source = "nifty50_constituents"
+    try:
+        from trade_integrations.dataflows.index_research.constituents import (
+            load_nifty50_constituents,
+        )
+
+        rows = load_nifty50_constituents()
+        symbols = [row.symbol.upper().strip() for row in rows if row.symbol]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("nifty50 constituent load failed (%s); using fallback", exc)
+
+    if not symbols:
+        symbols = list(_NIFTY50_FALLBACK_CODES)
+        constituent_source = "hand-picked fallback"
+        logger.warning("nifty50: using %d-name fallback (degraded run)", len(symbols))
+
+    from trade_integrations.dataflows.index_research.alpha_bridge.india_ohlcv import (
+        load_symbol_ohlcv,
+    )
+
+    fetched: dict[str, pd.DataFrame] = {}
+    for code in symbols:
+        try:
+            frame = load_symbol_ohlcv(code, start_date=start, end_date=end)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("nifty50 fetch failed for %s: %s", code, exc)
+            continue
+        if frame is None or frame.empty or "close" not in frame.columns:
+            continue
+        df = frame.copy()
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+        mask = (df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))
+        df = df.loc[mask]
+        if df.empty:
+            continue
+        for col in ("open", "high", "low", "close", "volume"):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        keep = [c for c in ("open", "high", "low", "close", "volume") if c in df.columns]
+        trimmed = df[keep].dropna(subset=["close"])
+        if not trimmed.empty:
+            fetched[code] = trimmed
+
+    panel = _wide_from_fetched(fetched, include_amount=False)
+    if all(k in panel for k in ("open", "high", "low", "close")):
+        panel["vwap"] = (panel["open"] + panel["high"] + panel["low"] + panel["close"]) / 4.0
+
+    panel["_meta"] = {
+        "universe": "nifty50",
+        "survivorship_bias": True,
+        "constituent_source": constituent_source,
+        "constituent_count": len(fetched),
+    }
+    return panel
 
 
 def _load_btc_panel(start: str, end: str) -> dict[str, pd.DataFrame]:
@@ -869,7 +943,7 @@ class AlphaBenchTool(BaseTool):
             },
             "universe": {
                 "type": "string",
-                "description": "csi300 | sp500 | btc-usdt (resolved via existing data tools).",
+                "description": "csi300 | sp500 | btc-usdt | nifty50 (resolved via existing data tools).",
             },
             "period": {
                 "type": "string",

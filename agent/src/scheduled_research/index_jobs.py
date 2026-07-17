@@ -31,6 +31,7 @@ JOB_TYPE_INDEX_CALIBRATION = "index_calibration"
 JOB_TYPE_COMPANY_RESEARCH_ARCHIVE = "company_research_archive"
 
 JOB_TYPE_INDEX_PREDICTION_POST_CLOSE = "index_prediction_post_close"
+JOB_TYPE_HUB_NEWS_ENTITY = "hub_news_entity"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -39,6 +40,7 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_CALIBRATION,
     JOB_TYPE_COMPANY_RESEARCH_ARCHIVE,
     JOB_TYPE_INDEX_PREDICTION_POST_CLOSE,
+    JOB_TYPE_HUB_NEWS_ENTITY,
 })
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -140,11 +142,22 @@ def run_index_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[str
 
     cfg = config or {}
     ticker = str(cfg.get("ticker") or "NIFTY").strip().upper()
-    doc, reason = run_index_light_refresh(
-        ticker,
-        horizon_days=cfg.get("horizon_days"),
-        force=bool(cfg.get("force")),
-    )
+    try:
+        doc, reason = run_index_light_refresh(
+            ticker,
+            horizon_days=cfg.get("horizon_days"),
+            force=bool(cfg.get("force")),
+        )
+    except Exception as exc:
+        # Poll jobs must not enter terminal FAILED on transient pipeline errors.
+        logger.exception("index plan refresh failed for %s", ticker)
+        return {
+            "skipped": False,
+            "ticker": ticker,
+            "reason": "error",
+            "refreshed": False,
+            "error": str(exc),
+        }
     if reason == "unchanged":
         return {"skipped": False, "ticker": ticker, "reason": reason, "refreshed": False}
     return {
@@ -212,6 +225,14 @@ def run_index_calibration_job(config: dict[str, Any] | None = None) -> dict[str,
     )
 
 
+def run_hub_news_entity_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Drain staging queue and upsert distilled news events."""
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.dataflows.index_research.news_entity_worker import run_hub_news_entity_job as _fn
+
+    return _fn(config)
+
+
 def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
     """Execute one index scheduled job synchronously."""
     job_type = str(job.config.get("job_type") or "")
@@ -238,6 +259,10 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
     if job_type == JOB_TYPE_INDEX_PREDICTION_POST_CLOSE:
         summary = run_index_prediction_post_close_job(job.config)
         logger.info("index prediction post-close completed for job %s: %s", job.id, summary)
+        return
+    if job_type == JOB_TYPE_HUB_NEWS_ENTITY:
+        summary = run_hub_news_entity_job(job.config)
+        logger.info("hub news entity pipeline completed for job %s: %s", job.id, summary)
         return
     raise ValueError(f"unsupported index job_type: {job_type!r}")
 
@@ -309,6 +334,15 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             status=JobStatus.PENDING,
             created_at=now_ms,
             config={"job_type": JOB_TYPE_COMPANY_RESEARCH_ARCHIVE, "ticker": "NIFTY"},
+        ),
+        ScheduledResearchJob(
+            id="nifty-hub-news-entity",
+            prompt="Process staging news refs into distilled hub events",
+            schedule=os.getenv("HUB_NEWS_ENTITY_CRON", "35 18 * * *").strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={"job_type": JOB_TYPE_HUB_NEWS_ENTITY, "ticker": "NIFTY", "batch_size": 200},
         ),
         ScheduledResearchJob(
             id="nifty-index-prediction-post-close",

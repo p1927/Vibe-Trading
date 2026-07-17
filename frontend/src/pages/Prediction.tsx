@@ -41,9 +41,12 @@ import {
   type IndexPredictionHistoryMeta,
   type IndexPredictionHistoryRow,
   type IndexSimulationResult,
+  type NewsScenarioDateRange,
   type TradePlanWidget,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { normalizePipelineAsOf, pipelineAsOfMatches } from "@/lib/pipelineSnapshot";
+import { scenarioDocToWidget } from "@/lib/newsScenarioUtils";
 
 const EmbeddedAgent = lazy(() =>
   import("@/pages/Agent").then((m) => ({ default: m.Agent })),
@@ -62,6 +65,9 @@ export function Prediction() {
   const [newsSessionError, setNewsSessionError] = useState<string | null>(null);
   const [boundPipelineAsOf, setBoundPipelineAsOf] = useState<string | null>(null);
   const [newsScenarioWidget, setNewsScenarioWidget] = useState<TradePlanWidget | null>(null);
+  const [newsSessionDateRange, setNewsSessionDateRange] = useState<NewsScenarioDateRange | null>(null);
+  const [newsSelectedOutcomeId, setNewsSelectedOutcomeId] = useState<string | null>(null);
+  const [recentScenarios, setRecentScenarios] = useState<Array<Record<string, unknown>>>([]);
   const newsSessionBootstrappingRef = useRef(false);
 
   const [horizonDays, setHorizonDays] = useState(14);
@@ -117,11 +123,87 @@ export function Prediction() {
     hasArtifact &&
     boundPipelineAsOf != null &&
     artifact?.as_of != null &&
-    boundPipelineAsOf !== artifact.as_of;
+    !pipelineAsOfMatches(boundPipelineAsOf, artifact.as_of);
+
+  const embeddedNewsItemCount =
+    ((
+      (artifact as Record<string, unknown> | null | undefined)?.news_impact as
+        | { items?: unknown[] }
+        | undefined
+    )?.items?.length ?? 0);
+
+  useEffect(() => {
+    if (predictionMode !== NEWS_SCENARIO_MODE || pipelineStale) return;
+    void api.listRecentNewsScenarios("NIFTY", 8).then((res) => {
+      setRecentScenarios((res.scenarios ?? []) as Array<Record<string, unknown>>);
+    }).catch(() => setRecentScenarios([]));
+  }, [predictionMode, pipelineStale, newsScenarioWidget?.scenario_id]);
+
+  const handleLoadRecentScenario = useCallback(async (scenarioId: string) => {
+    try {
+      const res = await api.getNewsScenario(scenarioId, "NIFTY");
+      if (res.scenario) {
+        setNewsScenarioWidget(scenarioDocToWidget(res.scenario as Record<string, unknown>));
+      }
+    } catch (e) {
+      setNewsSessionError(e instanceof Error ? e.message : "Failed to load scenario");
+    }
+  }, []);
 
   const handleNewsScenarioWidget = useCallback((widget: TradePlanWidget) => {
     setNewsScenarioWidget(widget);
+    if (widget.selected_outcome_id) {
+      setNewsSelectedOutcomeId(widget.selected_outcome_id);
+    }
+    if (widget.date_range?.start && widget.date_range?.end) {
+      setNewsSessionDateRange(widget.date_range);
+    }
   }, []);
+
+  const restartNewsSession = useCallback(() => {
+    setNewsScenarioWidget(null);
+    setBoundPipelineAsOf(null);
+    setNewsSessionDateRange(null);
+    setNewsSelectedOutcomeId(null);
+    setNewsSessionError(null);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("session");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [setSearchParams]);
+
+  const handleNewsDateRangeChange = useCallback(
+    async (range: NewsScenarioDateRange) => {
+      setNewsSessionDateRange(range);
+      const sid = searchParams.get("session");
+      if (!sid || pipelineStale) return;
+      try {
+        await api.patchNewsScenarioSession(sid, { date_range: range });
+      } catch (e) {
+        setNewsSessionError(e instanceof Error ? e.message : "Failed to update date range");
+      }
+    },
+    [pipelineStale, searchParams],
+  );
+
+  const handleNewsOutcomeSelect = useCallback(
+    async (outcomeId: string) => {
+      setNewsSelectedOutcomeId(outcomeId);
+      setNewsScenarioWidget((w) => (w ? { ...w, selected_outcome_id: outcomeId } : w));
+      const sid = searchParams.get("session");
+      if (!sid || pipelineStale) return;
+      try {
+        await api.patchNewsScenarioSession(sid, { selected_outcome_id: outcomeId });
+      } catch (e) {
+        setNewsSessionError(e instanceof Error ? e.message : "Failed to update outcome selection");
+      }
+    },
+    [pipelineStale, searchParams],
+  );
 
   const setPredictionMode = useCallback(
     (mode: "analysis" | typeof NEWS_SCENARIO_MODE) => {
@@ -146,6 +228,7 @@ export function Prediction() {
 
   useEffect(() => {
     if (predictionMode !== NEWS_SCENARIO_MODE || !artifact?.as_of) return;
+    if (pipelineStale) return;
     if (newsSessionBootstrappingRef.current) return;
 
     const pipelineAsOf = artifact.as_of;
@@ -159,9 +242,9 @@ export function Prediction() {
           ticker: "NIFTY",
           pipeline_as_of: pipelineAsOf,
           horizon_days: horizonDays,
-          session_id: urlNewsSessionId || undefined,
+          session_id: pipelineStale ? undefined : urlNewsSessionId || undefined,
         });
-        setBoundPipelineAsOf(res.pipeline_as_of);
+        setBoundPipelineAsOf(normalizePipelineAsOf(res.pipeline_as_of || pipelineAsOf));
         if (res.session_id && res.session_id !== urlNewsSessionId) {
           setSearchParams(
             (prev) => {
@@ -181,7 +264,7 @@ export function Prediction() {
     };
 
     void bootstrap();
-  }, [predictionMode, artifact?.as_of, horizonDays, urlNewsSessionId, setSearchParams]);
+  }, [predictionMode, artifact?.as_of, horizonDays, urlNewsSessionId, setSearchParams, pipelineStale]);
 
   const loadHistory = useCallback(async () => {
     setHistoryError(null);
@@ -371,10 +454,19 @@ export function Prediction() {
         {predictionMode === NEWS_SCENARIO_MODE ? (
           <>
             {pipelineStale ? (
-              <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
-                <AlertTriangle className="h-4 w-4 shrink-0" />
-                Analysis snapshot updated ({artifact?.as_of?.slice(0, 16)}). Re-run Analysis or start a
-                new advisor session to bind the latest pipeline.
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                  Analysis refreshed ({artifact?.as_of?.slice(0, 16)}). Restart the advisor session to
+                  bind the latest pipeline snapshot.
+                </div>
+                <button
+                  type="button"
+                  onClick={restartNewsSession}
+                  className="shrink-0 rounded-md bg-amber-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-amber-700"
+                >
+                  Restart session
+                </button>
               </div>
             ) : null}
             {newsSessionError ? (
@@ -400,12 +492,23 @@ export function Prediction() {
                       embedded
                       newsScenarioMode
                       boundPipelineAsOf={boundPipelineAsOf ?? artifact?.as_of ?? undefined}
+                      pipelineStale={pipelineStale}
                       onNewsScenarioWidget={handleNewsScenarioWidget}
                     />
                   </Suspense>
                 </div>
               </div>
-              <NewsScenarioCanvas widget={newsScenarioWidget} />
+              <NewsScenarioCanvas
+                widget={newsScenarioWidget}
+                disabled={pipelineStale}
+                dateRange={newsSessionDateRange}
+                selectedOutcomeId={newsSelectedOutcomeId}
+                embeddedNewsItemCount={embeddedNewsItemCount}
+                recentScenarios={recentScenarios}
+                onDateRangeChange={handleNewsDateRangeChange}
+                onOutcomeSelect={handleNewsOutcomeSelect}
+                onLoadScenario={handleLoadRecentScenario}
+              />
             </div>
           </>
         ) : (
