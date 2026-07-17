@@ -48,7 +48,6 @@ VALID_SOURCES: set[str] = {
     "alphavantage",
     "tiingo",
     "fmp",
-    "feitu",
     "qveris",  # QVERIS-INTEGRATION
     "india_broker",
     "longbridge",
@@ -96,7 +95,6 @@ def _ensure_registered() -> None:
         "backtest.loaders.alphavantage_loader",
         "backtest.loaders.tiingo_loader",
         "backtest.loaders.fmp_loader",
-        "backtest.loaders.feitu_loader",
         "backtest.loaders.qveris_loader",  # QVERIS-INTEGRATION
         "backtest.loaders.india_broker_loader",
         "backtest.loaders.longbridge",
@@ -130,9 +128,9 @@ _NO_NETWORK_FALLBACK_SOURCES: frozenset[str] = frozenset({"local", "qveris"})  #
 # that must be politely throttled; Finnhub/AlphaVantage/Tiingo/FMP are key-gated
 # REST fallbacks placed deeper in the chain.
 FALLBACK_CHAINS: dict[str, list[str]] = {
-    "a_share":   ["tencent", "mootdx", "eastmoney", "baostock", "feitu", "akshare", "tushare", "local"],
+    "a_share":   ["tencent", "mootdx", "eastmoney", "baostock", "akshare", "tushare", "local"],
     "us_equity": ["yahoo", "stooq", "sina", "eastmoney", "yfinance", "tiingo", "fmp", "finnhub", "alphavantage", "longbridge", "akshare", "local"],
-    "hk_equity": ["eastmoney", "yahoo", "feitu", "futu", "yfinance", "akshare", "longbridge", "local"],
+    "hk_equity": ["eastmoney", "yahoo", "futu", "yfinance", "akshare", "longbridge", "local"],
     "india_equity": ["yahoo", "yfinance", "india_broker", "local"],
     "crypto":    ["okx", "ccxt", "yfinance", "local"],
     "futures":   ["tushare", "akshare", "local"],
