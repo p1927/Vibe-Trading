@@ -12,16 +12,40 @@ const PROXY_PATHS = [
   "/settings/data-sources",
   "/channels",
   "/mandate",
+  "/autonomous-agents",
   "/live",
   "/upload",
   "/shadow-reports",
   "/trade",
+  "/trading",
 ];
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const apiTarget = env.VITE_API_URL || "http://127.0.0.1:8899";
-  const apiProxy = { target: apiTarget, changeOrigin: true };
+  const apiProxy = {
+    target: apiTarget,
+    changeOrigin: true,
+    configure: (proxy: {
+      on: (event: string, handler: (...args: unknown[]) => void) => void;
+    }) => {
+      proxy.on("proxyReq", (proxyReq: { setHeader: (name: string, value: string) => void }, req) => {
+        const url = req.url ?? "";
+        if (url.includes("/stream") || req.headers?.accept?.includes("text/event-stream")) {
+          proxyReq.setHeader("Accept", "text/event-stream");
+          proxyReq.setHeader("Cache-Control", "no-cache");
+        }
+      });
+      proxy.on("proxyRes", (proxyRes: { headers: Record<string, string | string[] | undefined> }) => {
+        const ct = proxyRes.headers["content-type"];
+        const contentType = Array.isArray(ct) ? ct[0] : ct;
+        if (contentType?.includes("text/event-stream")) {
+          proxyRes.headers["cache-control"] = "no-cache";
+          proxyRes.headers["x-accel-buffering"] = "no";
+        }
+      });
+    },
+  };
   const apiProxyWithHtmlFallback = {
     ...apiProxy,
     bypass(req: { headers: { accept?: string } }) {

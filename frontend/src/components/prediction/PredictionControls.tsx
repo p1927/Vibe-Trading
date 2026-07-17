@@ -26,6 +26,7 @@ interface Props {
   onRefreshConstituentsChange: (value: boolean) => void;
   onRun: () => void;
   running?: boolean;
+  runJobId?: string | null;
   lastUpdated?: string | null;
   spot?: number | null;
   regime?: string | null;
@@ -42,6 +43,7 @@ export function PredictionControls({
   onRefreshConstituentsChange,
   onRun,
   running,
+  runJobId,
   lastUpdated,
   spot,
   regime,
@@ -134,8 +136,11 @@ export function PredictionControls({
           className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
         >
           {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-          Run analysis
+          {running ? "Analysis running…" : "Run analysis"}
         </button>
+        {running && runJobId ? (
+          <span className="text-[10px] tabular-nums text-muted-foreground">Run {runJobId.slice(0, 12)}…</span>
+        ) : null}
       </div>
     </div>
   );

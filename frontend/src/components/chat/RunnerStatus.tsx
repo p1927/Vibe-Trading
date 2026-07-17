@@ -27,6 +27,13 @@ import {
 interface ConnectorCheckSnapshot {
   status: string;
   error?: string;
+  broker?: string;
+  broker_display?: string;
+  analyze_mode?: boolean;
+  host?: string;
+  switch_url?: string;
+  warning?: string;
+  token_sync_warning?: string;
 }
 
 interface Props {
@@ -91,9 +98,22 @@ function fallbackAuthorizeInstruction(): string {
   return "Run `vibe-trading connector list`, choose the broker profile, then run `vibe-trading connector authorize <profile>` from the desktop session that will hold the broker connection.";
 }
 
-function connectorDisplayName(profile: TradingConnectorProfile): string {
-  if (profile.connector === "openalgo") return "OpenAlgo";
+function connectorDisplayName(
+  profile: TradingConnectorProfile,
+  check?: ConnectorCheckSnapshot | null,
+): string {
+  if (profile.connector === "openalgo") {
+    if (check?.broker_display) return `OpenAlgo · ${check.broker_display}`;
+    return "OpenAlgo";
+  }
   return profile.connector;
+}
+
+function connectorSummaryName(
+  profile: TradingConnectorProfile,
+  check?: ConnectorCheckSnapshot | null,
+): string {
+  return connectorDisplayName(profile, check);
 }
 
 function SdkProfileRow({
@@ -111,7 +131,7 @@ function SdkProfileRow({
   return (
     <div className="grid gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-2.5">
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-xs font-semibold text-foreground">{connectorDisplayName(profile)}</span>
+        <span className="text-xs font-semibold text-foreground">{connectorDisplayName(profile, check)}</span>
         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
           {profile.selected ? i18n.t("runnerStatus.selectedProfile") : profile.id}
         </span>
@@ -131,7 +151,32 @@ function SdkProfileRow({
         )}
       </div>
       <p className="font-mono text-[10px] text-muted-foreground">{profile.id}</p>
+      {profile.connector === "openalgo" ? (
+        <div className="grid gap-1 text-[10px] text-muted-foreground">
+          {check?.host ? (
+            <p>
+              {i18n.t("runnerStatus.openalgoHost")}: <span className="font-mono text-foreground">{check.host}</span>
+            </p>
+          ) : null}
+          {check?.analyze_mode != null ? (
+            <p>
+              {i18n.t("runnerStatus.openalgoAnalyzeMode")}:{" "}
+              <span className="text-foreground">
+                {check.analyze_mode ? i18n.t("runnerStatus.openalgoAnalyzeOn") : i18n.t("runnerStatus.openalgoAnalyzeOff")}
+              </span>
+            </p>
+          ) : null}
+          {!check?.broker_display ? (
+            <p>{i18n.t("runnerStatus.openalgoConfigureBroker")}</p>
+          ) : null}
+        </div>
+      ) : null}
       {profile.notes ? <p className="text-[10px] leading-relaxed text-muted-foreground">{profile.notes}</p> : null}
+      {check?.warning || check?.token_sync_warning ? (
+        <p className="text-[10px] text-amber-700 dark:text-amber-300">
+          {check.warning || check.token_sync_warning}
+        </p>
+      ) : null}
       {check?.error ? (
         <p className="text-[10px] text-amber-700 dark:text-amber-300">{check.error}</p>
       ) : null}
@@ -354,8 +399,11 @@ export const RunnerStatus = memo(function RunnerStatus({
   if (!selectedProfile && oauthBrokers.length === 0) return null;
 
   const isOAuthHalted = (halted ?? status?.global_halted) && showOAuthSection;
+  const summaryName = selectedProfile ? connectorSummaryName(selectedProfile, connectorCheck) : "";
   const summary = sdkReady && selectedProfile
-    ? i18n.t("runnerStatus.sdkConnectedSummary", { name: connectorDisplayName(selectedProfile) })
+    ? (selectedProfile.connector === "openalgo" && connectorCheck?.broker_display
+      ? i18n.t("runnerStatus.sdkConnectedBrokerSummary", { broker: connectorCheck.broker_display })
+      : i18n.t("runnerStatus.sdkConnectedSummary", { name: summaryName }))
     : oauthAuthorizedCount > 0
       ? i18n.t("runnerStatus.connected", { count: oauthAuthorizedCount })
       : i18n.t("runnerStatus.pickConnector");

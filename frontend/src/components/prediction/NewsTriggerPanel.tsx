@@ -7,6 +7,7 @@ interface Props {
   countdownSec?: number;
   pollMs?: number;
   monitorEnabled?: boolean;
+  pausedForAnalysis?: boolean;
 }
 
 export function NewsTriggerPanel({
@@ -15,6 +16,7 @@ export function NewsTriggerPanel({
   countdownSec = 0,
   pollMs = 0,
   monitorEnabled,
+  pausedForAnalysis = false,
 }: Props) {
   if (!monitorEnabled) {
     return (
@@ -40,7 +42,9 @@ export function NewsTriggerPanel({
       <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
         <RefreshCw className="h-3.5 w-3.5" />
         <span>
-          Next refresh in {countdownSec}s
+          {pausedForAnalysis
+            ? "Live refresh paused during analysis"
+            : `Next refresh in ${countdownSec}s`}
           {lastReason ? ` · last: ${lastReason.replace(/_/g, " ")}` : ""}
           {mins > 0 ? ` · every ${mins}m` : ""}
         </span>

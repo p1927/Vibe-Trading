@@ -23,6 +23,10 @@ import { AgentAvatar } from "./AgentAvatar";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { MiniPnlOverTimeChart } from "@/components/charts/MiniPnlOverTimeChart";
 import { IndexFactorChart } from "@/components/charts/IndexFactorChart";
+import {
+  NewsScenarioPathChart,
+  formatOutcomeReturn,
+} from "@/components/charts/NewsScenarioPathChart";
 import { buildOptionSymbol, type StrategyLeg } from "@/lib/strategyMath";
 import {
   computePnlOverTimeSamples,
@@ -47,6 +51,8 @@ const PayoffChart = lazy(() =>
 
 interface Props {
   widget: TradePlanWidget;
+  autonomousMode?: boolean;
+  planApproved?: boolean;
 }
 
 function formatInr(value: unknown, precise = false): string {
@@ -113,7 +119,11 @@ function ScenarioTile({
   );
 }
 
-export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }: Props) {
+export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
+  widget,
+  autonomousMode = false,
+  planApproved = false,
+}: Props) {
   const agentPick = widget.agent_recommended_strategy || widget.recommended?.name || "";
   const [selectedScenario, setSelectedScenario] = useState(0);
   const [selectedStrategyName, setSelectedStrategyName] = useState(agentPick);
@@ -422,8 +432,90 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
 
   const builderUrl = widget.meta?.strategy_builder_execute_url || widget.meta?.strategy_builder_url;
   const executeLabel = isPaper ? "Execute (Paper)" : "Execute (Live)";
-  const executeDisabled =
-    executing || executed || executeOrders.length === 0 || (!isPaper && liveBlocked);
+  const isNewsScenario = widget.widget_kind === "news_event_scenario";
+
+  if (isNewsScenario) {
+    const eventTitle =
+      (widget.event?.title as string | undefined)?.trim() ||
+      (widget.event?.headline as string | undefined)?.trim() ||
+      "News event scenario";
+    const outcomes = widget.outcomes ?? [];
+    const selected = outcomes.find((o) => o.id === widget.selected_outcome_id) ?? outcomes[0];
+
+    return (
+      <div className="flex gap-3">
+        <AgentAvatar />
+        <div className="flex-1 min-w-0 space-y-3 rounded-xl border border-border/60 bg-card/50 p-4 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <BarChart3 className="h-4 w-4 text-primary" />
+                News scenario — {widget.underlying}
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{eventTitle}</p>
+            </div>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
+              Scenario paths
+            </span>
+          </div>
+
+          <NewsScenarioPathChart
+            baselinePath={widget.baseline?.path}
+            outcomes={outcomes}
+            fanBand={widget.fan_band}
+            selectedOutcomeId={widget.selected_outcome_id}
+            height={200}
+            compact
+            showLegend={outcomes.length <= 3}
+          />
+
+          {outcomes.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5 text-[10px]">
+              {outcomes.slice(0, 4).map((outcome) => (
+                <span
+                  key={outcome.id || outcome.label}
+                  className={[
+                    "rounded-md border px-2 py-1 font-mono",
+                    outcome.id === widget.selected_outcome_id
+                      ? "border-primary/50 bg-primary/5 text-primary"
+                      : "border-border/50 text-muted-foreground",
+                  ].join(" ")}
+                >
+                  {outcome.label || outcome.id}: {formatOutcomeReturn(outcome)}
+                </span>
+              ))}
+            </div>
+          ) : null}
+
+          {selected ? (
+            <p className="text-[10px] text-muted-foreground">
+              Highlighted branch:{" "}
+              <span className="font-medium text-foreground">{selected.label || selected.id}</span>
+              {selected.range?.low != null && selected.range?.high != null ? (
+                <span className="ml-1 font-mono">
+                  · range{" "}
+                  {Number(selected.range.low).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                  –
+                  {Number(selected.range.high).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                </span>
+              ) : null}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  const isHoldCash =
+    normalizeStrategyKey(displayRec.name || "") === "hold_cash" ||
+    normalizeStrategyKey(agentPick) === "hold_cash";
+  const autonomousDisplayOnly = autonomousMode && planApproved;
+  const hideExecute =
+    autonomousDisplayOnly ||
+    isHoldCash ||
+    executeOrders.length === 0 ||
+    (!isPaper && liveBlocked);
+  const executeDisabled = executing || executed || hideExecute;
   const openAlgoUrl = execMode?.switch_url || "";
 
   if (
@@ -477,6 +569,11 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
             {isPaper && (
               <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-700 dark:text-amber-400">
                 Paper
+              </span>
+            )}
+            {autonomousDisplayOnly && (
+              <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sky-700 dark:text-sky-400">
+                Autonomous · Nautilus
               </span>
             )}
             {!isPaper && (
@@ -758,6 +855,9 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({ widget }:
                   ),
                 )}
               </ul>
+            )}
+            {isHoldCash && (
+              <p className="text-[11px] text-muted-foreground italic">Remain in cash — no equity order on this recommendation.</p>
             )}
           </div>
         )}

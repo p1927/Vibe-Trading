@@ -573,8 +573,24 @@ def prefetch_research_for_message(
     asset_type = infer_prefetch_asset_type(session_config, ticker, content)
     artifact: dict[str, Any] | None = None
     index_artifact: dict[str, Any] | None = None
+
+    from src.session.news_scenario_profile import is_news_scenario_session
+
+    news_scenario_mode = is_news_scenario_session(session_config)
     try:
-        artifact = prefetch_hub_plan(ticker, asset_type)
+        if news_scenario_mode:
+            from trade_integrations.dataflows.index_research.pipeline_snapshot import (
+                load_pipeline_doc_from_hub,
+                normalize_as_of,
+            )
+
+            pipeline_as_of = str((session_config or {}).get("pipeline_as_of") or "")
+            doc = load_pipeline_doc_from_hub(ticker)
+            if doc and normalize_as_of(doc.as_of) == normalize_as_of(pipeline_as_of):
+                index_artifact = _index_doc_to_panel(doc)
+                index_artifact["asset_type"] = "index"
+        else:
+            artifact = prefetch_hub_plan(ticker, asset_type)
         if artifact:
             _maybe_evaluate_plan_staleness(artifact, ticker, asset_type, event_bus, session_id)
             _emit(
@@ -601,7 +617,7 @@ def prefetch_research_for_message(
 
         from trade_integrations.tools.index_research_tools import is_index_research_eligible
 
-        if is_index_research_eligible(ticker):
+        if is_index_research_eligible(ticker) and not news_scenario_mode:
             index_artifact = prefetch_index_hub_plan(ticker)
             if index_artifact:
                 _emit(
@@ -621,6 +637,13 @@ def prefetch_research_for_message(
                         ticker,
                         widget_intent=widget_intent,
                     )
+        elif news_scenario_mode and index_artifact:
+            _emit(
+                event_bus,
+                session_id,
+                "research.artifact",
+                {"ticker": ticker, "asset_type": "index", "artifact": index_artifact},
+            )
     except Exception:
         logger.exception("Hub prefetch failed for %s", ticker)
 
@@ -630,6 +653,7 @@ def prefetch_research_for_message(
         artifact,
         index_artifact=index_artifact,
         widget_intent=widget_intent,
+        session_config=session_config,
     )
     if detect_finalize_intent(content):
         _maybe_start_debate(session_id, ticker, asset_type, event_bus)

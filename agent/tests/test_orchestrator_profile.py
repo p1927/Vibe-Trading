@@ -51,9 +51,19 @@ def test_is_orchestrator_session() -> None:
     assert not is_orchestrator_session(None)
 
 
+class _SearchIndiaTool(BaseTool):
+    name = "search_india_symbol"
+    description = "search"
+    parameters = {"type": "object", "properties": {}}
+
+    def execute(self, **kwargs):
+        return "{}"
+
+
 def test_filter_registry_for_orchestrator() -> None:
     reg = ToolRegistry()
     reg.register(_ProposeTool())
+    reg.register(_SearchIndiaTool())
     reg.register(_MandateTool())
     reg.register(_McpBrowseTool())
     reg.register(_DummyTool())
@@ -61,6 +71,7 @@ def test_filter_registry_for_orchestrator() -> None:
     filtered = filter_registry_for_orchestrator(reg)
     names = set(filtered._tools.keys())
     assert "propose_autonomous_agent" in names
+    assert "search_india_symbol" in names
     assert "mcp_openalgo_get_stock_browse" in names
     assert "propose_mandate_profiles" not in names
     assert "dummy" not in names

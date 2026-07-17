@@ -157,6 +157,16 @@ async def dispatch_autonomous_job(job: ScheduledResearchJob) -> None:
         await asyncio.to_thread(run_quant_monitor_tick, agent_id)
         return
     if job_type == JOB_TYPE_RESEARCH:
+        import os
+
+        if os.getenv("AUTONOMOUS_RESEARCH_ON_SCHEDULE", "").strip().lower() not in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            logger.info("skip scheduled research for %s (alert-only policy)", agent_id)
+            return
         await dispatch_full_reasoning(agent_id, turn_kind="research")
         return
 

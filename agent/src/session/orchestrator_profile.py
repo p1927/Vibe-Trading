@@ -12,6 +12,7 @@ SESSION_KIND_AGENT = "autonomous_agent"
 _ORCHESTRATOR_LOCAL_TOOLS = frozenset(
     {
         "propose_autonomous_agent",
+        "search_india_symbol",
         "load_skill",
     }
 )

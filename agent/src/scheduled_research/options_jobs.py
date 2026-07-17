@@ -142,6 +142,21 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
     watchlist = cfg.get("watchlist")
     if not watchlist:
         watchlist = list(get_monitor_config().watchlist)
+    try:
+        from trade_integrations.autonomous_agents.store import list_agents
+
+        extra: set[str] = set()
+        for agent in list_agents() or []:
+            if str(agent.get("status") or "") not in ("running", "paused"):
+                continue
+            for sym in agent.get("symbols") or []:
+                s = str(sym).strip().upper()
+                if s:
+                    extra.add(s)
+        if extra:
+            watchlist = sorted(set(watchlist) | extra)
+    except Exception:
+        pass
 
     refreshed: list[dict[str, Any]] = []
     skipped: list[str] = []

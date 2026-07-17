@@ -1,5 +1,10 @@
 import { cn } from "@/lib/utils";
 import type { IndexFactorCatalogEntry, IndexPredictionArtifact, PipelineLogEntry } from "@/lib/api";
+import {
+  formatPipelineLogTime,
+  pickDisplayPipelineLogs,
+  pipelineLogRowKey,
+} from "@/lib/pipelineLogUtils";
 import { MACRO_MODEL_KEYS } from "@/lib/predictionVerification";
 import { ChevronDown, ChevronRight, Loader2, Terminal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -13,6 +18,8 @@ const LEVEL_STYLES: Record<string, string> = {
 interface Props {
   open: boolean;
   running: boolean;
+  reattached?: boolean;
+  runJobId?: string | null;
   logs: PipelineLogEntry[];
   artifact?: IndexPredictionArtifact | null;
   factorCatalog: {
@@ -86,6 +93,8 @@ function FactorList({
 export function PredictionPipelinePanel({
   open,
   running,
+  reattached,
+  runJobId,
   logs,
   artifact,
   factorCatalog,
@@ -93,10 +102,10 @@ export function PredictionPipelinePanel({
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const displayLogs = useMemo(() => {
-    if (logs.length) return logs;
-    return artifact?.pipeline_log ?? [];
-  }, [logs, artifact?.pipeline_log]);
+  const displayLogs = useMemo(
+    () => pickDisplayPipelineLogs(logs, artifact?.pipeline_log, running, artifact?.as_of),
+    [logs, artifact?.pipeline_log, artifact?.as_of, running],
+  );
 
   const activeFactorKeys = useMemo(() => {
     const keys = new Set<string>(MACRO_MODEL_KEYS as readonly string[]);
@@ -129,13 +138,21 @@ export function PredictionPipelinePanel({
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold">Pipeline activity</p>
           <p className="text-[10px] text-muted-foreground">
-            {artifact?.as_of
-              ? `Last run ${new Date(artifact.as_of).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}`
-              : "Live steps when you run analysis"}
+            {running
+              ? "Running analysis now — live steps below"
+              : artifact?.as_of
+                ? `Last run ${new Date(artifact.as_of).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}`
+                : "Live steps when you run analysis"}
           </p>
         </div>
         {running ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : null}
       </div>
+
+      {reattached && runJobId ? (
+        <div className="border-b bg-muted/40 px-3 py-1.5 text-[10px] text-muted-foreground">
+          Reconnected to run {runJobId.slice(0, 12)}…
+        </div>
+      ) : null}
 
       {artifact ? (
         <div className="border-b px-3 py-2 text-[10px] text-muted-foreground">
@@ -153,9 +170,9 @@ export function PredictionPipelinePanel({
         ) : null}
         <ul className="space-y-1.5">
           {displayLogs.map((entry, idx) => (
-            <li key={`${entry.at}-${idx}`} className="leading-snug">
+            <li key={pipelineLogRowKey(entry, idx)} className="leading-snug">
               <span className="text-[9px] text-muted-foreground">
-                {entry.at ? new Date(entry.at).toLocaleTimeString() : ""}
+                {formatPipelineLogTime(entry.at)}
               </span>
               <span className="mx-1 rounded bg-muted px-1 text-[9px] uppercase">{entry.stage}</span>
               <span className={LEVEL_STYLES[entry.level] ?? LEVEL_STYLES.info}>{entry.message}</span>

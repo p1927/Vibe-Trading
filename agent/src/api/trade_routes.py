@@ -8,7 +8,6 @@ import os
 import re
 import threading
 import asyncio
-import queue
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -321,14 +320,49 @@ def _live_context_from_report(report: Any) -> dict[str, Any]:
 
 def _material_news_count(ticker: str) -> int:
     try:
+        from trade_integrations.dataflows.company_research.india_symbols import india_index_tickers
         from trade_integrations.monitor.news_watcher import check_material_news
         from trade_integrations.monitor.service import MonitorService
 
-        since = MonitorService._news_since(ticker)
-        return len(check_material_news(ticker, since))
+        key = ticker.strip().upper()
+        since = MonitorService._news_since(key)
+        if key in india_index_tickers():
+            since = _index_news_since(key, fallback=since)
+        return len(check_material_news(key, since))
     except Exception:
         logger.exception("Material news count failed for %s", ticker)
         return 0
+
+
+def _index_news_since(ticker: str, *, fallback: datetime) -> datetime:
+    """Prefer index research as_of for index prediction live monitor."""
+    try:
+        from trade_integrations.context.hub import load_index_research_json
+
+        doc = load_index_research_json(ticker)
+    except Exception:
+        return fallback
+    if doc is None:
+        return fallback
+    as_of = getattr(doc, "as_of", None)
+    if as_of is None and isinstance(doc, dict):
+        as_of = doc.get("as_of")
+    if isinstance(as_of, datetime):
+        if as_of.tzinfo is None:
+            return as_of.replace(tzinfo=timezone.utc)
+        return as_of
+    if isinstance(as_of, str):
+        text = as_of.strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return fallback
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
+    return fallback
 
 
 def _has_open_plan_position(ticker: str) -> bool:
@@ -453,6 +487,35 @@ class RunIndexPredictionRequest(BaseModel):
     ticker: str = "NIFTY"
     horizon_days: int | None = None
     refresh_constituents: bool = False
+
+
+class IndexPredictionRunStartResponse(BaseModel):
+    status: str = "ok"
+    job_id: str
+    job_status: str
+    reused: bool = False
+
+
+class IndexPredictionRunJobSnapshot(BaseModel):
+    job_id: str
+    status: str
+    ticker: str = ""
+    horizon_days: int | None = None
+    refresh_constituents: bool = False
+    created_at: str | None = None
+    error: str | None = None
+    logs: List[Dict[str, Any]] = Field(default_factory=list)
+    artifact: Dict[str, Any] | None = None
+
+
+class IndexPredictionRunActiveResponse(BaseModel):
+    status: str = "ok"
+    job: IndexPredictionRunJobSnapshot | None = None
+
+
+class IndexPredictionRunJobResponse(BaseModel):
+    status: str = "ok"
+    job: IndexPredictionRunJobSnapshot | None = None
 
 
 class RefreshIndexPredictionRequest(BaseModel):
@@ -622,6 +685,36 @@ class IndexNewsImpactResponse(BaseModel):
     message: str = ""
 
 
+class NewsScenarioSessionRequest(BaseModel):
+    ticker: str = "NIFTY"
+    pipeline_as_of: str
+    horizon_days: int | None = 14
+    session_id: str | None = None
+
+
+class NewsScenarioSessionPatchRequest(BaseModel):
+    date_range: Dict[str, Any] | None = None
+    selected_outcome_id: str | None = None
+    active_draft_id: str | None = None
+    active_scenario_id: str | None = None
+
+
+class NewsScenarioSessionResponse(BaseModel):
+    status: str = "ok"
+    session_id: str = ""
+    pipeline_as_of: str = ""
+    ticker: str = "NIFTY"
+    message: str = ""
+
+
+class NewsEventScenarioResponse(BaseModel):
+    status: str = "ok"
+    ticker: str = "NIFTY"
+    scenario: Dict[str, Any] | None = None
+    scenarios: List[Dict[str, Any]] = Field(default_factory=list)
+    message: str = ""
+
+
 class IndexVerifiedNewsResponse(BaseModel):
     status: str
     ticker: str = ""
@@ -744,7 +837,7 @@ def get_capture_registry(
             registry=reg,
             factor_tree=build_factor_tree(),
             stats=build_capture_stats(key),
-            coverage=capture_coverage_stats(key),
+            coverage=capture_coverage_stats(entity_id=key),
         )
     except Exception as exc:
         logger.exception("capture-registry get failed")
@@ -778,7 +871,7 @@ def update_capture_registry(
             registry=reg,
             factor_tree=build_factor_tree(),
             stats=build_capture_stats(key),
-            coverage=capture_coverage_stats(key),
+            coverage=capture_coverage_stats(entity_id=key),
         )
     except Exception as exc:
         logger.exception("capture-registry update failed")
@@ -1208,6 +1301,167 @@ def get_index_prediction_news_impact(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@trade_router.post("/index-prediction/news-scenarios/session", response_model=NewsScenarioSessionResponse)
+def create_news_scenario_session(
+    body: NewsScenarioSessionRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> NewsScenarioSessionResponse:
+    """Create or resume a news-scenario advisor Vibe session bound to pipeline_as_of."""
+    key = (body.ticker or "NIFTY").strip().upper()
+    pipeline_as_of = (body.pipeline_as_of or "").strip()
+    if not pipeline_as_of:
+        raise HTTPException(status_code=400, detail="pipeline_as_of is required")
+    try:
+        from src.api.state import _get_session_service
+        from src.trade.hub_bridge import ensure_trade_stack_path
+        from trade_integrations.dataflows.index_research.pipeline_snapshot import (
+            normalize_as_of,
+            resolve_bound_pipeline_doc,
+        )
+
+        ensure_trade_stack_path()
+        resolve_bound_pipeline_doc(key, pipeline_as_of)
+
+        svc = _get_session_service()
+        if svc is None:
+            raise HTTPException(status_code=503, detail="session runtime not enabled")
+
+        if body.session_id:
+            existing = svc.get_session(body.session_id)
+            bound = normalize_as_of(pipeline_as_of)
+            existing_as_of = normalize_as_of((existing.config or {}).get("pipeline_as_of") if existing else "")
+            if existing and existing_as_of == bound:
+                return NewsScenarioSessionResponse(
+                    session_id=existing.session_id,
+                    pipeline_as_of=pipeline_as_of,
+                    ticker=key,
+                )
+
+        session = svc.create_session(
+            title=f"news-scenario:{key}",
+            config={
+                "session_kind": "news_scenario_advisor",
+                "pipeline_ticker": key,
+                "pipeline_as_of": pipeline_as_of,
+                "horizon_days": body.horizon_days or 14,
+                "system_note": (
+                    "News Predictions advisor — use pipeline tools only; "
+                    "load_skill news-scenario-advisor on first turn."
+                ),
+            },
+        )
+        return NewsScenarioSessionResponse(
+            session_id=session.session_id,
+            pipeline_as_of=pipeline_as_of,
+            ticker=key,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        from trade_integrations.dataflows.index_research.pipeline_snapshot import (
+            MissingSnapshotError,
+            StaleSnapshotError,
+        )
+
+        if isinstance(exc, (MissingSnapshotError, StaleSnapshotError)):
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        logger.exception("news-scenario session create failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.patch(
+    "/index-prediction/news-scenarios/session/{session_id}",
+    response_model=NewsScenarioSessionResponse,
+)
+def patch_news_scenario_session(
+    session_id: str,
+    body: NewsScenarioSessionPatchRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> NewsScenarioSessionResponse:
+    """Update date_range / selection fields on a news-scenario session."""
+    try:
+        from src.api.state import _get_session_service
+
+        svc = _get_session_service()
+        if svc is None:
+            raise HTTPException(status_code=503, detail="session runtime not enabled")
+        session = svc.get_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        cfg = dict(session.config or {})
+        if body.date_range is not None:
+            cfg["date_range"] = body.date_range
+        if body.selected_outcome_id is not None:
+            cfg["selected_outcome_id"] = body.selected_outcome_id
+        if body.active_draft_id is not None:
+            cfg["active_draft_id"] = body.active_draft_id
+        if body.active_scenario_id is not None:
+            cfg["active_scenario_id"] = body.active_scenario_id
+        session.config = cfg
+        svc.store.update_session(session)
+        return NewsScenarioSessionResponse(
+            session_id=session.session_id,
+            pipeline_as_of=str(cfg.get("pipeline_as_of") or ""),
+            ticker=str(cfg.get("pipeline_ticker") or "NIFTY"),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("news-scenario session patch failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/index-prediction/news-scenarios/recent", response_model=NewsEventScenarioResponse)
+def list_news_scenarios(
+    ticker: str = "NIFTY",
+    limit: int = 10,
+    _auth: None = Depends(require_local_or_auth),
+) -> NewsEventScenarioResponse:
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+        from trade_integrations.dataflows.index_research.news_event_scenarios import (
+            list_recent_news_scenarios,
+        )
+
+        ensure_trade_stack_path()
+        rows = list_recent_news_scenarios(key, limit=limit)
+        return NewsEventScenarioResponse(status="ok", ticker=key, scenarios=rows)
+    except Exception as exc:
+        logger.exception("list news scenarios failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get(
+    "/index-prediction/news-scenarios/{scenario_id}",
+    response_model=NewsEventScenarioResponse,
+)
+def get_news_scenario(
+    scenario_id: str,
+    ticker: str = "NIFTY",
+    _auth: None = Depends(require_local_or_auth),
+) -> NewsEventScenarioResponse:
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+        from trade_integrations.dataflows.index_research.news_event_scenarios import (
+            load_news_event_scenario,
+        )
+
+        ensure_trade_stack_path()
+        scenario = load_news_event_scenario(key, scenario_id)
+        if scenario is None:
+            return NewsEventScenarioResponse(
+                status="not_found",
+                ticker=key,
+                message=f"Scenario {scenario_id} not found",
+            )
+        return NewsEventScenarioResponse(status="ok", ticker=key, scenario=scenario)
+    except Exception as exc:
+        logger.exception("get news scenario failed for %s", scenario_id)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @trade_router.get("/index-prediction/verified-news", response_model=IndexVerifiedNewsResponse)
 def get_index_verified_news(
     ticker: str = "NIFTY",
@@ -1291,64 +1545,64 @@ def get_index_day_attribution(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@trade_router.post("/index-prediction/run/stream")
-async def stream_index_prediction_run(
-    body: RunIndexPredictionRequest,
-    request: Request,
-    _auth: None = Depends(require_local_or_auth),
-) -> StreamingResponse:
-    """Run full index research pipeline and stream activity logs via SSE."""
-    key = (body.ticker or "NIFTY").strip().upper()
-    event_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
+_INDEX_PREDICTION_RUN_POLL_SECONDS = 0.5
+_INDEX_PREDICTION_RUN_HEARTBEAT_SECONDS = 15.0
 
-    def on_log(entry) -> None:
-        event_queue.put({"type": "log", "entry": entry.to_dict()})
 
-    def worker() -> None:
-        try:
-            from trade_integrations.context.hub import save_index_research
-            from trade_integrations.dataflows.index_research.aggregator import run_index_research
-            from trade_integrations.dataflows.index_research.pipeline_log import PipelineLogger
-            from src.trade.hub_bridge import _index_doc_to_panel, ensure_trade_stack_path
+def _index_prediction_run_sse_frame(event: str, data: dict[str, Any]) -> str:
+    payload = json.dumps(data, ensure_ascii=False, default=str)
+    return f"event: {event}\ndata: {payload}\n\n"
 
-            ensure_trade_stack_path()
-            plog = PipelineLogger(on_entry=on_log)
-            doc = run_index_research(
-                key,
-                horizon_days=body.horizon_days,
-                refresh_constituents=body.refresh_constituents,
-                pipeline=plog,
-            )
-            save_index_research(doc)
-            artifact = _index_doc_to_panel(doc)
-            artifact["asset_type"] = "index"
-            event_queue.put({"type": "done", "ticker": key, "artifact": artifact})
-        except Exception as exc:
-            logger.exception("index-prediction stream failed for %s", key)
-            event_queue.put({"type": "error", "message": str(exc)})
-        finally:
-            event_queue.put(None)
 
-    threading.Thread(target=worker, daemon=True).start()
+async def _index_prediction_run_event_stream(job_id: str, request: Request):
+    """Replay stored logs then poll job store until done/error."""
+    import time as time_mod
 
-    async def event_generator():
-        while True:
-            if await request.is_disconnected():
-                break
-            try:
-                item = await asyncio.to_thread(event_queue.get, timeout=0.5)
-            except queue.Empty:
-                yield ": keepalive\n\n"
-                continue
-            if item is None:
-                break
-            event_type = str(item.get("type") or "message")
-            yield f"event: {event_type}\ndata: {json.dumps(item, default=str)}\n\n"
-            if event_type in {"done", "error"}:
-                break
+    from src.trade.index_prediction_run_jobs import INDEX_PREDICTION_RUN_JOBS, _JOBS_LOCK
 
+    last_log_idx = 0
+    last_emit = time_mod.monotonic()
+    while True:
+        if await request.is_disconnected():
+            return
+
+        with _JOBS_LOCK:
+            job = INDEX_PREDICTION_RUN_JOBS.get(job_id)
+            if job is None:
+                yield _index_prediction_run_sse_frame("error", {"message": "job not found"})
+                return
+            status = str(job.get("status") or "")
+            logs = list(job.get("logs") or [])
+            artifact = job.get("artifact")
+            error = job.get("error")
+            ticker = str(job.get("ticker") or "")
+
+        while last_log_idx < len(logs):
+            yield _index_prediction_run_sse_frame("log", {"entry": logs[last_log_idx]})
+            last_log_idx += 1
+            last_emit = time_mod.monotonic()
+
+        if status == "done":
+            if artifact is not None:
+                yield _index_prediction_run_sse_frame(
+                    "done",
+                    {"ticker": ticker, "artifact": artifact},
+                )
+            return
+        if status == "error":
+            yield _index_prediction_run_sse_frame("error", {"message": error or "unknown error"})
+            return
+
+        if time_mod.monotonic() - last_emit >= _INDEX_PREDICTION_RUN_HEARTBEAT_SECONDS:
+            yield ": keepalive\n\n"
+            last_emit = time_mod.monotonic()
+
+        await asyncio.sleep(_INDEX_PREDICTION_RUN_POLL_SECONDS)
+
+
+def _index_prediction_run_stream_response(job_id: str, request: Request) -> StreamingResponse:
     return StreamingResponse(
-        event_generator(),
+        _index_prediction_run_event_stream(job_id, request),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -1356,6 +1610,97 @@ async def stream_index_prediction_run(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+def _kick_index_prediction_run(body: RunIndexPredictionRequest) -> tuple[str, str, bool]:
+    from src.trade.index_prediction_run_jobs import spawn_worker, start_job
+
+    key = (body.ticker or "NIFTY").strip().upper()
+    job_id, reused = start_job(
+        ticker=key,
+        horizon_days=body.horizon_days,
+        refresh_constituents=body.refresh_constituents,
+    )
+    if not reused:
+        spawn_worker(job_id)
+    from src.trade.index_prediction_run_jobs import get_job
+
+    snap = get_job(job_id) or {}
+    return job_id, str(snap.get("status") or "queued"), reused
+
+
+@trade_router.post(
+    "/index-prediction/run/start",
+    response_model=IndexPredictionRunStartResponse,
+    status_code=202,
+)
+def start_index_prediction_run(
+    body: RunIndexPredictionRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexPredictionRunStartResponse:
+    """Queue index research pipeline and return a trackable job_id."""
+    job_id, job_status, reused = _kick_index_prediction_run(body)
+    return IndexPredictionRunStartResponse(
+        job_id=job_id,
+        job_status=job_status,
+        reused=reused,
+    )
+
+
+@trade_router.get("/index-prediction/run/active", response_model=IndexPredictionRunActiveResponse)
+def get_active_index_prediction_run(
+    ticker: str = "NIFTY",
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexPredictionRunActiveResponse:
+    from src.trade.index_prediction_run_jobs import get_active_job
+
+    snap = get_active_job(ticker)
+    if snap is None:
+        return IndexPredictionRunActiveResponse(job=None)
+    return IndexPredictionRunActiveResponse(job=IndexPredictionRunJobSnapshot(**snap))
+
+
+@trade_router.get("/index-prediction/run/{job_id}", response_model=IndexPredictionRunJobResponse)
+def get_index_prediction_run_job(
+    job_id: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexPredictionRunJobResponse:
+    from src.trade.index_prediction_run_jobs import get_job, job_id_valid
+
+    if not job_id_valid(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    snap = get_job(job_id)
+    if snap is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    return IndexPredictionRunJobResponse(job=IndexPredictionRunJobSnapshot(**snap))
+
+
+@trade_router.get("/index-prediction/run/{job_id}/stream")
+async def stream_index_prediction_run_job(
+    job_id: str,
+    request: Request,
+    _auth: None = Depends(require_local_or_auth),
+) -> StreamingResponse:
+    """SSE: replay pipeline logs and stream until the run terminates."""
+    from src.trade.index_prediction_run_jobs import INDEX_PREDICTION_RUN_JOBS, _JOBS_LOCK, job_id_valid
+
+    if not job_id_valid(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    with _JOBS_LOCK:
+        if job_id not in INDEX_PREDICTION_RUN_JOBS:
+            raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    return _index_prediction_run_stream_response(job_id, request)
+
+
+@trade_router.post("/index-prediction/run/stream")
+async def stream_index_prediction_run(
+    body: RunIndexPredictionRequest,
+    request: Request,
+    _auth: None = Depends(require_local_or_auth),
+) -> StreamingResponse:
+    """Run full index research pipeline and stream activity logs via SSE (legacy)."""
+    job_id, _, _ = _kick_index_prediction_run(body)
+    return _index_prediction_run_stream_response(job_id, request)
 
 
 @trade_router.post("/index-prediction/refresh", response_model=IndexPredictionRefreshResponse)

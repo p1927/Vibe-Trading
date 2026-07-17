@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Radio } from "lucide-react";
+import { Plus, Radio, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, type AutonomousAgentInstance, type AutonomousStackHealth } from "@/lib/api";
 import { AutonomousAgentCard } from "@/components/autonomous/AutonomousAgentCard";
@@ -71,6 +71,7 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
   const [agents, setAgents] = useState<AutonomousAgentInstance[]>([]);
   const [stackHealth, setStackHealth] = useState<AutonomousStackHealth | undefined>();
   const [loading, setLoading] = useState(true);
+  const [clearing, setClearing] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -138,13 +139,76 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
     }
   };
 
+  const handleClearAll = async () => {
+    const count = agents.length;
+    const hasInfra =
+      stackHealth?.paper_session_enabled ||
+      stackHealth?.nautilus_bound_agent_id ||
+      (stackHealth?.nautilus_state && stackHealth.nautilus_state !== "expected");
+    if (count === 0 && !hasInfra) {
+      toast.message("Nothing to clear");
+      return;
+    }
+    const prompt =
+      count > 0
+        ? `Clear all ${count} autonomous agent(s)? This will flatten open positions, stop Nautilus watch, and remove all agents and bridge artifacts.`
+        : "Clear autonomous infrastructure (Nautilus watch, paper session, bridge artifacts)?";
+    if (!window.confirm(prompt)) return;
+
+    setClearing(true);
+    try {
+      const result = await api.clearAllAutonomousAgents();
+      await load();
+      const removed = result.deleted?.length ?? 0;
+      const openalgoLeft = result.flatten?.openalgo?.remaining_positions ?? 0;
+      if (result.status === "partial" || (result.errors?.length ?? 0) > 0) {
+        toast.warning(
+          `Cleared ${removed} agent(s) with warnings${openalgoLeft ? ` — ${openalgoLeft} OpenAlgo position(s) may remain` : ""}`,
+        );
+      } else {
+        toast.success(
+          removed > 0
+            ? `Cleared ${removed} agent(s) and stopped Nautilus watch`
+            : "Autonomous infrastructure cleared",
+        );
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Clear all failed");
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  const canClearAll =
+    agents.length > 0 ||
+    stackHealth?.paper_session_enabled ||
+    Boolean(stackHealth?.nautilus_bound_agent_id) ||
+    (stackHealth?.nautilus_state != null && stackHealth.nautilus_state !== "expected");
+
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Autonomous</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Persistent trading agents — Nautilus watches, Vibe decides, OpenAlgo executes.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Autonomous</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Persistent trading agents — Nautilus watches, Vibe decides, OpenAlgo executes.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleClearAll()}
+          disabled={loading || clearing || !canClearAll}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+            canClearAll
+              ? "border-red-500/40 text-red-700 hover:bg-red-500/10"
+              : "border-border text-muted-foreground",
+            (loading || clearing) && "opacity-60",
+          )}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          {clearing ? "Clearing…" : "Clear all agents"}
+        </button>
       </div>
 
       <StackHealthStrip health={stackHealth} />
