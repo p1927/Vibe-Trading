@@ -77,13 +77,19 @@ def _parse_period(period: str) -> tuple[str, str]:
         raise ValueError(f"period must be string, got {type(period).__name__}")
     m = _PERIOD_DATE.match(period)
     if m:
-        return m.group(1), m.group(2)
-    m = _PERIOD_YEAR.match(period)
-    if m:
-        return f"{m.group(1)}-01-01", f"{m.group(2)}-12-31"
-    raise ValueError(
-        f"period {period!r} must be YYYY-YYYY or YYYY-MM-DD/YYYY-MM-DD"
-    )
+        start, end = m.group(1), m.group(2)
+    else:
+        m = _PERIOD_YEAR.match(period)
+        if m:
+            start, end = f"{m.group(1)}-01-01", f"{m.group(2)}-12-31"
+        else:
+            raise ValueError(
+                f"period {period!r} must be YYYY-YYYY or YYYY-MM-DD/YYYY-MM-DD"
+            )
+    # Match backtest loaders.validate_date_range: reject inverted ranges.
+    if pd.Timestamp(start) > pd.Timestamp(end):
+        raise ValueError(f"start_date ({start}) > end_date ({end})")
+    return start, end
 
 
 def _load_universe_panel(
