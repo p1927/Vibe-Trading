@@ -292,7 +292,7 @@ def test_settings_reads_reject_remote_dev_mode_clients(
     assert "ts-s...oken" not in data_source_response.text
 
 
-def test_settings_reads_allow_loopback_without_bearer_even_when_api_auth_key_configured(
+def test_settings_reads_require_bearer_on_loopback_when_api_auth_key_configured(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     env_path = tmp_path / ".env"
@@ -319,7 +319,9 @@ def test_settings_reads_allow_loopback_without_bearer_even_when_api_auth_key_con
         headers={"Authorization": "Bearer settings-secret"},
     )
 
-    assert unauthenticated_response.status_code == 200
+    # GHSA-7wgj: a configured key gates settings reads even on loopback (the
+    # bundled frontend sends the bearer once the key is stored in Settings).
+    assert unauthenticated_response.status_code == 401
     assert authenticated_response.status_code == 200
     assert authenticated_response.json()["api_key_configured"] is True
     assert authenticated_response.json()["api_key_hint"] is None
