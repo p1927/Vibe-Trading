@@ -790,9 +790,11 @@ The built-in adapters cover `websocket`, `telegram`, `slack`, `discord`, `matrix
 | `/new` | Reset the current session — the next message starts a fresh conversation |
 | `/reset` | Alias for `/new` |
 | `/newsession` | Alias for `/new` |
-| `/pairing list` | Show pending sender-pairing requests |
+| `/pairing list` | Show pending sender-pairing requests (operators only) |
 
 Commands are case-insensitive and must be sent as the entire message (e.g. `hello /new` is treated as a regular message, not a reset).
+
+> **`/pairing` is operator-gated.** In-chat pairing-control commands are rejected unless the sender is listed as an operator — set `channels.operators` (cross-channel authority) or a channel section's own `operators` list in your channels config. With no operators configured, in-chat `/pairing` is refused (fail-closed) and pairing is managed only through the authenticated CLI (`vibe-trading channels pairing …`) and the auth-gated REST endpoint. This prevents any allow-listed group member from taking over pairing across channels.
 
 </details>
 
