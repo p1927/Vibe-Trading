@@ -276,8 +276,10 @@ def _validate_class_body(node: ast.ClassDef) -> None:
 # (it does ``import module; SignalEngine().generate(data_map)``). Blocking those
 # imports file-wide would reject strategies generated from ~12 shipped skills, so
 # we block the dangerous *use* along the executed path instead of a harmless
-# unused top-level import. Transitive reach via ``getattr``/indirection is a
-# documented residual — see the VT-001 note; this is not a kernel-level guarantee.
+# unused top-level import. Direct ``getattr``/``setattr``/``delattr`` indirection
+# onto ``os`` / forbidden modules is now rejected (see _reject_forbidden_getattr);
+# exotic reach via ``builtins.getattr`` or aliasing remains a documented residual
+# (VT-001) — this is defense-in-depth, not a kernel-level guarantee.
 _FORBIDDEN_IMPORT_MODULES = frozenset(
     {
         "socket",
@@ -319,6 +321,13 @@ _FORBIDDEN_OS_ATTRS = frozenset(
 _FORBIDDEN_BUILTINS = frozenset(
     {"eval", "exec", "compile", "__import__", "globals", "locals", "vars", "breakpoint"}
 )
+# getattr/setattr/delattr can indirect around the attribute scanner
+# (``getattr(os, "system")("id")``). We reject them ONLY when the target object
+# is ``os`` or a forbidden module — keyed off the target, not the attribute
+# string, so ``getattr(os, "sys" + "tem")`` is caught too. Legitimate dynamic
+# access on user objects (``getattr(tech, name, None)``, ``getattr(self, x)``)
+# is unaffected.
+_GETATTR_INDIRECTION = frozenset({"getattr", "setattr", "delattr"})
 _OPEN_WRITE_MODE_CHARS = frozenset("wax+")
 _SCRUB_MSG = "is not allowed inside generated strategy code"
 
@@ -367,6 +376,30 @@ def _reject_forbidden_open(node: ast.Call) -> None:
         raise ValueError(f"open() with a non-relative path {path!r} {_SCRUB_MSG}")
 
 
+def _reject_forbidden_getattr(node: ast.Call) -> None:
+    """Reject getattr/setattr/delattr indirection onto ``os`` / forbidden modules.
+
+    Closes the documented bypass ``getattr(os, "system")("id")`` — and computed
+    variants like ``getattr(os, "sys" + "tem")`` — by keying off the *target*
+    object (first positional arg), not the attribute string. Dynamic access on
+    ordinary user objects (``getattr(tech, name, None)``) is left untouched.
+    """
+    func = node.func
+    if not (isinstance(func, ast.Name) and func.id in _GETATTR_INDIRECTION):
+        return
+    if not node.args:
+        return
+    target = node.args[0]
+    if isinstance(target, ast.Name):
+        root: str | None = target.id
+    elif isinstance(target, ast.Attribute):
+        root = _attribute_root_name(target)
+    else:
+        root = None
+    if root == "os" or root in _FORBIDDEN_IMPORT_MODULES:
+        raise ValueError(f"{func.id}() indirection onto {root!r} {_SCRUB_MSG}")
+
+
 def _reject_forbidden_node(node: ast.AST) -> None:
     """Raise ``ValueError`` if a single AST node performs a forbidden operation."""
     if isinstance(node, ast.Import):
@@ -392,6 +425,7 @@ def _reject_forbidden_node(node: ast.AST) -> None:
             raise ValueError(f"Use of {node.id!r} {_SCRUB_MSG}")
     elif isinstance(node, ast.Call):
         _reject_forbidden_open(node)
+        _reject_forbidden_getattr(node)
 
 
 def _scan_runtime_reachable(tree: ast.Module) -> None:
