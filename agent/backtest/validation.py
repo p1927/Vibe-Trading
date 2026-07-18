@@ -324,8 +324,6 @@ def _load_equity(run_dir: Path) -> pd.Series:
     for col in ("equity", "nav", "value"):
         if col in df.columns:
             return df[col]
-    if len(df.columns) == 1:
-        return df.iloc[:, 0]
     raise ValueError(
         f"equity.csv must contain an equity/nav/value column; got {list(df.columns)}"
     )

@@ -29,10 +29,19 @@ def test_load_equity_accepts_equity_column(tmp_path: Path) -> None:
     assert list(_load_equity(tmp_path).values) == [1.0, 2.0]
 
 
+def test_load_equity_accepts_value_column(tmp_path: Path) -> None:
+    arts = tmp_path / "artifacts"
+    arts.mkdir()
+    pd.DataFrame({"value": [9.0, 10.0]}, index=pd.date_range("2024-01-01", periods=2)).to_csv(
+        arts / "equity.csv"
+    )
+    assert list(_load_equity(tmp_path).values) == [9.0, 10.0]
+
+
 def test_load_equity_unknown_columns_raise(tmp_path: Path) -> None:
     arts = tmp_path / "artifacts"
     arts.mkdir()
-    pd.DataFrame({"foo": [1.0], "bar": [2.0]}, index=pd.date_range("2024-01-01", periods=1)).to_csv(
+    pd.DataFrame({"foo": [1.0]}, index=pd.date_range("2024-01-01", periods=1)).to_csv(
         arts / "equity.csv"
     )
     with pytest.raises(ValueError, match="equity/nav/value"):
