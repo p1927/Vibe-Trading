@@ -113,11 +113,18 @@ def _rolling_correlation_matrix(
             raise ValueError(f"Price series for '{code}' is empty")
         if "close" not in df.columns and "close" not in df.index.names:
             raise ValueError(f"No 'close' column in price series for '{code}'")
-        # Support both column-based and index-based trade_date
-        if "trade_date" in df.index.names and "trade_date" not in df.columns:
+        # Support trade_date as index name, column, or a plain DatetimeIndex.
+        if "trade_date" in df.columns:
+            ts = df.set_index("trade_date")["close"]
+        elif "close" in df.columns and (
+            "trade_date" in df.index.names
+            or isinstance(df.index, pd.DatetimeIndex)
+        ):
             ts = df["close"]
         else:
-            ts = df.set_index("trade_date")["close"]
+            raise ValueError(
+                f"No trade_date index/column for price series '{code}'"
+            )
         closes[code] = ts.sort_index()
 
     for code in codes:
