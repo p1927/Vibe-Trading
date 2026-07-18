@@ -206,6 +206,12 @@ class APIConfig(_EnvBase):
     vibe_trading_api_key: str = Field(alias="VIBE_TRADING_API_KEY", default="")
     cors_origins: str = Field(alias="CORS_ORIGINS", default="")
     api_allowed_hosts: str = Field(alias="API_ALLOWED_HOSTS", default="")
+    # Comma-separated Host/Origin allow-list for the network MCP transports
+    # (--transport sse / http). Empty means loopback-only (127.0.0.1,
+    # localhost), which blocks DNS-rebinding while keeping local use working.
+    vibe_trading_mcp_allowed_hosts: str = Field(
+        alias="VIBE_TRADING_MCP_ALLOWED_HOSTS", default="",
+    )
     enable_session_runtime: EnvBool = Field(alias="ENABLE_SESSION_RUNTIME", default=True)
     vibe_trading_trust_docker_loopback: EnvBool = Field(
         alias="VIBE_TRADING_TRUST_DOCKER_LOOPBACK", default=False,
