@@ -602,3 +602,228 @@ class TestDetectMarket:
     def test_forex_codes(self) -> None:
         assert _detect_market_for_align("EUR/USD") == "forex"
         assert _detect_market_for_align("EURUSD.FX") == "forex"
+
+
+# ---------------------------------------------------------------------------
+# TestFundPanelCompatibility: E2E verify vectorized _align() ignores fund:*
+# ---------------------------------------------------------------------------
+
+
+def _make_data_map_with_fund(n_dates=200, n_codes=5, fund_cols=None):
+    """Create synthetic data_map with OHLCV + optional fund:* columns."""
+    if fund_cols is None:
+        fund_cols = ["fund:revenue", "fund:roe", "fund:net_profit"]
+
+    np.random.seed(42)
+    dates = pd.bdate_range("2023-01-01", periods=n_dates)
+    data_map = {}
+    signal_map = {}
+    codes = [f"SYM{i:03d}.SZ" for i in range(n_codes)]
+
+    for c in codes:
+        price = 100 + np.cumsum(np.random.randn(n_dates) * 0.5)
+        df = pd.DataFrame(
+            {
+                "open": price * 0.99,
+                "high": price * 1.01,
+                "low": price * 0.98,
+                "close": price,
+                "volume": np.random.randint(1000, 10000, n_dates).astype(float),
+            },
+            index=dates,
+        )
+
+        # Inject fund:* enrichment columns
+        for fc in fund_cols:
+            df[fc] = np.random.rand(n_dates) * 100
+
+        data_map[c] = df
+        # Simple alternating signal
+        signal_map[c] = pd.Series(
+            np.where(np.random.rand(n_dates) > 0.5, 1.0, 0.0),
+            index=dates,
+        )
+
+    return data_map, signal_map, codes
+
+
+class TestFundPanelCompatibility:
+    """E2E: verify vectorized _align() ignores fund:* enrichment columns."""
+
+    def test_align_output_excludes_fund_columns(self) -> None:
+        """Returned close_df and target_pos columns contain only symbol codes."""
+        data_map, signal_map, codes = _make_data_map_with_fund(
+            n_dates=200, n_codes=5
+        )
+
+        _, close_df, pos_df, ret_df = _align(data_map, signal_map, list(codes))
+
+        # Columns must only be symbol codes, no fund:* leakage
+        for col in close_df.columns:
+            assert not col.startswith("fund:"), (
+                f"fund column '{col}' leaked into close_df"
+            )
+        for col in pos_df.columns:
+            assert not col.startswith("fund:"), (
+                f"fund column '{col}' leaked into target_pos"
+            )
+        for col in ret_df.columns:
+            assert not col.startswith("fund:"), (
+                f"fund column '{col}' leaked into ret_df"
+            )
+        # All original codes should be present
+        assert set(close_df.columns) == set(codes)
+        assert set(pos_df.columns) == set(codes)
+
+    def test_align_equivalence_with_and_without_fund_columns(self) -> None:
+        """_align() output is identical whether fund:* columns are present or not."""
+        np.random.seed(42)
+        n_dates, n_codes = 200, 5
+        dates = pd.bdate_range("2023-01-01", periods=n_dates)
+        codes = [f"SYM{i:03d}.SZ" for i in range(n_codes)]
+
+        data_map_clean = {}
+        data_map_fund = {}
+        signal_map = {}
+
+        for c in codes:
+            price = 100 + np.cumsum(np.random.randn(n_dates) * 0.5)
+            base_df = pd.DataFrame(
+                {
+                    "open": price * 0.99,
+                    "high": price * 1.01,
+                    "low": price * 0.98,
+                    "close": price,
+                    "volume": np.random.randint(1000, 10000, n_dates).astype(float),
+                },
+                index=dates,
+            )
+            data_map_clean[c] = base_df.copy()
+
+            fund_df = base_df.copy()
+            fund_df["fund:revenue"] = np.random.rand(n_dates) * 1e6
+            fund_df["fund:roe"] = np.random.rand(n_dates) * 0.3
+            fund_df["fund:net_profit"] = np.random.rand(n_dates) * 5e5
+            data_map_fund[c] = fund_df
+
+            signal_map[c] = pd.Series(
+                np.where(np.random.rand(n_dates) > 0.5, 1.0, 0.0),
+                index=dates,
+            )
+
+        _, close_clean, pos_clean, ret_clean = _align(
+            data_map_clean, signal_map, list(codes)
+        )
+        _, close_fund, pos_fund, ret_fund = _align(
+            data_map_fund, signal_map, list(codes)
+        )
+
+        pd.testing.assert_frame_equal(close_clean, close_fund, rtol=1e-10, atol=1e-12)
+        pd.testing.assert_frame_equal(pos_clean, pos_fund, rtol=1e-10, atol=1e-12)
+        pd.testing.assert_frame_equal(ret_clean, ret_fund, rtol=1e-10, atol=1e-12)
+
+    def test_heterogeneous_fund_columns(self) -> None:
+        """_align() works when different symbols have different fund:* columns."""
+        np.random.seed(99)
+        n_dates = 150
+        dates = pd.bdate_range("2023-01-01", periods=n_dates)
+        codes = ["AAA.SZ", "BBB.SZ", "CCC.SZ"]
+
+        data_map = {}
+        signal_map = {}
+
+        for i, c in enumerate(codes):
+            price = 50 + np.cumsum(np.random.randn(n_dates) * 0.3)
+            df = pd.DataFrame(
+                {
+                    "open": price * 0.99,
+                    "high": price * 1.01,
+                    "low": price * 0.98,
+                    "close": price,
+                    "volume": np.random.randint(500, 5000, n_dates).astype(float),
+                },
+                index=dates,
+            )
+            # Different fund:* columns per symbol
+            if i == 0:
+                df["fund:roe"] = np.random.rand(n_dates) * 0.2
+                df["fund:revenue"] = np.random.rand(n_dates) * 1e6
+            elif i == 1:
+                df["fund:roe"] = np.random.rand(n_dates) * 0.15
+            else:
+                df["fund:net_profit"] = np.random.rand(n_dates) * 3e5
+                df["fund:eps"] = np.random.rand(n_dates) * 5.0
+
+            data_map[c] = df
+            signal_map[c] = pd.Series(
+                np.where(np.random.rand(n_dates) > 0.5, 1.0, 0.0),
+                index=dates,
+            )
+
+        # Should not raise
+        _, close_df, pos_df, ret_df = _align(data_map, signal_map, list(codes))
+
+        assert set(close_df.columns) == set(codes)
+        assert set(pos_df.columns) == set(codes)
+        assert close_df.shape == (n_dates, len(codes))
+        assert pos_df.shape == (n_dates, len(codes))
+        assert ret_df.shape == (n_dates, len(codes))
+
+    def test_full_backtest_with_fund_columns(self) -> None:
+        """Full E2E: BaseEngine.run through _align with fund:* columns."""
+        data_map, signal_map, codes = _make_data_map_with_fund(
+            n_dates=200, n_codes=4
+        )
+
+        dates, close_df, target_pos, _ = _align(data_map, signal_map, list(codes))
+        valid_codes = [c for c in codes if c in target_pos.columns]
+
+        engine = ChinaAEngine({"initial_cash": 1_000_000})
+        engine._execute_bars(dates, data_map, close_df, target_pos, valid_codes)
+
+        # Should complete with equity snapshots for every bar
+        assert len(engine.equity_snapshots) == len(dates)
+        # Final equity should be positive
+        assert engine.equity_snapshots[-1].equity > 0
+        # Should have executed trades
+        assert len(engine.trades) > 0
+
+    def test_fund_columns_do_not_leak_to_close_matrix(self) -> None:
+        """fund:* columns with sentinel value 999.0 must not appear in close_df."""
+        np.random.seed(7)
+        n_dates = 100
+        sentinel = 999.0
+        dates = pd.bdate_range("2023-06-01", periods=n_dates)
+        codes = ["X.SZ", "Y.SZ"]
+
+        data_map = {}
+        signal_map = {}
+
+        for c in codes:
+            price = 30 + np.cumsum(np.random.randn(n_dates) * 0.2)
+            # Ensure no price naturally equals sentinel
+            price = np.where(np.abs(price - sentinel) < 1.0, price + 5.0, price)
+            df = pd.DataFrame(
+                {
+                    "open": price * 0.99,
+                    "high": price * 1.01,
+                    "low": price * 0.98,
+                    "close": price,
+                    "volume": np.random.randint(100, 1000, n_dates).astype(float),
+                },
+                index=dates,
+            )
+            # All fund columns filled with sentinel
+            df["fund:revenue"] = sentinel
+            df["fund:roe"] = sentinel
+            df["fund:net_profit"] = sentinel
+
+            data_map[c] = df
+            signal_map[c] = pd.Series(1.0, index=dates)
+
+        _, close_df, _, _ = _align(data_map, signal_map, list(codes))
+
+        # No cell in close_df should contain the sentinel value
+        assert not (close_df == sentinel).any().any(), (
+            "Sentinel 999.0 from fund:* columns leaked into close matrix"
+        )
