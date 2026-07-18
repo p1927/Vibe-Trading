@@ -164,7 +164,10 @@ def _normalize_side(raw: Any) -> str:
 
 def _qualify_a_share(code: str) -> str:
     """Append .SH/.SZ/.BJ suffix to a bare A-share ticker."""
-    code = str(code).strip().zfill(6)
+    code = str(code).strip()
+    if not code:
+        raise ValueError("empty securities code")
+    code = code.zfill(6)
     if "." in code:
         return code.upper()
     first = code[0]
@@ -193,13 +196,16 @@ def parse_tonghuashun(df: pd.DataFrame) -> list[TradeRecord]:
     """
     records: list[TradeRecord] = []
     for _, row in df.iterrows():
+        raw_code = str(row.get("证券代码", "")).strip()
+        if not raw_code:
+            continue
         qty = _to_float(row.get("成交数量"))
         price = _to_float(row.get("成交价格"))
         amount = _to_float(row.get("成交金额")) or qty * price
         fee = _to_float(row.get("手续费")) + _to_float(row.get("印花税")) + _to_float(row.get("过户费"))
         records.append(TradeRecord(
             datetime=str(row.get("成交时间", "")).strip(),
-            symbol=_qualify_a_share(row.get("证券代码", "")),
+            symbol=_qualify_a_share(raw_code),
             name=str(row.get("证券名称", "")).strip(),
             side=_normalize_side(row.get("操作")),
             quantity=qty,
@@ -219,6 +225,9 @@ def parse_eastmoney(df: pd.DataFrame) -> list[TradeRecord]:
     """
     records: list[TradeRecord] = []
     for _, row in df.iterrows():
+        raw_code = str(row.get("股票代码", "")).strip()
+        if not raw_code:
+            continue
         raw_date = str(row.get("成交日期", "")).strip()
         raw_time = str(row.get("成交时间", "")).strip()
         if len(raw_date) == 8 and raw_date.isdigit():
@@ -232,7 +241,7 @@ def parse_eastmoney(df: pd.DataFrame) -> list[TradeRecord]:
         fee = _to_float(row.get("佣金")) + _to_float(row.get("印花税"))
         records.append(TradeRecord(
             datetime=dt,
-            symbol=_qualify_a_share(row.get("股票代码", "")),
+            symbol=_qualify_a_share(raw_code),
             name=str(row.get("股票名称", "")).strip(),
             side=_normalize_side(row.get("买卖标志")),
             quantity=qty,
