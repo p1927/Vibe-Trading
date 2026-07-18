@@ -81,14 +81,40 @@ logger = logging.getLogger(__name__)
 _skills_loader = None
 _registry = None
 _goal_store = None
-_include_shell_tools = True
+# Fail-closed default: the bash / background_run shell tools are a remote
+# code-execution surface once the MCP server is reachable by any client (stdio,
+# SSE, or Streamable HTTP), so they stay OFF unless an operator explicitly opts
+# in. main() may flip this on via --enable-shell-tools or the
+# VIBE_TRADING_ENABLE_SHELL_TOOLS env var. Keeping the module-level default off
+# means an ASGI/import deployment that never calls main() also stays safe.
+_include_shell_tools = False
 
 
 def _env_shell_tools_enabled() -> bool:
-    """Return whether shell tools were explicitly enabled for network MCP."""
+    """Return whether shell tools were explicitly enabled via the environment."""
     from src.config.accessor import get_env_config
 
     return get_env_config().api.vibe_trading_enable_shell_tools
+
+
+def _resolve_include_shell_tools(cli_opt_in: bool) -> bool:
+    """Resolve whether the MCP server should register shell tools.
+
+    Shell tools (``bash`` / ``background_run``) run arbitrary OS commands and are
+    an RCE surface regardless of transport. They are therefore disabled for every
+    transport unless the operator explicitly opts in. Transport type never
+    implicitly grants shell access: previously ``stdio`` force-enabled these tools
+    with no opt-out (GHSA-6wjh-cc6v-xfrx), which also widened the reachable
+    surface of the ``bash`` OS-command-injection issue (GHSA-m768-22r9-h4x7).
+
+    Args:
+        cli_opt_in: Whether ``--enable-shell-tools`` was passed on the command line.
+
+    Returns:
+        True only when the operator opted in via the flag or the
+        ``VIBE_TRADING_ENABLE_SHELL_TOOLS`` environment variable.
+    """
+    return bool(cli_opt_in) or _env_shell_tools_enabled()
 
 
 def _get_skills_loader():
@@ -1916,8 +1942,15 @@ def main():
     parser.add_argument(
         "--port", type=int, default=8900, help="SSE/HTTP port (default: 8900)"
     )
+    parser.add_argument(
+        "--enable-shell-tools",
+        action="store_true",
+        help="Register the bash / background_run shell tools (arbitrary OS "
+        "command execution — RCE surface). OFF by default for every transport; "
+        "equivalent to setting VIBE_TRADING_ENABLE_SHELL_TOOLS=1.",
+    )
     args = parser.parse_args()
-    _include_shell_tools = True if args.transport == "stdio" else _env_shell_tools_enabled()
+    _include_shell_tools = _resolve_include_shell_tools(args.enable_shell_tools)
     _registry = None
     _get_registry()  # pre-warm: avoids deadlock when first tools/call lazy-inits inside FastMCP worker thread
 
