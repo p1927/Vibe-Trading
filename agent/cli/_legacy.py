@@ -3908,13 +3908,89 @@ def cmd_connector_check(
     return EXIT_SUCCESS
 
 
+def _normalize_mcp_value(value: Any) -> Any:
+    """Unwrap a value from a remote MCP call into plain JSON-safe data.
+
+    Remote connectors (e.g. Robinhood) return their payload as an instance of
+    ``fastmcp``'s auto-generated ``Root`` type — a *dataclass* built at runtime
+    via ``dataclasses.make_dataclass`` from the tool's JSON Schema, not a
+    Pydantic model. ``dataclasses.asdict()`` is the correct unwrap (it also
+    recurses into nested dataclass fields, e.g. ``buying_power``); a stray
+    Pydantic model elsewhere falls back to ``model_dump()``. Anything else
+    (already a dict/list/scalar) is returned as-is.
+    """
+    import dataclasses
+
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return dataclasses.asdict(value)
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    return value
+
+
+def _flatten_account_fields(data: dict[str, Any], prefix: str = "") -> list[tuple[str, str]]:
+    """Flatten a remote-MCP account payload into (tag, value) rows.
+
+    Nested one level (e.g. ``buying_power.buying_power``) rather than
+    recursing arbitrarily deep, since broker account payloads are shallow.
+    Skips ``None`` and zero-valued numeric-looking fields, matching the
+    guidance the broker's own response typically includes (zero means no
+    holdings in that asset class — noise to omit, not a real 0.00 balance).
+    """
+    rows: list[tuple[str, str]] = []
+    for key, value in data.items():
+        if key == "currency" or value is None:
+            continue
+        label = f"{prefix}{key}"
+        normalized = _normalize_mcp_value(value)
+        if isinstance(normalized, dict):
+            rows.extend(_flatten_account_fields(normalized, prefix=f"{label}."))
+            continue
+        text = str(normalized)
+        try:
+            if float(text) == 0.0:
+                continue
+        except (TypeError, ValueError):
+            pass
+        rows.append((label, text))
+    return rows
+
+
 def _print_connector_account(result: dict[str, Any]) -> int:
     accounts = ", ".join(result.get("accounts", [])) or "(none)"
-    console.print(f"Accounts: [cyan]{rich_escape(accounts)}[/cyan]")
     rows = result.get("summary", [])
     if not rows:
+        # Not the broker_sdk flat shape — try the remote-MCP nested shape.
+        # Robinhood's tool result double-wraps: result["data"] unwraps to
+        # {"data": <actual account fields>, "guide": "<advisory text>"},
+        # not the fields directly — drill one more level in when present.
+        wrapper = _normalize_mcp_value(result.get("data"))
+        raw_data = wrapper
+        guide = result.get("guide")
+        if isinstance(wrapper, dict) and "data" in wrapper and "guide" in wrapper:
+            raw_data = _normalize_mcp_value(wrapper.get("data"))
+            guide = wrapper.get("guide") or guide
+        if isinstance(raw_data, dict):
+            currency = raw_data.get("currency", "")
+            account_label = result.get("account_number") or accounts
+            table = Table(
+                title=f"Account Summary · {result.get('profile_id')}", box=box.SIMPLE_HEAVY, show_lines=False
+            )
+            table.add_column("Field")
+            table.add_column("Value", justify="right")
+            for tag, value in _flatten_account_fields(raw_data):
+                is_currency_code = tag.endswith("currency") or tag.endswith("_currency")
+                display = value if is_currency_code else f"{value} {currency}".strip()
+                table.add_row(tag, display)
+            console.print(f"Account: [cyan]{rich_escape(str(account_label))}[/cyan]")
+            console.print(table)
+            if guide:
+                console.print(f"[dim]{rich_escape(str(guide))}[/dim]")
+            return EXIT_SUCCESS
+        console.print(f"Accounts: [cyan]{rich_escape(accounts)}[/cyan]")
         console.print("[dim]No account summary returned.[/dim]")
         return EXIT_SUCCESS
+    console.print(f"Accounts: [cyan]{rich_escape(accounts)}[/cyan]")
     table = Table(title=f"Account Summary · {result.get('profile_id')}", box=box.SIMPLE_HEAVY, show_lines=False)
     table.add_column("Account")
     table.add_column("Tag")
@@ -3929,7 +4005,6 @@ def _print_connector_account(result: dict[str, Any]) -> int:
         )
     console.print(table)
     return EXIT_SUCCESS
-
 
 def cmd_connector_account(
     profile_id: Optional[str] = None,
@@ -3974,6 +4049,41 @@ def cmd_connector_positions(
         return EXIT_RUN_FAILED
     rows = result.get("positions", [])
     if not rows:
+        # Not the broker_sdk flat shape — try the remote-MCP nested shape
+        # (same double-wrap as account: result["data"] -> {"data": {"positions":
+        # [...], "next": ...}, "guide": "..."}).
+        wrapper = _normalize_mcp_value(result.get("data"))
+        inner = wrapper
+        guide = result.get("guide")
+        if isinstance(wrapper, dict) and "data" in wrapper and "guide" in wrapper:
+            inner = _normalize_mcp_value(wrapper.get("data"))
+            guide = wrapper.get("guide") or guide
+        remote_positions = inner.get("positions") if isinstance(inner, dict) else None
+        if remote_positions:
+            account_label = result.get("account_number") or "(none)"
+            table = Table(title=f"Positions · {result.get('profile_id')}", box=box.SIMPLE_HEAVY, show_lines=False)
+            table.add_column("Symbol")
+            table.add_column("Type")
+            table.add_column("Qty", justify="right")
+            table.add_column("Avail. Sell", justify="right")
+            table.add_column("Avg Buy Price", justify="right")
+            for pos in remote_positions:
+                pos = _normalize_mcp_value(pos)
+                table.add_row(
+                    str(pos.get("symbol") or pos.get("local_symbol") or ""),
+                    str(pos.get("type") or pos.get("sec_type") or ""),
+                    str(pos.get("quantity") or pos.get("position") or ""),
+                    str(pos.get("shares_available_for_sells") or ""),
+                    str(pos.get("average_buy_price") or pos.get("avg_cost") or ""),
+                )
+            console.print(f"Account: [cyan]{rich_escape(str(account_label))}[/cyan]")
+            console.print(table)
+            if guide:
+                console.print(f"[dim]{rich_escape(str(guide))}[/dim]")
+            next_cursor = inner.get("next") if isinstance(inner, dict) else None
+            if next_cursor:
+                console.print(f"[dim]More results available (next={rich_escape(str(next_cursor))}).[/dim]")
+            return EXIT_SUCCESS
         console.print("[dim]No positions returned.[/dim]")
         return EXIT_SUCCESS
     table = Table(title=f"Positions · {result.get('profile_id')}", box=box.SIMPLE_HEAVY, show_lines=False)
@@ -3994,7 +4104,6 @@ def cmd_connector_positions(
         )
     console.print(table)
     return EXIT_SUCCESS
-
 
 def cmd_connector_orders(
     profile_id: Optional[str] = None,
