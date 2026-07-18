@@ -162,8 +162,22 @@ def _normalize_side(raw: Any) -> str:
     raise ValueError(f"Unsupported trade side: {raw!r}")
 
 
+def _is_empty_code(raw: Any) -> bool:
+    """True for None/NaN/blank securities codes from CSV/Excel cells."""
+    if raw is None:
+        return True
+    try:
+        if pd.isna(raw):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return not str(raw).strip()
+
+
 def _qualify_a_share(code: str) -> str:
     """Append .SH/.SZ/.BJ suffix to a bare A-share ticker."""
+    if _is_empty_code(code):
+        raise ValueError("empty securities code")
     code = str(code).strip().zfill(6)
     if "." in code:
         return code.upper()
@@ -193,13 +207,16 @@ def parse_tonghuashun(df: pd.DataFrame) -> list[TradeRecord]:
     """
     records: list[TradeRecord] = []
     for _, row in df.iterrows():
+        raw_code = row.get("证券代码", "")
+        if _is_empty_code(raw_code):
+            continue
         qty = _to_float(row.get("成交数量"))
         price = _to_float(row.get("成交价格"))
         amount = _to_float(row.get("成交金额")) or qty * price
         fee = _to_float(row.get("手续费")) + _to_float(row.get("印花税")) + _to_float(row.get("过户费"))
         records.append(TradeRecord(
             datetime=str(row.get("成交时间", "")).strip(),
-            symbol=_qualify_a_share(row.get("证券代码", "")),
+            symbol=_qualify_a_share(raw_code),
             name=str(row.get("证券名称", "")).strip(),
             side=_normalize_side(row.get("操作")),
             quantity=qty,
@@ -219,6 +236,9 @@ def parse_eastmoney(df: pd.DataFrame) -> list[TradeRecord]:
     """
     records: list[TradeRecord] = []
     for _, row in df.iterrows():
+        raw_code = row.get("股票代码", "")
+        if _is_empty_code(raw_code):
+            continue
         raw_date = str(row.get("成交日期", "")).strip()
         raw_time = str(row.get("成交时间", "")).strip()
         if len(raw_date) == 8 and raw_date.isdigit():
@@ -232,7 +252,7 @@ def parse_eastmoney(df: pd.DataFrame) -> list[TradeRecord]:
         fee = _to_float(row.get("佣金")) + _to_float(row.get("印花税"))
         records.append(TradeRecord(
             datetime=dt,
-            symbol=_qualify_a_share(row.get("股票代码", "")),
+            symbol=_qualify_a_share(raw_code),
             name=str(row.get("股票名称", "")).strip(),
             side=_normalize_side(row.get("买卖标志")),
             quantity=qty,

@@ -19,6 +19,8 @@ from src.tools.trade_journal_parsers import (
     _infer_market_from_symbol,
     _normalize_side,
     _qualify_a_share,
+    parse_tonghuashun,
+    parse_eastmoney,
     detect_format,
     parse_file,
     records_to_dataframe,
@@ -506,3 +508,60 @@ def test_analyze_with_filter(allow_tmp: Path) -> None:
     assert result["status"] == "ok"
     assert result["total_records"] == 1
     assert result["filter_applied"] == "symbol=AAPL"
+
+
+def test_qualify_a_share_rejects_empty() -> None:
+    with pytest.raises(ValueError, match="empty"):
+        _qualify_a_share("")
+    with pytest.raises(ValueError, match="empty"):
+        _qualify_a_share("   ")
+
+
+def test_parse_tonghuashun_skips_blank_code_rows() -> None:
+    df = pd.DataFrame([{
+        "成交时间": "2024-01-01 10:00:00", "证券代码": "", "证券名称": "",
+        "操作": "买入", "成交数量": 100, "成交价格": 10.0, "成交金额": 1000,
+        "手续费": 0, "印花税": 0, "过户费": 0,
+    }, {
+        "成交时间": "2024-01-01 10:01:00", "证券代码": "600519", "证券名称": "茅台",
+        "操作": "买入", "成交数量": 100, "成交价格": 10.0, "成交金额": 1000,
+        "手续费": 0, "印花税": 0, "过户费": 0,
+    }])
+    rec = parse_tonghuashun(df)
+    assert len(rec) == 1
+    assert rec[0].symbol == "600519.SH"
+
+
+def test_qualify_a_share_rejects_nan() -> None:
+    with pytest.raises(ValueError, match="empty"):
+        _qualify_a_share(float("nan"))
+
+
+def test_parse_tonghuashun_skips_nan_code_rows() -> None:
+    df = pd.DataFrame([{
+        "成交时间": "2024-01-01 10:00:00", "证券代码": float("nan"), "证券名称": "",
+        "操作": "买入", "成交数量": 100, "成交价格": 10.0, "成交金额": 1000,
+        "手续费": 0, "印花税": 0, "过户费": 0,
+    }, {
+        "成交时间": "2024-01-01 10:01:00", "证券代码": "600519", "证券名称": "茅台",
+        "操作": "买入", "成交数量": 100, "成交价格": 10.0, "成交金额": 1000,
+        "手续费": 0, "印花税": 0, "过户费": 0,
+    }])
+    rec = parse_tonghuashun(df)
+    assert len(rec) == 1
+    assert rec[0].symbol == "600519.SH"
+
+
+def test_parse_eastmoney_skips_nan_code_rows() -> None:
+    df = pd.DataFrame([{
+        "成交日期": "20240101", "成交时间": "10:00:00", "股票代码": float("nan"),
+        "股票名称": "", "买卖标志": "B", "成交数量": 100, "成交均价": 10.0,
+        "成交金额": 1000, "佣金": 0, "印花税": 0,
+    }, {
+        "成交日期": "20240101", "成交时间": "10:01:00", "股票代码": "000001",
+        "股票名称": "平安", "买卖标志": "B", "成交数量": 100, "成交均价": 10.0,
+        "成交金额": 1000, "佣金": 0, "印花税": 0,
+    }])
+    rec = parse_eastmoney(df)
+    assert len(rec) == 1
+    assert rec[0].symbol == "000001.SZ"
