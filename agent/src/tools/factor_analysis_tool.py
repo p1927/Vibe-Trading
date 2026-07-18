@@ -42,6 +42,12 @@ def run_factor_analysis(
     if factor_df.empty or return_df.empty:
         return json.dumps({"status": "error", "error": "Factor or return data is empty"}, ensure_ascii=False)
 
+    if n_groups < 1:
+        return json.dumps(
+            {"status": "error", "error": f"n_groups must be >= 1, got {n_groups}"},
+            ensure_ascii=False,
+        )
+
     ic_series = compute_ic_series(factor_df, return_df)
     if ic_series.empty:
         return json.dumps(
@@ -67,10 +73,7 @@ def run_factor_analysis(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    try:
-        equity_df = compute_group_equity(factor_df, return_df, n_groups)
-    except ValueError as e:
-        return json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False)
+    equity_df = compute_group_equity(factor_df, return_df, n_groups)
     if equity_df.empty:
         return json.dumps(
             {"status": "error", "error": "Layered backtest failed: insufficient valid cross-section dates"},
