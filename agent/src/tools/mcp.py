@@ -68,6 +68,7 @@ def _make_cache_key(server_name: str, server_config: "MCPServerConfig") -> tuple
         server_config.command,
         str(server_config.args or []),
         str(sorted((server_config.env or {}).items())),
+        str(sorted(server_config.enabled_tools or [])),
     )
 
 
