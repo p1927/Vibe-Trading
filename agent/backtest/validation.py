@@ -321,7 +321,12 @@ def _load_equity(run_dir: Path) -> pd.Series:
     """Load equity curve from artifacts/equity.csv."""
     path = run_dir / "artifacts" / "equity.csv"
     df = pd.read_csv(path, index_col=0, parse_dates=True)
-    return df["equity"]
+    for col in ("equity", "nav", "value"):
+        if col in df.columns:
+            return df[col]
+    raise ValueError(
+        f"equity.csv must contain an equity/nav/value column; got {list(df.columns)}"
+    )
 
 
 def _load_trades(run_dir: Path) -> List[TradeRecord]:
