@@ -466,39 +466,30 @@ def backtest(run_dir: str) -> str:
 
 @mcp.tool
 def factor_analysis(
-    codes: list[str],
-    factor_name: str,
-    start_date: str,
-    end_date: str,
-    source: str = "auto",
-    top_n: int = 10,
-    bottom_n: int = 10,
+    factor_csv: str,
+    return_csv: str,
+    output_dir: str,
+    n_groups: int = 5,
 ) -> str:
-    """Compute factor IC/IR analysis and layered backtest for a cross-section of stocks.
+    """Compute factor IC/IR analysis and layered backtest from prepared CSVs.
 
     Analyzes factor predictive power using Spearman rank IC, IR (IC/std),
-    and top/bottom quintile return spreads.
+    and quantile group return spreads.
 
     Args:
-        codes: List of stock codes (e.g. ["000001.SZ", "600519.SH"]).
-        factor_name: Factor column name in daily_basic data (e.g. "pe_ttm", "pb", "turnover_rate").
-        start_date: Start date (YYYY-MM-DD).
-        end_date: End date (YYYY-MM-DD).
-        source: Data source ("tushare", "yfinance", "auto").
-        top_n: Number of top-ranked stocks per period.
-        bottom_n: Number of bottom-ranked stocks per period.
+        factor_csv: Path to factor values CSV (index=date, columns=codes).
+        return_csv: Path to returns CSV (same structure as factor_csv).
+        output_dir: Directory for output files (ic_series.csv, ic_summary.json, group_equity.csv).
+        n_groups: Number of quantile groups (default 5).
     """
     registry = _get_registry()
     return registry.execute(
         "factor_analysis",
         {
-            "codes": codes,
-            "factor_name": factor_name,
-            "start_date": start_date,
-            "end_date": end_date,
-            "source": source,
-            "top_n": top_n,
-            "bottom_n": bottom_n,
+            "factor_csv": factor_csv,
+            "return_csv": return_csv,
+            "output_dir": output_dir,
+            "n_groups": n_groups,
         },
     )
 
