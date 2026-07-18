@@ -162,12 +162,23 @@ def _normalize_side(raw: Any) -> str:
     raise ValueError(f"Unsupported trade side: {raw!r}")
 
 
+def _is_empty_code(raw: Any) -> bool:
+    """True for None/NaN/blank securities codes from CSV/Excel cells."""
+    if raw is None:
+        return True
+    try:
+        if pd.isna(raw):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return not str(raw).strip()
+
+
 def _qualify_a_share(code: str) -> str:
     """Append .SH/.SZ/.BJ suffix to a bare A-share ticker."""
-    code = str(code).strip()
-    if not code:
+    if _is_empty_code(code):
         raise ValueError("empty securities code")
-    code = code.zfill(6)
+    code = str(code).strip().zfill(6)
     if "." in code:
         return code.upper()
     first = code[0]
@@ -196,8 +207,8 @@ def parse_tonghuashun(df: pd.DataFrame) -> list[TradeRecord]:
     """
     records: list[TradeRecord] = []
     for _, row in df.iterrows():
-        raw_code = str(row.get("证券代码", "")).strip()
-        if not raw_code:
+        raw_code = row.get("证券代码", "")
+        if _is_empty_code(raw_code):
             continue
         qty = _to_float(row.get("成交数量"))
         price = _to_float(row.get("成交价格"))
@@ -225,8 +236,8 @@ def parse_eastmoney(df: pd.DataFrame) -> list[TradeRecord]:
     """
     records: list[TradeRecord] = []
     for _, row in df.iterrows():
-        raw_code = str(row.get("股票代码", "")).strip()
-        if not raw_code:
+        raw_code = row.get("股票代码", "")
+        if _is_empty_code(raw_code):
             continue
         raw_date = str(row.get("成交日期", "")).strip()
         raw_time = str(row.get("成交时间", "")).strip()
