@@ -78,6 +78,238 @@ def _build_synthetic_dataset(n_bars: int, n_symbols: int, nan_ratio: float = 0.0
 
 
 # ---------------------------------------------------------------------------
+# Gold standard reference: pre-vectorization pandas scalar path
+# Source: main branch base.py lines 98-157 (commit 86f6012)
+# ---------------------------------------------------------------------------
+
+
+def _align_pandas_reference(
+    data_map: dict,
+    signal_map: dict,
+    codes: list,
+    optimizer=None,
+) -> tuple:
+    """Reference implementation of _align() using pure pandas operations.
+
+    This replicates the original scalar reindex+ffill logic from before
+    the vectorization optimization (commit fff6c16). Used as gold standard
+    to validate that the optimized path produces identical results.
+    """
+    all_dates: set = set()
+    for c in codes:
+        all_dates.update(data_map[c].index)
+    dates = pd.DatetimeIndex(sorted(all_dates))
+
+    close = pd.DataFrame(index=dates, columns=codes, dtype=float)
+    for c in codes:
+        close[c] = data_map[c]["close"].reindex(dates)
+
+    # ffill with limit to avoid masking long suspensions
+    ffill_limit = (
+        10 if len({_detect_market_for_align(c) for c in codes}) > 1 else 5
+    )
+    close = close.ffill(limit=ffill_limit)
+
+    # Drop symbols that are entirely NaN
+    all_nan_cols = [c for c in codes if close[c].isna().all()]
+    if all_nan_cols:
+        codes = [c for c in codes if c not in all_nan_cols]
+        if not codes:
+            raise ValueError("All symbols have no data in the requested date range")
+        close = close[codes]
+
+    pos = pd.DataFrame(0.0, index=dates, columns=codes)
+    for c in codes:
+        own_dates = data_map[c].index
+        raw = signal_map[c].reindex(own_dates).fillna(0.0).clip(-1.0, 1.0)
+        shifted = raw.shift(1).fillna(0.0)
+        pos[c] = shifted.reindex(dates).ffill(limit=ffill_limit).fillna(0.0)
+
+    ret = close.pct_change().fillna(0.0)
+
+    if optimizer is not None:
+        pos = optimizer(ret, pos, dates)
+
+    scale = pos.abs().sum(axis=1).clip(lower=1.0)
+    pos = pos.div(scale, axis=0)
+
+    return dates, close, pos, ret
+
+
+class TestAlignGoldStandard:
+    """Gold standard regression: old pandas scalar path vs. new vectorized path.
+
+    Ensures any optimization to _align() produces element-wise identical results
+    to the original pandas reindex implementation across all edge cases.
+    """
+
+    @pytest.mark.parametrize("n_bars,n_symbols", [
+        (100, 3),
+        (500, 10),
+        (2000, 30),
+    ])
+    def test_basic_equivalence(self, n_bars: int, n_symbols: int) -> None:
+        """Vectorized _align() matches reference on clean synthetic data."""
+        data_map, signal_map, codes = _build_synthetic_dataset(
+            n_bars, n_symbols, nan_ratio=0.05
+        )
+
+        dates_ref, close_ref, pos_ref, ret_ref = _align_pandas_reference(
+            data_map, signal_map, list(codes)
+        )
+        dates_opt, close_opt, pos_opt, ret_opt = _align(
+            data_map, signal_map, list(codes)
+        )
+
+        assert (dates_ref == dates_opt).all(), "Date indices must match exactly"
+        pd.testing.assert_frame_equal(close_ref, close_opt, rtol=1e-10, atol=1e-12)
+        pd.testing.assert_frame_equal(pos_ref, pos_opt, rtol=1e-10, atol=1e-12)
+        pd.testing.assert_frame_equal(ret_ref, ret_opt, rtol=1e-10, atol=1e-12)
+
+    def test_nan_gaps_equivalence(self) -> None:
+        """Both paths handle high NaN ratio (trading halts) identically."""
+        data_map, signal_map, codes = _build_synthetic_dataset(
+            n_bars=500, n_symbols=5, nan_ratio=0.20
+        )
+
+        dates_ref, close_ref, pos_ref, ret_ref = _align_pandas_reference(
+            data_map, signal_map, list(codes)
+        )
+        dates_opt, close_opt, pos_opt, ret_opt = _align(
+            data_map, signal_map, list(codes)
+        )
+
+        assert (dates_ref == dates_opt).all()
+        pd.testing.assert_frame_equal(close_ref, close_opt, rtol=1e-10, atol=1e-12)
+        pd.testing.assert_frame_equal(pos_ref, pos_opt, rtol=1e-10, atol=1e-12)
+        pd.testing.assert_frame_equal(ret_ref, ret_opt, rtol=1e-10, atol=1e-12)
+
+    def test_cross_market_equivalence(self) -> None:
+        """Both paths use ffill_limit=10 for cross-market scenarios."""
+        dates = pd.bdate_range("2025-01-01", periods=300)
+        rng = np.random.default_rng(42)
+
+        # Equity symbols
+        codes_eq = ["000001.SZ", "600519.SH", "000858.SZ"]
+        # Crypto symbols (triggers multi-market ffill_limit=10)
+        codes_crypto = ["BTC-USDT", "ETH-USDT", "SOL-USDT"]
+        codes = codes_eq + codes_crypto
+
+        data_map = {}
+        signal_map = {}
+        for i, code in enumerate(codes):
+            close = 100.0 * np.exp(np.cumsum(rng.normal(0.001, 0.02, 300)))
+            # Inject NaN gaps
+            nan_pos = rng.choice(300, size=15, replace=False)
+            close[nan_pos] = np.nan
+            df = pd.DataFrame({"close": close, "open": np.roll(close, 1)}, index=dates)
+            data_map[code] = df
+            signal_map[code] = pd.Series(
+                rng.choice([-1.0, 0.0, 1.0], size=300), index=dates
+            )
+
+        dates_ref, close_ref, pos_ref, ret_ref = _align_pandas_reference(
+            data_map, signal_map, list(codes)
+        )
+        dates_opt, close_opt, pos_opt, ret_opt = _align(
+            data_map, signal_map, list(codes)
+        )
+
+        assert (dates_ref == dates_opt).all()
+        pd.testing.assert_frame_equal(close_ref, close_opt, rtol=1e-10, atol=1e-12)
+        pd.testing.assert_frame_equal(pos_ref, pos_opt, rtol=1e-10, atol=1e-12)
+        pd.testing.assert_frame_equal(ret_ref, ret_opt, rtol=1e-10, atol=1e-12)
+
+    def test_all_nan_column_drop(self) -> None:
+        """Both paths drop all-NaN symbols identically."""
+        dates = pd.bdate_range("2025-01-01", periods=200)
+        rng = np.random.default_rng(42)
+
+        codes = ["VALID1.SZ", "VALID2.SZ", "ALLNAN.SZ", "VALID3.SZ"]
+        data_map = {}
+        signal_map = {}
+        for code in codes:
+            if code == "ALLNAN.SZ":
+                close = np.full(200, np.nan)
+            else:
+                close = 100.0 * np.exp(np.cumsum(rng.normal(0.001, 0.02, 200)))
+            df = pd.DataFrame({"close": close, "open": close.copy()}, index=dates)
+            data_map[code] = df
+            signal_map[code] = pd.Series(
+                rng.choice([-1.0, 0.0, 1.0], size=200), index=dates
+            )
+
+        dates_ref, close_ref, pos_ref, ret_ref = _align_pandas_reference(
+            data_map, signal_map, list(codes)
+        )
+        dates_opt, close_opt, pos_opt, ret_opt = _align(
+            data_map, signal_map, list(codes)
+        )
+
+        # Both should have dropped ALLNAN.SZ
+        assert "ALLNAN.SZ" not in close_ref.columns
+        assert "ALLNAN.SZ" not in close_opt.columns
+        assert (dates_ref == dates_opt).all()
+        pd.testing.assert_frame_equal(close_ref, close_opt, rtol=1e-10, atol=1e-12)
+        pd.testing.assert_frame_equal(pos_ref, pos_opt, rtol=1e-10, atol=1e-12)
+
+    def test_with_optimizer(self) -> None:
+        """Both paths produce identical results when optimizer is applied."""
+        data_map, signal_map, codes = _build_synthetic_dataset(
+            n_bars=100, n_symbols=3, nan_ratio=0.05
+        )
+
+        def scale_optimizer(ret, pos, dates_arg):
+            """Simple scaling optimizer for testing."""
+            return pos * 0.5
+
+        dates_ref, close_ref, pos_ref, ret_ref = _align_pandas_reference(
+            data_map, signal_map, list(codes), optimizer=scale_optimizer
+        )
+        dates_opt, close_opt, pos_opt, ret_opt = _align(
+            data_map, signal_map, list(codes), optimizer=scale_optimizer
+        )
+
+        assert (dates_ref == dates_opt).all()
+        pd.testing.assert_frame_equal(close_ref, close_opt, rtol=1e-10, atol=1e-12)
+        pd.testing.assert_frame_equal(pos_ref, pos_opt, rtol=1e-10, atol=1e-12)
+        pd.testing.assert_frame_equal(ret_ref, ret_opt, rtol=1e-10, atol=1e-12)
+
+    def test_end_to_end_equity_curve(self) -> None:
+        """End-to-end backtest equity curve matches between old and new path."""
+        data_map, signal_map, codes = _build_synthetic_dataset(
+            n_bars=500, n_symbols=10, nan_ratio=0.05
+        )
+
+        # New (optimized) path
+        dates_opt, close_opt, pos_opt, _ = _align(data_map, signal_map, list(codes))
+        codes_opt = list(pos_opt.columns)
+        engine_opt = ChinaAEngine({"initial_cash": 1_000_000})
+        engine_opt._execute_bars(dates_opt, data_map, close_opt, pos_opt, codes_opt)
+        equity_opt = pd.Series(
+            [s.equity for s in engine_opt.equity_snapshots],
+            index=[s.timestamp for s in engine_opt.equity_snapshots],
+        )
+
+        # Old (reference pandas) path
+        dates_ref, close_ref, pos_ref, _ = _align_pandas_reference(
+            data_map, signal_map, list(codes)
+        )
+        codes_ref = list(pos_ref.columns)
+        engine_ref = ChinaAEngine({"initial_cash": 1_000_000})
+        engine_ref._execute_bars(dates_ref, data_map, close_ref, pos_ref, codes_ref)
+        equity_ref = pd.Series(
+            [s.equity for s in engine_ref.equity_snapshots],
+            index=[s.timestamp for s in engine_ref.equity_snapshots],
+        )
+
+        pd.testing.assert_series_equal(
+            equity_ref, equity_opt, rtol=1e-6, atol=1e-8,
+            check_names=False,
+        )
+
+
+# ---------------------------------------------------------------------------
 # TestAlignConsistency: verify _align() output correctness
 # ---------------------------------------------------------------------------
 
