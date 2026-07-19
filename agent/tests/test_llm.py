@@ -263,6 +263,53 @@ class TestMinimaxTemperature:
         assert captured["temperature"] == 0.7
 
 
+# ---------------------------------------------------------------------------
+# Kimi K-series temperature forcing
+# ---------------------------------------------------------------------------
+
+
+class TestKimiTemperature:
+    """Kimi reasoning models reject any temperature other than 1."""
+
+    def _capture_temperature(self, model: str, configured_temp: str) -> float:
+        import src.providers.llm as llm_mod
+        llm_mod._dotenv_loaded = True
+
+        captured: dict[str, float] = {}
+
+        class _FakeChatOpenAI:
+            def __init__(self, **kwargs: object) -> None:
+                captured["temperature"] = float(kwargs.get("temperature", -1))
+
+        env = {
+            "LANGCHAIN_PROVIDER": "moonshot",
+            "MOONSHOT_API_KEY": "moonshot-key",
+            "MOONSHOT_BASE_URL": "https://api.kimi.com/coding/v1",
+            "LANGCHAIN_MODEL_NAME": model,
+            "LANGCHAIN_TEMPERATURE": configured_temp,
+        }
+        with patch.dict(os.environ, env, clear=True):
+            with patch.object(llm_mod, "ChatOpenAIWithReasoning", _FakeChatOpenAI):
+                build_llm()
+        return captured["temperature"]
+
+    def test_kimi_k3_temperature_forced_to_one(self) -> None:
+        """kimi-k3 must be forced to 1.0 (API rejects other values)."""
+        assert self._capture_temperature("kimi-k3", "0.0") == 1.0
+
+    def test_kimi_k2_temperature_forced_to_one(self) -> None:
+        """Regression: kimi-k2.x keeps the existing forcing behavior."""
+        assert self._capture_temperature("kimi-k2.6", "0.0") == 1.0
+
+    def test_kimi_for_coding_temperature_forced_to_one(self) -> None:
+        """Regression: kimi-for-coding alias keeps the existing behavior."""
+        assert self._capture_temperature("kimi-for-coding", "0.5") == 1.0
+
+    def test_non_k_series_temperature_preserved(self) -> None:
+        """Non-reasoning Moonshot models keep the configured temperature."""
+        assert self._capture_temperature("moonshot-v1-8k", "0.0") == 0.0
+
+
 class TestReasoningEffortPassthrough:
     """LANGCHAIN_REASONING_EFFORT is forwarded as extra_body.reasoning.effort
     to the underlying OpenAI-compatible client. Used for OpenRouter-style

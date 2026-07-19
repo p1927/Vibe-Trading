@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from collections.abc import Sequence
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
@@ -297,6 +298,11 @@ _ENV_CANDIDATES = [
 # which slot won - the entire P08 R1 signal - using compile-time
 # constants only.
 _ENV_LABELS = ("~/.vibe-trading/.env", "<AGENT_DIR>/.env", "<CWD>/.env")
+
+# Kimi reasoning models (K-series: kimi-k2*, kimi-k3, …, and the
+# kimi-for-coding alias) reject any temperature other than 1 with
+# "invalid temperature: only 1 is allowed for this model".
+_KIMI_FORCED_TEMPERATURE_RE = re.compile(r"kimi-(k\d+|for-coding)", re.IGNORECASE)
 
 logger = logging.getLogger(__name__)
 
@@ -625,7 +631,7 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
     # ("invalid temperature: only 1 is allowed for this model").
     if (
         caps.name in {"moonshot", "kimi-coding"}
-        and name.lower().startswith(("kimi-k2", "kimi-for-coding"))
+        and _KIMI_FORCED_TEMPERATURE_RE.match(name)
         and temperature != 1.0
     ):
         logger.info("Forcing temperature=1.0 for %s (provider requirement)", name)
