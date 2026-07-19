@@ -92,6 +92,8 @@ class CompositeEngine(BaseEngine):
             market = "china_futures" if _is_china_futures(symbol) else "global_futures"
         engine = self._rule_engines.get(market)
         if engine is None:
+            if not self._rule_engines:
+                raise ValueError("No sub-engines available for composite backtest")
             engine = next(iter(self._rule_engines.values()))
         return engine
 
