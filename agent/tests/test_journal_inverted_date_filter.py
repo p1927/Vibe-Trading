@@ -23,5 +23,5 @@ def test_inverted_month_filter_raises() -> None:
 
 
 def test_normal_month_filter_keeps_rows() -> None:
-    out = _apply_filter(_frame(), "2026-01 to 2026-03")
-    assert len(out) == 2
+    out = _apply_filter(_frame(), "2026-01 to 2026-02")
+    assert list(out["datetime"].dt.strftime("%Y-%m")) == ["2026-01", "2026-02"]
