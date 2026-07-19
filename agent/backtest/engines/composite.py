@@ -90,7 +90,10 @@ class CompositeEngine(BaseEngine):
         market = self._symbol_market.get(symbol, "a_share")
         if market == "futures":
             market = "china_futures" if _is_china_futures(symbol) else "global_futures"
-        return self._rule_engines[market]
+        engine = self._rule_engines.get(market)
+        if engine is None:
+            engine = next(iter(self._rule_engines.values()))
+        return engine
 
     # ── Stateless method dispatch ──
 
