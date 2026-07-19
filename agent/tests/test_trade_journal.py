@@ -417,11 +417,13 @@ def test_apply_filter_preserves_full_date_and_mixed_precision() -> None:
 
     dates = _apply_filter(df, "2024-02-01 to 2024-02-15")
     mixed = _apply_filter(df, "2024-02-15 to 2024-02")
-    reversed_range = _apply_filter(df, "2024-03 to 2024-02")
 
     assert list(dates["symbol"]) == ["START", "MIDDLE"]
     assert list(mixed["symbol"]) == ["MIDDLE", "END"]
-    assert reversed_range.empty
+    # Inverted/degenerate ranges now fail fast rather than silently returning
+    # an empty frame that a caller could mistake for "no trades in range" (#729).
+    with pytest.raises(ValueError, match="inverted date filter"):
+        _apply_filter(df, "2024-03 to 2024-02")
 
 
 def test_apply_filter_symbol_equals() -> None:
@@ -508,6 +510,17 @@ def test_analyze_with_filter(allow_tmp: Path) -> None:
     assert result["status"] == "ok"
     assert result["total_records"] == 1
     assert result["filter_applied"] == "symbol=AAPL"
+
+
+def test_analyze_with_inverted_date_filter_returns_error_envelope(allow_tmp: Path) -> None:
+    """An inverted date range must surface as an error envelope, not a raw raise."""
+    result = json.loads(
+        analyze_trade_journal(
+            str(_write_full_journal(allow_tmp)), filter_expr="2026-03 to 2026-01"
+        )
+    )
+    assert result["status"] == "error"
+    assert "inverted date filter" in result["error"]
 
 
 def test_qualify_a_share_rejects_empty() -> None:

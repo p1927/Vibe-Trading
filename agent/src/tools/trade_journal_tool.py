@@ -444,7 +444,10 @@ def analyze_trade_journal(file_path: str, analysis_type: str = "full", filter_ex
         )
 
     df = records_to_dataframe(records)
-    filtered = _apply_filter(df, filter_expr)
+    try:
+        filtered = _apply_filter(df, filter_expr)
+    except ValueError as exc:
+        return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False)
 
     result: dict[str, Any] = {
         "status": "ok",
