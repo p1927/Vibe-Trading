@@ -389,10 +389,15 @@ def _apply_filter(df: pd.DataFrame, expr: str) -> pd.DataFrame:
                 if hi_month
                 else hi_base + pd.Timedelta(days=1)
             )
-            return df[(df["datetime"] >= lo) & (df["datetime"] < hi)]
+        except ValueError:
+            raise
         except Exception as exc:
             logger.warning("filter date parse failed: %s", exc)
             return df
+        # Mirror alpha_bench _parse_period: reject inverted ranges.
+        if lo >= hi:
+            raise ValueError(f"inverted date filter: {expr!r}")
+        return df[(df["datetime"] >= lo) & (df["datetime"] < hi)]
 
     if "=" in expr:
         key, val = (p.strip() for p in expr.split("=", 1))
