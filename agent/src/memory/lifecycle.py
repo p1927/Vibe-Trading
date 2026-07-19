@@ -12,16 +12,17 @@ Feature flags (env vars):
 
 from __future__ import annotations
 
-import fcntl
 import logging
-import math
 import os
 import time
-from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator
 
-from src.memory.persistent import MemoryEntry, PersistentMemory
+from src.memory.persistent import (
+    MemoryEntry,
+    PersistentMemory,
+    compute_importance,
+    memory_lock,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,88 +44,6 @@ def is_gc_enabled() -> bool:
 def is_decay_enabled() -> bool:
     """Check if importance decay is enabled via VT_MEMORY_DECAY env var."""
     return os.environ.get("VT_MEMORY_DECAY", "0") == "1"
-
-
-# ---------------------------------------------------------------------------
-# File lock
-# ---------------------------------------------------------------------------
-
-LOCK_TIMEOUT_S = 5.0
-
-
-@contextmanager
-def memory_lock(memory_dir: Path) -> Generator[bool, None, None]:
-    """Acquire exclusive file lock for write operations.
-
-    Single-writer model: only one agent session writes at a time.
-    On timeout (5s), the operation is skipped with a warning.
-
-    Yields:
-        True if lock acquired, False if timed out.
-    """
-    lock_path = memory_dir / ".lock"
-    lock_path.touch(exist_ok=True)
-    fd = None
-    try:
-        fd = open(lock_path, "w")  # noqa: SIM115
-        deadline = time.monotonic() + LOCK_TIMEOUT_S
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                yield True
-                return
-            except (OSError, BlockingIOError):
-                if time.monotonic() >= deadline:
-                    logger.warning(
-                        "memory_lock: timeout after %.1fs, skipping write",
-                        LOCK_TIMEOUT_S,
-                    )
-                    yield False
-                    return
-                time.sleep(0.1)
-    finally:
-        if fd:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            except OSError:
-                pass
-            fd.close()
-
-
-# ---------------------------------------------------------------------------
-# Importance / decay
-# ---------------------------------------------------------------------------
-
-HALF_LIFE_DAYS = 14.0
-DECAY_LAMBDA = math.log(2) / HALF_LIFE_DAYS
-ACCESS_BOOST = 0.1
-MAX_IMPORTANCE = 1.0
-
-
-def compute_importance(
-    quality_score: float,
-    access_count: int,
-    days_since_last_access: float,
-) -> float:
-    """Compute importance score using Ebbinghaus-inspired decay.
-
-    importance = quality * retention
-    retention  = exp(-lambda * t) + access_bonus
-
-    Args:
-        quality_score: Memory quality in [0.0, 1.0].
-        access_count: Number of times recalled.
-        days_since_last_access: Days since last access.
-
-    Returns:
-        Importance in [0.0, 1.0].
-    """
-    if not is_decay_enabled():
-        return quality_score  # Fallback: importance = quality when decay disabled
-    retention = math.exp(-DECAY_LAMBDA * max(0.0, days_since_last_access))
-    access_bonus = min(0.3, access_count * ACCESS_BOOST)
-    raw = quality_score * (retention + access_bonus)
-    return min(MAX_IMPORTANCE, max(0.0, raw))
 
 
 # ---------------------------------------------------------------------------
@@ -317,15 +236,21 @@ class MemoryLifecycle:
         with memory_lock(self.memory_dir) as acquired:
             if not acquired:
                 return
-            if action == "archive":
-                dest = archive_dir / entry.path.name
-                entry.path.rename(dest)
-            elif action == "delete":
-                dest = archive_dir / entry.path.name
-                dest.write_text(
-                    entry.path.read_text(encoding="utf-8"), encoding="utf-8"
+            try:
+                if action == "archive":
+                    dest = archive_dir / entry.path.name
+                    entry.path.rename(dest)
+                elif action == "delete":
+                    dest = archive_dir / entry.path.name
+                    dest.write_text(
+                        entry.path.read_text(encoding="utf-8"), encoding="utf-8"
+                    )
+                    entry.path.unlink()
+            except (OSError, IOError) as exc:
+                logger.warning(
+                    "GC action(%s, %s) failed: %s", entry.title, action, exc
                 )
-                entry.path.unlink()
+                return
 
         # Rebuild index after removal
         self._memory._rebuild_index()
@@ -343,8 +268,11 @@ class MemoryLifecycle:
             )
         lines.append("")
 
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write("\n".join(lines))
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+        except OSError as exc:
+            logger.warning("append_gc_log failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Frontmatter manipulation
