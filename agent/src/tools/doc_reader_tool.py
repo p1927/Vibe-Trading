@@ -111,8 +111,13 @@ def _parse_pages(pages_str: str, total: int) -> list[int]:
             continue
         if "-" in part:
             start, end = part.split("-", 1)
-            s = max(int(start.strip()) - 1, 0)
-            e = min(int(end.strip()), total)
+            start_1 = int(start.strip())
+            end_1 = int(end.strip())
+            # Mirror alpha_bench_tool._parse_period: reject inverted ranges.
+            if start_1 > end_1:
+                raise ValueError(f"inverted page range: {part!r}")
+            s = max(start_1 - 1, 0)
+            e = min(end_1, total)
             out.extend(range(s, e))
         elif part.isdigit():
             out.append(int(part) - 1)
