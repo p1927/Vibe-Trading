@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
-import os as _os
 import re
 import sys
 import time as _time
@@ -72,7 +71,9 @@ def compute_importance(
     quality_score: float, access_count: int, days_since_last_access: float
 ) -> float:
     """Compute importance via Ebbinghaus-inspired decay formula."""
-    if _os.environ.get("VT_MEMORY_DECAY", "0") != "1":
+    from src.config.accessor import get_env_config
+
+    if not get_env_config().memory.decay_enabled:
         return quality_score
     retention = math.exp(-_DECAY_LAMBDA * max(0.0, days_since_last_access))
     access_bonus = min(0.3, access_count * _ACCESS_BOOST)

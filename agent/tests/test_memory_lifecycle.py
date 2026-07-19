@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from src.config.accessor import reset_env_config
 from src.memory.lifecycle import (
     MemoryLifecycle,
     compute_importance,
@@ -15,6 +16,14 @@ from src.memory.lifecycle import (
     memory_lock,
 )
 from src.memory.persistent import PersistentMemory
+
+
+@pytest.fixture(autouse=True)
+def _reset_config_cache():
+    """Reset env config singleton so monkeypatch.setenv() takes effect."""
+    reset_env_config()
+    yield
+    reset_env_config()
 
 
 # ---------------------------------------------------------------------------

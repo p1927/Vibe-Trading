@@ -5,9 +5,20 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import pytest
+
+from src.config.accessor import reset_env_config
 from src.memory.lifecycle import MemoryLifecycle
 from src.memory.persistent import PersistentMemory
 from src.tools.remember_tool import RememberTool
+
+
+@pytest.fixture(autouse=True)
+def _reset_config_cache():
+    """Reset env config singleton so monkeypatch.setenv() takes effect."""
+    reset_env_config()
+    yield
+    reset_env_config()
 
 
 # ---------------------------------------------------------------------------

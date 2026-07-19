@@ -13,7 +13,6 @@ Feature flags (env vars):
 from __future__ import annotations
 
 import logging
-import os
 import time
 from pathlib import Path
 
@@ -33,17 +32,23 @@ logger = logging.getLogger(__name__)
 
 def is_quality_enabled() -> bool:
     """Check if quality scoring is enabled via VT_MEMORY_QUALITY env var."""
-    return os.environ.get("VT_MEMORY_QUALITY", "0") == "1"
+    from src.config.accessor import get_env_config
+
+    return get_env_config().memory.quality_enabled
 
 
 def is_gc_enabled() -> bool:
     """Check if garbage collection is enabled via VT_MEMORY_GC env var."""
-    return os.environ.get("VT_MEMORY_GC", "0") == "1"
+    from src.config.accessor import get_env_config
+
+    return get_env_config().memory.gc_enabled
 
 
 def is_decay_enabled() -> bool:
     """Check if importance decay is enabled via VT_MEMORY_DECAY env var."""
-    return os.environ.get("VT_MEMORY_DECAY", "0") == "1"
+    from src.config.accessor import get_env_config
+
+    return get_env_config().memory.decay_enabled
 
 
 # ---------------------------------------------------------------------------
