@@ -142,15 +142,15 @@ class TestMemoryEntryNewFields:
         assert len(entries[0].keywords) == 5
 
     def test_related_memories_filters_invalid_ids(self, tmp_path: Path) -> None:
-        """Non-6-char IDs in related_memories should be dropped."""
+        """Non-6-char or non-hex IDs in related_memories should be dropped."""
         _create_memory_file(
             tmp_path, "bad-rel",
-            related_memories=["ab12cd", "too_long_id", "ok33ff", "x"],
+            related_memories=["ab12cd", "too_long_id", "0a33ff", "x", "ok33ff"],
         )
         pm = PersistentMemory(memory_dir=tmp_path)
         entries = pm.list_entries()
-        # Only 6-char IDs survive
-        assert entries[0].related_memories == ("ab12cd", "ok33ff")
+        # Only 6-char hex IDs survive
+        assert entries[0].related_memories == ("ab12cd", "0a33ff")
 
     def test_id_generated_when_missing(self, tmp_path: Path) -> None:
         """Missing id field should auto-generate 6-char hex."""
