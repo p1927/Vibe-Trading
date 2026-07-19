@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import time as _time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -46,16 +47,7 @@ _SLUG_DISALLOWED_RE = re.compile(rf"[^a-z0-9_\-{_NON_LATIN_SCRIPT_RANGES}]")
 
 @dataclass(frozen=True)
 class MemoryEntry:
-    """A single memory entry on disk.
-
-    Attributes:
-        path: File path.
-        title: Memory title.
-        description: One-line description (used for retrieval scoring).
-        memory_type: Category (user/feedback/project/reference).
-        body: Body text content.
-        modified_at: File modification timestamp.
-    """
+    """A single memory entry on disk."""
 
     path: Path
     title: str
@@ -63,54 +55,42 @@ class MemoryEntry:
     memory_type: str
     body: str
     modified_at: float
+    # Phase 1 fields — all have defaults for backward compatibility
+    id: str = ""                    # 6-char hex; generated from name+mtime if empty
+    created_at: float = 0.0         # epoch seconds; 0 means use modified_at
+    updated_at: float = 0.0         # epoch seconds; 0 means use modified_at
+    keywords: tuple[str, ...] = ()  # max 5 tags
+    quality_score: float = 0.5      # [0.0, 1.0]; neutral default
+    access_count: int = 0           # cumulative recall hits
+    last_accessed: float = 0.0      # epoch; 0 means use modified_at
+    importance: float = 0.5         # computed via decay formula
+    related_memories: tuple[str, ...] = ()  # linked IDs
 
 
 def _tokenize(text: str) -> set[str]:
     """Split text into searchable tokens.
 
-    ASCII words >= 3 chars + individual characters from non-Latin scripts
-    listed in ``_NON_LATIN_SCRIPT_RANGES`` (CJK, Thai, Arabic, Hebrew,
-    Cyrillic). Underscores are
-    treated as word boundaries so snake_case titles (e.g. ``mcp_wiring_test``)
-    match natural-language queries (``"mcp wiring"``) as well as verbatim
-    lookups.
-
-    Args:
-        text: Input text.
-
-    Returns:
-        Set of tokens.
+    ASCII words >= 3 chars + individual characters from non-Latin scripts.
+    Underscores are treated as word boundaries so snake_case titles match
+    natural-language queries.
     """
     return set(_TOKEN_RE.findall(text.lower()))
 
 
-# Strip C0 (U+0000-U+001F except \t \n) and C1 (U+0080-U+009F) bytes from
-# user-supplied body content. These never carry useful payload from agent
-# writes but can be replayed back through `memory show` to inject ANSI
-# escape sequences into the user's terminal (see issue #108).
+# Strip C0 (U+0000-U+001F except \t \n) and C1 (U+0080-U+009F) bytes.
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 
-# Truncation marker appended when content exceeds MAX_ENTRY_CHARS. Read
-# semantics are unchanged (clipped at MAX_ENTRY_CHARS), but the marker
-# makes the silent clip surfaceable to anyone inspecting the file directly
-# (see issue #109).
+# Truncation marker appended when content exceeds MAX_ENTRY_CHARS.
 _TRUNCATION_MARKER = "\n\n[truncated at {limit} chars]\n"
 
 
 def _sanitize_body(content: str) -> str:
-    """Strip C0/C1 control bytes from `content` while keeping ``\n`` and ``\t``."""
+    """Strip C0/C1 control bytes from `content` while keeping ``\\n`` and ``\\t``."""
     return _CONTROL_CHAR_RE.sub("", content)
 
 
 def _truncate_body(content: str, limit: int = None) -> str:
-    """Clip `content` to `limit` chars total, leaving room for the marker.
-
-    The marker is reserved inside the limit (not appended on top) so the on-
-    disk body length stays <= MAX_ENTRY_CHARS and the marker survives the
-    matching read-side clip in `_scan_entries`. Callers that inspect
-    `entry.body` see the marker; the original tail content past the head
-    window is dropped.
-    """
+    """Clip `content` to `limit` chars, leaving room for the marker."""
     if limit is None:
         limit = MAX_ENTRY_CHARS
     if len(content) <= limit:
@@ -123,9 +103,7 @@ def _truncate_body(content: str, limit: int = None) -> str:
 def _coerce_str(value: object, default: str = "") -> str:
     """Coerce frontmatter values to a display string.
 
-    ``parse_frontmatter`` returns lists for ``[a, b]`` syntax and bools for
-    ``true``/``false``. ``MemoryEntry`` annotates these fields as ``str`` so
-    callers (CLI rendering, recall scoring) can rely on string operations.
+    Handles lists (``[a, b]``), bools, None, etc.
     """
     if value is None:
         return default
@@ -138,24 +116,31 @@ def _coerce_str(value: object, default: str = "") -> str:
     return str(value)
 
 
+def _parse_timestamp(value: object, fallback: float) -> float:
+    """Parse a timestamp from frontmatter. Returns epoch float."""
+    if value is None:
+        return fallback
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return dt.timestamp()
+        except (ValueError, TypeError):
+            pass
+    return fallback
+
+
 class PersistentMemory:
     """File-based persistent memory that survives across sessions.
 
-    Design:
-        - Frozen snapshot injected into system prompt at session start (preserves prompt cache).
-        - Disk writes via add()/remove() update files immediately but do NOT change the snapshot.
-        - Next session picks up the updated state.
-
-    Attributes:
-        snapshot: Frozen memory index text for system prompt injection.
+    Frozen snapshot injected into system prompt at session start.
+    Disk writes via add()/remove() update files immediately but do NOT
+    change the snapshot. Next session picks up the updated state.
     """
 
     def __init__(self, memory_dir: Optional[Path] = None) -> None:
-        """Initialize PersistentMemory.
-
-        Args:
-            memory_dir: Override memory directory (default: ~/.vibe-trading/memory/).
-        """
         self._dir = memory_dir or MEMORY_BASE
         self._dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self._dir / "MEMORY.md"
@@ -178,11 +163,7 @@ class PersistentMemory:
         return self._snapshot
 
     def _scan_entries(self) -> List[MemoryEntry]:
-        """Scan all .md files (except MEMORY.md) and parse frontmatter.
-
-        Returns:
-            List of parsed memory entries.
-        """
+        """Scan all .md files (except MEMORY.md) and parse frontmatter."""
         entries: List[MemoryEntry] = []
         for path in sorted(self._dir.glob("*.md")):
             if path.name == "MEMORY.md":
@@ -192,13 +173,60 @@ class PersistentMemory:
             except OSError:
                 continue
             meta, body = _parse_frontmatter(text)
+            mtime = path.stat().st_mtime
+
+            # Parse new fields with safe defaults
+            raw_kw = meta.get("keywords", [])
+            keywords = tuple(
+                str(k)[:30] for k in (raw_kw if isinstance(raw_kw, list) else [])
+            )[:5]
+
+            raw_related = meta.get("related_memories", [])
+            related = tuple(
+                str(r) for r in (raw_related if isinstance(raw_related, list) else [])
+                if isinstance(r, str) and len(r) == 6
+            )
+
+            qs = meta.get("quality_score", 0.5)
+            try:
+                qs = max(0.0, min(1.0, float(qs)))
+            except (TypeError, ValueError):
+                qs = 0.5
+
+            ac = meta.get("access_count", 0)
+            try:
+                ac = max(0, int(ac))
+            except (TypeError, ValueError):
+                ac = 0
+
+            # Generate id if missing
+            entry_id = str(meta.get("id", ""))
+            if not entry_id or len(entry_id) != 6:
+                entry_id = hashlib.sha256(
+                    f"{meta.get('name', path.stem)}{mtime}".encode()
+                ).hexdigest()[:6]
+
+            # Parse timestamps
+            created = _parse_timestamp(meta.get("created_at"), mtime)
+            updated = _parse_timestamp(meta.get("updated_at"), mtime)
+            last_acc = _parse_timestamp(meta.get("last_accessed"), mtime)
+
             entries.append(MemoryEntry(
                 path=path,
                 title=_coerce_str(meta.get("name"), default=path.stem),
                 description=_coerce_str(meta.get("description")),
                 memory_type=_coerce_str(meta.get("type"), default="project"),
                 body=body[:MAX_ENTRY_CHARS],
-                modified_at=path.stat().st_mtime,
+                modified_at=mtime,
+                id=entry_id,
+                created_at=created,
+                updated_at=updated,
+                keywords=keywords,
+                quality_score=qs,
+                access_count=ac,
+                last_accessed=last_acc,
+                importance=0.5,
+                related_memories=related,
             ))
         return entries
 
@@ -210,7 +238,7 @@ class PersistentMemory:
         """Resolve a memory by exact title, then by on-disk filename stem.
 
         Stem fallback accepts both the full ``{type}_{slug}`` form and the
-        bare ``slug`` suffix so users can paste either form from the index.
+        bare ``slug`` suffix.
         """
         needle = name.strip()
         if not needle:
@@ -238,14 +266,8 @@ class PersistentMemory:
     def find_relevant(self, query: str, max_results: int = MAX_RESULTS) -> List[MemoryEntry]:
         """Keyword search across all memory entries.
 
-        Scoring: metadata_hits * 2.0 + body_hits * 1.0.
-
-        Args:
-            query: Search query.
-            max_results: Maximum entries to return.
-
-        Returns:
-            Top-scoring memory entries.
+        Scoring: (metadata_hits + keyword_hits) * 2.0 + body_hits * 1.0,
+        weighted by importance.
         """
         query_tokens = _tokenize(query)
         if not query_tokens:
@@ -255,9 +277,15 @@ class PersistentMemory:
         for entry in self._scan_entries():
             meta_tokens = _tokenize(f"{entry.title} {entry.description}")
             body_tokens = _tokenize(entry.body)
-            score = len(query_tokens & meta_tokens) * METADATA_WEIGHT + len(query_tokens & body_tokens)
-            if score > 0:
-                scored.append((score, entry))
+            kw_tokens = _tokenize(" ".join(entry.keywords))
+            token_score = (
+                len(query_tokens & meta_tokens) * METADATA_WEIGHT
+                + len(query_tokens & kw_tokens) * METADATA_WEIGHT
+                + len(query_tokens & body_tokens)
+            )
+            if token_score > 0:
+                final_score = token_score * (0.5 + 0.5 * entry.importance)
+                scored.append((final_score, entry))
 
         scored.sort(key=lambda x: (-x[0], -x[1].modified_at))
         return [entry for _, entry in scored[:max_results]]
@@ -266,24 +294,9 @@ class PersistentMemory:
             description: str = "") -> Path:
         """Save a new memory entry and update the index.
 
-        Args:
-            name: Memory name (used as filename slug). Empty or whitespace-
-                only names are rejected.
-            content: Memory body text. C0/C1 control bytes (other than
-                ``\n`` and ``\t``) are stripped; the body is truncated to
-                ``MAX_ENTRY_CHARS`` with a visible marker.
-            memory_type: One of user/feedback/project/reference.
-            description: One-line description for retrieval scoring.
-
-        Returns:
-            Path to the created memory file.
-
         Raises:
-            ValueError: If `name` is empty or whitespace-only.
+            ValueError: If `name` is empty/whitespace-only or type is invalid.
         """
-        # Reject empty / whitespace-only names so they cannot all collapse
-        # to the same `{type}_.md` filename and silently overwrite each
-        # other (issue #110).
         stripped_name = name.strip()
         if not stripped_name:
             raise ValueError("memory name must not be empty or whitespace-only")
@@ -292,15 +305,10 @@ class PersistentMemory:
             allowed = ", ".join(MEMORY_TYPES)
             raise ValueError(f"memory_type must be one of: {allowed}")
 
-        # Preserve non-Latin script characters in the slug — collapsing
-        # them all to ``_`` caused two same-length non-Latin names to share a
-        # filename and silently overwrite each other (PR #95 + #104).
+        # Preserve non-Latin script characters in the slug
         slug = _SLUG_DISALLOWED_RE.sub("_", stripped_name.lower())[:60]
 
-        # If the slug normalized to all underscores (emoji-only, punctuation-
-        # only, etc.) the on-disk filename would still collide between any
-        # two such names. Append a short deterministic hash so distinct
-        # inputs produce distinct files (issue #110).
+        # If slug normalized to all underscores, append a hash
         if slug.strip("_") == "":
             digest = hashlib.sha256(stripped_name.encode("utf-8")).hexdigest()[:6]
             slug = f"{slug}_{digest}" if slug else digest
@@ -311,14 +319,28 @@ class PersistentMemory:
         safe_name = stripped_name.replace("\n", " ").replace("\r", " ")
         safe_desc = (description or stripped_name).replace("\n", " ").replace("\r", " ")
 
-        # Strip control bytes (#108) before truncation (#109) so the marker
-        # is computed against the user-visible content length.
         clean_content = _truncate_body(_sanitize_body(content))
+
+        # Generate Phase 1 metadata
+        entry_id = hashlib.sha256(
+            f"{stripped_name}{_time.time()}".encode()
+        ).hexdigest()[:6]
+        now_iso = _time.strftime("%Y-%m-%dT%H:%M:%S", _time.gmtime())
 
         frontmatter = (
             f"---\nname: {safe_name}\n"
             f"description: {safe_desc}\n"
-            f"type: {memory_type}\n---\n\n"
+            f"type: {memory_type}\n"
+            f"id: {entry_id}\n"
+            f"created_at: {now_iso}\n"
+            f"updated_at: {now_iso}\n"
+            f"keywords: []\n"
+            f"quality_score: 0.5\n"
+            f"access_count: 0\n"
+            f"last_accessed: {now_iso}\n"
+            f"importance: 0.5\n"
+            f"related_memories: []\n"
+            f"---\n\n"
             f"{clean_content}"
         )
         path.write_text(frontmatter, encoding="utf-8")
@@ -326,14 +348,7 @@ class PersistentMemory:
         return path
 
     def remove(self, name: str) -> bool:
-        """Remove a memory entry by name.
-
-        Args:
-            name: Memory name to remove.
-
-        Returns:
-            True if found and removed.
-        """
+        """Remove a memory entry by name. Returns True if found and removed."""
         for entry in self._scan_entries():
             if entry.title == name:
                 entry.path.unlink(missing_ok=True)
