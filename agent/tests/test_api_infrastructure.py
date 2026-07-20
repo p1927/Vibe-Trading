@@ -262,6 +262,12 @@ def test_strip_env_value_quoted_hash_preserves_value():
     assert helpers._strip_env_value("'secret # still-part-of-value'") == "secret # still-part-of-value"
 
 
+def test_strip_env_value_quoted_then_inline_comment():
+    """Trailing comments after a closed quote must still be stripped."""
+    assert helpers._strip_env_value('"secret" # comment') == "secret"
+    assert helpers._strip_env_value("'secret' # comment") == "secret"
+
+
 def test_read_write_env_quoted_hash_roundtrip(tmp_path):
     env_file = tmp_path / ".env"
     secret = "secret # still-part-of-value"

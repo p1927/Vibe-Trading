@@ -133,11 +133,13 @@ def _ensure_agent_env_file(path: Path | None = None) -> Path:
 def _strip_env_value(value: str) -> str:
     """Remove basic dotenv quotes and inline comments."""
     value = value.strip()
-    # Unquote first so "secret # still" keeps the hash (dotenv quotes shield comments).
+    # Fully quote-wrapped: keep interior `#` (do not treat as comment).
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1].strip()
     if " #" in value:
         value = value.split(" #", 1)[0].rstrip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
     return value.strip()
 
 
