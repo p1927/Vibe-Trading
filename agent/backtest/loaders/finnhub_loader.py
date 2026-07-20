@@ -26,9 +26,39 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from backtest.loaders._http import resolve_min_interval, throttled_get_json
 from backtest.loaders.base import cached_loader_fetch, validate_date_range
 from backtest.loaders.registry import register
+
+try:
+    from trade_integrations.tiered_api.http import tiered_http_get
+except ImportError:
+    tiered_http_get = None  # type: ignore[assignment,misc]
+
+
+def throttled_get_json(
+    url: str,
+    *,
+    host_key: str | None = None,
+    min_interval: float | None = None,
+    params: dict | None = None,
+) -> object:
+    del host_key, min_interval
+    if tiered_http_get is None:
+        raise RuntimeError("trade_integrations.tiered_api is required for finnhub loader")
+    return tiered_http_get("finnhub", url, params=params or {}, credential_param="token")
+
+
+def throttled_get_json(
+    url: str,
+    *,
+    host_key: str | None = None,
+    min_interval: float | None = None,
+    params: dict | None = None,
+) -> object:
+    del host_key, min_interval
+    if tiered_http_get is None:
+        raise RuntimeError("trade_integrations.tiered_api is not available")
+    return tiered_http_get("finnhub", url, params=params or {}, credential_param="token")
 
 logger = logging.getLogger(__name__)
 
@@ -241,8 +271,6 @@ class DataLoader:
         """
         payload = throttled_get_json(
             _CANDLE_URL,
-            host_key=_HOST_KEY,
-            min_interval=_min_interval(),
             params={
                 "symbol": _to_finnhub_symbol(code),
                 "resolution": _RESOLUTION,

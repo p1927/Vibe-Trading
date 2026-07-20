@@ -6,10 +6,19 @@ import {
   type PricePoint,
 } from "@/lib/forecastReplayUtils";
 
+const EXPERIMENTAL_TRACK_IDS = [
+  "lightgbm_macro",
+  "xgboost_macro",
+  "arimax_macro",
+  "darts_macro",
+  "automl_cached",
+] as const;
+
 const CANONICAL_TRACK_IDS = [
   "quant_ridge",
   "quant_ridge_no_overlay",
   "macro_only",
+  "macro_only_no_overlay",
   "bottom_up",
   "scenario_anchor",
   "event_overlay",
@@ -23,19 +32,24 @@ const BACKTEST_COMBINER_IDS = [
   "quant_only",
   "equal_weight_2",
   "equal_weight_3",
+  "equal_weight_quant_3",
   "inverse_mae_w6",
   "shrinkage_50",
   "alignment_grid",
   "stress_conditional",
+  "stress_conditional",
   "fixed_legacy",
+  "stacked_ridge_meta",
+  "equal_weight_ml_3",
 ] as const;
 
-export { CANONICAL_TRACK_IDS, BACKTEST_COMBINER_IDS };
+export { CANONICAL_TRACK_IDS, EXPERIMENTAL_TRACK_IDS, BACKTEST_COMBINER_IDS };
 
 const TRACK_LABELS: Record<string, string> = {
   quant_ridge: "Quant Ridge",
   quant_ridge_no_overlay: "Quant Ridge (no overlay)",
   macro_only: "Macro only",
+  macro_only_no_overlay: "Macro only (no overlay)",
   scenario_anchor: "Scenario anchor",
   event_overlay: "News shock",
   naive_zero: "Naive zero",
@@ -43,14 +57,22 @@ const TRACK_LABELS: Record<string, string> = {
   bottom_up: "Bottom up",
   debate_numeric: "Debate numeric",
   headline_legacy: "Headline legacy",
+  lightgbm_macro: "LightGBM macro (ML)",
+  xgboost_macro: "XGBoost macro (ML)",
+  arimax_macro: "ARIMAX macro (ML)",
+  darts_macro: "Darts macro (ML)",
+  automl_cached: "AutoML cached (ML)",
   "combiner:quant_only": "Combiner: quant only",
   "combiner:equal_weight_2": "Combiner: equal (2)",
   "combiner:equal_weight_3": "Combiner: equal (3)",
+  "combiner:equal_weight_quant_3": "Combiner: equal quant (3)",
   "combiner:shrinkage_50": "Combiner: shrinkage",
   "combiner:inverse_mae_w6": "Combiner: inverse MAE",
   "combiner:alignment_grid": "Combiner: alignment",
   "combiner:fixed_legacy": "Combiner: fixed legacy",
   "combiner:stress_conditional": "Combiner: stress",
+  "combiner:stacked_ridge_meta": "Combiner: stacked ML meta",
+  "combiner:equal_weight_ml_3": "Combiner: equal ML top 3",
 };
 
 function isoDay(raw: string | undefined): string {
