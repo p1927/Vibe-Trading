@@ -729,6 +729,32 @@ export const api = {
     ),
   getHubStatus: (entityId = "NIFTY") =>
     request<HubStatusResponse>(`/trade/hub/status?entity_id=${encodeURIComponent(entityId)}`),
+  getHubNewsPipelineConfig: () =>
+    request<HubNewsPipelineConfigResponse>("/trade/hub/news-pipeline/config"),
+  updateHubNewsPipelineConfig: (body: HubNewsPipelineConfigUpdate) =>
+    request<HubNewsPipelineConfigResponse>("/trade/hub/news-pipeline/config", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  runHubNewsIngest: (body: HubNewsIngestRequest = { mode: "full" }) =>
+    request<HubStagingDrainResponse>("/trade/hub/news-pipeline/ingest", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  discardHubNews: (body: HubNewsDiscardRequest) =>
+    request<HubNewsDiscardResponse>("/trade/hub/news/discard", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  undoHubNewsDiscard: (body: HubNewsDiscardUndoRequest) =>
+    request<HubNewsDiscardResponse>("/trade/hub/news/discard/undo", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  listHubDiscardedNews: (entityId = "NIFTY", limit = 50) =>
+    request<HubNewsDiscardedListResponse>(
+      `/trade/hub/news/discarded?entity_id=${encodeURIComponent(entityId)}&limit=${encodeURIComponent(String(limit))}`,
+    ),
   drainHubStaging: (entityId = "NIFTY", limit = 20) =>
     request<HubStagingDrainResponse>(
       `/trade/hub/staging/drain?entity_id=${encodeURIComponent(entityId)}&limit=${encodeURIComponent(String(limit))}`,
@@ -2317,6 +2343,7 @@ export interface HubNewsReference {
 export interface HubNewsItem {
   id?: string;
   ref_id?: string;
+  event_id?: string;
   title?: string;
   summary?: string;
   url?: string;
@@ -2326,10 +2353,33 @@ export interface HubNewsItem {
   ticker?: string;
   provenance?: "staging" | "distilled" | string;
   verification_status?: string;
+  market_impact_status?: string;
+  event_kind?: string;
+  parent_event_id?: string | null;
   sources?: HubNewsReference[];
   references?: HubNewsReference[];
   ref_count?: number;
+  timeline?: Array<{ at?: string; kind?: string; summary?: string }>;
+  consensus?: { direction?: string; confidence?: number; ref_count?: number };
+  predicted_impact?: Record<string, unknown>;
+  actual_impact?: Record<string, unknown>;
   tags?: { topics?: string[]; themes?: string[]; factors?: string[] };
+}
+
+export interface HubDiscardedNewsItem {
+  discard_id?: string;
+  id?: string;
+  ref_id?: string;
+  event_id?: string;
+  title?: string;
+  url?: string;
+  reason?: string;
+  source_kind?: string;
+  discarded_at?: string;
+  expires_at?: string;
+  provenance?: "discarded" | string;
+  ticker?: string;
+  relevance?: Record<string, unknown>;
 }
 
 export interface HubStatusPayload {
@@ -2337,6 +2387,7 @@ export interface HubStatusPayload {
   entity_id?: string;
   hub_dir?: string;
   paths?: Record<string, string>;
+  news_pipeline?: Record<string, unknown>;
   news_staging?: {
     entity_pipeline_enabled?: boolean;
     pipeline_paused?: boolean;
@@ -2357,8 +2408,10 @@ export interface HubStatusPayload {
     union_count?: number;
     staging_in_union?: number;
     distilled_in_union?: number;
+    discarded_count?: number;
     items?: HubNewsItem[];
     staging_queue?: HubNewsItem[];
+    discarded_items?: HubDiscardedNewsItem[];
   };
   verified_news?: Record<
     string,
@@ -2398,8 +2451,97 @@ export interface HubStatusResponse {
 
 export interface HubStagingDrainResponse {
   status: string;
-  summary?: Record<string, number | string | boolean>;
+  summary?: Record<string, number | string | boolean | Record<string, unknown>>;
   message?: string;
+}
+
+export interface HubNewsPipelineConfig {
+  ticker?: string;
+  full_ingest_cron?: string;
+  light_ingest_cron?: string;
+  light_ingest_enabled?: boolean;
+  entity_drain_cron?: string;
+  full_ingest_sources?: string;
+  light_ingest_sources?: string;
+  full_lookback_days?: number;
+  light_lookback_days?: number;
+  entity_batch_size?: number;
+  cluster_threshold?: number;
+  relevance_gate_enabled?: boolean;
+  relevance_min_confidence?: number;
+  relevance_rule_first?: boolean;
+  discard_retention_days?: number;
+  config_path?: string;
+  ingest_modes?: {
+    full?: { label?: string; sources?: string; lookback_days?: number; cron?: string };
+    light?: {
+      label?: string;
+      sources?: string;
+      lookback_days?: number;
+      cron?: string;
+      enabled?: boolean;
+    };
+  };
+  scheduler_sync?: Record<string, unknown>;
+}
+
+export interface HubNewsPipelineConfigResponse {
+  status: string;
+  config?: HubNewsPipelineConfig;
+  message?: string;
+}
+
+export interface HubNewsPipelineConfigUpdate {
+  full_ingest_cron?: string;
+  light_ingest_cron?: string;
+  light_ingest_enabled?: boolean;
+  entity_drain_cron?: string;
+  full_ingest_sources?: string;
+  light_ingest_sources?: string;
+  full_lookback_days?: number;
+  light_lookback_days?: number;
+  entity_batch_size?: number;
+  cluster_threshold?: number;
+  relevance_gate_enabled?: boolean;
+  relevance_min_confidence?: number;
+  relevance_rule_first?: boolean;
+  discard_retention_days?: number;
+}
+
+export interface HubNewsDiscardRequest {
+  entity_id?: string;
+  item_id: string;
+  source_kind?: "staging" | "distilled" | string;
+  reason?: string;
+  discard_similar?: boolean;
+}
+
+export interface HubNewsDiscardUndoRequest {
+  entity_id?: string;
+  discard_id: string;
+}
+
+export interface HubNewsDiscardResponse {
+  status: string;
+  discarded_count?: number;
+  discard_ids?: string[];
+  discarded?: Record<string, unknown>[];
+  similar_preview?: { similar_count?: number; items?: Array<{ id?: string; title?: string }> };
+  message?: string;
+}
+
+export interface HubNewsDiscardedListResponse {
+  status: string;
+  items?: HubDiscardedNewsItem[];
+  count?: number;
+  message?: string;
+}
+
+export interface HubNewsIngestRequest {
+  mode?: "full" | "light" | string;
+  ticker?: string;
+  sources?: string;
+  lookback_days?: number;
 }
 
 export interface IndexBacktestResponse {

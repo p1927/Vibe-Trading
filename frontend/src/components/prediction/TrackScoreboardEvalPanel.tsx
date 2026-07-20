@@ -21,7 +21,7 @@ const TRACK_NOTES: Record<string, string> = {
   naive_zero:
     "Always predicts 0% horizon return — the dashed forecast stays flat at the anchor spot by design (sanity baseline, not a bug).",
   event_overlay:
-    "Needs news shock calibration topics in hub; without calibration every eval is 0% and the track is marked unavailable on recompute.",
+    "Needs news shock calibration topics in hub; without calibration the News shock track is marked unavailable. Run: python scripts/backfill_historical_news.py && python scripts/rebuild_news_shock_calibration.py",
   bottom_up:
     "Only scores OOS days with enough constituent signals — n may be lower than other tracks.",
   headline_legacy:

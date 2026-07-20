@@ -37,7 +37,7 @@ const TRACK_LABELS: Record<string, string> = {
   quant_ridge_no_overlay: "Quant Ridge (no overlay)",
   macro_only: "Macro only",
   scenario_anchor: "Scenario anchor",
-  event_overlay: "Event overlay",
+  event_overlay: "News shock",
   naive_zero: "Naive zero",
   naive_momentum: "Naive momentum",
   bottom_up: "Bottom up",

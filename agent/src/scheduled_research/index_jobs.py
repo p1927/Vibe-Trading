@@ -32,6 +32,7 @@ JOB_TYPE_COMPANY_RESEARCH_ARCHIVE = "company_research_archive"
 
 JOB_TYPE_INDEX_PREDICTION_POST_CLOSE = "index_prediction_post_close"
 JOB_TYPE_HUB_NEWS_ENTITY = "hub_news_entity"
+JOB_TYPE_HUB_NEWS_INGEST = "hub_news_ingest"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -41,6 +42,7 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_COMPANY_RESEARCH_ARCHIVE,
     JOB_TYPE_INDEX_PREDICTION_POST_CLOSE,
     JOB_TYPE_HUB_NEWS_ENTITY,
+    JOB_TYPE_HUB_NEWS_INGEST,
 })
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -233,6 +235,27 @@ def run_hub_news_entity_job(config: dict[str, Any] | None = None) -> dict[str, A
     return _fn(config)
 
 
+def run_hub_news_ingest_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Fetch live news from configured sources into hub staging."""
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.dataflows.index_research.hub_news_ingest import run_hub_news_ingest
+
+    cfg = config or {}
+    mode = str(cfg.get("mode") or "full").strip().lower()
+    sources = cfg.get("sources")
+    if sources is None:
+        sources = "default"
+    return run_hub_news_ingest(
+        ticker=str(cfg.get("ticker") or "NIFTY"),
+        sources=sources,
+        mode=mode,
+        lookback_days=cfg.get("lookback_days"),
+        rss_limit_per_feed=int(cfg.get("rss_limit_per_feed") or 10),
+        watcher_since_hours=int(cfg.get("watcher_since_hours") or 6),
+        watcher_tickers=cfg.get("watcher_tickers"),
+    )
+
+
 def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
     """Execute one index scheduled job synchronously."""
     job_type = str(job.config.get("job_type") or "")
@@ -263,6 +286,10 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
     if job_type == JOB_TYPE_HUB_NEWS_ENTITY:
         summary = run_hub_news_entity_job(job.config)
         logger.info("hub news entity pipeline completed for job %s: %s", job.id, summary)
+        return
+    if job_type == JOB_TYPE_HUB_NEWS_INGEST:
+        summary = run_hub_news_ingest_job(job.config)
+        logger.info("hub news ingest completed for job %s: %s", job.id, summary)
         return
     raise ValueError(f"unsupported index job_type: {job_type!r}")
 
@@ -336,6 +363,39 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             config={"job_type": JOB_TYPE_COMPANY_RESEARCH_ARCHIVE, "ticker": "NIFTY"},
         ),
         ScheduledResearchJob(
+            id="nifty-hub-news-ingest-full",
+            prompt="Full hub news ingest (all sources, daily)",
+            schedule=os.getenv("HUB_NEWS_FULL_INGEST_CRON", "0 7 * * *").strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "full",
+                "ticker": "NIFTY",
+                "sources": os.getenv("HUB_NEWS_FULL_SOURCES", "all"),
+                "lookback_days": 3,
+            },
+        ),
+        ScheduledResearchJob(
+            id="nifty-hub-news-ingest-light",
+            prompt="Light hub news ingest (RSS + watcher)",
+            schedule=os.getenv(
+                "HUB_NEWS_LIGHT_INGEST_CRON",
+                os.getenv("HUB_NEWS_INGEST_CRON", "0 */4 * * *"),
+            ).strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "light",
+                "ticker": "NIFTY",
+                "sources": os.getenv("HUB_NEWS_LIGHT_SOURCES", "rss,watcher"),
+                "lookback_days": 1,
+            },
+        ),
+        ScheduledResearchJob(
             id="nifty-hub-news-entity",
             prompt="Process staging news refs into distilled hub events",
             schedule=os.getenv("HUB_NEWS_ENTITY_CRON", "35 18 * * *").strip(),
@@ -384,6 +444,14 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         )
 
     created = 0
+    try:
+        _ensure_trade_integrations_on_path()
+        from trade_integrations.hub_storage.news_pipeline_config import sync_scheduled_jobs_from_config
+
+        sync_scheduled_jobs_from_config()
+    except Exception as exc:
+        logger.warning("hub news pipeline job sync failed: %s", exc)
+
     for job in defaults:
         if store.get(job.id) is not None:
             continue

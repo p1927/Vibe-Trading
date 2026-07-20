@@ -5,6 +5,7 @@ import { fmtHitRate, fmtPct } from "@/lib/trackScoreboardUtils";
 import {
   BACKTEST_COMBINER_IDS,
   CANONICAL_TRACK_IDS,
+  trackDisplayLabel,
 } from "@/lib/trackScoreboardReplayUtils";
 import { TrackScoreboardChart } from "@/components/charts/TrackScoreboardChart";
 import { TrackScoreboardEvalPanel } from "@/components/prediction/TrackScoreboardEvalPanel";
@@ -93,6 +94,10 @@ export function TrackScoreboardPanel({
   const tracks = CANONICAL_TRACK_IDS.map((tid) => [tid, report.tracks?.[tid] ?? { track_id: tid, eval_count: 0 }] as const);
   const combiners = BACKTEST_COMBINER_IDS.map((cid) => [cid, report.combiners?.[cid] ?? { track_id: cid, eval_count: 0 }] as const);
   const live = report.live;
+  const eventOverlayUnavailable =
+    report.tracks?.event_overlay?.backtest_eligible !== false &&
+    (report.tracks?.event_overlay?.eval_count ?? 0) === 0 &&
+    (report.limitations ?? []).some((line) => line.includes("event_overlay"));
 
   return (
     <div className="space-y-5">
@@ -164,6 +169,31 @@ export function TrackScoreboardPanel({
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
           Direction skill is informational only — {evalCount} eval rows (need ≥
           {promo?.min_eval_count_required ?? 60} for auto-promotion). Headline stays quant_only until gates pass.
+        </div>
+      ) : null}
+
+      {eventOverlayUnavailable ? (
+        <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[11px] text-blue-950 dark:text-blue-100">
+          <p className="font-medium">News shock track ({trackDisplayLabel("event_overlay")}) needs historical data</p>
+          <p className="mt-1 text-muted-foreground">
+            Backfill 2006+ macro, flows, and news factors, then rebuild shock calibration:
+            {" "}
+            <code className="rounded bg-muted/60 px-1 py-0.5 text-[10px]">
+              python scripts/backfill_historical_macro.py --start 2006-01-01
+            </code>
+            {" → "}
+            <code className="rounded bg-muted/60 px-1 py-0.5 text-[10px]">
+              python scripts/backfill_historical_flows.py
+            </code>
+            {" → "}
+            <code className="rounded bg-muted/60 px-1 py-0.5 text-[10px]">
+              python scripts/backfill_historical_news.py
+            </code>
+            {" → "}
+            <code className="rounded bg-muted/60 px-1 py-0.5 text-[10px]">
+              python scripts/rebuild_news_shock_calibration.py
+            </code>
+          </p>
         </div>
       ) : null}
 

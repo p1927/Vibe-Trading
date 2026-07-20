@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.api.security import require_local_or_auth
+from trade_integrations.trade_widgets.store import load_trade_widget
 
 logger = logging.getLogger(__name__)
 
@@ -40,22 +41,15 @@ _WIDGET_TOOL_NAMES = frozenset(
 
 
 def trade_widget_dir() -> Path:
-    root = Path.home() / ".vibe-trading" / "trade_widgets"
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+    from trade_integrations.trade_widgets.store import trade_widget_dir as _dir
+
+    return _dir()
 
 
-def load_trade_widget(widget_id: str) -> Optional[Dict[str, Any]]:
-    if not _WIDGET_ID_RE.fullmatch(widget_id or ""):
-        return None
-    path = trade_widget_dir() / f"{widget_id}.json"
-    if not path.is_file():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return data if isinstance(data, dict) and data.get("type") == "trade_plan.widget" else None
+def trade_widget_dir() -> Path:
+    from trade_integrations.trade_widgets.store import trade_widget_dir as _dir
+
+    return _dir()
 
 
 def _widget_id_from_preview(preview: str) -> Optional[str]:
@@ -718,6 +712,65 @@ class HubStagingDrainResponse(BaseModel):
     message: str = ""
 
 
+class HubNewsPipelineConfigResponse(BaseModel):
+    status: str = "ok"
+    config: Dict[str, Any] = Field(default_factory=dict)
+    message: str = ""
+
+
+class HubNewsPipelineConfigUpdate(BaseModel):
+    full_ingest_cron: str | None = None
+    light_ingest_cron: str | None = None
+    light_ingest_enabled: bool | None = None
+    entity_drain_cron: str | None = None
+    full_ingest_sources: str | None = None
+    light_ingest_sources: str | None = None
+    full_lookback_days: int | None = None
+    light_lookback_days: int | None = None
+    entity_batch_size: int | None = None
+    cluster_threshold: float | None = None
+    relevance_gate_enabled: bool | None = None
+    relevance_min_confidence: float | None = None
+    relevance_rule_first: bool | None = None
+    discard_retention_days: int | None = None
+
+
+class HubNewsDiscardRequest(BaseModel):
+    entity_id: str = "NIFTY"
+    item_id: str = ""
+    source_kind: str = "staging"
+    reason: str | None = None
+    discard_similar: bool = False
+
+
+class HubNewsDiscardUndoRequest(BaseModel):
+    entity_id: str = "NIFTY"
+    discard_id: str = ""
+
+
+class HubNewsDiscardResponse(BaseModel):
+    status: str = "ok"
+    discarded_count: int = 0
+    discard_ids: list[str] = Field(default_factory=list)
+    discarded: list[Dict[str, Any]] = Field(default_factory=list)
+    similar_preview: Dict[str, Any] | None = None
+    message: str = ""
+
+
+class HubNewsDiscardedListResponse(BaseModel):
+    status: str = "ok"
+    items: list[Dict[str, Any]] = Field(default_factory=list)
+    count: int = 0
+    message: str = ""
+
+
+class HubNewsIngestRequest(BaseModel):
+    mode: str = "full"
+    ticker: str = "NIFTY"
+    sources: str | None = None
+    lookback_days: int | None = None
+
+
 class SimulateIndexPredictionRequest(BaseModel):
     ticker: str = "NIFTY"
     horizon_days: int | None = None
@@ -1049,6 +1102,191 @@ def drain_hub_staging(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@trade_router.get("/hub/news-pipeline/config", response_model=HubNewsPipelineConfigResponse)
+def get_hub_news_pipeline_config(
+    _auth: None = Depends(require_local_or_auth),
+) -> HubNewsPipelineConfigResponse:
+    """Return hub news ingest/distill schedule (env defaults + hub override file)."""
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.hub_storage.news_pipeline_config import config_for_api
+
+        return HubNewsPipelineConfigResponse(status="ok", config=config_for_api())
+    except Exception as exc:
+        logger.exception("hub news pipeline config read failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.patch("/hub/news-pipeline/config", response_model=HubNewsPipelineConfigResponse)
+def patch_hub_news_pipeline_config(
+    body: HubNewsPipelineConfigUpdate,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubNewsPipelineConfigResponse:
+    """Update persisted pipeline config and sync scheduled job crons."""
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.hub_storage.news_pipeline_config import (
+            config_for_api,
+            sync_scheduled_jobs_from_config,
+            update_news_pipeline_config,
+        )
+
+        patch = {k: v for k, v in body.model_dump().items() if v is not None}
+        update_news_pipeline_config(patch)
+        sync_result = sync_scheduled_jobs_from_config()
+        payload = config_for_api()
+        payload["scheduler_sync"] = sync_result
+        return HubNewsPipelineConfigResponse(status="ok", config=payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("hub news pipeline config update failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.post("/hub/news-pipeline/ingest", response_model=HubStagingDrainResponse)
+def run_hub_news_ingest_now(
+    body: HubNewsIngestRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubStagingDrainResponse:
+    """Trigger ingest immediately (full or light mode)."""
+    key = (body.ticker or "NIFTY").strip().upper()
+    mode = (body.mode or "full").strip().lower()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.dataflows.news_hub_bridge import run_hub_news_ingest
+
+        summary = run_hub_news_ingest(
+            ticker=key,
+            mode=mode,
+            sources=body.sources or "default",
+            lookback_days=body.lookback_days,
+        )
+        return HubStagingDrainResponse(status="ok", summary=summary)
+    except Exception as exc:
+        logger.exception("hub news ingest now failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.post("/hub/news/discard", response_model=HubNewsDiscardResponse)
+def discard_hub_news(
+    body: HubNewsDiscardRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubNewsDiscardResponse:
+    """Discard one news item or discard similar cluster."""
+    key = (body.entity_id or "NIFTY").strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.dataflows.index_research.news_discard import (
+            discard_news_item,
+            discard_similar_items,
+            preview_discard_similar,
+        )
+        from trade_integrations.hub_storage.news_events_store import get_event
+        from trade_integrations.hub_storage.news_staging_store import list_pending_refs
+
+        reason = str(body.reason or "manual discard")
+        if body.discard_similar:
+            anchor: dict[str, Any] = {}
+            iid = str(body.item_id or "").strip()
+            if body.source_kind == "staging" or iid.startswith("ref:"):
+                for ref in list_pending_refs(ticker=key, limit=10_000):
+                    if str(ref.get("ref_id") or "") == iid:
+                        anchor = {**ref, "provenance": "staging"}
+                        break
+            else:
+                ev = get_event(iid)
+                if ev:
+                    anchor = {**ev, "provenance": "distilled_event"}
+            if not anchor:
+                raise HTTPException(status_code=404, detail=f"item not found: {iid}")
+            preview = preview_discard_similar(anchor, ticker=key)
+            result = discard_similar_items(anchor, ticker=key, reason=reason)
+            return HubNewsDiscardResponse(
+                status="ok",
+                discarded_count=int(result.get("discarded_count") or 0),
+                discard_ids=list(result.get("discard_ids") or []),
+                discarded=list(result.get("discarded") or []),
+                similar_preview=preview,
+            )
+
+        result = discard_news_item(
+            str(body.item_id or ""),
+            ticker=key,
+            source_kind=str(body.source_kind or "staging"),
+            reason=reason,
+        )
+        rows = list(result.get("discarded") or [])
+        return HubNewsDiscardResponse(
+            status="ok",
+            discarded_count=int(result.get("count") or len(rows)),
+            discard_ids=[str(r.get("discard_id") or "") for r in rows if r.get("discard_id")],
+            discarded=rows,
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("hub news discard failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.post("/hub/news/discard/undo", response_model=HubNewsDiscardResponse)
+def undo_hub_news_discard(
+    body: HubNewsDiscardUndoRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubNewsDiscardResponse:
+    """Restore a soft-discarded news item within retention window."""
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.dataflows.index_research.news_discard import undo_discard
+
+        result = undo_discard(str(body.discard_id or "").strip())
+        if not result.get("restored"):
+            return HubNewsDiscardResponse(
+                status="failed",
+                message=str(result.get("reason") or "restore failed"),
+            )
+        return HubNewsDiscardResponse(status="ok", message="restored", discarded=[result])
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("hub news discard undo failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/hub/news/discarded", response_model=HubNewsDiscardedListResponse)
+def list_hub_discarded_news(
+    entity_id: str = "NIFTY",
+    limit: int = 50,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubNewsDiscardedListResponse:
+    """List soft-discarded news items (30d retention)."""
+    key = entity_id.strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.dataflows.index_research.news_discard import list_discarded
+
+        items = list_discarded(ticker=key, limit=max(1, min(limit, 200)))
+        return HubNewsDiscardedListResponse(status="ok", items=items, count=len(items))
+    except Exception as exc:
+        logger.exception("hub discarded news list failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @trade_router.post("/index-prediction/simulate", response_model=SimulateIndexPredictionResponse)
 def simulate_index_prediction(
     body: SimulateIndexPredictionRequest,
@@ -1196,10 +1434,17 @@ def index_prediction_forecast_lab(
     key = (ticker or "NIFTY").strip().upper()
     try:
         from trade_integrations.dataflows.index_research.prediction_algorithms.api import run_forecast_lab
-        from trade_integrations.dataflows.index_research.prediction_algorithms.config import lab_enabled
+        from trade_integrations.dataflows.index_research.prediction_algorithms.config import (
+            default_combiner_id,
+            lab_enabled,
+        )
         from trade_integrations.dataflows.index_research.prediction_algorithms.context_builder import (
             build_track_context,
             context_from_hub,
+        )
+        from trade_integrations.dataflows.index_research.prediction_algorithms.promotion import (
+            resolve_active_combiner,
+            resolve_combiner_runtime_kwargs,
         )
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -1229,7 +1474,23 @@ def index_prediction_forecast_lab(
             )
 
         lab_mode_val = "combine" if run_mode == "combine" else "tracks_only"
-        result = run_forecast_lab(ctx, mode=lab_mode_val, combiner_id=combiner)
+        active = None
+        runtime_kwargs: dict[str, Any] = {}
+        if lab_mode_val == "combine":
+            active = combiner or resolve_active_combiner(default=default_combiner_id(), ticker=key)
+            if active:
+                runtime_kwargs = resolve_combiner_runtime_kwargs(
+                    str(active),
+                    ticker=key,
+                    as_of_day=getattr(ctx, "as_of_day", None),
+                )
+        result = run_forecast_lab(
+            ctx,
+            mode=lab_mode_val,
+            combiner_id=combiner or active,
+            mae_by_track=runtime_kwargs.get("mae_by_track"),
+            lam=runtime_kwargs.get("lam"),
+        )
         return IndexForecastLabResponse(status="ok", ticker=key, result=result.to_dict())
     except Exception as exc:
         logger.exception("index-prediction forecast-lab failed for %s", key)
@@ -2066,6 +2327,7 @@ def get_index_prediction_history(
 def get_index_factor_history(
     ticker: str = "NIFTY",
     days: int = 90,
+    start: str | None = None,
     factors: str | None = None,
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexFactorHistoryResponse:
@@ -2079,7 +2341,11 @@ def get_index_factor_history(
 
         ensure_trade_stack_path()
         factor_list = [f.strip() for f in factors.split(",") if f.strip()] if factors else None
-        payload = list_factor_history_series(days=max(7, min(days, 365)), factors=factor_list)
+        payload = list_factor_history_series(
+            days=max(7, min(days, 5000)),
+            start=start,
+            factors=factor_list,
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:

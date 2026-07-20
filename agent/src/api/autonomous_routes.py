@@ -7,8 +7,10 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
+from src.api.security import require_local_or_auth
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +78,9 @@ def autonomous_stack_health() -> Dict[str, Any]:
 
 
 @autonomous_router.post("/clear-all")
-def clear_all_agents_route() -> Dict[str, Any]:
+def clear_all_agents_route(
+    _auth: None = Depends(require_local_or_auth),
+) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.proposals import clear_all_autonomous_agents
     from trade_integrations.autonomous_agents.store import list_agents
     from src.scheduled_research.autonomous_agent_jobs import unregister_agent_jobs
@@ -110,7 +114,10 @@ def get_autonomous_agent(agent_id: str) -> Dict[str, Any]:
 
 
 @autonomous_router.post("/commit")
-def commit_autonomous_agent_route(body: CommitAutonomousAgentRequest) -> Dict[str, Any]:
+def commit_autonomous_agent_route(
+    body: CommitAutonomousAgentRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.proposals import commit_autonomous_agent
     from src.scheduled_research.autonomous_agent_jobs import register_agent_jobs
 
@@ -217,7 +224,10 @@ def reject_plan_route(agent_id: str, body: PlanApprovalRequest) -> Dict[str, Any
 
 
 @autonomous_router.post("/{agent_id}/pause")
-def pause_agent(agent_id: str) -> Dict[str, Any]:
+def pause_agent(
+    agent_id: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.proposals import pause_autonomous_agent
     from src.scheduled_research.autonomous_agent_jobs import unregister_agent_jobs
 
@@ -245,7 +255,10 @@ def resume_agent(agent_id: str) -> Dict[str, Any]:
 
 
 @autonomous_router.post("/{agent_id}/stop")
-def stop_agent(agent_id: str) -> Dict[str, Any]:
+def stop_agent(
+    agent_id: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.proposals import stop_autonomous_agent
     from src.scheduled_research.autonomous_agent_jobs import unregister_agent_jobs
 
@@ -257,7 +270,10 @@ def stop_agent(agent_id: str) -> Dict[str, Any]:
 
 
 @autonomous_router.delete("/{agent_id}")
-def delete_agent_route(agent_id: str) -> Dict[str, Any]:
+def delete_agent_route(
+    agent_id: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.proposals import delete_autonomous_agent
     from src.scheduled_research.autonomous_agent_jobs import unregister_agent_jobs
 

@@ -509,7 +509,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
   const isHoldCash =
     normalizeStrategyKey(displayRec.name || "") === "hold_cash" ||
     normalizeStrategyKey(agentPick) === "hold_cash";
-  const autonomousDisplayOnly = autonomousMode && planApproved;
+  const autonomousDisplayOnly = autonomousMode && !planApproved;
   const hideExecute =
     autonomousDisplayOnly ||
     isHoldCash ||

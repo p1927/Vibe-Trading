@@ -130,11 +130,14 @@ def test_stale_running_job_recovers_to_pending_and_fires_on_next_tick(tmp_path: 
 
     async def scenario() -> None:
         executor = ScheduledResearchExecutor(store, dispatch)
-        assert executor.recover_stale_running() == 1
+        assert executor.recover_stale_running(0) == 1
         recovered = store.get("stale")
         assert recovered is not None
         assert recovered.status == JobStatus.PENDING
+        assert recovered.next_run_at == 1000
         await executor.tick(100)
+        assert calls == []
+        await executor.tick(1000)
 
     asyncio.run(scenario())
 
@@ -142,8 +145,8 @@ def test_stale_running_job_recovers_to_pending_and_fires_on_next_tick(tmp_path: 
     assert saved is not None
     assert calls == [("stale", JobStatus.RUNNING)]
     assert saved.status == JobStatus.COMPLETED
-    assert saved.last_run_at == 100
-    assert saved.next_run_at == 1100
+    assert saved.last_run_at == 1000
+    assert saved.next_run_at == 2000
 
 
 def test_impossible_cron_marks_failed_and_tick_continues(tmp_path: Path) -> None:
