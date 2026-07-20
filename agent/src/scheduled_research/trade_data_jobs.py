@@ -21,16 +21,20 @@ RESEARCH_HISTORY_ARCHIVE_CRON_ENV = "RESEARCH_HISTORY_ARCHIVE_CRON"
 DEFAULT_FILLS_EXPORT_CRON = "0 19 * * *"
 DEFAULT_RESEARCH_HISTORY_ARCHIVE_CRON = "35 18 * * *"
 DEFAULT_NSE_MACRO_REFRESH_CRON = "15 6 * * *"
+DEFAULT_NSE_REPO_CONSISTENCY_CRON = "30 5 * * *"
 NSE_MACRO_REFRESH_CRON_ENV = "NSE_MACRO_REFRESH_CRON"
+NSE_REPO_CONSISTENCY_CRON_ENV = "NSE_REPO_CONSISTENCY_CRON"
 
 JOB_TYPE_TRADE_FILLS_EXPORT = "trade_fills_export"
 JOB_TYPE_RESEARCH_HISTORY_ARCHIVE = "research_history_archive"
 JOB_TYPE_NSE_MACRO_REFRESH = "nse_macro_refresh"
+JOB_TYPE_NSE_REPO_CONSISTENCY = "nse_repo_consistency"
 
 TRADE_DATA_JOB_TYPES = frozenset({
     JOB_TYPE_TRADE_FILLS_EXPORT,
     JOB_TYPE_RESEARCH_HISTORY_ARCHIVE,
     JOB_TYPE_NSE_MACRO_REFRESH,
+    JOB_TYPE_NSE_REPO_CONSISTENCY,
 })
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -85,13 +89,25 @@ def run_trade_fills_export_job(config: dict[str, Any] | None = None) -> dict[str
 
 def run_nse_macro_refresh_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     _ensure_trade_integrations_on_path()
-    from trade_integrations.nse_browser.repository import ingest_repository_to_hub, sync_all_repo_seed_layers
+    from trade_integrations.nse_browser.repository import ingest_repository_to_hub, sync_light_repo_seed_layers
 
     cfg = config or {}
-    counts = sync_all_repo_seed_layers(explicit=True, allow_live_fetch=bool(cfg.get("allow_live_fetch", True)))
-    repo_counts = ingest_repository_to_hub()
+    counts = sync_light_repo_seed_layers(allow_live_fetch=bool(cfg.get("allow_live_fetch", True)))
+    repo_counts = ingest_repository_to_hub(skip_repo_sync=True, allow_live_fetch=False)
     summary = {"seed_layers": counts, "repository": repo_counts}
     logger.info("nse macro refresh: %s", summary)
+    return summary
+
+
+def run_nse_repo_consistency_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.nse_browser.repo_consistency import run_repo_consistency_check
+
+    cfg = config or {}
+    summary = run_repo_consistency_check(
+        trigger_reingest_on_drift=bool(cfg.get("trigger_reingest_on_drift", True)),
+    )
+    logger.info("nse repo consistency: %s", summary.get("status"))
     return summary
 
 
@@ -105,6 +121,9 @@ def dispatch_trade_data_job_sync(job: ScheduledResearchJob) -> None:
         return
     if job_type == JOB_TYPE_NSE_MACRO_REFRESH:
         run_nse_macro_refresh_job(job.config)
+        return
+    if job_type == JOB_TYPE_NSE_REPO_CONSISTENCY:
+        run_nse_repo_consistency_job(job.config)
         return
     raise ValueError(f"unsupported trade_data job_type: {job_type!r}")
 
@@ -187,6 +206,30 @@ def register_default_trade_data_jobs(store: ScheduledResearchJobStore) -> int:
             )
         )
         logger.info("registered default trade data job %s (%s)", nse_job_id, nse_cron)
+        created += 1
+
+    consistency_cron = os.getenv(
+        NSE_REPO_CONSISTENCY_CRON_ENV,
+        DEFAULT_NSE_REPO_CONSISTENCY_CRON,
+    ).strip()
+    validate_schedule(consistency_cron)
+    consistency_job_id = "nse-repo-consistency"
+    if store.get(consistency_job_id) is None:
+        store.upsert(
+            ScheduledResearchJob(
+                id=consistency_job_id,
+                prompt="Daily NSE repo vs hub consistency check with light repair on drift",
+                schedule=consistency_cron,
+                next_run_at=now_ms,
+                status=JobStatus.PENDING,
+                created_at=now_ms,
+                config={
+                    "job_type": JOB_TYPE_NSE_REPO_CONSISTENCY,
+                    "trigger_reingest_on_drift": True,
+                },
+            )
+        )
+        logger.info("registered default trade data job %s (%s)", consistency_job_id, consistency_cron)
         created += 1
 
     return created

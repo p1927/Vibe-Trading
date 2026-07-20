@@ -6,7 +6,7 @@ interface Props {
   running: boolean;
   runJobId?: string | null;
   pipelineLogs: PipelineLogEntry[];
-  predictionMode: "analysis" | "news-scenarios" | "scoreboard";
+  predictionMode: "analysis" | "news-scenarios" | "scoreboard" | "external-predictions";
   onGoToAnalysis: () => void;
 }
 

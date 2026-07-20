@@ -304,6 +304,7 @@ class ScheduledResearchExecutor:
         """
         if not self._enabled:
             return
+        logger.info("scheduled research executor stopping…")
         self._stopping = True
         self.recover_all_running_on_shutdown(self._now_fn())
         watchdog = self._watchdog_task
@@ -330,6 +331,7 @@ class ScheduledResearchExecutor:
             pass
         self._task = None
         self._reset_runtime_state()
+        logger.info("scheduled research executor stopped")
 
     def recover_all_running_on_shutdown(self, now_ms: int | None = None) -> int:
         """Reset every RUNNING job to pending for clean executor shutdown."""
@@ -540,6 +542,17 @@ class ScheduledResearchExecutor:
 
         timeout_ms = dispatch_timeout_ms_for(job)
         final_status = JobStatus.COMPLETED
+        job_type = str(job.config.get("job_type") or "unknown")
+        from src.api.runtime_activity import finish_named_task, register_named_task
+
+        task_id = register_named_task(f"scheduled:{job.id}:{job_type}")
+        logger.info(
+            "scheduled research dispatch start job=%s type=%s timeout_ms=%s",
+            job.id,
+            job_type,
+            timeout_ms,
+        )
+        started = time.monotonic()
         try:
             await asyncio.wait_for(self._dispatch(job), timeout=timeout_ms / 1000.0)
         except asyncio.TimeoutError:
@@ -548,33 +561,61 @@ class ScheduledResearchExecutor:
                 job.id,
                 timeout_ms,
             )
+            job.config["_timed_out"] = True
             job.last_error = f"dispatch timed out after {timeout_ms}ms"
             job.consecutive_failures = int(job.consecutive_failures or 0) + 1
             final_status = JobStatus.COMPLETED
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.error("scheduled research dispatch failed for job %s", job.id, exc_info=True)
-            job.last_error = _truncate_error(exc)
-            job.consecutive_failures = int(job.consecutive_failures or 0) + 1
-            threshold = _failure_threshold_for(job)
-            if job.consecutive_failures >= threshold:
-                final_status = JobStatus.FAILED
-            else:
-                final_status = JobStatus.COMPLETED
-                logger.warning(
-                    "scheduled job %s failed (%s/%s); keeping schedule alive",
-                    job.id,
-                    job.consecutive_failures,
-                    threshold,
+            try:
+                from trade_integrations.dataflows.index_research.pipeline_cancel import (
+                    PipelineCancelledError,
                 )
+            except ImportError:
+                PipelineCancelledError = None  # type: ignore[misc, assignment]
+            if PipelineCancelledError is not None and isinstance(exc, PipelineCancelledError):
+                logger.warning(
+                    "scheduled research dispatch cancelled for job %s: %s",
+                    job.id,
+                    exc.reason,
+                )
+                job.last_error = f"cancelled: {exc.reason}"
+                job.consecutive_failures = 0
+                final_status = JobStatus.COMPLETED
+            else:
+                logger.error("scheduled research dispatch failed for job %s", job.id, exc_info=True)
+                job.last_error = _truncate_error(exc)
+                job.consecutive_failures = int(job.consecutive_failures or 0) + 1
+                threshold = _failure_threshold_for(job)
+                if job.consecutive_failures >= threshold:
+                    final_status = JobStatus.FAILED
+                else:
+                    final_status = JobStatus.COMPLETED
+                    logger.warning(
+                        "scheduled job %s failed (%s/%s); keeping schedule alive",
+                        job.id,
+                        job.consecutive_failures,
+                        threshold,
+                    )
         else:
             job.consecutive_failures = 0
             job.last_error = None
+            job.config.pop("_timed_out", None)
             raw_summary = job.config.pop(LAST_RESULT_CONFIG_KEY, None)
             if isinstance(raw_summary, dict):
                 job.last_result_summary = raw_summary
             final_status = JobStatus.COMPLETED
+
+        finally:
+            finish_named_task(task_id)
+            logger.info(
+                "scheduled research dispatch done job=%s type=%s status=%s (%.1fs)",
+                job.id,
+                job_type,
+                final_status.value,
+                time.monotonic() - started,
+            )
 
         job.last_run_at = now_ms
         try:
@@ -608,11 +649,24 @@ class ScheduledResearchExecutor:
         (replaced via POST) let the new definition own its lifecycle. Only
         persist our completion when it still refers to the same scheduled run.
         """
+        if self._stopping:
+            logger.info(
+                "scheduled research job %s finished during executor shutdown; skipping completion write",
+                job.id,
+            )
+            return
         current = self._store.get(job.id)
         if current is None:
             logger.info("scheduled research job %s deleted during dispatch; skipping completion write", job.id)
             return
         if not self._same_record(current, job):
             logger.info("scheduled research job %s replaced during dispatch; skipping completion write", job.id)
+            return
+        if current.status != JobStatus.RUNNING:
+            logger.info(
+                "scheduled research job %s no longer running (status=%s); skipping completion write",
+                job.id,
+                current.status.value,
+            )
             return
         self._store.upsert(job)

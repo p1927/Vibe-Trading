@@ -68,6 +68,61 @@ def test_interval_job_fires_and_persists_completion(tmp_path: Path) -> None:
     assert saved.next_run_at == 6500
 
 
+def test_executor_skips_completion_write_during_shutdown(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    job = _job(schedule="5000", next_run_at=1000, created_at=100)
+    store.upsert(job)
+    started = asyncio.Event()
+
+    async def dispatch(running_job: ScheduledResearchJob) -> None:
+        started.set()
+        await asyncio.sleep(0.05)
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(store, dispatch)
+        tick_task = asyncio.create_task(executor.tick(1500))
+        await started.wait()
+        store.upsert(
+            ScheduledResearchJob(
+                id=job.id,
+                prompt=job.prompt,
+                schedule=job.schedule,
+                next_run_at=job.next_run_at,
+                status=JobStatus.PENDING,
+                created_at=job.created_at,
+                last_error="recovered on shutdown",
+            )
+        )
+        executor._stopping = True
+        await tick_task
+
+    asyncio.run(scenario())
+
+    saved = store.get("job-001")
+    assert saved is not None
+    assert saved.status == JobStatus.PENDING
+    assert saved.last_error == "recovered on shutdown"
+    store = _store(tmp_path)
+    store.upsert(_job(schedule="5000", next_run_at=1000))
+    calls: list[tuple[str, JobStatus]] = []
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        calls.append((job.id, job.status))
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(store, dispatch)
+        await executor.tick(1500)
+
+    asyncio.run(scenario())
+
+    saved = store.get("job-001")
+    assert saved is not None
+    assert calls == [("job-001", JobStatus.RUNNING)]
+    assert saved.status == JobStatus.COMPLETED
+    assert saved.last_run_at == 1500
+    assert saved.next_run_at == 6500
+
+
 def test_cron_job_next_due_and_not_before_due_time(tmp_path: Path) -> None:
     store = _store(tmp_path)
     before_due = _ms(2026, 6, 20, 5, 59)
@@ -393,6 +448,7 @@ def test_dispatch_timeout_marks_completed_and_unblocks_next_job(tmp_path: Path) 
     assert fast_saved is not None
     assert slow_saved.status == JobStatus.COMPLETED
     assert "timed out" in (slow_saved.last_error or "")
+    assert slow_saved.config.get("_timed_out") is True
     assert fast_saved.status == JobStatus.COMPLETED
 
 
@@ -411,7 +467,7 @@ def test_index_plan_refresh_uses_shorter_stale_threshold(
     assert stale_running_ms_for(poll) == 600_000
     assert is_job_stale_running(poll, now_ms) is True
     assert is_job_stale_running(heavy, now_ms) is False
-    assert dispatch_timeout_ms_for(poll) == 8 * 60 * 1000
+    assert dispatch_timeout_ms_for(poll) == 10 * 60 * 1000
 
 
 def test_watchdog_recovers_stale_job_independently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

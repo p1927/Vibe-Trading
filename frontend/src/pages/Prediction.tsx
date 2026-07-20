@@ -33,7 +33,9 @@ import { PredictionVerificationPanel } from "@/components/prediction/PredictionV
 import { PredictionSectionHeader } from "@/components/prediction/PredictionSectionHeader";
 import { TechnicalContextStrip } from "@/components/prediction/TechnicalContextStrip";
 import { QuantReviewPanel } from "@/components/prediction/QuantReviewPanel";
+import { ExternalPredictionsPanel } from "@/components/prediction/ExternalPredictionsPanel";
 import { NewsScenarioCanvas } from "@/components/prediction/NewsScenarioCanvas";
+import { useExternalPredictions } from "@/hooks/useExternalPredictions";
 import { useIndexPrediction } from "@/hooks/useIndexPrediction";
 import { useIndexPredictionLive } from "@/hooks/useIndexPredictionLive";
 import {
@@ -64,6 +66,7 @@ const POLL_STORAGE_KEY = "vibe-prediction-poll-ms";
 const DEFAULT_POLL_MS = 300_000;
 const NEWS_SCENARIO_MODE = "news-scenarios";
 const SCOREBOARD_MODE = "scoreboard";
+const EXTERNAL_PREDICTIONS_MODE = "external-predictions";
 
 export function Prediction() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -72,7 +75,9 @@ export function Prediction() {
       ? NEWS_SCENARIO_MODE
       : searchParams.get("mode") === SCOREBOARD_MODE
         ? SCOREBOARD_MODE
-        : "analysis";
+        : searchParams.get("mode") === EXTERNAL_PREDICTIONS_MODE
+          ? EXTERNAL_PREDICTIONS_MODE
+          : "analysis";
   const [newsSessionError, setNewsSessionError] = useState<string | null>(null);
   const [boundPipelineAsOf, setBoundPipelineAsOf] = useState<string | null>(null);
   const [newsScenarioWidget, setNewsScenarioWidget] = useState<TradePlanWidget | null>(null);
@@ -135,6 +140,49 @@ export function Prediction() {
     catalogLoading,
     setPipelinePanelOpen,
   } = useIndexPrediction("NIFTY", horizonDays);
+
+  const externalPredictionsEnabled = predictionMode === EXTERNAL_PREDICTIONS_MODE;
+  const {
+    snapshot: externalSnapshot,
+    loading: externalLoading,
+    refreshing: externalRefreshing,
+    refreshLogs: externalRefreshLogs,
+    runJobId: externalRunJobId,
+    reattached: externalReattached,
+    refreshPhase: externalRefreshPhase,
+    error: externalError,
+    refresh: refreshExternalPredictions,
+    load: reloadExternalPredictions,
+  } = useExternalPredictions(horizonDays, externalPredictionsEnabled);
+
+  const handleExternalDiscover = useCallback(async () => {
+    const res = await api.discoverExternalPredictionSources("NIFTY", 12);
+    await reloadExternalPredictions();
+    return res.candidates ?? [];
+  }, [reloadExternalPredictions]);
+
+  const handleExternalAddSource = useCallback(
+    async (candidate: Record<string, unknown>) => {
+      await api.addExternalPredictionSource(
+        {
+          id: candidate.id ? String(candidate.id) : undefined,
+          display_name: String(candidate.display_name ?? candidate.domain ?? "Source"),
+          domains: candidate.domain ? [String(candidate.domain)] : undefined,
+        },
+        "NIFTY",
+      );
+      await reloadExternalPredictions();
+    },
+    [reloadExternalPredictions],
+  );
+
+  const handleExternalRemoveSource = useCallback(
+    async (sourceId: string) => {
+      await api.removeExternalPredictionSource(sourceId, "NIFTY");
+      await reloadExternalPredictions();
+    },
+    [reloadExternalPredictions],
+  );
 
   const hasArtifact = Boolean(artifact);
   const pipelineStale =
@@ -225,7 +273,13 @@ export function Prediction() {
   );
 
   const setPredictionMode = useCallback(
-    (mode: "analysis" | typeof NEWS_SCENARIO_MODE | typeof SCOREBOARD_MODE) => {
+    (
+      mode:
+        | "analysis"
+        | typeof NEWS_SCENARIO_MODE
+        | typeof SCOREBOARD_MODE
+        | typeof EXTERNAL_PREDICTIONS_MODE,
+    ) => {
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -233,6 +287,9 @@ export function Prediction() {
             next.set("mode", NEWS_SCENARIO_MODE);
           } else if (mode === SCOREBOARD_MODE) {
             next.set("mode", SCOREBOARD_MODE);
+            next.delete("session");
+          } else if (mode === EXTERNAL_PREDICTIONS_MODE) {
+            next.set("mode", EXTERNAL_PREDICTIONS_MODE);
             next.delete("session");
           } else {
             next.delete("mode");
@@ -526,7 +583,7 @@ export function Prediction() {
     <div className="mx-auto flex w-full max-w-[90rem] flex-col gap-4 p-4 pb-10 lg:flex-row lg:items-start lg:gap-5 md:p-6">
       <div className="flex min-w-0 flex-1 flex-col gap-6">
         <PredictionRunningStrip
-          running={running}
+          running={running && predictionMode !== EXTERNAL_PREDICTIONS_MODE}
           runJobId={runJobId}
           pipelineLogs={pipelineLogs}
           predictionMode={predictionMode}
@@ -571,9 +628,40 @@ export function Prediction() {
           >
             Track Scoreboard
           </button>
+          <button
+            type="button"
+            onClick={() => setPredictionMode(EXTERNAL_PREDICTIONS_MODE)}
+            className={cn(
+              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+              predictionMode === EXTERNAL_PREDICTIONS_MODE
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Miscellaneous
+          </button>
         </div>
 
-        {predictionMode === SCOREBOARD_MODE ? (
+        {predictionMode === EXTERNAL_PREDICTIONS_MODE ? (
+          <ExternalPredictionsPanel
+            snapshot={externalSnapshot}
+            loading={externalLoading}
+            refreshing={externalRefreshing}
+            refreshPhase={externalRefreshPhase}
+            refreshLogs={externalRefreshLogs}
+            runJobId={externalRunJobId}
+            reattached={externalReattached}
+            error={externalError}
+            horizonDays={horizonDays}
+            priceSeries={niftyPriceSeries}
+            priceLoading={backtestLoading && !niftyPriceSeries.length}
+            onHorizonChange={setHorizonDays}
+            onRefresh={refreshExternalPredictions}
+            onDiscover={handleExternalDiscover}
+            onAddSource={handleExternalAddSource}
+            onRemoveSource={handleExternalRemoveSource}
+          />
+        ) : predictionMode === SCOREBOARD_MODE ? (
           <>
             {error && running === false ? (
               <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">

@@ -33,6 +33,7 @@ JOB_TYPE_COMPANY_RESEARCH_ARCHIVE = "company_research_archive"
 JOB_TYPE_INDEX_PREDICTION_POST_CLOSE = "index_prediction_post_close"
 JOB_TYPE_HUB_NEWS_ENTITY = "hub_news_entity"
 JOB_TYPE_HUB_NEWS_INGEST = "hub_news_ingest"
+JOB_TYPE_EXTERNAL_PREDICTIONS_REFRESH = "external_predictions_refresh"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -43,11 +44,24 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_PREDICTION_POST_CLOSE,
     JOB_TYPE_HUB_NEWS_ENTITY,
     JOB_TYPE_HUB_NEWS_INGEST,
+    JOB_TYPE_EXTERNAL_PREDICTIONS_REFRESH,
 })
 
 LAST_RESULT_CONFIG_KEY = "_last_result_summary"
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
+
+_POST_CLOSE_LIGHT_ENRICH_DAYS = 30
+
+
+def _reraise_pipeline_cancel(exc: BaseException) -> None:
+    """Re-raise cooperative pipeline cancellation so the executor can record it."""
+    try:
+        from trade_integrations.dataflows.index_research.pipeline_cancel import PipelineCancelledError
+    except ImportError:
+        return
+    if isinstance(exc, PipelineCancelledError):
+        raise exc
 
 
 def is_index_scheduler_enabled(value: str | None = None) -> bool:
@@ -120,8 +134,10 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
     _ensure_trade_integrations_on_path()
     from datetime import datetime, timezone
 
+    from trade_integrations.dataflows.index_research.pipeline_cancel import check_pipeline_cancel
     from trade_integrations.dataflows.index_research.snapshot import run_snapshot
 
+    check_pipeline_cancel()
     cfg = config or {}
     snapshot_date = cfg.get("snapshot_date")
     if not snapshot_date:
@@ -131,7 +147,10 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
         skip_constituents=bool(cfg.get("skip_constituents")),
     )
 
-    enrich_days = int(cfg.get("enrich_days") or 30)
+    enrich_days = int(cfg.get("enrich_days") or 7)
+    participant_oi_days = int(cfg.get("participant_oi_days") or min(7, enrich_days))
+    live_fetch_days = int(cfg.get("live_fetch_days") or 1)
+    enrich_rolling_only = bool(cfg.get("enrich_rolling_only", False))
     try:
         from trade_integrations.dataflows.index_research.participant_oi_backfill import (
             backfill_participant_oi,
@@ -139,22 +158,32 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
 
         oi_summary = backfill_participant_oi(
             days=enrich_days,
-            max_days=min(7, enrich_days),
+            max_days=participant_oi_days,
             sleep_seconds=0.25,
+            skip_if_complete=True,
         )
         summary["participant_oi"] = oi_summary
     except Exception as exc:
+        _reraise_pipeline_cancel(exc)
         logger.warning("participant OI refresh in factor snapshot failed: %s", exc)
         summary["participant_oi"] = {"status": "error", "reason": str(exc)}
 
+    check_pipeline_cancel()
     try:
         from trade_integrations.dataflows.index_research.factor_backfill_enrichment import (
             enrich_factor_history,
         )
 
-        enrich_summary = enrich_factor_history(days=enrich_days)
+        enrich_summary = enrich_factor_history(
+            days=enrich_days,
+            batch_historic=False,
+            enrichment_mode="light",
+            enrich_rolling_only=enrich_rolling_only,
+            live_fetch_days=live_fetch_days,
+        )
         summary["factor_enrichment"] = enrich_summary
     except Exception as exc:
+        _reraise_pipeline_cancel(exc)
         logger.warning("factor enrichment in factor snapshot failed: %s", exc)
         summary["factor_enrichment"] = {"status": "error", "reason": str(exc)}
 
@@ -207,6 +236,7 @@ def run_index_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[str
             poll_mode=True,
         )
     except Exception as exc:
+        _reraise_pipeline_cancel(exc)
         # Poll jobs must not enter terminal FAILED on transient pipeline errors.
         logger.exception("index plan refresh failed for %s", ticker)
         return {
@@ -251,23 +281,29 @@ def run_index_prediction_post_close_job(config: dict[str, Any] | None = None) ->
     from trade_integrations.dataflows.index_research.prediction_counterfactual import run_and_save_counterfactual
 
     cfg = config or {}
-    days = int(cfg.get("days") or 365)
+    enrich_days = int(cfg.get("enrich_days") or min(int(cfg.get("days") or 365), _POST_CLOSE_LIGHT_ENRICH_DAYS))
+    backtest_days = int(cfg.get("days") or 365)
     horizon_days = int(cfg.get("horizon_days") or 14)
     nse_browser = refresh_nse_browser_for_prediction(
-        days=days,
+        days=enrich_days,
         refresh=bool(cfg.get("refresh_nse_browser", True)),
         refresh_cookies=bool(cfg.get("refresh_cookies", False)),
     )
     return {
         "nse_browser": nse_browser,
-        "factor_enrichment": enrich_factor_history(days=days),
+        "factor_enrichment": enrich_factor_history(
+            days=enrich_days,
+            batch_historic=False,
+            enrichment_mode="light",
+            skip_niftyinvest_fetch=True,
+        ),
         "backtest": run_and_save_backtest(
-            days=days,
+            days=backtest_days,
             horizon_days=horizon_days,
             include_bottom_up=bool(cfg.get("include_bottom_up")),
         ),
-        "counterfactual": run_and_save_counterfactual(days=days, horizon_days=horizon_days),
-        "data_audit": run_and_save_data_audit(days=days, horizon_days=horizon_days),
+        "counterfactual": run_and_save_counterfactual(days=backtest_days, horizon_days=horizon_days),
+        "data_audit": run_and_save_data_audit(days=backtest_days, horizon_days=horizon_days),
     }
 
 
@@ -320,6 +356,34 @@ def run_hub_news_ingest_job(config: dict[str, Any] | None = None) -> dict[str, A
         return {"status": "error", "error": str(exc), "mode": mode, "had_errors": True}
 
 
+def run_external_predictions_refresh_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Refresh third-party NIFTY forecasts for default horizons."""
+    _ensure_trade_integrations_on_path()
+    cfg = dict(config or {})
+    ticker = str(cfg.get("ticker") or "NIFTY").upper()
+    horizons = cfg.get("horizon_days")
+    if isinstance(horizons, int):
+        horizon_list = [horizons]
+    elif isinstance(horizons, list):
+        horizon_list = [int(h) for h in horizons if int(h) > 0]
+    else:
+        horizon_list = [14, 30]
+    try:
+        from trade_integrations.dataflows.index_research.external_predictions.refresh import (
+            refresh_all_external_predictions,
+        )
+
+        summaries = []
+        for horizon in horizon_list:
+            snap = refresh_all_external_predictions(symbol=ticker, horizon_days=horizon)
+            ok = sum(1 for p in snap.predictions if p.fetch_status == "ok")
+            summaries.append({"horizon_days": horizon, "ok_predictions": ok, "fetched_at": snap.fetched_at})
+        return {"status": "ok", "ticker": ticker, "horizons": summaries}
+    except Exception as exc:
+        logger.exception("external predictions refresh job failed")
+        return {"status": "error", "error": str(exc), "ticker": ticker}
+
+
 def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
     """Execute one index scheduled job synchronously."""
     job_type = str(job.config.get("job_type") or "")
@@ -356,6 +420,11 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         summary = run_hub_news_ingest_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("hub news ingest completed for job %s: %s", job.id, summary)
+        return
+    if job_type == JOB_TYPE_EXTERNAL_PREDICTIONS_REFRESH:
+        summary = run_external_predictions_refresh_job(job.config)
+        _attach_job_result_summary(job, summary)
+        logger.info("external predictions refresh completed for job %s: %s", job.id, summary)
         return
     raise ValueError(f"unsupported index job_type: {job_type!r}")
 
@@ -394,7 +463,15 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             next_run_at=now_ms,
             status=JobStatus.PENDING,
             created_at=now_ms,
-            config={"job_type": JOB_TYPE_INDEX_FACTOR_SNAPSHOT, "ticker": "NIFTY"},
+            config={
+                "job_type": JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
+                "ticker": "NIFTY",
+                "enrich_days": 7,
+                "enrich_rolling_only": True,
+                "skip_constituents": True,
+                "participant_oi_days": 1,
+                "live_fetch_days": 1,
+            },
         ),
         ScheduledResearchJob(
             id="nifty-index-research",
@@ -441,6 +518,19 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "ticker": "NIFTY",
                 "sources": os.getenv("HUB_NEWS_FULL_SOURCES", "all"),
                 "lookback_days": 3,
+            },
+        ),
+        ScheduledResearchJob(
+            id="nifty-external-predictions-refresh",
+            prompt="Refresh third-party NIFTY street forecasts (SearXNG + LLM)",
+            schedule=os.getenv("EXTERNAL_PREDICTIONS_REFRESH_CRON", "0 8 * * *").strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_EXTERNAL_PREDICTIONS_REFRESH,
+                "ticker": "NIFTY",
+                "horizon_days": [14, 30],
             },
         ),
         ScheduledResearchJob(
@@ -501,6 +591,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "job_type": JOB_TYPE_INDEX_PREDICTION_POST_CLOSE,
                 "ticker": "NIFTY",
                 "days": 365,
+                "enrich_days": _POST_CLOSE_LIGHT_ENRICH_DAYS,
                 "horizon_days": 14,
                 "include_bottom_up": True,
             },

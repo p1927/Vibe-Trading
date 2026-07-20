@@ -931,6 +931,62 @@ class RunIndexQuantReviewRequest(BaseModel):
     refresh: bool = False
 
 
+class ExternalPredictionsResponse(BaseModel):
+    status: str = "ok"
+    ticker: str = "NIFTY"
+    snapshot: Dict[str, Any] | None = None
+    message: str = ""
+
+
+class ExternalPredictionsRefreshRequest(BaseModel):
+    ticker: str = "NIFTY"
+    horizon_days: int = 14
+
+
+class ExternalPredictionsRefreshStartResponse(BaseModel):
+    status: str = "ok"
+    job_id: str
+    job_status: str
+    reused: bool = False
+
+
+class ExternalPredictionsRefreshJobSnapshot(BaseModel):
+    job_id: str
+    status: str
+    ticker: str = "NIFTY"
+    horizon_days: int = 14
+    created_at: str | None = None
+    error: str | None = None
+    logs: List[Dict[str, Any]] = Field(default_factory=list)
+    snapshot: Dict[str, Any] | None = None
+
+
+class ExternalPredictionsRefreshActiveResponse(BaseModel):
+    status: str = "ok"
+    job: ExternalPredictionsRefreshJobSnapshot | None = None
+
+
+class ExternalPredictionsRefreshJobResponse(BaseModel):
+    status: str = "ok"
+    job: ExternalPredictionsRefreshJobSnapshot | None = None
+
+
+class ExternalPredictionSourceRequest(BaseModel):
+    id: str | None = None
+    display_name: str
+    domains: List[str] = Field(default_factory=list)
+    search_queries: List[str] = Field(default_factory=list)
+    kind: str = "media"
+
+
+class ExternalPredictionSourcesResponse(BaseModel):
+    status: str = "ok"
+    ticker: str = "NIFTY"
+    sources: List[Dict[str, Any]] = Field(default_factory=list)
+    candidates: List[Dict[str, Any]] = Field(default_factory=list)
+    message: str = ""
+
+
 @trade_router.get("/index-prediction", response_model=IndexPredictionResponse)
 def get_index_prediction(
     ticker: str = "NIFTY",
@@ -2121,6 +2177,363 @@ def get_news_scenario(
         return NewsEventScenarioResponse(status="ok", ticker=key, scenario=scenario)
     except Exception as exc:
         logger.exception("get news scenario failed for %s", scenario_id)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get(
+    "/index-prediction/external-predictions",
+    response_model=ExternalPredictionsResponse,
+)
+def get_external_predictions(
+    ticker: str = "NIFTY",
+    horizon_days: int = 14,
+    _auth: None = Depends(require_local_or_auth),
+) -> ExternalPredictionsResponse:
+    """Return cached third-party NIFTY forecasts (no live fetch)."""
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+        from trade_integrations.dataflows.index_research.external_predictions.store import (
+            load_snapshot,
+        )
+
+        ensure_trade_stack_path()
+        snapshot = load_snapshot(symbol=key, horizon_days=horizon_days)
+        return ExternalPredictionsResponse(
+            status="ok",
+            ticker=key,
+            snapshot=snapshot.to_dict(),
+        )
+    except Exception as exc:
+        logger.exception("get external predictions failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.post(
+    "/index-prediction/external-predictions/refresh",
+    response_model=ExternalPredictionsResponse,
+)
+def refresh_external_predictions(
+    body: ExternalPredictionsRefreshRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> ExternalPredictionsResponse:
+    """Fetch latest third-party forecasts from watchlisted sources."""
+    key = (body.ticker or "NIFTY").strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+        from trade_integrations.dataflows.index_research.external_predictions.refresh import (
+            refresh_all_external_predictions,
+        )
+
+        ensure_trade_stack_path()
+        snapshot = refresh_all_external_predictions(
+            symbol=key,
+            horizon_days=body.horizon_days,
+        )
+        return ExternalPredictionsResponse(
+            status="ok",
+            ticker=key,
+            snapshot=snapshot.to_dict(),
+        )
+    except Exception as exc:
+        logger.exception("refresh external predictions failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _kick_external_predictions_refresh(body: ExternalPredictionsRefreshRequest) -> tuple[str, str, bool]:
+    from src.trade.external_predictions_run_jobs import kick_external_predictions_refresh
+
+    return kick_external_predictions_refresh(
+        ticker=(body.ticker or "NIFTY").strip().upper(),
+        horizon_days=body.horizon_days,
+    )
+
+
+async def _external_predictions_refresh_event_stream(job_id: str, request: Request):
+    """Replay stored logs then poll job store until done/error."""
+    import time as time_mod
+
+    from src.trade.external_predictions_run_jobs import _get_job_record, reconcile_zombie_job
+
+    last_log_idx = 0
+    last_emit = time_mod.monotonic()
+    while True:
+        if await request.is_disconnected():
+            return
+
+        reconcile_zombie_job(job_id)
+        job = _get_job_record(job_id)
+        if job is None:
+            yield _index_prediction_run_sse_frame("error", {"message": "job not found"})
+            return
+        status = str(job.get("status") or "")
+        logs = list(job.get("logs") or [])
+        snapshot = job.get("snapshot")
+        error = job.get("error")
+        ticker = str(job.get("ticker") or "")
+
+        while last_log_idx < len(logs):
+            yield _index_prediction_run_sse_frame("log", {"entry": logs[last_log_idx]})
+            last_log_idx += 1
+            last_emit = time_mod.monotonic()
+
+        if status == "done":
+            if snapshot is not None:
+                yield _index_prediction_run_sse_frame(
+                    "done",
+                    {"ticker": ticker, "snapshot": snapshot},
+                )
+            else:
+                yield _index_prediction_run_sse_frame(
+                    "error",
+                    {"message": "job completed without snapshot"},
+                )
+            return
+        if status == "error":
+            yield _index_prediction_run_sse_frame("error", {"message": error or "unknown error"})
+            return
+
+        if time_mod.monotonic() - last_emit >= _INDEX_PREDICTION_RUN_HEARTBEAT_SECONDS:
+            yield _index_prediction_run_sse_frame("heartbeat", {"job_id": job_id, "status": status})
+            last_emit = time_mod.monotonic()
+
+        await asyncio.sleep(_INDEX_PREDICTION_RUN_POLL_SECONDS)
+
+
+def _external_predictions_refresh_stream_response(job_id: str, request: Request) -> StreamingResponse:
+    return StreamingResponse(
+        _external_predictions_refresh_event_stream(job_id, request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@trade_router.post(
+    "/index-prediction/external-predictions/refresh/start",
+    response_model=ExternalPredictionsRefreshStartResponse,
+    status_code=202,
+)
+def start_external_predictions_refresh(
+    body: ExternalPredictionsRefreshRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> ExternalPredictionsRefreshStartResponse:
+    """Queue external-predictions refresh and return a trackable job_id."""
+    from src.trade.hub_bridge import ensure_trade_stack_path
+
+    ensure_trade_stack_path()
+    job_id, job_status, reused = _kick_external_predictions_refresh(body)
+    return ExternalPredictionsRefreshStartResponse(
+        job_id=job_id,
+        job_status=job_status,
+        reused=reused,
+    )
+
+
+@trade_router.get(
+    "/index-prediction/external-predictions/refresh/active",
+    response_model=ExternalPredictionsRefreshActiveResponse,
+)
+def get_active_external_predictions_refresh(
+    ticker: str = "NIFTY",
+    horizon_days: int = 14,
+    _auth: None = Depends(require_local_or_auth),
+) -> ExternalPredictionsRefreshActiveResponse:
+    from src.trade.external_predictions_run_jobs import get_active_job
+
+    snap = get_active_job(ticker, horizon_days=horizon_days)
+    if snap is None:
+        return ExternalPredictionsRefreshActiveResponse(status="ok", job=None)
+    return ExternalPredictionsRefreshActiveResponse(status="ok", job=snap)
+
+
+@trade_router.get(
+    "/index-prediction/external-predictions/refresh/{job_id}",
+    response_model=ExternalPredictionsRefreshJobResponse,
+)
+def get_external_predictions_refresh_job(
+    job_id: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> ExternalPredictionsRefreshJobResponse:
+    from src.trade.external_predictions_run_jobs import get_job, job_id_valid
+
+    if not job_id_valid(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    snap = get_job(job_id)
+    if snap is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    return ExternalPredictionsRefreshJobResponse(status="ok", job=snap)
+
+
+@trade_router.get("/index-prediction/external-predictions/refresh/{job_id}/stream")
+async def stream_external_predictions_refresh_job(
+    job_id: str,
+    request: Request,
+    _auth: None = Depends(require_local_or_auth),
+) -> StreamingResponse:
+    """SSE: replay pipeline logs and stream until the refresh terminates."""
+    from src.trade.external_predictions_run_jobs import _get_job_record, job_id_valid
+
+    if not job_id_valid(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    if _get_job_record(job_id) is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    return _external_predictions_refresh_stream_response(job_id, request)
+
+
+@trade_router.post("/index-prediction/external-predictions/refresh/stream")
+async def stream_refresh_external_predictions(
+    body: ExternalPredictionsRefreshRequest,
+    request: Request,
+    _auth: None = Depends(require_local_or_auth),
+) -> StreamingResponse:
+    """SSE: kick refresh job and stream live activity (legacy entrypoint)."""
+    from src.trade.hub_bridge import ensure_trade_stack_path
+
+    ensure_trade_stack_path()
+    job_id, _, _ = _kick_external_predictions_refresh(body)
+    return _external_predictions_refresh_stream_response(job_id, request)
+
+
+@trade_router.get(
+    "/index-prediction/external-predictions/sources",
+    response_model=ExternalPredictionSourcesResponse,
+)
+def list_external_prediction_sources(
+    ticker: str = "NIFTY",
+    watchlisted_only: bool = False,
+    _auth: None = Depends(require_local_or_auth),
+) -> ExternalPredictionSourcesResponse:
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+        from trade_integrations.dataflows.index_research.external_predictions.source_registry import (
+            load_registry,
+        )
+
+        ensure_trade_stack_path()
+        registry = load_registry()
+        if watchlisted_only:
+            registry = [s for s in registry if s.watchlisted]
+        return ExternalPredictionSourcesResponse(
+            status="ok",
+            ticker=key,
+            sources=[s.to_dict() for s in registry],
+        )
+    except Exception as exc:
+        logger.exception("list external prediction sources failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.post(
+    "/index-prediction/external-predictions/sources",
+    response_model=ExternalPredictionSourcesResponse,
+)
+def add_external_prediction_source(
+    body: ExternalPredictionSourceRequest,
+    ticker: str = "NIFTY",
+    _auth: None = Depends(require_local_or_auth),
+) -> ExternalPredictionSourcesResponse:
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+        from trade_integrations.dataflows.index_research.external_predictions.source_registry import (
+            add_source_to_watchlist,
+            load_registry,
+        )
+
+        ensure_trade_stack_path()
+        add_source_to_watchlist(
+            source_id=body.id,
+            display_name=body.display_name,
+            domains=body.domains,
+            search_queries=body.search_queries,
+            kind=body.kind,
+            added_by="user",
+        )
+        registry = load_registry()
+        return ExternalPredictionSourcesResponse(
+            status="ok",
+            ticker=key,
+            sources=[s.to_dict() for s in registry],
+            message=f"Added {body.display_name} to watchlist",
+        )
+    except Exception as exc:
+        logger.exception("add external prediction source failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.delete(
+    "/index-prediction/external-predictions/sources/{source_id}",
+    response_model=ExternalPredictionSourcesResponse,
+)
+def remove_external_prediction_source(
+    source_id: str,
+    ticker: str = "NIFTY",
+    _auth: None = Depends(require_local_or_auth),
+) -> ExternalPredictionSourcesResponse:
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+        from trade_integrations.dataflows.index_research.external_predictions.source_registry import (
+            load_registry,
+            remove_source_from_watchlist,
+        )
+
+        ensure_trade_stack_path()
+        removed = remove_source_from_watchlist(source_id)
+        registry = load_registry()
+        if not removed:
+            return ExternalPredictionSourcesResponse(
+                status="forbidden",
+                ticker=key,
+                sources=[s.to_dict() for s in registry],
+                message=f"Cannot remove source {source_id}",
+            )
+        return ExternalPredictionSourcesResponse(
+            status="ok",
+            ticker=key,
+            sources=[s.to_dict() for s in registry],
+            message=f"Removed {source_id} from watchlist",
+        )
+    except Exception as exc:
+        logger.exception("remove external prediction source failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get(
+    "/index-prediction/external-predictions/discover",
+    response_model=ExternalPredictionSourcesResponse,
+)
+def discover_external_prediction_sources(
+    ticker: str = "NIFTY",
+    limit: int = 12,
+    _auth: None = Depends(require_local_or_auth),
+) -> ExternalPredictionSourcesResponse:
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+        from trade_integrations.dataflows.index_research.external_predictions.discover import (
+            discover_external_sources,
+        )
+        from trade_integrations.dataflows.index_research.external_predictions.source_registry import (
+            load_registry,
+        )
+
+        ensure_trade_stack_path()
+        candidates = discover_external_sources(limit=limit, persist=True)
+        registry = load_registry()
+        return ExternalPredictionSourcesResponse(
+            status="ok",
+            ticker=key,
+            sources=[s.to_dict() for s in registry if not s.watchlisted],
+            candidates=candidates,
+        )
+    except Exception as exc:
+        logger.exception("discover external prediction sources failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
