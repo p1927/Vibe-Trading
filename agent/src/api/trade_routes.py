@@ -716,7 +716,9 @@ class IndexCounterfactualResponse(BaseModel):
 class IndexPredictionJobsResponse(BaseModel):
     status: str
     env: Dict[str, Any] = Field(default_factory=dict)
+    master_scheduler_env_enabled: bool = False
     master_scheduler_running: bool = False
+    executor_is_running: bool = False
     jobs: List[Dict[str, Any]] = Field(default_factory=list)
     job: Dict[str, Any] | None = None
     message: str = ""
@@ -2536,7 +2538,9 @@ def get_index_prediction_jobs(
     return IndexPredictionJobsResponse(
         status=payload.get("status", "ok"),
         env=payload.get("env") or {},
+        master_scheduler_env_enabled=bool(payload.get("master_scheduler_env_enabled")),
         master_scheduler_running=bool(payload.get("master_scheduler_running")),
+        executor_is_running=bool(payload.get("executor_is_running")),
         jobs=payload.get("jobs") or [],
     )
 
