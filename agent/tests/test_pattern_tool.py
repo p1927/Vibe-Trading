@@ -268,6 +268,20 @@ def test_trend_line_slope_rejects_nonpositive_window() -> None:
         trend_line_slope(close, window=0)
 
 
+def test_trend_line_slope_rejects_window_one() -> None:
+    """window=1 passes the old >=1 guard then polyfit raises LinAlgError."""
+    close = pd.Series(range(30), dtype=float)
+    with pytest.raises(ValueError, match="window must be >= 2"):
+        trend_line_slope(close, window=1)
+
+
+def test_trend_line_slope_window_two_is_finite() -> None:
+    slopes = trend_line_slope(pd.Series([0.0, 1.0, 2.0, 3.0]), window=2)
+    assert pd.isna(slopes.iloc[0])
+    assert slopes.iloc[1] == pytest.approx(1.0)
+    assert slopes.iloc[2] == pytest.approx(1.0)
+
+
 def test_run_pattern_nonpositive_window_returns_json_error(allow_runs: Path) -> None:
     run_dir = allow_runs / "run1"
     arts = run_dir / "artifacts"
@@ -279,3 +293,17 @@ def test_run_pattern_nonpositive_window_returns_json_error(allow_runs: Path) -> 
     out = json.loads(run_pattern(str(run_dir), patterns="peaks_valleys", window=-1))
     assert out["status"] == "error"
     assert "window" in out["error"]
+
+
+def test_run_pattern_trend_slope_window_one_returns_json_error(allow_runs: Path) -> None:
+    run_dir = allow_runs / "run_trend"
+    arts = run_dir / "artifacts"
+    arts.mkdir(parents=True)
+    pd.DataFrame(
+        {"open": range(30), "high": range(30), "low": range(30), "close": range(30), "volume": 1},
+        index=pd.date_range("2024-01-01", periods=30),
+    ).to_csv(arts / "ohlcv_TEST.csv")
+    out = json.loads(run_pattern(str(run_dir), patterns="trend_slope", window=1))
+    assert out["status"] == "error"
+    assert "window" in out["error"]
+    assert "trend_slope" in out["error"] or ">= 2" in out["error"]

@@ -140,8 +140,9 @@ def trend_line_slope(close: pd.Series, window: int = 20) -> pd.Series:
     Returns:
         Series of slope values; first window-1 entries are NaN.
     """
-    if window < 1:
-        raise ValueError(f"window must be >= 1, got {window}")
+    # polyfit needs >=2 points; window=1 raises LinAlgError.
+    if window < 2:
+        raise ValueError(f"window must be >= 2, got {window}")
     n = len(close)
     slopes = np.full(n, np.nan)
     values = close.values.astype(float)
@@ -337,6 +338,11 @@ def run_pattern(run_dir: str, patterns: str = "all", window: int = 10) -> str:
     if window < 1:
         return json.dumps(
             {"status": "error", "error": f"window must be >= 1, got {window}"},
+            ensure_ascii=False,
+        )
+    if "trend_slope" in selected and window < 2:
+        return json.dumps(
+            {"status": "error", "error": f"window must be >= 2 for trend_slope, got {window}"},
             ensure_ascii=False,
         )
 
