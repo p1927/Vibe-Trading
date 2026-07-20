@@ -23,8 +23,13 @@ export function useIndexPredictionLive({
   const [materialNewsCount, setMaterialNewsCount] = useState(0);
   const onUpdateRef = useRef(onUpdate);
   onUpdateRef.current = onUpdate;
+  const refreshInFlightRef = useRef(false);
 
   const refreshLight = useCallback(async () => {
+    if (refreshInFlightRef.current) {
+      return;
+    }
+    refreshInFlightRef.current = true;
     try {
       const res = await api.refreshIndexPrediction({ ticker, horizon_days: horizonDays });
       if (res.status === "ok") {
@@ -36,6 +41,8 @@ export function useIndexPredictionLive({
     } catch (e) {
       const msg = e instanceof Error ? e.message : "refresh_failed";
       setLastReason(msg.length > 80 ? "refresh_failed" : msg);
+    } finally {
+      refreshInFlightRef.current = false;
     }
   }, [ticker, horizonDays]);
 

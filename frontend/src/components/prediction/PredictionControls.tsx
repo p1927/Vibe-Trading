@@ -1,4 +1,4 @@
-import { Loader2, PanelRight, Play } from "lucide-react";
+import { Loader2, PanelRight, Play, FlaskConical } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const HORIZON_OPTIONS = [
@@ -25,7 +25,9 @@ interface Props {
   refreshConstituents: boolean;
   onRefreshConstituentsChange: (value: boolean) => void;
   onRun: () => void;
+  onRunForecastLab?: () => void;
   running?: boolean;
+  forecastLabLoading?: boolean;
   runJobId?: string | null;
   lastUpdated?: string | null;
   spot?: number | null;
@@ -42,7 +44,9 @@ export function PredictionControls({
   refreshConstituents,
   onRefreshConstituentsChange,
   onRun,
+  onRunForecastLab,
   running,
+  forecastLabLoading,
   runJobId,
   lastUpdated,
   spot,
@@ -116,9 +120,26 @@ export function PredictionControls({
             Refresh all 50 constituents
           </label>
           <p className="max-w-[220px] px-1 text-[10px] leading-snug text-muted-foreground">
-            Unchecked: cached constituents + live momentum (~1–3 min). Checked: full 50-stock research + news enqueue (long run).
+            Unchecked: cached constituents + live macro (~15–30s). Checked: full 50-stock research (long run).
           </p>
         </div>
+
+        {onRunForecastLab ? (
+          <button
+            type="button"
+            onClick={onRunForecastLab}
+            disabled={running || forecastLabLoading}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border bg-background px-3 text-sm hover:bg-muted disabled:opacity-60"
+            title="Run forecast lab tracks (manual — not part of Run analysis)"
+          >
+            {forecastLabLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <FlaskConical className="h-4 w-4" />
+            )}
+            {forecastLabLoading ? "Forecast lab…" : "Run forecast lab"}
+          </button>
+        ) : null}
 
         <button
           type="button"

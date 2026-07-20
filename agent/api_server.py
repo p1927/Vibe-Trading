@@ -8,11 +8,46 @@ infrastructure lives in ``src.api.{security,models,helpers,state}``.
 
 from __future__ import annotations
 
+import os
+import sys
+
 from src.config.bootstrap import bootstrap_environment
 
 bootstrap_environment()
 
+
+def _ensure_prediction_ml_runtime() -> None:
+    try:
+        from trade_integrations.ml_runtime_env import ensure_libomp_loaded
+
+        ensure_libomp_loaded()
+    except Exception:
+        pass
+
+
+def _require_prediction_ml_runtime() -> int | None:
+    """Return exit code when prediction ML runtime is not ready."""
+    try:
+        from trade_integrations.ml_runtime_env import ml_runtime_env, verify_prediction_ml
+
+        ok, message = verify_prediction_ml()
+        if ok:
+            for key, value in ml_runtime_env().items():
+                if key.startswith(("DYLD_", "LIBOMP_")):
+                    os.environ[key] = value
+            return None
+        print(f"[stack] prediction ML runtime not ready: {message}", file=sys.stderr)
+        print("[stack] run: ./scripts/ensure_prediction_ml.sh", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"[stack] prediction ML runtime check failed: {exc}", file=sys.stderr)
+        return 1
+
+
+_ensure_prediction_ml_runtime()
+
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict
 
@@ -117,34 +152,7 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 # ============================================================================
-# FastAPI Application
-# ============================================================================
-
-app = FastAPI(
-    title="Vibe-Trading API",
-    description="Vibe-Trading API: natural-language finance research, backtesting, and swarm workflows",
-    version=APP_VERSION,
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Middleware functions are defined in src.api.security / src.api.helpers, so
-# the @app.middleware("http") decorator cannot be used here — register them
-# programmatically instead.
-app.middleware("http")(_reject_untrusted_loopback_host)
-app.middleware("http")(_spa_html_deep_link_fallback)
-app.middleware("http")(_apply_security_headers)
-
-# ============================================================================
-# Lifecycle hooks
+# Lifecycle (must be defined before FastAPI app construction)
 # ============================================================================
 
 from src.api.channels_routes import (  # noqa: E402
@@ -157,9 +165,13 @@ from src.api.scheduled_routes import (  # noqa: E402
 )
 
 
-@app.on_event("startup")
-async def _run_startup_preflight() -> None:
-    """Run preflight checks on server startup."""
+@asynccontextmanager
+async def _app_lifespan(app: FastAPI):
+    """Startup/shutdown: HTTP gateway, preflight, schedulers, session recovery."""
+    from trade_integrations.http import close_http_gateway, init_http_gateway
+
+    init_http_gateway()
+
     from src.preflight import run_preflight
     import asyncio
 
@@ -202,12 +214,41 @@ async def _run_startup_preflight() -> None:
     if get_env_config().agent_tuning.vibe_trading_channels_auto_start:
         await _start_channel_runtime()
 
+    try:
+        yield
+    finally:
+        close_http_gateway()
+        await _stop_channel_runtime()
+        await _stop_scheduled_research_executor()
 
-@app.on_event("shutdown")
-async def _stop_scheduled_research_on_shutdown() -> None:
-    """Stop the scheduled research executor on server shutdown."""
-    await _stop_channel_runtime()
-    await _stop_scheduled_research_executor()
+
+# ============================================================================
+# FastAPI Application
+# ============================================================================
+
+app = FastAPI(
+    title="Vibe-Trading API",
+    description="Vibe-Trading API: natural-language finance research, backtesting, and swarm workflows",
+    version=APP_VERSION,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=_app_lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Middleware functions are defined in src.api.security / src.api.helpers, so
+# the @app.middleware("http") decorator cannot be used here — register them
+# programmatically instead.
+app.middleware("http")(_reject_untrusted_loopback_host)
+app.middleware("http")(_spa_html_deep_link_fallback)
+app.middleware("http")(_apply_security_headers)
 
 
 # ============================================================================
@@ -344,6 +385,10 @@ from src.api.scheduled_routes import (  # noqa: E402, F401
 def serve_main(argv: list[str] | None = None) -> int:
     """Start the API server from CLI-style arguments."""
     bootstrap_environment()
+
+    ml_rc = _require_prediction_ml_runtime()
+    if ml_rc is not None:
+        return ml_rc
 
     import argparse
     import subprocess

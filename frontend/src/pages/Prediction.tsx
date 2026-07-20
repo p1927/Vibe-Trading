@@ -23,6 +23,7 @@ import { ConstituentDrivers } from "@/components/prediction/ConstituentDrivers";
 import { SectorBreadthPanel } from "@/components/prediction/SectorBreadthPanel";
 import { PredictionLearningPanel } from "@/components/prediction/PredictionLearningPanel";
 import { PredictionPipelinePanel } from "@/components/prediction/PredictionPipelinePanel";
+import { PredictionRunningStrip } from "@/components/prediction/PredictionRunningStrip";
 import { DerivativesFactorsPanel } from "@/components/prediction/DerivativesFactorsPanel";
 import { PredictionScheduledJobsPanel } from "@/components/prediction/PredictionScheduledJobsPanel";
 import { DataCapturePanel } from "@/components/prediction/DataCapturePanel";
@@ -102,6 +103,8 @@ export function Prediction() {
   const [missHighlightDate, setMissHighlightDate] = useState<string | null>(null);
   const [simulation, setSimulation] = useState<IndexSimulationResult | null>(null);
   const [refreshConstituents, setRefreshConstituents] = useState(false);
+  const [forecastLabLoading, setForecastLabLoading] = useState(false);
+  const [forecastLabError, setForecastLabError] = useState<string | null>(null);
   const [backtestError, setBacktestError] = useState<string | null>(null);
   const [includeBottomUpBacktest, setIncludeBottomUpBacktest] = useState(false);
   const [trackScoreboard, setTrackScoreboard] = useState<IndexTrackScoreboardReport | null>(null);
@@ -126,6 +129,7 @@ export function Prediction() {
     reattached,
     error,
     runAnalysis,
+    reload,
     applyArtifact,
     pipelineLogs,
     pipelinePanelOpen,
@@ -460,8 +464,35 @@ export function Prediction() {
 
   const handleRun = () => {
     setSimulation(null);
-    void runAnalysis(horizonDays, refreshConstituents).then(() => loadHistory());
+    void runAnalysis(horizonDays, refreshConstituents).then(() => {
+      void loadHistory();
+      void reload();
+    });
   };
+
+  const handleRunForecastLab = useCallback(() => {
+    setForecastLabError(null);
+    setForecastLabLoading(true);
+    void api
+      .runIndexForecastLab("NIFTY", horizonDays, "tracks_only", true)
+      .then((res) => {
+        if (res.status !== "ok") {
+          setForecastLabError(res.message || "Forecast lab failed");
+          return;
+        }
+        if (res.artifact) {
+          applyArtifact(res.artifact);
+        } else {
+          void reload();
+        }
+      })
+      .catch((e) => {
+        setForecastLabError(e instanceof Error ? e.message : "Forecast lab request failed");
+      })
+      .finally(() => {
+        setForecastLabLoading(false);
+      });
+  }, [applyArtifact, horizonDays, reload]);
 
   const handleDerivativesLoadState = useCallback((count: number, err: string | null) => {
     setDerivativesSeriesCount(count);
@@ -501,6 +532,13 @@ export function Prediction() {
   return (
     <div className="mx-auto flex w-full max-w-[90rem] flex-col gap-4 p-4 pb-10 lg:flex-row lg:items-start lg:gap-5 md:p-6">
       <div className="flex min-w-0 flex-1 flex-col gap-6">
+        <PredictionRunningStrip
+          running={running}
+          runJobId={runJobId}
+          pipelineLogs={pipelineLogs}
+          predictionMode={predictionMode}
+          onGoToAnalysis={() => setPredictionMode("analysis")}
+        />
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-card/40 p-1">
           <button
             type="button"
@@ -624,7 +662,9 @@ export function Prediction() {
           refreshConstituents={refreshConstituents}
           onRefreshConstituentsChange={setRefreshConstituents}
           onRun={handleRun}
+          onRunForecastLab={handleRunForecastLab}
           running={running}
+          forecastLabLoading={forecastLabLoading}
           runJobId={runJobId}
           lastUpdated={artifact?.as_of}
           spot={artifact?.spot}
@@ -644,6 +684,13 @@ export function Prediction() {
 
         <PredictionScheduledJobsPanel />
         <DataCapturePanel />
+
+        {forecastLabError ? (
+          <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            Forecast lab: {forecastLabError}
+          </div>
+        ) : null}
 
         {error ? (
           <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
@@ -936,9 +983,9 @@ export function Prediction() {
         )}
       </div>
 
-      {predictionMode === "analysis" ? (
+      {predictionMode === "analysis" || running ? (
       <PredictionPipelinePanel
-        open={pipelinePanelOpen}
+        open={running && predictionMode !== "analysis" ? true : pipelinePanelOpen}
         running={running}
         reattached={reattached}
         runJobId={runJobId}

@@ -538,6 +538,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  runIndexForecastLab: (
+    ticker = "NIFTY",
+    horizonDays?: number,
+    mode: "tracks_only" | "combine" = "tracks_only",
+    persist = true,
+  ) =>
+    request<IndexForecastLabResponse>("/trade/index-prediction/forecast-lab", {
+      method: "POST",
+      body: JSON.stringify({
+        ticker,
+        horizon_days: horizonDays,
+        mode,
+        persist,
+        use_hub_cache: true,
+      }),
+    }),
   getActiveIndexPredictionRun: (ticker = "NIFTY") =>
     request<IndexPredictionRunActiveResponse>(
       `/trade/index-prediction/run/active?ticker=${encodeURIComponent(ticker)}`,
@@ -1933,6 +1949,15 @@ export interface RunIndexPredictionRequest {
   ticker?: string;
   horizon_days?: number;
   refresh_constituents?: boolean;
+  run_forecast_lab?: boolean;
+}
+
+export interface IndexForecastLabResponse {
+  status: string;
+  ticker?: string;
+  result?: Record<string, unknown> | null;
+  message?: string;
+  artifact?: IndexPredictionArtifact | null;
 }
 
 export interface IndexPredictionRunStartResponse {
@@ -2279,10 +2304,24 @@ export interface IndexPredictionJob {
   schedule?: string;
   status?: string;
   paused?: boolean;
+  stale_running?: boolean;
   enabled?: boolean;
   job_type?: string;
   next_run_at?: number;
   last_run_at?: number | null;
+  last_error?: string | null;
+  last_result_summary?: Record<string, unknown> | null;
+  consecutive_failures?: number;
+}
+
+export interface IndexPredictionNewsPipelineHealth {
+  queued?: number;
+  oldest_pending_seconds?: number;
+  pipeline_paused?: boolean;
+  pause_reason?: string;
+  minimax_configured?: boolean;
+  worker_last?: Record<string, unknown> | null;
+  error?: string;
 }
 
 export interface IndexPredictionJobsResponse {
@@ -2295,6 +2334,7 @@ export interface IndexPredictionJobsResponse {
   master_scheduler_env_enabled?: boolean;
   master_scheduler_running?: boolean;
   executor_is_running?: boolean;
+  news_pipeline?: IndexPredictionNewsPipelineHealth;
   jobs?: IndexPredictionJob[];
   job?: IndexPredictionJob | null;
   message?: string;

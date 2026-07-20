@@ -176,15 +176,31 @@ export function PredictionPipelinePanel({
           </p>
         ) : null}
         <ul className="space-y-1.5">
-          {displayLogs.map((entry, idx) => (
+          {displayLogs.map((entry, idx) => {
+            const detail = entry.detail ?? {};
+            const elapsedMs = detail.elapsed_ms;
+            const cached = detail.cached;
+            const timing =
+              typeof elapsedMs === "number"
+                ? ` (${(elapsedMs / 1000).toFixed(1)}s)`
+                : cached === true
+                  ? " (cached)"
+                  : "";
+            return (
             <li key={pipelineLogRowKey(entry, idx)} className="leading-snug">
               <span className="text-[9px] text-muted-foreground">
                 {formatPipelineLogTime(entry.at)}
               </span>
               <span className="mx-1 rounded bg-muted px-1 text-[9px] uppercase">{entry.stage}</span>
-              <span className={LEVEL_STYLES[entry.level] ?? LEVEL_STYLES.info}>{entry.message}</span>
+              <span className={LEVEL_STYLES[entry.level] ?? LEVEL_STYLES.info}>
+                {entry.message}
+                {timing ? (
+                  <span className="text-muted-foreground">{timing}</span>
+                ) : null}
+              </span>
             </li>
-          ))}
+            );
+          })}
         </ul>
         {running && logs.length === 0 ? (
           <p className="mt-2 animate-pulse text-muted-foreground">Starting pipeline…</p>

@@ -45,6 +45,8 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_HUB_NEWS_INGEST,
 })
 
+LAST_RESULT_CONFIG_KEY = "_last_result_summary"
+
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
@@ -71,6 +73,46 @@ def _ensure_trade_integrations_on_path() -> None:
     integrations = trade_root / "integrations"
     if integrations.is_dir() and str(integrations) not in sys.path:
         sys.path.insert(0, str(integrations))
+
+
+def _compact_result_summary(result: dict[str, Any] | None) -> dict[str, Any]:
+    """Shrink a job result dict for persistence on ScheduledResearchJob."""
+    if not isinstance(result, dict):
+        return {}
+    summary: dict[str, Any] = {}
+    for key in ("mode", "skipped", "pipeline_paused", "pause_reason", "had_errors", "status", "error"):
+        if key in result:
+            summary[key] = result[key]
+    staging = result.get("staging")
+    if isinstance(staging, dict):
+        summary["staging"] = {
+            k: staging.get(k)
+            for k in ("processed", "created", "updated", "skipped", "errors", "paused")
+            if k in staging
+        }
+    for stage in ("repair", "backfill", "compact_events", "cleanup", "rollup"):
+        part = result.get(stage)
+        if isinstance(part, dict):
+            summary[stage] = {
+                k: part.get(k)
+                for k in ("status", "error", "skipped", "repaired", "groups_merged", "rows_removed")
+                if k in part
+            }
+    totals = result.get("totals")
+    if isinstance(totals, dict):
+        summary["totals"] = dict(totals)
+    return summary
+
+
+def _attach_job_result_summary(job: ScheduledResearchJob, result: dict[str, Any] | None) -> None:
+    summary = _compact_result_summary(result)
+    if summary:
+        job.config[LAST_RESULT_CONFIG_KEY] = summary
+    if isinstance(result, dict) and result.get("had_errors"):
+        job.config[LAST_RESULT_CONFIG_KEY] = {
+            **summary,
+            "warning": "one or more pipeline stages reported errors",
+        }
 
 
 def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -153,6 +195,7 @@ def run_index_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[str
             ticker,
             horizon_days=cfg.get("horizon_days"),
             force=bool(cfg.get("force")),
+            poll_mode=True,
         )
     except Exception as exc:
         # Poll jobs must not enter terminal FAILED on transient pipeline errors.
@@ -232,11 +275,15 @@ def run_index_calibration_job(config: dict[str, Any] | None = None) -> dict[str,
 
 
 def run_hub_news_entity_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Drain staging queue and upsert distilled news events."""
+    """Drain staging queue and optionally run heavy entity maintenance."""
     _ensure_trade_integrations_on_path()
     from trade_integrations.dataflows.index_research.news_entity_worker import run_hub_news_entity_job as _fn
 
-    return _fn(config)
+    try:
+        return _fn(config)
+    except Exception as exc:
+        logger.exception("hub news entity job failed")
+        return {"status": "error", "error": str(exc), "had_errors": True}
 
 
 def run_hub_news_ingest_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -249,15 +296,19 @@ def run_hub_news_ingest_job(config: dict[str, Any] | None = None) -> dict[str, A
     sources = cfg.get("sources")
     if sources is None:
         sources = "default"
-    return run_hub_news_ingest(
-        ticker=str(cfg.get("ticker") or "NIFTY"),
-        sources=sources,
-        mode=mode,
-        lookback_days=cfg.get("lookback_days"),
-        rss_limit_per_feed=int(cfg.get("rss_limit_per_feed") or 10),
-        watcher_since_hours=int(cfg.get("watcher_since_hours") or 6),
-        watcher_tickers=cfg.get("watcher_tickers"),
-    )
+    try:
+        return run_hub_news_ingest(
+            ticker=str(cfg.get("ticker") or "NIFTY"),
+            sources=sources,
+            mode=mode,
+            lookback_days=cfg.get("lookback_days"),
+            rss_limit_per_feed=int(cfg.get("rss_limit_per_feed") or 10),
+            watcher_since_hours=int(cfg.get("watcher_since_hours") or 6),
+            watcher_tickers=cfg.get("watcher_tickers"),
+        )
+    except Exception as exc:
+        logger.exception("hub news ingest job failed (mode=%s)", mode)
+        return {"status": "error", "error": str(exc), "mode": mode, "had_errors": True}
 
 
 def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
@@ -289,10 +340,12 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         return
     if job_type == JOB_TYPE_HUB_NEWS_ENTITY:
         summary = run_hub_news_entity_job(job.config)
+        _attach_job_result_summary(job, summary)
         logger.info("hub news entity pipeline completed for job %s: %s", job.id, summary)
         return
     if job_type == JOB_TYPE_HUB_NEWS_INGEST:
         summary = run_hub_news_ingest_job(job.config)
+        _attach_job_result_summary(job, summary)
         logger.info("hub news ingest completed for job %s: %s", job.id, summary)
         return
     raise ValueError(f"unsupported index job_type: {job_type!r}")
@@ -401,12 +454,32 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         ),
         ScheduledResearchJob(
             id="nifty-hub-news-entity",
-            prompt="Process staging news refs into distilled hub events",
+            prompt="Drain staging news refs into distilled hub events",
             schedule=os.getenv("HUB_NEWS_ENTITY_CRON", "35 18 * * *").strip(),
             next_run_at=now_ms,
             status=JobStatus.PENDING,
             created_at=now_ms,
-            config={"job_type": JOB_TYPE_HUB_NEWS_ENTITY, "ticker": "NIFTY", "batch_size": 200},
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_ENTITY,
+                "mode": "drain",
+                "ticker": "NIFTY",
+                "batch_size": 200,
+            },
+        ),
+        ScheduledResearchJob(
+            id="nifty-hub-news-entity-maintenance",
+            prompt="Heavy hub news maintenance (repair, backfill, compact)",
+            schedule=os.getenv("HUB_NEWS_ENTITY_MAINTENANCE_CRON", "0 3 * * 0").strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_ENTITY,
+                "mode": "maintenance",
+                "ticker": "NIFTY",
+                "batch_size": 200,
+                "lookback_days": 365,
+            },
         ),
         ScheduledResearchJob(
             id="nifty-index-prediction-post-close",
