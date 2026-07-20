@@ -7,6 +7,8 @@ No API key required for public market data.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import re
@@ -49,6 +51,7 @@ _TIMEFRAME_DELTA = {
 # scheduling is delegated to :mod:`backtest.loaders.base`.
 _CCXT_TIMEOUT_MS = positive_env_int("CCXT_TIMEOUT_MS", 15_000)
 _CCXT_FETCH_BUDGET_S = positive_env_float("CCXT_FETCH_BUDGET_S", 60.0)
+_FUNDING_HOURS = {0, 8, 16}
 
 
 def _parse_ccxt_symbol(code: str) -> tuple[str, str]:
@@ -218,7 +221,134 @@ class DataLoader:
         result["execution_open"] = trade["open"]
         for column in ("open", "high", "low", "close"):
             result[f"mark_{column}"] = mark[column]
+
+        funding = cls._fetch_funding_history(exchange, symbol, since_ms, end_ms)
+        if funding.index.has_duplicates:
+            raise ValueError(f"duplicate funding settlement for {symbol}")
+        required = result.index[result.index.hour.isin(_FUNDING_HOURS)]
+        missing = required.difference(funding.index)
+        if not missing.empty:
+            raise ValueError(
+                f"funding settlement data is missing for {symbol}: "
+                f"{', '.join(str(ts) for ts in missing)}"
+            )
+
+        result["funding_rate"] = 0.0
+        result["funding_settlement_time"] = pd.NaT
+        aligned = funding.index.intersection(result.index)
+        if not aligned.empty:
+            result.loc[aligned, "funding_rate"] = funding.loc[aligned, "funding_rate"]
+            result.loc[aligned, "funding_settlement_time"] = aligned
+
+        brackets, version = cls._fetch_maintenance_brackets(exchange, symbol)
+        result["maintenance_brackets"] = json.dumps(brackets)
+        result["maintenance_bracket_version"] = version
         return result
+
+    @staticmethod
+    def _fetch_funding_history(
+        exchange, symbol: str, since_ms: int, end_ms: int,
+    ) -> pd.DataFrame:
+        """Fetch bounded historical funding settlements for one USD-M swap."""
+        import ccxt
+
+        rows: list[dict] = []
+        cursor = since_ms
+        limit = 1000
+        deadline = time.monotonic() + _CCXT_FETCH_BUDGET_S
+        label = f"ccxt funding fetch for {symbol}"
+
+        for _ in range(200):
+            check_budget(deadline, label, budget_s=_CCXT_FETCH_BUDGET_S)
+            page = retry_with_budget(
+                lambda: exchange.fetch_funding_rate_history(
+                    symbol, since=cursor, limit=limit
+                ),
+                transient=ccxt.NetworkError,
+                deadline=deadline,
+                label=label,
+            )
+            if not page:
+                break
+            rows.extend(page)
+            last_ts = int(page[-1]["timestamp"])
+            if last_ts >= end_ms or len(page) < limit:
+                break
+            cursor = last_ts + 1
+
+        if not rows:
+            return pd.DataFrame(
+                {"funding_rate": pd.Series(dtype=float)},
+                index=pd.DatetimeIndex([], name="trade_date"),
+            )
+
+        frame = pd.DataFrame({
+            "trade_date": pd.to_datetime(
+                [row["timestamp"] for row in rows], unit="ms"
+            ),
+            "funding_rate": pd.to_numeric(
+                [row["fundingRate"] for row in rows], errors="raise"
+            ),
+        }).set_index("trade_date").sort_index()
+        start_dt = pd.Timestamp(since_ms, unit="ms")
+        end_dt = pd.Timestamp(end_ms, unit="ms")
+        return frame[(frame.index >= start_dt) & (frame.index < end_dt)]
+
+    @staticmethod
+    def _fetch_maintenance_brackets(exchange, symbol: str) -> tuple[list[dict], str]:
+        """Fetch the current versioned maintenance-margin bracket schedule.
+
+        CCXT/Binance expose only the *current* bracket table (no history), so
+        each bracket record is stamped with a content hash rather than an
+        exchange-provided version: any change to the schedule changes the
+        hash, giving downstream consumers a fail-closed way to detect a stale
+        or mismatched bracket set.
+        """
+        import ccxt
+
+        try:
+            raw = retry_with_budget(
+                lambda: exchange.fetch_leverage_tiers([symbol]),
+                transient=ccxt.NetworkError,
+                deadline=time.monotonic() + _CCXT_FETCH_BUDGET_S,
+                label=f"ccxt bracket fetch for {symbol}",
+            )
+            tiers = raw.get(symbol) if raw else None
+        except Exception as exc:
+            raise ValueError(f"maintenance bracket fetch failed for {symbol}: {exc}") from exc
+
+        if not tiers:
+            raise ValueError(f"maintenance bracket data is missing for {symbol}")
+
+        brackets: list[dict] = []
+        for tier in tiers:
+            info = tier.get("info") or {}
+            try:
+                bracket_tier = int(info["bracket"])
+                notional_cap = float(info["notionalCap"])
+                maintenance_rate = float(info["maintMarginRatio"])
+                cumulative_maintenance_amount = float(info["cum"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"maintenance bracket for {symbol} is missing a required field: {exc}"
+                ) from exc
+            brackets.append({
+                "bracket_tier": bracket_tier,
+                "notional_cap": notional_cap,
+                "maintenance_rate": maintenance_rate,
+                "cumulative_maintenance_amount": cumulative_maintenance_amount,
+            })
+
+        brackets.sort(key=lambda row: row["bracket_tier"])
+        caps = [row["notional_cap"] for row in brackets]
+        if caps != sorted(caps) or len(caps) != len(set(caps)):
+            raise ValueError(
+                f"maintenance bracket notional caps for {symbol} are not strictly increasing"
+            )
+
+        blob = json.dumps(brackets, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        version = hashlib.sha256(blob).hexdigest()[:16]
+        return brackets, version
 
     @staticmethod
     def _fetch_one(
