@@ -344,6 +344,18 @@ export function Prediction() {
     void loadBacktest(false);
   }, [loadBacktest]);
 
+  const loadTrackScoreboardCached = useCallback(async () => {
+    setTrackScoreboardError(null);
+    try {
+      const fetchScoreboard = api.getIndexTrackScoreboard;
+      if (typeof fetchScoreboard !== "function") return;
+      const cachedRes = await fetchScoreboard("NIFTY", false, 730, horizonDays, 5, true);
+      if (cachedRes.report) setTrackScoreboard(cachedRes.report);
+    } catch (e) {
+      setTrackScoreboardError(e instanceof Error ? e.message : "Track scoreboard request failed");
+    }
+  }, [horizonDays]);
+
   const loadTrackScoreboard = useCallback(
     async (forceRefresh = false) => {
       setTrackScoreboardLoading(true);
@@ -394,8 +406,8 @@ export function Prediction() {
   useEffect(() => {
     if (predictionMode !== SCOREBOARD_MODE) return;
     setTrackScoreboardPanelOpen(true);
-    void loadTrackScoreboard(false);
-  }, [predictionMode, horizonDays, loadTrackScoreboard]);
+    void loadTrackScoreboardCached();
+  }, [predictionMode, horizonDays, loadTrackScoreboardCached]);
 
   const loadMissAnalysis = useCallback(
     async (refresh = false) => {
@@ -581,17 +593,27 @@ export function Prediction() {
         </div>
 
         {predictionMode === SCOREBOARD_MODE ? (
-          <TrackScoreboardPanel
-            report={trackScoreboard}
-            loading={trackScoreboardLoading}
-            recomputing={trackScoreboardRecomputing}
-            error={trackScoreboardError}
-            horizonDays={horizonDays}
-            onHorizonChange={setHorizonDays}
-            onRefresh={() => void loadTrackScoreboard(true)}
-            progressPanelOpen={trackScoreboardPanelOpen}
-            onToggleProgressPanel={() => setTrackScoreboardPanelOpen((v) => !v)}
-          />
+          <>
+            {forecastLabError ? (
+              <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                Forecast lab: {forecastLabError}
+              </div>
+            ) : null}
+            <TrackScoreboardPanel
+              report={trackScoreboard}
+              loading={trackScoreboardLoading}
+              recomputing={trackScoreboardRecomputing}
+              error={trackScoreboardError}
+              horizonDays={horizonDays}
+              onHorizonChange={setHorizonDays}
+              onRefresh={() => void loadTrackScoreboard(true)}
+              onRunForecastLab={handleRunForecastLab}
+              forecastLabLoading={forecastLabLoading}
+              progressPanelOpen={trackScoreboardPanelOpen}
+              onToggleProgressPanel={() => setTrackScoreboardPanelOpen((v) => !v)}
+            />
+          </>
         ) : predictionMode === NEWS_SCENARIO_MODE ? (
           <>
             {pipelineStale ? (
@@ -662,9 +684,7 @@ export function Prediction() {
           refreshConstituents={refreshConstituents}
           onRefreshConstituentsChange={setRefreshConstituents}
           onRun={handleRun}
-          onRunForecastLab={handleRunForecastLab}
           running={running}
-          forecastLabLoading={forecastLabLoading}
           runJobId={runJobId}
           lastUpdated={artifact?.as_of}
           spot={artifact?.spot}
@@ -684,13 +704,6 @@ export function Prediction() {
 
         <PredictionScheduledJobsPanel />
         <DataCapturePanel />
-
-        {forecastLabError ? (
-          <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            Forecast lab: {forecastLabError}
-          </div>
-        ) : null}
 
         {error ? (
           <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
