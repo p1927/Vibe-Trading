@@ -46,8 +46,8 @@ def bs_price(S: float, K: float, T: float, r: float, sigma: float,
         >>> round(bs_price(100, 100, 1.0, 0.05, 0.2, "call"), 2)
         10.45
     """
-    # Non-positive spot/strike makes log(S/K) undefined; match options_pricing_tool
-    # and iv_smile_adjustment by falling back to intrinsic value.
+    # Non-positive S/K makes log(S/K) undefined; reuse the intrinsic fallback
+    # (iv_smile_adjustment already soft-guards non-positive S/K).
     if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
         if option_type == "call":
             return max(S - K, 0.0)

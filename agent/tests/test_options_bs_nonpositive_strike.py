@@ -1,4 +1,4 @@
-"""Reject non-positive spot/strike in Black-Scholes pricing helpers."""
+"""Treat non-positive spot/strike as intrinsic in Black-Scholes helpers."""
 
 from __future__ import annotations
 
