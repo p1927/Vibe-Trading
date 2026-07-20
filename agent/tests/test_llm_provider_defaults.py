@@ -15,6 +15,8 @@ EXPECTED_PROVIDER_DEFAULTS = {
     "openai": "gpt-5.5",
     "openai-codex": "openai-codex/gpt-5.4",
     "deepseek": "deepseek-v4-pro",
+    "siliconflow-cn": "deepseek-ai/DeepSeek-V3.1-Terminus",
+    "siliconflow-global": "deepseek-ai/DeepSeek-V3.1-Terminus",
     "nvidia": "nvidia/nemotron-3-ultra-550b-a55b",
     "gemini": "gemini-3.5-flash",
     "groq": "meta-llama/llama-4-maverick-17b-128e-instruct",
@@ -79,6 +81,8 @@ def test_interactive_onboard_suggests_current_primary_models() -> None:
     assert onboard_defaults["openai"] == "gpt-5.5"
     assert onboard_defaults["openai-codex"] == "openai-codex/gpt-5.4"
     assert onboard_defaults["deepseek"] == "deepseek-v4-pro"
+    assert onboard_defaults["siliconflow-cn"] == "deepseek-ai/DeepSeek-V3.1-Terminus"
+    assert onboard_defaults["siliconflow-global"] == "deepseek-ai/DeepSeek-V3.1-Terminus"
     assert onboard_defaults["nvidia"] == "nvidia/nemotron-3-ultra-550b-a55b"
 
 
@@ -89,3 +93,26 @@ def test_nvidia_is_available_in_both_cli_onboarding_surfaces() -> None:
     assert onboard.key_env == legacy["key_env"] == "NVIDIA_API_KEY"
     assert onboard.base_env == legacy["base_env"] == "NVIDIA_BASE_URL"
     assert onboard.base_url == legacy["base_url"] == "https://integrate.api.nvidia.com/v1"
+
+
+def test_siliconflow_is_available_in_both_cli_onboarding_surfaces() -> None:
+    expected = {
+        "siliconflow-cn": (
+            "SILICONFLOW_API_KEY",
+            "SILICONFLOW_BASE_URL",
+            "https://api.siliconflow.cn/v1",
+        ),
+        "siliconflow-global": (
+            "SILICONFLOW_GLOBAL_API_KEY",
+            "SILICONFLOW_GLOBAL_BASE_URL",
+            "https://api.siliconflow.com/v1",
+        ),
+    }
+
+    for provider, (key_env, base_env, base_url) in expected.items():
+        onboard = next(item for item in ONBOARD_PROVIDERS if item.key == provider)
+        legacy = next(item for item in cli._PROVIDER_CHOICES if item["provider"] == provider)
+
+        assert onboard.key_env == legacy["key_env"] == key_env
+        assert onboard.base_env == legacy["base_env"] == base_env
+        assert onboard.base_url == legacy["base_url"] == base_url

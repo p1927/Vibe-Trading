@@ -47,6 +47,24 @@
     "api_key_required": true
   },
   {
+    "name": "siliconflow-cn",
+    "label": "SiliconFlow (CN)",
+    "api_key_env": "SILICONFLOW_API_KEY",
+    "base_url_env": "SILICONFLOW_BASE_URL",
+    "default_model": "deepseek-ai/DeepSeek-V3.1-Terminus",
+    "default_base_url": "https://api.siliconflow.cn/v1",
+    "api_key_required": true
+  },
+  {
+    "name": "siliconflow-global",
+    "label": "SiliconFlow (Global)",
+    "api_key_env": "SILICONFLOW_GLOBAL_API_KEY",
+    "base_url_env": "SILICONFLOW_GLOBAL_BASE_URL",
+    "default_model": "deepseek-ai/DeepSeek-V3.1-Terminus",
+    "default_base_url": "https://api.siliconflow.com/v1",
+    "api_key_required": true
+  },
+  {
     "name": "nvidia",
     "label": "NVIDIA NIM",
     "api_key_env": "NVIDIA_API_KEY",
