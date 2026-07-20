@@ -211,12 +211,32 @@ async def _app_lifespan(app: FastAPI):
 
     from src.config.accessor import get_env_config
 
+    try:
+        from trade_integrations.dataflows.index_research.pipeline_cancel import clear_pipeline_cancel
+
+        clear_pipeline_cancel()
+    except Exception:
+        logger.debug("pipeline cancel clear skipped", exc_info=True)
+
+    try:
+        from src.trade.index_prediction_run_jobs import hydrate_jobs_from_disk
+
+        hydrate_jobs_from_disk()
+    except Exception:
+        logger.debug("index-prediction job hydrate skipped", exc_info=True)
+
     if get_env_config().agent_tuning.vibe_trading_channels_auto_start:
         await _start_channel_runtime()
 
     try:
         yield
     finally:
+        try:
+            from trade_integrations.dataflows.index_research.pipeline_cancel import request_pipeline_cancel
+
+            request_pipeline_cancel("server_shutting_down")
+        except Exception:
+            logger.debug("pipeline cancel request skipped", exc_info=True)
         close_http_gateway()
         await _stop_channel_runtime()
         await _stop_scheduled_research_executor()

@@ -584,7 +584,7 @@ class RunIndexPredictionRequest(BaseModel):
     ticker: str = "NIFTY"
     horizon_days: int | None = None
     refresh_constituents: bool = False
-    run_forecast_lab: bool = False
+    run_forecast_lab: bool = True
 
 
 class IndexPredictionRunStartResponse(BaseModel):
@@ -2248,7 +2248,7 @@ async def _index_prediction_run_event_stream(job_id: str, request: Request):
     """Replay stored logs then poll job store until done/error."""
     import time as time_mod
 
-    from src.trade.index_prediction_run_jobs import INDEX_PREDICTION_RUN_JOBS, _JOBS_LOCK
+    from src.trade.index_prediction_run_jobs import _get_job_record
 
     last_log_idx = 0
     last_emit = time_mod.monotonic()
@@ -2256,16 +2256,15 @@ async def _index_prediction_run_event_stream(job_id: str, request: Request):
         if await request.is_disconnected():
             return
 
-        with _JOBS_LOCK:
-            job = INDEX_PREDICTION_RUN_JOBS.get(job_id)
-            if job is None:
-                yield _index_prediction_run_sse_frame("error", {"message": "job not found"})
-                return
-            status = str(job.get("status") or "")
-            logs = list(job.get("logs") or [])
-            artifact = job.get("artifact")
-            error = job.get("error")
-            ticker = str(job.get("ticker") or "")
+        job = _get_job_record(job_id)
+        if job is None:
+            yield _index_prediction_run_sse_frame("error", {"message": "job not found"})
+            return
+        status = str(job.get("status") or "")
+        logs = list(job.get("logs") or [])
+        artifact = job.get("artifact")
+        error = job.get("error")
+        ticker = str(job.get("ticker") or "")
 
         while last_log_idx < len(logs):
             yield _index_prediction_run_sse_frame("log", {"entry": logs[last_log_idx]})
@@ -2373,13 +2372,12 @@ async def stream_index_prediction_run_job(
     _auth: None = Depends(require_local_or_auth),
 ) -> StreamingResponse:
     """SSE: replay pipeline logs and stream until the run terminates."""
-    from src.trade.index_prediction_run_jobs import INDEX_PREDICTION_RUN_JOBS, _JOBS_LOCK, job_id_valid
+    from src.trade.index_prediction_run_jobs import _get_job_record, job_id_valid
 
     if not job_id_valid(job_id):
         raise HTTPException(status_code=400, detail="invalid job_id")
-    with _JOBS_LOCK:
-        if job_id not in INDEX_PREDICTION_RUN_JOBS:
-            raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    if _get_job_record(job_id) is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
     return _index_prediction_run_stream_response(job_id, request)
 
 
