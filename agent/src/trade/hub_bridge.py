@@ -317,7 +317,11 @@ def _index_doc_to_panel(doc) -> dict[str, Any]:
         if getattr(stage, "status", None) == "error":
             errors.extend(getattr(stage, "errors", None) or [])
 
-    warnings: list[str] = []
+    warnings: list[str] = list(getattr(doc, "data_warnings", None) or [])
+    if getattr(doc, "spot_error", None):
+        warnings.append(
+            f"Live spot unavailable — re-login INDmoney in OpenAlgo ({doc.spot_error})"
+        )
     if not pred.get("view"):
         warnings.append("Index prediction incomplete — refresh index research.")
     if not contributors:
@@ -364,6 +368,8 @@ def _index_doc_to_panel(doc) -> dict[str, Any]:
         "as_of": doc.as_of.isoformat() if hasattr(doc.as_of, "isoformat") else str(doc.as_of),
         "horizon": doc.horizon or {},
         "spot": doc.spot,
+        "spot_source": getattr(doc, "spot_source", None),
+        "spot_error": getattr(doc, "spot_error", None),
         "prediction": pred,
         "regime": doc.regime or {},
         "scenarios": doc.scenarios or [],

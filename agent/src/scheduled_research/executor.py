@@ -36,9 +36,13 @@ WATCHDOG_INTERVAL_ENV = "SCHEDULED_RESEARCH_WATCHDOG_INTERVAL_MS"
 FAILURE_THRESHOLD_ENV = "SCHEDULED_RESEARCH_FAILURE_THRESHOLD"
 SCHEDULER_ENABLED_ENV = "VIBE_TRADING_ENABLE_SCHEDULER"
 LAST_RESULT_CONFIG_KEY = "_last_result_summary"
+_RECOVERY_ERROR_MARKERS = (
+    "recovered on stack boot",
+    "recovered on shutdown",
+)
 
 _JOB_DISPATCH_TIMEOUT_MS: dict[str, int] = {
-    "index_plan_refresh": 8 * 60 * 1000,
+    "index_plan_refresh": 10 * 60 * 1000,
     "hub_news_entity": 20 * 60 * 1000,
     "hub_news_ingest": 10 * 60 * 1000,
 }
@@ -527,6 +531,9 @@ class ScheduledResearchExecutor:
         if current is None or not self._same_record(current, job) or not is_due(current, now_ms):
             return
         job = current
+
+        if job.last_error and any(marker in job.last_error for marker in _RECOVERY_ERROR_MARKERS):
+            job.last_error = None
 
         job.status = JobStatus.RUNNING
         self._store.upsert(job)

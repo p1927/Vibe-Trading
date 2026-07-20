@@ -256,6 +256,7 @@ export async function runPredictionAnalysis(
     ticker: key,
     horizon_days: horizonDays,
     refresh_constituents: refreshConstituents,
+    run_forecast_lab: true,
   };
 
   try {

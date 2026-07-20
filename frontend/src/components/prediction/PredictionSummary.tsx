@@ -105,6 +105,26 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
 
   return (
     <div className="space-y-2">
+      {artifact.spot_error ? (
+        <div className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-[11px] text-red-800 dark:text-red-300">
+          Live Nifty spot unavailable — {artifact.spot_error}. Re-login INDmoney in{" "}
+          <a
+            href="http://127.0.0.1:5001"
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium underline underline-offset-2"
+          >
+            OpenAlgo
+          </a>{" "}
+          then run analysis again.
+        </div>
+      ) : null}
+      {artifact.as_of ? (
+        <p className="text-[10px] text-muted-foreground">
+          Pipeline snapshot {new Date(artifact.as_of).toLocaleString()}
+          {artifact.spot_source ? ` · spot source: ${artifact.spot_source}` : ""}
+        </p>
+      ) : null}
       {pred.reconciled_with_scenarios &&
       pred.raw_expected_return_pct != null &&
       pred.scenario_anchor_return_pct != null ? (

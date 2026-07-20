@@ -19,8 +19,8 @@ interface Props {
   recomputing?: boolean;
   error?: string | null;
   onRefresh?: () => void;
-  onRunAnalysis?: () => void;
-  runningAnalysis?: boolean;
+  onGoToAnalysis?: () => void;
+  pipelineRunning?: boolean;
   horizonDays?: number;
   onHorizonChange?: (days: number) => void;
   progressPanelOpen?: boolean;
@@ -33,8 +33,8 @@ export function TrackScoreboardPanel({
   recomputing,
   error,
   onRefresh,
-  onRunAnalysis,
-  runningAnalysis,
+  onGoToAnalysis,
+  pipelineRunning,
   horizonDays = 14,
   onHorizonChange,
   progressPanelOpen,
@@ -92,29 +92,25 @@ export function TrackScoreboardPanel({
     return (
       <div className="space-y-4 rounded-xl border bg-card p-6">
         <p className="text-[12px] text-muted-foreground">
-          {error ?? report?.message ?? "No cached scoreboard yet — Run analysis for live tracks or Recompute scoreboard for walk-forward history."}
+          {error ?? report?.message ?? "No cached scoreboard yet — Recompute scoreboard for walk-forward history, or open Analysis for the latest forecast."}
         </p>
         <div className="flex flex-wrap items-center gap-2">
-          {onRunAnalysis ? (
+          {onGoToAnalysis ? (
             <button
               type="button"
-              onClick={onRunAnalysis}
-              disabled={runningAnalysis || loading}
+              onClick={onGoToAnalysis}
+              disabled={loading}
               className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {runningAnalysis ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Play className="h-3.5 w-3.5" />
-              )}
-              {runningAnalysis ? "Running analysis…" : "Run analysis"}
+              <Play className="h-3.5 w-3.5" />
+              Open Analysis tab
             </button>
           ) : null}
           {onRefresh ? (
             <button
               type="button"
               onClick={onRefresh}
-              disabled={loading || runningAnalysis}
+              disabled={loading || pipelineRunning}
               className="rounded-md border border-border/60 px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/50 disabled:opacity-50"
             >
               {loading ? "Recomputing…" : "Recompute scoreboard"}
@@ -165,27 +161,23 @@ export function TrackScoreboardPanel({
             Activity
           </button>
         ) : null}
-        {onRunAnalysis ? (
+        {onGoToAnalysis ? (
           <button
             type="button"
-            onClick={onRunAnalysis}
-            disabled={runningAnalysis || loading}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            title="Run index analysis with forecast lab tracks (same pipeline as Analysis tab)"
+            onClick={onGoToAnalysis}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/50 disabled:opacity-50"
+            title="Switch to Analysis tab (runs are independent from scoreboard recompute)"
           >
-            {runningAnalysis ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Play className="h-3.5 w-3.5" />
-            )}
-            {runningAnalysis ? "Running analysis…" : "Run analysis"}
+            <Play className="h-3.5 w-3.5" />
+            Open Analysis tab
           </button>
         ) : null}
         {onRefresh ? (
           <button
             type="button"
             onClick={onRefresh}
-            disabled={loading || runningAnalysis}
+            disabled={loading || pipelineRunning}
             className="rounded-md border border-border/60 px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/50 disabled:opacity-50"
           >
             {loading ? "Recomputing…" : "Recompute scoreboard"}

@@ -982,34 +982,6 @@ def run_index_prediction(
             run_forecast_lab=body.run_forecast_lab,
         )
         save_index_research(doc)
-        try:
-            from trade_integrations.dataflows.index_research.prediction_algorithms.config import (
-                lab_enabled,
-                scoreboard_auto_refresh,
-            )
-            from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.scoreboard import (
-                load_scoreboard,
-                scoreboard_needs_promotion_history,
-                scoreboard_needs_refresh,
-            )
-            from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.walk_forward import (
-                run_track_walk_forward,
-            )
-
-            if lab_enabled() and scoreboard_auto_refresh():
-                cached = load_scoreboard(key)
-                if (
-                    not cached
-                    or scoreboard_needs_refresh(cached, horizon_days=body.horizon_days, history_days=365)
-                    or scoreboard_needs_promotion_history(cached)
-                ):
-                    run_track_walk_forward(
-                        ticker=key,
-                        days=365,
-                        horizon_days=body.horizon_days,
-                    )
-        except Exception as exc:
-            logger.debug("track scoreboard auto-refresh skipped for %s: %s", key, exc)
         artifact = _index_doc_to_panel(doc)
         artifact["asset_type"] = "index"
     except RuntimeError as exc:
@@ -2248,7 +2220,7 @@ async def _index_prediction_run_event_stream(job_id: str, request: Request):
     """Replay stored logs then poll job store until done/error."""
     import time as time_mod
 
-    from src.trade.index_prediction_run_jobs import _get_job_record
+    from src.trade.index_prediction_run_jobs import _get_job_record, reconcile_zombie_job
 
     last_log_idx = 0
     last_emit = time_mod.monotonic()
@@ -2256,6 +2228,7 @@ async def _index_prediction_run_event_stream(job_id: str, request: Request):
         if await request.is_disconnected():
             return
 
+        reconcile_zombie_job(job_id)
         job = _get_job_record(job_id)
         if job is None:
             yield _index_prediction_run_sse_frame("error", {"message": "job not found"})
@@ -2276,6 +2249,11 @@ async def _index_prediction_run_event_stream(job_id: str, request: Request):
                 yield _index_prediction_run_sse_frame(
                     "done",
                     {"ticker": ticker, "artifact": artifact},
+                )
+            else:
+                yield _index_prediction_run_sse_frame(
+                    "error",
+                    {"message": "job completed without artifact"},
                 )
             return
         if status == "error":
@@ -2313,6 +2291,12 @@ def _kick_index_prediction_run(body: RunIndexPredictionRequest) -> tuple[str, st
     )
     if not reused:
         spawn_worker(job_id)
+    else:
+        from src.trade.index_prediction_run_jobs import _get_job_record, spawn_worker, worker_alive
+
+        existing = _get_job_record(job_id)
+        if existing is not None and not worker_alive(existing):
+            spawn_worker(job_id)
     from src.trade.index_prediction_run_jobs import get_job
 
     snap = get_job(job_id) or {}
@@ -2408,6 +2392,7 @@ def refresh_index_prediction(
             key,
             horizon_days=body.horizon_days,
             force=body.force,
+            poll_mode=True,
         )
         artifact = _index_doc_to_panel(doc)
         artifact["asset_type"] = "index"

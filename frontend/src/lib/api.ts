@@ -158,6 +158,39 @@ async function consumeIndexPredictionSse(
   return gotDone;
 }
 
+async function fetchIndexPredictionRunJobSnapshot(
+  jobId: string,
+): Promise<{ status?: string; artifact?: IndexPredictionArtifact; error?: string } | null> {
+  try {
+    const res = await fetch(
+      `${BASE}/trade/index-prediction/run/${encodeURIComponent(jobId)}`,
+      { headers: authHeaders() },
+    );
+    if (!res.ok) return null;
+    const payload = (await res.json()) as { job?: { status?: string; artifact?: IndexPredictionArtifact; error?: string } };
+    return payload.job ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function recoverIndexPredictionJobFromPoll(
+  jobId: string,
+  handlers: StreamIndexPredictionHandlers,
+): Promise<boolean> {
+  const job = await fetchIndexPredictionRunJobSnapshot(jobId);
+  if (!job) return false;
+  if (job.status === "done" && job.artifact) {
+    handlers.onDone?.(job.artifact);
+    return true;
+  }
+  if (job.status === "error") {
+    handlers.onError?.(job.error || "Analysis failed");
+    return true;
+  }
+  return false;
+}
+
 export async function streamIndexPredictionJob(
   jobId: string,
   handlers: StreamIndexPredictionHandlers,
@@ -187,6 +220,8 @@ export async function streamIndexPredictionJob(
   }
   const gotDone = await consumeIndexPredictionSse(res, handlers);
   if (!gotDone) {
+    const recovered = await recoverIndexPredictionJobFromPoll(jobId, handlers);
+    if (recovered) return;
     handlers.onError?.(
       "Analysis stream ended without a result — the server may have timed out. Try without “Refresh all constituents”.",
     );
@@ -1865,6 +1900,8 @@ export interface ConstituentSignal {
 
 export interface IndexPredictionArtifact extends Omit<HubPlanArtifact, "regime" | "accuracy"> {
   asset_type?: "index";
+  spot_source?: string | null;
+  spot_error?: string | null;
   horizon?: { name?: string; days?: number };
   regime?: IndexRegime;
   global_factors?: IndexGlobalFactor[];

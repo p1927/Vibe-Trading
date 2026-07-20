@@ -191,6 +191,15 @@ def run_index_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[str
     cfg = config or {}
     ticker = str(cfg.get("ticker") or "NIFTY").strip().upper()
     try:
+        from src.trade.index_prediction_run_jobs import get_active_job
+
+        active = get_active_job(ticker)
+        if active and str(active.get("status") or "") in {"queued", "running"}:
+            logger.info("index plan refresh skipped: manual run active for %s", ticker)
+            return {"skipped": True, "reason": "manual_run_active", "ticker": ticker}
+    except Exception as exc:
+        logger.debug("manual run active check skipped: %s", exc)
+    try:
         doc, reason = run_index_light_refresh(
             ticker,
             horizon_days=cfg.get("horizon_days"),
@@ -436,7 +445,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         ),
         ScheduledResearchJob(
             id="nifty-hub-news-ingest-light",
-            prompt="Light hub news ingest (RSS + watcher)",
+            prompt="Light hub news ingest (all env RSS feeds)",
             schedule=os.getenv(
                 "HUB_NEWS_LIGHT_INGEST_CRON",
                 os.getenv("HUB_NEWS_INGEST_CRON", "0 */4 * * *"),
@@ -448,7 +457,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "job_type": JOB_TYPE_HUB_NEWS_INGEST,
                 "mode": "light",
                 "ticker": "NIFTY",
-                "sources": os.getenv("HUB_NEWS_LIGHT_SOURCES", "rss,watcher"),
+                "sources": os.getenv("HUB_NEWS_LIGHT_SOURCES", "rss"),
                 "lookback_days": 1,
             },
         ),
