@@ -267,6 +267,10 @@ if ChatOpenAI is not None:
             payload = super()._get_request_payload(input_, stop=stop, **kwargs)
             messages = super()._convert_input(input_).to_messages()
             caps = self._capabilities()
+            if caps.name == "minimax":
+                from trade_integrations.nse_browser.minimax_agent import apply_minimax_request_payload
+
+                apply_minimax_request_payload(payload)
             for i, m in enumerate(payload["messages"]):
                 if m.get("role") != "assistant":
                     continue
@@ -636,7 +640,11 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
     if effort and caps.openrouter_reasoning_body:
         extra_body = {"reasoning": {"effort": effort}}
     if caps.minimax_reasoning_split:
-        extra_body = {**(extra_body or {}), "reasoning_split": True}
+        extra_body = {
+            **(extra_body or {}),
+            "reasoning_split": True,
+            "thinking": {"type": "adaptive"},
+        }
     kwargs: dict[str, Any] = {
         "model": name,
         "temperature": temperature,

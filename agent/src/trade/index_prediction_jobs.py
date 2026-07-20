@@ -76,13 +76,14 @@ def _hub_news_pipeline_health() -> dict[str, Any]:
         integrations = trade_root / "integrations"
         if integrations.is_dir() and str(integrations) not in sys.path:
             sys.path.insert(0, str(integrations))
-        from trade_integrations.hub_storage.hub_status import build_hub_status
+        from trade_integrations.dataflows.index_research.news_entity_worker import load_worker_last_summary
+        from trade_integrations.hub_storage.news_staging_store import pipeline_pause_status, staging_queue_detail
 
-        hub = build_hub_status(entity_id="NIFTY")
-        staging = hub.get("news_staging") if isinstance(hub.get("news_staging"), dict) else {}
+        pause = pipeline_pause_status(ticker="NIFTY")
+        staging = staging_queue_detail(ticker="NIFTY")
         queued = int(staging.get("queued") or 0)
         threshold = _entity_backpressure_threshold()
-        worker_last = staging.get("worker_last") if isinstance(staging.get("worker_last"), dict) else {}
+        worker_last = load_worker_last_summary() or {}
         processed = int(worker_last.get("processed") or 0)
         drain_rate_per_hour = processed * 4.0 if processed > 0 else None
         estimated_drain_hours = None
@@ -91,9 +92,9 @@ def _hub_news_pipeline_health() -> dict[str, Any]:
         return {
             "queued": queued,
             "oldest_pending_seconds": staging.get("oldest_pending_seconds"),
-            "pipeline_paused": bool(staging.get("pipeline_paused")),
-            "pause_reason": str(staging.get("pause_reason") or ""),
-            "minimax_configured": bool(staging.get("minimax_configured")),
+            "pipeline_paused": bool(pause.get("pipeline_paused")),
+            "pause_reason": str(pause.get("pause_reason") or ""),
+            "minimax_configured": bool(pause.get("minimax_configured")),
             "worker_last": worker_last,
             "backpressure_active": queued >= threshold,
             "backpressure_threshold": threshold,
