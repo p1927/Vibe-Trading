@@ -433,6 +433,7 @@ def _build_anthropic(
 
     return chat_anthropic(
         model=model,
+        max_tokens=get_env_config().llm.anthropic_max_tokens,
         temperature=temperature,
         timeout=get_env_config().llm.timeout_seconds,
         max_retries=get_env_config().llm.max_retries,

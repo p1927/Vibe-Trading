@@ -233,6 +233,7 @@ def test_build_anthropic_uses_messages_api_proxy() -> None:
         "LANGCHAIN_TEMPERATURE": "0",
         "ANTHROPIC_API_KEY": "PROXY_MANAGED",
         "ANTHROPIC_BASE_URL": "http://host.docker.internal:15721",
+        "ANTHROPIC_MAX_TOKENS": "16384",
         "TIMEOUT_SECONDS": "600",
         "MAX_RETRIES": "2",
     }
@@ -248,6 +249,7 @@ def test_build_anthropic_uses_messages_api_proxy() -> None:
     assert captured["model"] == "claude-sonnet-4-6[1M]"
     assert captured["api_key"] == "PROXY_MANAGED"
     assert captured["base_url"] == "http://host.docker.internal:15721"
+    assert captured["max_tokens"] == 16384
     assert captured["timeout"] == 600
     assert captured["max_retries"] == 2
 
