@@ -5,6 +5,7 @@ import { fmtHitRate, fmtPct } from "@/lib/trackScoreboardUtils";
 import {
   BACKTEST_COMBINER_IDS,
   CANONICAL_TRACK_IDS,
+  EXPERIMENTAL_TRACK_IDS,
   trackDisplayLabel,
 } from "@/lib/trackScoreboardReplayUtils";
 import { TrackScoreboardChart } from "@/components/charts/TrackScoreboardChart";
@@ -92,6 +93,9 @@ export function TrackScoreboardPanel({
   }
 
   const tracks = CANONICAL_TRACK_IDS.map((tid) => [tid, report.tracks?.[tid] ?? { track_id: tid, eval_count: 0 }] as const);
+  const experimentalTracks = EXPERIMENTAL_TRACK_IDS.map(
+    (tid) => [tid, report.tracks?.[tid] ?? { track_id: tid, eval_count: 0, experimental: true }] as const,
+  );
   const combiners = BACKTEST_COMBINER_IDS.map((cid) => [cid, report.combiners?.[cid] ?? { track_id: cid, eval_count: 0 }] as const);
   const live = report.live;
   const eventOverlayUnavailable =
@@ -378,6 +382,7 @@ export function TrackScoreboardPanel({
           </p>
           <p className="mb-2 text-[11px] text-muted-foreground">
             Quant baseline direction: {fmtHitRate(promo?.quant_direction_hit_rate)}
+            {promo?.quant_mae_pct != null ? ` · MAE ${fmtPct(promo.quant_mae_pct)}` : ""}
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-[11px]">
@@ -403,7 +408,9 @@ export function TrackScoreboardPanel({
                         {verdict?.promoted ? (
                           <span className="text-emerald-600 dark:text-emerald-400">yes</span>
                         ) : (
-                          <span className="text-muted-foreground">no</span>
+                          <span className="text-muted-foreground">
+                            {verdict?.mae_passes === false ? "mae" : "no"}
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -419,6 +426,41 @@ export function TrackScoreboardPanel({
           ) : (
             <p className="mt-2 text-[10px] text-muted-foreground">Report-only — headline stays quant_only.</p>
           )}
+        </div>
+
+        <div className="rounded-xl border bg-card p-4 shadow-sm lg:col-span-2">
+          <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            ML experiment tracks (opt-in)
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-[11px]">
+              <thead>
+                <tr className="border-b text-muted-foreground">
+                  <th className="py-1 pr-2">Track</th>
+                  <th className="py-1 pr-2">MAE</th>
+                  <th className="py-1 pr-2">Direction</th>
+                  <th className="py-1">n</th>
+                </tr>
+              </thead>
+              <tbody>
+                {experimentalTracks.map(([tid, row]) => (
+                  <tr key={tid} className="border-b border-border/40">
+                    <td className="py-1.5 pr-2 font-medium">
+                      {trackDisplayLabel(tid)}
+                      <span className="ml-1 text-[9px] text-muted-foreground">(ML)</span>
+                    </td>
+                    <td className="py-1.5 pr-2 tabular-nums">{fmtPct(row.mae_pct)}</td>
+                    <td className="py-1.5 pr-2 tabular-nums">{fmtHitRate(row.direction_hit_rate)}</td>
+                    <td className="py-1.5 tabular-nums">{row.eval_count ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            ML tracks run in parallel with quant_ridge when libraries are installed. Disable with
+            INDEX_PREDICTION_EXPERIMENTAL_TRACKS=0.
+          </p>
         </div>
       </div>
     </div>

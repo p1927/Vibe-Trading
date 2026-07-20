@@ -186,6 +186,21 @@ dev = [
     "pytest-cov>=4.0",
     "pytest-socket>=0.7.0",
 ]
+prediction-ml = [
+    "lightgbm>=4.0",
+    "xgboost>=2.0",
+    "statsmodels>=0.14",
+    "pandas-ta>=0.3",
+    "darts>=0.30",
+]
+prediction-ml-heavy = [
+    "pycaret[time_series]>=3.3",
+    "autogluon.timeseries>=1.1",
+]
+prediction-exec = [
+    "vectorbt>=0.26",
+    "backtrader>=1.9",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["agent/tests"]
