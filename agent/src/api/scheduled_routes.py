@@ -157,6 +157,12 @@ def _register_persisted_autonomous_agent_jobs() -> None:
 
 def _start_scheduled_research_executor() -> None:
     """Start scheduled research execution when explicitly enabled."""
+    try:
+        from src.scheduled_research.lifecycle import recover_scheduler_jobs_on_stack_boot
+
+        recover_scheduler_jobs_on_stack_boot(_get_scheduled_research_store())
+    except Exception:
+        logger.exception("failed to recover stale scheduler jobs on API startup")
     from src.scheduled_research.index_jobs import (
         is_index_scheduler_enabled,
         register_default_index_jobs,
@@ -232,9 +238,17 @@ def _start_scheduled_research_executor() -> None:
 
 async def _stop_scheduled_research_executor() -> None:
     """Stop scheduled research execution if it was started."""
+    global _scheduled_research_executor
+    try:
+        from src.scheduled_research.lifecycle import recover_scheduler_jobs_on_stack_shutdown
+
+        recover_scheduler_jobs_on_stack_shutdown(_get_scheduled_research_store())
+    except Exception:
+        logger.exception("failed to recover scheduler jobs on API shutdown")
     executor = _scheduled_research_executor
     if executor is not None:
         await executor.stop()
+    _scheduled_research_executor = None
 
 
 # ---------------------------------------------------------------------------

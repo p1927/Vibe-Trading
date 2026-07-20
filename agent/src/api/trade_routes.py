@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import requests
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -162,13 +161,14 @@ def _paper_mode_env_enabled() -> bool:
 
 def _openalgo_analyzer_status(host: str, api_key: str) -> bool:
     try:
-        response = requests.post(
-            f"{host}/api/v1/analyzer",
-            json={"apikey": api_key},
+        from trade_integrations.openalgo.rest_client import get_rest_client
+
+        body = get_rest_client(host=host, api_key=api_key).post(
+            "analyzer",
+            {"apikey": api_key},
             timeout=15,
         )
-        body = response.json() if response.content else {}
-    except requests.RequestException as exc:
+    except RuntimeError as exc:
         logger.warning("OpenAlgo analyzer status failed: %s", exc)
         return False
     data = body.get("data") if isinstance(body.get("data"), dict) else body
@@ -180,13 +180,14 @@ def _ensure_openalgo_analyzer_mode(host: str, api_key: str) -> bool:
     if _openalgo_analyzer_status(host, api_key):
         return True
     try:
-        response = requests.post(
-            f"{host}/api/v1/analyzer/toggle",
-            json={"apikey": api_key, "mode": True},
+        from trade_integrations.openalgo.rest_client import get_rest_client
+
+        body = get_rest_client(host=host, api_key=api_key).post(
+            "analyzer/toggle",
+            {"apikey": api_key, "mode": True},
             timeout=15,
         )
-        body = response.json() if response.content else {}
-    except requests.RequestException as exc:
+    except RuntimeError as exc:
         logger.warning("OpenAlgo analyzer toggle failed: %s", exc)
         return False
     data = body.get("data") if isinstance(body.get("data"), dict) else body
@@ -297,19 +298,20 @@ def execute_basket(
 
     payload = {"apikey": api_key, "strategy": body.strategy, "orders": orders}
     try:
-        response = requests.post(
-            f"{host}/api/v1/basketorder",
-            json=payload,
+        from trade_integrations.openalgo.rest_client import get_rest_client
+
+        body_json = get_rest_client(host=host, api_key=api_key).post(
+            "basketorder",
+            payload,
             timeout=45,
         )
-        body_json = response.json() if response.content else {}
-    except requests.RequestException as exc:
+    except RuntimeError as exc:
         logger.warning("OpenAlgo basket order failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"OpenAlgo request failed: {exc}") from exc
 
-    if not response.ok:
+    if body_json.get("status") == "error":
         raise HTTPException(
-            status_code=response.status_code,
+            status_code=502,
             detail=body_json.get("message") or str(body_json),
         )
 
@@ -582,6 +584,7 @@ class RunIndexPredictionRequest(BaseModel):
     ticker: str = "NIFTY"
     horizon_days: int | None = None
     refresh_constituents: bool = False
+    run_forecast_lab: bool = False
 
 
 class IndexPredictionRunStartResponse(BaseModel):
@@ -676,6 +679,7 @@ class IndexForecastLabResponse(BaseModel):
     ticker: str = ""
     result: Dict[str, Any] | None = None
     message: str = ""
+    artifact: Dict[str, Any] | None = None
 
 
 class IndexTrackScoreboardResponse(BaseModel):
@@ -719,6 +723,7 @@ class IndexPredictionJobsResponse(BaseModel):
     master_scheduler_env_enabled: bool = False
     master_scheduler_running: bool = False
     executor_is_running: bool = False
+    news_pipeline: Dict[str, Any] = Field(default_factory=dict)
     jobs: List[Dict[str, Any]] = Field(default_factory=list)
     job: Dict[str, Any] | None = None
     message: str = ""
@@ -974,6 +979,7 @@ def run_index_prediction(
             key,
             horizon_days=body.horizon_days,
             refresh_constituents=body.refresh_constituents,
+            run_forecast_lab=body.run_forecast_lab,
         )
         save_index_research(doc)
         try:
@@ -1570,7 +1576,27 @@ def index_prediction_forecast_lab(
             mae_by_track=runtime_kwargs.get("mae_by_track"),
             lam=runtime_kwargs.get("lam"),
         )
-        return IndexForecastLabResponse(status="ok", ticker=key, result=result.to_dict())
+        lab_dict = result.to_dict()
+        artifact = None
+        persist = payload.get("persist", True)
+        if persist is not False:
+            from trade_integrations.context.hub import load_index_research_json
+            from trade_integrations.dataflows.index_research.prediction_algorithms.pipeline_lab import (
+                persist_forecast_lab_to_hub,
+            )
+            from src.trade.hub_bridge import _index_doc_to_panel
+
+            if persist_forecast_lab_to_hub(key, lab_dict):
+                doc = load_index_research_json(key)
+                if doc is not None:
+                    artifact = _index_doc_to_panel(doc)
+                    artifact["asset_type"] = "index"
+        return IndexForecastLabResponse(
+            status="ok",
+            ticker=key,
+            result=lab_dict,
+            artifact=artifact,
+        )
     except Exception as exc:
         logger.exception("index-prediction forecast-lab failed for %s", key)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -2284,6 +2310,7 @@ def _kick_index_prediction_run(body: RunIndexPredictionRequest) -> tuple[str, st
         ticker=key,
         horizon_days=body.horizon_days,
         refresh_constituents=body.refresh_constituents,
+        run_forecast_lab=body.run_forecast_lab,
     )
     if not reused:
         spawn_worker(job_id)
@@ -2541,6 +2568,7 @@ def get_index_prediction_jobs(
         master_scheduler_env_enabled=bool(payload.get("master_scheduler_env_enabled")),
         master_scheduler_running=bool(payload.get("master_scheduler_running")),
         executor_is_running=bool(payload.get("executor_is_running")),
+        news_pipeline=payload.get("news_pipeline") or {},
         jobs=payload.get("jobs") or [],
     )
 
@@ -2579,6 +2607,26 @@ def resume_index_prediction_job_route(
         payload = resume_index_prediction_job(job_id)
     except Exception as exc:
         logger.exception("resume index job %s failed", job_id)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if payload.get("status") == "error":
+        return IndexPredictionJobsResponse(status="error", message=str(payload.get("message") or "not found"))
+    return IndexPredictionJobsResponse(status="ok", job=payload.get("job"))
+
+
+@trade_router.post("/index-prediction/jobs/{job_id}/recover", response_model=IndexPredictionJobsResponse)
+def recover_index_prediction_job_route(
+    job_id: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexPredictionJobsResponse:
+    """Reset a stuck RUNNING index prediction cron job to pending."""
+    try:
+        from src.trade.index_prediction_jobs import recover_index_prediction_job
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        payload = recover_index_prediction_job(job_id)
+    except Exception as exc:
+        logger.exception("recover index job %s failed", job_id)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if payload.get("status") == "error":
         return IndexPredictionJobsResponse(status="error", message=str(payload.get("message") or "not found"))

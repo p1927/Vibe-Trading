@@ -138,13 +138,13 @@ def _check_llm_provider() -> CheckResult:
 
     # Ping the base URL
     try:
-        import requests
+        from trade_integrations.http import get
 
         # Strip /v1 suffix for health check, just test TCP+SSL
         ping_url = base_url.rstrip("/")
         if ping_url.endswith("/v1"):
             ping_url = ping_url[:-3]
-        requests.get(ping_url, timeout=10, allow_redirects=False)
+        get(ping_url, timeout=10, allow_redirects=False)
         return CheckResult(
             name=f"LLM ({provider})",
             status="ready",
@@ -164,9 +164,9 @@ def _check_llm_provider() -> CheckResult:
 def _check_okx() -> CheckResult:
     """Check OKX public API reachability."""
     try:
-        import requests
+        from trade_integrations.http import get
 
-        resp = requests.get(
+        resp = get(
             "https://www.okx.com/api/v5/market/candles",
             params={"instId": "BTC-USDT", "bar": "1D", "limit": "1"},
             timeout=10,
@@ -279,6 +279,43 @@ def _check_ccxt() -> CheckResult:
     return CheckResult(name="ccxt", status="ready", message="installed", impact="")
 
 
+def _check_prediction_ml() -> CheckResult:
+    """Verify forecast-lab ML runtime (libomp + lightgbm/xgboost/darts)."""
+    try:
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[3]
+        integrations = repo_root / "integrations"
+        if integrations.is_dir() and str(integrations) not in sys.path:
+            sys.path.insert(0, str(integrations))
+        from trade_integrations.ml_runtime_env import verify_prediction_ml
+
+        ok, message = verify_prediction_ml()
+        if ok:
+            return CheckResult(
+                name="Prediction ML",
+                status="ready",
+                message=message,
+                impact="",
+            )
+        return CheckResult(
+            name="Prediction ML",
+            status="error",
+            message=message,
+            impact="forecast lab ML tracks unavailable — run: ./scripts/ensure_prediction_ml.sh",
+            critical=True,
+        )
+    except Exception as exc:
+        return CheckResult(
+            name="Prediction ML",
+            status="error",
+            message=f"{type(exc).__name__}: {exc}",
+            impact="forecast lab ML tracks unavailable",
+            critical=True,
+        )
+
+
 # -- Status icons and colors --------------------------------------------------
 
 _STATUS_DISPLAY = {
@@ -304,6 +341,7 @@ def run_preflight(console: Optional[Console] = None) -> List[CheckResult]:
     checks = [
         _check_environment,
         _check_llm_provider,
+        _check_prediction_ml,
         _check_okx,
         _check_yfinance,
         _check_tushare,
@@ -335,8 +373,13 @@ def run_preflight(console: Optional[Console] = None) -> List[CheckResult]:
 
     has_critical = any(r.critical and r.status != "ready" for r in results)
     if has_critical:
-        console.print("\n[bold red]Critical check failed - agent cannot start without a working LLM provider.[/bold red]")
-        console.print("[dim]  See: agent/.env.example for configuration reference[/dim]")
+        console.print(
+            "\n[bold red]Critical check failed — fix the items above before using the stack.[/bold red]"
+        )
+        if any(r.critical and r.status != "ready" and r.name == "LLM Provider" for r in results):
+            console.print("[dim]  See: agent/.env.example for LLM configuration[/dim]")
+        if any(r.critical and r.status != "ready" and r.name == "Prediction ML" for r in results):
+            console.print("[dim]  Run: ./scripts/ensure_prediction_ml.sh[/dim]")
     else:
         ready_count = sum(1 for r in results if r.status == "ready")
         console.print(f"\n[dim]{ready_count}/{len(results)} services ready[/dim]")

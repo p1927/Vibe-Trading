@@ -5328,8 +5328,46 @@ def cmd_dev(
     )
     console.print("[dim]Press Ctrl+C to stop both servers.[/dim]\n")
 
-    backend = subprocess.Popen(backend_cmd, cwd=str(AGENT_DIR))
-    frontend = subprocess.Popen(frontend_cmd, cwd=str(frontend_dir))
+    verify_script = AGENT_DIR.parent.parent / "scripts" / "verify_prediction_ml.py"
+    if verify_script.is_file():
+        launch_env = os.environ.copy()
+        try:
+            import sys as _sys
+
+            integrations = AGENT_DIR.parent.parent / "integrations"
+            if integrations.is_dir() and str(integrations) not in _sys.path:
+                _sys.path.insert(0, str(integrations))
+            from trade_integrations.ml_runtime_env import ml_runtime_env
+
+            launch_env = ml_runtime_env()
+        except Exception:
+            pass
+        verify = subprocess.run(
+            [sys.executable, str(verify_script)],
+            capture_output=True,
+            text=True,
+            env=launch_env,
+        )
+        if verify.returncode != 0:
+            detail = (verify.stderr or verify.stdout or "prediction ML runtime not ready").strip()
+            console.print(f"[red]Prediction ML runtime not ready:[/red] {detail}")
+            console.print("[dim]Run: ./scripts/ensure_prediction_ml.sh[/dim]")
+            return EXIT_USAGE_ERROR
+
+    launch_env = os.environ.copy()
+    try:
+        import sys as _sys
+
+        integrations = AGENT_DIR.parent.parent / "integrations"
+        if integrations.is_dir() and str(integrations) not in _sys.path:
+            _sys.path.insert(0, str(integrations))
+        from trade_integrations.ml_runtime_env import ml_runtime_env
+
+        launch_env = ml_runtime_env()
+    except Exception:
+        pass
+    backend = subprocess.Popen(backend_cmd, cwd=str(AGENT_DIR), env=launch_env)
+    frontend = subprocess.Popen(frontend_cmd, cwd=str(frontend_dir), env=launch_env)
     children = [backend, frontend]
 
     def _terminate_all() -> None:

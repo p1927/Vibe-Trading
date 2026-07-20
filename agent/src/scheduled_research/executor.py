@@ -23,8 +23,27 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TICK_INTERVAL_MS = 60 * 1000
 DEFAULT_STARTUP_GRACE_MS = 30 * 1000
+DEFAULT_STALE_RUNNING_MS = 45 * 60 * 1000
+DEFAULT_INDEX_PLAN_REFRESH_STALE_MS = 10 * 60 * 1000
+DEFAULT_DISPATCH_TIMEOUT_MS = DEFAULT_STALE_RUNNING_MS
+DEFAULT_WATCHDOG_INTERVAL_MS = 60 * 1000
+DEFAULT_FAILURE_THRESHOLD = 3
 STARTUP_GRACE_ENV = "SCHEDULED_RESEARCH_STARTUP_GRACE_MS"
+STALE_RUNNING_ENV = "SCHEDULED_RESEARCH_STALE_RUNNING_MS"
+INDEX_PLAN_REFRESH_STALE_ENV = "INDEX_PLAN_REFRESH_STALE_MS"
+DISPATCH_TIMEOUT_ENV = "SCHEDULED_RESEARCH_DISPATCH_TIMEOUT_MS"
+WATCHDOG_INTERVAL_ENV = "SCHEDULED_RESEARCH_WATCHDOG_INTERVAL_MS"
+FAILURE_THRESHOLD_ENV = "SCHEDULED_RESEARCH_FAILURE_THRESHOLD"
 SCHEDULER_ENABLED_ENV = "VIBE_TRADING_ENABLE_SCHEDULER"
+LAST_RESULT_CONFIG_KEY = "_last_result_summary"
+
+_JOB_DISPATCH_TIMEOUT_MS: dict[str, int] = {
+    "index_plan_refresh": 8 * 60 * 1000,
+    "hub_news_entity": 20 * 60 * 1000,
+    "hub_news_ingest": 10 * 60 * 1000,
+}
+_INDEX_JOB_DISPATCH_TIMEOUT_MS = 30 * 60 * 1000
+
 
 NowFn = Callable[[], int]
 DispatchCallback = Callable[[ScheduledResearchJob], Awaitable[None]]
@@ -49,6 +68,82 @@ def _startup_grace_ms() -> int:
         return max(0, int(raw))
     except ValueError:
         return DEFAULT_STARTUP_GRACE_MS
+
+
+def _stale_running_ms() -> int:
+    raw = os.getenv(STALE_RUNNING_ENV, str(DEFAULT_STALE_RUNNING_MS)).strip()
+    try:
+        return max(60_000, int(raw))
+    except ValueError:
+        return DEFAULT_STALE_RUNNING_MS
+
+
+def _index_plan_refresh_stale_ms() -> int:
+    raw = os.getenv(INDEX_PLAN_REFRESH_STALE_ENV, str(DEFAULT_INDEX_PLAN_REFRESH_STALE_MS)).strip()
+    try:
+        return max(60_000, int(raw))
+    except ValueError:
+        return DEFAULT_INDEX_PLAN_REFRESH_STALE_MS
+
+
+def stale_running_ms_for(job: ScheduledResearchJob) -> int:
+    """Return stale threshold for *job* (poll jobs use a shorter window)."""
+    job_type = str(job.config.get("job_type") or "")
+    if job_type == "index_plan_refresh":
+        return _index_plan_refresh_stale_ms()
+    return _stale_running_ms()
+
+
+def is_job_stale_running(job: ScheduledResearchJob, now_ms: int) -> bool:
+    """Return whether a RUNNING job has exceeded its stale threshold."""
+    if job.status != JobStatus.RUNNING:
+        return False
+    started_at = job.last_run_at if job.last_run_at is not None else job.created_at
+    return now_ms - started_at >= stale_running_ms_for(job)
+
+
+def dispatch_timeout_ms_for(job: ScheduledResearchJob) -> int:
+    """Return dispatch timeout for *job* (config override, then job_type, then env default)."""
+    raw = job.config.get("dispatch_timeout_ms")
+    if isinstance(raw, int) and raw > 0:
+        return raw
+    job_type = str(job.config.get("job_type") or "")
+    if job_type in _JOB_DISPATCH_TIMEOUT_MS:
+        return _JOB_DISPATCH_TIMEOUT_MS[job_type]
+    if job_type.startswith("index_"):
+        return _INDEX_JOB_DISPATCH_TIMEOUT_MS
+    raw_env = os.getenv(DISPATCH_TIMEOUT_ENV, str(DEFAULT_DISPATCH_TIMEOUT_MS)).strip()
+    try:
+        return max(60_000, int(raw_env))
+    except ValueError:
+        return DEFAULT_DISPATCH_TIMEOUT_MS
+
+
+def _watchdog_interval_ms() -> int:
+    raw = os.getenv(WATCHDOG_INTERVAL_ENV, str(DEFAULT_WATCHDOG_INTERVAL_MS)).strip()
+    try:
+        return max(10_000, int(raw))
+    except ValueError:
+        return DEFAULT_WATCHDOG_INTERVAL_MS
+
+
+def _default_failure_threshold() -> int:
+    raw = os.getenv(FAILURE_THRESHOLD_ENV, str(DEFAULT_FAILURE_THRESHOLD)).strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_FAILURE_THRESHOLD
+
+
+def _failure_threshold_for(job: ScheduledResearchJob) -> int:
+    raw = job.config.get("failure_threshold")
+    if isinstance(raw, int) and raw > 0:
+        return raw
+    return _default_failure_threshold()
+
+
+def _truncate_error(exc: BaseException) -> str:
+    return str(exc)[:500]
 
 
 def scheduler_enabled_from_env(value: str | None = None) -> bool:
@@ -169,6 +264,7 @@ class ScheduledResearchExecutor:
         self._stopping = False
         self._recovered_stale_running = False
         self._startup_backlog_deferred = False
+        self._watchdog_task: asyncio.Task | None = None
 
     @property
     def is_running(self) -> bool:
@@ -183,10 +279,19 @@ class ScheduledResearchExecutor:
         if not self._enabled or self.is_running:
             return
         self._stopping = False
-        self.recover_stale_running(self._now_fn())
+        self.recover_stale_running(self._now_fn(), startup=True)
         self._wakeup = asyncio.Event()
         loop = asyncio.get_running_loop()
         self._task = loop.create_task(self._run(), name="scheduled-research-executor")
+        self._watchdog_task = loop.create_task(
+            self._stale_watchdog(),
+            name="scheduled-research-stale-watchdog",
+        )
+
+    def wake(self) -> None:
+        """Wake the executor loop for an immediate tick (e.g. after manual job recovery)."""
+        if self._wakeup is not None:
+            self._wakeup.set()
 
     async def stop(self) -> None:
         """Stop the background loop and wait for it to finish.
@@ -195,10 +300,20 @@ class ScheduledResearchExecutor:
         """
         if not self._enabled:
             return
+        self._stopping = True
+        self.recover_all_running_on_shutdown(self._now_fn())
+        watchdog = self._watchdog_task
+        if watchdog is not None:
+            watchdog.cancel()
+            try:
+                await watchdog
+            except asyncio.CancelledError:
+                pass
+            self._watchdog_task = None
         task = self._task
         if task is None:
+            self._reset_runtime_state()
             return
-        self._stopping = True
         if self._wakeup is not None:
             self._wakeup.set()
         # The set() above wakes a sleeping loop in the common case. Cancel as a
@@ -210,6 +325,46 @@ class ScheduledResearchExecutor:
         except asyncio.CancelledError:
             pass
         self._task = None
+        self._reset_runtime_state()
+
+    def recover_all_running_on_shutdown(self, now_ms: int | None = None) -> int:
+        """Reset every RUNNING job to pending for clean executor shutdown."""
+        now = self._now_fn() if now_ms is None else now_ms
+        jobs = self._store.load()
+        recovered = 0
+        for job in jobs.values():
+            if job.status != JobStatus.RUNNING:
+                continue
+            _advance = job
+            _advance.status = JobStatus.PENDING
+            try:
+                _advance.next_run_at = next_due(job.schedule, now)
+            except Exception:
+                logger.warning(
+                    "could not advance schedule for shutdown-recovered job %s; deferring one tick",
+                    job.id,
+                    exc_info=True,
+                )
+                _advance.next_run_at = now + self._tick_interval_ms
+            if not _advance.last_error:
+                _advance.last_error = "recovered on executor shutdown"
+            recovered += 1
+            logger.warning(
+                "recovering scheduled research job %s on executor shutdown (next_run_at=%s)",
+                job.id,
+                _advance.next_run_at,
+            )
+        if recovered:
+            self._store.save(jobs)
+        return recovered
+
+    def _reset_runtime_state(self) -> None:
+        """Clear in-memory executor flags so the next start is fresh."""
+        self._stopping = False
+        self._recovered_stale_running = False
+        self._startup_backlog_deferred = False
+        if self._wakeup is not None:
+            self._wakeup.set()
 
     async def tick(self, now_ms: int | None = None) -> None:
         """Run one poll/dispatch pass.
@@ -218,7 +373,8 @@ class ScheduledResearchExecutor:
             now_ms: Optional explicit reference time. Defaults to ``now_fn``.
         """
         now = self._now_fn() if now_ms is None else now_ms
-        self.recover_stale_running(now)
+        self.recover_stale_running(now, startup=True)
+        self.recover_stale_running(now, startup=False)
         jobs = sorted(
             (job for job in self._store.load().values() if is_due(job, now)),
             key=lambda job: job.next_run_at,
@@ -226,19 +382,17 @@ class ScheduledResearchExecutor:
         for job in jobs:
             await self._run_job(job, now)
 
-    def recover_stale_running(self, now_ms: int | None = None) -> int:
-        """Reset jobs left ``RUNNING`` by a previous executor process.
+    def recover_stale_running(self, now_ms: int | None = None, *, startup: bool = False) -> int:
+        """Reset jobs left ``RUNNING`` after a crash or hung dispatch.
 
-        This runs at most once per executor instance. Jobs that become
-        ``RUNNING`` after this recovery step are treated as live in-flight work
-        and remain skipped by :func:`is_due`.
+        On startup (``startup=True``), recover every ``RUNNING`` job once per
+        executor instance. On each tick (``startup=False``), recover only jobs
+        whose ``last_run_at`` exceeds :func:`stale_running_ms_for`.
 
         Recovered jobs are scheduled for their next cron/interval slot instead
-        of firing immediately. Immediate re-dispatch after a crash (especially
-        heavy index calibration / factor backfill) was causing API OOM/SIGKILL
-        loops that looked like an unstable ``trade up`` stack.
+        of firing immediately.
         """
-        if self._recovered_stale_running:
+        if startup and self._recovered_stale_running:
             return 0
 
         now = self._now_fn() if now_ms is None else now_ms
@@ -246,6 +400,8 @@ class ScheduledResearchExecutor:
         recovered = 0
         for job in jobs.values():
             if job.status != JobStatus.RUNNING:
+                continue
+            if not startup and not is_job_stale_running(job, now):
                 continue
             job.status = JobStatus.PENDING
             try:
@@ -266,7 +422,8 @@ class ScheduledResearchExecutor:
 
         if recovered:
             self._store.save(jobs)
-        self._recovered_stale_running = True
+        if startup:
+            self._recovered_stale_running = True
         return recovered
 
     def defer_startup_backlog(self, now_ms: int | None = None) -> int:
@@ -328,6 +485,23 @@ class ScheduledResearchExecutor:
                 break
             await self._sleep_or_wake(self._tick_interval_ms)
 
+    async def _stale_watchdog(self) -> None:
+        """Recover hung RUNNING jobs on a timer independent of tick completion."""
+        interval_ms = _watchdog_interval_ms()
+        while not self._stopping:
+            try:
+                await asyncio.sleep(interval_ms / 1000.0)
+            except asyncio.CancelledError:
+                raise
+            if self._stopping:
+                break
+            try:
+                recovered = self.recover_stale_running(self._now_fn(), startup=False)
+                if recovered:
+                    self.wake()
+            except Exception:
+                logger.error("scheduled research stale watchdog failed", exc_info=True)
+
     async def _sleep_or_wake(self, sleep_ms: int) -> None:
         wakeup = self._wakeup
         if wakeup is None:
@@ -357,22 +531,51 @@ class ScheduledResearchExecutor:
         job.status = JobStatus.RUNNING
         self._store.upsert(job)
 
+        timeout_ms = dispatch_timeout_ms_for(job)
+        final_status = JobStatus.COMPLETED
         try:
-            await self._dispatch(job)
+            await asyncio.wait_for(self._dispatch(job), timeout=timeout_ms / 1000.0)
+        except asyncio.TimeoutError:
+            logger.error(
+                "scheduled research dispatch timed out for job %s after %sms",
+                job.id,
+                timeout_ms,
+            )
+            job.last_error = f"dispatch timed out after {timeout_ms}ms"
+            job.consecutive_failures = int(job.consecutive_failures or 0) + 1
+            final_status = JobStatus.COMPLETED
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             logger.error("scheduled research dispatch failed for job %s", job.id, exc_info=True)
-            final_status = JobStatus.FAILED
+            job.last_error = _truncate_error(exc)
+            job.consecutive_failures = int(job.consecutive_failures or 0) + 1
+            threshold = _failure_threshold_for(job)
+            if job.consecutive_failures >= threshold:
+                final_status = JobStatus.FAILED
+            else:
+                final_status = JobStatus.COMPLETED
+                logger.warning(
+                    "scheduled job %s failed (%s/%s); keeping schedule alive",
+                    job.id,
+                    job.consecutive_failures,
+                    threshold,
+                )
         else:
+            job.consecutive_failures = 0
+            job.last_error = None
+            raw_summary = job.config.pop(LAST_RESULT_CONFIG_KEY, None)
+            if isinstance(raw_summary, dict):
+                job.last_result_summary = raw_summary
             final_status = JobStatus.COMPLETED
 
         job.last_run_at = now_ms
         try:
             job.next_run_at = next_due(job.schedule, now_ms)
-        except Exception:
+        except Exception as exc:
             logger.error("scheduled research schedule advancement failed for job %s", job.id, exc_info=True)
             job.status = JobStatus.FAILED
+            job.last_error = _truncate_error(exc)
             self._persist_completion(job)
             return
 

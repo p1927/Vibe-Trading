@@ -115,6 +115,9 @@ class ScheduledResearchJob:
         created_at: Epoch-millisecond timestamp of job creation.
         last_run_at: Epoch-millisecond timestamp of the most recent executor
             attempt, or ``None`` when the job has not fired yet.
+        last_error: Truncated error message from the most recent failed dispatch.
+        last_result_summary: Compact JSON-serializable summary from the last run.
+        consecutive_failures: Count of consecutive dispatch failures (resets on success).
         config: Opaque dict for future backtest parameters.
     """
 
@@ -125,6 +128,9 @@ class ScheduledResearchJob:
     status: JobStatus = JobStatus.PENDING
     created_at: int = field(default_factory=lambda: int(time.time() * 1000))
     last_run_at: Optional[int] = None
+    last_error: Optional[str] = None
+    last_result_summary: Optional[Dict[str, Any]] = None
+    consecutive_failures: int = 0
     config: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -142,6 +148,9 @@ class ScheduledResearchJob:
             "status": self.status.value,
             "created_at": self.created_at,
             "last_run_at": self.last_run_at,
+            "last_error": self.last_error,
+            "last_result_summary": self.last_result_summary,
+            "consecutive_failures": self.consecutive_failures,
             "config": self.config,
         }
 
@@ -172,6 +181,20 @@ class ScheduledResearchJob:
         last_run_at = data.get("last_run_at")
         if last_run_at is not None and not isinstance(last_run_at, int):
             raise TypeError("'last_run_at' must be an integer (epoch ms) or null")
+        last_error = data.get("last_error")
+        if last_error is not None and not isinstance(last_error, str):
+            raise TypeError("'last_error' must be a string or null")
+        raw_summary = data.get("last_result_summary")
+        last_result_summary: Dict[str, Any] | None
+        if raw_summary is None:
+            last_result_summary = None
+        elif isinstance(raw_summary, dict):
+            last_result_summary = raw_summary
+        else:
+            raise TypeError("'last_result_summary' must be an object or null")
+        consecutive_failures = data.get("consecutive_failures", 0)
+        if not isinstance(consecutive_failures, int):
+            raise TypeError("'consecutive_failures' must be an integer")
         status = JobStatus(data["status"])
         raw_config = data.get("config")
         config: Dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
@@ -183,5 +206,8 @@ class ScheduledResearchJob:
             status=status,
             created_at=created_at,
             last_run_at=last_run_at,
+            last_error=last_error,
+            last_result_summary=last_result_summary,
+            consecutive_failures=consecutive_failures,
             config=config,
         )

@@ -9,9 +9,12 @@ from pathlib import Path
 import pytest
 from src.scheduled_research.executor import (
     ScheduledResearchExecutor,
+    dispatch_timeout_ms_for,
     is_due,
+    is_job_stale_running,
     next_due,
     scheduler_enabled_from_env,
+    stale_running_ms_for,
 )
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob
 from src.scheduled_research.store import ScheduledResearchJobStore
@@ -96,7 +99,9 @@ def test_cron_job_next_due_and_not_before_due_time(tmp_path: Path) -> None:
 
 def test_dispatch_failure_marks_failed_and_tick_continues(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    store.upsert(_job("bad", next_run_at=10))
+    bad_job = _job("bad", next_run_at=10)
+    bad_job.config = {"failure_threshold": 1}
+    store.upsert(bad_job)
     store.upsert(_job("good", next_run_at=20))
     calls: list[str] = []
 
@@ -117,7 +122,30 @@ def test_dispatch_failure_marks_failed_and_tick_continues(tmp_path: Path) -> Non
     assert good is not None
     assert calls == ["bad", "good"]
     assert bad.status == JobStatus.FAILED
+    assert bad.last_error == "boom"
+    assert bad.consecutive_failures == 1
     assert good.status == JobStatus.COMPLETED
+
+
+def test_dispatch_failure_below_threshold_stays_completed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SCHEDULED_RESEARCH_FAILURE_THRESHOLD", "3")
+    store = _store(tmp_path)
+    store.upsert(_job("bad", next_run_at=10))
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        raise RuntimeError("transient")
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(store, dispatch)
+        await executor.tick(100)
+
+    asyncio.run(scenario())
+
+    bad = store.get("bad")
+    assert bad is not None
+    assert bad.status == JobStatus.COMPLETED
+    assert bad.consecutive_failures == 1
+    assert bad.last_error == "transient"
 
 
 def test_stale_running_job_recovers_to_pending_and_fires_on_next_tick(tmp_path: Path) -> None:
@@ -130,7 +158,7 @@ def test_stale_running_job_recovers_to_pending_and_fires_on_next_tick(tmp_path: 
 
     async def scenario() -> None:
         executor = ScheduledResearchExecutor(store, dispatch)
-        assert executor.recover_stale_running(0) == 1
+        assert executor.recover_stale_running(0, startup=True) == 1
         recovered = store.get("stale")
         assert recovered is not None
         assert recovered.status == JobStatus.PENDING
@@ -190,7 +218,7 @@ def test_cancelled_and_running_jobs_are_skipped(tmp_path: Path) -> None:
 
     async def scenario() -> None:
         executor = ScheduledResearchExecutor(store, dispatch)
-        assert executor.recover_stale_running() == 0
+        assert executor.recover_stale_running(startup=True) == 0
         store.upsert(_job("running", next_run_at=0, status=JobStatus.RUNNING))
         await executor.tick(100)
 
@@ -320,3 +348,97 @@ def test_disabled_executor_start_stop_are_noops(tmp_path: Path) -> None:
     assert scheduler_enabled_from_env("true") is True
     assert calls == []
     assert store.get("job-001").status == JobStatus.PENDING  # type: ignore[union-attr]
+
+
+def test_periodic_stale_running_recovery(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    stale = _job("stale", schedule="5000", next_run_at=10, status=JobStatus.RUNNING, created_at=0)
+    stale.last_run_at = 0
+    store.upsert(stale)
+    now_ms = 10_000_000
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        pass
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(store, dispatch, now_fn=lambda: now_ms)
+        assert executor.recover_stale_running(now_ms, startup=False) == 1
+        recovered = store.get("stale")
+        assert recovered is not None
+        assert recovered.status == JobStatus.PENDING
+
+    asyncio.run(scenario())
+
+
+def test_dispatch_timeout_marks_completed_and_unblocks_next_job(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    slow = _job("slow", schedule="1000", next_run_at=10)
+    slow.config = {"job_type": "index_plan_refresh", "dispatch_timeout_ms": 50}
+    store.upsert(slow)
+    store.upsert(_job("fast", schedule="1000", next_run_at=10, created_at=1))
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        if job.id == "slow":
+            await asyncio.sleep(0.2)
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(store, dispatch, tick_interval_ms=1)
+        await executor.tick(100)
+
+    asyncio.run(scenario())
+
+    slow_saved = store.get("slow")
+    fast_saved = store.get("fast")
+    assert slow_saved is not None
+    assert fast_saved is not None
+    assert slow_saved.status == JobStatus.COMPLETED
+    assert "timed out" in (slow_saved.last_error or "")
+    assert fast_saved.status == JobStatus.COMPLETED
+
+
+def test_index_plan_refresh_uses_shorter_stale_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("INDEX_PLAN_REFRESH_STALE_MS", "600000")
+    poll = _job("poll", schedule="*/5 * * * *", status=JobStatus.RUNNING, created_at=0)
+    poll.last_run_at = 0
+    poll.config = {"job_type": "index_plan_refresh"}
+    heavy = _job("heavy", schedule="0 6 * * *", status=JobStatus.RUNNING, created_at=0)
+    heavy.last_run_at = 0
+    heavy.config = {"job_type": "index_calibration"}
+    now_ms = 11 * 60 * 1000
+
+    assert stale_running_ms_for(poll) == 600_000
+    assert is_job_stale_running(poll, now_ms) is True
+    assert is_job_stale_running(heavy, now_ms) is False
+    assert dispatch_timeout_ms_for(poll) == 8 * 60 * 1000
+
+
+def test_watchdog_recovers_stale_job_independently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SCHEDULED_RESEARCH_WATCHDOG_INTERVAL_MS", "20")
+    store = _store(tmp_path)
+    stale = _job("stale", schedule="1000", next_run_at=10, status=JobStatus.RUNNING, created_at=0)
+    stale.last_run_at = 0
+    stale.config = {"job_type": "index_plan_refresh"}
+    store.upsert(stale)
+    now_ms = 11 * 60 * 1000
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        await asyncio.sleep(3600)
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(
+            store,
+            dispatch,
+            now_fn=lambda: now_ms,
+            tick_interval_ms=1_000_000,
+        )
+        executor.start()
+        await asyncio.sleep(0.05)
+        await executor.stop()
+
+    asyncio.run(scenario())
+
+    recovered = store.get("stale")
+    assert recovered is not None
+    assert recovered.status == JobStatus.PENDING

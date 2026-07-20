@@ -6,7 +6,10 @@ import { cn } from "@/lib/utils";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { api, type SessionItem } from "@/lib/api";
 import { useAgentStore } from "@/stores/agent";
+import { usePredictionRunCoordinator } from "@/hooks/usePredictionRunCoordinator";
 import { ConnectionBanner } from "@/components/layout/ConnectionBanner";
+import { PredictionRunningBanner } from "@/components/layout/PredictionRunningBanner";
+import { usePredictionRunStore } from "@/stores/predictionRun";
 import { SUPPORTED_LANGUAGES } from "@/i18n";
 
 // APP_VERSION is sourced from i18n locale files (app.version key) to keep a
@@ -38,6 +41,9 @@ export function Layout() {
 
   const activeSessionId = searchParams.get("session");
   const streamingSessionId = useAgentStore(s => s.streamingSessionId);
+  const predictionRunning = usePredictionRunStore(s => s.running);
+
+  usePredictionRunCoordinator("NIFTY");
 
   useEffect(() => {
     localStorage.setItem("qa-sidebar", collapsed ? "collapsed" : "expanded");
@@ -95,6 +101,7 @@ export function Layout() {
         <nav className={cn("space-y-0.5", collapsed ? "p-1" : "p-2")}>
           {NAV.map(({ to, icon: Icon, label }) => {
             const text = label;
+            const showPredictionSpinner = to === "/prediction" && predictionRunning;
             return (
               <Link
                 key={to}
@@ -108,7 +115,11 @@ export function Layout() {
                 )}
                 title={collapsed ? text : undefined}
               >
-                <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                {showPredictionSpinner ? (
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" aria-hidden="true" />
+                ) : (
+                  <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                )}
                 {!collapsed && text}
               </Link>
             );
@@ -257,6 +268,7 @@ export function Layout() {
       {/* Main */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <ConnectionBanner status={sseStatus} retryAttempt={sseRetryAttempt} />
+        <PredictionRunningBanner pathname={pathname} />
         <main className="flex-1 overflow-auto">
           <Outlet />
         </main>

@@ -2,6 +2,7 @@
 
 Process-local state (same tradeoff as alpha bench jobs): server restart clears
 jobs; users re-trigger. One active (queued/running) job per ticker.
+Pipeline logs stream live via ``PipelineLogger(on_entry=...)``.
 """
 
 from __future__ import annotations
@@ -55,6 +56,7 @@ def _job_snapshot(job: dict[str, Any], *, include_logs: bool = True) -> dict[str
         "ticker": job["ticker"],
         "horizon_days": job.get("horizon_days"),
         "refresh_constituents": bool(job.get("refresh_constituents")),
+        "run_forecast_lab": bool(job.get("run_forecast_lab")),
         "created_at": job.get("created_at"),
         "error": job.get("error"),
     }
@@ -91,6 +93,7 @@ def start_job(
     ticker: str,
     horizon_days: int | None,
     refresh_constituents: bool,
+    run_forecast_lab: bool = False,
 ) -> tuple[str, bool]:
     """Create or reuse an active job for *ticker*. Returns (job_id, reused)."""
     _prune_old_jobs()
@@ -109,6 +112,7 @@ def start_job(
             "ticker": key,
             "horizon_days": horizon_days,
             "refresh_constituents": refresh_constituents,
+            "run_forecast_lab": run_forecast_lab,
             "created_at": _now_iso(),
             "logs": [],
             "artifact": None,
@@ -171,6 +175,7 @@ def run_worker(job_id: str) -> None:
         key = str(job["ticker"]).upper()
         horizon_days = job.get("horizon_days")
         refresh_constituents = bool(job.get("refresh_constituents"))
+        run_forecast_lab = bool(job.get("run_forecast_lab"))
 
     mark_running(job_id)
 
@@ -189,6 +194,7 @@ def run_worker(job_id: str) -> None:
             key,
             horizon_days=horizon_days,
             refresh_constituents=refresh_constituents,
+            run_forecast_lab=run_forecast_lab,
             pipeline=plog,
         )
         save_index_research(doc)
