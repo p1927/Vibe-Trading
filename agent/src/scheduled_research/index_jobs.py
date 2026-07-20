@@ -52,14 +52,18 @@ def is_index_scheduler_enabled(value: str | None = None) -> bool:
     """Return whether default index research jobs should register on startup."""
     if value is not None:
         return value.strip().lower() in _TRUE_VALUES
-    return os.getenv(INDEX_RESEARCH_ENABLE_SCHEDULER_ENV, "").strip().lower() in _TRUE_VALUES
+    from src.config.accessor import get_env_config
+
+    return bool(get_env_config().agent_tuning.index_research_enable_scheduler)
 
 
 def is_index_monitor_scheduler_enabled(value: str | None = None) -> bool:
     """Return whether live index plan refresh jobs should register on startup."""
     if value is not None:
         return value.strip().lower() in _TRUE_VALUES
-    return os.getenv(INDEX_MONITOR_ENABLE_SCHEDULER_ENV, "").strip().lower() in _TRUE_VALUES
+    from src.config.accessor import get_env_config
+
+    return bool(get_env_config().agent_tuning.index_monitor_enable_scheduler)
 
 
 def _ensure_trade_integrations_on_path() -> None:

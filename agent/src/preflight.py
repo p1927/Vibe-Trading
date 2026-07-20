@@ -15,7 +15,7 @@ from typing import List, Optional
 from rich.console import Console
 from rich.table import Table
 
-from src.config.accessor import get_env_config, reset_env_config
+from src.config.accessor import get_env_config
 
 
 @dataclass(frozen=True)
@@ -29,16 +29,47 @@ class CheckResult:
     critical: bool = False
 
 
+def _check_environment() -> CheckResult:
+    """Verify env bootstrap completed and scheduler flags are readable."""
+    from src.config.bootstrap import bootstrap_environment, is_bootstrapped
+
+    if not is_bootstrapped():
+        report = bootstrap_environment()
+    else:
+        report = bootstrap_environment()
+
+    cfg = get_env_config()
+    master = cfg.agent_tuning.vibe_trading_enable_scheduler
+    index_on = cfg.agent_tuning.index_research_enable_scheduler
+    monitor_on = cfg.agent_tuning.index_monitor_enable_scheduler
+
+    layers = ", ".join(report.layers_loaded) if report.layers_loaded else (
+        "cached" if report.already_bootstrapped else "defaults only"
+    )
+
+    flags = (
+        f"master={'on' if master else 'off'} "
+        f"index={'on' if index_on else 'off'} "
+        f"monitor={'on' if monitor_on else 'off'}"
+    )
+    executor_hint = "executor will start" if master else "executor skipped (master off)"
+
+    status = "ready"
+    if not report.layers_loaded and not master and not index_on and not monitor_on:
+        status = "warning"
+
+    return CheckResult(
+        name="Environment",
+        status=status,
+        message=f"{layers} | {flags} | {executor_hint}",
+        impact="scheduler and LLM read misconfigured env when bootstrap fails",
+    )
+
+
 def _check_llm_provider() -> CheckResult:
     """Verify LLM provider connectivity."""
-    from src.providers.llm import _ensure_dotenv, _sync_provider_env, provider_diagnostics
+    from src.providers.llm import _sync_provider_env, provider_diagnostics
 
-    _ensure_dotenv()
-    # The EnvConfig singleton may have been cached before _ensure_dotenv()
-    # loaded the .env file (e.g. by theme.py's import-time _is_dark_terminal
-    # call). Reset it so get_env_config() rebuilds from the now-populated
-    # os.environ.
-    reset_env_config()
     _cfg = get_env_config()
     provider = _cfg.llm.langchain_provider.strip()
     model = _cfg.llm.langchain_model_name.strip()
@@ -275,6 +306,7 @@ def run_preflight(console: Optional[Console] = None) -> List[CheckResult]:
         console = Console()
 
     checks = [
+        _check_environment,
         _check_llm_provider,
         _check_okx,
         _check_yfinance,
