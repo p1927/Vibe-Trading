@@ -1,4 +1,4 @@
-import { Loader2, PanelRight } from "lucide-react";
+import { FlaskConical, Loader2, PanelRight } from "lucide-react";
 import { useState } from "react";
 import type { IndexTrackScoreboardReport } from "@/lib/api";
 import { fmtHitRate, fmtPct } from "@/lib/trackScoreboardUtils";
@@ -19,6 +19,8 @@ interface Props {
   recomputing?: boolean;
   error?: string | null;
   onRefresh?: () => void;
+  onRunForecastLab?: () => void;
+  forecastLabLoading?: boolean;
   horizonDays?: number;
   onHorizonChange?: (days: number) => void;
   progressPanelOpen?: boolean;
@@ -31,6 +33,8 @@ export function TrackScoreboardPanel({
   recomputing,
   error,
   onRefresh,
+  onRunForecastLab,
+  forecastLabLoading,
   horizonDays = 14,
   onHorizonChange,
   progressPanelOpen,
@@ -132,11 +136,27 @@ export function TrackScoreboardPanel({
             Activity
           </button>
         ) : null}
+        {onRunForecastLab ? (
+          <button
+            type="button"
+            onClick={onRunForecastLab}
+            disabled={forecastLabLoading || loading}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/50 disabled:opacity-50"
+            title="Run forecast lab tracks for today's prediction (manual — not part of Run analysis)"
+          >
+            {forecastLabLoading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <FlaskConical className="h-3.5 w-3.5" />
+            )}
+            {forecastLabLoading ? "Forecast lab…" : "Run forecast lab"}
+          </button>
+        ) : null}
         {onRefresh ? (
           <button
             type="button"
             onClick={onRefresh}
-            disabled={loading}
+            disabled={loading || forecastLabLoading}
             className="rounded-md border border-border/60 px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/50 disabled:opacity-50"
           >
             {loading ? "Recomputing…" : "Recompute scoreboard"}
