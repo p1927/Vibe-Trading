@@ -143,3 +143,13 @@ def test_development_extra_includes_bounded_style_tools() -> None:
 
     assert "black>=24.0,<27" in dev_extra
     assert "ruff>=0.9,<1" in dev_extra
+
+
+def test_slack_markdown_dependency_uses_a_published_version_range() -> None:
+    """Both Slack extras should use the same resolvable dependency range."""
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    extras = pyproject["project"]["optional-dependencies"]
+
+    expected = "slackify-markdown>=0.2.4,<1"
+    assert expected in extras["slack"]
+    assert expected in extras["channels"]

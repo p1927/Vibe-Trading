@@ -1448,12 +1448,11 @@ def cmd_run(prompt: str, max_iter: int, *, json_mode: bool = False, no_rich: boo
     return _result_exit_code(result)
 
 
-def _build_history_from_trace(run_dir: Path) -> List[Dict[str, str]]:
+def _build_history_from_trace(trace_dir: Path) -> List[Dict[str, str]]:
     """Build conversation history from trace.jsonl."""
     from src.agent.trace import TraceWriter
 
-    trace_dir = TraceWriter.find_trace_dir(run_dir.name, runs_dir=RUNS_DIR, sessions_dir=SESSIONS_DIR)
-    if trace_dir is None:
+    if not (trace_dir / "trace.jsonl").exists():
         return []
     entries = TraceWriter.read(
         trace_dir,
@@ -1478,6 +1477,8 @@ def cmd_continue(
     no_rich: bool = False,
 ) -> int:
     """Continue an existing run."""
+    from src.agent.trace import TraceWriter
+
     run_dir = RUNS_DIR / run_id
     session_trace_dir = SESSIONS_DIR / run_id
     if not run_dir.exists() and not session_trace_dir.exists():
@@ -1486,10 +1487,17 @@ def cmd_continue(
             return EXIT_USAGE_ERROR
         console.print(f"[red]Run {run_id} not found[/red]")
         return EXIT_USAGE_ERROR
-    if not run_dir.exists():
-        run_dir.mkdir(parents=True, exist_ok=True)
+    trace_dir = TraceWriter.find_trace_dir(
+        run_id, runs_dir=RUNS_DIR, sessions_dir=SESSIONS_DIR
+    )
+    if trace_dir is None:
+        # Preserve support for an existing, empty run/session directory. Once a
+        # trace exists, ``find_trace_dir`` is authoritative so every later
+        # continuation reads and appends to the same conversation.
+        trace_dir = session_trace_dir if session_trace_dir.exists() else run_dir
+    trace_dir.mkdir(parents=True, exist_ok=True)
 
-    history = _build_history_from_trace(run_dir)
+    history = _build_history_from_trace(trace_dir)
     if not json_mode and no_rich:
         print(f"Continue {run_id}: {prompt[:120]}\n")
     if json_mode or no_rich:
@@ -1498,7 +1506,7 @@ def cmd_continue(
             result = _run_agent(
                 prompt,
                 history=history,
-                run_dir_override=str(run_dir),
+                run_dir_override=str(trace_dir),
                 max_iter=max_iter,
                 no_rich=no_rich,
                 stream_output=not json_mode,
@@ -1506,7 +1514,12 @@ def cmd_continue(
         except KeyboardInterrupt:
             if json_mode:
                 _print_json_result(
-                    {"status": "cancelled", "run_id": run_id, "run_dir": str(run_dir), "reason": "Interrupted"}
+                    {
+                        "status": "cancelled",
+                        "run_id": run_id,
+                        "run_dir": str(trace_dir),
+                        "reason": "Interrupted",
+                    }
                 )
             else:
                 print("\nInterrupted")
@@ -1526,7 +1539,7 @@ def cmd_continue(
             result = _run_agent(
                 prompt,
                 history=history,
-                run_dir_override=str(run_dir),
+                run_dir_override=str(trace_dir),
                 max_iter=max_iter,
                 dashboard=dashboard,
             )
@@ -2954,31 +2967,35 @@ def cmd_channels_status(*, json_mode: bool = False, local: bool = False) -> int:
 def cmd_channels_start(*, json_mode: bool = False) -> int:
     """Start configured IM channels through the API runtime."""
     payload = _channels_api_call("POST", "/channels/start")
+    failed = payload.get("status") == "error"
     if json_mode:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
-    elif payload.get("status") == "error":
+    elif failed:
         console.print(f"[red]Failed to start IM channels:[/red] {payload.get('error')}")
-        console.print("[dim]Run `vibe-trading serve --port 8000` first, or set VIBE_TRADING_API_URL.[/dim]")
-        return EXIT_RUN_FAILED
+        console.print(
+            "[dim]Run `vibe-trading serve --port 8000` first, or set VIBE_TRADING_API_URL.[/dim]"
+        )
     else:
         console.print("[green]IM channels started.[/green]")
         _print_channels_status(payload)
-    return EXIT_SUCCESS
+    return EXIT_RUN_FAILED if failed else EXIT_SUCCESS
 
 
 def cmd_channels_stop(*, json_mode: bool = False) -> int:
     """Stop configured IM channels through the API runtime."""
     payload = _channels_api_call("POST", "/channels/stop")
+    failed = payload.get("status") == "error"
     if json_mode:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
-    elif payload.get("status") == "error":
+    elif failed:
         console.print(f"[red]Failed to stop IM channels:[/red] {payload.get('error')}")
-        console.print("[dim]Run `vibe-trading serve --port 8000` first, or set VIBE_TRADING_API_URL.[/dim]")
-        return EXIT_RUN_FAILED
+        console.print(
+            "[dim]Run `vibe-trading serve --port 8000` first, or set VIBE_TRADING_API_URL.[/dim]"
+        )
     else:
         console.print("[green]IM channels stopped.[/green]")
         _print_channels_status(payload)
-    return EXIT_SUCCESS
+    return EXIT_RUN_FAILED if failed else EXIT_SUCCESS
 
 
 def cmd_channels_pairing(channel: str, command: str) -> int:
@@ -5510,9 +5527,8 @@ def cmd_dev(
     )
     console.print("[dim]Press Ctrl+C to stop both servers.[/dim]\n")
 
-    backend = subprocess.Popen(backend_cmd, cwd=str(AGENT_DIR))
-    frontend = subprocess.Popen(frontend_cmd, cwd=str(frontend_dir))
-    children = [backend, frontend]
+    children: List[subprocess.Popen] = []
+    exit_code = EXIT_SUCCESS
 
     def _terminate_all() -> None:
         for child in children:
@@ -5522,28 +5538,41 @@ def cmd_dev(
                 except OSError:
                     pass
 
-    # Wire signal handlers. On Windows, SIGTERM does not exist and signal
-    # handlers must be installed from the main thread; KeyboardInterrupt is
-    # the cross-platform path for Ctrl+C.
-    if threading.current_thread() is threading.main_thread():
-        try:
-            signal.signal(signal.SIGINT, lambda *_: _terminate_all())
-        except (ValueError, OSError):
-            pass
-        try:
-            signal.signal(signal.SIGTERM, lambda *_: _terminate_all())
-        except (AttributeError, ValueError, OSError):
-            pass
-
     try:
+        backend = subprocess.Popen(backend_cmd, cwd=str(AGENT_DIR))
+        children.append(backend)
+        frontend = subprocess.Popen(frontend_cmd, cwd=str(frontend_dir))
+        children.append(frontend)
+
+        # Wire signal handlers only after both children are tracked. On
+        # Windows, SIGTERM may not exist and handlers must be installed from
+        # the main thread; KeyboardInterrupt remains the portable Ctrl+C path.
+        if threading.current_thread() is threading.main_thread():
+            try:
+                signal.signal(signal.SIGINT, lambda *_: _terminate_all())
+            except (ValueError, OSError):
+                pass
+            try:
+                signal.signal(signal.SIGTERM, lambda *_: _terminate_all())
+            except (AttributeError, ValueError, OSError):
+                pass
+
         # Wait for whichever process exits first; if it's the backend we
         # bring the frontend down too, and vice versa.
         while True:
             time.sleep(0.5)
-            if backend.poll() is not None or frontend.poll() is not None:
+            return_codes = [backend.poll(), frontend.poll()]
+            if any(code is not None for code in return_codes):
+                exit_code = next(
+                    (code for code in return_codes if code not in (None, EXIT_SUCCESS)),
+                    EXIT_SUCCESS,
+                )
                 break
     except KeyboardInterrupt:
         pass
+    except OSError as exc:
+        console.print(f"[red]Failed to start development server:[/red] {exc}")
+        exit_code = EXIT_RUN_FAILED
     finally:
         _terminate_all()
         # Give the children a brief grace period, then force-kill.
@@ -5557,8 +5586,12 @@ def cmd_dev(
                     child.kill()
                 except OSError:
                     pass
+                try:
+                    child.wait(timeout=1.0)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
 
-    return EXIT_SUCCESS
+    return exit_code
 
 
 def main(argv: list[str] | None = None) -> int:
