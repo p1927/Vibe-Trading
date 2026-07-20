@@ -18,9 +18,9 @@ bootstrap_environment()
 
 def _ensure_prediction_ml_runtime() -> None:
     try:
-        from trade_integrations.ml_runtime_env import ensure_libomp_loaded
+        from trade_integrations.ml_runtime_env import prepare_yfinance_runtime
 
-        ensure_libomp_loaded()
+        prepare_yfinance_runtime()
     except Exception:
         pass
 
@@ -28,13 +28,18 @@ def _ensure_prediction_ml_runtime() -> None:
 def _require_prediction_ml_runtime() -> int | None:
     """Return exit code when prediction ML runtime is not ready."""
     try:
-        from trade_integrations.ml_runtime_env import ml_runtime_env, verify_prediction_ml
+        from trade_integrations.ml_runtime_env import (
+            ml_runtime_env,
+            prepare_yfinance_runtime,
+            verify_prediction_ml,
+        )
 
         ok, message = verify_prediction_ml()
         if ok:
             for key, value in ml_runtime_env().items():
-                if key.startswith(("DYLD_", "LIBOMP_")):
+                if key.startswith(("DYLD_", "LIBOMP_", "YF_")):
                     os.environ[key] = value
+            prepare_yfinance_runtime()
             return None
         print(f"[stack] prediction ML runtime not ready: {message}", file=sys.stderr)
         print("[stack] run: ./scripts/ensure_prediction_ml.sh", file=sys.stderr)
@@ -159,6 +164,7 @@ from src.api.channels_routes import (  # noqa: E402
     _start_channel_runtime,
     _stop_channel_runtime,
 )
+from src.api.runtime_activity import runtime_activity_middleware  # noqa: E402
 from src.api.scheduled_routes import (  # noqa: E402
     _start_scheduled_research_executor,
     _stop_scheduled_research_executor,
@@ -205,7 +211,9 @@ async def _app_lifespan(app: FastAPI):
                 except Exception:
                     logger.exception("Auto paper resume dispatch failed")
 
-            asyncio.create_task(_startup_paper_resume())
+            from src.api.runtime_activity import tracked_create_task
+
+            tracked_create_task(_startup_paper_resume(), name="startup:auto-paper-resume")
     except Exception:
         logger.exception("Session recovery / auto paper resume failed")
 
@@ -225,12 +233,26 @@ async def _app_lifespan(app: FastAPI):
     except Exception:
         logger.debug("index-prediction job hydrate skipped", exc_info=True)
 
+    try:
+        from src.trade.external_predictions_run_jobs import hydrate_jobs_from_disk as hydrate_ext_jobs
+
+        hydrate_ext_jobs()
+    except Exception:
+        logger.debug("external-predictions job hydrate skipped", exc_info=True)
+
     if get_env_config().agent_tuning.vibe_trading_channels_auto_start:
         await _start_channel_runtime()
 
     try:
         yield
     finally:
+        from src.api.runtime_activity import log_shutdown_wait
+
+        log_shutdown_wait(
+            "lifespan-shutdown",
+            connection_count=0,
+            uvicorn_task_count=0,
+        )
         try:
             from trade_integrations.dataflows.index_research.pipeline_cancel import request_pipeline_cancel
 
@@ -269,6 +291,7 @@ app.add_middleware(
 app.middleware("http")(_reject_untrusted_loopback_host)
 app.middleware("http")(_spa_html_deep_link_fallback)
 app.middleware("http")(_apply_security_headers)
+app.middleware("http")(runtime_activity_middleware)
 
 
 # ============================================================================
@@ -480,6 +503,14 @@ def serve_main(argv: list[str] | None = None) -> int:
             print(f"[dev] API auto-reload watching: {', '.join(reload_dirs)}")
             # uvicorn requires an import string (not an app instance) for --reload
             app_target = "api_server:app"
+        # Monkey-patching uvicorn.server.Server breaks reload: the reloader parent
+        # pickles Server.run and spawn compares class identity across processes.
+        if not args.reload:
+            import uvicorn.server
+
+            from src.api.uvicorn_server import TransparentShutdownServer
+
+            uvicorn.server.Server = TransparentShutdownServer
         uvicorn.run(
             app_target,
             host=args.host,

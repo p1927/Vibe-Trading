@@ -239,6 +239,7 @@ def _start_scheduled_research_executor() -> None:
 async def _stop_scheduled_research_executor() -> None:
     """Stop scheduled research execution if it was started."""
     global _scheduled_research_executor
+    logger.info("scheduled research shutdown: recovering jobs and stopping executor")
     try:
         from src.scheduled_research.lifecycle import recover_scheduler_jobs_on_stack_shutdown
 

@@ -122,6 +122,116 @@ export interface StreamIndexPredictionHandlers {
   onError?: (message: string) => void;
 }
 
+export interface StreamExternalPredictionsHandlers {
+  onLog?: (entry: PipelineLogEntry) => void;
+  onDone?: (snapshot: ExternalPredictionSnapshot) => void;
+  onError?: (message: string) => void;
+}
+
+async function consumeExternalPredictionsSse(
+  res: Response,
+  handlers: StreamExternalPredictionsHandlers,
+): Promise<boolean> {
+  if (!res.body) {
+    throw new ApiError("Empty stream body", res.status);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let gotDone = false;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    buffer = parseSseChunk(buffer, (eventType, data) => {
+      if (eventType === "log" && data.entry) {
+        handlers.onLog?.(data.entry as PipelineLogEntry);
+        return;
+      }
+      if (eventType === "done" && data.snapshot) {
+        gotDone = true;
+        handlers.onDone?.(data.snapshot as ExternalPredictionSnapshot);
+        return;
+      }
+      if (eventType === "error") {
+        gotDone = true;
+        handlers.onError?.(String(data.message ?? "Refresh failed"));
+      }
+    });
+  }
+  return gotDone;
+}
+
+async function fetchExternalPredictionsRefreshJobSnapshot(
+  jobId: string,
+): Promise<{ status?: string; snapshot?: ExternalPredictionSnapshot; error?: string } | null> {
+  try {
+    const res = await fetch(
+      `${BASE}/trade/index-prediction/external-predictions/refresh/${encodeURIComponent(jobId)}`,
+      { headers: authHeaders() },
+    );
+    if (!res.ok) return null;
+    const payload = (await res.json()) as {
+      job?: { status?: string; snapshot?: ExternalPredictionSnapshot; error?: string };
+    };
+    return payload.job ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function recoverExternalPredictionsJobFromPoll(
+  jobId: string,
+  handlers: StreamExternalPredictionsHandlers,
+): Promise<boolean> {
+  const job = await fetchExternalPredictionsRefreshJobSnapshot(jobId);
+  if (!job) return false;
+  if (job.status === "done" && job.snapshot) {
+    handlers.onDone?.(job.snapshot);
+    return true;
+  }
+  if (job.status === "error") {
+    handlers.onError?.(job.error || "Refresh failed");
+    return true;
+  }
+  return false;
+}
+
+export async function streamExternalPredictionsJob(
+  jobId: string,
+  handlers: StreamExternalPredictionsHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `${BASE}/trade/index-prediction/external-predictions/refresh/${encodeURIComponent(jobId)}/stream`,
+      {
+        headers: authHeaders(),
+        signal,
+      },
+    );
+  } catch (err) {
+    const hint =
+      BASE.includes(":8899") || !BASE
+        ? " Check the Vibe API is running on port 8899."
+        : " Check your network connection and API URL.";
+    throw new ApiError(
+      `Network error reaching refresh stream.${hint} ${err instanceof Error ? err.message : ""}`.trim(),
+      0,
+    );
+  }
+  if (!res.ok) {
+    throw await errorFromResponse(res);
+  }
+  const gotDone = await consumeExternalPredictionsSse(res, handlers);
+  if (!gotDone) {
+    const recovered = await recoverExternalPredictionsJobFromPoll(jobId, handlers);
+    if (recovered) return;
+    handlers.onError?.("Refresh stream ended without a result — the server may have timed out.");
+  }
+}
+
 async function consumeIndexPredictionSse(
   res: Response,
   handlers: StreamIndexPredictionHandlers,
@@ -762,6 +872,73 @@ export const api = {
   listRecentNewsScenarios: (ticker = "NIFTY", limit = 10) =>
     request<NewsEventScenarioResponse>(
       `/trade/index-prediction/news-scenarios/recent?ticker=${encodeURIComponent(ticker)}&limit=${encodeURIComponent(String(limit))}`,
+    ),
+  getExternalPredictions: (ticker = "NIFTY", horizonDays = 14) =>
+    request<ExternalPredictionsResponse>(
+      `/trade/index-prediction/external-predictions?ticker=${encodeURIComponent(ticker)}&horizon_days=${encodeURIComponent(String(horizonDays))}`,
+    ),
+  refreshExternalPredictions: (ticker = "NIFTY", horizonDays = 14) =>
+    request<ExternalPredictionsResponse>("/trade/index-prediction/external-predictions/refresh", {
+      method: "POST",
+      body: JSON.stringify({ ticker, horizon_days: horizonDays }),
+    }),
+  startExternalPredictionsRefresh: (ticker = "NIFTY", horizonDays = 14, signal?: AbortSignal) =>
+    request<ExternalPredictionsRefreshStartResponse>(
+      "/trade/index-prediction/external-predictions/refresh/start",
+      {
+        method: "POST",
+        body: JSON.stringify({ ticker, horizon_days: horizonDays }),
+        signal,
+      },
+    ),
+  getActiveExternalPredictionsRefresh: (ticker = "NIFTY", horizonDays = 14, signal?: AbortSignal) =>
+    request<ExternalPredictionsRefreshActiveResponse>(
+      `/trade/index-prediction/external-predictions/refresh/active?ticker=${encodeURIComponent(ticker)}&horizon_days=${encodeURIComponent(String(horizonDays))}`,
+      { signal },
+    ),
+  getExternalPredictionsRefreshJob: (jobId: string, signal?: AbortSignal) =>
+    request<ExternalPredictionsRefreshJobResponse>(
+      `/trade/index-prediction/external-predictions/refresh/${encodeURIComponent(jobId)}`,
+      { signal },
+    ),
+  streamExternalPredictionsJob: streamExternalPredictionsJob,
+  streamExternalPredictionsRefresh: async (
+    ticker = "NIFTY",
+    horizonDays = 14,
+    handlers: StreamExternalPredictionsHandlers,
+    signal?: AbortSignal,
+  ) => {
+    const res = await fetch(`${BASE}/trade/index-prediction/external-predictions/refresh/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ ticker, horizon_days: horizonDays }),
+      signal,
+    });
+    if (!res.ok) {
+      throw await errorFromResponse(res);
+    }
+    const gotDone = await consumeExternalPredictionsSse(res, handlers);
+    if (!gotDone) {
+      handlers.onError?.("Refresh stream ended without a result");
+    }
+  },
+  listExternalPredictionSources: (ticker = "NIFTY", watchlistedOnly = false) =>
+    request<ExternalPredictionSourcesResponse>(
+      `/trade/index-prediction/external-predictions/sources?ticker=${encodeURIComponent(ticker)}&watchlisted_only=${watchlistedOnly}`,
+    ),
+  addExternalPredictionSource: (body: ExternalPredictionSourceRequest, ticker = "NIFTY") =>
+    request<ExternalPredictionSourcesResponse>(
+      `/trade/index-prediction/external-predictions/sources?ticker=${encodeURIComponent(ticker)}`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  removeExternalPredictionSource: (sourceId: string, ticker = "NIFTY") =>
+    request<ExternalPredictionSourcesResponse>(
+      `/trade/index-prediction/external-predictions/sources/${encodeURIComponent(sourceId)}?ticker=${encodeURIComponent(ticker)}`,
+      { method: "DELETE" },
+    ),
+  discoverExternalPredictionSources: (ticker = "NIFTY", limit = 12) =>
+    request<ExternalPredictionSourcesResponse>(
+      `/trade/index-prediction/external-predictions/discover?ticker=${encodeURIComponent(ticker)}&limit=${encodeURIComponent(String(limit))}`,
     ),
   getIndexPredictionJobs: () =>
     request<IndexPredictionJobsResponse>("/trade/index-prediction/jobs"),
@@ -1548,6 +1725,105 @@ export interface NewsEventScenarioResponse {
   scenario?: Record<string, unknown> | null;
   scenarios?: Array<Record<string, unknown>>;
   message?: string;
+}
+
+export interface ExternalPredictionTarget {
+  low?: number | null;
+  mid?: number | null;
+  high?: number | null;
+}
+
+export interface ExternalPredictionRecord {
+  source_id: string;
+  symbol?: string;
+  horizon_days?: number;
+  as_of?: string;
+  published_at?: string;
+  spot_at_fetch?: number | null;
+  target?: ExternalPredictionTarget;
+  target_date?: string;
+  direction?: "bullish" | "bearish" | "neutral";
+  expected_return_pct?: number | null;
+  rationale_bullets?: string[];
+  confidence?: "high" | "medium" | "low";
+  provenance?: { url?: string; title?: string; snippet?: string; summary?: string; horizon_days?: number };
+  extraction?: { model?: string; extracted_at?: string };
+  fetch_status?: "ok" | "stale" | "not_found" | "error";
+  error_message?: string;
+}
+
+export interface ExternalPredictionSource {
+  id: string;
+  display_name: string;
+  kind?: "media" | "broker" | "global_bank";
+  search_queries?: string[];
+  domains?: string[];
+  watchlisted?: boolean;
+  discovered_at?: string | null;
+  added_by?: "seed" | "user" | "discover";
+  removable?: boolean;
+}
+
+export interface ExternalPredictionSnapshot {
+  symbol?: string;
+  horizon_days?: number;
+  fetched_at?: string;
+  cache_ttl_hours?: number;
+  is_stale?: boolean;
+  sources?: ExternalPredictionSource[];
+  predictions?: ExternalPredictionRecord[];
+  internal_forecast?: Record<string, unknown> | null;
+}
+
+export interface ExternalPredictionsResponse {
+  status: string;
+  ticker: string;
+  snapshot?: ExternalPredictionSnapshot | null;
+  message?: string;
+}
+
+export interface ExternalPredictionsRefreshStartResponse {
+  status: string;
+  job_id: string;
+  job_status: string;
+  reused?: boolean;
+}
+
+export interface ExternalPredictionsRefreshJobSnapshot {
+  job_id: string;
+  status: string;
+  ticker?: string;
+  horizon_days?: number;
+  created_at?: string | null;
+  error?: string | null;
+  logs?: PipelineLogEntry[];
+  snapshot?: ExternalPredictionSnapshot | null;
+}
+
+export interface ExternalPredictionsRefreshActiveResponse {
+  status: string;
+  job?: ExternalPredictionsRefreshJobSnapshot | null;
+}
+
+export interface ExternalPredictionsRefreshJobResponse {
+  status: string;
+  job?: ExternalPredictionsRefreshJobSnapshot | null;
+}
+
+export interface ExternalPredictionSourcesResponse {
+  status: string;
+  ticker: string;
+  sources?: ExternalPredictionSource[];
+  candidates?: Array<Record<string, unknown>>;
+  message?: string;
+}
+
+export interface ExternalPredictionSourceRequest {
+  id?: string;
+  display_name: string;
+  domains?: string[];
+  search_queries?: string[];
+  kind?: string;
 }
 
 export interface TradePlanWidget {

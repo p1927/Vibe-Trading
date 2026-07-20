@@ -192,6 +192,20 @@ def _check_okx() -> CheckResult:
 def _check_yfinance() -> CheckResult:
     """Check yfinance availability."""
     try:
+        import sys
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[3]
+        integrations = repo_root / "integrations"
+        if integrations.is_dir() and str(integrations) not in sys.path:
+            sys.path.insert(0, str(integrations))
+        from trade_integrations.ml_runtime_env import prepare_yfinance_runtime
+
+        prepare_yfinance_runtime()
+    except Exception:
+        pass
+
+    try:
         import yfinance  # noqa: F401
     except ImportError:
         return CheckResult(
