@@ -1,18 +1,23 @@
-"""In-memory job store for manual index-prediction Run analysis.
+"""In-memory + file-backed job store for manual index-prediction Run analysis.
 
-Process-local state (same tradeoff as alpha bench jobs): server restart clears
-jobs; users re-trigger. One active (queued/running) job per ticker.
-Pipeline logs stream live via ``PipelineLogger(on_entry=...)``.
+Jobs persist under ``log/index_prediction_jobs/{job_id}/job.json`` so SSE polling
+survives API hot-reload. Workers run in a detached subprocess (see
+``index_prediction_run_worker``).
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
+import subprocess
+import sys
 import threading
 import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -28,6 +33,102 @@ _ACTIVE_STATUSES = frozenset({"queued", "running"})
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _jobs_root() -> Path:
+    from src.trade.hub_bridge import trade_repo_root
+
+    root = trade_repo_root()
+    if root is None:
+        root = Path.cwd()
+    return root / "log" / "index_prediction_jobs"
+
+
+def _job_dir(job_id: str) -> Path:
+    return _jobs_root() / job_id
+
+
+def _job_file(job_id: str) -> Path:
+    return _job_dir(job_id) / "job.json"
+
+
+def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "job_id": job["job_id"],
+        "status": job.get("status"),
+        "ticker": job.get("ticker"),
+        "horizon_days": job.get("horizon_days"),
+        "refresh_constituents": bool(job.get("refresh_constituents")),
+        "run_forecast_lab": bool(job.get("run_forecast_lab")),
+        "created_at": job.get("created_at"),
+        "logs": list(job.get("logs") or []),
+        "artifact": job.get("artifact"),
+        "error": job.get("error"),
+        "worker_pid": job.get("worker_pid"),
+        "_finished_at": job.get("_finished_at"),
+    }
+
+
+def _write_job_to_disk(job: dict[str, Any]) -> None:
+    job_id = str(job.get("job_id") or "")
+    if not job_id_valid(job_id):
+        return
+    path = _job_file(job_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(_serialize_job(job), ensure_ascii=False, default=str), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _read_job_from_disk(job_id: str) -> dict[str, Any] | None:
+    path = _job_file(job_id)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(payload, dict) or not job_id_valid(str(payload.get("job_id") or job_id)):
+        return None
+    payload.setdefault("job_id", job_id)
+    payload.setdefault("logs", [])
+    return payload
+
+
+def _get_job_record(job_id: str) -> dict[str, Any] | None:
+    with _JOBS_LOCK:
+        job = INDEX_PREDICTION_RUN_JOBS.get(job_id)
+        if job is not None:
+            return job
+    disk = _read_job_from_disk(job_id)
+    if disk is not None:
+        with _JOBS_LOCK:
+            INDEX_PREDICTION_RUN_JOBS[job_id] = disk
+            ticker = str(disk.get("ticker") or "").upper()
+            if disk.get("status") in _ACTIVE_STATUSES and ticker:
+                _ACTIVE_BY_TICKER[ticker] = job_id
+    return disk
+
+
+def hydrate_jobs_from_disk() -> None:
+    """Reload active jobs after API restart so SSE can resume polling."""
+    root = _jobs_root()
+    if not root.is_dir():
+        return
+    for path in root.iterdir():
+        if not path.is_dir():
+            continue
+        job_id = path.name
+        if not job_id_valid(job_id):
+            continue
+        job = _read_job_from_disk(job_id)
+        if job is None:
+            continue
+        with _JOBS_LOCK:
+            INDEX_PREDICTION_RUN_JOBS[job_id] = job
+            ticker = str(job.get("ticker") or "").upper()
+            if job.get("status") in _ACTIVE_STATUSES and ticker:
+                _ACTIVE_BY_TICKER[ticker] = job_id
 
 
 def _prune_old_jobs() -> None:
@@ -68,24 +169,25 @@ def _job_snapshot(job: dict[str, Any], *, include_logs: bool = True) -> dict[str
 
 
 def get_job(job_id: str) -> dict[str, Any] | None:
-    with _JOBS_LOCK:
-        job = INDEX_PREDICTION_RUN_JOBS.get(job_id)
-        if job is None:
-            return None
-        return _job_snapshot(job)
+    job = _get_job_record(job_id)
+    if job is None:
+        return None
+    return _job_snapshot(job)
 
 
 def get_active_job(ticker: str) -> dict[str, Any] | None:
     key = (ticker or "NIFTY").strip().upper()
     with _JOBS_LOCK:
         job_id = _ACTIVE_BY_TICKER.get(key)
-        if not job_id:
-            return None
-        job = INDEX_PREDICTION_RUN_JOBS.get(job_id)
-        if job is None or job.get("status") not in _ACTIVE_STATUSES:
-            _ACTIVE_BY_TICKER.pop(key, None)
-            return None
-        return _job_snapshot(job)
+    if not job_id:
+        return None
+    job = _get_job_record(job_id)
+    if job is None or job.get("status") not in _ACTIVE_STATUSES:
+        with _JOBS_LOCK:
+            if _ACTIVE_BY_TICKER.get(key) == job_id:
+                _ACTIVE_BY_TICKER.pop(key, None)
+        return None
+    return _job_snapshot(job)
 
 
 def start_job(
@@ -93,7 +195,7 @@ def start_job(
     ticker: str,
     horizon_days: int | None,
     refresh_constituents: bool,
-    run_forecast_lab: bool = False,
+    run_forecast_lab: bool = True,
 ) -> tuple[str, bool]:
     """Create or reuse an active job for *ticker*. Returns (job_id, reused)."""
     _prune_old_jobs()
@@ -101,12 +203,14 @@ def start_job(
     with _JOBS_LOCK:
         existing_id = _ACTIVE_BY_TICKER.get(key)
         if existing_id:
-            existing = INDEX_PREDICTION_RUN_JOBS.get(existing_id)
+            existing = INDEX_PREDICTION_RUN_JOBS.get(existing_id) or _read_job_from_disk(existing_id)
             if existing and existing.get("status") in _ACTIVE_STATUSES:
+                if existing_id not in INDEX_PREDICTION_RUN_JOBS:
+                    INDEX_PREDICTION_RUN_JOBS[existing_id] = existing
                 return existing_id, True
 
         job_id = uuid.uuid4().hex
-        INDEX_PREDICTION_RUN_JOBS[job_id] = {
+        job = {
             "job_id": job_id,
             "status": "queued",
             "ticker": key,
@@ -117,65 +221,71 @@ def start_job(
             "logs": [],
             "artifact": None,
             "error": None,
+            "worker_pid": None,
             "_finished_at": None,
         }
+        INDEX_PREDICTION_RUN_JOBS[job_id] = job
         _ACTIVE_BY_TICKER[key] = job_id
-        return job_id, False
+    _write_job_to_disk(job)
+    return job_id, False
 
 
 def mark_running(job_id: str) -> None:
-    with _JOBS_LOCK:
-        job = INDEX_PREDICTION_RUN_JOBS.get(job_id)
-        if job is not None and job["status"] == "queued":
-            job["status"] = "running"
+    job = _get_job_record(job_id)
+    if job is None:
+        return
+    if job.get("status") == "queued":
+        job["status"] = "running"
+        _write_job_to_disk(job)
 
 
 def append_log(job_id: str, entry: dict[str, Any]) -> None:
-    with _JOBS_LOCK:
-        job = INDEX_PREDICTION_RUN_JOBS.get(job_id)
-        if job is None:
-            return
-        if job["status"] == "queued":
-            job["status"] = "running"
-        job.setdefault("logs", []).append(dict(entry))
+    job = _get_job_record(job_id)
+    if job is None:
+        return
+    if job.get("status") == "queued":
+        job["status"] = "running"
+    job.setdefault("logs", []).append(dict(entry))
+    _write_job_to_disk(job)
 
 
 def complete_job(job_id: str, *, ticker: str, artifact: dict[str, Any]) -> None:
+    job = _get_job_record(job_id)
+    if job is None:
+        return
+    job["status"] = "done"
+    job["artifact"] = artifact
+    job["_finished_at"] = time.time()
+    key = str(job.get("ticker") or ticker).upper()
     with _JOBS_LOCK:
-        job = INDEX_PREDICTION_RUN_JOBS.get(job_id)
-        if job is None:
-            return
-        job["status"] = "done"
-        job["artifact"] = artifact
-        job["_finished_at"] = time.time()
-        key = str(job.get("ticker") or ticker).upper()
         if _ACTIVE_BY_TICKER.get(key) == job_id:
             _ACTIVE_BY_TICKER.pop(key, None)
+    _write_job_to_disk(job)
 
 
 def fail_job(job_id: str, message: str) -> None:
+    job = _get_job_record(job_id)
+    if job is None:
+        return
+    job["status"] = "error"
+    job["error"] = message
+    job["_finished_at"] = time.time()
+    key = str(job.get("ticker") or "").upper()
     with _JOBS_LOCK:
-        job = INDEX_PREDICTION_RUN_JOBS.get(job_id)
-        if job is None:
-            return
-        job["status"] = "error"
-        job["error"] = message
-        job["_finished_at"] = time.time()
-        key = str(job.get("ticker") or "").upper()
         if _ACTIVE_BY_TICKER.get(key) == job_id:
             _ACTIVE_BY_TICKER.pop(key, None)
+    _write_job_to_disk(job)
 
 
 def run_worker(job_id: str) -> None:
-    """Blocking worker — run in a background thread."""
-    with _JOBS_LOCK:
-        job = INDEX_PREDICTION_RUN_JOBS.get(job_id)
-        if job is None:
-            return
-        key = str(job["ticker"]).upper()
-        horizon_days = job.get("horizon_days")
-        refresh_constituents = bool(job.get("refresh_constituents"))
-        run_forecast_lab = bool(job.get("run_forecast_lab"))
+    """Blocking worker — run in subprocess or background thread."""
+    job = _get_job_record(job_id)
+    if job is None:
+        return
+    key = str(job["ticker"]).upper()
+    horizon_days = job.get("horizon_days")
+    refresh_constituents = bool(job.get("refresh_constituents"))
+    run_forecast_lab = bool(job.get("run_forecast_lab"))
 
     mark_running(job_id)
 
@@ -185,6 +295,7 @@ def run_worker(job_id: str) -> None:
     try:
         from trade_integrations.context.hub import save_index_research
         from trade_integrations.dataflows.index_research.aggregator import run_index_research
+        from trade_integrations.dataflows.index_research.pipeline_cancel import PipelineCancelledError
         from trade_integrations.dataflows.index_research.pipeline_log import PipelineLogger
         from src.trade.hub_bridge import _index_doc_to_panel, ensure_trade_stack_path
 
@@ -201,6 +312,19 @@ def run_worker(job_id: str) -> None:
         artifact = _index_doc_to_panel(doc)
         artifact["asset_type"] = "index"
         complete_job(job_id, ticker=key, artifact=artifact)
+    except PipelineCancelledError as exc:
+        message = f"Pipeline cancelled: {exc.reason}"
+        logger.info("index-prediction run cancelled (job=%s ticker=%s reason=%s)", job_id, key, exc.reason)
+        append_log(
+            job_id,
+            {
+                "stage": "error",
+                "message": message,
+                "level": "error",
+                "at": _now_iso(),
+            },
+        )
+        fail_job(job_id, message)
     except Exception as exc:
         logger.exception("index-prediction run worker failed (job=%s ticker=%s)", job_id, key)
         append_log(
@@ -215,5 +339,30 @@ def run_worker(job_id: str) -> None:
         fail_job(job_id, str(exc))
 
 
+def _agent_dir() -> Path:
+    here = Path(__file__).resolve()
+    return here.parents[1]
+
+
 def spawn_worker(job_id: str) -> None:
-    threading.Thread(target=run_worker, args=(job_id,), daemon=True).start()
+    """Launch pipeline in a detached subprocess (survives API hot-reload)."""
+    agent_dir = _agent_dir()
+    worker_log = _job_dir(job_id) / "worker.log"
+    worker_log.parent.mkdir(parents=True, exist_ok=True)
+    log_handle = worker_log.open("ab")
+
+    env = os.environ.copy()
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "src.trade.index_prediction_run_worker", job_id],
+        cwd=str(agent_dir),
+        env=env,
+        start_new_session=True,
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+    )
+    log_handle.close()
+
+    job = _get_job_record(job_id)
+    if job is not None:
+        job["worker_pid"] = proc.pid
+        _write_job_to_disk(job)
