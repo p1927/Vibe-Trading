@@ -46,8 +46,9 @@ def bs_price(S: float, K: float, T: float, r: float, sigma: float,
         >>> round(bs_price(100, 100, 1.0, 0.05, 0.2, "call"), 2)
         10.45
     """
-    if T <= 0 or sigma <= 0:
-        # Expired: return intrinsic value
+    # Non-positive S/K makes log(S/K) undefined; reuse the intrinsic fallback
+    # (iv_smile_adjustment already soft-guards non-positive S/K).
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
         if option_type == "call":
             return max(S - K, 0.0)
         return max(K - S, 0.0)
@@ -78,7 +79,7 @@ def bs_greeks(S: float, K: float, T: float, r: float, sigma: float,
     Returns:
         Dict containing delta, gamma, theta, vega.
     """
-    if T <= 0 or sigma <= 0:
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
         intrinsic_call = 1.0 if S > K else 0.0
         delta = intrinsic_call if option_type == "call" else intrinsic_call - 1.0
         return {"delta": delta, "gamma": 0.0, "theta": 0.0, "vega": 0.0}
