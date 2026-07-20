@@ -413,6 +413,8 @@ def _provider_key_env(provider: str | None) -> str | None:
         "moonshot": "MOONSHOT_API_KEY",
         "minimax": "MINIMAX_API_KEY",
         "mimo": "MIMO_API_KEY",
+        "spark": "SPARK_API_KEY",
+        "iflytek": "SPARK_API_KEY",
         "zai": "ZAI_API_KEY",
     }.get((provider or "").lower())
 
@@ -435,6 +437,8 @@ def _provider_base_env(provider: str | None) -> str | None:
         "moonshot": "MOONSHOT_BASE_URL",
         "minimax": "MINIMAX_BASE_URL",
         "mimo": "MIMO_BASE_URL",
+        "spark": "SPARK_BASE_URL",
+        "iflytek": "SPARK_BASE_URL",
         "zai": "ZAI_BASE_URL",
         "ollama": "OLLAMA_BASE_URL",
     }.get((provider or "").lower())
@@ -4822,6 +4826,16 @@ _PROVIDER_CHOICES: list[dict[str, str | None]] = [
         "key_placeholder": "api-key...",
     },
     {
+        "label": "iFlytek Spark",
+        "provider": "spark",
+        "key_env": "SPARK_API_KEY",
+        "base_env": "SPARK_BASE_URL",
+        "base_url": "https://spark-api-open.xf-yun.com/v1",
+        "model": "4.0Ultra",
+        "key_prefix": None,
+        "key_placeholder": "api-password...",
+    },
+    {
         "label": "Z.ai (Coding platform)",
         "provider": "zai",
         "key_env": "ZAI_API_KEY",
@@ -4891,6 +4905,8 @@ def _render_env_content(config: dict[str, str]) -> str:
         "MINIMAX_BASE_URL",
         "MIMO_API_KEY",
         "MIMO_BASE_URL",
+        "SPARK_API_KEY",
+        "SPARK_BASE_URL",
         "ZAI_API_KEY",
         "ZAI_BASE_URL",
         "OLLAMA_BASE_URL",

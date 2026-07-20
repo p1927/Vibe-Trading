@@ -164,6 +164,15 @@
     "api_key_required": true
   },
   {
+    "name": "spark",
+    "label": "iFlytek Spark",
+    "api_key_env": "SPARK_API_KEY",
+    "base_url_env": "SPARK_BASE_URL",
+    "default_model": "4.0Ultra",
+    "default_base_url": "https://spark-api-open.xf-yun.com/v1",
+    "api_key_required": true
+  },
+  {
     "name": "zai",
     "label": "Z.ai",
     "api_key_env": "ZAI_API_KEY",

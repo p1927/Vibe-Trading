@@ -101,6 +101,14 @@ _ZHIPU_CAPABILITIES = ProviderCapabilities(
     capture_reasoning=True,
 )
 
+# iFlytek Spark's HTTP endpoint is plain OpenAI-compatible (Bearer APIPassword);
+# the v1 chat path exposes no reasoning fields, so no capability flags are set.
+_SPARK_CAPABILITIES = ProviderCapabilities(
+    "spark",
+    "SPARK_API_KEY",
+    "SPARK_BASE_URL",
+)
+
 _OPENAI_CODEX_CAPABILITIES = ProviderCapabilities("openai-codex", None, "OPENAI_CODEX_BASE_URL")
 
 
@@ -158,6 +166,8 @@ _PROVIDERS: dict[str, ProviderCapabilities] = {
     "kimi-coding": _KIMI_CODING_CAPABILITIES,
     "minimax": ProviderCapabilities("minimax", "MINIMAX_API_KEY", "MINIMAX_BASE_URL"),
     "mimo": ProviderCapabilities("mimo", "MIMO_API_KEY", "MIMO_BASE_URL"),
+    "spark": _SPARK_CAPABILITIES,
+    "iflytek": _SPARK_CAPABILITIES,
     "zai": ProviderCapabilities("zai", "ZAI_API_KEY", "ZAI_BASE_URL"),
     "ollama": ProviderCapabilities("ollama", None, "OLLAMA_BASE_URL"),
     "openai-codex": _OPENAI_CODEX_CAPABILITIES,

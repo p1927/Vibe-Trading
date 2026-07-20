@@ -27,6 +27,7 @@ EXPECTED_PROVIDER_DEFAULTS = {
     "moonshot": "kimi-k2.6",
     "minimax": "MiniMax-M3",
     "mimo": "MiMo-72B-A27B",
+    "spark": "4.0Ultra",
     "zai": "glm-5.1",
 }
 
