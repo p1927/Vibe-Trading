@@ -41,6 +41,7 @@ defusedxml>=0.7.1
 yfinance>=0.2.30
 akshare>=1.12.0
 ccxt>=4.0.0
+# optional: pip install "vibe-trading-ai[mt5]" — MetaTrader 5 terminal bridge (Windows only): forex/metals data + broker connector
 
 # REST API & SSE
 fastapi>=0.104.0

@@ -240,11 +240,8 @@ def _normalize_notional(intent: OrderIntent, connector_module: Any, config: Any)
     """
     if intent.quantity is None:
         return intent
-    price = _quote_price(intent, connector_module, config)
-    if price is None:
-        return None
-    implied = intent.quantity * price
-    if implied != implied or implied <= 0:
+    implied = _implied_notional(intent, connector_module, config)
+    if implied is None or implied != implied or implied <= 0:
         return None
     explicit = intent.notional_usd if intent.notional_usd is not None else 0.0
     enforced = max(float(explicit), implied)
@@ -252,6 +249,33 @@ def _normalize_notional(intent: OrderIntent, connector_module: Any, config: Any)
         symbol=intent.symbol, side=intent.side, notional_usd=enforced,
         quantity=intent.quantity, instrument_type=intent.instrument_type, asset_class=intent.asset_class,
     )
+
+
+def _implied_notional(intent: OrderIntent, connector_module: Any, config: Any) -> float | None:
+    """USD notional implied by ``intent.quantity``, fail-closed.
+
+    A connector whose quantities are not unit-sized (MT5 lots: 1 lot EURUSD ==
+    100,000 EUR) exposes ``quantity_notional_usd(config, symbol, quantity)``.
+    When present the hook is AUTHORITATIVE and there is deliberately NO fallback
+    to ``quantity x quote price`` — that product under-states a lot-sized order
+    by roughly the contract size, which would silently disarm every USD cap.
+    Absent the hook, behavior is byte-identical to the legacy path: quantity
+    times the connector/loader quote.
+    """
+    sizer = getattr(connector_module, "quantity_notional_usd", None)
+    if sizer is not None:
+        try:
+            value = sizer(config, intent.symbol, intent.quantity)
+        except Exception as exc:  # noqa: BLE001 - sizing failure → fail-closed
+            logger.warning("connector notional sizing failed for %s: %s", intent.symbol, exc)
+            return None
+        if value is None:
+            return None
+        return float(value)
+    price = _quote_price(intent, connector_module, config)
+    if price is None:
+        return None
+    return intent.quantity * price
 
 
 def _quote_price(intent: OrderIntent, connector_module: Any, config: Any) -> float | None:

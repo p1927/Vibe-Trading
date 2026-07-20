@@ -52,6 +52,7 @@ VALID_SOURCES: set[str] = {
     "qveris",  # QVERIS-INTEGRATION
     "india_broker",
     "longbridge",
+    "mt5",
     "local",
     "auto",
 }
@@ -100,6 +101,7 @@ def _ensure_registered() -> None:
         "backtest.loaders.qveris_loader",  # QVERIS-INTEGRATION
         "backtest.loaders.india_broker_loader",
         "backtest.loaders.longbridge",
+        "backtest.loaders.mt5_loader",
         "backtest.loaders.local_loader",
     ]
     import importlib
@@ -139,7 +141,9 @@ FALLBACK_CHAINS: dict[str, list[str]] = {
     "futures":   ["tushare", "akshare", "local"],
     "fund":      ["tushare", "akshare", "local"],
     "macro":     ["akshare", "tushare", "local"],
-    "forex":     ["akshare", "yfinance", "local"],
+    # mt5 leads when a local MetaTrader 5 terminal is attached (Windows-only,
+    # broker feed); otherwise it reports unavailable and the chain proceeds.
+    "forex":     ["mt5", "akshare", "yfinance", "local"],
 }
 
 

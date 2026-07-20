@@ -33,6 +33,21 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   in backtest metrics for every optimizer (#478, thanks @Robin1987China).
 - **Frazzini-Pedersen betting-against-beta** academic factor (#480, thanks
   @YogeshModi24) — Alpha Zoo: 460 → **461**.
+- **MetaTrader 5 connector + data source** (Exness-style MT5 brokers,
+  Windows-only `pip install "vibe-trading-ai[mt5]"`). Broker connectors:
+  11 → **12** — full read surface plus order placement against a locally
+  running terminal, with a bidirectional identity guard (paper profile ⇔
+  demo `trade_mode`, login pinned, contest rejected), connector-level
+  `max_order_volume`/`max_order_notional_usd` guards on demo AND live, and
+  hedging-safe position close by ticket. The live mandate gate gains
+  `forex`/`cfd` instrument vocabulary (schema v1 unchanged) and a lot-aware
+  `quantity_notional_usd` sizing hook so USD caps bind on lot-sized orders
+  (0.1 lot EURUSD ≈ $10,800, never 0.1 × quote). Market-data sources:
+  20 → **21** — the `mt5` loader heads the forex fallback chain (broker-exact
+  symbols with Exness suffix discovery, 1m–1D bars), `get_market_data` learns
+  forex/metal symbol routing (`EUR/USD`, `XAUUSD.FX` previously fell through
+  to tushare), and akshare's forex path accepts the canonical slash form so
+  degradation off-Windows keeps working.
 - **Strategy Development Manager** skill (#457, thanks @shadowinlife, closes
   #455) — `sdm_register` / `sdm_status` / `sdm_decay_scan` turn academic
   papers and broker research into registered factors/strategies with a

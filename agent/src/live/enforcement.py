@@ -67,6 +67,10 @@ _ASSET_CLASS_MARKET: dict[AssetClass, str] = {
     # floors; market-cap floors stay US-only (see ``market_cap_usd``), so an
     # India market-cap floor fails closed like CN — intentional until a metadata
     # source is wired.
+    # FOREX likewise has no loader market wired: market-cap/liquidity floors do
+    # not apply to currency pairs, so any floor set on a forex mandate fails
+    # closed, and quantity pricing comes from the connector's own sizing hook
+    # (see ``src.live.sdk_order_gate._implied_notional``), not the loaders.
 }
 
 #: Breach ``kind`` values. ``universe``/``instrument`` are structural (DENY);
@@ -75,13 +79,15 @@ BREACH_KIND_UNIVERSE = "universe"
 BREACH_KIND_INSTRUMENT = "instrument"
 BREACH_KIND_QUANTITATIVE = "quantitative"
 
-#: InstrumentType → the AssetClass bucket it belongs to. OPTION has no
+#: InstrumentType → the AssetClass bucket it belongs to. OPTION and CFD have no
 #: universe-level asset-class bucket (the user permits asset classes, not
-#: option chains), so an option is gated purely by ``allowed_instruments``.
+#: option chains or CFD catalogs), so both are gated purely by
+#: ``allowed_instruments``.
 _INSTRUMENT_ASSET_CLASS: dict[InstrumentType, AssetClass] = {
     InstrumentType.EQUITY: AssetClass.US_EQUITY,
     InstrumentType.ETF: AssetClass.US_ETF,
     InstrumentType.CRYPTO: AssetClass.CRYPTO,
+    InstrumentType.FOREX: AssetClass.FOREX,
 }
 
 
