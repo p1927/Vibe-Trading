@@ -55,6 +55,10 @@ def _discover_subclasses() -> list[type[BaseTool]]:
     queue = deque(BaseTool.__subclasses__())
     while queue:
         cls = queue.popleft()
+        mod = getattr(cls, "__module__", "") or ""
+        if mod.startswith("tests.") or mod.endswith(".tests"):
+            queue.extend(cls.__subclasses__())
+            continue
         if cls.name:
             classes.append(cls)
         queue.extend(cls.__subclasses__())
