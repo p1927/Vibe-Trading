@@ -31,13 +31,9 @@ class CheckResult:
 
 def _check_environment() -> CheckResult:
     """Verify env bootstrap completed and scheduler flags are readable."""
-    from src.config.bootstrap import bootstrap_environment, is_bootstrapped
+    from src.config.bootstrap import bootstrap_environment
 
-    if not is_bootstrapped():
-        report = bootstrap_environment()
-    else:
-        report = bootstrap_environment()
-
+    report = bootstrap_environment()
     cfg = get_env_config()
     master = cfg.agent_tuning.vibe_trading_enable_scheduler
     index_on = cfg.agent_tuning.index_research_enable_scheduler
