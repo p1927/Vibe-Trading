@@ -133,10 +133,19 @@ def _ensure_agent_env_file(path: Path | None = None) -> Path:
 def _strip_env_value(value: str) -> str:
     """Remove basic dotenv quotes and inline comments."""
     value = value.strip()
+    if value[:1] in {"'", '"'}:
+        q = value[0]
+        i = 1
+        while i < len(value):
+            if value[i] == "\\" and i + 1 < len(value):
+                i += 2
+                continue
+            if value[i] == q:
+                return value[1:i].strip()
+            i += 1
+        return value
     if " #" in value:
         value = value.split(" #", 1)[0].rstrip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        value = value[1:-1]
     return value.strip()
 
 

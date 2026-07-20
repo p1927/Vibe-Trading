@@ -268,6 +268,32 @@ def test_write_env_values_updates_last_duplicate_active_key(tmp_path):
     assert lines[-1] == "K=new"
 
 
+def test_strip_env_value_quoted_hash_preserves_value():
+    """Quoted dotenv values may contain ' #'; do not treat as comment."""
+    assert helpers._strip_env_value('"secret # still-part-of-value"') == "secret # still-part-of-value"
+    assert helpers._strip_env_value("'secret # still-part-of-value'") == "secret # still-part-of-value"
+
+
+def test_strip_env_value_quoted_then_inline_comment():
+    """Trailing comments after a closed quote must still be stripped."""
+    assert helpers._strip_env_value('"secret" # comment') == "secret"
+    assert helpers._strip_env_value("'secret' # comment") == "secret"
+    assert helpers._strip_env_value('"a # b" # outer') == "a # b"
+    assert helpers._strip_env_value("'a # b' # outer") == "a # b"
+
+
+def test_read_write_env_quoted_hash_roundtrip(tmp_path):
+    env_file = tmp_path / ".env"
+    secret = "secret # still-part-of-value"
+    helpers._write_env_values(env_file, {"K": secret})
+    assert helpers._read_env_values(env_file)["K"] == secret
+    # Re-read the formatted line directly through strip
+    raw = env_file.read_text(encoding="utf-8")
+    assert ' #' in raw
+    line = [ln for ln in raw.splitlines() if ln.startswith("K=")][0]
+    assert helpers._strip_env_value(line.split("=", 1)[1]) == secret
+
+
 # ============================================================================
 # state._get_session_service writeback
 # ============================================================================
