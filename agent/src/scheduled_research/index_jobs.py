@@ -386,6 +386,12 @@ def run_external_predictions_refresh_job(config: dict[str, Any] | None = None) -
 
 def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
     """Execute one index scheduled job synchronously."""
+    try:
+        from trade_integrations.dataflows.index_research.pipeline_cancel import clear_pipeline_cancel
+
+        clear_pipeline_cancel()
+    except ImportError:
+        pass
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_INDEX_FACTOR_SNAPSHOT:
         summary = run_index_factor_snapshot_job(job.config)

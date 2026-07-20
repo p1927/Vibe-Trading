@@ -123,6 +123,17 @@ def dispatch_timeout_ms_for(job: ScheduledResearchJob) -> int:
         return DEFAULT_DISPATCH_TIMEOUT_MS
 
 
+def _request_pipeline_cancel_on_dispatch_timeout(job_id: str, job_type: str) -> None:
+    """Cooperatively stop in-flight index pipeline work after executor timeout."""
+    if not (job_type.startswith("index_") or job_type in _JOB_DISPATCH_TIMEOUT_MS):
+        return
+    try:
+        from trade_integrations.dataflows.index_research.pipeline_cancel import request_pipeline_cancel
+    except ImportError:
+        return
+    request_pipeline_cancel(f"dispatch_timeout:{job_id}")
+
+
 def _watchdog_interval_ms() -> int:
     raw = os.getenv(WATCHDOG_INTERVAL_ENV, str(DEFAULT_WATCHDOG_INTERVAL_MS)).strip()
     try:
@@ -561,6 +572,7 @@ class ScheduledResearchExecutor:
                 job.id,
                 timeout_ms,
             )
+            _request_pipeline_cancel_on_dispatch_timeout(job.id, job_type)
             job.config["_timed_out"] = True
             job.last_error = f"dispatch timed out after {timeout_ms}ms"
             job.consecutive_failures = int(job.consecutive_failures or 0) + 1
