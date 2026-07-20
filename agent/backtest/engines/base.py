@@ -181,9 +181,12 @@ def _align(
     # Build position matrix: shift on each symbol's OWN calendar, then fill
     pos_arr = np.full((n_dates, n_codes), np.nan)
     for j, c in enumerate(codes):
-        # Get signal values aligned to own trading calendar
+        # Get signal values aligned to own trading calendar.
+        # copy=True guarantees a writable array: with copy=False, an already
+        # float64 source returns a read-only view (e.g. pandas copy-on-write),
+        # which the in-place nan_to_num/clip below would reject.
         own_idx = data_map[c].index
-        sig_vals = signal_map[c].reindex(own_idx).values.astype(np.float64, copy=False)
+        sig_vals = signal_map[c].reindex(own_idx).values.astype(np.float64, copy=True)
         # fillna(0) + clip in numpy
         np.nan_to_num(sig_vals, copy=False, nan=0.0)
         np.clip(sig_vals, -1.0, 1.0, out=sig_vals)
@@ -197,9 +200,10 @@ def _align(
 
     # Vectorized ffill with limit using pandas (C-optimized)
     _tmp = pd.DataFrame(pos_arr)
-    pos_arr = _tmp.ffill(limit=ffill_limit).values
-    # Remaining NaN -> 0 (equivalent to pandas fillna(0.0))
-    np.nan_to_num(pos_arr, copy=False, nan=0.0)
+    # ``.values`` may be a read-only view under pandas copy-on-write; take the
+    # copy-returning nan_to_num (not in-place) so the fill never writes a
+    # read-only destination.
+    pos_arr = np.nan_to_num(_tmp.ffill(limit=ffill_limit).values, nan=0.0)
 
     # Construct DataFrames for return
     close = pd.DataFrame(close_arr, index=dates, columns=codes)
