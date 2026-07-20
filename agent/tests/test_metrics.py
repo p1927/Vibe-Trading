@@ -327,6 +327,16 @@ class TestCalcMetrics:
         assert m["annual_return"] == pytest.approx(-1.0)
         assert m["final_value"] == pytest.approx(-500_000)
 
+    def test_explosive_equity_annualization_does_not_overflow(self) -> None:
+        """A 1 → 1e6 two-bar path overflows ``growth ** factor`` on CPython.
+
+        Metrics must stay defined (non-finite annual_return is acceptable).
+        """
+        eq = pd.Series([1.0, 1_000_000.0])
+        m = calc_metrics(eq, [], 1.0, 252)
+        assert m["total_return"] == pytest.approx(999_999.0)
+        assert m["annual_return"] == float("inf")
+
 
 # ---------------------------------------------------------------------------
 # turnover

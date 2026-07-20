@@ -267,7 +267,14 @@ def calc_metrics(
     if growth <= 0:
         ann_ret = -1.0
     else:
-        ann_ret = float(growth ** (bpy / max(n, 1)) - 1)
+        # Explosive equity paths (e.g. 1 → 1e6 in a few bars) overflow
+        # ``float(growth ** …)`` on CPython; treat as non-finite annualisation.
+        try:
+            ann_ret = float(growth ** (bpy / max(n, 1)) - 1)
+        except OverflowError:
+            ann_ret = float("inf")
+        if not np.isfinite(ann_ret):
+            ann_ret = float("inf")
     # ``Series.std()`` uses ddof=1, so a single-observation return series
     # (e.g. a one-bar backtest) yields NaN and poisons the Sharpe ratio.
     # Guard the small sample the same way ``downside_std`` is guarded below.
