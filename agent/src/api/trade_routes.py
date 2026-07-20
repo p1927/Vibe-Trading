@@ -1465,6 +1465,7 @@ def get_index_prediction_backtest(
     refresh: bool = False,
     days: int = 180,
     horizon_days: int | None = None,
+    include_bottom_up: bool = False,
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexBacktestResponse:
     """Load cached walk-forward backtest or recompute from factor history."""
@@ -1477,18 +1478,17 @@ def get_index_prediction_backtest(
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
+        backtest_kwargs = {
+            "days": days,
+            "horizon_days": horizon_days,
+            "include_bottom_up": include_bottom_up,
+        }
         if refresh:
-            report = run_and_save_backtest(
-                days=days,
-                horizon_days=horizon_days,
-            )
+            report = run_and_save_backtest(**backtest_kwargs)
         else:
             report = load_backtest_report(key)
             if report is None:
-                report = run_and_save_backtest(
-                    days=days,
-                    horizon_days=horizon_days,
-                )
+                report = run_and_save_backtest(**backtest_kwargs)
         status = str(report.get("status") or "ok")
         return IndexBacktestResponse(status=status, ticker=key, report=report)
     except Exception as exc:

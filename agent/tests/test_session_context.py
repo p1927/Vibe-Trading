@@ -38,6 +38,23 @@ def test_chat_session_falls_back_to_message_ticker() -> None:
     assert resolve_prefetch_ticker({}, "What is RELIANCE doing?") == "RELIANCE"
 
 
+def test_news_scenario_session_uses_pipeline_ticker_not_current_word() -> None:
+    cfg = {
+        "session_kind": "news_scenario_advisor",
+        "pipeline_ticker": "NIFTY",
+        "pipeline_as_of": "2026-07-20T10:00:00+00:00",
+    }
+    assert resolve_prefetch_ticker(cfg, "What is the current outlook?") == "NIFTY"
+    assert resolve_prefetch_ticker(cfg, "finalize current analysis") == "NIFTY"
+
+
+def test_current_is_not_extracted_as_ticker() -> None:
+    from src.trade.symbol_detect import extract_primary_ticker
+
+    assert extract_primary_ticker("What is the current outlook?") is None
+    assert extract_primary_ticker("finalize current analysis") is None
+
+
 def test_us_equity_autonomous_asset_type_is_stock() -> None:
     cfg = {
         "session_kind": "autonomous_agent",

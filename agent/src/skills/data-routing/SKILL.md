@@ -39,6 +39,15 @@ per-source skill.
 | fmp | US equities | Yes (`FMP_API_KEY`) | Unrestricted | data-routing |
 | qveris | Global multi-asset (paid, credits) | Yes (`QVERIS_API_KEY` / Settings) | QVeris API | qveris <!-- QVERIS-INTEGRATION --> |
 
+## Unified DataRouter (trade stack)
+
+For India/US OHLCV, news, fundamentals, and NSE flows, prefer the trade-stack
+**DataRouter** catalog at `integrations/trade_integrations/data_router/catalog.yaml`.
+Vibe backtest fallback chains for `us_equity` and `india_equity` load from this catalog
+when `DATA_ROUTER_ENABLED=1` (default). Override per chain via env, e.g.
+`DATA_ROUTER_CHAIN_OHLCV_US_EQUITY=yahoo,stooq,yfinance`. Status:
+`trade data-router status`; background tiered drain: `TRADE_DATA_WORKER=1` + `trade up`.
+
 ## Capability → Tool Routing
 
 Pick the tool by the data need. "Market" is the universe the tool covers; "Env key"

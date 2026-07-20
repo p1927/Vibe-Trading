@@ -118,6 +118,16 @@ def _ensure_registered() -> None:
 _NO_NETWORK_FALLBACK_SOURCES: frozenset[str] = frozenset({"local", "qveris"})  # QVERIS-INTEGRATION
 
 
+def _effective_fallback_chain(market: str) -> list[str]:
+    default = FALLBACK_CHAINS.get(market, [])
+    try:
+        from trade_integrations.data_router.callers import effective_fallback_chain
+
+        return effective_fallback_chain(market, default)
+    except Exception:
+        return default
+
+
 # ---------------------------------------------------------------------------
 # Fallback chains: market_type -> ordered list of source names
 # ---------------------------------------------------------------------------
@@ -156,7 +166,7 @@ def resolve_loader(market: str) -> Any:
         NoAvailableSourceError: If every candidate is unavailable.
     """
     _ensure_registered()
-    chain = FALLBACK_CHAINS.get(market, [])
+    chain = _effective_fallback_chain(market)
     tried: list[str] = []
     for name in chain:
         if name not in LOADER_REGISTRY:

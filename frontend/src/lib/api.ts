@@ -599,11 +599,18 @@ export const api = {
     request<IndexPredictionSnapshotsResponse>(
       `/trade/index-prediction/snapshots?ticker=${encodeURIComponent(ticker)}&limit=${limit}`,
     ),
-  getIndexPredictionBacktest: (ticker = "NIFTY", refresh = false, days = 180, horizonDays?: number) => {
+  getIndexPredictionBacktest: (
+    ticker = "NIFTY",
+    refresh = false,
+    days = 180,
+    horizonDays?: number,
+    includeBottomUp = false,
+  ) => {
     const params = new URLSearchParams({
       ticker,
       refresh: String(refresh),
       days: String(days),
+      include_bottom_up: String(includeBottomUp),
     });
     if (horizonDays != null) params.set("horizon_days", String(horizonDays));
     return request<IndexBacktestResponse>(`/trade/index-prediction/backtest?${params}`);
@@ -1667,6 +1674,7 @@ export interface PlanPrediction {
   momentum_coverage?: { with_momentum?: number; total?: number; coverage_pct?: number };
   direction_hit_rate_oos?: number | null;
   direction_hit_rate_walk_forward?: number | null;
+  direction_model_score?: number | null;
   direction_confidence?: number | null;
   direction_confidence_raw?: number | null;
   direction_view?: string | null;
@@ -1683,6 +1691,9 @@ export interface PlanPrediction {
     passes_gate?: boolean;
     min_pct?: number | null;
   } | null;
+  cause_stress_index?: number | null;
+  cause_stress_label?: string | null;
+  channel_attribution?: Record<string, number> | null;
 }
 
 export interface IndexGlobalFactor {
@@ -1894,6 +1905,7 @@ export interface IndexFactorCatalogEntry {
   category: string;
   source: string;
   role: string;
+  data_quality?: string | null;
 }
 
 export interface IndexFactorCatalogResponse {
@@ -2198,6 +2210,7 @@ export interface IndexBacktestDrawdown {
 
 export interface IndexBacktestReport {
   status?: string;
+  scope?: "macro_only" | "hybrid" | string;
   as_of?: string;
   ticker?: string;
   horizon_days?: number;
@@ -2208,6 +2221,9 @@ export interface IndexBacktestReport {
   metrics?: {
     mae_pct?: number | null;
     direction_hit_rate?: number | null;
+    macro_only_direction_hit_rate?: number | null;
+    hybrid_direction_hit_rate?: number | null;
+    hybrid_eval_count?: number | null;
     in_sample_mae_pct?: number | null;
     in_sample_r2?: number | null;
     in_sample_direction_hit_rate?: number | null;

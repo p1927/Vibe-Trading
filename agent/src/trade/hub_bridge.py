@@ -711,6 +711,14 @@ def _maybe_start_debate(
                 "research.debate",
                 {"ticker": ticker, "status": "ready", "debate": debate},
             )
+        except ValueError as exc:
+            logger.warning("Agent debate skipped for %s: %s", ticker, exc)
+            _emit(
+                event_bus,
+                session_id,
+                "research.debate",
+                {"ticker": ticker, "status": "error", "message": str(exc)},
+            )
         except Exception as exc:
             logger.exception("Agent debate failed for %s", ticker)
             _emit(

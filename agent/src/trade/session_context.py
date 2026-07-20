@@ -78,6 +78,14 @@ def resolve_prefetch_ticker(
     cfg = session_config or {}
     symbols = session_symbols(cfg)
 
+    pipeline_ticker = str(cfg.get("pipeline_ticker") or "").strip().upper()
+    if pipeline_ticker:
+        return pipeline_ticker
+
+    session_kind = str(cfg.get("session_kind") or "").strip()
+    if session_kind == "news_scenario_advisor":
+        return pipeline_ticker or "NIFTY"
+
     if is_autonomous_agent_session(cfg) and symbols:
         return symbols[0]
 
