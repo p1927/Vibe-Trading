@@ -132,6 +132,15 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
             : "."}
         </div>
       ) : null}
+      {pred.cause_stress_index != null &&
+      Number(pred.cause_stress_index) >= 60 &&
+      (pred.cause_stress_label === "elevated" || pred.cause_stress_label === "event_driven") ? (
+        <div className="rounded-lg border border-orange-500/35 bg-orange-500/10 px-3 py-2 text-[11px] text-orange-950 dark:text-orange-200">
+          Cause stress elevated ({Math.round(Number(pred.cause_stress_index))}/100
+          {pred.cause_stress_label ? ` · ${String(pred.cause_stress_label).replace(/_/g, " ")}` : ""}). News/vol
+          regime may invalidate a stale forecast — run full analysis or check Track Scoreboard before acting.
+        </div>
+      ) : null}
       {(lowDirectionConf || directionReturnConflict) && !pred.sign_conflict ? (
         <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
           Direction confidence is modest ({directionConf != null ? `${Math.round(Number(directionConf) * 100)}%` : "—"}) —

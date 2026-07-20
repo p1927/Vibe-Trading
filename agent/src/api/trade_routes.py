@@ -981,6 +981,8 @@ def run_index_prediction(
             )
             from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.scoreboard import (
                 load_scoreboard,
+                scoreboard_needs_promotion_history,
+                scoreboard_needs_refresh,
             )
             from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.walk_forward import (
                 run_track_walk_forward,
@@ -988,7 +990,11 @@ def run_index_prediction(
 
             if lab_enabled() and scoreboard_auto_refresh():
                 cached = load_scoreboard(key)
-                if not cached or int(cached.get("eval_count") or 0) == 0:
+                if (
+                    not cached
+                    or scoreboard_needs_refresh(cached, horizon_days=body.horizon_days, history_days=365)
+                    or scoreboard_needs_promotion_history(cached)
+                ):
                     run_track_walk_forward(
                         ticker=key,
                         days=365,
