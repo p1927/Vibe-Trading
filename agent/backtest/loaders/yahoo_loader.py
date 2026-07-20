@@ -39,8 +39,14 @@ _INTERVAL_MAP = {
 
 
 def _is_supported(code: str) -> bool:
-    """Return whether *code* is a symbol this loader handles (US/HK/India)."""
-    return code.strip().upper().endswith((".US", ".HK", ".NS", ".BO"))
+    """Return whether *code* is a symbol this loader handles.
+
+    Covers US/HK/India equities plus Yahoo's own futures (``GC=F``) and forex
+    (``EURUSD=X``) suffix conventions, which the public chart endpoint serves
+    verbatim (the code is used as-is in the request URL, no conversion) (#718).
+    """
+    upper = code.strip().upper()
+    return upper.endswith((".US", ".HK", ".NS", ".BO", "=F", "=X"))
 
 
 def _to_yahoo_interval(interval: str) -> str:
