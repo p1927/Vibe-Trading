@@ -256,6 +256,18 @@ def test_strip_env_value_inline_comment():
     assert helpers._strip_env_value("value # comment") == "value"
 
 
+def test_write_env_values_updates_last_duplicate_active_key(tmp_path):
+    """Duplicate active KEY= lines: read is last-wins; upsert must update last."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("K=old\nK=older\n", encoding="utf-8")
+    assert helpers._read_env_values(env_file)["K"] == "older"
+
+    helpers._write_env_values(env_file, {"K": "new"})
+    assert helpers._read_env_values(env_file)["K"] == "new"
+    lines = [ln for ln in env_file.read_text(encoding="utf-8").splitlines() if ln.startswith("K=")]
+    assert lines[-1] == "K=new"
+
+
 # ============================================================================
 # state._get_session_service writeback
 # ============================================================================
