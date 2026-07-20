@@ -31,6 +31,40 @@ _JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 _ACTIVE_STATUSES = frozenset({"queued", "running"})
 
 
+def _is_pid_alive(pid: int | None) -> bool:
+    if pid is None or pid <= 0:
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except OSError:
+        return False
+    return True
+
+
+def worker_alive(job: dict[str, Any] | None) -> bool:
+    """Return whether the detached worker subprocess is still running."""
+    if job is None:
+        return False
+    status = str(job.get("status") or "")
+    pid = job.get("worker_pid")
+    if status == "queued" and pid is None:
+        return True
+    if pid is None:
+        return status not in _ACTIVE_STATUSES
+    return _is_pid_alive(int(pid))
+
+
+def reconcile_zombie_job(job_id: str) -> bool:
+    """Mark an active job failed when its worker exited. Returns True if reconciled."""
+    job = _get_job_record(job_id)
+    if job is None or job.get("status") not in _ACTIVE_STATUSES:
+        return False
+    if worker_alive(job):
+        return False
+    fail_job(job_id, "worker process exited unexpectedly")
+    return True
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -95,19 +129,51 @@ def _read_job_from_disk(job_id: str) -> dict[str, Any] | None:
     return payload
 
 
+def _merge_job_from_disk(job_id: str, memory: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Prefer fresher on-disk state when the worker subprocess updates job.json."""
+    disk = _read_job_from_disk(job_id)
+    if disk is None:
+        return memory
+    if memory is None:
+        return disk
+    mem_logs = len(memory.get("logs") or [])
+    disk_logs = len(disk.get("logs") or [])
+    mem_status = str(memory.get("status") or "")
+    disk_status = str(disk.get("status") or "")
+    if disk_logs > mem_logs or disk_status != mem_status:
+        merged = dict(disk)
+        merged.setdefault("job_id", job_id)
+        return merged
+    if disk.get("artifact") is not None and memory.get("artifact") is None:
+        merged = dict(memory)
+        merged.update(
+            {
+                "status": disk_status or mem_status,
+                "artifact": disk.get("artifact"),
+                "error": disk.get("error"),
+                "worker_pid": disk.get("worker_pid", memory.get("worker_pid")),
+                "_finished_at": disk.get("_finished_at", memory.get("_finished_at")),
+            }
+        )
+        if disk_logs >= mem_logs:
+            merged["logs"] = list(disk.get("logs") or [])
+        return merged
+    return memory
+
+
 def _get_job_record(job_id: str) -> dict[str, Any] | None:
     with _JOBS_LOCK:
-        job = INDEX_PREDICTION_RUN_JOBS.get(job_id)
-        if job is not None:
-            return job
-    disk = _read_job_from_disk(job_id)
-    if disk is not None:
+        memory = INDEX_PREDICTION_RUN_JOBS.get(job_id)
+    merged = _merge_job_from_disk(job_id, memory)
+    if merged is not None:
         with _JOBS_LOCK:
-            INDEX_PREDICTION_RUN_JOBS[job_id] = disk
-            ticker = str(disk.get("ticker") or "").upper()
-            if disk.get("status") in _ACTIVE_STATUSES and ticker:
+            INDEX_PREDICTION_RUN_JOBS[job_id] = merged
+            ticker = str(merged.get("ticker") or "").upper()
+            if merged.get("status") in _ACTIVE_STATUSES and ticker:
                 _ACTIVE_BY_TICKER[ticker] = job_id
-    return disk
+            elif _ACTIVE_BY_TICKER.get(ticker) == job_id:
+                _ACTIVE_BY_TICKER.pop(ticker, None)
+    return merged
 
 
 def hydrate_jobs_from_disk() -> None:
@@ -187,6 +253,9 @@ def get_active_job(ticker: str) -> dict[str, Any] | None:
             if _ACTIVE_BY_TICKER.get(key) == job_id:
                 _ACTIVE_BY_TICKER.pop(key, None)
         return None
+    if not worker_alive(job):
+        reconcile_zombie_job(job_id)
+        return None
     return _job_snapshot(job)
 
 
@@ -205,9 +274,29 @@ def start_job(
         if existing_id:
             existing = INDEX_PREDICTION_RUN_JOBS.get(existing_id) or _read_job_from_disk(existing_id)
             if existing and existing.get("status") in _ACTIVE_STATUSES:
-                if existing_id not in INDEX_PREDICTION_RUN_JOBS:
-                    INDEX_PREDICTION_RUN_JOBS[existing_id] = existing
-                return existing_id, True
+                if existing.get("worker_pid") is not None and not worker_alive(existing):
+                    fail_job(existing_id, "worker process exited unexpectedly")
+                elif existing.get("status") == "running" and existing.get("worker_pid") is None:
+                    created_at = str(existing.get("created_at") or "")
+                    age_seconds = 999.0
+                    if created_at:
+                        try:
+                            age_seconds = (
+                                datetime.now(timezone.utc)
+                                - datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                            ).total_seconds()
+                        except ValueError:
+                            age_seconds = 999.0
+                    if age_seconds > 30:
+                        fail_job(existing_id, "worker never started")
+                    else:
+                        if existing_id not in INDEX_PREDICTION_RUN_JOBS:
+                            INDEX_PREDICTION_RUN_JOBS[existing_id] = existing
+                        return existing_id, True
+                else:
+                    if existing_id not in INDEX_PREDICTION_RUN_JOBS:
+                        INDEX_PREDICTION_RUN_JOBS[existing_id] = existing
+                    return existing_id, True
 
         job_id = uuid.uuid4().hex
         job = {

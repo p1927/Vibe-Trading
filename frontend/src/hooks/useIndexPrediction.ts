@@ -4,6 +4,7 @@ import {
   type IndexFactorCatalogResponse,
   type IndexPredictionArtifact,
 } from "@/lib/api";
+import { pickNewestArtifact } from "@/lib/predictionArtifactUtils";
 import {
   artifactLogMatchesAsOf,
   mergePipelineLogs,
@@ -49,7 +50,7 @@ export function useIndexPrediction(
   const coordinatorReady = usePredictionRunStore((s) => s.coordinatorReady);
 
   const artifact = useMemo(
-    () => runArtifact ?? hubArtifact,
+    () => pickNewestArtifact(runArtifact, hubArtifact),
     [runArtifact, hubArtifact],
   );
 
@@ -146,6 +147,12 @@ export function useIndexPrediction(
     });
     usePredictionRunStore.getState().setPipelineLogs((prev) => mergePipelineLogs(prev, next.pipeline_log));
   }, []);
+
+  useEffect(() => {
+    if (running || !runArtifact) return;
+    applyArtifact(runArtifact);
+    usePredictionRunStore.getState().setRunArtifact(null);
+  }, [running, runArtifact, applyArtifact]);
 
   const runAnalysis = useCallback(
     async (days: number, refreshConstituents = false) => {

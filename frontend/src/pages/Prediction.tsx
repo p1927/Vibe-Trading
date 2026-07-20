@@ -477,16 +477,15 @@ export function Prediction() {
     void runAnalysis(horizonDays, refreshConstituents).then(() => {
       void loadHistory();
       void reload();
+      void loadBacktest(true);
+      void loadMissAnalysis(true);
+      void loadFactorHistory();
     });
   };
 
-  const handleScoreboardRunAnalysis = useCallback(() => {
-    setTrackScoreboardPanelOpen(true);
-    setPipelinePanelOpen(true);
-    void runAnalysis(horizonDays, false).then(() => {
-      void loadTrackScoreboardCached();
-    });
-  }, [horizonDays, runAnalysis, loadTrackScoreboardCached, setPipelinePanelOpen]);
+  const handleScoreboardGoToAnalysis = useCallback(() => {
+    setPredictionMode("analysis");
+  }, []);
 
   const handleDerivativesLoadState = useCallback((count: number, err: string | null) => {
     setDerivativesSeriesCount(count);
@@ -590,8 +589,8 @@ export function Prediction() {
               horizonDays={horizonDays}
               onHorizonChange={setHorizonDays}
               onRefresh={() => void loadTrackScoreboard(true)}
-              onRunAnalysis={handleScoreboardRunAnalysis}
-              runningAnalysis={running}
+              onGoToAnalysis={handleScoreboardGoToAnalysis}
+              pipelineRunning={running}
               progressPanelOpen={trackScoreboardPanelOpen}
               onToggleProgressPanel={() => setTrackScoreboardPanelOpen((v) => !v)}
             />
@@ -670,6 +669,7 @@ export function Prediction() {
           runJobId={runJobId}
           lastUpdated={artifact?.as_of}
           spot={artifact?.spot}
+          spotError={artifact?.spot_error ?? null}
           regime={regimeLabel}
           pipelinePanelOpen={pipelinePanelOpen}
           onTogglePipelinePanel={() => setPipelinePanelOpen(!pipelinePanelOpen)}

@@ -226,7 +226,20 @@ export function PredictionScheduledJobsPanel() {
                     {staleRunning ? " — stuck RUNNING; reload API or wait for stale recovery" : ""}
                   </p>
                   {job.last_error ? (
-                    <p className="mt-1 text-[10px] text-red-600 dark:text-red-400">Last error: {job.last_error}</p>
+                    <p
+                      className={cn(
+                        "mt-1 text-[10px]",
+                        job.last_error.includes("recovered on stack boot")
+                          || job.last_error.includes("recovered on shutdown")
+                          ? "text-amber-700 dark:text-amber-400"
+                          : "text-red-600 dark:text-red-400",
+                      )}
+                    >
+                      {job.last_error.includes("recovered on stack boot")
+                        || job.last_error.includes("recovered on shutdown")
+                        ? `Note: ${job.last_error}`
+                        : `Last error: ${job.last_error}`}
+                    </p>
                   ) : null}
                   {(job.consecutive_failures ?? 0) > 0 && !failed ? (
                     <p className="mt-0.5 text-[10px] text-amber-700 dark:text-amber-400">

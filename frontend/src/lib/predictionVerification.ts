@@ -126,6 +126,26 @@ export function runPredictionUiAudit(
 
   const spotOk = artifact.spot != null && Number.isFinite(artifact.spot);
   rows.push({
+    id: "spot-live",
+    component: "Live spot (OpenAlgo)",
+    section: "Headline",
+    modelRole: "feeds",
+    status: statusFrom({
+      ok: spotOk && !artifact.spot_error && artifact.spot_source === "openalgo",
+      warn: spotOk && artifact.spot_source !== "openalgo",
+      error: Boolean(artifact.spot_error) || !spotOk,
+    }),
+    source: "OpenAlgo LIVE quote (INDmoney) — no history fallback",
+    userValue: artifact.spot_error
+      ? artifact.spot_error
+      : spotOk
+        ? `${artifact.spot?.toLocaleString("en-IN")} (${artifact.spot_source ?? "openalgo"})`
+        : "Missing spot",
+    feedsForecast: true,
+    detail: artifact.as_of ? `Snapshot ${artifact.as_of.slice(0, 19)}` : undefined,
+  });
+
+  rows.push({
     id: "summary",
     component: "PredictionSummary",
     section: "Headline",

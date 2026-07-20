@@ -29,6 +29,7 @@ interface Props {
   runJobId?: string | null;
   lastUpdated?: string | null;
   spot?: number | null;
+  spotError?: string | null;
   regime?: string | null;
   pipelinePanelOpen?: boolean;
   onTogglePipelinePanel?: () => void;
@@ -46,6 +47,7 @@ export function PredictionControls({
   runJobId,
   lastUpdated,
   spot,
+  spotError,
   regime,
   pipelinePanelOpen,
   onTogglePipelinePanel,
@@ -74,6 +76,19 @@ export function PredictionControls({
         {lastUpdated ? (
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             Updated {new Date(lastUpdated).toLocaleString()}
+          </p>
+        ) : null}
+        {spotError ? (
+          <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">
+            {spotError}{" "}
+            <a
+              href="http://127.0.0.1:5001"
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium underline underline-offset-2"
+            >
+              OpenAlgo login
+            </a>
           </p>
         ) : null}
       </div>

@@ -30,7 +30,7 @@ describe("beginRun / finishRun", () => {
     expect(s.pipelineLogs).toEqual([]);
   });
 
-  it("finishRun clears running flags but keeps runArtifact", () => {
+  it("finishRun clears running flags but keeps runArtifact until hub merge", () => {
     usePredictionRunStore.getState().setRunning(true);
     usePredictionRunStore.getState().setRunJobId("abc123");
     usePredictionRunStore.getState().setReattached(true);
