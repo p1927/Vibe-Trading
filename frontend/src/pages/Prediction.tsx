@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { AlertTriangle } from "lucide-react";
 import { PredictionControls } from "@/components/prediction/PredictionControls";
 import { PredictionSummary } from "@/components/prediction/PredictionSummary";
+import { CauseAttributionPanel } from "@/components/prediction/CauseAttributionPanel";
 import { FactorImpactWorkbench } from "@/components/prediction/FactorImpactWorkbench";
 import { FactorCompositionTable } from "@/components/prediction/FactorCompositionTable";
 import { EquationCard } from "@/components/prediction/EquationCard";
@@ -102,6 +103,7 @@ export function Prediction() {
   const [simulation, setSimulation] = useState<IndexSimulationResult | null>(null);
   const [refreshConstituents, setRefreshConstituents] = useState(false);
   const [backtestError, setBacktestError] = useState<string | null>(null);
+  const [includeBottomUpBacktest, setIncludeBottomUpBacktest] = useState(false);
   const [trackScoreboard, setTrackScoreboard] = useState<IndexTrackScoreboardReport | null>(null);
   const [trackScoreboardLoading, setTrackScoreboardLoading] = useState(false);
   const [trackScoreboardRecomputing, setTrackScoreboardRecomputing] = useState(false);
@@ -312,11 +314,17 @@ export function Prediction() {
   }, []);
 
   const loadBacktest = useCallback(
-    async (refresh = false) => {
+    async (refresh = false, includeBottomUp = includeBottomUpBacktest) => {
       setBacktestLoading(true);
       setBacktestError(null);
       try {
-        const res = await api.getIndexPredictionBacktest("NIFTY", refresh, 365, horizonDays);
+        const res = await api.getIndexPredictionBacktest(
+          "NIFTY",
+          refresh,
+          365,
+          horizonDays,
+          includeBottomUp,
+        );
         if (res.report) setBacktest(res.report);
         else if (res.status !== "ok") setBacktestError(res.message || "Backtest unavailable");
       } catch (e) {
@@ -325,7 +333,7 @@ export function Prediction() {
         setBacktestLoading(false);
       }
     },
-    [horizonDays],
+    [horizonDays, includeBottomUpBacktest],
   );
 
   useEffect(() => {
@@ -688,6 +696,7 @@ export function Prediction() {
                 modelRole="display"
               />
               <PredictionSummary artifact={artifact} flashReturn={flashReturn} horizonDays={horizonDays} />
+              <CauseAttributionPanel artifact={artifact} />
 
               <TechnicalContextStrip
                 interpretation={
@@ -882,6 +891,11 @@ export function Prediction() {
                 report={backtest}
                 loading={backtestLoading}
                 error={backtestError}
+                includeBottomUp={includeBottomUpBacktest}
+                onIncludeBottomUpChange={(next) => {
+                  setIncludeBottomUpBacktest(next);
+                  void loadBacktest(true, next);
+                }}
                 onRefresh={() => void loadBacktest(true)}
                 onMissSelect={(date) => {
                   setMissHighlightDate(date);

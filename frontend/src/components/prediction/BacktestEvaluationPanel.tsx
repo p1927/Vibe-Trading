@@ -18,11 +18,21 @@ interface Props {
   report: IndexBacktestReport | null;
   loading?: boolean;
   error?: string | null;
+  includeBottomUp?: boolean;
+  onIncludeBottomUpChange?: (value: boolean) => void;
   onRefresh?: () => void;
   onMissSelect?: (date: string) => void;
 }
 
-export function BacktestEvaluationPanel({ report, loading, error, onRefresh, onMissSelect }: Props) {
+export function BacktestEvaluationPanel({
+  report,
+  loading,
+  error,
+  includeBottomUp = false,
+  onIncludeBottomUpChange,
+  onRefresh,
+  onMissSelect,
+}: Props) {
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
   const [expandedDrop, setExpandedDrop] = useState<string | null>(null);
 
@@ -49,6 +59,10 @@ export function BacktestEvaluationPanel({ report, loading, error, onRefresh, onM
   const metrics = report.metrics ?? {};
   const daily = [...(report.daily_evaluations ?? [])].reverse().slice(0, 30);
   const drawdowns = report.major_drawdowns ?? [];
+  const scope = report.scope ?? "macro_only";
+  const isHybrid = scope === "hybrid";
+  const hybridHitRate = metrics.hybrid_direction_hit_rate;
+  const macroHitRate = metrics.macro_only_direction_hit_rate ?? metrics.direction_hit_rate;
 
   return (
     <div className="space-y-4 rounded-xl border bg-card p-4 shadow-sm">
@@ -59,24 +73,47 @@ export function BacktestEvaluationPanel({ report, loading, error, onRefresh, onM
           </p>
           <p className="mt-1 text-[11px] text-muted-foreground">
             {report.history_start} → {report.history_end} · {report.history_rows} trading rows ·{" "}
-            {report.eval_count} out-of-sample predictions ({report.horizon_days}d horizon). Click the chart
-            for ranked causes (FII outflows, oil, US risk, news) — not just post-event metrics.
+            {report.eval_count} out-of-sample predictions ({report.horizon_days}d horizon). Scope:{" "}
+            <span className="font-medium">{isHybrid ? "hybrid (macro + bottom-up)" : "macro-only Ridge"}</span>.
           </p>
         </div>
-        {onRefresh ? (
-          <button
-            type="button"
-            onClick={onRefresh}
-            className="rounded-md border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted/50"
-          >
-            Re-run backtest
-          </button>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {onIncludeBottomUpChange ? (
+            <label className="flex cursor-pointer items-center gap-1.5 rounded-md border border-border/60 px-2 py-1 text-[10px] text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={includeBottomUp}
+                onChange={(e) => onIncludeBottomUpChange(e.target.checked)}
+                className="h-3 w-3 rounded border-border"
+              />
+              Include bottom-up
+            </label>
+          ) : null}
+          {onRefresh ? (
+            <button
+              type="button"
+              onClick={onRefresh}
+              className="rounded-md border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted/50"
+            >
+              Re-run backtest
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <div className="rounded-lg border border-violet-500/25 bg-violet-500/10 px-3 py-2 text-[11px] text-violet-900 dark:text-violet-200">
-        Macro-only walk-forward — validates the Ridge overlay, not the live hybrid headline (bottom-up +
-        scenario reconciliation). Compare to ledger accuracy once forecasts mature.
+        {isHybrid ? (
+          <>
+            Hybrid walk-forward — macro Ridge overlay plus constituent bottom-up when daily research archives exist.
+            Macro-only direction {macroHitRate != null ? `${Math.round(macroHitRate * 100)}%` : "—"}
+            {hybridHitRate != null ? ` · hybrid ${Math.round(hybridHitRate * 100)}%` : ""}.
+          </>
+        ) : (
+          <>
+            Macro-only walk-forward — validates the Ridge overlay, not the live hybrid headline (bottom-up +
+            scenario reconciliation). Toggle bottom-up and re-run to compare hybrid direction hit rate.
+          </>
+        )}
         {(report.limitations ?? [])[0] ? ` ${report.limitations![0]}` : ""}
       </div>
 
@@ -98,6 +135,11 @@ export function BacktestEvaluationPanel({ report, loading, error, onRefresh, onM
               ? `${Math.round(metrics.direction_hit_rate * 100)}%`
               : "—"}
           </p>
+          {isHybrid && hybridHitRate != null && macroHitRate != null ? (
+            <p className="text-[10px] text-muted-foreground">
+              Macro {Math.round(macroHitRate * 100)}% · hybrid {Math.round(hybridHitRate * 100)}%
+            </p>
+          ) : null}
         </div>
         <div className="text-[11px]">
           <span className="text-muted-foreground">In-sample R² (train)</span>

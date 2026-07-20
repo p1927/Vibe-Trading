@@ -70,11 +70,18 @@ function FactorList({
               >
                 <div className="flex items-start justify-between gap-2">
                   <p className="text-[11px] font-medium">{f.label}</p>
-                  {inModel ? (
-                    <span className="shrink-0 text-[9px] font-medium text-emerald-700 dark:text-emerald-400">
-                      in model
-                    </span>
-                  ) : null}
+                  <div className="flex shrink-0 flex-col items-end gap-0.5">
+                    {inModel ? (
+                      <span className="text-[9px] font-medium text-emerald-700 dark:text-emerald-400">
+                        in model
+                      </span>
+                    ) : null}
+                    {f.data_quality === "proxy" ? (
+                      <span className="text-[9px] font-medium text-amber-700 dark:text-amber-400">
+                        proxy data
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
                 <p className="text-[10px] text-muted-foreground">
                   <span className="font-mono">{f.key}</span>

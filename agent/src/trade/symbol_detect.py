@@ -124,6 +124,11 @@ _STOPWORDS = frozenset(
         "IT",
         "TO",
         "OF",
+        "CURRENT",
+        "PREVIOUS",
+        "LATEST",
+        "TODAY",
+        "PRIOR",
     }
 )
 

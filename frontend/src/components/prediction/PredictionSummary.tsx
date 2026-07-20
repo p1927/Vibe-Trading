@@ -57,6 +57,7 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
   const view = String(pred.view || "neutral");
   const rangeConf = range.confidence ?? pred.confidence;
   const directionConf = pred.direction_confidence;
+  const modelDirectionScore = pred.direction_model_score ?? pred.direction_confidence_raw;
   const hitRate =
     accuracy.direction_hit_rate_walk_forward ??
     accuracy.direction_hit_rate_14d ??
@@ -143,11 +144,13 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
       ) : null}
       {(lowDirectionConf || directionReturnConflict) && !pred.sign_conflict ? (
         <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
-          Direction confidence is modest ({directionConf != null ? `${Math.round(Number(directionConf) * 100)}%` : "—"}) —
-          walk-forward OOS accuracy is the calibration reference, not raw model score.
+          Calibrated direction confidence is modest (
+          {directionConf != null ? `${Math.round(Number(directionConf) * 100)}%` : "—"}) — raw model score{" "}
+          {modelDirectionScore != null ? `${Math.round(Number(modelDirectionScore) * 100)}%` : "—"} is capped to
+          walk-forward OOS hit rate ({hitRate != null ? `${Math.round(Number(hitRate) * 100)}%` : "—"}).
         </div>
       ) : null}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         <StatCard
         label={`${horizonDays}d target (Nifty)`}
         value={fmtNum(targetLevel)}
@@ -159,6 +162,15 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
         label="Expected range"
         value={`${fmtNum(range.low)} – ${fmtNum(range.high)}`}
         sub="Index points at horizon"
+      />
+      <StatCard
+        label="Model direction score"
+        value={
+          modelDirectionScore != null && Number.isFinite(Number(modelDirectionScore))
+            ? `${Math.round(Number(modelDirectionScore) * 100)}%`
+            : "—"
+        }
+        sub="Raw Ridge logit before OOS calibration"
       />
       <StatCard
         label="Direction confidence"
@@ -187,7 +199,7 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
         }
       />
       <StatCard
-        label="Direction accuracy"
+        label="Direction accuracy (OOS)"
         value={hitRate != null && Number.isFinite(Number(hitRate)) ? `${Math.round(Number(hitRate) * 100)}%` : "—"}
         sub={accuracySub}
       />
