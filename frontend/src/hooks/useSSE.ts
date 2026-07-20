@@ -87,6 +87,8 @@ export function useSSE(config?: SSEConfig) {
       "message.received", "session.created",
       "goal.created", "goal.evidence", "goal.updated",
       "mandate.proposal", "mandate.committed", "live.halted", "live.resumed", "live.action",
+      "autonomous_agent.proposal", "autonomous_agent.committed", "autonomous_agent.plan_ready",
+      "autonomous_agent.plan_approved", "session.promoted", "paper.action",
       "trade_plan.widget",
       "plan.stale",
       "research.artifact", "research.debate",

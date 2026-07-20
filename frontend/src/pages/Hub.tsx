@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Database, ExternalLink, Loader2, Newspaper, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, type HubNewsItem, type HubStatusResponse } from "@/lib/api";
+import { api, type HubDiscardedNewsItem, type HubNewsItem, type HubNewsPipelineConfig, type HubStatusResponse } from "@/lib/api";
 
-type NewsFilter = "all" | "staging" | "distilled";
+type NewsFilter = "all" | "staging" | "distilled" | "discarded";
 
 function StatCard({
   title,
@@ -23,6 +23,13 @@ function StatCard({
 }
 
 function provenanceBadge(provenance?: string) {
+  if (provenance === "discarded") {
+    return (
+      <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-medium text-red-800 dark:text-red-200">
+        discarded
+      </span>
+    );
+  }
   if (provenance === "staging") {
     return (
       <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-200">
@@ -65,9 +72,58 @@ function statusBadge(status?: string) {
   );
 }
 
-function NewsRow({ item }: { item: HubNewsItem }) {
+function marketImpactBadge(status?: string) {
+  const s = (status || "unverified").toLowerCase();
+  const tone =
+    s === "observed"
+      ? "text-emerald-700 dark:text-emerald-400 bg-emerald-500/10"
+      : s === "predicted"
+        ? "text-blue-700 dark:text-blue-400 bg-blue-500/10"
+        : s === "claimed"
+          ? "text-amber-700 dark:text-amber-400 bg-amber-500/10"
+          : "text-muted-foreground bg-muted";
+  return (
+    <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium capitalize", tone)}>
+      {s}
+    </span>
+  );
+}
+
+function consensusBadge(consensus?: {
+  direction?: string;
+  confidence?: number;
+  ref_count?: number;
+}) {
+  if (!consensus?.direction) return null;
+  const direction = consensus.direction;
+  const tone =
+    direction === "bullish"
+      ? "text-emerald-700 dark:text-emerald-400 bg-emerald-500/10"
+      : direction === "bearish"
+        ? "text-red-700 dark:text-red-400 bg-red-500/10"
+        : "text-muted-foreground bg-muted";
+  return (
+    <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium capitalize", tone)}>
+      {direction}
+      {consensus.confidence != null ? ` · ${Math.round(consensus.confidence * 100)}%` : ""}
+    </span>
+  );
+}
+
+function NewsRow({
+  item,
+  onDiscard,
+  onDiscardSimilar,
+  discarding,
+}: {
+  item: HubNewsItem;
+  onDiscard?: (item: HubNewsItem) => void;
+  onDiscardSimilar?: (item: HubNewsItem) => void;
+  discarding?: boolean;
+}) {
   const references = item.references?.length ? item.references : item.sources ?? [];
   const link = item.url || references[0]?.url;
+  const timeline = item.timeline ?? [];
 
   return (
     <article className="rounded-lg border bg-background/60 p-3">
@@ -76,6 +132,8 @@ function NewsRow({ item }: { item: HubNewsItem }) {
           <div className="flex flex-wrap items-center gap-1.5">
             {provenanceBadge(item.provenance)}
             {statusBadge(item.verification_status)}
+            {item.market_impact_status ? marketImpactBadge(item.market_impact_status) : null}
+            {consensusBadge(item.consensus)}
             {item.ticker ? (
               <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                 {item.ticker}
@@ -91,7 +149,7 @@ function NewsRow({ item }: { item: HubNewsItem }) {
           <p className="text-[11px] text-muted-foreground">
             {item.source || "unknown source"}
             {item.published_at ? ` · ${item.published_at.slice(0, 16).replace("T", " ")}` : ""}
-            {item.ref_id ? ` · ${item.ref_id}` : ""}
+            {item.event_id ? ` · ${item.event_id.slice(0, 8)}` : item.ref_id ? ` · ${item.ref_id}` : ""}
           </p>
         </div>
         {link ? (
@@ -103,6 +161,28 @@ function NewsRow({ item }: { item: HubNewsItem }) {
           >
             Open <ExternalLink className="h-3 w-3" />
           </a>
+        ) : null}
+        {onDiscard ? (
+          <div className="flex shrink-0 flex-col gap-1">
+            <button
+              type="button"
+              disabled={discarding}
+              onClick={() => onDiscard(item)}
+              className="rounded-md border border-red-500/30 px-2 py-1 text-[10px] text-red-700 hover:bg-red-500/10 disabled:opacity-50 dark:text-red-300"
+            >
+              Discard
+            </button>
+            {onDiscardSimilar ? (
+              <button
+                type="button"
+                disabled={discarding}
+                onClick={() => onDiscardSimilar(item)}
+                className="rounded-md border px-2 py-1 text-[10px] hover:bg-muted/50 disabled:opacity-50"
+              >
+                Discard similar
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
@@ -139,6 +219,25 @@ function NewsRow({ item }: { item: HubNewsItem }) {
         </details>
       ) : null}
 
+      {timeline.length ? (
+        <details className="mt-2 text-[11px]">
+          <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+            Event timeline ({timeline.length})
+          </summary>
+          <ul className="mt-1 space-y-1 pl-1">
+            {timeline.map((entry, idx) => (
+              <li key={`${entry.at || idx}-${entry.kind || "entry"}`} className="text-foreground/90">
+                <span className="font-medium capitalize">{entry.kind || "update"}</span>
+                {entry.at ? (
+                  <span className="text-muted-foreground"> · {entry.at.slice(0, 16).replace("T", " ")}</span>
+                ) : null}
+                {entry.summary ? <p className="text-muted-foreground line-clamp-2">{entry.summary}</p> : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
       {(item.tags?.topics?.length ?? 0) > 0 || (item.tags?.factors?.length ?? 0) > 0 ? (
         <div className="mt-2 flex flex-wrap gap-1">
           {(item.tags?.topics ?? []).slice(0, 4).map((topic) => (
@@ -157,8 +256,67 @@ function NewsRow({ item }: { item: HubNewsItem }) {
   );
 }
 
+function DiscardedRow({
+  item,
+  onUndo,
+  busy,
+}: {
+  item: HubDiscardedNewsItem;
+  onUndo?: (item: HubDiscardedNewsItem) => void;
+  busy?: boolean;
+}) {
+  const expired = item.expires_at ? new Date(item.expires_at).getTime() < Date.now() : false;
+  return (
+    <article className="rounded-lg border border-dashed bg-muted/20 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {provenanceBadge("discarded")}
+            {item.source_kind ? (
+              <span className="text-[10px] text-muted-foreground">{item.source_kind}</span>
+            ) : null}
+          </div>
+          <h3 className="text-[13px] font-semibold leading-snug">{item.title || "Untitled"}</h3>
+          <p className="text-[11px] text-muted-foreground">
+            {item.reason || "discarded"}
+            {item.discarded_at ? ` · ${item.discarded_at.slice(0, 16).replace("T", " ")}` : ""}
+          </p>
+          {item.expires_at ? (
+            <p className="text-[10px] text-muted-foreground">
+              Expires {item.expires_at.slice(0, 10)}
+              {expired ? " (expired)" : ""}
+            </p>
+          ) : null}
+        </div>
+        {onUndo ? (
+          <button
+            type="button"
+            disabled={busy || expired}
+            onClick={() => onUndo(item)}
+            className="rounded-md border px-2 py-1 text-[10px] hover:bg-muted/50 disabled:opacity-50"
+          >
+            Undo
+          </button>
+        ) : null}
+      </div>
+      {item.url ? (
+        <a
+          href={item.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-block truncate text-[11px] text-blue-600 hover:underline dark:text-blue-400"
+        >
+          {item.url}
+        </a>
+      ) : null}
+    </article>
+  );
+}
+
 export function Hub() {
   const [data, setData] = useState<HubStatusResponse | null>(null);
+  const [pipelineConfig, setPipelineConfig] = useState<HubNewsPipelineConfig | null>(null);
+  const [pipelineDraft, setPipelineDraft] = useState<HubNewsPipelineConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -168,8 +326,15 @@ export function Hub() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const res = await api.getHubStatus("NIFTY");
+      const [res, cfgRes] = await Promise.all([
+        api.getHubStatus("NIFTY"),
+        api.getHubNewsPipelineConfig().catch(() => null),
+      ]);
       setData(res);
+      if (cfgRes?.config) {
+        setPipelineConfig(cfgRes.config);
+        setPipelineDraft(cfgRes.config);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load hub status");
     } finally {
@@ -195,10 +360,63 @@ export function Hub() {
   const factorCoverage = hub?.factor_coverage;
 
   const filteredNews = useMemo(() => {
+    if (newsFilter === "discarded") {
+      return newsInventory?.discarded_items ?? [];
+    }
     const items = showQueue ? newsInventory?.staging_queue ?? [] : newsInventory?.items ?? [];
     if (newsFilter === "all") return items;
     return items.filter((item) => item.provenance === newsFilter);
-  }, [newsFilter, newsInventory?.items, newsInventory?.staging_queue, showQueue]);
+  }, [newsFilter, newsInventory?.discarded_items, newsInventory?.items, newsInventory?.staging_queue, showQueue]);
+
+  const resolveItemId = (item: HubNewsItem) =>
+    item.ref_id || item.event_id || item.id || "";
+
+  const resolveSourceKind = (item: HubNewsItem) =>
+    item.provenance === "staging" || String(item.ref_id || "").startsWith("ref:") ? "staging" : "distilled";
+
+  const discardNews = async (item: HubNewsItem, discardSimilar = false) => {
+    const itemId = resolveItemId(item);
+    if (!itemId) return;
+    if (
+      discardSimilar &&
+      !window.confirm(`Discard this headline and similar items (semantic + topic overlap)?`)
+    ) {
+      return;
+    }
+    setBusy(discardSimilar ? "discard-similar" : "discard");
+    setError(null);
+    try {
+      const res = await api.discardHubNews({
+        entity_id: "NIFTY",
+        item_id: itemId,
+        source_kind: resolveSourceKind(item),
+        discard_similar: discardSimilar,
+      });
+      if (discardSimilar && res.similar_preview?.similar_count != null) {
+        setError(null);
+      }
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Discard failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const undoDiscard = async (item: HubDiscardedNewsItem) => {
+    const discardId = item.discard_id || item.id;
+    if (!discardId) return;
+    setBusy("undo-discard");
+    setError(null);
+    try {
+      await api.undoHubNewsDiscard({ entity_id: "NIFTY", discard_id: discardId });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Undo failed");
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const drainStaging = async () => {
     setBusy("drain");
@@ -214,6 +432,55 @@ export function Hub() {
     } finally {
       setBusy(null);
     }
+  };
+
+  const runIngest = async (mode: "full" | "light") => {
+    setBusy(`ingest-${mode}`);
+    setError(null);
+    try {
+      await api.runHubNewsIngest({ mode, ticker: "NIFTY" });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `${mode} ingest failed`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const savePipelineConfig = async () => {
+    if (!pipelineDraft) return;
+    setBusy("save-pipeline");
+    setError(null);
+    try {
+      const res = await api.updateHubNewsPipelineConfig({
+        full_ingest_cron: pipelineDraft.full_ingest_cron,
+        light_ingest_cron: pipelineDraft.light_ingest_cron,
+        light_ingest_enabled: pipelineDraft.light_ingest_enabled,
+        entity_drain_cron: pipelineDraft.entity_drain_cron,
+        full_ingest_sources: pipelineDraft.full_ingest_sources,
+        light_ingest_sources: pipelineDraft.light_ingest_sources,
+        full_lookback_days: pipelineDraft.full_lookback_days,
+        light_lookback_days: pipelineDraft.light_lookback_days,
+        entity_batch_size: pipelineDraft.entity_batch_size,
+        cluster_threshold: pipelineDraft.cluster_threshold,
+        relevance_gate_enabled: pipelineDraft.relevance_gate_enabled,
+        relevance_min_confidence: pipelineDraft.relevance_min_confidence,
+        relevance_rule_first: pipelineDraft.relevance_rule_first,
+        discard_retention_days: pipelineDraft.discard_retention_days,
+      });
+      if (res.config) {
+        setPipelineConfig(res.config);
+        setPipelineDraft(res.config);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save pipeline config");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const patchDraft = (patch: Partial<HubNewsPipelineConfig>) => {
+    setPipelineDraft((prev) => ({ ...(prev ?? {}), ...patch }));
   };
 
   return (
@@ -268,6 +535,124 @@ export function Hub() {
         </div>
       ) : null}
 
+      {pipelineDraft ? (
+        <StatCard title="News pipeline schedule" className="col-span-full">
+          <p className="mb-3 text-[12px] text-muted-foreground">
+            Full ingest runs all sources once daily; light ingest keeps RSS and watcher fresh between runs.
+            Cron uses standard 5-field syntax. Overrides persist in hub config (env supplies defaults).
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="space-y-1 text-sm">
+              <span className="text-[11px] text-muted-foreground">Full ingest cron</span>
+              <input
+                type="text"
+                value={pipelineDraft.full_ingest_cron ?? ""}
+                onChange={(e) => patchDraft({ full_ingest_cron: e.target.value })}
+                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-[11px] text-muted-foreground">Light ingest cron</span>
+              <input
+                type="text"
+                value={pipelineDraft.light_ingest_cron ?? ""}
+                onChange={(e) => patchDraft({ light_ingest_cron: e.target.value })}
+                disabled={!pipelineDraft.light_ingest_enabled}
+                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] disabled:opacity-50"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-[11px] text-muted-foreground">Entity drain cron</span>
+              <input
+                type="text"
+                value={pipelineDraft.entity_drain_cron ?? ""}
+                onChange={(e) => patchDraft({ entity_drain_cron: e.target.value })}
+                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
+              />
+            </label>
+            <label className="flex items-center gap-2 self-end text-sm">
+              <input
+                type="checkbox"
+                checked={pipelineDraft.light_ingest_enabled ?? true}
+                onChange={(e) => patchDraft({ light_ingest_enabled: e.target.checked })}
+                className="rounded border-border"
+              />
+              Light ingest enabled
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-[11px] text-muted-foreground">Full sources</span>
+              <input
+                type="text"
+                value={pipelineDraft.full_ingest_sources ?? "all"}
+                onChange={(e) => patchDraft({ full_ingest_sources: e.target.value })}
+                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-[11px] text-muted-foreground">Light sources</span>
+              <input
+                type="text"
+                value={pipelineDraft.light_ingest_sources ?? "rss,watcher"}
+                onChange={(e) => patchDraft({ light_ingest_sources: e.target.value })}
+                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
+              />
+            </label>
+            <label className="flex items-center gap-2 self-end text-sm">
+              <input
+                type="checkbox"
+                checked={pipelineDraft.relevance_gate_enabled ?? true}
+                onChange={(e) => patchDraft({ relevance_gate_enabled: e.target.checked })}
+                className="rounded border-border"
+              />
+              Relevance gate (auto-discard irrelevant)
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-[11px] text-muted-foreground">Min relevance confidence</span>
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={pipelineDraft.relevance_min_confidence ?? 0.55}
+                onChange={(e) =>
+                  patchDraft({ relevance_min_confidence: parseFloat(e.target.value) || 0.55 })
+                }
+                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
+              />
+            </label>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => void runIngest("full")}
+              className="rounded-md border px-3 py-1.5 text-[12px] hover:bg-muted/50 disabled:opacity-50"
+            >
+              {busy === "ingest-full" ? "Running full…" : "Run full ingest now"}
+            </button>
+            <button
+              type="button"
+              disabled={busy !== null || !pipelineDraft.light_ingest_enabled}
+              onClick={() => void runIngest("light")}
+              className="rounded-md border px-3 py-1.5 text-[12px] hover:bg-muted/50 disabled:opacity-50"
+            >
+              {busy === "ingest-light" ? "Running light…" : "Run light ingest now"}
+            </button>
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => void savePipelineConfig()}
+              className="rounded-md bg-primary px-3 py-1.5 text-[12px] text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            >
+              {busy === "save-pipeline" ? "Saving…" : "Save schedule"}
+            </button>
+            {pipelineConfig?.config_path ? (
+              <span className="text-[10px] text-muted-foreground">Config: {pipelineConfig.config_path}</span>
+            ) : null}
+          </div>
+        </StatCard>
+      ) : null}
+
       <StatCard title="News & references" className="col-span-full">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -283,10 +668,14 @@ export function Hub() {
             <span className="tabular-nums">
               {newsInventory?.distilled_in_union ?? 0} distilled
             </span>
+            <span className="text-muted-foreground">·</span>
+            <span className="tabular-nums text-red-700 dark:text-red-300">
+              {newsInventory?.discarded_count ?? 0} discarded (30d)
+            </span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex rounded-lg border p-0.5 text-[11px]">
-              {(["all", "staging", "distilled"] as const).map((key) => (
+              {(["all", "staging", "distilled", "discarded"] as const).map((key) => (
                 <button
                   key={key}
                   type="button"
@@ -322,13 +711,31 @@ export function Hub() {
 
         {!filteredNews.length ? (
           <p className="rounded-lg border border-dashed bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
-            No headlines in this view. Run analysis with constituents refresh or wait for news ingest — pending refs
-            appear here with <span className="font-medium">staging</span> provenance until the worker distills them.
+            {newsFilter === "discarded"
+              ? "No discarded headlines in the retention window."
+              : "No headlines in this view. Run analysis with constituents refresh or wait for news ingest — pending refs appear here with staging provenance until the worker distills them."}
           </p>
+        ) : newsFilter === "discarded" ? (
+          <div className="grid gap-2 md:grid-cols-2">
+            {(filteredNews as HubDiscardedNewsItem[]).slice(0, 40).map((item) => (
+              <DiscardedRow
+                key={item.discard_id || item.id || item.title}
+                item={item}
+                onUndo={(row) => void undoDiscard(row)}
+                busy={busy !== null}
+              />
+            ))}
+          </div>
         ) : (
           <div className="grid gap-2 md:grid-cols-2">
-            {filteredNews.slice(0, 40).map((item) => (
-              <NewsRow key={item.id || item.ref_id || item.title} item={item} />
+            {(filteredNews as HubNewsItem[]).slice(0, 40).map((item) => (
+              <NewsRow
+                key={item.id || item.ref_id || item.title}
+                item={item}
+                onDiscard={(row) => void discardNews(row, false)}
+                onDiscardSimilar={(row) => void discardNews(row, true)}
+                discarding={busy !== null}
+              />
             ))}
           </div>
         )}

@@ -22,6 +22,8 @@ from src.scheduled_research.store import ScheduledResearchJobStore
 logger = logging.getLogger(__name__)
 
 DEFAULT_TICK_INTERVAL_MS = 60 * 1000
+DEFAULT_STARTUP_GRACE_MS = 30 * 1000
+STARTUP_GRACE_ENV = "SCHEDULED_RESEARCH_STARTUP_GRACE_MS"
 SCHEDULER_ENABLED_ENV = "VIBE_TRADING_ENABLE_SCHEDULER"
 
 NowFn = Callable[[], int]
@@ -38,6 +40,15 @@ _CRON_BOUNDS = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 6))
 def _now_ms() -> int:
     """Return current wall-clock time in epoch milliseconds."""
     return int(time.time() * 1000)
+
+
+def _startup_grace_ms() -> int:
+    """Delay before the first executor tick so the API can serve health checks."""
+    raw = os.getenv(STARTUP_GRACE_ENV, str(DEFAULT_STARTUP_GRACE_MS)).strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_STARTUP_GRACE_MS
 
 
 def scheduler_enabled_from_env(value: str | None = None) -> bool:
@@ -157,6 +168,7 @@ class ScheduledResearchExecutor:
         self._wakeup: asyncio.Event | None = None
         self._stopping = False
         self._recovered_stale_running = False
+        self._startup_backlog_deferred = False
 
     @property
     def is_running(self) -> bool:
@@ -171,7 +183,7 @@ class ScheduledResearchExecutor:
         if not self._enabled or self.is_running:
             return
         self._stopping = False
-        self.recover_stale_running()
+        self.recover_stale_running(self._now_fn())
         self._wakeup = asyncio.Event()
         loop = asyncio.get_running_loop()
         self._task = loop.create_task(self._run(), name="scheduled-research-executor")
@@ -205,8 +217,8 @@ class ScheduledResearchExecutor:
         Args:
             now_ms: Optional explicit reference time. Defaults to ``now_fn``.
         """
-        self.recover_stale_running()
         now = self._now_fn() if now_ms is None else now_ms
+        self.recover_stale_running(now)
         jobs = sorted(
             (job for job in self._store.load().values() if is_due(job, now)),
             key=lambda job: job.next_run_at,
@@ -214,31 +226,97 @@ class ScheduledResearchExecutor:
         for job in jobs:
             await self._run_job(job, now)
 
-    def recover_stale_running(self) -> int:
+    def recover_stale_running(self, now_ms: int | None = None) -> int:
         """Reset jobs left ``RUNNING`` by a previous executor process.
 
         This runs at most once per executor instance. Jobs that become
         ``RUNNING`` after this recovery step are treated as live in-flight work
         and remain skipped by :func:`is_due`.
+
+        Recovered jobs are scheduled for their next cron/interval slot instead
+        of firing immediately. Immediate re-dispatch after a crash (especially
+        heavy index calibration / factor backfill) was causing API OOM/SIGKILL
+        loops that looked like an unstable ``trade up`` stack.
         """
         if self._recovered_stale_running:
             return 0
 
+        now = self._now_fn() if now_ms is None else now_ms
         jobs = self._store.load()
         recovered = 0
         for job in jobs.values():
             if job.status != JobStatus.RUNNING:
                 continue
             job.status = JobStatus.PENDING
+            try:
+                job.next_run_at = next_due(job.schedule, now)
+            except Exception:
+                logger.warning(
+                    "could not advance schedule for recovered job %s; deferring one tick",
+                    job.id,
+                    exc_info=True,
+                )
+                job.next_run_at = now + self._tick_interval_ms
             recovered += 1
-            logger.warning("recovering stale scheduled research job %s from running to pending", job.id)
+            logger.warning(
+                "recovering stale scheduled research job %s from running to pending (next_run_at=%s)",
+                job.id,
+                job.next_run_at,
+            )
 
         if recovered:
             self._store.save(jobs)
         self._recovered_stale_running = True
         return recovered
 
+    def defer_startup_backlog(self, now_ms: int | None = None) -> int:
+        """Push overdue pending jobs to their next schedule slot (once per process).
+
+        After a crash or long downtime many cron jobs share ``next_run_at`` in
+        the past. The first executor tick would otherwise run them back-to-back
+        and spike memory in the Vibe API process.
+        """
+        if self._startup_backlog_deferred:
+            return 0
+
+        now = self._now_fn() if now_ms is None else now_ms
+        jobs = self._store.load()
+        deferred = 0
+        for job in jobs.values():
+            if job.status != JobStatus.PENDING:
+                continue
+            if job.next_run_at > now:
+                continue
+            try:
+                job.next_run_at = next_due(job.schedule, now)
+            except Exception:
+                logger.warning(
+                    "could not defer overdue job %s on startup; delaying one tick",
+                    job.id,
+                    exc_info=True,
+                )
+                job.next_run_at = now + self._tick_interval_ms
+            deferred += 1
+            logger.info(
+                "deferring overdue scheduled job %s on startup (next_run_at=%s)",
+                job.id,
+                job.next_run_at,
+            )
+
+        if deferred:
+            self._store.save(jobs)
+        self._startup_backlog_deferred = True
+        return deferred
+
     async def _run(self) -> None:
+        grace_ms = _startup_grace_ms()
+        if grace_ms > 0:
+            logger.info(
+                "scheduled research executor waiting %ss before first tick",
+                grace_ms / 1000.0,
+            )
+            await self._sleep_or_wake(grace_ms)
+        self.defer_startup_backlog(self._now_fn())
         while not self._stopping:
             try:
                 await self.tick(self._now_fn())
