@@ -117,6 +117,12 @@ _OPENAI_CODEX_CAPABILITIES = ProviderCapabilities(
 
 _PROVIDERS: dict[str, ProviderCapabilities] = {
     "openai": ProviderCapabilities("openai", "OPENAI_API_KEY", "OPENAI_BASE_URL"),
+    "anthropic": ProviderCapabilities(
+        "anthropic",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_BASE_URL",
+        native_adapter_package="langchain-anthropic",
+    ),
     "openrouter": ProviderCapabilities(
         "openrouter",
         "OPENROUTER_API_KEY",

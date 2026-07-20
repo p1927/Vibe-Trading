@@ -28,6 +28,24 @@ def _dedupe_finish_reason(raw: str) -> str:
     )
 
 
+def _text_content(content: Any) -> str:
+    """Normalize provider text or content blocks to plain assistant text."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and isinstance(block.get("text"), str):
+            parts.append(block["text"])
+        elif isinstance(getattr(block, "text", None), str):
+            parts.append(block.text)
+    return "".join(parts)
+
+
 @dataclass
 class ToolCallRequest:
     """Tool call request returned by the LLM.
@@ -215,7 +233,7 @@ def _parse_dsml_tool_calls(content: Any) -> list[ToolCallRequest]:
 class ChatLLM:
     """LLM chat client with function calling support.
 
-    Uses build_llm() to obtain a ChatOpenAI instance and bind_tools() to attach tool definitions.
+    Uses build_llm() to obtain a provider model and bind_tools() to attach tool definitions.
 
     Attributes:
         model_name: Model name.
@@ -283,9 +301,10 @@ class ChatLLM:
             for chunk in llm.stream(messages, config=config):
                 if should_cancel and should_cancel():
                     break
-                if chunk.content and on_text_chunk:
+                chunk_text = _text_content(chunk.content)
+                if chunk_text and on_text_chunk:
                     if possible_dsml_text:
-                        pending_text += chunk.content
+                        pending_text += chunk_text
                         if _is_possible_dsml_tool_call_prefix(pending_text):
                             pass
                         else:
@@ -293,7 +312,7 @@ class ChatLLM:
                             on_text_chunk(pending_text)
                             pending_text = ""
                     else:
-                        on_text_chunk(chunk.content)
+                        on_text_chunk(chunk_text)
                 reasoning = getattr(chunk, "additional_kwargs", {}).get("reasoning_content")
                 if reasoning and not chunk.content and on_reasoning_chunk:
                     on_reasoning_chunk(reasoning)
@@ -391,22 +410,30 @@ class ChatLLM:
                 )
             )
 
-        dsml_tool_calls = [] if native_tool_calls else _parse_dsml_tool_calls(ai_message.content)
+        content = _text_content(ai_message.content)
+        dsml_tool_calls = [] if native_tool_calls else _parse_dsml_tool_calls(content)
         tool_calls = native_tool_calls or dsml_tool_calls
 
+        raw_finish_reason = (
+            ai_message.response_metadata.get("finish_reason")
+            or ai_message.response_metadata.get("stop_reason")
+            or "stop"
+        )
         finish_reason = (
             "tool_calls"
             if dsml_tool_calls
+            else "tool_calls"
+            if raw_finish_reason == "tool_use"
             else _dedupe_finish_reason(
-                ai_message.response_metadata.get("finish_reason", "stop")
+                raw_finish_reason
             )
         )
         content_filter_triggered = is_content_filter_triggered(
-            ai_message.response_metadata.get("finish_reason")
+            raw_finish_reason
         )
 
         return LLMResponse(
-            content="" if dsml_tool_calls else ai_message.content,
+            content="" if dsml_tool_calls else content,
             tool_calls=tool_calls,
             reasoning_content=additional_kwargs.get("reasoning_content"),
             finish_reason=finish_reason,
