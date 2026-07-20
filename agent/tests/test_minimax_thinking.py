@@ -58,7 +58,10 @@ def test_minimax_build_llm_requests_reasoning_split() -> None:
         with patch.object(llm_mod, "ChatOpenAIWithReasoning", _FakeChatOpenAI):
             build_llm()
 
-    assert captured["extra_body"] == {"reasoning_split": True}
+    assert captured["extra_body"] == {
+        "reasoning_split": True,
+        "thinking": {"type": "adaptive"},
+    }
 
 
 class _FakeChunk:
