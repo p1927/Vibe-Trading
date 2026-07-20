@@ -630,7 +630,11 @@ def _calc_options_metrics(
         )
     else:
         growth = final_raw / float(initial_cash)
-        candidate = float(growth ** (bars_per_year / (n - 1)) - 1)
+        # Explosive paths (e.g. 1m bars) can OverflowError before isfinite.
+        try:
+            candidate = float(growth ** (bars_per_year / (n - 1)) - 1)
+        except OverflowError:
+            candidate = float("inf")
         if np.isfinite(candidate):
             ann_ret = candidate
         else:

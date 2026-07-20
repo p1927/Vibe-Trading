@@ -88,3 +88,24 @@ def test_non_positive_bars_per_year_keeps_all_metrics_json_safe() -> None:
     assert metrics["sharpe"] is None
     assert metrics["sortino"] is None
     json.dumps(metrics, allow_nan=False)
+
+
+def test_minute_bar_annualization_does_not_overflow() -> None:
+    """1m OKX bars_per_year can OverflowError on modest equity growth."""
+    equity = pd.Series(np.linspace(1e5, 1.2e5, 100))
+    metrics = _calc_options_metrics(equity, 1e5, [], bars_per_year=525_600)
+
+    assert metrics["final_value"] == 120_000.0
+    assert metrics["total_return"] == pytest.approx(0.2)
+    assert metrics["annual_return"] is None
+    assert any("non-finite" in warning for warning in metrics["warnings"])
+    json.dumps(metrics, allow_nan=False)
+
+
+def test_daily_bar_annualization_still_finite() -> None:
+    equity = pd.Series(np.linspace(1e5, 1.2e5, 100))
+    metrics = _calc_options_metrics(equity, 1e5, [], bars_per_year=252)
+
+    assert metrics["annual_return"] is not None
+    assert np.isfinite(metrics["annual_return"])
+    json.dumps(metrics, allow_nan=False)
