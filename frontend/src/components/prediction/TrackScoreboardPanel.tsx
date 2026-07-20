@@ -1,4 +1,4 @@
-import { FlaskConical, Loader2, PanelRight } from "lucide-react";
+import { Loader2, PanelRight, Play } from "lucide-react";
 import { useState } from "react";
 import type { IndexTrackScoreboardReport } from "@/lib/api";
 import { fmtHitRate, fmtPct } from "@/lib/trackScoreboardUtils";
@@ -19,8 +19,8 @@ interface Props {
   recomputing?: boolean;
   error?: string | null;
   onRefresh?: () => void;
-  onRunForecastLab?: () => void;
-  forecastLabLoading?: boolean;
+  onRunAnalysis?: () => void;
+  runningAnalysis?: boolean;
   horizonDays?: number;
   onHorizonChange?: (days: number) => void;
   progressPanelOpen?: boolean;
@@ -33,8 +33,8 @@ export function TrackScoreboardPanel({
   recomputing,
   error,
   onRefresh,
-  onRunForecastLab,
-  forecastLabLoading,
+  onRunAnalysis,
+  runningAnalysis,
   horizonDays = 14,
   onHorizonChange,
   progressPanelOpen,
@@ -58,7 +58,7 @@ export function TrackScoreboardPanel({
             </p>
             <p className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-              Loading cached scoreboard, then running walk-forward if needed…
+              Loading cached scoreboard…
             </p>
           </div>
           {onToggleProgressPanel ? (
@@ -90,8 +90,37 @@ export function TrackScoreboardPanel({
 
   if (!report || report.status === "error") {
     return (
-      <div className="rounded-xl border bg-card p-6 text-[12px] text-muted-foreground">
-        {error ?? report?.message ?? "Track scoreboard unavailable — recompute or run index research first."}
+      <div className="space-y-4 rounded-xl border bg-card p-6">
+        <p className="text-[12px] text-muted-foreground">
+          {error ?? report?.message ?? "No cached scoreboard yet — Run analysis for live tracks or Recompute scoreboard for walk-forward history."}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          {onRunAnalysis ? (
+            <button
+              type="button"
+              onClick={onRunAnalysis}
+              disabled={runningAnalysis || loading}
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {runningAnalysis ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Play className="h-3.5 w-3.5" />
+              )}
+              {runningAnalysis ? "Running analysis…" : "Run analysis"}
+            </button>
+          ) : null}
+          {onRefresh ? (
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={loading || runningAnalysis}
+              className="rounded-md border border-border/60 px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/50 disabled:opacity-50"
+            >
+              {loading ? "Recomputing…" : "Recompute scoreboard"}
+            </button>
+          ) : null}
+        </div>
       </div>
     );
   }
@@ -136,27 +165,27 @@ export function TrackScoreboardPanel({
             Activity
           </button>
         ) : null}
-        {onRunForecastLab ? (
+        {onRunAnalysis ? (
           <button
             type="button"
-            onClick={onRunForecastLab}
-            disabled={forecastLabLoading || loading}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/50 disabled:opacity-50"
-            title="Run forecast lab tracks for today's prediction (manual — not part of Run analysis)"
+            onClick={onRunAnalysis}
+            disabled={runningAnalysis || loading}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            title="Run index analysis with forecast lab tracks (same pipeline as Analysis tab)"
           >
-            {forecastLabLoading ? (
+            {runningAnalysis ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
-              <FlaskConical className="h-3.5 w-3.5" />
+              <Play className="h-3.5 w-3.5" />
             )}
-            {forecastLabLoading ? "Forecast lab…" : "Run forecast lab"}
+            {runningAnalysis ? "Running analysis…" : "Run analysis"}
           </button>
         ) : null}
         {onRefresh ? (
           <button
             type="button"
             onClick={onRefresh}
-            disabled={loading || forecastLabLoading}
+            disabled={loading || runningAnalysis}
             className="rounded-md border border-border/60 px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/50 disabled:opacity-50"
           >
             {loading ? "Recomputing…" : "Recompute scoreboard"}
@@ -237,7 +266,7 @@ export function TrackScoreboardPanel({
 
       {report.live_enrichment_note ? (
         <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
-          {report.live_enrichment_note} — run index analysis with INDEX_PREDICTION_LAB_ENABLED=1 for live tracks.
+          {report.live_enrichment_note} — use Run analysis to refresh live tracks from the hub.
         </div>
       ) : null}
 

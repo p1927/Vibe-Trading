@@ -103,8 +103,6 @@ export function Prediction() {
   const [missHighlightDate, setMissHighlightDate] = useState<string | null>(null);
   const [simulation, setSimulation] = useState<IndexSimulationResult | null>(null);
   const [refreshConstituents, setRefreshConstituents] = useState(false);
-  const [forecastLabLoading, setForecastLabLoading] = useState(false);
-  const [forecastLabError, setForecastLabError] = useState<string | null>(null);
   const [backtestError, setBacktestError] = useState<string | null>(null);
   const [includeBottomUpBacktest, setIncludeBottomUpBacktest] = useState(false);
   const [trackScoreboard, setTrackScoreboard] = useState<IndexTrackScoreboardReport | null>(null);
@@ -482,29 +480,13 @@ export function Prediction() {
     });
   };
 
-  const handleRunForecastLab = useCallback(() => {
-    setForecastLabError(null);
-    setForecastLabLoading(true);
-    void api
-      .runIndexForecastLab("NIFTY", horizonDays, "tracks_only", true)
-      .then((res) => {
-        if (res.status !== "ok") {
-          setForecastLabError(res.message || "Forecast lab failed");
-          return;
-        }
-        if (res.artifact) {
-          applyArtifact(res.artifact);
-        } else {
-          void reload();
-        }
-      })
-      .catch((e) => {
-        setForecastLabError(e instanceof Error ? e.message : "Forecast lab request failed");
-      })
-      .finally(() => {
-        setForecastLabLoading(false);
-      });
-  }, [applyArtifact, horizonDays, reload]);
+  const handleScoreboardRunAnalysis = useCallback(() => {
+    setTrackScoreboardPanelOpen(true);
+    setPipelinePanelOpen(true);
+    void runAnalysis(horizonDays, false).then(() => {
+      void loadTrackScoreboardCached();
+    });
+  }, [horizonDays, runAnalysis, loadTrackScoreboardCached, setPipelinePanelOpen]);
 
   const handleDerivativesLoadState = useCallback((count: number, err: string | null) => {
     setDerivativesSeriesCount(count);
@@ -594,10 +576,10 @@ export function Prediction() {
 
         {predictionMode === SCOREBOARD_MODE ? (
           <>
-            {forecastLabError ? (
+            {error && running === false ? (
               <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
                 <AlertTriangle className="h-4 w-4 shrink-0" />
-                Forecast lab: {forecastLabError}
+                {error}
               </div>
             ) : null}
             <TrackScoreboardPanel
@@ -608,8 +590,8 @@ export function Prediction() {
               horizonDays={horizonDays}
               onHorizonChange={setHorizonDays}
               onRefresh={() => void loadTrackScoreboard(true)}
-              onRunForecastLab={handleRunForecastLab}
-              forecastLabLoading={forecastLabLoading}
+              onRunAnalysis={handleScoreboardRunAnalysis}
+              runningAnalysis={running}
               progressPanelOpen={trackScoreboardPanelOpen}
               onToggleProgressPanel={() => setTrackScoreboardPanelOpen((v) => !v)}
             />
