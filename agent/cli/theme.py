@@ -183,9 +183,19 @@ def _make_console() -> Console:
     )
 
 
-_console: Console = _make_console()
-_dark: bool = _is_dark_terminal(_console)
-_styles: _ThemeStyles = _build_styles(_dark, _NO_COLOR or _console.color_system is None)
+_console: Console | None = None
+_dark: bool | None = None
+_styles: _ThemeStyles | None = None
+
+
+def _ensure_theme() -> None:
+    """Build terminal theme styles on first use (after env bootstrap)."""
+    global _dark, _styles
+    if _styles is not None:
+        return
+    console = get_console()
+    _dark = _is_dark_terminal(console)
+    _styles = _build_styles(_dark, _NO_COLOR or console.color_system is None)
 
 
 def get_console() -> Console:
@@ -194,13 +204,16 @@ def get_console() -> Console:
     Returns:
         The single :class:`Console` everyone in ``agent/cli`` writes to.
     """
-
+    global _console
+    if _console is None:
+        _console = _make_console()
     return _console
 
 
 def is_dark() -> bool:
     """Return ``True`` if dark-mode styles are active."""
-
+    _ensure_theme()
+    assert _dark is not None
     return _dark
 
 
@@ -217,19 +230,16 @@ class Theme:
         >>> get_console().print("Vibe-Trading", style=Theme.primary)
     """
 
-    primary: Final[Style] = _styles.primary
-    primary_dim: Final[Style] = _styles.primary_dim
-    success: Final[Style] = _styles.success
-    danger: Final[Style] = _styles.danger
-    warning: Final[Style] = _styles.warning
-    info: Final[Style] = _styles.info
-    muted: Final[Style] = _styles.muted
-    bold: Final[Style] = _styles.bold
-    label: Final[Style] = _styles.label
-    accent_bg: Final[Style] = _styles.accent_bg
-
-    # Convenience aliases used by intro / stream
-    brand_hex: Final[str] = BRAND_ORANGE_DARK if _dark else BRAND_ORANGE_LIGHT
+    @classmethod
+    def __getattr__(cls, name: str) -> Style | str:
+        _ensure_theme()
+        assert _styles is not None and _dark is not None
+        if name == "brand_hex":
+            return BRAND_ORANGE_DARK if _dark else BRAND_ORANGE_LIGHT
+        try:
+            return getattr(_styles, name)
+        except AttributeError as exc:
+            raise AttributeError(f"{cls.__name__}.{name}") from exc
 
 
 __all__ = [

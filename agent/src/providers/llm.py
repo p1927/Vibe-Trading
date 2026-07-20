@@ -438,25 +438,18 @@ def _load_env_file(path: Path) -> None:
 
 
 def _ensure_dotenv() -> None:
-    """Load `.env` from the first found candidate path."""
+    """Ensure environment is bootstrapped (legacy name retained for callers)."""
     global _dotenv_loaded
-    if _dotenv_loaded:
+    from src.config.bootstrap import bootstrap_environment, is_bootstrapped
+
+    if is_bootstrapped():
+        _dotenv_loaded = True
         return
-    loaded = None
-    for candidate in _ENV_CANDIDATES:
-        if candidate.exists():
-            _load_env_file(candidate)
-            loaded = candidate
-            break
-    if loaded is not None:
-        reset_env_config()
+    bootstrap_environment()
     _dotenv_loaded = True
-    # P08 R1: one-time, behavior-preserving diagnostic so a stale or
-    # shadowed .env is observable instead of costing hours. The path is
-    # redacted to a symbolic slot label and the API key is never logged.
+    loaded = None
     logger.info(
-        "dotenv resolved from %s | provider=%s model=%s base=%s",
-        _redact_env_source(loaded),
+        "dotenv resolved via bootstrap | provider=%s model=%s base=%s",
         get_env_config().llm.langchain_provider,
         get_env_config().llm.langchain_model_name or "(unset)",
         _redact_base_url_for_log(os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")),  # noqa: env-gate — diagnostic display
@@ -481,7 +474,6 @@ def _sync_provider_env() -> None:
     api_key_env=None means no key required (e.g. Ollama local).
     """
     _ensure_dotenv()
-    reset_env_config()
     provider = get_env_config().llm.langchain_provider.lower()
 
     if provider in {"openai-codex", "openai_codex"}:

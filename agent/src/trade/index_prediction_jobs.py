@@ -7,10 +7,6 @@ from typing import Any
 
 from src.scheduled_research.index_jobs import (
     INDEX_JOB_TYPES,
-    INDEX_MONITOR_ENABLE_SCHEDULER_ENV,
-    INDEX_RESEARCH_ENABLE_SCHEDULER_ENV,
-    is_index_monitor_scheduler_enabled,
-    is_index_scheduler_enabled,
     register_default_index_jobs,
 )
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob
@@ -40,11 +36,25 @@ def _scheduler_master_enabled() -> bool:
 
 
 def _env_flags() -> dict[str, Any]:
+    from src.config.accessor import get_env_config
+
+    tuning = get_env_config().agent_tuning
     return {
-        "vibe_trading_enable_scheduler": _scheduler_master_enabled(),
-        "index_research_enable_scheduler": is_index_scheduler_enabled(),
-        "index_monitor_enable_scheduler": is_index_monitor_scheduler_enabled(),
+        "vibe_trading_enable_scheduler": bool(tuning.vibe_trading_enable_scheduler),
+        "index_research_enable_scheduler": bool(tuning.index_research_enable_scheduler),
+        "index_monitor_enable_scheduler": bool(tuning.index_monitor_enable_scheduler),
     }
+
+
+def _executor_is_running() -> bool:
+    if not _scheduler_master_enabled():
+        return False
+    try:
+        from src.api.scheduled_routes import _get_scheduled_research_executor
+
+        return bool(_get_scheduled_research_executor().is_running)
+    except Exception:
+        return False
 
 
 def _serialize_job(job: ScheduledResearchJob) -> dict[str, Any]:
@@ -78,10 +88,14 @@ def list_index_prediction_jobs(store: ScheduledResearchJobStore | None = None) -
         if str(job.config.get("job_type") or "") in INDEX_JOB_TYPES
     ]
     jobs.sort(key=lambda j: j.id)
+    master_env = _scheduler_master_enabled()
+    executor_running = _executor_is_running()
     return {
         "status": "ok",
         "env": _env_flags(),
-        "master_scheduler_running": _scheduler_master_enabled(),
+        "master_scheduler_env_enabled": master_env,
+        "master_scheduler_running": executor_running,
+        "executor_is_running": executor_running,
         "jobs": [_serialize_job(job) for job in jobs],
     }
 

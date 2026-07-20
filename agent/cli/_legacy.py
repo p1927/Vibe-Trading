@@ -5381,6 +5381,10 @@ def cmd_dev(
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint returning a process exit code."""
+    from src.config.bootstrap import bootstrap_environment
+
+    bootstrap_environment()
+
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     parser = _build_parser()
     try:

@@ -2292,7 +2292,9 @@ export interface IndexPredictionJobsResponse {
     index_research_enable_scheduler?: boolean;
     index_monitor_enable_scheduler?: boolean;
   };
+  master_scheduler_env_enabled?: boolean;
   master_scheduler_running?: boolean;
+  executor_is_running?: boolean;
   jobs?: IndexPredictionJob[];
   job?: IndexPredictionJob | null;
   message?: string;

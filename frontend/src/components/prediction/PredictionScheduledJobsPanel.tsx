@@ -20,7 +20,8 @@ function fmtNextRun(ms: number | undefined): string {
 export function PredictionScheduledJobsPanel() {
   const [jobs, setJobs] = useState<IndexPredictionJob[]>([]);
   const [env, setEnv] = useState<IndexPredictionJobsResponse["env"]>({});
-  const [masterOn, setMasterOn] = useState(false);
+  const [masterEnvOn, setMasterEnvOn] = useState(false);
+  const [executorRunning, setExecutorRunning] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +33,8 @@ export function PredictionScheduledJobsPanel() {
       const res = await api.getIndexPredictionJobs();
       setJobs(res.jobs ?? []);
       setEnv(res.env ?? {});
-      setMasterOn(Boolean(res.master_scheduler_running));
+      setMasterEnvOn(Boolean(res.master_scheduler_env_enabled ?? res.env?.vibe_trading_enable_scheduler));
+      setExecutorRunning(Boolean(res.executor_is_running ?? res.master_scheduler_running));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load scheduled jobs");
     } finally {
@@ -88,10 +90,18 @@ export function PredictionScheduledJobsPanel() {
         <span
           className={cn(
             "rounded-full px-2 py-0.5",
-            masterOn ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" : "bg-muted text-muted-foreground",
+            masterEnvOn ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" : "bg-muted text-muted-foreground",
           )}
         >
-          Master scheduler: {masterOn ? "ON" : "OFF"} (VIBE_TRADING_ENABLE_SCHEDULER)
+          Master scheduler: {masterEnvOn ? "ENABLED" : "DISABLED"} (VIBE_TRADING_ENABLE_SCHEDULER)
+        </span>
+        <span
+          className={cn(
+            "rounded-full px-2 py-0.5",
+            executorRunning ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400" : "bg-muted text-muted-foreground",
+          )}
+        >
+          Executor: {executorRunning ? "RUNNING" : masterEnvOn ? "NOT STARTED" : "OFF"}
         </span>
         <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">
           Index jobs: {env?.index_research_enable_scheduler ? "registered" : "not registered"}
@@ -101,10 +111,14 @@ export function PredictionScheduledJobsPanel() {
         </span>
       </div>
 
-      {!masterOn ? (
+      {!masterEnvOn ? (
         <p className="mb-3 text-[11px] text-amber-700 dark:text-amber-400">
-          Master scheduler is off — jobs are listed but will not run until VIBE_TRADING_ENABLE_SCHEDULER=1 and the API
-          is restarted.
+          Master scheduler is disabled in env — jobs are listed but will not run until
+          VIBE_TRADING_ENABLE_SCHEDULER=1 and the API is restarted.
+        </p>
+      ) : !executorRunning ? (
+        <p className="mb-3 text-[11px] text-amber-700 dark:text-amber-400">
+          Master scheduler is enabled but the executor is not running — restart the API or check startup logs.
         </p>
       ) : null}
 

@@ -8,6 +8,10 @@ infrastructure lives in ``src.api.{security,models,helpers,state}``.
 
 from __future__ import annotations
 
+from src.config.bootstrap import bootstrap_environment
+
+bootstrap_environment()
+
 import logging
 from pathlib import Path
 from typing import Any, Dict
@@ -339,6 +343,8 @@ from src.api.scheduled_routes import (  # noqa: E402, F401
 
 def serve_main(argv: list[str] | None = None) -> int:
     """Start the API server from CLI-style arguments."""
+    bootstrap_environment()
+
     import argparse
     import subprocess
     import uvicorn
