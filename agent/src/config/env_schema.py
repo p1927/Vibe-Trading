@@ -20,6 +20,7 @@ Usage::
 from __future__ import annotations
 
 import os
+
 from typing import Annotated, Any
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
@@ -184,11 +185,36 @@ class DataConfig(_EnvBase):
 class OcrConfig(_EnvBase):
     """OCR engine selection and model configuration.
 
-    Sources: ``src/tools/ocr/engine.py``, ``src/tools/ocr/qwen_vision_ocr.py``.
+    Sources: ``src/tools/ocr/engine.py``, ``src/tools/ocr/llm_vision_ocr.py``.
     """
 
     vibe_trading_ocr_engine: str = Field(alias="VIBE_TRADING_OCR_ENGINE", default="auto")
-    vibe_trading_ocr_qwen_model: str = Field(alias="VIBE_TRADING_OCR_QWEN_MODEL", default="")
+    vibe_trading_ocr_llm_model: str = Field(alias="VIBE_TRADING_OCR_LLM_MODEL", default="")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _alias_legacy_env_vars(cls, data: dict) -> dict:
+        """Backward compat: VIBE_TRADING_OCR_QWEN_MODEL → VIBE_TRADING_OCR_LLM_MODEL.
+
+        Issue #547 requires a deprecation warning when the legacy env var is
+        present. Pydantic alias validation runs before field assignment, so we
+        read the old env var here and forward it to the new field.
+        """
+        import logging
+
+        old_val = os.getenv("VIBE_TRADING_OCR_QWEN_MODEL", "")
+        new_val = (
+            data.get("vibe_trading_ocr_llm_model")
+            or os.getenv("VIBE_TRADING_OCR_LLM_MODEL", "")
+        )
+        if old_val and not new_val:
+            logging.getLogger(__name__).warning(
+                "VIBE_TRADING_OCR_QWEN_MODEL is deprecated; "
+                "use VIBE_TRADING_OCR_LLM_MODEL instead. "
+                "Alias will be removed in a future release."
+            )
+            data["vibe_trading_ocr_llm_model"] = old_val
+        return data
 
 
 # ---------------------------------------------------------------------------
