@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -303,11 +304,61 @@ def _autonomous_agent_proposal_frame_from_tool_result(event: Any) -> Optional[st
     return frame.to_sse()
 
 
+_WIDGET_DEDUP_WINDOW_MS = 15 * 60 * 1000
+_recent_trade_plan_widgets: dict[str, list[tuple[int, str, str]]] = {}
+
+
+def _trade_widget_strategy_key(widget: dict[str, Any]) -> str:
+    rec = widget.get("recommended") if isinstance(widget.get("recommended"), dict) else {}
+    return str(
+        rec.get("strategy")
+        or rec.get("name")
+        or widget.get("strategy")
+        or widget.get("widget_kind")
+        or ""
+    ).strip().lower()
+
+
+def _should_skip_duplicate_trade_widget(session_id: str, widget: dict[str, Any]) -> bool:
+    """Suppress duplicate trade_plan.widget SSE within 15m for same underlying+strategy."""
+    if not session_id:
+        return False
+    underlying = str(widget.get("underlying") or "").upper()
+    strategy = _trade_widget_strategy_key(widget)
+    if not underlying:
+        return False
+    now_ms = int(time.time() * 1000)
+    recent = [
+        row
+        for row in _recent_trade_plan_widgets.get(session_id, [])
+        if now_ms - row[0] < _WIDGET_DEDUP_WINDOW_MS
+    ]
+    for ts, u, s in recent:
+        if u == underlying and s == strategy:
+            return True
+    recent.append((now_ms, underlying, strategy))
+    _recent_trade_plan_widgets[session_id] = recent[-30:]
+    return False
+
+
 def _trade_plan_widget_frame_from_tool_result(event: Any) -> Optional[str]:
     """Build trade_plan.widget SSE frame from options widget MCP tool_result."""
     from src.api.trade_routes import trade_plan_widget_frame_from_tool_result
 
-    return trade_plan_widget_frame_from_tool_result(event)
+    frame = trade_plan_widget_frame_from_tool_result(event)
+    if frame is None:
+        return None
+    session_id = str(getattr(event, "session_id", "") or "")
+    try:
+        payload_line = frame.split("\n", 1)[-1]
+        if payload_line.startswith("data:"):
+            payload_line = payload_line[5:].strip()
+        widget = json.loads(payload_line)
+    except (json.JSONDecodeError, IndexError, TypeError):
+        return frame
+    if isinstance(widget, dict) and _should_skip_duplicate_trade_widget(session_id, widget):
+        return None
+    return frame
 
 
 _LIVE_ACTION_ID_RE = re.compile(r'"audit_id"\s*:\s*"(la_[0-9a-zA-Z]+)"')

@@ -72,7 +72,6 @@ def trade_plan_widget_frame_from_tool_result(event: Any) -> Optional[str]:
     tool = str(data.get("tool") or "")
     if tool not in _WIDGET_TOOL_NAMES or data.get("status") != "ok":
         return None
-        return None
     preview = str(data.get("preview") or "")
     widget_id = _widget_id_from_preview(preview)
     if not widget_id:
@@ -680,6 +679,13 @@ class IndexForecastLabResponse(BaseModel):
 
 
 class IndexTrackScoreboardResponse(BaseModel):
+    status: str
+    ticker: str = ""
+    report: Dict[str, Any] | None = None
+    message: str = ""
+
+
+class IndexExecutionBacktestResponse(BaseModel):
     status: str
     ticker: str = ""
     report: Dict[str, Any] | None = None
@@ -1627,6 +1633,51 @@ def get_index_track_scoreboard(
         return IndexTrackScoreboardResponse(status=status, ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction track-scoreboard failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/index-prediction/execution-backtest", response_model=IndexExecutionBacktestResponse)
+def get_index_execution_backtest(
+    ticker: str = "NIFTY",
+    track: str = "quant_ridge",
+    strategy: str = "futures_trend",
+    refresh: bool = False,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexExecutionBacktestResponse:
+    """Load or compute execution simulation from track scoreboard."""
+    from trade_integrations.dataflows.index_research.prediction_algorithms.config import exec_sim_enabled
+
+    if not exec_sim_enabled():
+        return IndexExecutionBacktestResponse(
+            status="disabled",
+            ticker=(ticker or "NIFTY").strip().upper(),
+            message="Set INDEX_PREDICTION_EXEC_SIM_ENABLED=1",
+        )
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from trade_integrations.dataflows.index_research.execution_sim.runner import (
+            execution_backtest_path,
+            run_execution_backtest,
+        )
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        path = execution_backtest_path(key)
+        if refresh or not path.is_file():
+            report = run_execution_backtest(
+                ticker=key,
+                track_id=(track or "quant_ridge").strip(),
+                strategy=(strategy or "futures_trend").strip(),
+                persist=True,
+            )
+        else:
+            import json
+
+            report = json.loads(path.read_text(encoding="utf-8"))
+        status = str(report.get("status") or "ok")
+        return IndexExecutionBacktestResponse(status=status, ticker=key, report=report)
+    except Exception as exc:
+        logger.exception("index-prediction execution-backtest failed for %s", key)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

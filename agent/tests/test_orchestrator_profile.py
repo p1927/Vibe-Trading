@@ -9,58 +9,53 @@ from src.session.orchestrator_profile import (
 )
 
 
-class _DummyTool(BaseTool):
-    name = "dummy"
-    description = "dummy"
-    parameters = {"type": "object", "properties": {}}
-
-    def execute(self, **kwargs):
-        return "ok"
-
-
-class _ProposeTool(BaseTool):
-    name = "propose_autonomous_agent"
-    description = "propose"
-    parameters = {"type": "object", "properties": {}}
-
-    def execute(self, **kwargs):
-        return "{}"
-
-
-class _MandateTool(BaseTool):
-    name = "propose_mandate_profiles"
-    description = "mandate"
-    parameters = {"type": "object", "properties": {}}
-
-    def execute(self, **kwargs):
-        return "{}"
-
-
-class _McpBrowseTool(BaseTool):
-    name = "mcp_openalgo_get_stock_browse"
-    description = "browse"
-    parameters = {"type": "object", "properties": {}}
-
-    def execute(self, **kwargs):
-        return "{}"
-
-
 def test_is_orchestrator_session() -> None:
     assert is_orchestrator_session({"session_kind": "autonomous_orchestrator"})
     assert not is_orchestrator_session({"session_kind": "autonomous_agent"})
     assert not is_orchestrator_session(None)
 
 
-class _SearchIndiaTool(BaseTool):
-    name = "search_india_symbol"
-    description = "search"
-    parameters = {"type": "object", "properties": {}}
-
-    def execute(self, **kwargs):
-        return "{}"
-
-
 def test_filter_registry_for_orchestrator() -> None:
+    class _DummyTool(BaseTool):
+        name = "dummy"
+        description = "dummy"
+        parameters = {"type": "object", "properties": {}}
+
+        def execute(self, **kwargs):
+            return "ok"
+
+    class _ProposeTool(BaseTool):
+        name = "propose_autonomous_agent"
+        description = "propose"
+        parameters = {"type": "object", "properties": {}}
+
+        def execute(self, **kwargs):
+            return "{}"
+
+    class _MandateTool(BaseTool):
+        name = "propose_mandate_profiles"
+        description = "mandate"
+        parameters = {"type": "object", "properties": {}}
+
+        def execute(self, **kwargs):
+            return "{}"
+
+    class _McpBrowseTool(BaseTool):
+        name = "mcp_openalgo_get_stock_browse"
+        description = "browse"
+        parameters = {"type": "object", "properties": {}}
+
+        def execute(self, **kwargs):
+            return "{}"
+
+    class _SearchIndiaTool(BaseTool):
+        name = "search_india_symbol"
+        description = "search"
+        parameters = {"type": "object", "properties": {}}
+
+        def execute(self, **kwargs):
+            return "{}"
+
     reg = ToolRegistry()
     reg.register(_ProposeTool())
     reg.register(_SearchIndiaTool())
