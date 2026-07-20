@@ -215,10 +215,25 @@ def execute_basket(
 ) -> ExecuteBasketResponse:
     """Place a multi-leg basket order via OpenAlgo REST (after user confirms in widget)."""
     orders = list(body.orders or [])
+    widget: dict | None = None
     if not orders and body.widget_id:
         widget = load_trade_widget(body.widget_id)
         if not widget:
             raise HTTPException(status_code=404, detail="Widget not found")
+        agent_id = str(widget.get("autonomous_agent_id") or widget.get("agent_id") or "").strip()
+        if agent_id:
+            try:
+                from trade_integrations.execution.enforce import is_bridge_autonomous_agent
+
+                if is_bridge_autonomous_agent(agent_id):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Direct execute-basket blocked for autonomous agents — use plan approval flow",
+                    )
+            except HTTPException:
+                raise
+            except ImportError:
+                pass
         for step in widget.get("implementation_steps") or []:
             if step.get("action") == "execute_basket" and step.get("payload"):
                 orders = (step["payload"] or {}).get("orders") or []

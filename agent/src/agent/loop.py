@@ -1415,6 +1415,20 @@ class AgentLoop:
             self._emit("tool_heartbeat", payload)
 
         t0 = _time.perf_counter()
+        try:
+            from trade_integrations.execution.enforce import assert_direct_order_tool_allowed
+
+            cfg = self._session_config or {}
+            assert_direct_order_tool_allowed(
+                tool_name=tool_name,
+                session_kind=str(cfg.get("session_kind") or ""),
+                autonomous_agent_id=str(cfg.get("autonomous_agent_id") or ""),
+            )
+        except PermissionError as exc:
+            return json.dumps({"status": "error", "error": str(exc)}), 0
+        except ImportError:
+            pass
+
         _tool_timeout = _tool_timeout_seconds()
         timeout = _tool_timeout if _tool_timeout > 0 else None
         timeout_label = _format_timeout(timeout) if timeout is not None else ""
