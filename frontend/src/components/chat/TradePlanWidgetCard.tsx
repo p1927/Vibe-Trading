@@ -132,6 +132,9 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
   const [executed, setExecuted] = useState(false);
   const [execMode, setExecMode] = useState<TradeExecutionMode | null>(null);
   const [legs, setLegs] = useState<StrategyLeg[]>([]);
+  const [draggedCharges, setDraggedCharges] = useState<TradePlanWidget["charges"] | null>(null);
+  const [chargesLoading, setChargesLoading] = useState(false);
+  const [chargesEstimate, setChargesEstimate] = useState(false);
   const baselineLegsRef = useRef<TradePlanLeg[]>([]);
   const widgetIdRef = useRef(widget.widget_id);
 
@@ -201,7 +204,8 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
           net_max_loss: rankedRow.net_max_loss,
         }
       : rec;
-  const charges = activeVariant?.charges || widget.charges || {};
+  const baseCharges = activeVariant?.charges || widget.charges || {};
+  const charges = draggedCharges ?? baseCharges;
   const pnlOverTime = activeVariant?.payoff_over_time || widget.payoff_over_time || {};
   const steps = activeVariant?.implementation_steps || widget.implementation_steps || [];
 
@@ -294,6 +298,44 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
     return () => setTradeWidgetAdjustment(null);
   }, [isOptions, widget.widget_id, widget.underlying, agentPick, rec.name, legs, payoffInputs]);
 
+  useEffect(() => {
+    setDraggedCharges(null);
+    setChargesEstimate(false);
+    setChargesLoading(false);
+  }, [widget.widget_id, selectedScenario, selectedStrategyName]);
+
+  useEffect(() => {
+    if (!isOptions || !legsModified || legs.length === 0 || !resolvedSpot) {
+      if (!legsModified) {
+        setDraggedCharges(null);
+        setChargesEstimate(false);
+      }
+      return;
+    }
+    const tradeLegs = strategyLegsToTradePlanLegs(legs);
+    const timer = window.setTimeout(() => {
+      setChargesLoading(true);
+      api
+        .fetchTradeCharges({
+          legs: tradeLegs,
+          spot: resolvedSpot,
+          include_exit: true,
+        })
+        .then((res) => {
+          if (res.charges) {
+            setDraggedCharges(res.charges);
+            setChargesEstimate(false);
+          }
+        })
+        .catch(() => {
+          setDraggedCharges(null);
+          setChargesEstimate(true);
+        })
+        .finally(() => setChargesLoading(false));
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [isOptions, legsModified, legs, resolvedSpot]);
+
   const handleStrikeChange = useCallback(
     (legId: string, strike: number) => {
       setLegs((prev) =>
@@ -315,6 +357,8 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
 
   const resetStrikes = useCallback(() => {
     if (!resolvedSpot || baselineLegsRef.current.length === 0) return;
+    setDraggedCharges(null);
+    setChargesEstimate(false);
     setLegs(
       tradePlanLegsToStrategyLegs(
         baselineLegsRef.current,
@@ -867,6 +911,12 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
           <div className="flex items-center gap-2 font-semibold mb-1">
             <Wallet className="h-3.5 w-3.5" />
             Charges &amp; costs
+            {chargesLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+            {chargesEstimate && !chargesLoading && (
+              <span className="text-[9px] font-normal text-amber-600 dark:text-amber-400">
+                charges estimate
+              </span>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-1 font-mono text-[11px] text-muted-foreground">
             <div>Net debit/credit: {formatInr(charges.net_debit_credit)}</div>

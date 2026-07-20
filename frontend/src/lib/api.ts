@@ -501,6 +501,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  fetchTradeCharges: (body: TradeChargesRequest) =>
+    request<TradeChargesResponse>("/trade/charges", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   getTradeWidget: (widgetId: string) =>
     request<TradePlanWidget>(`/trade/widget/${encodeURIComponent(widgetId)}`),
   getTradeExecutionMode: () => request<TradeExecutionMode>("/trade/execution-mode"),
@@ -1585,6 +1590,19 @@ export interface ExecuteTradeBasketResponse {
   results?: Array<Record<string, unknown>>;
   message?: string;
   execution_mode?: string;
+}
+
+export interface TradeChargesRequest {
+  legs: Array<Record<string, unknown>>;
+  spot?: number;
+  broker_preset?: string;
+  include_exit?: boolean;
+}
+
+export interface TradeChargesResponse {
+  status: string;
+  charges?: TradePlanWidget["charges"];
+  message?: string;
 }
 
 export interface TradeExecutionMode {

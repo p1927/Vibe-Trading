@@ -103,6 +103,19 @@ class ExecuteBasketResponse(BaseModel):
     execution_mode: str = "live"
 
 
+class TradeChargesRequest(BaseModel):
+    legs: List[Dict[str, Any]] = Field(default_factory=list)
+    spot: float | None = None
+    broker_preset: str = "zerodha"
+    include_exit: bool = True
+
+
+class TradeChargesResponse(BaseModel):
+    status: str
+    charges: Dict[str, Any] = Field(default_factory=dict)
+    message: str = ""
+
+
 class ExecutionModeResponse(BaseModel):
     mode: str
     analyze_mode: bool
@@ -206,6 +219,41 @@ def execution_mode(
     except HTTPException:
         analyze = paper_env
     return _resolve_execution_mode(analyze, paper_env)
+
+
+@trade_router.post("/charges", response_model=TradeChargesResponse)
+def trade_charges(
+    body: TradeChargesRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> TradeChargesResponse:
+    """Compute per-leg and round-trip charges for adjusted strategy legs."""
+    legs = list(body.legs or [])
+    if not legs:
+        raise HTTPException(status_code=400, detail="legs array required")
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.dataflows.options_research.payoff_charges import (
+            calculate_charges,
+            calculate_charges_with_exit,
+        )
+
+        spot = float(body.spot or 0.0)
+        if body.include_exit and spot > 0:
+            charges = calculate_charges_with_exit(
+                legs,
+                spot=spot,
+                broker_preset=body.broker_preset,
+            )
+        else:
+            charges = calculate_charges(legs, broker_preset=body.broker_preset)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("trade charges failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return TradeChargesResponse(status="success", charges=charges)
 
 
 @trade_router.post("/execute-basket", response_model=ExecuteBasketResponse)
@@ -1205,20 +1253,22 @@ def discard_hub_news(
             discard_similar_items,
             preview_discard_similar,
         )
-        from trade_integrations.hub_storage.news_events_store import get_event
-        from trade_integrations.hub_storage.news_staging_store import list_pending_refs
+        from trade_integrations.dataflows.news_hub_bridge import (
+            get_distilled_event,
+            list_pending_staging_refs,
+        )
 
         reason = str(body.reason or "manual discard")
         if body.discard_similar:
             anchor: dict[str, Any] = {}
             iid = str(body.item_id or "").strip()
             if body.source_kind == "staging" or iid.startswith("ref:"):
-                for ref in list_pending_refs(ticker=key, limit=10_000):
+                for ref in list_pending_staging_refs(ticker=key, limit=10_000):
                     if str(ref.get("ref_id") or "") == iid:
                         anchor = {**ref, "provenance": "staging"}
                         break
             else:
-                ev = get_event(iid)
+                ev = get_distilled_event(iid)
                 if ev:
                     anchor = {**ev, "provenance": "distilled_event"}
             if not anchor:
