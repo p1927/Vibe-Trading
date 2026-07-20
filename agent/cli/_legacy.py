@@ -3908,10 +3908,52 @@ def cmd_connector_check(
     return EXIT_SUCCESS
 
 
+def _first_present(row: dict[str, Any], *keys: str) -> Any:
+    """Return the first key whose value is not None (0/'' are kept), else None.
+
+    Connectors expose different result schemas (IBKR-style ``position``/``avg_cost``
+    vs Longbridge-style ``quantity``/``cost_price``); the shared CLI renderers use
+    this to read whichever key a given connector emitted without dropping a real
+    zero quantity via a falsy ``or`` chain.
+    """
+    for key in keys:
+        value = row.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _print_connector_balances(result: dict[str, Any]) -> int:
+    """Render the multi-currency balances table returned by ``broker_sdk`` connectors."""
+    cell = lambda v: "" if v is None else str(v)  # noqa: E731
+    table = Table(title=f"Account Balances · {result.get('profile_id')}", box=box.SIMPLE_HEAVY, show_lines=False)
+    table.add_column("Currency")
+    table.add_column("Net Assets", justify="right")
+    table.add_column("Total Cash", justify="right")
+    table.add_column("Buy Power", justify="right")
+    table.add_column("Init Margin", justify="right")
+    table.add_column("Maint Margin", justify="right")
+    for row in result.get("balances", []):
+        table.add_row(
+            cell(row.get("currency")),
+            cell(row.get("net_assets")),
+            cell(row.get("total_cash")),
+            cell(row.get("buy_power")),
+            cell(row.get("init_margin")),
+            cell(row.get("maintenance_margin")),
+        )
+    console.print(table)
+    return EXIT_SUCCESS
+
+
 def _print_connector_account(result: dict[str, Any]) -> int:
     accounts = ", ".join(result.get("accounts", [])) or "(none)"
     console.print(f"Accounts: [cyan]{rich_escape(accounts)}[/cyan]")
     rows = result.get("summary", [])
+    # broker_sdk connectors (Longbridge, …) return a ``balances`` list instead of
+    # IBKR-style ``summary`` tag/value rows; render that when present (#735).
+    if not rows and result.get("balances"):
+        return _print_connector_balances(result)
     if not rows:
         console.print("[dim]No account summary returned.[/dim]")
         return EXIT_SUCCESS
@@ -3984,12 +4026,16 @@ def cmd_connector_positions(
     table.add_column("Avg Cost", justify="right")
     table.add_column("Currency")
     for row in rows:
+        # Tolerate both IBKR-style and broker_sdk (Longbridge, …) schemas (#735):
+        # position→quantity, avg_cost→cost_price, sec_type→market.
+        qty = _first_present(row, "position", "quantity")
+        avg_cost = _first_present(row, "avg_cost", "cost_price")
         table.add_row(
             str(row.get("account") or ""),
             str(row.get("local_symbol") or row.get("symbol") or ""),
-            str(row.get("sec_type") or ""),
-            str(row.get("position") or ""),
-            str(row.get("avg_cost") or ""),
+            str(row.get("sec_type") or row.get("market") or ""),
+            "" if qty is None else str(qty),
+            "" if avg_cost is None else str(avg_cost),
             str(row.get("currency") or ""),
         )
     console.print(table)
