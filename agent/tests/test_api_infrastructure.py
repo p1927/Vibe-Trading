@@ -268,6 +268,24 @@ def test_write_env_values_updates_last_duplicate_active_key(tmp_path):
     assert lines[-1] == "K=new"
 
 
+def test_write_env_values_skips_commented_keys(tmp_path):
+    """A commented `# KEY=` must not steal an upsert from a later active KEY (#738)."""
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "# LANGCHAIN_PROVIDER=openrouter\nLANGCHAIN_PROVIDER=deepseek\nOTHER=1\n",
+        encoding="utf-8",
+    )
+
+    helpers._write_env_values(env_file, {"LANGCHAIN_PROVIDER": "ollama"})
+
+    text = env_file.read_text(encoding="utf-8")
+    assert "# LANGCHAIN_PROVIDER=openrouter\n" in text
+    assert "LANGCHAIN_PROVIDER=ollama\n" in text
+    assert text.count("LANGCHAIN_PROVIDER=") == 2  # one comment + one active
+    assert helpers._read_env_values(env_file)["LANGCHAIN_PROVIDER"] == "ollama"
+    assert helpers._read_env_values(env_file)["OTHER"] == "1"
+
+
 def test_strip_env_value_quoted_hash_preserves_value():
     """Quoted dotenv values may contain ' #'; do not treat as comment."""
     assert helpers._strip_env_value('"secret # still-part-of-value"') == "secret # still-part-of-value"
