@@ -202,11 +202,17 @@ def _start_scheduled_research_executor() -> None:
         register_default_hub_capture_jobs(_get_scheduled_research_store())
     _register_persisted_autonomous_agent_jobs()
     try:
-        from src.scheduled_research.autonomous_bootstrap import resume_pending_bootstraps
+        from src.scheduled_research.autonomous_bootstrap import (
+            resume_pending_bootstraps,
+            resume_stale_pending_bootstraps,
+        )
 
         resumed = resume_pending_bootstraps()
         if resumed:
             logger.info("resumed %d pending autonomous agent bootstrap(s)", resumed)
+        stale = resume_stale_pending_bootstraps()
+        if stale:
+            logger.info("re-scheduled %d stale pending autonomous bootstrap(s)", stale)
     except Exception:
         logger.exception("failed to resume pending autonomous bootstraps")
     try:

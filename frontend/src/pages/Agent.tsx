@@ -338,6 +338,7 @@ export function Agent({
   const [liveItems, setLiveItems] = useState<LiveItem[]>([]);
   const [committedMandates, setCommittedMandates] = useState<Record<string, MandateCommitted>>({});
   const [committedAutonomous, setCommittedAutonomous] = useState<Record<string, { agent_id?: string; name?: string }>>({});
+  const [orchestratorMissingProposal, setOrchestratorMissingProposal] = useState(false);
   const [liveHalted, setLiveHalted] = useState<LiveHalted | null>(null);
   const [halting, setHalting] = useState(false);
   /* Bumped to force an immediate live-status re-poll on a live event
@@ -776,10 +777,13 @@ export function Agent({
         }
 
         if (isOrchestratorView && sid) {
+          let foundProposal = false;
           const applyLatestProposal = (proposal: AutonomousAgentProposal | null | undefined) => {
             if (!proposal?.proposal_id || !["ready", "incomplete"].includes(proposal.status ?? "")) return false;
+            setOrchestratorMissingProposal(false);
             setLiveItems((items) => upsertAutonomousProposalItems(items, proposal, sid));
             scrollToBottom();
+            foundProposal = true;
             return true;
           };
           try {
@@ -791,6 +795,18 @@ export function Agent({
             }
           } catch {
             /* proposal poll fallback is best-effort */
+          }
+          if (!foundProposal) {
+            setLiveItems((items) => {
+              const hasCard = items.some(
+                (item) =>
+                  item.kind === "autonomous_proposal" &&
+                  !item.proposal.committed_agent_id &&
+                  !item.proposal.superseded,
+              );
+              setOrchestratorMissingProposal(!hasCard);
+              return items;
+            });
           }
         }
 
@@ -869,6 +885,7 @@ export function Agent({
         touch();
         const proposal = d as unknown as AutonomousAgentProposal;
         if (!proposal.proposal_id || !["ready", "incomplete"].includes(proposal.status ?? "")) return;
+        setOrchestratorMissingProposal(false);
         setLiveItems((items) => upsertAutonomousProposalItems(items, proposal, sid));
         scrollToBottom();
       },
@@ -1627,6 +1644,26 @@ export function Agent({
             ) : (
               <WelcomeScreen onExample={runPrompt} />
             )
+          )}
+
+          {isOrchestratorView && orchestratorMissingProposal && (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-xs text-amber-900 dark:text-amber-100">
+              <p className="font-medium">No proposal card yet</p>
+              <p className="mt-1 text-amber-800/90 dark:text-amber-200/90">
+                The orchestrator must call <span className="font-mono">propose_autonomous_agent</span> to create the
+                confirmation card. Prose alone does not render a card.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setOrchestratorMissingProposal(false);
+                  runPrompt("Please call propose_autonomous_agent with the settings we discussed.");
+                }}
+                className="mt-2 rounded-lg border border-amber-600/30 px-2.5 py-1 text-[11px] font-medium hover:bg-amber-500/10"
+              >
+                Ask to create the card
+              </button>
+            </div>
           )}
 
           {timelineRows.map((row, rowIdx) => {
