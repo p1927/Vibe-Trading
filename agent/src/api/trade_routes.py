@@ -805,6 +805,10 @@ class HubNewsPipelineConfigUpdate(BaseModel):
     light_ingest_cron: str | None = None
     light_ingest_enabled: bool | None = None
     entity_drain_cron: str | None = None
+    entity_maintenance_cron: str | None = None
+    entity_drain_continuous_cron: str | None = None
+    entity_drain_continuous_enabled: bool | None = None
+    entity_backpressure_threshold: int | None = None
     full_ingest_sources: str | None = None
     light_ingest_sources: str | None = None
     full_lookback_days: int | None = None
@@ -1262,6 +1266,40 @@ def patch_hub_news_pipeline_config(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("hub news pipeline config update failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.post("/hub/news-pipeline/maintenance", response_model=HubStagingDrainResponse)
+def run_hub_news_maintenance_now(
+    entity_id: str = "NIFTY",
+    lookback_days: int = 365,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubStagingDrainResponse:
+    """Run full entity maintainer: repair, backfill, compact, cleanup, rollup."""
+    key = entity_id.strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.dataflows.index_research.news_entity_worker import run_hub_news_entity_job
+
+        summary = run_hub_news_entity_job(
+            {
+                "ticker": key,
+                "mode": "maintenance",
+                "batch_size": 200,
+                "lookback_days": max(7, min(lookback_days, 730)),
+            }
+        )
+        if summary.get("pipeline_paused"):
+            return HubStagingDrainResponse(
+                status="paused",
+                summary=summary,
+                message=str(summary.get("pause_reason") or "News distillation pipeline is paused."),
+            )
+        return HubStagingDrainResponse(status="ok", summary=summary)
+    except Exception as exc:
+        logger.exception("hub news maintenance failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

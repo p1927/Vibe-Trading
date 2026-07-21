@@ -43,6 +43,7 @@ _RECOVERY_ERROR_MARKERS = (
 
 _JOB_DISPATCH_TIMEOUT_MS: dict[str, int] = {
     "index_plan_refresh": 10 * 60 * 1000,
+    "index_factor_snapshot": 60 * 60 * 1000,
     "hub_news_entity": 20 * 60 * 1000,
     "hub_news_ingest": 10 * 60 * 1000,
 }
