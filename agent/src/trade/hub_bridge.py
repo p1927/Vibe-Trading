@@ -20,8 +20,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_debate_running: set[str] = set()
-
 session_widget_emitted: dict[str, dict[str, float]] = {}
 WIDGET_EMIT_DEDUP_SECONDS = 10 * 60
 
@@ -534,26 +532,20 @@ def load_debate_artifact(ticker: str) -> dict[str, Any] | None:
 
 
 def is_debate_running(ticker: str) -> bool:
-    return ticker.strip().upper() in _debate_running
+    ensure_trade_stack_path()
+    from trade_integrations.bridge.agent_debate import is_debate_running as _is_running
+
+    return _is_running(ticker)
 
 
 def run_agent_debate_sync(ticker: str, *, asset_type: str = "stock") -> dict[str, Any]:
-    key = ticker.strip().upper()
-    if key in _debate_running:
-        cached = load_debate_artifact(key)
-        if cached:
-            return cached
-        raise RuntimeError(f"Agent debate already running for {key}")
-    _debate_running.add(key)
-    try:
-        ensure_trade_stack_path()
-        from trade_integrations.bridge.agent_debate import run_agent_debate
-        from trade_integrations.bridge.hub_context import infer_debate_asset_type
+    ensure_trade_stack_path()
+    from trade_integrations.bridge.agent_debate import run_agent_debate_locked
+    from trade_integrations.bridge.hub_context import infer_debate_asset_type
 
-        resolved_asset = infer_debate_asset_type(key, asset_type)
-        return run_agent_debate(key, asset_type=resolved_asset)
-    finally:
-        _debate_running.discard(key)
+    key = ticker.strip().upper()
+    resolved_asset = infer_debate_asset_type(key, asset_type)
+    return run_agent_debate_locked(key, asset_type=resolved_asset)
 
 
 def prefetch_research_for_message(
