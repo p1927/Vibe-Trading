@@ -21,7 +21,6 @@ from types import MappingProxyType
 from src.memory.persistent import (
     MemoryEntry,
     PersistentMemory,
-    _is_hotness_decay_enabled as is_hotness_decay_enabled,
     compute_importance,
     memory_lock,
 )

@@ -77,9 +77,6 @@ HALF_LIFE_DAYS = 14.0
 _DECAY_LAMBDA = math.log(2) / HALF_LIFE_DAYS
 _ACCESS_BOOST = 0.1
 
-_HOTNESS_HALF_LIFE_DAYS = 7.0
-_HOTNESS_DECAY_RATE = math.log(2) / _HOTNESS_HALF_LIFE_DAYS
-
 
 def compute_importance(
     quality_score: float, access_count: int, days_since_last_access: float
@@ -95,25 +92,18 @@ def compute_importance(
     return min(1.0, max(0.0, raw))
 
 
-def compute_hotness(access_count: int, days_since_last_access: float) -> float:
-    """Sigmoid-smoothed hotness combining frequency and recency.
-
-    Alternative decay formula for high-frequency trading context where
-    14-day half-life is too slow. Uses 7-day half-life with sigmoid
-    smoothing to prevent access_count from dominating.
-
-    Inspired by Open-Viking (via AutoMemory reference hub).
-    """
-    frequency_signal = 1 / (1 + math.exp(-math.log1p(access_count)))
-    recency_signal = math.exp(-_HOTNESS_DECAY_RATE * days_since_last_access)
-    return frequency_signal * recency_signal
-
-
-def _is_hotness_decay_enabled() -> bool:
-    """Check if hotness decay is enabled via VT_MEMORY_HOTNESS_DECAY env var."""
+def _is_decay_enabled() -> bool:
+    """Check if importance decay is enabled via VT_MEMORY_DECAY env var."""
     from src.config.accessor import get_env_config
 
-    return get_env_config().memory.hotness_decay_enabled
+    return get_env_config().memory.decay_enabled
+
+
+def _is_quality_enabled() -> bool:
+    """Check if quality scoring is enabled via VT_MEMORY_QUALITY env var."""
+    from src.config.accessor import get_env_config
+
+    return get_env_config().memory.quality_enabled
 
 
 # Script ranges for non-Latin tokenization and slug generation.
@@ -274,11 +264,7 @@ class PersistentMemory:
             last_acc = _parse_timestamp(meta.get("last_accessed"), mtime)
             now = _time.time()
             days_since = max(0.0, (now - last_acc) / 86400.0)
-            # Select decay formula based on feature flag
-            if _is_hotness_decay_enabled():
-                importance = compute_hotness(ac, days_since)
-            else:
-                importance = compute_importance(qs, ac, days_since)
+            importance = compute_importance(qs, ac, days_since)
 
             entries.append(MemoryEntry(
                 path=path,
@@ -348,7 +334,9 @@ class PersistentMemory:
                 + len(query_tokens & body_tokens)
             )
             if token_score > 0:
-                final_score = token_score * (0.5 + 0.5 * entry.importance)
+                final_score = token_score
+                if _is_decay_enabled():
+                    final_score *= (0.5 + 0.5 * entry.importance)
                 scored.append((final_score, entry))
 
         scored.sort(key=lambda x: (-x[0], -x[1].modified_at))
@@ -379,7 +367,7 @@ class PersistentMemory:
     def add(self, name: str, content: str, memory_type: str = "project",
             description: str = "") -> Optional[Path]:
         """Save a new memory entry and update the index."""
-        if self.is_duplicate(name, description, content):
+        if _is_quality_enabled() and self.is_duplicate(name, description, content):
             logger.debug(
                 "Duplicate memory write blocked within %.0fs window: %s",
                 DEDUP_WINDOW_SECONDS,

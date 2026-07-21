@@ -356,11 +356,6 @@ class MemoryConfig(_EnvBase):
         alias="VT_MEMORY_DECAY",
         description="Enable importance decay computation",
     )
-    hotness_decay_enabled: EnvBool = Field(
-        default=False,
-        alias="VT_MEMORY_HOTNESS_DECAY",
-        description="Use alternative hotness decay (7-day half-life) instead of Ebbinghaus",
-    )
 
 
 # ---------------------------------------------------------------------------

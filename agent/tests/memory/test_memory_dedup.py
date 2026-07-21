@@ -116,8 +116,9 @@ class TestIsDuplicate:
 class TestAddDedup:
     """Integration tests: dedup check within the add() method."""
 
-    def test_duplicate_add_returns_none(self, tmp_path: Path) -> None:
+    def test_duplicate_add_returns_none(self, tmp_path: Path, monkeypatch) -> None:
         """Second add() with same name+desc within window returns None."""
+        monkeypatch.setenv("VT_MEMORY_QUALITY", "1")
         pm = PersistentMemory(memory_dir=tmp_path)
         result1 = pm.add("My Note", "body content", description="important")
         assert result1 is not None
@@ -126,8 +127,9 @@ class TestAddDedup:
         result2 = pm.add("My Note", "body content", description="important")
         assert result2 is None
 
-    def test_duplicate_add_does_not_create_second_file(self, tmp_path: Path) -> None:
+    def test_duplicate_add_does_not_create_second_file(self, tmp_path: Path, monkeypatch) -> None:
         """Blocked duplicate does not write a second .md file."""
+        monkeypatch.setenv("VT_MEMORY_QUALITY", "1")
         pm = PersistentMemory(memory_dir=tmp_path)
         pm.add("Unique Entry", "content", description="desc")
         # Count .md files (excluding MEMORY.md)
@@ -148,8 +150,9 @@ class TestAddDedup:
         assert r2 is not None
         assert r1 != r2
 
-    def test_add_after_window_expires(self, tmp_path: Path) -> None:
+    def test_add_after_window_expires(self, tmp_path: Path, monkeypatch) -> None:
         """Same content can be written again after dedup window expires."""
+        monkeypatch.setenv("VT_MEMORY_QUALITY", "1")
         pm = PersistentMemory(memory_dir=tmp_path)
 
         with patch("src.memory.persistent._time.time", return_value=1000.0):

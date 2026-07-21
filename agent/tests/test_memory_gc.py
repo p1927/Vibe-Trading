@@ -179,8 +179,9 @@ class TestRunGC:
 
 
 class TestFindRelevantImportanceWeighting:
-    def test_higher_importance_ranks_higher(self, tmp_path: Path) -> None:
+    def test_higher_importance_ranks_higher(self, tmp_path: Path, monkeypatch) -> None:
         """Entry with more metadata overlap should rank above body-only match."""
+        monkeypatch.setenv("VT_MEMORY_DECAY", "1")
         # "trading strategy" appears in title/description (metadata, 2x weight)
         _create_memory_file(
             tmp_path, "trading strategy notes", content="general notes",
@@ -197,8 +198,9 @@ class TestFindRelevantImportanceWeighting:
         # Metadata-weighted entry ranks first
         assert results[0].title == "trading strategy notes"
 
-    def test_keywords_participate_in_scoring(self, tmp_path: Path) -> None:
+    def test_keywords_participate_in_scoring(self, tmp_path: Path, monkeypatch) -> None:
         """Keywords in frontmatter should contribute to retrieval score."""
+        monkeypatch.setenv("VT_MEMORY_DECAY", "1")
         _create_memory_file(
             tmp_path, "kw-entry", content="unrelated body",
             keywords=["momentum", "alpha"], entry_id="kw1234",
