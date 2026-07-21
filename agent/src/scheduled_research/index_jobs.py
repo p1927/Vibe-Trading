@@ -112,6 +112,14 @@ def _compact_result_summary(result: dict[str, Any] | None) -> dict[str, Any]:
                 for k in ("status", "error", "skipped", "repaired", "groups_merged", "rows_removed")
                 if k in part
             }
+    finalize = result.get("cold_tier_finalize")
+    if isinstance(finalize, dict):
+        summary["cold_tier_finalize"] = {
+            "status": finalize.get("status"),
+            "reason": finalize.get("reason"),
+            "failed_steps": finalize.get("failed_steps") or [],
+            "trading_day": finalize.get("trading_day"),
+        }
     totals = result.get("totals")
     if isinstance(totals, dict):
         summary["totals"] = dict(totals)
@@ -127,6 +135,42 @@ def _attach_job_result_summary(job: ScheduledResearchJob, result: dict[str, Any]
             **summary,
             "warning": "one or more pipeline stages reported errors",
         }
+
+
+def _index_factor_snapshot_had_errors(summary: dict[str, Any]) -> bool:
+    if summary.get("status") == "error":
+        return True
+    ohlcv = summary.get("ohlcv") or {}
+    if isinstance(ohlcv, dict) and ohlcv.get("status") == "error":
+        return True
+    enrich = summary.get("factor_enrichment") or {}
+    if enrich.get("status") == "error" or enrich.get("reason") == "no_nifty_history":
+        return True
+    for key in ("participant_oi", "macro_daily", "cache_flows", "repo_flows", "panel"):
+        step = summary.get(key) or {}
+        if isinstance(step, dict) and step.get("status") in {"error", "partial"}:
+            return True
+    finalize = summary.get("cold_tier_finalize") or {}
+    if isinstance(finalize, dict):
+        if finalize.get("status") in {"partial", "error", "skipped"}:
+            return True
+        for step_name, step in finalize.items():
+            if step_name in {"status", "failed_steps", "trading_day", "reason"}:
+                continue
+            if isinstance(step, dict) and step.get("status") in {"error", "partial"}:
+                return True
+    return False
+
+
+def _should_skip_cold_tier_finalize(summary: dict[str, Any]) -> tuple[bool, str]:
+    if summary.get("status") == "error":
+        return True, "persist_failed"
+    enrich = summary.get("factor_enrichment") or {}
+    if enrich.get("status") == "error":
+        return True, "factor_enrichment_failed"
+    if enrich.get("reason") == "no_nifty_history":
+        return True, "no_nifty_history"
+    return False, ""
 
 
 def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -204,21 +248,33 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
         summary["factor_enrichment"] = {"status": "error", "reason": str(exc)}
 
     check_pipeline_cancel()
-    try:
-        from trade_integrations.dataflows.index_research.history_ingest import finalize_daily_cold_tier
+    skip_finalize, skip_reason = _should_skip_cold_tier_finalize(summary)
+    if skip_finalize:
+        from trade_integrations.dataflows.company_research.market import india_trading_date_iso
 
-        flow_lookback = int(cfg.get("flow_lookback_days") or 7)
-        finalize_summary = finalize_daily_cold_tier(
-            flow_lookback_days=flow_lookback,
-            macro_lookback_days=int(cfg.get("macro_lookback_days") or 14),
-            panel_tail_days=int(cfg.get("panel_tail_days") or 14),
-        )
-        summary["cold_tier_finalize"] = finalize_summary
-    except Exception as exc:
-        _reraise_pipeline_cancel(exc)
-        logger.warning("cold tier finalize in factor snapshot failed: %s", exc)
-        summary["cold_tier_finalize"] = {"status": "error", "reason": str(exc)}
+        summary["cold_tier_finalize"] = {
+            "status": "skipped",
+            "reason": skip_reason,
+            "trading_day": india_trading_date_iso()[:10],
+        }
+    else:
+        try:
+            from trade_integrations.dataflows.index_research.history_ingest import finalize_daily_cold_tier
 
+            flow_lookback = int(cfg.get("flow_lookback_days") or 7)
+            finalize_summary = finalize_daily_cold_tier(
+                flow_lookback_days=flow_lookback,
+                macro_lookback_days=int(cfg.get("macro_lookback_days") or 14),
+                panel_tail_days=int(cfg.get("panel_tail_days") or 14),
+            )
+            summary["cold_tier_finalize"] = finalize_summary
+        except Exception as exc:
+            _reraise_pipeline_cancel(exc)
+            logger.warning("cold tier finalize in factor snapshot failed: %s", exc)
+            summary["cold_tier_finalize"] = {"status": "error", "reason": str(exc)}
+
+    if _index_factor_snapshot_had_errors(summary):
+        summary["had_errors"] = True
     return summary
 
 
@@ -427,6 +483,7 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_INDEX_FACTOR_SNAPSHOT:
         summary = run_index_factor_snapshot_job(job.config)
+        _attach_job_result_summary(job, summary)
         logger.info("index factor snapshot completed for job %s: %s", job.id, summary)
         return
     if job_type == JOB_TYPE_INDEX_RESEARCH:
@@ -509,6 +566,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "skip_constituents": True,
                 "participant_oi_days": 1,
                 "live_fetch_days": 1,
+                "dispatch_timeout_ms": 3_600_000,
             },
         ),
         ScheduledResearchJob(
@@ -606,7 +664,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         ScheduledResearchJob(
             id="nifty-hub-news-entity-maintenance",
             prompt="Heavy hub news maintenance (repair, backfill, compact)",
-            schedule=os.getenv("HUB_NEWS_ENTITY_MAINTENANCE_CRON", "0 3 * * 0").strip(),
+            schedule=os.getenv("HUB_NEWS_ENTITY_MAINTENANCE_CRON", "0 4 * * *").strip(),
             next_run_at=now_ms,
             status=JobStatus.PENDING,
             created_at=now_ms,
@@ -616,6 +674,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "ticker": "NIFTY",
                 "batch_size": 200,
                 "lookback_days": 365,
+                "dispatch_timeout_ms": 3_600_000,
             },
         ),
         ScheduledResearchJob(

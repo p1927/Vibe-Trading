@@ -447,6 +447,19 @@ export function Hub() {
     }
   };
 
+  const runMaintenance = async () => {
+    setBusy("maintenance");
+    setError(null);
+    try {
+      await api.runHubNewsMaintenance("NIFTY", 365);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Maintainer run failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const savePipelineConfig = async () => {
     if (!pipelineDraft) return;
     setBusy("save-pipeline");
@@ -457,6 +470,10 @@ export function Hub() {
         light_ingest_cron: pipelineDraft.light_ingest_cron,
         light_ingest_enabled: pipelineDraft.light_ingest_enabled,
         entity_drain_cron: pipelineDraft.entity_drain_cron,
+        entity_maintenance_cron: pipelineDraft.entity_maintenance_cron,
+        entity_drain_continuous_cron: pipelineDraft.entity_drain_continuous_cron,
+        entity_drain_continuous_enabled: pipelineDraft.entity_drain_continuous_enabled,
+        entity_backpressure_threshold: pipelineDraft.entity_backpressure_threshold,
         full_ingest_sources: pipelineDraft.full_ingest_sources,
         light_ingest_sources: pipelineDraft.light_ingest_sources,
         full_lookback_days: pipelineDraft.full_lookback_days,
@@ -570,6 +587,57 @@ export function Hub() {
                 className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
               />
             </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-[11px] text-muted-foreground">Maintainer cron (compact/cleanup)</span>
+              <input
+                type="text"
+                value={pipelineDraft.entity_maintenance_cron ?? ""}
+                onChange={(e) => patchDraft({ entity_maintenance_cron: e.target.value })}
+                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-[11px] text-muted-foreground">Continuous drain cron</span>
+              <input
+                type="text"
+                value={pipelineDraft.entity_drain_continuous_cron ?? ""}
+                onChange={(e) => patchDraft({ entity_drain_continuous_cron: e.target.value })}
+                disabled={!pipelineDraft.entity_drain_continuous_enabled}
+                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] disabled:opacity-50"
+              />
+            </label>
+            <label className="flex items-center gap-2 self-end text-sm">
+              <input
+                type="checkbox"
+                checked={pipelineDraft.entity_drain_continuous_enabled ?? true}
+                onChange={(e) => patchDraft({ entity_drain_continuous_enabled: e.target.checked })}
+                className="rounded border-border"
+              />
+              Continuous drain enabled
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-[11px] text-muted-foreground">Batch size</span>
+              <input
+                type="number"
+                min={20}
+                max={500}
+                value={pipelineDraft.entity_batch_size ?? 200}
+                onChange={(e) => patchDraft({ entity_batch_size: parseInt(e.target.value, 10) || 200 })}
+                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-[11px] text-muted-foreground">Cluster threshold (semantic dedup)</span>
+              <input
+                type="number"
+                min={0.5}
+                max={0.99}
+                step={0.01}
+                value={pipelineDraft.cluster_threshold ?? 0.8}
+                onChange={(e) => patchDraft({ cluster_threshold: parseFloat(e.target.value) || 0.8 })}
+                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
+              />
+            </label>
             <label className="flex items-center gap-2 self-end text-sm">
               <input
                 type="checkbox"
@@ -637,6 +705,14 @@ export function Hub() {
               className="rounded-md border px-3 py-1.5 text-[12px] hover:bg-muted/50 disabled:opacity-50"
             >
               {busy === "ingest-light" ? "Running light…" : "Run light ingest now"}
+            </button>
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => void runMaintenance()}
+              className="rounded-md border px-3 py-1.5 text-[12px] hover:bg-muted/50 disabled:opacity-50"
+            >
+              {busy === "maintenance" ? "Running maintainer…" : "Run maintainer now"}
             </button>
             <button
               type="button"
