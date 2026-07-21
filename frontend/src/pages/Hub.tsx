@@ -484,6 +484,10 @@ export function Hub() {
         relevance_min_confidence: pipelineDraft.relevance_min_confidence,
         relevance_rule_first: pipelineDraft.relevance_rule_first,
         discard_retention_days: pipelineDraft.discard_retention_days,
+        wiki_search_enabled: pipelineDraft.wiki_search_enabled,
+        wiki_search_top_k: pipelineDraft.wiki_search_top_k,
+        wiki_search_max_per_pass: pipelineDraft.wiki_search_max_per_pass,
+        wiki_search_min_score: pipelineDraft.wiki_search_min_score,
       });
       if (res.config) {
         setPipelineConfig(res.config);
@@ -686,6 +690,56 @@ export function Hub() {
                   patchDraft({ relevance_min_confidence: parseFloat(e.target.value) || 0.55 })
                 }
                 className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
+              />
+            </label>
+            <label className="flex items-center gap-2 self-end text-sm md:col-span-2">
+              <input
+                type="checkbox"
+                checked={pipelineDraft.wiki_search_enabled ?? true}
+                onChange={(e) => patchDraft({ wiki_search_enabled: e.target.checked })}
+                className="rounded border-border"
+              />
+              Wiki search dedup (compaction uses LLM Wiki before semantic pass)
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-[11px] text-muted-foreground">Wiki search top K</span>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={pipelineDraft.wiki_search_top_k ?? 5}
+                onChange={(e) => patchDraft({ wiki_search_top_k: parseInt(e.target.value, 10) || 5 })}
+                disabled={!(pipelineDraft.wiki_search_enabled ?? true)}
+                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] disabled:opacity-50"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-[11px] text-muted-foreground">Wiki queries per compaction pass</span>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={pipelineDraft.wiki_search_max_per_pass ?? 150}
+                onChange={(e) =>
+                  patchDraft({ wiki_search_max_per_pass: parseInt(e.target.value, 10) || 150 })
+                }
+                disabled={!(pipelineDraft.wiki_search_enabled ?? true)}
+                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] disabled:opacity-50"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-[11px] text-muted-foreground">Wiki match min score</span>
+              <input
+                type="number"
+                min={0.5}
+                max={0.99}
+                step={0.01}
+                value={pipelineDraft.wiki_search_min_score ?? 0.75}
+                onChange={(e) =>
+                  patchDraft({ wiki_search_min_score: parseFloat(e.target.value) || 0.75 })
+                }
+                disabled={!(pipelineDraft.wiki_search_enabled ?? true)}
+                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] disabled:opacity-50"
               />
             </label>
           </div>

@@ -2973,6 +2973,10 @@ export interface HubNewsPipelineConfig {
   relevance_min_confidence?: number;
   relevance_rule_first?: boolean;
   discard_retention_days?: number;
+  wiki_search_enabled?: boolean;
+  wiki_search_top_k?: number;
+  wiki_search_max_per_pass?: number;
+  wiki_search_min_score?: number;
   config_path?: string;
   ingest_modes?: {
     full?: { label?: string; sources?: string; lookback_days?: number; cron?: string };
@@ -3012,6 +3016,10 @@ export interface HubNewsPipelineConfigUpdate {
   relevance_min_confidence?: number;
   relevance_rule_first?: boolean;
   discard_retention_days?: number;
+  wiki_search_enabled?: boolean;
+  wiki_search_top_k?: number;
+  wiki_search_max_per_pass?: number;
+  wiki_search_min_score?: number;
 }
 
 export interface HubNewsDiscardRequest {
