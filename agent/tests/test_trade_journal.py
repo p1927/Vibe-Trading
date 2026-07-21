@@ -21,6 +21,8 @@ from src.tools.trade_journal_parsers import (
     _qualify_a_share,
     parse_tonghuashun,
     parse_eastmoney,
+    parse_futu,
+    parse_generic,
     detect_format,
     parse_file,
     records_to_dataframe,
@@ -578,3 +580,34 @@ def test_parse_eastmoney_skips_nan_code_rows() -> None:
     rec = parse_eastmoney(df)
     assert len(rec) == 1
     assert rec[0].symbol == "000001.SZ"
+
+
+def test_parse_futu_skips_nan_symbol_rows() -> None:
+    """NaN Symbol cells must not become literal "NAN" US trades."""
+    df = pd.DataFrame([{
+        "Date": "2024-01-01", "Time": "10:00:00", "Symbol": float("nan"),
+        "Name": "", "Side": "Buy", "Quantity": 100, "Price": 10.0,
+        "Amount": 1000, "Commission": 0, "Platform Fee": 0,
+    }, {
+        "Date": "2024-01-01", "Time": "10:01:00", "Symbol": "AAPL",
+        "Name": "Apple", "Side": "Buy", "Quantity": 100, "Price": 10.0,
+        "Amount": 1000, "Commission": 0, "Platform Fee": 0,
+    }])
+    rec = parse_futu(df)
+    assert len(rec) == 1
+    assert rec[0].symbol == "AAPL"
+    assert rec[0].market == "us"
+
+
+def test_parse_generic_skips_nan_symbol_rows() -> None:
+    """Blank/NaN symbol cells are dropped instead of stringified to "nan"."""
+    df = pd.DataFrame([{
+        "datetime": "2024-01-01 10:00:00", "symbol": float("nan"),
+        "side": "buy", "quantity": 100, "price": 10.0,
+    }, {
+        "datetime": "2024-01-01 10:01:00", "symbol": "AAPL",
+        "side": "buy", "quantity": 100, "price": 10.0,
+    }])
+    rec = parse_generic(df)
+    assert len(rec) == 1
+    assert rec[0].symbol == "AAPL"
