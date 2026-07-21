@@ -17,9 +17,18 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+try:
+    import fcntl
+
+    _HAS_FCNTL = True
+except ImportError:  # pragma: no cover - Windows / minimal builds
+    fcntl = None  # type: ignore[assignment]
+    _HAS_FCNTL = False
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +172,30 @@ def _job_file(job_id: str) -> Path:
     return _job_dir(job_id) / "job.json"
 
 
+def _job_lock_file(job_id: str) -> Path:
+    return _job_dir(job_id) / ".job.lock"
+
+
+@contextmanager
+def _job_file_lock(job_id: str, *, exclusive: bool = True):
+    """Cross-process lock for job.json read-modify-write (API vs worker subprocess)."""
+    if not job_id_valid(job_id):
+        yield
+        return
+    lock_path = _job_lock_file(job_id)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if not _HAS_FCNTL:
+        yield
+        return
+    with open(lock_path, "a+", encoding="utf-8") as lockf:
+        flag = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        fcntl.flock(lockf.fileno(), flag)
+        try:
+            yield
+        finally:
+            fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
+
+
 def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
     return {
         "job_id": job["job_id"],
@@ -180,7 +213,7 @@ def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _write_job_to_disk(job: dict[str, Any]) -> None:
+def _write_job_to_disk_unsafe(job: dict[str, Any]) -> None:
     job_id = str(job.get("job_id") or "")
     if not job_id_valid(job_id):
         return
@@ -191,7 +224,7 @@ def _write_job_to_disk(job: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
-def _read_job_from_disk(job_id: str) -> dict[str, Any] | None:
+def _read_job_from_disk_unsafe(job_id: str) -> dict[str, Any] | None:
     path = _job_file(job_id)
     if not path.is_file():
         return None
@@ -204,6 +237,34 @@ def _read_job_from_disk(job_id: str) -> dict[str, Any] | None:
     payload.setdefault("job_id", job_id)
     payload.setdefault("logs", [])
     return payload
+
+
+def _write_job_to_disk(job: dict[str, Any]) -> None:
+    job_id = str(job.get("job_id") or "")
+    with _job_file_lock(job_id, exclusive=True):
+        _write_job_to_disk_unsafe(job)
+
+
+def _read_job_from_disk(job_id: str) -> dict[str, Any] | None:
+    with _job_file_lock(job_id, exclusive=False):
+        return _read_job_from_disk_unsafe(job_id)
+
+
+def _mutate_job_on_disk(
+    job_id: str,
+    mutator: Callable[[dict[str, Any]], bool],
+) -> dict[str, Any] | None:
+    """Atomically read, mutate, and write job.json under an exclusive file lock."""
+    with _job_file_lock(job_id, exclusive=True):
+        job = _read_job_from_disk_unsafe(job_id)
+        if job is None:
+            return None
+        job = dict(job)
+        job.setdefault("logs", [])
+        if not mutator(job):
+            return None
+        _write_job_to_disk_unsafe(job)
+        return job
 
 
 def _merge_job_from_disk(job_id: str, memory: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -377,48 +438,53 @@ def start_job(
     key = (ticker or "NIFTY").strip().upper()
     with _JOBS_LOCK:
         existing_id = _ACTIVE_BY_TICKER.get(key)
-        if existing_id:
-            existing = INDEX_PREDICTION_RUN_JOBS.get(existing_id) or _read_job_from_disk(existing_id)
-            if existing and existing.get("status") in _ACTIVE_STATUSES:
-                if existing.get("worker_pid") is not None and not worker_alive(existing):
-                    fail_job(existing_id, "worker process exited unexpectedly")
-                elif existing.get("status") == "running" and existing.get("worker_pid") is None:
-                    created_at = str(existing.get("created_at") or "")
-                    age_seconds = 999.0
-                    if created_at:
-                        try:
-                            age_seconds = (
-                                datetime.now(timezone.utc)
-                                - datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                            ).total_seconds()
-                        except ValueError:
-                            age_seconds = 999.0
-                    if age_seconds > _QUEUED_NO_PID_SECONDS:
-                        fail_job(existing_id, "worker never started")
-                    else:
+        existing_mem = INDEX_PREDICTION_RUN_JOBS.get(existing_id) if existing_id else None
+
+    if existing_id:
+        existing = existing_mem or _read_job_from_disk(existing_id)
+        if existing and existing.get("status") in _ACTIVE_STATUSES:
+            if existing.get("worker_pid") is not None and not worker_alive(existing):
+                fail_job(existing_id, "worker process exited unexpectedly")
+            elif existing.get("status") == "running" and existing.get("worker_pid") is None:
+                created_at = str(existing.get("created_at") or "")
+                age_seconds = 999.0
+                if created_at:
+                    try:
+                        age_seconds = (
+                            datetime.now(timezone.utc)
+                            - datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                        ).total_seconds()
+                    except ValueError:
+                        age_seconds = 999.0
+                if age_seconds > _QUEUED_NO_PID_SECONDS:
+                    fail_job(existing_id, "worker never started")
+                else:
+                    with _JOBS_LOCK:
                         if existing_id not in INDEX_PREDICTION_RUN_JOBS:
                             INDEX_PREDICTION_RUN_JOBS[existing_id] = existing
-                        return existing_id, True
-                else:
+                    return existing_id, True
+            else:
+                with _JOBS_LOCK:
                     if existing_id not in INDEX_PREDICTION_RUN_JOBS:
                         INDEX_PREDICTION_RUN_JOBS[existing_id] = existing
-                    return existing_id, True
+                return existing_id, True
 
-        job_id = uuid.uuid4().hex
-        job = {
-            "job_id": job_id,
-            "status": "queued",
-            "ticker": key,
-            "horizon_days": horizon_days,
-            "refresh_constituents": refresh_constituents,
-            "run_forecast_lab": run_forecast_lab,
-            "created_at": _now_iso(),
-            "logs": [],
-            "artifact": None,
-            "error": None,
-            "worker_pid": None,
-            "_finished_at": None,
-        }
+    job_id = uuid.uuid4().hex
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "ticker": key,
+        "horizon_days": horizon_days,
+        "refresh_constituents": refresh_constituents,
+        "run_forecast_lab": run_forecast_lab,
+        "created_at": _now_iso(),
+        "logs": [],
+        "artifact": None,
+        "error": None,
+        "worker_pid": None,
+        "_finished_at": None,
+    }
+    with _JOBS_LOCK:
         INDEX_PREDICTION_RUN_JOBS[job_id] = job
         _ACTIVE_BY_TICKER[key] = job_id
     _write_job_to_disk(job)
@@ -426,45 +492,89 @@ def start_job(
 
 
 def mark_running(job_id: str) -> None:
-    job = _get_job_record(job_id)
+    def mutator(job: dict[str, Any]) -> bool:
+        if str(job.get("status") or "") not in _ACTIVE_STATUSES:
+            return False
+        if job.get("status") == "queued":
+            job["status"] = "running"
+        return True
+
+    job = _mutate_job_on_disk(job_id, mutator)
     if job is None:
         return
-    if job.get("status") == "queued":
-        job["status"] = "running"
-        _write_job_to_disk(job)
+    with _JOBS_LOCK:
+        INDEX_PREDICTION_RUN_JOBS[job_id] = job
 
 
 def append_log(job_id: str, entry: dict[str, Any]) -> None:
-    with _JOBS_LOCK:
-        job = INDEX_PREDICTION_RUN_JOBS.get(job_id) or _read_job_from_disk(job_id)
-        if job is None:
-            return
+    def mutator(job: dict[str, Any]) -> bool:
+        if str(job.get("status") or "") not in _ACTIVE_STATUSES:
+            return False
         if job.get("status") == "queued":
             job["status"] = "running"
         job.setdefault("logs", []).append(dict(entry))
+        return True
+
+    job = _mutate_job_on_disk(job_id, mutator)
+    if job is None:
+        return
+    with _JOBS_LOCK:
         INDEX_PREDICTION_RUN_JOBS[job_id] = job
-    _write_job_to_disk(job)
 
 
 def complete_job(job_id: str, *, ticker: str, artifact: dict[str, Any]) -> None:
-    job = _get_job_record(job_id)
+    key_holder: dict[str, str] = {}
+
+    def mutator(job: dict[str, Any]) -> bool:
+        if str(job.get("status") or "") not in _ACTIVE_STATUSES:
+            logger.info(
+                "complete_job skipped — job already terminal (job=%s status=%s)",
+                job_id,
+                job.get("status"),
+            )
+            return False
+        job["status"] = "done"
+        job["artifact"] = artifact
+        job["_finished_at"] = time.time()
+        key_holder["key"] = str(job.get("ticker") or ticker).upper()
+        return True
+
+    job = _mutate_job_on_disk(job_id, mutator)
     if job is None:
         return
-    if str(job.get("status") or "") not in _ACTIVE_STATUSES:
-        logger.info(
-            "complete_job skipped — job already terminal (job=%s status=%s)",
-            job_id,
-            job.get("status"),
-        )
-        return
-    job["status"] = "done"
-    job["artifact"] = artifact
-    job["_finished_at"] = time.time()
-    key = str(job.get("ticker") or ticker).upper()
+    key = key_holder.get("key", str(ticker).upper())
     with _JOBS_LOCK:
+        INDEX_PREDICTION_RUN_JOBS[job_id] = job
         if _ACTIVE_BY_TICKER.get(key) == job_id:
             _ACTIVE_BY_TICKER.pop(key, None)
-    _write_job_to_disk(job)
+
+
+def fail_job(job_id: str, message: str, *, terminate_worker: bool = False) -> None:
+    job_for_term = _get_job_record(job_id)
+    if job_for_term is None:
+        return
+    if terminate_worker:
+        _terminate_worker(job_for_term)
+
+    key_holder: dict[str, str] = {}
+
+    def mutator(job: dict[str, Any]) -> bool:
+        if str(job.get("status") or "") not in _ACTIVE_STATUSES:
+            return False
+        job["status"] = "error"
+        job["error"] = message
+        job["_finished_at"] = time.time()
+        key_holder["key"] = str(job.get("ticker") or "").upper()
+        return True
+
+    job = _mutate_job_on_disk(job_id, mutator)
+    if job is None:
+        return
+    key = key_holder.get("key", "")
+    with _JOBS_LOCK:
+        INDEX_PREDICTION_RUN_JOBS[job_id] = job
+        if key and _ACTIVE_BY_TICKER.get(key) == job_id:
+            _ACTIVE_BY_TICKER.pop(key, None)
 
 
 def _terminate_worker(job: dict[str, Any] | None) -> None:
@@ -486,24 +596,6 @@ def _terminate_worker(job: dict[str, Any] | None) -> None:
         os.kill(pid_int, signal.SIGTERM)
     except OSError:
         pass
-
-
-def fail_job(job_id: str, message: str, *, terminate_worker: bool = False) -> None:
-    job = _get_job_record(job_id)
-    if job is None:
-        return
-    if str(job.get("status") or "") not in _ACTIVE_STATUSES:
-        return
-    if terminate_worker:
-        _terminate_worker(job)
-    job["status"] = "error"
-    job["error"] = message
-    job["_finished_at"] = time.time()
-    key = str(job.get("ticker") or "").upper()
-    with _JOBS_LOCK:
-        if _ACTIVE_BY_TICKER.get(key) == job_id:
-            _ACTIVE_BY_TICKER.pop(key, None)
-    _write_job_to_disk(job)
 
 
 def run_worker(job_id: str) -> None:
@@ -617,7 +709,11 @@ def spawn_worker(job_id: str) -> None:
     )
     log_handle.close()
 
-    job = _get_job_record(job_id)
-    if job is not None:
+    def mutator(job: dict[str, Any]) -> bool:
         job["worker_pid"] = proc.pid
-        _write_job_to_disk(job)
+        return True
+
+    job = _mutate_job_on_disk(job_id, mutator)
+    if job is not None:
+        with _JOBS_LOCK:
+            INDEX_PREDICTION_RUN_JOBS[job_id] = job
