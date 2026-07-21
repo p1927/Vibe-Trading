@@ -158,6 +158,22 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
           {pred.data_quality_warning.min_pct != null
             ? ` (${pred.data_quality_warning.min_pct}% vs ${pred.data_quality_warning.threshold_pct ?? 90}% gate).`
             : "."}
+          {pred.data_quality_warning.macro_trust_multiplier != null
+            ? ` Macro Ridge weight ×${pred.data_quality_warning.macro_trust_multiplier}.`
+            : null}
+        </div>
+      ) : null}
+      {pred.flow_coverage && !pred.data_quality_warning?.message ? (
+        <div
+          className={
+            pred.flow_coverage.passes_gate
+              ? "rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground"
+              : "rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200"
+          }
+        >
+          FII/DII/PCR flow coverage{" "}
+          {pred.flow_coverage.min_pct != null ? `${pred.flow_coverage.min_pct}%` : "—"}
+          {pred.flow_coverage.passes_gate ? " — gate pass (full macro trust)." : " — below gate."}
         </div>
       ) : null}
       {pred.cause_stress_index != null &&
