@@ -527,7 +527,14 @@
     "loading": "جارٍ التحميل...",
     "method_pearson": "بيرسون",
     "method_spearman": "سبيرمان",
-    "failedToCompute": "فشل احتساب الارتباط"
+    "failedToCompute": "فشل احتساب الارتباط",
+    "regimeTimeline": "الخط الزمني لنظام الارتباط",
+    "regimeTimelineHint": "كثافة الحواف مع التباطؤ عبر الزمن — سياق وصفي للمخاطر وليس إشارة تداول",
+    "regimeDensity": "كثافة الحواف",
+    "regimeSmoothed": "الكثافة الممهدة",
+    "regimeFused": "مندمج (FUSED)",
+    "regimeEnterThreshold": "عتبة الدخول",
+    "regimeExitThreshold": "عتبة الخروج"
   },
   "alphaZoo": {
     "title": "Alpha Zoo",

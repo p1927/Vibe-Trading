@@ -532,7 +532,14 @@
     "method_spearman": "Spearman",
     "compute": "Compute",
     "loading": "Computing...",
-    "failedToCompute": "Failed to compute correlation"
+    "failedToCompute": "Failed to compute correlation",
+    "regimeTimeline": "Regime timeline",
+    "regimeTimelineHint": "Edge density + hysteresis over time — descriptive risk context, not a trading signal",
+    "regimeDensity": "Edge density",
+    "regimeSmoothed": "Smoothed",
+    "regimeFused": "FUSED",
+    "regimeEnterThreshold": "enter",
+    "regimeExitThreshold": "exit"
   },
   "alphaZoo": {
     "title": "Alpha Zoo",

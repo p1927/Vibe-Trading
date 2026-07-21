@@ -2,7 +2,8 @@ import i18n from '@/i18n';
 import { useRef, useState } from "react";
 import { BarChart3 } from "lucide-react";
 import { CorrelationMatrix } from "@/components/charts/CorrelationMatrix";
-import { api } from "@/lib/api";
+import { RegimeTimeline } from "@/components/charts/RegimeTimeline";
+import { api, type CorrelationRegimeResponse } from "@/lib/api";
 
 const WINDOWS = [30, 60, 90, 180, 365] as const;
 
@@ -10,17 +11,20 @@ export function Correlation() {
   const [codes, setCodes] = useState("000001.SZ,600519.SH,000858.SZ,601318.SH");
   const [days, setDays] = useState<number>(90);
   const [method, setMethod] = useState<"pearson" | "spearman">("pearson");
+  const [showRegime, setShowRegime] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [labels, setLabels] = useState<string[]>([]);
   const [matrix, setMatrix] = useState<number[][]>([]);
+  const [regime, setRegime] = useState<CorrelationRegimeResponse | null>(null);
   const requestGeneration = useRef(0);
 
   const invalidateResult = () => {
     requestGeneration.current += 1;
     setLabels([]);
     setMatrix([]);
+    setRegime(null);
     setError(null);
     setLoading(false);
   };
@@ -30,12 +34,17 @@ export function Correlation() {
     setError(null);
     setLabels([]);
     setMatrix([]);
+    setRegime(null);
     setLoading(true);
     try {
-      const result = await api.getCorrelation(codes, days, method);
+      const [result, regimeResult] = await Promise.all([
+        api.getCorrelation(codes, days, method),
+        showRegime ? api.getCorrelationRegime(codes, days) : Promise.resolve(null),
+      ]);
       if (requestGeneration.current === generation) {
         setLabels(result.labels);
         setMatrix(result.matrix);
+        setRegime(regimeResult);
       }
     } catch (e) {
       if (requestGeneration.current === generation) {
@@ -119,6 +128,26 @@ export function Correlation() {
           </div>
         </div>
 
+        <div className="flex flex-col gap-1.5">
+          <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showRegime}
+              onChange={(e) => {
+                invalidateResult();
+                setShowRegime(e.target.checked);
+              }}
+              className="h-4 w-4"
+            />
+            {i18n.t("correlation.regimeTimeline")}
+          </label>
+          {showRegime && (
+            <p className="text-xs text-muted-foreground">
+              {i18n.t("correlation.regimeTimelineHint")}
+            </p>
+          )}
+        </div>
+
         <button
           onClick={compute}
           disabled={loading}
@@ -134,6 +163,9 @@ export function Correlation() {
           {error}
         </div>
       )}
+
+      {/* Regime timeline (above the matrix when enabled) */}
+      {regime && <RegimeTimeline data={regime} height={260} />}
 
       {/* Chart */}
       {labels.length > 0 && <CorrelationMatrix labels={labels} matrix={matrix} height={520} />}
