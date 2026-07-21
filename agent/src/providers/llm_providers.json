@@ -161,6 +161,10 @@
     "base_url_env": "MINIMAX_BASE_URL",
     "default_model": "MiniMax-M3",
     "default_base_url": "https://api.minimax.io/v1",
+    "base_url_options": [
+      "https://api.minimax.io/v1",
+      "https://api.minimaxi.com/v1"
+    ],
     "api_key_required": true
   },
   {
