@@ -361,12 +361,19 @@ class PersistentMemory:
         """
         new_hash = content_hash(name, description, content)
         now = _time.time()
-        # Check recent writes cache (in-memory dict, not persisted)
+        self._cleanup_expired_hashes(now)
         if new_hash in self._recent_hashes:
             if now - self._recent_hashes[new_hash] < DEDUP_WINDOW_SECONDS:
                 return True
         self._recent_hashes[new_hash] = now
         return False
+
+    def _cleanup_expired_hashes(self, now: float) -> None:
+        """Remove hash entries older than the dedup window to bound memory use."""
+        threshold = now - DEDUP_WINDOW_SECONDS
+        expired = [h for h, ts in self._recent_hashes.items() if ts < threshold]
+        for h in expired:
+            del self._recent_hashes[h]
 
     def add(self, name: str, content: str, memory_type: str = "project",
             description: str = "") -> Optional[Path]:

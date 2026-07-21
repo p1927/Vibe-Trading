@@ -105,6 +105,8 @@ class RememberTool(BaseTool):
             path = self._memory.add(title, content, memory_type, description=title)
         except ValueError as exc:
             return json.dumps({"status": "error", "error": str(exc)})
+        if path is None:
+            return json.dumps({"status": "skipped", "message": f"Duplicate write blocked for: {title}"})
         return json.dumps({"status": "ok", "message": f"Saved: {title}", "path": str(path)})
 
     def _recall(self, kwargs: dict) -> str:
@@ -112,6 +114,10 @@ class RememberTool(BaseTool):
         if not query:
             return json.dumps({"status": "error", "error": "query required"})
         entries = self._memory.find_relevant(query)
+        # Track access for each recalled entry so importance decay
+        # reflects actual usage patterns.
+        for e in entries:
+            self._lifecycle.track_access(e)
         results = [
             {"title": e.title, "type": e.memory_type, "content": e.body[:2000]}
             for e in entries

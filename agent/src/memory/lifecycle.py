@@ -13,12 +13,15 @@ Feature flags (env vars):
 from __future__ import annotations
 
 import logging
+import os
 import time
 from pathlib import Path
+from types import MappingProxyType
 
 from src.memory.persistent import (
     MemoryEntry,
     PersistentMemory,
+    _is_hotness_decay_enabled as is_hotness_decay_enabled,
     compute_importance,
     memory_lock,
 )
@@ -51,13 +54,6 @@ def is_decay_enabled() -> bool:
     return get_env_config().memory.decay_enabled
 
 
-def is_hotness_decay_enabled() -> bool:
-    """Check if hotness decay is enabled via VT_MEMORY_HOTNESS_DECAY env var."""
-    from src.config.accessor import get_env_config
-
-    return get_env_config().memory.hotness_decay_enabled
-
-
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
@@ -81,14 +77,13 @@ class MemoryLifecycle:
     file-level locking.
     """
 
-    # Event -> delta mapping
-    _EVENT_DELTAS: dict[str, float] = {
+    _EVENT_DELTAS: MappingProxyType[str, float] = MappingProxyType({
         "task_success": 0.1,
         "task_failure": -0.15,
         "user_confirm": 0.2,
         "user_reject": -0.3,
         "passive_decay": -0.05,
-    }
+    })
 
     # Safety: per-memory per-session cap
     _MAX_SESSION_DELTA = 0.5
@@ -293,12 +288,19 @@ class MemoryLifecycle:
     def _update_frontmatter_field(
         self, path: Path, field: str, value: str
     ) -> None:
-        """Update a single frontmatter field in a memory file."""
+        """Update a single frontmatter field in a memory file.
+
+        Uses an atomic write-then-rename strategy to prevent file corruption
+        if the process crashes mid-write.
+        """
         text = path.read_text(encoding="utf-8")
         lines = text.split("\n")
 
-        # Find frontmatter boundaries
         if not lines or lines[0].strip() != "---":
+            logger.warning(
+                "_update_frontmatter_field(%s): no frontmatter delimiters in %s",
+                field, path,
+            )
             return
         end_idx = None
         for i in range(1, len(lines)):
@@ -306,9 +308,12 @@ class MemoryLifecycle:
                 end_idx = i
                 break
         if end_idx is None:
+            logger.warning(
+                "_update_frontmatter_field(%s): no closing delimiter in %s",
+                field, path,
+            )
             return
 
-        # Update or insert field
         field_found = False
         for i in range(1, end_idx):
             if lines[i].startswith(f"{field}:"):
@@ -318,4 +323,6 @@ class MemoryLifecycle:
         if not field_found:
             lines.insert(end_idx, f"{field}: {value}")
 
-        path.write_text("\n".join(lines), encoding="utf-8")
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        tmp_path.write_text("\n".join(lines), encoding="utf-8")
+        os.replace(tmp_path, path)
