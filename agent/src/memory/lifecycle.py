@@ -76,13 +76,15 @@ class MemoryLifecycle:
     file-level locking.
     """
 
-    _EVENT_DELTAS: MappingProxyType[str, float] = MappingProxyType({
-        "task_success": 0.1,
-        "task_failure": -0.15,
-        "user_confirm": 0.2,
-        "user_reject": -0.3,
-        "passive_decay": -0.05,
-    })
+    _EVENT_DELTAS: MappingProxyType[str, float] = MappingProxyType(
+        {
+            "task_success": 0.1,
+            "task_failure": -0.15,
+            "user_confirm": 0.2,
+            "user_reject": -0.3,
+            "passive_decay": -0.05,
+        }
+    )
 
     # Safety: per-memory per-session cap
     _MAX_SESSION_DELTA = 0.5
@@ -170,9 +172,7 @@ class MemoryLifecycle:
                 self._update_frontmatter_field(
                     entry.path, "access_count", str(entry.access_count + 1)
                 )
-                self._update_frontmatter_field(
-                    entry.path, "last_accessed", _now_iso()
-                )
+                self._update_frontmatter_field(entry.path, "last_accessed", _now_iso())
             except (FileNotFoundError, IOError) as exc:
                 logger.warning("track_access(%s) skipped: %s", entry.title, exc)
 
@@ -251,9 +251,7 @@ class MemoryLifecycle:
                     )
                     entry.path.unlink()
             except (OSError, IOError) as exc:
-                logger.warning(
-                    "GC action(%s, %s) failed: %s", entry.title, action, exc
-                )
+                logger.warning("GC action(%s, %s) failed: %s", entry.title, action, exc)
                 return
 
         # Rebuild index after removal
@@ -282,9 +280,7 @@ class MemoryLifecycle:
     # Frontmatter manipulation
     # ------------------------------------------------------------------
 
-    def _update_frontmatter_field(
-        self, path: Path, field: str, value: str
-    ) -> None:
+    def _update_frontmatter_field(self, path: Path, field: str, value: str) -> None:
         """Update a single frontmatter field in a memory file.
 
         Uses an atomic write-then-rename strategy to prevent file corruption
@@ -296,7 +292,8 @@ class MemoryLifecycle:
         if not lines or lines[0].strip() != "---":
             logger.warning(
                 "_update_frontmatter_field(%s): no frontmatter delimiters in %s",
-                field, path,
+                field,
+                path,
             )
             return
         end_idx = None
@@ -307,7 +304,8 @@ class MemoryLifecycle:
         if end_idx is None:
             logger.warning(
                 "_update_frontmatter_field(%s): no closing delimiter in %s",
-                field, path,
+                field,
+                path,
             )
             return
 
