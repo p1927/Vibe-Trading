@@ -194,8 +194,6 @@ class MemoryLifecycle:
             return []
 
         entries = self._memory.list_entries()
-        if len(entries) <= self.MAX_MEMORY_COUNT and dry_run:
-            return []  # Under capacity in dry-run = nothing to report
 
         now = time.time()
         actions: list[dict] = []

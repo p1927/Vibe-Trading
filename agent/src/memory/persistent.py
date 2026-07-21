@@ -10,6 +10,7 @@ import sys
 import time as _time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Generator, List, Optional
 
@@ -76,6 +77,9 @@ HALF_LIFE_DAYS = 14.0
 _DECAY_LAMBDA = math.log(2) / HALF_LIFE_DAYS
 _ACCESS_BOOST = 0.1
 
+_HOTNESS_HALF_LIFE_DAYS = 7.0
+_HOTNESS_DECAY_RATE = math.log(2) / _HOTNESS_HALF_LIFE_DAYS
+
 
 def compute_importance(
     quality_score: float, access_count: int, days_since_last_access: float
@@ -100,8 +104,6 @@ def compute_hotness(access_count: int, days_since_last_access: float) -> float:
 
     Inspired by Open-Viking (via AutoMemory reference hub).
     """
-    _HOTNESS_HALF_LIFE_DAYS = 7.0  # More aggressive for trading context
-    _HOTNESS_DECAY_RATE = math.log(2) / _HOTNESS_HALF_LIFE_DAYS
     frequency_signal = 1 / (1 + math.exp(-math.log1p(access_count)))
     recency_signal = math.exp(-_HOTNESS_DECAY_RATE * days_since_last_access)
     return frequency_signal * recency_signal
@@ -192,7 +194,6 @@ def _parse_timestamp(value: object, fallback: float) -> float:
         return float(value)
     if isinstance(value, str):
         try:
-            from datetime import datetime
             dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
             return dt.timestamp()
         except (ValueError, TypeError):
