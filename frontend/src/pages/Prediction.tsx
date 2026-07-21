@@ -395,7 +395,11 @@ export function Prediction() {
           includeBottomUp,
         );
         if (res.report) setBacktest(res.report);
-        else if (res.status !== "ok") setBacktestError(res.message || "Backtest unavailable");
+        else if (res.status === "ok") {
+          setBacktestError("Backtest refresh returned no report — try again or check API logs.");
+        } else {
+          setBacktestError(res.message || "Backtest unavailable");
+        }
       } catch (e) {
         setBacktestError(e instanceof Error ? e.message : "Backtest request failed");
       } finally {
@@ -484,7 +488,11 @@ export function Prediction() {
           api.getIndexPredictionCounterfactual("NIFTY", refresh, 365, horizonDays),
         ]);
         if (res.report) setMissAnalysis(res.report);
-        else if (res.status !== "ok") setMissAnalysisError(res.message || "Miss analysis unavailable");
+        else if (res.status === "ok") {
+          setMissAnalysisError("Miss analysis refresh returned no report — try again or check API logs.");
+        } else {
+          setMissAnalysisError(res.message || "Miss analysis unavailable");
+        }
         setCounterfactual(cfRes.report?.misses ?? cfRes.report?.rows ?? null);
       } catch (e) {
         setMissAnalysisError(e instanceof Error ? e.message : "Miss analysis request failed");
@@ -925,6 +933,15 @@ export function Prediction() {
                 subtitle="Expand any stock to see drivers, upcoming events, and sentiment history (archived daily)."
                 modelRole="feeds"
               />
+              {(artifact.constituent_signals?.length ?? 0) < 40 ? (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    Only {artifact.constituent_signals?.length ?? 0} of 50 constituents loaded. Check{" "}
+                    <strong>Refresh all 50 constituents</strong> in the controls above, then Run analysis.
+                  </span>
+                </div>
+              ) : null}
               <ConstituentDrivers signals={artifact.constituent_signals} />
             </section>
 

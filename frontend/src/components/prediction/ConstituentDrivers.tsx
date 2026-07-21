@@ -46,7 +46,9 @@ export function ConstituentDrivers({ signals = [], limit = null }: Props) {
     <div className="overflow-hidden rounded-xl border shadow-sm">
       <div className="flex items-center justify-between border-b bg-muted/20 px-3 py-2">
         <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-          {rows.length} Nifty 50 constituents
+          {rows.length >= 40
+            ? `${rows.length} Nifty 50 constituents`
+            : `${rows.length} of 50 constituents`}
         </p>
         {totalPages > 1 ? (
           <div className="flex items-center gap-2 text-[10px]">

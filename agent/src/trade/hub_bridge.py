@@ -659,9 +659,11 @@ def prefetch_research_for_message(
 
     from trade_integrations.bridge.hub_context import format_research_context_for_agent
 
+    debate_artifact = load_debate_artifact(ticker)
     context = format_research_context_for_agent(
         artifact,
         index_artifact=index_artifact,
+        debate_artifact=debate_artifact,
         widget_intent=widget_intent,
         session_config=session_config,
     )
