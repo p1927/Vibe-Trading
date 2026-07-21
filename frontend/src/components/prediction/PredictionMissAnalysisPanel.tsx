@@ -1,4 +1,5 @@
 import { Fragment, useState } from "react";
+import { Loader2 } from "lucide-react";
 import type { IndexCounterfactualRow, IndexMissAnalysisReport } from "@/lib/api";
 import { DayMoveCauses } from "@/components/prediction/DayMoveCauses";
 
@@ -105,12 +106,25 @@ export function PredictionMissAnalysisPanel({
           <button
             type="button"
             onClick={onRefresh}
-            className="rounded-md border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted/50"
+            disabled={loading}
+            className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Re-run analysis
+            {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+            {loading ? "Recomputing…" : "Recompute miss analysis"}
           </button>
         ) : null}
       </div>
+
+      {loading ? (
+        <div className="rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-[11px] text-primary">
+          Recomputing miss root-cause analysis (T0 vs maturity factor diff)…
+          {report.as_of ? (
+            <span className="ml-1 text-muted-foreground">
+              (showing cached results from {String(report.as_of).slice(0, 16)})
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="text-[11px]">

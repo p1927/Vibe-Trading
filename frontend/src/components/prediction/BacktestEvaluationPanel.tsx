@@ -1,4 +1,5 @@
 import { Fragment, useState } from "react";
+import { Loader2 } from "lucide-react";
 import type { IndexBacktestReport } from "@/lib/api";
 import { NiftyHistoricalChart } from "@/components/charts/NiftyHistoricalChart";
 import { DayMoveCauses } from "@/components/prediction/DayMoveCauses";
@@ -97,13 +98,26 @@ export function BacktestEvaluationPanel({
             <button
               type="button"
               onClick={onRefresh}
-              className="rounded-md border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted/50"
+              disabled={loading}
+              className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Re-run backtest
+              {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              {loading ? "Re-running…" : "Re-run backtest"}
             </button>
           ) : null}
         </div>
       </div>
+
+      {loading ? (
+        <div className="rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-[11px] text-primary">
+          Recomputing walk-forward backtest on past factor data…
+          {report.as_of ? (
+            <span className="ml-1 text-muted-foreground">
+              (showing cached results from {String(report.as_of).slice(0, 16)})
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="rounded-lg border border-violet-500/25 bg-violet-500/10 px-3 py-2 text-[11px] text-violet-900 dark:text-violet-200">
         {isHybrid ? (
