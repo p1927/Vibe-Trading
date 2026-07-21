@@ -278,8 +278,7 @@ class SessionService:
                  "summary": attempt.summary, "error": attempt.error, "run_dir": attempt.run_dir},
             )
             if attempt.status == AttemptStatus.COMPLETED:
-                await asyncio.to_thread(
-                    self._maybe_orchestrator_auto_propose,
+                await self._maybe_orchestrator_propose_guard(
                     session.session_id,
                     attempt.prompt,
                     attempt.summary or "",
@@ -295,6 +294,11 @@ class SessionService:
                     dict(session.config),
                 )
                 await self._maybe_autonomous_decision_guard(
+                    session,
+                    attempt.prompt,
+                    result.get("tools_called") or [],
+                )
+                await self._maybe_bootstrap_finalize_guard(
                     session,
                     attempt.prompt,
                     result.get("tools_called") or [],
@@ -459,6 +463,34 @@ class SessionService:
         result["tools_called"] = sorted(tools_called)
         return result
 
+    async def _maybe_orchestrator_propose_guard(
+        self,
+        session_id: str,
+        user_message: str,
+        assistant_text: str,
+        tools_called: set[str] | list[str],
+        session_config: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        from src.session.orchestrator_profile import is_orchestrator_session
+
+        if not is_orchestrator_session(session_config):
+            return
+        try:
+            from src.trade.orchestrator_propose_guard import maybe_enforce_orchestrator_propose
+
+            await maybe_enforce_orchestrator_propose(
+                self,
+                session_id,
+                user_message=user_message,
+                assistant_text=assistant_text,
+                tools_called=tools_called,
+                session_config=session_config,
+            )
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Orchestrator propose guard failed")
+
     def _maybe_orchestrator_auto_propose(
         self,
         session_id: str,
@@ -490,7 +522,7 @@ class SessionService:
                 tools_called=tools_called,
             )
             proposal = (result or {}).get("proposal")
-            if isinstance(proposal, dict) and proposal.get("status") == "ready":
+            if isinstance(proposal, dict) and proposal.get("status") in {"ready", "incomplete"}:
                 self.event_bus.emit(session_id, "autonomous_agent.proposal", proposal)
         except Exception:
             import logging
@@ -549,6 +581,31 @@ class SessionService:
             import logging
 
             logging.getLogger(__name__).exception("Autonomous decision guard hook failed")
+
+    async def _maybe_bootstrap_finalize_guard(
+        self,
+        session: Session,
+        user_message: str,
+        tools_called: set[str] | list[str],
+    ) -> None:
+        from src.session.orchestrator_profile import is_orchestrator_session
+
+        if is_orchestrator_session(session.config):
+            return
+        try:
+            from src.trade.bootstrap_finalize_guard import maybe_retry_bootstrap_widget
+
+            await maybe_retry_bootstrap_widget(
+                self,
+                session.session_id,
+                user_message=user_message,
+                tools_called=tools_called,
+                session_config=dict(session.config),
+            )
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Bootstrap finalize guard hook failed")
 
     @staticmethod
     def _convert_messages_to_history(

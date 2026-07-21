@@ -34,6 +34,8 @@ function AgentRuntimeStrip({ agent }: { agent: AutonomousAgentInstance }) {
     agent.bootstrap_status === "failed" ||
     runtime?.bootstrap_status === "failed";
   const bootstrapError = agent.bootstrap_error || runtime?.bootstrap_error;
+  const infraPaused = agent.status === "paused" && agent.pause_reason === "infra";
+  const infraPending = agent.infra_pending?.[0];
 
   const nautilusLabel =
     !nautilusOn
@@ -54,7 +56,17 @@ function AgentRuntimeStrip({ agent }: { agent: AutonomousAgentInstance }) {
           {bootstrapError}
         </span>
       )}
-      {isBootstrapping && !bootstrapFailed && <span className="font-medium text-primary">starting…</span>}
+      {infraPaused && (
+        <span
+          className="max-w-xs truncate font-medium text-amber-700 dark:text-amber-300"
+          title={infraPending || "Waiting for OpenAlgo / Nautilus — run trade status"}
+        >
+          waiting for infra{infraPending ? ` · ${infraPending}` : ""}
+        </span>
+      )}
+      {isBootstrapping && !bootstrapFailed && !infraPaused && (
+        <span className="font-medium text-primary">starting…</span>
+      )}
       {lastDecision?.decision && (
         <span className="font-medium text-foreground/80">
           last {lastDecision.decision}

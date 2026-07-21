@@ -48,6 +48,9 @@ def list_autonomous_agents() -> Dict[str, Any]:
 
     try:
         from src.scheduled_research.autonomous_agent_jobs import finalize_infra_heal
+        from src.scheduled_research.autonomous_bootstrap import resume_stale_pending_bootstraps
+
+        resume_stale_pending_bootstraps()
 
         before = {
             str(a.get("id") or ""): str(a.get("status") or "")
