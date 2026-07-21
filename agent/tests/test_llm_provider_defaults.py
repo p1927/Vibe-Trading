@@ -44,6 +44,17 @@ def test_llm_provider_registry_uses_current_default_models() -> None:
     assert defaults["openai"] != "gpt-5.5-instant"
 
 
+def test_minimax_provider_lists_regional_endpoints() -> None:
+    providers_path = Path(__file__).resolve().parents[1] / "src" / "providers" / "llm_providers.json"
+    providers = json.loads(providers_path.read_text(encoding="utf-8"))
+    minimax = next(item for item in providers if item["name"] == "minimax")
+
+    assert minimax["base_url_options"] == [
+        "https://api.minimax.io/v1",
+        "https://api.minimaxi.com/v1",
+    ]
+
+
 def test_interactive_onboard_openai_defaults_to_available_model() -> None:
     provider = next(provider for provider in ONBOARD_PROVIDERS if provider.key == "openai")
 
