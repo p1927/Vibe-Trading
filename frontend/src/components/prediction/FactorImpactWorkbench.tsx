@@ -303,10 +303,15 @@ export function FactorImpactWorkbench({
 
       {multicollinearityWarning ? (
         <div className="mb-4 rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-[11px] text-violet-950 dark:text-violet-100">
-          <p className="font-medium">Correlated macro factors — group attribution active</p>
+          <p className="font-medium">
+            {attributionMethod === "correlation_dependent_shap"
+              ? "Correlated macro factors — covariance-aware SHAP"
+              : "Correlated macro factors — group attribution active"}
+          </p>
           <p className="mt-0.5 text-violet-900/90 dark:text-violet-200/90">
-            Per-factor rankings split credit among correlated inputs. Prefer channel bars below; drill into
-            individual factors with caution.
+            {attributionMethod === "correlation_dependent_shap"
+              ? "Credit is shared using 365d panel covariance. Prefer channel bars below; individual factor ranks remain approximate."
+              : "Per-factor rankings split credit among correlated inputs. Prefer channel bars below; drill into individual factors with caution."}
           </p>
           {correlatedPairs.length > 0 ? (
             <ul className="mt-1.5 space-y-0.5 text-[10px] tabular-nums">
