@@ -1746,7 +1746,7 @@ def get_index_track_scoreboard(
         elif refresh:
             report = run_track_walk_forward(
                 ticker=key,
-                days=days,
+                days=history_days,
                 horizon_days=horizon_days,
                 eval_step=eval_step,
             )

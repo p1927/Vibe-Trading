@@ -210,7 +210,20 @@ export function TrackScoreboardPanel({
         </div>
       ) : null}
 
-      {insufficient ? (
+      {evalCount === 0 ? (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-950 dark:text-red-100">
+          <p className="font-medium">Scoreboard has no OOS eval rows — charts and metrics stay empty.</p>
+          <p className="mt-1 text-muted-foreground">
+            Cached history: {report.history_rows ?? "?"} rows
+            {report.history_days != null ? ` (${report.history_days}d requested)` : ""}.
+            {(report.history_rows ?? 0) >= 200
+              ? " History looks sufficient — walk-forward likely skipped all tracks (check API logs for track failures), then Recompute scoreboard."
+              : " Recompute needs ~730 trading days to produce walk-forward eval points. Click Recompute scoreboard; if this persists after a full run, check API logs for track failures."}
+          </p>
+        </div>
+      ) : null}
+
+      {insufficient && evalCount > 0 ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
           Direction skill is informational only — {evalCount} eval rows (need ≥
           {promo?.min_eval_count_required ?? 60} for auto-promotion). Headline stays quant_only until gates pass.
