@@ -33,6 +33,18 @@ function fmtLevel(v: number | null | undefined): string {
   return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
+const CHANNEL_LABELS: Record<string, string> = {
+  valuation_pct: "Valuation",
+  liquidity_spread_pct: "Rates & spreads",
+  energy_pct: "Energy",
+  fx_rates_pct: "FX & rates",
+  global_risk_pct: "Global risk",
+  vol_pct: "Volatility",
+  flows_pct: "Flows",
+  technical_pct: "Technical",
+  sentiment_news_pct: "Sentiment & news",
+};
+
 export function FactorImpactWorkbench({
   artifact,
   horizonDays,
@@ -42,9 +54,10 @@ export function FactorImpactWorkbench({
   contextLoading: contextLoadingProp,
 }: Props) {
   const contributors = artifact.factor_explanation?.contributors ?? [];
-  const channelAttribution = artifact.factor_explanation?.channel_attribution as
-    | Record<string, number>
-    | undefined;
+  const channelAttribution = artifact.factor_explanation?.channel_attribution ?? undefined;
+  const multicollinearityWarning = Boolean(artifact.factor_explanation?.multicollinearity_warning);
+  const correlatedPairs = artifact.factor_explanation?.correlated_pairs ?? [];
+  const attributionMethod = artifact.factor_explanation?.method;
   const attributionDisclaimer =
     artifact.factor_explanation?.attribution_disclaimer ??
     "Attribution shows model sensitivity, not causal effect. Correlated factors share credit.";
@@ -60,12 +73,22 @@ export function FactorImpactWorkbench({
 
   const rankedFactors = useMemo(() => {
     const keys = new Set<string>();
-    const list: Array<{ factor: string; label: string; contribution?: number }> = [];
+    const list: Array<{
+      factor: string;
+      label: string;
+      contribution?: number;
+      correlationCaveat?: boolean;
+    }> = [];
     for (const c of contributors) {
       const f = c.factor || "";
       if (!f || keys.has(f)) continue;
       keys.add(f);
-      list.push({ factor: f, label: c.label || factorLabel(f), contribution: c.contribution_pct });
+      list.push({
+        factor: f,
+        label: c.label || factorLabel(f),
+        contribution: c.contribution_pct,
+        correlationCaveat: c.correlation_caveat,
+      });
     }
     for (const row of artifact.global_factors ?? []) {
       const f = row.factor || "";
@@ -75,6 +98,23 @@ export function FactorImpactWorkbench({
     }
     return list;
   }, [contributors, artifact.global_factors]);
+
+  const channelRows = useMemo(() => {
+    if (!channelAttribution) return [];
+    return Object.entries(channelAttribution)
+      .filter(([key, value]) => !key.startsWith("_") && Number.isFinite(Number(value)))
+      .map(([key, value]) => ({
+        key,
+        label: CHANNEL_LABELS[key] || key.replace(/_pct$/, "").replace(/_/g, " "),
+        value: Number(value),
+      }))
+      .sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+  }, [channelAttribution]);
+
+  const maxChannelAbs = useMemo(
+    () => Math.max(0.01, ...channelRows.map((row) => Math.abs(row.value))),
+    [channelRows],
+  );
 
   const [activeFactor, setActiveFactor] = useState(rankedFactors[0]?.factor ?? "oil_brent");
   const [shockPct, setShockPct] = useState(0);
@@ -246,7 +286,8 @@ export function FactorImpactWorkbench({
           <p className="mt-1 text-[11px] text-muted-foreground">
             Select a factor or headline, shock it ±10%, see Nifty path to horizon with correlated macro
             cascade. Method: {cascadeMethodLabel}
-            {cascadeRegime !== "calm" ? ` · ${cascadeRegime} regime` : ""}.
+            {cascadeRegime !== "calm" ? ` · ${cascadeRegime} regime` : ""}
+            {attributionMethod ? ` · attribution: ${attributionMethod.replace(/_/g, " ")}` : ""}.
           </p>
           <p className="mt-1 text-[10px] text-amber-800 dark:text-amber-300">{attributionDisclaimer}</p>
         </div>
@@ -259,6 +300,51 @@ export function FactorImpactWorkbench({
           Reset
         </button>
       </div>
+
+      {multicollinearityWarning ? (
+        <div className="mb-4 rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-[11px] text-violet-950 dark:text-violet-100">
+          <p className="font-medium">Correlated macro factors — group attribution active</p>
+          <p className="mt-0.5 text-violet-900/90 dark:text-violet-200/90">
+            Per-factor rankings split credit among correlated inputs. Prefer channel bars below; drill into
+            individual factors with caution.
+          </p>
+          {correlatedPairs.length > 0 ? (
+            <ul className="mt-1.5 space-y-0.5 text-[10px] tabular-nums">
+              {correlatedPairs.slice(0, 3).map((pair) => (
+                <li key={`${pair.factor_a}-${pair.factor_b}`}>
+                  {factorLabel(pair.factor_a || "")} ↔ {factorLabel(pair.factor_b || "")}
+                  {pair.correlation != null ? ` (r=${Number(pair.correlation).toFixed(2)})` : ""}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+
+      {channelRows.length > 0 ? (
+        <div className="mb-4 rounded-lg border bg-muted/20 px-3 py-2">
+          <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Macro channel attribution
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {channelRows.map((row) => (
+              <li key={row.key} className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)_4.5rem] items-center gap-2 text-[10px]">
+                <span className="truncate text-muted-foreground">{row.label}</span>
+                <div className="h-2 overflow-hidden rounded-full bg-muted/60">
+                  <div
+                    className={cn(
+                      "h-full rounded-full",
+                      row.value >= 0 ? "bg-emerald-500/70" : "bg-red-500/70",
+                    )}
+                    style={{ width: `${Math.min(100, (Math.abs(row.value) / maxChannelAbs) * 100)}%` }}
+                  />
+                </div>
+                <span className="text-right tabular-nums font-medium">{fmtPct(row.value)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       <div className="mb-4 grid gap-2 sm:grid-cols-3">
         <div className="rounded-lg bg-muted/40 px-3 py-2">
@@ -313,6 +399,7 @@ export function FactorImpactWorkbench({
               {rankedFactors.map((r) => (
                 <option key={r.factor} value={r.factor}>
                   {r.label}
+                  {r.correlationCaveat ? " · correlated" : ""}
                   {r.contribution != null ? ` (${fmtPct(r.contribution)})` : ""}
                 </option>
               ))}
