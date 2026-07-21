@@ -51,6 +51,13 @@ def is_decay_enabled() -> bool:
     return get_env_config().memory.decay_enabled
 
 
+def is_hotness_decay_enabled() -> bool:
+    """Check if hotness decay is enabled via VT_MEMORY_HOTNESS_DECAY env var."""
+    from src.config.accessor import get_env_config
+
+    return get_env_config().memory.hotness_decay_enabled
+
+
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------

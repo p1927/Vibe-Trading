@@ -1,0 +1,35 @@
+{
+  "timestamp": "2026-07-21T06:04:45",
+  "corpus_size": 200,
+  "query_count": 50,
+  "baseline": {
+    "p_at_5": 0.372,
+    "mrr": 0.5643,
+    "ndcg_at_5": 0.3894
+  },
+  "treatment": {
+    "p_at_5": 0.42,
+    "mrr": 0.6227,
+    "ndcg_at_5": 0.4402
+  },
+  "improvement": {
+    "p_at_5_relative": "+12.90%",
+    "mrr_relative": "+10.34%",
+    "ndcg_at_5_relative": "+13.06%"
+  },
+  "by_difficulty": {
+    "easy": {
+      "baseline_p5": 0.52,
+      "treatment_p5": 0.61
+    },
+    "medium": {
+      "baseline_p5": 0.33,
+      "treatment_p5": 0.33
+    },
+    "hard": {
+      "baseline_p5": 0.16,
+      "treatment_p5": 0.22
+    }
+  },
+  "gate_passed": true
+}

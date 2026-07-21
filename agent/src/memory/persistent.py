@@ -26,6 +26,16 @@ MEMORY_TYPES = ("user", "feedback", "project", "reference")
 
 _LOCK_TIMEOUT_S = 5.0
 
+# Sliding window for content deduplication (seconds).
+# Catches rapid-fire duplicates from retry loops or parallel agent calls.
+DEDUP_WINDOW_SECONDS = 30.0
+
+
+def content_hash(name: str, description: str, content: str = "") -> str:
+    """Generate deterministic hash for deduplication."""
+    payload = f"{name.strip().lower()}|{description.strip().lower()}|{content.strip().lower()}"
+    return hashlib.sha256(payload.encode()).hexdigest()[:12]
+
 
 @contextmanager
 def memory_lock(memory_dir: Path) -> Generator[bool, None, None]:
@@ -79,6 +89,30 @@ def compute_importance(
     access_bonus = min(0.3, access_count * _ACCESS_BOOST)
     raw = quality_score * (retention + access_bonus)
     return min(1.0, max(0.0, raw))
+
+
+def compute_hotness(access_count: int, days_since_last_access: float) -> float:
+    """Sigmoid-smoothed hotness combining frequency and recency.
+
+    Alternative decay formula for high-frequency trading context where
+    14-day half-life is too slow. Uses 7-day half-life with sigmoid
+    smoothing to prevent access_count from dominating.
+
+    Inspired by Open-Viking (via AutoMemory reference hub).
+    """
+    _HOTNESS_HALF_LIFE_DAYS = 7.0  # More aggressive for trading context
+    _HOTNESS_DECAY_RATE = math.log(2) / _HOTNESS_HALF_LIFE_DAYS
+    frequency_signal = 1 / (1 + math.exp(-math.log1p(access_count)))
+    recency_signal = math.exp(-_HOTNESS_DECAY_RATE * days_since_last_access)
+    return frequency_signal * recency_signal
+
+
+def _is_hotness_decay_enabled() -> bool:
+    """Check if hotness decay is enabled via VT_MEMORY_HOTNESS_DECAY env var."""
+    from src.config.accessor import get_env_config
+
+    return get_env_config().memory.hotness_decay_enabled
+
 
 # Script ranges for non-Latin tokenization and slug generation.
 _NON_LATIN_SCRIPT_RANGES = (
@@ -174,6 +208,7 @@ class PersistentMemory:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self._dir / "MEMORY.md"
         self._snapshot: str = ""
+        self._recent_hashes: dict[str, float] = {}  # hash -> epoch timestamp
         self._load_snapshot()
 
     def _load_snapshot(self) -> None:
@@ -238,7 +273,11 @@ class PersistentMemory:
             last_acc = _parse_timestamp(meta.get("last_accessed"), mtime)
             now = _time.time()
             days_since = max(0.0, (now - last_acc) / 86400.0)
-            importance = compute_importance(qs, ac, days_since)
+            # Select decay formula based on feature flag
+            if _is_hotness_decay_enabled():
+                importance = compute_hotness(ac, days_since)
+            else:
+                importance = compute_importance(qs, ac, days_since)
 
             entries.append(MemoryEntry(
                 path=path,
@@ -314,9 +353,32 @@ class PersistentMemory:
         scored.sort(key=lambda x: (-x[0], -x[1].modified_at))
         return [entry for _, entry in scored[:max_results]]
 
+    def is_duplicate(self, name: str, description: str, content: str = "") -> bool:
+        """Check if a memory with similar content was recently written.
+
+        Uses a 30-second sliding window to catch rapid-fire duplicates
+        from retry loops or parallel agent calls.
+        """
+        new_hash = content_hash(name, description, content)
+        now = _time.time()
+        # Check recent writes cache (in-memory dict, not persisted)
+        if new_hash in self._recent_hashes:
+            if now - self._recent_hashes[new_hash] < DEDUP_WINDOW_SECONDS:
+                return True
+        self._recent_hashes[new_hash] = now
+        return False
+
     def add(self, name: str, content: str, memory_type: str = "project",
-            description: str = "") -> Path:
+            description: str = "") -> Optional[Path]:
         """Save a new memory entry and update the index."""
+        if self.is_duplicate(name, description, content):
+            logger.debug(
+                "Duplicate memory write blocked within %.0fs window: %s",
+                DEDUP_WINDOW_SECONDS,
+                name,
+            )
+            return None
+
         stripped_name = name.strip()
         if not stripped_name:
             raise ValueError("memory name must not be empty or whitespace-only")
