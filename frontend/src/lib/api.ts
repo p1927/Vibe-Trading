@@ -1064,6 +1064,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  runHubNewsMaintenance: (entityId = "NIFTY", lookbackDays = 365) =>
+    request<HubStagingDrainResponse>(
+      `/trade/hub/news-pipeline/maintenance?entity_id=${encodeURIComponent(entityId)}&lookback_days=${encodeURIComponent(String(lookbackDays))}`,
+      { method: "POST" },
+    ),
   discardHubNews: (body: HubNewsDiscardRequest) =>
     request<HubNewsDiscardResponse>("/trade/hub/news/discard", {
       method: "POST",
@@ -2130,6 +2135,7 @@ export interface IndexFactorContributor {
   contribution_index_pts?: number;
   value?: number;
   share_of_total_equation?: number;
+  correlation_caveat?: boolean;
 }
 
 export interface IndexScenario {
@@ -2277,6 +2283,14 @@ export interface IndexPredictionArtifact extends Omit<HubPlanArtifact, "regime" 
     macro_delta_pct?: number;
     ridge_macro_delta_pct?: number;
     attribution_rescaled?: boolean;
+    attribution_disclaimer?: string;
+    multicollinearity_warning?: boolean;
+    channel_attribution?: Record<string, number> | null;
+    correlated_pairs?: Array<{
+      factor_a?: string;
+      factor_b?: string;
+      correlation?: number;
+    }>;
   };
   factor_sensitivity?: Array<Record<string, unknown>>;
   event_impact_curves?: Array<Record<string, unknown>>;
@@ -2945,6 +2959,10 @@ export interface HubNewsPipelineConfig {
   light_ingest_cron?: string;
   light_ingest_enabled?: boolean;
   entity_drain_cron?: string;
+  entity_maintenance_cron?: string;
+  entity_drain_continuous_cron?: string;
+  entity_drain_continuous_enabled?: boolean;
+  entity_backpressure_threshold?: number;
   full_ingest_sources?: string;
   light_ingest_sources?: string;
   full_lookback_days?: number;
@@ -2980,6 +2998,10 @@ export interface HubNewsPipelineConfigUpdate {
   light_ingest_cron?: string;
   light_ingest_enabled?: boolean;
   entity_drain_cron?: string;
+  entity_maintenance_cron?: string;
+  entity_drain_continuous_cron?: string;
+  entity_drain_continuous_enabled?: boolean;
+  entity_backpressure_threshold?: number;
   full_ingest_sources?: string;
   light_ingest_sources?: string;
   full_lookback_days?: number;
