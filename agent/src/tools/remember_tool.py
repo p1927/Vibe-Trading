@@ -99,15 +99,24 @@ class RememberTool(BaseTool):
         title = kwargs.get("title", "")
         content = kwargs.get("content", "")
         if not title or not content:
-            return json.dumps({"status": "error", "error": "title and content required"})
+            return json.dumps(
+                {"status": "error", "error": "title and content required"}
+            )
         memory_type = kwargs.get("memory_type", "project")
         try:
             path = self._memory.add(title, content, memory_type, description=title)
         except ValueError as exc:
             return json.dumps({"status": "error", "error": str(exc)})
         if path is None:
-            return json.dumps({"status": "skipped", "message": f"Duplicate write blocked for: {title}"})
-        return json.dumps({"status": "ok", "message": f"Saved: {title}", "path": str(path)})
+            return json.dumps(
+                {
+                    "status": "skipped",
+                    "message": f"Duplicate write blocked for: {title}",
+                }
+            )
+        return json.dumps(
+            {"status": "ok", "message": f"Saved: {title}", "path": str(path)}
+        )
 
     def _recall(self, kwargs: dict) -> str:
         query = kwargs.get("query", "")
@@ -122,7 +131,10 @@ class RememberTool(BaseTool):
             {"title": e.title, "type": e.memory_type, "content": e.body[:2000]}
             for e in entries
         ]
-        return json.dumps({"status": "ok", "count": len(results), "memories": results}, ensure_ascii=False)
+        return json.dumps(
+            {"status": "ok", "count": len(results), "memories": results},
+            ensure_ascii=False,
+        )
 
     def _forget(self, kwargs: dict) -> str:
         title = kwargs.get("title", "")
@@ -142,5 +154,9 @@ class RememberTool(BaseTool):
             source = "system"
         success = self._lifecycle.reinforce(title, event, source)
         if success:
-            return json.dumps({"status": "ok", "message": f"Reinforced: {title} ({event})"})
-        return json.dumps({"status": "skipped", "message": f"Reinforce skipped for: {title}"})
+            return json.dumps(
+                {"status": "ok", "message": f"Reinforced: {title} ({event})"}
+            )
+        return json.dumps(
+            {"status": "skipped", "message": f"Reinforce skipped for: {title}"}
+        )

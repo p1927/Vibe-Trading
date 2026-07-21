@@ -45,6 +45,7 @@ def memory_lock(memory_dir: Path) -> Generator[bool, None, None]:
         yield True
         return
     import fcntl
+
     lock_path = memory_dir / ".lock"
     lock_path.touch(exist_ok=True)
     fd = None
@@ -58,9 +59,7 @@ def memory_lock(memory_dir: Path) -> Generator[bool, None, None]:
                 return
             except (OSError, BlockingIOError):
                 if _time.monotonic() >= deadline:
-                    logger.warning(
-                        "memory_lock: timeout after %.1fs", _LOCK_TIMEOUT_S
-                    )
+                    logger.warning("memory_lock: timeout after %.1fs", _LOCK_TIMEOUT_S)
                     yield False
                     return
                 _time.sleep(0.1)
@@ -123,6 +122,7 @@ _SLUG_DISALLOWED_RE = re.compile(rf"[^a-z0-9_\-{_NON_LATIN_SCRIPT_RANGES}]")
 @dataclass(frozen=True)
 class MemoryEntry:
     """A single memory entry on disk."""
+
     path: Path
     title: str
     description: str
@@ -235,8 +235,10 @@ class PersistentMemory:
             )[:5]
             raw_related = meta.get("related_memories", [])
             related = tuple(
-                str(r) for r in (raw_related if isinstance(raw_related, list) else [])
-                if isinstance(r, str) and len(r) == 6
+                str(r)
+                for r in (raw_related if isinstance(raw_related, list) else [])
+                if isinstance(r, str)
+                and len(r) == 6
                 and all(c in "0123456789abcdef" for c in r.lower())
             )
 
@@ -266,23 +268,25 @@ class PersistentMemory:
             days_since = max(0.0, (now - last_acc) / 86400.0)
             importance = compute_importance(qs, ac, days_since)
 
-            entries.append(MemoryEntry(
-                path=path,
-                title=_coerce_str(meta.get("name"), default=path.stem),
-                description=_coerce_str(meta.get("description")),
-                memory_type=_coerce_str(meta.get("type"), default="project"),
-                body=body[:MAX_ENTRY_CHARS],
-                modified_at=mtime,
-                id=entry_id,
-                created_at=created,
-                updated_at=updated,
-                keywords=keywords,
-                quality_score=qs,
-                access_count=ac,
-                last_accessed=last_acc,
-                importance=importance,
-                related_memories=related,
-            ))
+            entries.append(
+                MemoryEntry(
+                    path=path,
+                    title=_coerce_str(meta.get("name"), default=path.stem),
+                    description=_coerce_str(meta.get("description")),
+                    memory_type=_coerce_str(meta.get("type"), default="project"),
+                    body=body[:MAX_ENTRY_CHARS],
+                    modified_at=mtime,
+                    id=entry_id,
+                    created_at=created,
+                    updated_at=updated,
+                    keywords=keywords,
+                    quality_score=qs,
+                    access_count=ac,
+                    last_accessed=last_acc,
+                    importance=importance,
+                    related_memories=related,
+                )
+            )
         return entries
 
     def list_entries(self) -> List[MemoryEntry]:
@@ -317,7 +321,9 @@ class PersistentMemory:
             self._rebuild_index()
         return True
 
-    def find_relevant(self, query: str, max_results: int = MAX_RESULTS) -> List[MemoryEntry]:
+    def find_relevant(
+        self, query: str, max_results: int = MAX_RESULTS
+    ) -> List[MemoryEntry]:
         """Keyword search across all entries, weighted by importance."""
         query_tokens = _tokenize(query)
         if not query_tokens:
@@ -336,7 +342,7 @@ class PersistentMemory:
             if token_score > 0:
                 final_score = token_score
                 if _is_decay_enabled():
-                    final_score *= (0.5 + 0.5 * entry.importance)
+                    final_score *= 0.5 + 0.5 * entry.importance
                 scored.append((final_score, entry))
 
         scored.sort(key=lambda x: (-x[0], -x[1].modified_at))
@@ -364,8 +370,13 @@ class PersistentMemory:
         for h in expired:
             del self._recent_hashes[h]
 
-    def add(self, name: str, content: str, memory_type: str = "project",
-            description: str = "") -> Optional[Path]:
+    def add(
+        self,
+        name: str,
+        content: str,
+        memory_type: str = "project",
+        description: str = "",
+    ) -> Optional[Path]:
         """Save a new memory entry and update the index."""
         if _is_quality_enabled() and self.is_duplicate(name, description, content):
             logger.debug(
@@ -415,7 +426,9 @@ class PersistentMemory:
         )
         with memory_lock(self._dir) as acquired:
             if not acquired:
-                logger.warning("add(%s): lock timeout, best-effort write", stripped_name)
+                logger.warning(
+                    "add(%s): lock timeout, best-effort write", stripped_name
+                )
             path.write_text(frontmatter, encoding="utf-8")
             self._update_index(stripped_name, filename, description or stripped_name)
         return path
@@ -456,4 +469,6 @@ class PersistentMemory:
         """Rebuild MEMORY.md from all existing entry files."""
         entries = self._scan_entries()
         lines = [f"- [{e.title}]({e.path.name}) — {e.description}" for e in entries]
-        self._index_path.write_text("\n".join(lines[:MAX_INDEX_LINES]), encoding="utf-8")
+        self._index_path.write_text(
+            "\n".join(lines[:MAX_INDEX_LINES]), encoding="utf-8"
+        )
