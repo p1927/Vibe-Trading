@@ -819,6 +819,10 @@ class HubNewsPipelineConfigUpdate(BaseModel):
     relevance_min_confidence: float | None = None
     relevance_rule_first: bool | None = None
     discard_retention_days: int | None = None
+    wiki_search_enabled: bool | None = None
+    wiki_search_top_k: int | None = None
+    wiki_search_max_per_pass: int | None = None
+    wiki_search_min_score: float | None = None
 
 
 class HubNewsDiscardRequest(BaseModel):
