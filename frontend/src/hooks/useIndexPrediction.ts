@@ -18,6 +18,7 @@ export interface UseIndexPredictionState {
   running: boolean;
   runJobId: string | null;
   reattached: boolean;
+  streamReconnecting: boolean;
   error: string | null;
   pipelineLogs: import("@/lib/api").PipelineLogEntry[];
   pipelinePanelOpen: boolean;
@@ -44,6 +45,7 @@ export function useIndexPrediction(
   const running = usePredictionRunStore((s) => s.running);
   const runJobId = usePredictionRunStore((s) => s.runJobId);
   const reattached = usePredictionRunStore((s) => s.reattached);
+  const streamReconnecting = usePredictionRunStore((s) => s.streamReconnecting);
   const pipelineLogs = usePredictionRunStore((s) => s.pipelineLogs);
   const runError = usePredictionRunStore((s) => s.runError);
   const runArtifact = usePredictionRunStore((s) => s.runArtifact);
@@ -77,6 +79,7 @@ export function useIndexPrediction(
 
   const reload = useCallback(async () => {
     if (!coordinatorReady) return;
+    if (usePredictionRunStore.getState().running) return;
 
     const gen = ++fetchGenRef.current;
     const storeRunning = usePredictionRunStore.getState().running;
@@ -168,6 +171,7 @@ export function useIndexPrediction(
     running,
     runJobId,
     reattached,
+    streamReconnecting,
     error,
     pipelineLogs,
     pipelinePanelOpen,

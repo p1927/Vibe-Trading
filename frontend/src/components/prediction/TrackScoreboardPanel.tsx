@@ -214,6 +214,10 @@ export function TrackScoreboardPanel({
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
           Direction skill is informational only — {evalCount} eval rows (need ≥
           {promo?.min_eval_count_required ?? 60} for auto-promotion). Headline stays quant_only until gates pass.
+          Live uses legacy scenario reconcile (25/75); scoreboard shows OOS-optimal combiners.
+          {promo?.headline_direction_bootstrap_ci?.insufficient_evidence
+            ? " Direction bootstrap CI still crosses 50%."
+            : ""}
         </div>
       ) : null}
 

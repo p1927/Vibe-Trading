@@ -1,7 +1,7 @@
 import type { IndexBacktestReport, IndexPredictionArtifact } from "@/lib/api";
 
-/** Macro keys that feed the Ridge overlay in predict_nifty (must match factor_matrix.py). */
-export const MACRO_MODEL_KEYS = [
+/** Core macro keys always expected in live snapshot (subset of backend MACRO_FACTOR_KEYS). */
+export const MACRO_CORE_KEYS = [
   "oil_brent",
   "oil_wti",
   "usd_inr",
@@ -27,6 +27,40 @@ export const MACRO_MODEL_KEYS = [
   "is_budget_week",
   "is_results_season",
 ] as const;
+
+/** Extended keys used by Ridge when panel coverage allows — mirrors factor_matrix.py MACRO_FACTOR_KEYS. */
+export const MACRO_EXTENDED_KEYS = [
+  "nifty_ma50_distance_pct",
+  "nifty_ma200_distance_pct",
+  "nifty_macd_line",
+  "nifty_macd_signal",
+  "nifty_macd_histogram",
+  "nifty_bb_percent_b",
+  "nifty_bb_width_pct",
+  "nifty_stoch_k",
+  "nifty_stoch_d",
+  "nifty_williams_r",
+  "nifty_cci_20",
+  "nifty_adx_14",
+  "nifty_atr_pct",
+  "nifty_golden_cross_signal",
+  "qfinindia_skew",
+  "qfinindia_expected_move",
+  "qfinindia_tail_risk",
+  "institutional_net_5d",
+  "dii_absorption_ratio",
+  "nifty_earnings_yield",
+  "equity_risk_premium",
+  "india_term_spread",
+  "india_credit_spread",
+  "india_vix_velocity_3d",
+  "usd_inr_momentum_5d",
+  "us_10y_velocity_3d",
+  "fii_net_5d_momentum",
+] as const;
+
+/** Full Ridge feature universe for UI verification — keep in sync with factor_matrix.py. */
+export const MACRO_MODEL_KEYS = [...MACRO_CORE_KEYS, ...MACRO_EXTENDED_KEYS] as const;
 
 export type ModelRole = "feeds" | "display" | "context" | "verify" | "ops";
 
@@ -120,7 +154,12 @@ export function runPredictionUiAudit(
     const v = gf.get(key);
     return v == null || !Number.isFinite(Number(v));
   });
+  const missingCore = MACRO_CORE_KEYS.filter((key) => {
+    const v = gf.get(key);
+    return v == null || !Number.isFinite(Number(v));
+  });
   const macroPresent = MACRO_MODEL_KEYS.length - missingMacro.length;
+  const corePresent = MACRO_CORE_KEYS.length - missingCore.length;
 
   const rows: UiVerificationRow[] = [];
 
@@ -237,12 +276,12 @@ export function runPredictionUiAudit(
     section: "Macro levels",
     modelRole: "feeds",
     status: statusFrom({
-      ok: macroPresent >= 18,
-      warn: macroPresent >= 10 && macroPresent < 18,
-      empty: macroPresent === 0,
+      ok: corePresent >= 18,
+      warn: corePresent >= 10 && corePresent < 18,
+      empty: corePresent === 0,
     }),
     source: "fetch_global_macro_snapshot → global_factors",
-    userValue: `${macroPresent}/${MACRO_MODEL_KEYS.length} model inputs populated`,
+    userValue: `${macroPresent}/${MACRO_MODEL_KEYS.length} Ridge inputs · ${corePresent}/${MACRO_CORE_KEYS.length} core`,
     feedsForecast: true,
     detail: missingMacro.length
       ? `Missing: ${missingMacro.slice(0, 6).join(", ")}${missingMacro.length > 6 ? "…" : ""}`

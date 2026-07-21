@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -24,11 +25,14 @@ logger = logging.getLogger(__name__)
 
 INDEX_PREDICTION_RUN_JOBS: dict[str, dict[str, Any]] = {}
 _ACTIVE_BY_TICKER: dict[str, str] = {}
-_JOBS_LOCK = threading.Lock()
+_JOBS_LOCK = threading.RLock()
 
 _JOB_TTL_SECONDS = 60 * 60
 _JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 _ACTIVE_STATUSES = frozenset({"queued", "running"})
+_STALE_LOG_SECONDS = int(os.getenv("INDEX_PREDICTION_STALE_LOG_SECONDS", "1800"))
+_WALL_CLOCK_SECONDS = int(os.getenv("INDEX_PREDICTION_RUN_WALL_CLOCK_SECONDS", "2700"))
+_QUEUED_NO_PID_SECONDS = int(os.getenv("INDEX_PREDICTION_QUEUED_NO_PID_SECONDS", "60"))
 
 
 def _is_pid_alive(pid: int | None) -> bool:
@@ -63,6 +67,79 @@ def reconcile_zombie_job(job_id: str) -> bool:
         return False
     fail_job(job_id, "worker process exited unexpectedly")
     return True
+
+
+def _parse_iso_timestamp(ts: str | None) -> float | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _job_age_seconds(job: dict[str, Any]) -> float:
+    created = _parse_iso_timestamp(str(job.get("created_at") or ""))
+    if created is None:
+        return 0.0
+    return max(0.0, datetime.now(timezone.utc).timestamp() - created)
+
+
+def _last_log_age_seconds(job: dict[str, Any]) -> float | None:
+    logs = list(job.get("logs") or [])
+    if not logs:
+        return None
+    last_at = _parse_iso_timestamp(str(logs[-1].get("at") or ""))
+    if last_at is None:
+        return None
+    return max(0.0, datetime.now(timezone.utc).timestamp() - last_at)
+
+
+def reconcile_queued_job(job_id: str) -> bool:
+    """Fail queued jobs whose worker never received a PID."""
+    job = _get_job_record(job_id)
+    if job is None or job.get("status") != "queued":
+        return False
+    if job.get("worker_pid") is not None:
+        return False
+    if _job_age_seconds(job) <= _QUEUED_NO_PID_SECONDS:
+        return False
+    fail_job(job_id, f"worker never spawned after {_QUEUED_NO_PID_SECONDS}s", terminate_worker=True)
+    return True
+
+
+def reconcile_stale_job(job_id: str) -> bool:
+    """Fail running jobs that exceed wall-clock budget (log-stale only as secondary signal)."""
+    job = _get_job_record(job_id)
+    if job is None or job.get("status") != "running":
+        return False
+    if not worker_alive(job):
+        return False
+    wall_age = _job_age_seconds(job)
+    if wall_age > _WALL_CLOCK_SECONDS:
+        fail_job(
+            job_id,
+            f"run exceeded wall-clock budget ({int(wall_age)}s > {_WALL_CLOCK_SECONDS}s)",
+            terminate_worker=True,
+        )
+        return True
+    # Secondary: no logs at all for extended period after start (not per-stage silence).
+    logs = list(job.get("logs") or [])
+    if not logs and wall_age > _QUEUED_NO_PID_SECONDS:
+        fail_job(job_id, f"worker produced no logs after {int(wall_age)}s", terminate_worker=True)
+        return True
+    return False
+
+
+def reconcile_job(job_id: str) -> bool:
+    """Run all reconciliation checks. Returns True if job was terminalized."""
+    if reconcile_zombie_job(job_id):
+        return True
+    if reconcile_queued_job(job_id):
+        return True
+    if reconcile_stale_job(job_id):
+        return True
+    return False
 
 
 def _now_iso() -> str:
@@ -216,7 +293,26 @@ def job_id_valid(job_id: str | None) -> bool:
     return bool(job_id and _JOB_ID_RE.fullmatch(job_id))
 
 
+def _job_progress_from_logs(logs: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Derive live progress fields from the latest pipeline log entry."""
+    if not logs:
+        return {}
+    latest = logs[-1]
+    detail = latest.get("detail") or {}
+    progress: dict[str, Any] = {
+        "current_stage": latest.get("stage"),
+        "last_log_at": latest.get("at"),
+        "last_log_message": latest.get("message"),
+    }
+    if detail.get("elapsed_ms") is not None:
+        progress["stage_elapsed_ms"] = detail.get("elapsed_ms")
+    if detail.get("track_id") is not None:
+        progress["current_track_id"] = detail.get("track_id")
+    return progress
+
+
 def _job_snapshot(job: dict[str, Any], *, include_logs: bool = True) -> dict[str, Any]:
+    logs = list(job.get("logs") or [])
     out: dict[str, Any] = {
         "job_id": job["job_id"],
         "status": job["status"],
@@ -227,8 +323,9 @@ def _job_snapshot(job: dict[str, Any], *, include_logs: bool = True) -> dict[str
         "created_at": job.get("created_at"),
         "error": job.get("error"),
     }
+    out.update(_job_progress_from_logs(logs))
     if include_logs:
-        out["logs"] = list(job.get("logs") or [])
+        out["logs"] = logs
     if job.get("status") == "done" and job.get("artifact") is not None:
         out["artifact"] = job["artifact"]
     return out
@@ -254,7 +351,16 @@ def get_active_job(ticker: str) -> dict[str, Any] | None:
                 _ACTIVE_BY_TICKER.pop(key, None)
         return None
     if not worker_alive(job):
-        reconcile_zombie_job(job_id)
+        reconcile_job(job_id)
+        job = _get_job_record(job_id)
+        if job is not None and job.get("status") == "error":
+            return _job_snapshot(job)
+        return None
+    reconcile_job(job_id)
+    job = _get_job_record(job_id)
+    if job is None or job.get("status") not in _ACTIVE_STATUSES:
+        if job is not None and job.get("status") == "error":
+            return _job_snapshot(job)
         return None
     return _job_snapshot(job)
 
@@ -287,7 +393,7 @@ def start_job(
                             ).total_seconds()
                         except ValueError:
                             age_seconds = 999.0
-                    if age_seconds > 30:
+                    if age_seconds > _QUEUED_NO_PID_SECONDS:
                         fail_job(existing_id, "worker never started")
                     else:
                         if existing_id not in INDEX_PREDICTION_RUN_JOBS:
@@ -329,18 +435,27 @@ def mark_running(job_id: str) -> None:
 
 
 def append_log(job_id: str, entry: dict[str, Any]) -> None:
-    job = _get_job_record(job_id)
-    if job is None:
-        return
-    if job.get("status") == "queued":
-        job["status"] = "running"
-    job.setdefault("logs", []).append(dict(entry))
+    with _JOBS_LOCK:
+        job = INDEX_PREDICTION_RUN_JOBS.get(job_id) or _read_job_from_disk(job_id)
+        if job is None:
+            return
+        if job.get("status") == "queued":
+            job["status"] = "running"
+        job.setdefault("logs", []).append(dict(entry))
+        INDEX_PREDICTION_RUN_JOBS[job_id] = job
     _write_job_to_disk(job)
 
 
 def complete_job(job_id: str, *, ticker: str, artifact: dict[str, Any]) -> None:
     job = _get_job_record(job_id)
     if job is None:
+        return
+    if str(job.get("status") or "") not in _ACTIVE_STATUSES:
+        logger.info(
+            "complete_job skipped — job already terminal (job=%s status=%s)",
+            job_id,
+            job.get("status"),
+        )
         return
     job["status"] = "done"
     job["artifact"] = artifact
@@ -352,10 +467,35 @@ def complete_job(job_id: str, *, ticker: str, artifact: dict[str, Any]) -> None:
     _write_job_to_disk(job)
 
 
-def fail_job(job_id: str, message: str) -> None:
+def _terminate_worker(job: dict[str, Any] | None) -> None:
+    """Best-effort SIGTERM for a detached worker subprocess."""
+    if job is None:
+        return
+    pid = job.get("worker_pid")
+    if pid is None:
+        return
+    try:
+        pid_int = int(pid)
+    except (TypeError, ValueError):
+        return
+    if not _is_pid_alive(pid_int):
+        return
+    if pid_int == os.getpid():
+        return
+    try:
+        os.kill(pid_int, signal.SIGTERM)
+    except OSError:
+        pass
+
+
+def fail_job(job_id: str, message: str, *, terminate_worker: bool = False) -> None:
     job = _get_job_record(job_id)
     if job is None:
         return
+    if str(job.get("status") or "") not in _ACTIVE_STATUSES:
+        return
+    if terminate_worker:
+        _terminate_worker(job)
     job["status"] = "error"
     job["error"] = message
     job["_finished_at"] = time.time()
@@ -384,10 +524,16 @@ def run_worker(job_id: str) -> None:
     try:
         from trade_integrations.context.hub import save_index_research
         from trade_integrations.dataflows.index_research.aggregator import run_index_research
-        from trade_integrations.dataflows.index_research.pipeline_cancel import PipelineCancelledError
+        from trade_integrations.dataflows.index_research.pipeline_cancel import (
+            PipelineCancelledError,
+            clear_pipeline_cancel,
+            set_pipeline_job_id,
+        )
         from trade_integrations.dataflows.index_research.pipeline_log import PipelineLogger
         from src.trade.hub_bridge import _index_doc_to_panel, ensure_trade_stack_path
 
+        clear_pipeline_cancel(job_id=job_id)
+        set_pipeline_job_id(job_id)
         ensure_trade_stack_path()
         plog = PipelineLogger(on_entry=on_log)
         doc = run_index_research(
@@ -397,7 +543,19 @@ def run_worker(job_id: str) -> None:
             run_forecast_lab=run_forecast_lab,
             pipeline=plog,
         )
-        save_index_research(doc)
+        with plog.stage_timer("persist", "Save hub artifact"):
+            save_index_research(doc)
+        try:
+            from trade_integrations.dataflows.index_research.playground_context import (
+                build_playground_context,
+                save_playground_context,
+            )
+
+            with plog.stage_timer("persist", "Build playground context cache"):
+                playground_ctx = build_playground_context(doc, ticker=key, live_fetch=False)
+                save_playground_context(playground_ctx, ticker=key)
+        except Exception:
+            logger.debug("playground context cache write skipped (job=%s)", job_id, exc_info=True)
         artifact = _index_doc_to_panel(doc)
         artifact["asset_type"] = "index"
         complete_job(job_id, ticker=key, artifact=artifact)
@@ -426,6 +584,14 @@ def run_worker(job_id: str) -> None:
             },
         )
         fail_job(job_id, str(exc))
+    finally:
+        from trade_integrations.dataflows.index_research.pipeline_cancel import (
+            clear_pipeline_cancel,
+            set_pipeline_job_id,
+        )
+
+        set_pipeline_job_id(None)
+        clear_pipeline_cancel(job_id=job_id)
 
 
 def _agent_dir() -> Path:

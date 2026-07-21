@@ -38,6 +38,9 @@ import { NewsScenarioCanvas } from "@/components/prediction/NewsScenarioCanvas";
 import { useExternalPredictions } from "@/hooks/useExternalPredictions";
 import { useIndexPrediction } from "@/hooks/useIndexPrediction";
 import { useIndexPredictionLive } from "@/hooks/useIndexPredictionLive";
+import { usePlaygroundContext } from "@/hooks/usePlaygroundContext";
+import { cancelPredictionRunClient } from "@/hooks/usePredictionRunCoordinator";
+import { usePredictionRunStore } from "@/stores/predictionRun";
 import {
   api,
   type IndexBacktestReport,
@@ -130,6 +133,7 @@ export function Prediction() {
     running,
     runJobId,
     reattached,
+    streamReconnecting,
     error,
     runAnalysis,
     reload,
@@ -140,6 +144,12 @@ export function Prediction() {
     catalogLoading,
     setPipelinePanelOpen,
   } = useIndexPrediction("NIFTY", horizonDays);
+
+  const {
+    headlines: playgroundHeadlines,
+    events: playgroundEvents,
+    loading: playgroundContextLoading,
+  } = usePlaygroundContext("NIFTY", artifact?.as_of);
 
   const externalPredictionsEnabled = predictionMode === EXTERNAL_PREDICTIONS_MODE;
   const {
@@ -532,13 +542,28 @@ export function Prediction() {
   const handleRun = () => {
     setSimulation(null);
     void runAnalysis(horizonDays, refreshConstituents).then(() => {
+      const state = usePredictionRunStore.getState();
+      if (state.runError || state.running) return;
       void loadHistory();
       void reload();
-      void loadBacktest(true);
-      void loadMissAnalysis(true);
+      void loadBacktest(false);
+      void loadMissAnalysis(false);
       void loadFactorHistory();
     });
   };
+
+  const handleCancelRun = useCallback(() => {
+    const jobId = usePredictionRunStore.getState().runJobId;
+    cancelPredictionRunClient("NIFTY");
+    if (jobId) {
+      void api.cancelIndexPredictionRun(jobId);
+    }
+  }, []);
+
+  const handleRecomputeDiagnostics = useCallback(() => {
+    void loadBacktest(true);
+    void loadMissAnalysis(true);
+  }, [loadBacktest, loadMissAnalysis]);
 
   const handleScoreboardGoToAnalysis = useCallback(() => {
     setPredictionMode("analysis");
@@ -753,6 +778,7 @@ export function Prediction() {
           refreshConstituents={refreshConstituents}
           onRefreshConstituentsChange={setRefreshConstituents}
           onRun={handleRun}
+          onCancel={handleCancelRun}
           running={running}
           runJobId={runJobId}
           lastUpdated={artifact?.as_of}
@@ -772,7 +798,7 @@ export function Prediction() {
           pausedForAnalysis={pausedForAnalysis}
         />
 
-        <PredictionScheduledJobsPanel />
+        {!running ? <PredictionScheduledJobsPanel /> : null}
         <DataCapturePanel />
 
         {error ? (
@@ -874,6 +900,9 @@ export function Prediction() {
                 artifact={artifact}
                 horizonDays={horizonDays}
                 onSimulationChange={setSimulation}
+                headlines={playgroundHeadlines}
+                events={playgroundEvents}
+                contextLoading={playgroundContextLoading}
               />
             </section>
 
@@ -1012,11 +1041,21 @@ export function Prediction() {
             </section>
 
             <section className="space-y-3">
-              <PredictionSectionHeader
-                title="Walk-forward backtest"
-                subtitle="Out-of-sample MAE and direction hit rate — validates the model, not the live headline."
-                modelRole="verify"
-              />
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <PredictionSectionHeader
+                  title="Walk-forward backtest"
+                  subtitle="Out-of-sample MAE and direction hit rate — validates the model, not the live headline."
+                  modelRole="verify"
+                />
+                <button
+                  type="button"
+                  onClick={handleRecomputeDiagnostics}
+                  disabled={backtestLoading || missAnalysisLoading || running}
+                  className="inline-flex h-8 items-center rounded-lg border bg-background px-3 text-[11px] font-medium text-muted-foreground hover:bg-muted disabled:opacity-50"
+                >
+                  {backtestLoading || missAnalysisLoading ? "Recomputing…" : "Recompute diagnostics"}
+                </button>
+              </div>
               <BacktestEvaluationPanel
                 report={backtest}
                 loading={backtestLoading}
@@ -1071,6 +1110,7 @@ export function Prediction() {
         open={running && predictionMode !== "analysis" ? true : pipelinePanelOpen}
         running={running}
         reattached={reattached}
+        streamReconnecting={streamReconnecting}
         runJobId={runJobId}
         logs={pipelineLogs}
         artifact={artifact}

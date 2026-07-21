@@ -600,10 +600,16 @@ class IndexPredictionRunJobSnapshot(BaseModel):
     ticker: str = ""
     horizon_days: int | None = None
     refresh_constituents: bool = False
+    run_forecast_lab: bool = False
     created_at: str | None = None
     error: str | None = None
     logs: List[Dict[str, Any]] = Field(default_factory=list)
     artifact: Dict[str, Any] | None = None
+    current_stage: str | None = None
+    last_log_at: str | None = None
+    last_log_message: str | None = None
+    stage_elapsed_ms: float | None = None
+    current_track_id: str | None = None
 
 
 class IndexPredictionRunActiveResponse(BaseModel):
@@ -1469,6 +1475,7 @@ def simulate_index_prediction(
 @trade_router.get("/index-prediction/playground-context", response_model=IndexPlaygroundContextResponse)
 def get_index_playground_context(
     ticker: str = "NIFTY",
+    refresh: bool = False,
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexPlaygroundContextResponse:
     """Headlines, events, and ranked factors for the factor impact workbench."""
@@ -1476,9 +1483,12 @@ def get_index_playground_context(
     try:
         from trade_integrations.context.hub import load_index_research_json
         from trade_integrations.dataflows.index_research.playground_context import (
-            build_playground_context,
+            doc_as_of_iso,
+            load_playground_context,
+            resolve_playground_context,
         )
         from src.trade.hub_bridge import ensure_trade_stack_path
+        from src.trade.prediction_heavy_pool import run_single_flight
 
         ensure_trade_stack_path()
         doc = load_index_research_json(key)
@@ -1488,7 +1498,18 @@ def get_index_playground_context(
                 ticker=key,
                 message="Run index analysis first",
             )
-        ctx = build_playground_context(doc, ticker=key)
+
+        doc_as_of = doc_as_of_iso(doc)[:19]
+        if not refresh:
+            cached = load_playground_context(key)
+            if cached and str(cached.get("as_of") or "")[:19] == doc_as_of:
+                return IndexPlaygroundContextResponse(status="ok", ticker=key, context=cached)
+
+        flight_key = f"playground:{key}:{doc_as_of}:refresh={int(refresh)}"
+        ctx = run_single_flight(
+            flight_key,
+            lambda: resolve_playground_context(doc, ticker=key, refresh=refresh),
+        )
         return IndexPlaygroundContextResponse(status="ok", ticker=key, context=ctx)
     except Exception as exc:
         logger.exception("index-prediction playground-context failed for %s", key)
@@ -1499,9 +1520,9 @@ def get_index_playground_context(
 def get_index_prediction_backtest(
     ticker: str = "NIFTY",
     refresh: bool = False,
-    days: int = 180,
+    days: int = 500,
     horizon_days: int | None = None,
-    include_bottom_up: bool = False,
+    include_bottom_up: str = "auto",
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexBacktestResponse:
     """Load cached walk-forward backtest or recompute from factor history."""
@@ -1519,12 +1540,26 @@ def get_index_prediction_backtest(
             "horizon_days": horizon_days,
             "include_bottom_up": include_bottom_up,
         }
+        from src.trade.prediction_heavy_pool import run_single_flight
+
         if refresh:
-            report = run_and_save_backtest(**backtest_kwargs)
+            flight_key = (
+                f"backtest:{key}:{days}:{horizon_days}:{include_bottom_up}:refresh=1"
+            )
+            report = run_single_flight(
+                flight_key,
+                lambda: run_and_save_backtest(**backtest_kwargs),
+            )
         else:
             report = load_backtest_report(key)
             if report is None:
-                report = run_and_save_backtest(**backtest_kwargs)
+                flight_key = (
+                    f"backtest:{key}:{days}:{horizon_days}:{include_bottom_up}:cold"
+                )
+                report = run_single_flight(
+                    flight_key,
+                    lambda: run_and_save_backtest(**backtest_kwargs),
+                )
         status = str(report.get("status") or "ok")
         return IndexBacktestResponse(status=status, ticker=key, report=report)
     except Exception as exc:
@@ -1761,19 +1796,26 @@ def get_index_prediction_miss_analysis(
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
+        from src.trade.prediction_heavy_pool import run_single_flight
+
+        miss_kwargs = {
+            "days": days,
+            "horizon_days": horizon_days,
+            "ticker": key,
+        }
         if refresh:
-            report = run_and_save_miss_analysis(
-                days=days,
-                horizon_days=horizon_days,
-                ticker=key,
+            flight_key = f"miss-analysis:{key}:{days}:{horizon_days}:refresh=1"
+            report = run_single_flight(
+                flight_key,
+                lambda: run_and_save_miss_analysis(**miss_kwargs),
             )
         else:
             report = load_miss_analysis_report(key)
             if report is None:
-                report = run_and_save_miss_analysis(
-                    days=days,
-                    horizon_days=horizon_days,
-                    ticker=key,
+                flight_key = f"miss-analysis:{key}:{days}:{horizon_days}:cold"
+                report = run_single_flight(
+                    flight_key,
+                    lambda: run_and_save_miss_analysis(**miss_kwargs),
                 )
         status = str(report.get("status") or "ok")
         return IndexMissAnalysisResponse(status=status, ticker=key, report=report)
@@ -1923,19 +1965,26 @@ def get_index_prediction_counterfactual(
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
+        from src.trade.prediction_heavy_pool import run_single_flight
+
+        cf_kwargs = {
+            "days": days,
+            "horizon_days": horizon_days,
+            "ticker": key,
+        }
         if refresh:
-            report = run_and_save_counterfactual(
-                days=days,
-                horizon_days=horizon_days,
-                ticker=key,
+            flight_key = f"counterfactual:{key}:{days}:{horizon_days}:refresh=1"
+            report = run_single_flight(
+                flight_key,
+                lambda: run_and_save_counterfactual(**cf_kwargs),
             )
         else:
             report = load_counterfactual_report(key)
             if report is None:
-                report = run_and_save_counterfactual(
-                    days=days,
-                    horizon_days=horizon_days,
-                    ticker=key,
+                flight_key = f"counterfactual:{key}:{days}:{horizon_days}:cold"
+                report = run_single_flight(
+                    flight_key,
+                    lambda: run_and_save_counterfactual(**cf_kwargs),
                 )
         status = str(report.get("status") or "ok")
         return IndexCounterfactualResponse(status=status, ticker=key, report=report)
@@ -2633,7 +2682,7 @@ async def _index_prediction_run_event_stream(job_id: str, request: Request):
     """Replay stored logs then poll job store until done/error."""
     import time as time_mod
 
-    from src.trade.index_prediction_run_jobs import _get_job_record, reconcile_zombie_job
+    from src.trade.index_prediction_run_jobs import _get_job_record, reconcile_job
 
     last_log_idx = 0
     last_emit = time_mod.monotonic()
@@ -2641,7 +2690,7 @@ async def _index_prediction_run_event_stream(job_id: str, request: Request):
         if await request.is_disconnected():
             return
 
-        reconcile_zombie_job(job_id)
+        reconcile_job(job_id)
         job = _get_job_record(job_id)
         if job is None:
             yield _index_prediction_run_sse_frame("error", {"message": "job not found"})
@@ -2760,6 +2809,36 @@ def get_index_prediction_run_job(
     if snap is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
     return IndexPredictionRunJobResponse(job=IndexPredictionRunJobSnapshot(**snap))
+
+
+@trade_router.post("/index-prediction/run/{job_id}/cancel")
+def cancel_index_prediction_run(
+    job_id: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, str]:
+    """Request cooperative cancel for an in-flight manual run."""
+    from trade_integrations.dataflows.index_research.pipeline_cancel import request_pipeline_cancel
+    from src.trade.index_prediction_run_jobs import _ACTIVE_STATUSES, _get_job_record, _now_iso, append_log, job_id_valid
+
+    if not job_id_valid(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    job = _get_job_record(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    status = str(job.get("status") or "")
+    if status not in _ACTIVE_STATUSES:
+        raise HTTPException(status_code=409, detail=f"job is not active (status={status})")
+    request_pipeline_cancel(f"user_cancel:{job_id}", job_id=job_id)
+    append_log(
+        job_id,
+        {
+            "stage": "cancel",
+            "message": "Cancel requested — stopping pipeline…",
+            "level": "warn",
+            "at": _now_iso(),
+        },
+    )
+    return {"status": "ok", "message": "cancel requested"}
 
 
 @trade_router.get("/index-prediction/run/{job_id}/stream")
