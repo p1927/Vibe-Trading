@@ -25,6 +25,7 @@ interface Props {
   refreshConstituents: boolean;
   onRefreshConstituentsChange: (value: boolean) => void;
   onRun: () => void;
+  onCancel?: () => void;
   running?: boolean;
   runJobId?: string | null;
   lastUpdated?: string | null;
@@ -43,6 +44,7 @@ export function PredictionControls({
   refreshConstituents,
   onRefreshConstituentsChange,
   onRun,
+  onCancel,
   running,
   runJobId,
   lastUpdated,
@@ -158,6 +160,15 @@ export function PredictionControls({
           {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
           {running ? "Analysis running…" : "Run analysis"}
         </button>
+        {running && onCancel ? (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex h-9 items-center rounded-lg border px-3 text-sm text-muted-foreground hover:bg-muted"
+          >
+            Cancel
+          </button>
+        ) : null}
         {running && runJobId ? (
           <span className="text-[10px] tabular-nums text-muted-foreground">Run {runJobId.slice(0, 12)}…</span>
         ) : null}

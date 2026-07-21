@@ -18,6 +18,9 @@ interface Props {
   artifact: IndexPredictionArtifact;
   horizonDays: number;
   onSimulationChange?: (result: IndexSimulationResult | null) => void;
+  headlines?: PlaygroundTrigger[];
+  events?: PlaygroundTrigger[];
+  contextLoading?: boolean;
 }
 
 function fmtPct(v: number | null | undefined): string {
@@ -30,8 +33,21 @@ function fmtLevel(v: number | null | undefined): string {
   return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
-export function FactorImpactWorkbench({ artifact, horizonDays, onSimulationChange }: Props) {
+export function FactorImpactWorkbench({
+  artifact,
+  horizonDays,
+  onSimulationChange,
+  headlines: headlinesProp,
+  events: eventsProp,
+  contextLoading: contextLoadingProp,
+}: Props) {
   const contributors = artifact.factor_explanation?.contributors ?? [];
+  const channelAttribution = artifact.factor_explanation?.channel_attribution as
+    | Record<string, number>
+    | undefined;
+  const attributionDisclaimer =
+    artifact.factor_explanation?.attribution_disclaimer ??
+    "Attribution shows model sensitivity, not causal effect. Correlated factors share credit.";
   const sensitivity = (artifact.factor_sensitivity ?? []) as Array<{
     factor?: string;
     label?: string;
@@ -69,9 +85,13 @@ export function FactorImpactWorkbench({ artifact, horizonDays, onSimulationChang
   const [simError, setSimError] = useState<string | null>(null);
   const [eventPresetId, setEventPresetId] = useState<string | undefined>();
   const [selectedTriggerId, setSelectedTriggerId] = useState<string | null>(null);
-  const [headlines, setHeadlines] = useState<PlaygroundTrigger[]>([]);
-  const [events, setEvents] = useState<PlaygroundTrigger[]>([]);
-  const [contextLoading, setContextLoading] = useState(true);
+  const [headlinesLocal, setHeadlinesLocal] = useState<PlaygroundTrigger[]>([]);
+  const [eventsLocal, setEventsLocal] = useState<PlaygroundTrigger[]>([]);
+  const [contextLoadingLocal, setContextLoadingLocal] = useState(true);
+  const useExternalContext = headlinesProp !== undefined || eventsProp !== undefined;
+  const headlines = useExternalContext ? (headlinesProp ?? []) : headlinesLocal;
+  const events = useExternalContext ? (eventsProp ?? []) : eventsLocal;
+  const contextLoading = useExternalContext ? Boolean(contextLoadingProp) : contextLoadingLocal;
   const [whyText, setWhyText] = useState<string | null>(null);
   const debounceRef = useRef<number | null>(null);
 
@@ -82,28 +102,29 @@ export function FactorImpactWorkbench({ artifact, horizonDays, onSimulationChang
   }, [rankedFactors, activeFactor]);
 
   useEffect(() => {
+    if (useExternalContext) return;
     let cancelled = false;
-    setContextLoading(true);
+    setContextLoadingLocal(true);
     void api
       .getIndexPlaygroundContext(artifact.ticker || "NIFTY")
       .then((res) => {
         if (cancelled) return;
-        setHeadlines(res.context?.headlines ?? []);
-        setEvents(res.context?.events ?? []);
+        setHeadlinesLocal(res.context?.headlines ?? []);
+        setEventsLocal(res.context?.events ?? []);
       })
       .catch(() => {
         if (!cancelled) {
-          setHeadlines([]);
-          setEvents([]);
+          setHeadlinesLocal([]);
+          setEventsLocal([]);
         }
       })
       .finally(() => {
-        if (!cancelled) setContextLoading(false);
+        if (!cancelled) setContextLoadingLocal(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [artifact.ticker, artifact.as_of]);
+  }, [artifact.ticker, artifact.as_of, useExternalContext]);
 
   const runSimulate = useCallback(async () => {
     if (shockPct === 0 && !eventPresetId) {
@@ -227,6 +248,7 @@ export function FactorImpactWorkbench({ artifact, horizonDays, onSimulationChang
             cascade. Method: {cascadeMethodLabel}
             {cascadeRegime !== "calm" ? ` · ${cascadeRegime} regime` : ""}.
           </p>
+          <p className="mt-1 text-[10px] text-amber-800 dark:text-amber-300">{attributionDisclaimer}</p>
         </div>
         <button
           type="button"

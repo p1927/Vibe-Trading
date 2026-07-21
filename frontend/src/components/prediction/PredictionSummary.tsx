@@ -84,9 +84,9 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
 
   const accuracySub =
     evalCount != null && Number(evalCount) > 0
-      ? `${evalCount} eval rows · walk-forward OOS · MAE ${mae != null ? `${mae.toFixed(2)}%` : "—"}`
+      ? `Walk-forward OOS · ${evalCount} eval rows · MAE ${mae != null ? `${mae.toFixed(2)}%` : "—"}`
       : sampleCount > 0
-        ? `${sampleCount} reconciled · MAE ${mae != null ? `${mae.toFixed(2)}%` : "—"}`
+        ? `Reconciled ledger · ${sampleCount} matured forecasts · MAE ${mae != null ? `${mae.toFixed(2)}%` : "—"}`
         : "Forecasts need horizon to mature; calibration runs nightly";
 
   const regimeSub = [
@@ -132,6 +132,13 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
           Headline blended with event scenarios (25% Ridge model · 75% scenario anchor). Ridge raw{" "}
           {fmtPct(pred.raw_expected_return_pct)} → anchor {fmtPct(pred.scenario_anchor_return_pct)} → final{" "}
           {fmtPct(pred.expected_return_pct)}. Macro attribution reflects the reconciled headline.
+        </div>
+      ) : null}
+      {pred.debate_merged ? (
+        <div className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-[11px] text-violet-950 dark:text-violet-200">
+          Headline includes agent debate blend (60% debate · 40% quant). Quant-only return was{" "}
+          {fmtPct(pred.quant?.expected_return_pct)}; displayed {fmtPct(pred.expected_return_pct)}. Equation
+          card shows quant macro coefficients.
         </div>
       ) : null}
       {lowMomentum ? (

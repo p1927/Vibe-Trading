@@ -63,6 +63,10 @@ export function BacktestEvaluationPanel({
   const isHybrid = scope === "hybrid";
   const hybridHitRate = metrics.hybrid_direction_hit_rate;
   const macroHitRate = metrics.macro_only_direction_hit_rate ?? metrics.direction_hit_rate;
+  const bootstrapCi = metrics.direction_bootstrap_ci as
+    | { ci_lower?: number; ci_upper?: number; insufficient_evidence?: boolean; n?: number }
+    | undefined;
+  const evalProtocol = report.eval_protocol ?? "expanding";
 
   return (
     <div className="space-y-4 rounded-xl border bg-card p-4 shadow-sm">
@@ -73,7 +77,7 @@ export function BacktestEvaluationPanel({
           </p>
           <p className="mt-1 text-[11px] text-muted-foreground">
             {report.history_start} → {report.history_end} · {report.history_rows} trading rows ·{" "}
-            {report.eval_count} out-of-sample predictions ({report.horizon_days}d horizon). Scope:{" "}
+            {report.eval_count} out-of-sample predictions ({report.horizon_days}d horizon, {evalProtocol}). Scope:{" "}
             <span className="font-medium">{isHybrid ? "hybrid (macro + bottom-up)" : "macro-only Ridge"}</span>.
           </p>
         </div>
@@ -134,6 +138,15 @@ export function BacktestEvaluationPanel({
             {metrics.direction_hit_rate != null
               ? `${Math.round(metrics.direction_hit_rate * 100)}%`
               : "—"}
+          </p>
+          {bootstrapCi?.ci_lower != null && bootstrapCi?.ci_upper != null ? (
+            <p className="text-[10px] text-muted-foreground">
+              95% CI {Math.round(bootstrapCi.ci_lower * 100)}–{Math.round(bootstrapCi.ci_upper * 100)}%
+              {bootstrapCi.insufficient_evidence ? " · insufficient evidence vs 50%" : ""}
+            </p>
+          ) : null}
+          <p className="text-[10px] text-muted-foreground">
+            14d macro direction near 50% is expected; use magnitude and scenarios for sizing.
           </p>
           {isHybrid && hybridHitRate != null && macroHitRate != null ? (
             <p className="text-[10px] text-muted-foreground">

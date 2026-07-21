@@ -270,17 +270,83 @@ async function consumeIndexPredictionSse(
 
 async function fetchIndexPredictionRunJobSnapshot(
   jobId: string,
-): Promise<{ status?: string; artifact?: IndexPredictionArtifact; error?: string } | null> {
+  signal?: AbortSignal,
+): Promise<IndexPredictionRunJobSnapshot | null> {
   try {
     const res = await fetch(
       `${BASE}/trade/index-prediction/run/${encodeURIComponent(jobId)}`,
-      { headers: authHeaders() },
+      { headers: authHeaders(), signal },
     );
     if (!res.ok) return null;
-    const payload = (await res.json()) as { job?: { status?: string; artifact?: IndexPredictionArtifact; error?: string } };
+    const payload = (await res.json()) as IndexPredictionRunJobResponse;
     return payload.job ?? null;
   } catch {
     return null;
+  }
+}
+
+const ACTIVE_PREDICTION_JOB_STATUSES = new Set(["queued", "running"]);
+const POLL_REATTACH_MS = 3000;
+const POLL_REATTACH_MAX_MS = 45 * 60 * 1000;
+
+function sleepMs(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function pollIndexPredictionJobUntilDone(
+  jobId: string,
+  handlers: StreamIndexPredictionHandlers,
+  signal?: AbortSignal,
+  options?: { onReconnecting?: (reconnecting: boolean) => void; skipLogsBefore?: number },
+): Promise<void> {
+  const started = Date.now();
+  let lastLogCount = Math.max(0, options?.skipLogsBefore ?? 0);
+  options?.onReconnecting?.(true);
+  try {
+    while (Date.now() - started < POLL_REATTACH_MAX_MS) {
+      if (signal?.aborted) return;
+      const job = await fetchIndexPredictionRunJobSnapshot(jobId, signal);
+      if (job?.logs && job.logs.length > lastLogCount) {
+        for (let i = lastLogCount; i < job.logs.length; i += 1) {
+          handlers.onLog?.(job.logs[i]!);
+        }
+        lastLogCount = job.logs.length;
+      }
+      if (job?.status === "done" && job.artifact) {
+        handlers.onDone?.(job.artifact);
+        return;
+      }
+      if (job?.status === "error") {
+        handlers.onError?.(job.error || "Analysis failed");
+        return;
+      }
+      if (job?.status && !ACTIVE_PREDICTION_JOB_STATUSES.has(job.status)) {
+        handlers.onError?.("Analysis ended unexpectedly");
+        return;
+      }
+      await sleepMs(POLL_REATTACH_MS, signal);
+    }
+    handlers.onError?.("Analysis timed out waiting for completion (45 min)");
+  } catch (err) {
+    if (signal?.aborted) return;
+    throw err;
+  } finally {
+    options?.onReconnecting?.(false);
   }
 }
 
@@ -305,6 +371,7 @@ export async function streamIndexPredictionJob(
   jobId: string,
   handlers: StreamIndexPredictionHandlers,
   signal?: AbortSignal,
+  options?: { onReconnecting?: (reconnecting: boolean) => void; skipLogsBefore?: number },
 ): Promise<void> {
   let res: Response;
   try {
@@ -332,6 +399,14 @@ export async function streamIndexPredictionJob(
   if (!gotDone) {
     const recovered = await recoverIndexPredictionJobFromPoll(jobId, handlers);
     if (recovered) return;
+    const job = await fetchIndexPredictionRunJobSnapshot(jobId);
+    if (job?.status && ACTIVE_PREDICTION_JOB_STATUSES.has(job.status)) {
+      await pollIndexPredictionJobUntilDone(jobId, handlers, signal, {
+        onReconnecting: options?.onReconnecting,
+        skipLogsBefore: options?.skipLogsBefore ?? job.logs?.length ?? 0,
+      });
+      return;
+    }
     handlers.onError?.(
       "Analysis stream ended without a result — the server may have timed out. Try without “Refresh all constituents”.",
     );
@@ -707,6 +782,11 @@ export const api = {
     request<IndexPredictionRunJobResponse>(
       `/trade/index-prediction/run/${encodeURIComponent(jobId)}`,
     ),
+  cancelIndexPredictionRun: (jobId: string) =>
+    request<{ status: string; message?: string }>(
+      `/trade/index-prediction/run/${encodeURIComponent(jobId)}/cancel`,
+      { method: "POST" },
+    ),
   streamIndexPredictionJob: streamIndexPredictionJob,
   getIndexPredictionFactors: () =>
     request<IndexFactorCatalogResponse>("/trade/index-prediction/factors"),
@@ -716,10 +796,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  getIndexPlaygroundContext: (ticker = "NIFTY") =>
-    request<IndexPlaygroundContextResponse>(
-      `/trade/index-prediction/playground-context?ticker=${encodeURIComponent(ticker)}`,
-    ),
+  getIndexPlaygroundContext: (ticker = "NIFTY", refresh = false) => {
+    const params = new URLSearchParams({ ticker });
+    if (refresh) params.set("refresh", "true");
+    return request<IndexPlaygroundContextResponse>(
+      `/trade/index-prediction/playground-context?${params}`,
+    );
+  },
   refreshIndexPrediction: (body: RefreshIndexPredictionRequest) =>
     request<IndexPredictionRefreshResponse>("/trade/index-prediction/refresh", {
       method: "POST",
@@ -2007,6 +2090,12 @@ export interface PlanPrediction {
   direction_view?: string | null;
   direction_eval_count?: number | null;
   sign_conflict?: boolean;
+  debate_merged?: boolean;
+  quant?: {
+    expected_return_pct?: number | null;
+    macro_delta_pct?: number | null;
+    view?: string | null;
+  } | null;
   data_quality_warning?: {
     gate?: string;
     min_pct?: number | null;
@@ -2286,10 +2375,16 @@ export interface IndexPredictionRunJobSnapshot {
   ticker?: string;
   horizon_days?: number | null;
   refresh_constituents?: boolean;
+  run_forecast_lab?: boolean;
   created_at?: string | null;
   error?: string | null;
   logs?: PipelineLogEntry[];
   artifact?: IndexPredictionArtifact | null;
+  current_stage?: string | null;
+  last_log_at?: string | null;
+  last_log_message?: string | null;
+  stage_elapsed_ms?: number | null;
+  current_track_id?: string | null;
 }
 
 export interface IndexPredictionRunActiveResponse {

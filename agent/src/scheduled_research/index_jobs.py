@@ -132,20 +132,36 @@ def _attach_job_result_summary(job: ScheduledResearchJob, result: dict[str, Any]
 def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Collect daily macro + constituent aggregate factors."""
     _ensure_trade_integrations_on_path()
-    from datetime import datetime, timezone
 
     from trade_integrations.dataflows.index_research.pipeline_cancel import check_pipeline_cancel
-    from trade_integrations.dataflows.index_research.snapshot import run_snapshot
 
     check_pipeline_cancel()
     cfg = config or {}
     snapshot_date = cfg.get("snapshot_date")
     if not snapshot_date:
-        snapshot_date = datetime.now(timezone.utc).date().isoformat()
-    summary = run_snapshot(
+        from trade_integrations.dataflows.company_research.market import india_trading_date_iso
+
+        snapshot_date = india_trading_date_iso()[:10]
+
+    try:
+        from trade_integrations.dataflows.index_research.history_ingest import (
+            persist_daily_hub_market_data,
+        )
+
+        summary = persist_daily_hub_market_data()
+    except Exception as exc:
+        _reraise_pipeline_cancel(exc)
+        logger.warning("daily hub market persist in factor snapshot failed: %s", exc)
+        summary = {"status": "error", "reason": str(exc)}
+
+    check_pipeline_cancel()
+    from trade_integrations.dataflows.index_research.snapshot import run_snapshot
+
+    snapshot_summary = run_snapshot(
         snapshot_date=snapshot_date,
         skip_constituents=bool(cfg.get("skip_constituents")),
     )
+    summary = {**summary, "snapshot": snapshot_summary}
 
     enrich_days = int(cfg.get("enrich_days") or 7)
     participant_oi_days = int(cfg.get("participant_oi_days") or min(7, enrich_days))
@@ -186,6 +202,22 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
         _reraise_pipeline_cancel(exc)
         logger.warning("factor enrichment in factor snapshot failed: %s", exc)
         summary["factor_enrichment"] = {"status": "error", "reason": str(exc)}
+
+    check_pipeline_cancel()
+    try:
+        from trade_integrations.dataflows.index_research.history_ingest import finalize_daily_cold_tier
+
+        flow_lookback = int(cfg.get("flow_lookback_days") or 7)
+        finalize_summary = finalize_daily_cold_tier(
+            flow_lookback_days=flow_lookback,
+            macro_lookback_days=int(cfg.get("macro_lookback_days") or 14),
+            panel_tail_days=int(cfg.get("panel_tail_days") or 14),
+        )
+        summary["cold_tier_finalize"] = finalize_summary
+    except Exception as exc:
+        _reraise_pipeline_cancel(exc)
+        logger.warning("cold tier finalize in factor snapshot failed: %s", exc)
+        summary["cold_tier_finalize"] = {"status": "error", "reason": str(exc)}
 
     return summary
 
@@ -295,7 +327,7 @@ def run_index_prediction_post_close_job(config: dict[str, Any] | None = None) ->
             days=enrich_days,
             batch_historic=False,
             enrichment_mode="light",
-            skip_niftyinvest_fetch=True,
+            skip_niftyinvest_fetch=False,
         ),
         "backtest": run_and_save_backtest(
             days=backtest_days,

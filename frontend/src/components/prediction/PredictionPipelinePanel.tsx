@@ -15,10 +15,65 @@ const LEVEL_STYLES: Record<string, string> = {
   error: "text-red-700 dark:text-red-400",
 };
 
+const PIPELINE_STAGE_ORDER = [
+  "start",
+  "history",
+  "data_completeness",
+  "constituents",
+  "ohlcv_cache",
+  "momentum",
+  "macro",
+  "alpha_zoo",
+  "spot",
+  "regime",
+  "scenarios",
+  "predict",
+  "attribution",
+  "reconcile",
+  "debate",
+  "forecast_lab",
+  "explain",
+  "accuracy",
+  "ledger",
+  "done",
+  "events",
+  "news_impact",
+  "meta",
+  "persist",
+  "cancel",
+  "error",
+] as const;
+
+function pipelineProgressFromLogs(logs: PipelineLogEntry[]): {
+  stage: string | null;
+  pct: number;
+  elapsedMs: number | null;
+} {
+  if (!logs.length) {
+    return { stage: null, pct: 0, elapsedMs: null };
+  }
+  let maxIdx = -1;
+  for (const entry of logs) {
+    const stage = entry.stage ?? "";
+    const idx = PIPELINE_STAGE_ORDER.indexOf(stage as (typeof PIPELINE_STAGE_ORDER)[number]);
+    if (idx > maxIdx) maxIdx = idx;
+  }
+  const latest = logs[logs.length - 1]!;
+  const stage = latest.stage ?? null;
+  const pct =
+    maxIdx >= 0
+      ? Math.round(((maxIdx + 1) / PIPELINE_STAGE_ORDER.length) * 100)
+      : Math.min(95, Math.max(5, Math.round((logs.length / 40) * 100)));
+  const elapsedMs =
+    typeof latest.detail?.elapsed_ms === "number" ? latest.detail.elapsed_ms : null;
+  return { stage, pct: Math.min(100, pct), elapsedMs };
+}
+
 interface Props {
   open: boolean;
   running: boolean;
   reattached?: boolean;
+  streamReconnecting?: boolean;
   runJobId?: string | null;
   logs: PipelineLogEntry[];
   artifact?: IndexPredictionArtifact | null;
@@ -101,6 +156,7 @@ export function PredictionPipelinePanel({
   open,
   running,
   reattached,
+  streamReconnecting,
   runJobId,
   logs,
   artifact,
@@ -112,6 +168,11 @@ export function PredictionPipelinePanel({
   const displayLogs = useMemo(
     () => pickDisplayPipelineLogs(logs, artifact?.pipeline_log, running, artifact?.as_of),
     [logs, artifact?.pipeline_log, artifact?.as_of, running],
+  );
+
+  const progress = useMemo(
+    () => (running ? pipelineProgressFromLogs(logs) : { stage: null, pct: 100, elapsedMs: null }),
+    [logs, running],
   );
 
   const activeFactorKeys = useMemo(() => {
@@ -158,6 +219,34 @@ export function PredictionPipelinePanel({
       {reattached && runJobId ? (
         <div className="border-b bg-muted/40 px-3 py-1.5 text-[10px] text-muted-foreground">
           Reconnected to run {runJobId.slice(0, 12)}…
+        </div>
+      ) : null}
+
+      {streamReconnecting ? (
+        <div className="border-b bg-amber-500/10 px-3 py-1.5 text-[10px] text-amber-800 dark:text-amber-300">
+          Stream dropped — still running, polling for updates…
+        </div>
+      ) : null}
+
+      {running ? (
+        <div className="border-b px-3 py-2">
+          <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+            <span className="font-medium uppercase tracking-wide">
+              {progress.stage ?? "starting"}
+            </span>
+            <span>{progress.pct}%</span>
+          </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-primary transition-all duration-300"
+              style={{ width: `${progress.pct}%` }}
+            />
+          </div>
+          {progress.elapsedMs != null ? (
+            <p className="mt-1 text-[10px] text-muted-foreground">
+              Current step {(progress.elapsedMs / 1000).toFixed(1)}s
+            </p>
+          ) : null}
         </div>
       ) : null}
 

@@ -7,7 +7,7 @@ import {
   type IndexPredictionRunJobSnapshot,
 } from "@/lib/api";
 import { mergePipelineLogs } from "@/lib/pipelineLogUtils";
-import { usePredictionRunStore } from "@/stores/predictionRun";
+import { abortPredictionRunClient, usePredictionRunStore } from "@/stores/predictionRun";
 
 const RUN_JOB_STORAGE_PREFIX = "vibe-prediction-run-job:";
 const ACTIVE_JOB_STATUSES = new Set(["queued", "running"]);
@@ -66,6 +66,13 @@ function formatStreamError(msg: string): string {
 const abortRef = { current: null as AbortController | null };
 const attachGenRef = { current: 0 };
 
+export function cancelPredictionRunClient(tickerKey: string, message = "Analysis cancelled") {
+  abortRef.current?.abort();
+  attachGenRef.current += 1;
+  clearStoredRunJobId(tickerKey);
+  abortPredictionRunClient(message);
+}
+
 /**
  * Layout-level coordinator: owns SSE for index prediction runs so navigation
  * away from /prediction does not abort the stream.
@@ -107,6 +114,8 @@ export function usePredictionRunCoordinator(ticker = "NIFTY") {
         hydrateLogsFromSnapshot(snapshot);
       }
 
+      const skipLogsBefore = usePredictionRunStore.getState().getLogCount();
+
       if (snapshot && !ACTIVE_JOB_STATUSES.has(snapshot.status)) {
         if (snapshot.status === "done" && snapshot.artifact) {
           const s = usePredictionRunStore.getState();
@@ -136,21 +145,33 @@ export function usePredictionRunCoordinator(ticker = "NIFTY") {
             onDone: (next) => {
               if (gen !== attachGenRef.current) return;
               const s = usePredictionRunStore.getState();
+              s.setStreamReconnecting(false);
               s.setRunArtifact(next);
               s.setPipelineLogs((prev) => mergePipelineLogs(prev, next.pipeline_log));
               finishRunLocal(tickerKey);
             },
             onError: (message) => {
               if (gen !== attachGenRef.current) return;
-              usePredictionRunStore.getState().setRunError(message);
+              const s = usePredictionRunStore.getState();
+              s.setStreamReconnecting(false);
+              s.setRunError(message);
               finishRunLocal(tickerKey);
             },
           },
           controller.signal,
+          {
+            onReconnecting: (reconnecting) => {
+              if (gen !== attachGenRef.current) return;
+              usePredictionRunStore.getState().setStreamReconnecting(reconnecting);
+            },
+            skipLogsBefore,
+          },
         );
       } catch (e) {
-        if (controller.signal.aborted) return;
-        if (gen !== attachGenRef.current) return;
+        if (controller.signal.aborted || gen !== attachGenRef.current) {
+          finishRunLocal(tickerKey);
+          return;
+        }
         const msg = e instanceof Error ? e.message : "Analysis failed";
         usePredictionRunStore.getState().setRunError(formatStreamError(msg));
         finishRunLocal(tickerKey);
@@ -264,7 +285,7 @@ export async function runPredictionAnalysis(
     if (gen !== attachGenRef.current) return;
     await attachToJob(key, start.job_id, gen, {
       reattach: Boolean(start.reused),
-      clearLogs: true,
+      clearLogs: !start.reused,
     });
   } catch (e) {
     if (gen !== attachGenRef.current) return;
@@ -294,7 +315,10 @@ export async function runPredictionAnalysis(
           controller.signal,
         );
       } catch (legacyErr) {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted) {
+          usePredictionRunStore.getState().finishRun();
+          return;
+        }
         if (gen !== attachGenRef.current) return;
         const msg = legacyErr instanceof Error ? legacyErr.message : "Analysis failed";
         usePredictionRunStore.getState().setRunError(msg);
