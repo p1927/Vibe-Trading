@@ -1708,3 +1708,62 @@ def test_conditional_entry_rsi_nan_bars_are_skipped() -> None:
         assert series.iloc[i] == 0.0, f"bar {i} should be zero (RSI warmup)"
     # At least one entry after warmup.
     assert (series.iloc[14:] > 0).any(), "no entry after RSI warmup"
+
+
+# ---- Daily-bar entry-hour window (mined from intraday journal fills) ----
+
+
+@pytest.mark.unit
+def test_daily_bars_ignore_mined_hour_window() -> None:
+    """Market-hours window on midnight daily bars must not zero out the replay.
+
+    Rules mined from real journals carry entry_hour bounds from actual fill
+    times (e.g. 9-11). Daily bars are stamped at midnight, so gating on
+    bar hour rejects every bar and the replay goes silently flat.
+    """
+    rule = _rule_with_rsi(0.0, 100.0, hour_min=9, hour_max=11)
+    idx = _daily_index(periods=30)
+    assert {pd.Timestamp(ts).hour for ts in idx} == {0}  # midnight daily bars
+    close = pd.Series(
+        [10.0 + (i % 6) * 0.5 for i in range(30)], index=idx, dtype=float,
+    )
+    signals = _generate_signals(
+        _profile(rule),
+        {"600519.SH": pd.DataFrame({"close": close}, index=idx)},
+    )
+    series = signals["600519.SH"]
+    assert (series > 0).any(), "daily replay must not be flat for market-hours rules"
+
+
+@pytest.mark.unit
+def test_intraday_bars_still_enforce_hour_window() -> None:
+    """On intraday data the mined window keeps selecting entry bars."""
+    rule = _rule_with_rsi(0.0, 100.0, hour_min=9, hour_max=11)
+    idx = _hourly_index(periods=48)  # 2 full days of hours
+    close = pd.Series(
+        [10.0 + (i % 6) * 0.5 for i in range(48)], index=idx, dtype=float,
+    )
+    signals = _generate_signals(
+        _profile(rule),
+        {"600519.SH": pd.DataFrame({"close": close}, index=idx)},
+    )
+    series = signals["600519.SH"]
+    entry_hours = {pd.Timestamp(ts).hour for ts in series[series > 0].index}
+    assert entry_hours, "expected entries within the window"
+    assert entry_hours <= {9, 10, 11}
+
+
+@pytest.mark.unit
+def test_daily_bars_date_only_journal_window_still_enters() -> None:
+    """Window {0, 0} mined from date-only journals keeps entering on daily bars."""
+    rule = _rule_with_rsi(0.0, 100.0, hour_min=0, hour_max=0)
+    idx = _daily_index(periods=30)
+    close = pd.Series(
+        [10.0 + (i % 6) * 0.5 for i in range(30)], index=idx, dtype=float,
+    )
+    signals = _generate_signals(
+        _profile(rule),
+        {"600519.SH": pd.DataFrame({"close": close}, index=idx)},
+    )
+    series = signals["600519.SH"]
+    assert (series > 0).any(), "date-only journal window must still enter"
