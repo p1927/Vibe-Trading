@@ -132,8 +132,17 @@ class SessionStore:
                 continue
             session_file = session_dir / "session.json"
             data = self._read_json(session_file)
-            if data:
+            if not isinstance(data, dict):
+                continue
+            try:
                 sessions.append(Session.from_dict(data))
+            except (TypeError, ValueError, KeyError) as exc:
+                # One bad session.json must not abort listing siblings.
+                logger.warning(
+                    "Skipping corrupt session.json in %s: %s",
+                    session_dir.name,
+                    exc,
+                )
         sessions.sort(key=lambda s: s.updated_at, reverse=True)
         return sessions[:limit]
 
