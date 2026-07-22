@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
+from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from typing import Mapping, Optional
 
 
@@ -247,6 +250,41 @@ def provider_env_names(
     return caps.api_key_env, caps.base_url_env
 
 
+_PROVIDER_CATALOG_PATH = Path(__file__).with_name("llm_providers.json")
+
+
+@lru_cache(maxsize=1)
+def _provider_default_base_urls() -> dict[str, str]:
+    """Canonical ``name -> default_base_url`` map from the provider catalog.
+
+    The catalog (``llm_providers.json``) declares each provider's canonical API
+    root. Web Settings already fall back to it; this exposes the same default to
+    the backend credential path so a CLI / manual-``.env`` user who sets only
+    ``LANGCHAIN_PROVIDER`` + the API key still reaches the right endpoint (e.g.
+    Z.ai's ``/api/coding/paas/v4``) instead of silently defaulting to
+    ``api.openai.com`` and getting a 404 for a non-OpenAI model.
+    """
+    try:
+        raw = json.loads(_PROVIDER_CATALOG_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    entries = raw if isinstance(raw, list) else raw.get("providers", [])
+    result: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name", "")).strip().lower()
+        url = str(entry.get("default_base_url", "")).strip()
+        if name and url:
+            result[name] = url
+    return result
+
+
+def _provider_default_base_url(provider_name: str) -> str:
+    """Return the catalog default base URL for a canonical provider name."""
+    return _provider_default_base_urls().get((provider_name or "").strip().lower(), "")
+
+
 def get_llm_credentials(
     provider: str | None,
     model: str | None,
@@ -267,8 +305,12 @@ def get_llm_credentials(
 
     Notes:
         Reads dynamic env vars via ``os.getenv`` — not part of ``EnvConfig``.
+        When no base URL is set in the environment, falls back to the provider
+        catalog's ``default_base_url`` so a provider set without an explicit
+        ``*_BASE_URL`` still hits its canonical endpoint.
     """
-    key_env, base_env = provider_env_names(provider, model)
+    caps = get_provider_capabilities(provider, model)
+    key_env, base_env = caps.api_key_env, caps.base_url_env
 
     if key_env is not None:
         api_key = os.getenv(  # noqa: env-gate
@@ -294,6 +336,7 @@ def get_llm_credentials(
         or os.getenv(  # noqa: env-gate — dynamic provider URL chain
             "OPENAI_API_BASE", ""
         )
+        or _provider_default_base_url(caps.name)
     )
 
     return {
