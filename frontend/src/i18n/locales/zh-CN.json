@@ -1,6 +1,6 @@
 {
   "app": {
-    "version": "v0.1.11"
+    "version": "v0.1.12"
   },
   "layout": {
     "home": "首页",
@@ -527,7 +527,14 @@
     "loading": "加载中...",
     "method_pearson": "皮尔逊相关",
     "method_spearman": "斯皮尔曼秩相关",
-    "failedToCompute": "计算相关性失败"
+    "failedToCompute": "计算相关性失败",
+    "regimeTimeline": "相关性状态时间线",
+    "regimeTimelineHint": "边密度 + 滞回状态机的时间序列 — 描述性风险背景，并非交易信号",
+    "regimeDensity": "边密度",
+    "regimeSmoothed": "平滑密度",
+    "regimeFused": "融合期 (FUSED)",
+    "regimeEnterThreshold": "进入阈值",
+    "regimeExitThreshold": "退出阈值"
   },
   "alphaZoo": {
     "title": "Alpha 因子库",
