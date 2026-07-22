@@ -286,15 +286,26 @@ def _futu_market(symbol: str, market_hint: str) -> str:
 
 def _futu_datetime(date_val: Any, time_val: Any) -> str:
     """Combine Futu Date+Time cells; Excel serial floats become ISO datetime."""
-    if isinstance(date_val, (int, float)) and not isinstance(date_val, bool) and pd.notna(date_val):
-        serial = float(date_val)
-        if isinstance(time_val, (int, float)) and not isinstance(time_val, bool) and pd.notna(time_val):
-            frac = float(time_val)
-            if 0.0 <= frac < 1.0:
-                serial += frac
-        ts = pd.to_datetime(serial, unit="D", origin="1899-12-30", errors="coerce")
-        if pd.notna(ts):
-            return ts.strftime("%Y-%m-%d %H:%M:%S")
+    # iterrows yields numpy integer/float scalars; bare pd.to_datetime(int) is ns-epoch.
+    if pd.api.types.is_number(date_val) and not isinstance(date_val, (bool,)):
+        if not (isinstance(date_val, float) and pd.isna(date_val)):
+            serial = float(date_val)
+            frac = 0.0
+            time_is_frac = False
+            if pd.api.types.is_number(time_val) and not isinstance(time_val, (bool,)):
+                if not (isinstance(time_val, float) and pd.isna(time_val)):
+                    candidate = float(time_val)
+                    if 0.0 <= candidate < 1.0:
+                        frac = candidate
+                        time_is_frac = True
+            ts = pd.to_datetime(serial + frac, unit="D", origin="1899-12-30", errors="coerce")
+            if pd.notna(ts):
+                if time_is_frac or time_val is None or (
+                    isinstance(time_val, float) and pd.isna(time_val)
+                ):
+                    return ts.strftime("%Y-%m-%d %H:%M:%S")
+                # Numeric Excel date + string/clock Time column.
+                return f"{ts.strftime('%Y-%m-%d')} {str(time_val).strip()}".strip()
     date = "" if date_val is None or (isinstance(date_val, float) and pd.isna(date_val)) else str(date_val).strip()
     time = "" if time_val is None or (isinstance(time_val, float) and pd.isna(time_val)) else str(time_val).strip()
     return f"{date} {time}".strip()
