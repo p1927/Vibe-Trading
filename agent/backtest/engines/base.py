@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import math
 import re as _re
 import sys
 from abc import ABC, abstractmethod
@@ -38,6 +39,15 @@ from backtest.metrics import (
     calc_metrics,
     calc_trade_turnover_series,
 )
+
+
+def _json_safe_scalar_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    """Scalar metrics for stdout JSON; non-finite floats become null."""
+    return {
+        k: (None if isinstance(v, float) and not math.isfinite(v) else v)
+        for k, v in metrics.items()
+        if not isinstance(v, dict)
+    }
 from backtest.models import EquitySnapshot, Position, TradeRecord
 
 logger = logging.getLogger(__name__)
@@ -599,8 +609,10 @@ class BaseEngine(ABC):
             warnings=config.get("content_filter_warnings") or None,
         )
 
-        # Print scalar metrics (skip nested dicts for JSON compat)
-        print(json.dumps({k: v for k, v in m.items() if not isinstance(v, dict)}, indent=2))
+        # Print scalar metrics (skip nested dicts for JSON compat).
+        # Explosive annual_return may be +inf; match options/run_card and emit
+        # null instead of a bare Infinity token (invalid RFC-8259 JSON).
+        print(json.dumps(_json_safe_scalar_metrics(m), indent=2, allow_nan=False))
         return m
 
     # ── Execution loop ──
