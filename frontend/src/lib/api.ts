@@ -674,6 +674,18 @@ export const api = {
       method: "POST",
     }),
 
+  listWatches: (params: { sessionId?: string; agentId?: string }) => {
+    const q = new URLSearchParams();
+    if (params.sessionId) q.set("session_id", params.sessionId);
+    if (params.agentId) q.set("agent_id", params.agentId);
+    const qs = q.toString();
+    return request<WatchesListResponse>(`/watches${qs ? `?${qs}` : ""}`);
+  },
+  deleteWatch: (watchId: string) =>
+    request<{ status: string; watch_id: string }>(`/watches/${encodeURIComponent(watchId)}`, {
+      method: "DELETE",
+    }),
+
   haltLive: (session_id?: string, broker?: string, reason?: string) =>
     request<HaltLiveResponse>("/live/halt", {
       method: "POST",
@@ -3725,6 +3737,28 @@ export interface AutonomousStackHealth {
 export interface AutonomousAgentSchedules {
   watch_ms?: number;
   research_ms?: number;
+}
+
+export interface WatchRecord {
+  watch_id: string;
+  owner_kind: string;
+  owner_id: string;
+  vibe_session_id?: string;
+  label?: string | null;
+  symbols?: string[];
+  watch_spec?: Record<string, unknown>;
+  status?: string;
+  one_shot?: boolean;
+  created_at?: string;
+  updated_at?: string;
+  last_fired_at?: string | null;
+  last_alert_message?: string | null;
+}
+
+export interface WatchesListResponse {
+  status: string;
+  watches: WatchRecord[];
+  count: number;
 }
 
 export interface AutonomousAgentThesis {

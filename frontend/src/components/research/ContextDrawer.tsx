@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { AgentDebatePanel } from "@/components/research/AgentDebatePanel";
 import { ResearchContextPanel } from "@/components/research/ResearchContextPanel";
 import { SourcesPanel } from "@/components/research/SourcesPanel";
+import { WatchersPanel } from "@/components/research/WatchersPanel";
 import { api, type AgentDebateArtifact, type HubPlanArtifact } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useProvenanceStore, type ContextSection } from "@/stores/provenance";
@@ -15,6 +16,7 @@ const SECTIONS: { id: ContextSection; label: string }[] = [
   { id: "sources", label: "Sources" },
   { id: "research", label: "Research" },
   { id: "debate", label: "Debate" },
+  { id: "watchers", label: "Watchers" },
 ];
 
 interface Props {
@@ -128,6 +130,7 @@ export function ContextDrawer({
   const sectionSubtitle = useMemo(() => {
     if (activeSection === "sources") return `${sourceCount} data reference${sourceCount === 1 ? "" : "s"}`;
     if (activeSection === "research") return ticker ? `${ticker} trade plan` : "Hub research";
+    if (activeSection === "watchers") return "Live Nautilus watches";
     return ticker ? `${ticker} agent debate` : "Multi-agent debate";
   }, [activeSection, sourceCount, ticker]);
 
@@ -233,6 +236,8 @@ export function ContextDrawer({
                   )}
                 </>
               )}
+
+              {activeSection === "watchers" && <WatchersPanel sessionId={sessionId} />}
             </div>
           </>
         )}

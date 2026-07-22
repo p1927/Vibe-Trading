@@ -357,6 +357,8 @@ from src.api.trading_connector_routes import router as trading_connector_router 
 app.include_router(trading_connector_router)
 from src.api.autonomous_routes import autonomous_router  # noqa: E402
 app.include_router(autonomous_router)
+from src.api.watch_routes import watch_router  # noqa: E402
+app.include_router(watch_router)
 
 from src.api.channels_routes import (  # noqa: F401, E402
     ChannelPairingCommandRequest,

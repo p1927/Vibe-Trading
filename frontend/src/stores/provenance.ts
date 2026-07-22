@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { ProvenanceSource } from "@/lib/api";
 
-export type ContextSection = "sources" | "research" | "debate";
+export type ContextSection = "sources" | "research" | "debate" | "watchers";
 
 interface ProvenanceState {
   sources: ProvenanceSource[];
