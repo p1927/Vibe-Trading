@@ -307,3 +307,21 @@ def test_run_pattern_trend_slope_window_one_returns_json_error(allow_runs: Path)
     assert out["status"] == "error"
     assert "window" in out["error"]
     assert "trend_slope" in out["error"] or ">= 2" in out["error"]
+
+
+def test_run_pattern_trend_slope_halt_gaps_emits_strict_json(allow_runs: Path) -> None:
+    """Alternating NaN closes leave no clean polyfit window; mean must not be NaN."""
+    run_dir = allow_runs / "run_halt"
+    arts = run_dir / "artifacts"
+    arts.mkdir(parents=True)
+    n = 15
+    close = [100.0 if i % 2 == 0 else float("nan") for i in range(n)]
+    pd.DataFrame(
+        {"open": close, "high": close, "low": close, "close": close, "volume": 1},
+        index=pd.date_range("2024-01-01", periods=n),
+    ).to_csv(arts / "ohlcv_HALT.csv")
+    raw = run_pattern(str(run_dir), patterns="trend_slope", window=5)
+    assert "NaN" not in raw and "Infinity" not in raw
+    out = json.loads(raw, parse_constant=lambda c: (_ for _ in ()).throw(ValueError(c)))
+    assert out["status"] == "ok"
+    assert out["results"]["HALT"]["trend_slope"]["mean_slope"] == 0.0

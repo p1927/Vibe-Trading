@@ -93,4 +93,38 @@ describe("api request helper", () => {
       }),
     );
   });
+
+  it("sends the stored API key when fetching a correlation regime timeline", async () => {
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(() => "remote-test-key"),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    });
+    const regime = {
+      labels: ["A", "B"],
+      dates: ["2024-01-01"],
+      density: [0.5],
+      smoothed: [0.5],
+      fused: [0],
+      episodes: [],
+      params: {},
+    };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(regime), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { api } = await loadApiModule();
+
+    await expect(api.getCorrelationRegime("A,B", 90)).resolves.toEqual(regime);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/correlation/regime?codes=A%2CB&days=90",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer remote-test-key" }),
+      }),
+    );
+  });
 });

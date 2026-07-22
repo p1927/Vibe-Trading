@@ -337,6 +337,24 @@ class TestCalcMetrics:
         assert m["total_return"] == pytest.approx(999_999.0)
         assert m["annual_return"] == float("inf")
 
+    def test_zero_crossing_equity_keeps_risk_ratios_finite(self) -> None:
+        """Equity that hits exactly 0 then recovers yields inf pct_change.
+
+        Options metrics already skip non-finite returns; equity calc_metrics
+        must keep Sharpe/Sortino/IR finite (0) instead of leaking NaN/inf.
+        """
+        dates = pd.bdate_range("2025-01-01", periods=3)
+        eq = pd.Series([100.0, 0.0, 50.0], index=dates)
+        bench = pd.Series([0.0, -1.0, 0.0], index=dates)
+        m = calc_metrics(eq, [], 100.0, 252, bench_ret=bench)
+        for key in ("sharpe", "sortino", "information_ratio", "calmar"):
+            assert math.isfinite(m[key]), f"{key} is not finite: {m[key]!r}"
+        assert m["sharpe"] == 0.0
+        assert m["sortino"] == 0.0
+        assert m["information_ratio"] == 0.0
+        assert m["total_return"] == pytest.approx(-0.5)
+        assert m["max_drawdown"] == pytest.approx(-1.0)
+
 
 # ---------------------------------------------------------------------------
 # turnover

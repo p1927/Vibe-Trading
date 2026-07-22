@@ -527,7 +527,14 @@
     "loading": "불러오는 중...",
     "method_pearson": "피어슨",
     "method_spearman": "스피어만",
-    "failedToCompute": "상관 계산에 실패했습니다"
+    "failedToCompute": "상관 계산에 실패했습니다",
+    "regimeTimeline": "상관관계 국면 타임라인",
+    "regimeTimelineHint": "엣지 밀도 + 히스테리시스 시계열 — 설명용 리스크 컨텍스트이며 매매 신호가 아닙니다",
+    "regimeDensity": "엣지 밀도",
+    "regimeSmoothed": "평활 밀도",
+    "regimeFused": "융합 구간 (FUSED)",
+    "regimeEnterThreshold": "진입 임계값",
+    "regimeExitThreshold": "이탈 임계값"
   },
   "alphaZoo": {
     "title": "Alpha Zoo",
