@@ -527,7 +527,14 @@
     "loading": "読み込み中...",
     "method_pearson": "ピアソン",
     "method_spearman": "スピアマン",
-    "failedToCompute": "相関の計算に失敗しました"
+    "failedToCompute": "相関の計算に失敗しました",
+    "regimeTimeline": "相関レジーム・タイムライン",
+    "regimeTimelineHint": "エッジ密度とヒステリシスの時系列 — 記述的なリスク文脈であり、売買シグナルではありません",
+    "regimeDensity": "エッジ密度",
+    "regimeSmoothed": "平滑化密度",
+    "regimeFused": "融合期 (FUSED)",
+    "regimeEnterThreshold": "開始しきい値",
+    "regimeExitThreshold": "終了しきい値"
   },
   "alphaZoo": {
     "title": "Alpha Zoo",
