@@ -178,8 +178,13 @@ class SessionStore:
         for line in path.read_text(encoding="utf-8").strip().splitlines():
             if line.strip():
                 try:
-                    messages.append(Message.from_dict(json.loads(line)))
-                except json.JSONDecodeError:
+                    payload = json.loads(line)
+                    if not isinstance(payload, dict):
+                        raise TypeError(
+                            f"message line must be a JSON object, got {type(payload).__name__}"
+                        )
+                    messages.append(Message.from_dict(payload))
+                except (json.JSONDecodeError, TypeError, ValueError, KeyError):
                     logger.warning(
                         "Skipping corrupted message line in session %s: %s",
                         session_id,
