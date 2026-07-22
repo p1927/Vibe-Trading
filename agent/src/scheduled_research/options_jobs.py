@@ -146,15 +146,21 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
     reconciled = reconcile_options_predictions()
 
     cfg = config or {}
-    watchlist = cfg.get("watchlist")
+    watchlist = list(cfg.get("watchlist") or [])
     if not watchlist:
         watchlist = list(get_monitor_config().watchlist)
     try:
         from trade_integrations.autonomous_agents.market import agent_execution_market
         from trade_integrations.autonomous_agents.store import list_agents
         from trade_integrations.dataflows.options_research.market import is_options_research_eligible
+        from trade_integrations.watch_registry.store import list_watches
 
         extra: set[str] = set()
+        for watch in list_watches(active_only=True):
+            for sym in watch.get("symbols") or []:
+                s = str(sym).strip().upper()
+                if s and is_options_research_eligible(s):
+                    extra.add(s)
         for agent in list_agents() or []:
             if str(agent.get("status") or "") not in ("running", "paused"):
                 continue
@@ -168,6 +174,10 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
             watchlist = sorted(set(watchlist) | extra)
     except Exception:
         pass
+
+    if not watchlist:
+        logger.info("options plan refresh skipped: no agent/watch symbols in scope")
+        return {"skipped": True, "reason": "empty_watchlist", "reconciled_predictions": reconciled}
 
     refreshed: list[dict[str, Any]] = []
     skipped: list[str] = []
