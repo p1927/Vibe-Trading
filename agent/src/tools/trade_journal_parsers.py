@@ -179,8 +179,7 @@ def _qualify_a_share(code: str) -> str:
     if _is_empty_code(code):
         raise ValueError("empty securities code")
     code = str(code).strip()
-    # Numeric Excel/CSV cells often stringify as "600519.0" or "6.00519E+5".
-    # Those contain "." but are not exchange-qualified; normalize first.
+    # Excel/CSV numeric cells stringify as "600519.0"/sci — not exchange suffixes.
     try:
         as_float = float(code)
         if as_float.is_integer() and abs(as_float) < 10_000_000:
