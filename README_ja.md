@@ -1183,7 +1183,39 @@ Contributions を歓迎します。ガイドラインは [CONTRIBUTING.md](CONTR
 
 Vibe-Trading に貢献してくださった皆さまに感謝します。
 
-最近の v0.1.11 サイクルの貢献者とクレジット：
+最近の v0.1.12 サイクルの貢献者とクレジット：
+
+- @santhreal — a 30-PR correctness sweep: strict-JSON / finite-number hardening across metrics, factors, pattern, and options (#764/#765/#766/#767/#739/#740/#744), loader correctness (#761 yahoo 1m bars), and session / journal robustness (#762/#763/#768/#769/#770)
+- @xkam7ar — broad reliability across packaging, web, scheduler, swarm, and CLI (#584), cancellation before the first AgentLoop iteration (#641, closes #638), QVeris session budget + atomic credit accounting (#685/#686), CI / OOS gates (#630/#632), and journal month-filter / side-parse fixes (#626/#628)
+- @shadowinlife — the Strategy Development Manager skill (#457, closes #455), pluggable OCR + LLM-vision extraction (#548), centralized provider credentials (#563), the 80× signal-alignment vectorization (#698), and swarm MCP-discovery caching (#704)
+- @ebujinovch — the correlation regime timeline endpoint + UI (#756, closes #719) and its `correlation-regime` skill (#557), plus the `academic_corr_rewire` factor (#705)
+- @honginp — Binance USD-M routing with execution/mark separation (#470/#716) and the maintenance-bracket decouple that keeps `-PERP` backtests zero-credential (#757)
+- @StaniellG — the MetaTrader 5 (Exness) broker connector + `mt5` data source (#481)
+- @tyj147454413-cmd — the Binance fallback loader (#643), bounded OKX history with rate-limit handling (#644), and codex stream-failure classification (#663)
+- @Marnie0415 — composite sub-engine fallback for unknown symbols (#734) and the frontend `insertBefore` streaming DOM-race fix (#717)
+- @YZY0108 — the look-ahead-bias fix across all five portfolio optimizers (#487)
+- @UNHNQ — the SiliconFlow CN + Global providers (#565)
+- @FenjuFu — the iFlytek Spark provider (#537)
+- @jelech — the native Anthropic Messages API adapter (#695)
+- @octo-patch — MiniMax regional API endpoints (#731)
+- @Thibaultjaigu — the Requesty OpenAI-compatible gateway provider (#474)
+- @Robin1987China — realized portfolio turnover metrics for every optimizer (#478)
+- @YogeshModi24 — the Frazzini-Pedersen betting-against-beta academic factor (#480)
+- @0xZKnw — opt-in TAP mode for Alpaca (#377)
+- @sambazhu — the fundamental zoo `_VALID_ZOOS` whitelist (#707)
+- @nareshkps — Robinhood connector `account_number` wiring (#726)
+- @darkknight4563 — user swarm-presets directory discovery (#570)
+- @MikeCer — IBKR thread-local connection pool + snapshot quotes (#636)
+- @Shizoqua — `local` loader interval resampling (#467)
+- @roberttidball — FastMCP transport import compatibility (#469)
+- @yxhuang — bare-ticker resolution in the correlation matrix (#472, closes #471)
+- @Bortlesboat — stale `OPENAI_BASE_URL` provider-switch fix (#484, closes #482)
+- @ananaymital — preflight `EnvConfig` stale-cache fix (#479, closes #477)
+- @GabbaTauchi — reported the native zai streaming / base-URL bug (#758)
+- @warren618 / Haozhe Wu — the correlation regime backend integration, the zai provider streaming + base-URL resolution fix (#758), release integration, and open-PR/issue triage
+
+<details>
+<summary>v0.1.11 サイクルの貢献者</summary>
 
 - @shadowinlife — the `api_server` modularization capstone (1,103 → 371 lines, #424 closing #331), centralized env config with the AST CI gate (#440), loader `fetch()` protocol conformance (#437), and the Strategy Development Manager RFC in review (#455/#457) — 12 merged PRs this cycle
 - @Robin1987China — Research Autopilot Phase 3 loop closure (#267), 4 canonical academic alphas (#277), Shadow Account PIT-safe entry conditions (#302/#314/#316), the turnover-aware portfolio optimizer (#466), scheduled-research route tests (#452), and test-coverage batches for trade-journal / pattern / loader layers (#268/#269/#276)
@@ -1216,6 +1248,8 @@ Vibe-Trading に貢献してくださった皆さまに感謝します。
 - @flash1234pku — the tushare reference code-fence fix (#449)
 - @Penn-Live — the Docker startup route-iteration crash report (#450)
 - @warren618 / Haozhe Wu — the fundamental factor layer (PIT-safe SEC panels), the QVeris premium track, the IM channel runtime, India-equity integration review, CN search fallbacks, and release integration
+
+</details>
 
 <details>
 <summary>v0.1.10 サイクルの貢献者</summary>
