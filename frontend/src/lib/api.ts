@@ -24,6 +24,28 @@ export interface CorrelationResponse {
   matrix: number[][];
 }
 
+export interface RegimeEpisode {
+  start: string;
+  end: string | null;
+}
+
+export interface CorrelationRegimeResponse {
+  labels: string[];
+  dates: string[];
+  density: (number | null)[];
+  smoothed: (number | null)[];
+  fused: number[];
+  episodes: RegimeEpisode[];
+  params: {
+    days: number;
+    corr_window: number;
+    edge_threshold: number;
+    smooth_window: number;
+    enter_threshold: number;
+    exit_threshold: number;
+  };
+}
+
 async function errorFromResponse(res: Response): Promise<ApiError> {
   let detail = `HTTP ${res.status}`;
   try {
@@ -92,6 +114,10 @@ export const api = {
   getCorrelation: (codes: string, days: number, method: "pearson" | "spearman") =>
     request<CorrelationResponse>(
       `/correlation?codes=${encodeURIComponent(codes)}&days=${encodeURIComponent(String(days))}&method=${encodeURIComponent(method)}`,
+    ),
+  getCorrelationRegime: (codes: string, days: number) =>
+    request<CorrelationRegimeResponse>(
+      `/correlation/regime?codes=${encodeURIComponent(codes)}&days=${encodeURIComponent(String(days))}`,
     ),
   listRuns: (limit?: number) => request<RunListItem[]>(`/runs${limit ? `?limit=${encodeURIComponent(String(limit))}` : ""}`),
   getRun: (id: string, params: RunDetailParams = {}) => {
