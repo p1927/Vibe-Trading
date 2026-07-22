@@ -240,7 +240,8 @@ def _ths_datetime(val: Any) -> str:
     """Normalize 成交时间; Excel serial floats become ISO datetime."""
     if val is None or (isinstance(val, float) and pd.isna(val)):
         return ""
-    if isinstance(val, (int, float)) and not isinstance(val, bool):
+    # iterrows yields numpy integer/float scalars; bare pd.to_datetime(int) is ns-epoch.
+    if pd.api.types.is_number(val) and not isinstance(val, (bool,)):
         ts = pd.to_datetime(float(val), unit="D", origin="1899-12-30", errors="coerce")
         if pd.notna(ts):
             return ts.strftime("%Y-%m-%d %H:%M:%S")
