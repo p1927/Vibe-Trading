@@ -312,6 +312,33 @@ def test_read_write_env_quoted_hash_roundtrip(tmp_path):
     assert helpers._strip_env_value(line.split("=", 1)[1]) == secret
 
 
+def test_read_env_values_strips_export_prefix(tmp_path):
+    """Shell-style ``export KEY=`` must read as KEY (python-dotenv parity)."""
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "export OPENAI_API_KEY=sk-real\nLANGCHAIN_PROVIDER=openai\n",
+        encoding="utf-8",
+    )
+    values = helpers._read_env_values(env_file)
+    assert values["OPENAI_API_KEY"] == "sk-real"
+    assert values["LANGCHAIN_PROVIDER"] == "openai"
+    assert "export OPENAI_API_KEY" not in values
+
+
+def test_write_env_values_updates_export_prefixed_key(tmp_path):
+    """Upsert must rewrite ``export KEY=`` in place, not append a duplicate KEY=."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("export TUSHARE_TOKEN=old-token\nOTHER=1\n", encoding="utf-8")
+
+    helpers._write_env_values(env_file, {"TUSHARE_TOKEN": "new-token"})
+
+    text = env_file.read_text(encoding="utf-8")
+    assert "export TUSHARE_TOKEN=new-token\n" in text
+    assert text.count("TUSHARE_TOKEN=") == 1
+    assert helpers._read_env_values(env_file)["TUSHARE_TOKEN"] == "new-token"
+    assert helpers._read_env_values(env_file)["OTHER"] == "1"
+
+
 # ============================================================================
 # state._get_session_service writeback
 # ============================================================================
