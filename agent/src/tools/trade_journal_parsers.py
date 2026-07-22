@@ -240,6 +240,13 @@ def parse_eastmoney(df: pd.DataFrame) -> list[TradeRecord]:
         if _is_empty_code(raw_code):
             continue
         raw_date = str(row.get("成交日期", "")).strip()
+        # Excel numeric YYYYMMDD cells stringify as "20260115.0".
+        try:
+            as_float = float(raw_date)
+            if as_float.is_integer() and 19_000_001 <= int(as_float) <= 21_001_231:
+                raw_date = f"{int(as_float):08d}"
+        except (ValueError, OverflowError):
+            pass
         raw_time = str(row.get("成交时间", "")).strip()
         if len(raw_date) == 8 and raw_date.isdigit():
             iso_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
