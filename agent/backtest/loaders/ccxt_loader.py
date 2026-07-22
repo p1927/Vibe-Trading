@@ -91,6 +91,95 @@ def _ccxt_proxy_config() -> dict[str, str]:
     return proxies
 
 
+_BRACKET_SCHEMA_VERSION = 1
+
+
+def _validate_bracket_artifact(artifact: dict, *, expected_symbol: str) -> tuple[list[dict], str]:
+    """Validate a caller-supplied maintenance-bracket artifact.
+
+    ``binanceusdm.fetch_leverage_tiers()`` routes to Binance's signed
+    ``GET /fapi/v1/leverageBracket`` USER_DATA endpoint — it requires an API
+    key even though the response carries no account-specific data. This
+    loader no longer calls it: maintenance brackets are supplied out of band
+    as a versioned artifact and validated here, never fetched live. Fails
+    closed (raises ``ValueError``) on any schema, symbol, provenance,
+    ordering, or content-hash problem.
+    """
+    if not isinstance(artifact, dict):
+        raise ValueError("bracket artifact must be a dict")
+
+    schema_version = artifact.get("schema_version")
+    if schema_version != _BRACKET_SCHEMA_VERSION:
+        raise ValueError(
+            f"bracket artifact schema_version must be {_BRACKET_SCHEMA_VERSION}, "
+            f"got {schema_version!r}"
+        )
+
+    symbol = artifact.get("symbol")
+    if symbol != expected_symbol:
+        raise ValueError(
+            f"bracket artifact symbol mismatch: expected {expected_symbol!r}, got {symbol!r}"
+        )
+
+    provenance_timestamp = artifact.get("provenance_timestamp")
+    if not provenance_timestamp:
+        raise ValueError("bracket artifact is missing provenance_timestamp")
+    try:
+        pd.Timestamp(provenance_timestamp)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(
+            f"bracket artifact provenance_timestamp is not a valid timestamp: "
+            f"{provenance_timestamp!r}"
+        ) from exc
+
+    brackets = artifact.get("brackets")
+    if not brackets:
+        raise ValueError("bracket artifact has no brackets")
+
+    normalized: list[dict] = []
+    for tier in brackets:
+        try:
+            record = {
+                "bracket_tier": int(tier["bracket_tier"]),
+                "notional_cap": float(tier["notional_cap"]),
+                "maintenance_rate": float(tier["maintenance_rate"]),
+                "cumulative_maintenance_amount": float(tier["cumulative_maintenance_amount"]),
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"bracket artifact tier for {expected_symbol} is missing a required field: {exc}"
+            ) from exc
+        # Optional: reserved for future risk-model calibration, not part of
+        # Binance's own bracket schema. Validated only if present.
+        coefficient = tier.get("notional_coefficient")
+        if coefficient is not None:
+            try:
+                record["notional_coefficient"] = float(coefficient)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"bracket artifact notional_coefficient must be numeric: {coefficient!r}"
+                ) from exc
+        normalized.append(record)
+
+    normalized.sort(key=lambda row: row["bracket_tier"])
+    caps = [row["notional_cap"] for row in normalized]
+    if caps != sorted(caps) or len(caps) != len(set(caps)):
+        raise ValueError(
+            f"bracket artifact notional caps for {expected_symbol} are not strictly increasing"
+        )
+
+    blob = json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    computed_hash = hashlib.sha256(blob).hexdigest()[:16]
+    content_hash = artifact.get("content_hash")
+    if content_hash != computed_hash:
+        raise ValueError(
+            f"bracket artifact content_hash mismatch for {expected_symbol}: "
+            f"expected {computed_hash}, artifact declares {content_hash!r}"
+        )
+
+    return normalized, computed_hash
+
+
 @register
 class DataLoader:
     """CCXT-backed crypto OHLCV loader (100+ exchanges)."""
@@ -141,6 +230,8 @@ class DataLoader:
         *,
         interval: str = "1D",
         fields: Optional[List[str]] = None,
+        bracket_artifacts: Optional[Dict[str, dict]] = None,
+        require_brackets: bool = False,
     ) -> Dict[str, pd.DataFrame]:
         """Fetch crypto OHLCV via CCXT.
 
@@ -150,6 +241,17 @@ class DataLoader:
             end_date: End date (YYYY-MM-DD).
             interval: Bar size.
             fields: Ignored.
+            bracket_artifacts: Optional ``{code: artifact}`` map of caller-supplied,
+                versioned maintenance-bracket artifacts (see
+                ``_validate_bracket_artifact``) for ``-PERP`` codes. Normal
+                execution/mark/funding data never needs this — it stays
+                zero-credential regardless. This loader does not fetch brackets
+                live: ``binanceusdm.fetch_leverage_tiers()`` requires a Binance
+                API key, which this historical/backtest path never carries.
+            require_brackets: When True, a ``-PERP`` code without a matching,
+                valid artifact in ``bracket_artifacts`` fails closed instead of
+                silently returning data without bracket columns. Intended for
+                strict margin-risk consumers.
 
         Returns:
             Mapping symbol -> OHLCV DataFrame.
@@ -175,11 +277,13 @@ class DataLoader:
             try:
                 ccxt_symbol, instrument_type = _parse_ccxt_symbol(code)
                 exchange = get_exchange(instrument_type)
+                artifact = (bracket_artifacts or {}).get(code)
 
                 def fetch_frame():
                     if instrument_type == "swap":
                         return self._fetch_perpetual(
-                            exchange, ccxt_symbol, timeframe, since_ms, end_ms
+                            exchange, ccxt_symbol, timeframe, since_ms, end_ms,
+                            bracket_artifact=artifact, require_brackets=require_brackets,
                         )
                     return self._fetch_one(
                         exchange, ccxt_symbol, timeframe, since_ms, end_ms
@@ -205,8 +309,24 @@ class DataLoader:
     @classmethod
     def _fetch_perpetual(
         cls, exchange, symbol: str, timeframe: str, since_ms: int, end_ms: int,
+        *, bracket_artifact: dict | None = None, require_brackets: bool = False,
     ) -> pd.DataFrame:
-        """Fetch aligned trade-price and mark-price candles for one USD-M swap."""
+        """Fetch aligned trade-price and mark-price candles for one USD-M swap.
+
+        Maintenance brackets are never fetched live (see
+        ``_validate_bracket_artifact``): they're attached only when the caller
+        supplies a validated artifact. A strict caller (``require_brackets``)
+        fails closed before any network call when no artifact is supplied.
+        """
+        if require_brackets and bracket_artifact is None:
+            raise ValueError(
+                f"strict margin-risk fetch for {symbol} requires a maintenance-bracket "
+                "artifact, but none was supplied. This loader does not perform a live "
+                "authenticated bracket fetch (binanceusdm.fetch_leverage_tiers requires "
+                "a Binance API key this backtest path does not carry) — pass a validated "
+                "artifact via DataLoader.fetch(bracket_artifacts={code: artifact})."
+            )
+
         trade = cls._fetch_one(exchange, symbol, timeframe, since_ms, end_ms)
         mark = cls._fetch_one(
             exchange,
@@ -242,9 +362,12 @@ class DataLoader:
             result.loc[aligned, "funding_rate"] = funding.loc[aligned, "funding_rate"]
             result.loc[aligned, "funding_settlement_time"] = aligned
 
-        brackets, version = cls._fetch_maintenance_brackets(exchange, symbol)
-        result["maintenance_brackets"] = json.dumps(brackets)
-        result["maintenance_bracket_version"] = version
+        if bracket_artifact is not None:
+            brackets, version = _validate_bracket_artifact(
+                bracket_artifact, expected_symbol=symbol
+            )
+            result["maintenance_brackets"] = json.dumps(brackets)
+            result["maintenance_bracket_version"] = version
         return result
 
     @staticmethod
@@ -295,62 +418,6 @@ class DataLoader:
         start_dt = pd.Timestamp(since_ms, unit="ms")
         end_dt = pd.Timestamp(end_ms, unit="ms")
         return frame[(frame.index >= start_dt) & (frame.index < end_dt)]
-
-    @staticmethod
-    def _fetch_maintenance_brackets(exchange, symbol: str) -> tuple[list[dict], str]:
-        """Fetch the current versioned maintenance-margin bracket schedule.
-
-        CCXT/Binance expose only the *current* bracket table (no history), so
-        each bracket record is stamped with a content hash rather than an
-        exchange-provided version: any change to the schedule changes the
-        hash, giving downstream consumers a fail-closed way to detect a stale
-        or mismatched bracket set.
-        """
-        import ccxt
-
-        try:
-            raw = retry_with_budget(
-                lambda: exchange.fetch_leverage_tiers([symbol]),
-                transient=ccxt.NetworkError,
-                deadline=time.monotonic() + _CCXT_FETCH_BUDGET_S,
-                label=f"ccxt bracket fetch for {symbol}",
-            )
-            tiers = raw.get(symbol) if raw else None
-        except Exception as exc:
-            raise ValueError(f"maintenance bracket fetch failed for {symbol}: {exc}") from exc
-
-        if not tiers:
-            raise ValueError(f"maintenance bracket data is missing for {symbol}")
-
-        brackets: list[dict] = []
-        for tier in tiers:
-            info = tier.get("info") or {}
-            try:
-                bracket_tier = int(info["bracket"])
-                notional_cap = float(info["notionalCap"])
-                maintenance_rate = float(info["maintMarginRatio"])
-                cumulative_maintenance_amount = float(info["cum"])
-            except (KeyError, TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"maintenance bracket for {symbol} is missing a required field: {exc}"
-                ) from exc
-            brackets.append({
-                "bracket_tier": bracket_tier,
-                "notional_cap": notional_cap,
-                "maintenance_rate": maintenance_rate,
-                "cumulative_maintenance_amount": cumulative_maintenance_amount,
-            })
-
-        brackets.sort(key=lambda row: row["bracket_tier"])
-        caps = [row["notional_cap"] for row in brackets]
-        if caps != sorted(caps) or len(caps) != len(set(caps)):
-            raise ValueError(
-                f"maintenance bracket notional caps for {symbol} are not strictly increasing"
-            )
-
-        blob = json.dumps(brackets, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        version = hashlib.sha256(blob).hexdigest()[:16]
-        return brackets, version
 
     @staticmethod
     def _fetch_one(
