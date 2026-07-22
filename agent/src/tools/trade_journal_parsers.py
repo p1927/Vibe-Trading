@@ -178,7 +178,15 @@ def _qualify_a_share(code: str) -> str:
     """Append .SH/.SZ/.BJ suffix to a bare A-share ticker."""
     if _is_empty_code(code):
         raise ValueError("empty securities code")
-    code = str(code).strip().zfill(6)
+    code = str(code).strip()
+    # Excel/CSV numeric cells stringify as "600519.0"/sci — not exchange suffixes.
+    try:
+        as_float = float(code)
+        if as_float.is_integer() and abs(as_float) < 10_000_000:
+            code = str(int(as_float))
+    except (ValueError, OverflowError):
+        pass
+    code = code.zfill(6)
     if "." in code:
         return code.upper()
     first = code[0]

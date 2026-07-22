@@ -104,6 +104,12 @@ def _envelope(path: Path, fmt: str, text: str, **extra: Any) -> str:
 
 def _parse_pages(pages_str: str, total: int) -> list[int]:
     """Parse '1-10' / '5' / '1,3,5-8' into zero-based indices."""
+    # Word/LLM paste often uses en/em/minus dashes; treat as ASCII hyphen.
+    pages_str = (
+        pages_str.replace("\u2013", "-")
+        .replace("\u2014", "-")
+        .replace("\u2212", "-")
+    )
     out: list[int] = []
     for part in pages_str.split(","):
         part = part.strip()

@@ -59,6 +59,11 @@ def _to_yahoo_interval(interval: str) -> str:
         Yahoo-compatible interval string (e.g. ``1d``).
     """
     normalized = str(interval or "1D").strip()
+    if not normalized:
+        return "1d"
+    # Bare trailing ``m`` is minutes; do not uppercase into monthly ``1M`` → ``1mo``.
+    if normalized.endswith("m") and not normalized.endswith("M"):
+        return normalized.lower()
     return _INTERVAL_MAP.get(normalized.upper(), normalized.lower())
 
 

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
 import pandas as pd
 
 from backtest.loaders.base import make_loader_cache_key
-from backtest.loaders.ccxt_loader import _parse_ccxt_symbol
+from backtest.loaders.ccxt_loader import _parse_ccxt_symbol, _validate_bracket_artifact
 
 
 def _hourly_rows(opens: list[float]) -> list[list[float]]:
@@ -20,19 +21,18 @@ def _hourly_rows(opens: list[float]) -> list[list[float]]:
     ]
 
 
-_DEFAULT_BRACKETS = [
-    {"bracket": 1, "notionalCap": 50_000, "maintMarginRatio": 0.004, "cum": 0.0},
-    {"bracket": 2, "notionalCap": 250_000, "maintMarginRatio": 0.005, "cum": 50.0},
-]
-
-
 class _PerpetualExchange:
+    """Fake exchange with no ``fetch_leverage_tiers`` — proves the loader
+    never calls the authenticated bracket endpoint. If any code path tried
+    to, this fake would raise ``AttributeError`` instead of silently
+    succeeding.
+    """
+
     def __init__(
         self,
         *,
         mark_rows: list[list[float]] | None = None,
         funding_rows: list[dict[str, object]] | None = None,
-        brackets: list[dict[str, object]] | None = None,
     ) -> None:
         self.trade_rows = _hourly_rows([100.0, 101.0])
         self.mark_rows = mark_rows if mark_rows is not None else _hourly_rows([99.0, 100.0])
@@ -42,7 +42,6 @@ class _PerpetualExchange:
             if funding_rows is not None
             else [{"timestamp": start, "fundingRate": 0.0}]
         )
-        self.brackets = _DEFAULT_BRACKETS if brackets is None else brackets
         self.calls: list[dict[str, object]] = []
 
     def fetch_ohlcv(self, symbol, timeframe, since=None, limit=None, params=None):
@@ -63,22 +62,42 @@ class _PerpetualExchange:
         })
         return self.funding_rows
 
-    def fetch_leverage_tiers(self, symbols):
-        self.calls.append({"bracket_symbols": symbols})
-        [symbol] = symbols
-        return {
-            symbol: [
-                {
-                    "tier": row["bracket"],
-                    "minNotional": 0,
-                    "maxNotional": row["notionalCap"],
-                    "maintenanceMarginRate": row["maintMarginRatio"],
-                    "maxLeverage": 1,
-                    "info": row,
-                }
-                for row in self.brackets
-            ]
-        }
+
+_DEFAULT_BRACKET_RECORDS = [
+    {
+        "bracket_tier": 1,
+        "notional_cap": 50_000.0,
+        "maintenance_rate": 0.004,
+        "cumulative_maintenance_amount": 0.0,
+    },
+    {
+        "bracket_tier": 2,
+        "notional_cap": 250_000.0,
+        "maintenance_rate": 0.005,
+        "cumulative_maintenance_amount": 50.0,
+    },
+]
+
+
+def _bracket_content_hash(records: list[dict]) -> str:
+    """Mirror ``_validate_bracket_artifact``'s canonical hashing exactly."""
+    blob = json.dumps(records, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def _make_bracket_artifact(
+    *, symbol: str = "BTC/USDT:USDT", brackets: list[dict] | None = None, **overrides,
+) -> dict:
+    records = _DEFAULT_BRACKET_RECORDS if brackets is None else brackets
+    artifact = {
+        "schema_version": 1,
+        "symbol": symbol,
+        "provenance_timestamp": "2024-01-01T00:00:00Z",
+        "brackets": records,
+        "content_hash": _bracket_content_hash(records),
+    }
+    artifact.update(overrides)
+    return artifact
 
 
 def test_spot_symbol_keeps_existing_ccxt_contract() -> None:
@@ -200,7 +219,10 @@ def test_perpetual_fetch_rejects_duplicate_funding_settlement(monkeypatch) -> No
         )
 
 
-def test_perpetual_fetch_attaches_versioned_maintenance_brackets(monkeypatch) -> None:
+def test_perpetual_fetch_has_no_bracket_columns_without_artifact(monkeypatch) -> None:
+    """Normal perpetual fetch stays zero-credential: no artifact in, no
+    bracket columns out, and no bracket-endpoint call ever attempted (the
+    fake exchange has no ``fetch_leverage_tiers`` at all)."""
     exchange = _PerpetualExchange()
     monkeypatch.setattr(
         "backtest.loaders.ccxt_loader.DataLoader._get_exchange",
@@ -213,102 +235,121 @@ def test_perpetual_fetch_attaches_versioned_maintenance_brackets(monkeypatch) ->
         ["BTC-USDT-PERP"], "2024-01-01", "2024-01-01", interval="1H"
     )["BTC-USDT-PERP"]
 
-    versions = frame["maintenance_bracket_version"].unique().tolist()
-    assert len(versions) == 1
-    assert isinstance(versions[0], str) and versions[0]
+    assert "maintenance_brackets" not in frame.columns
+    assert "maintenance_bracket_version" not in frame.columns
+    assert all("bracket" not in str(call) for call in exchange.calls)
 
-    brackets = json.loads(frame["maintenance_brackets"].iloc[0])
-    assert brackets == [
-        {
-            "bracket_tier": 1,
-            "notional_cap": 50_000.0,
-            "maintenance_rate": 0.004,
-            "cumulative_maintenance_amount": 0.0,
-        },
-        {
-            "bracket_tier": 2,
-            "notional_cap": 250_000.0,
-            "maintenance_rate": 0.005,
-            "cumulative_maintenance_amount": 50.0,
-        },
-    ]
+
+def test_perpetual_fetch_attaches_valid_bracket_artifact(monkeypatch) -> None:
+    exchange = _PerpetualExchange()
+    monkeypatch.setattr(
+        "backtest.loaders.ccxt_loader.DataLoader._get_exchange",
+        lambda _self, instrument_type="spot": exchange,
+    )
+
+    from backtest.loaders.ccxt_loader import DataLoader
+
+    artifact = _make_bracket_artifact()
+    frame = DataLoader().fetch(
+        ["BTC-USDT-PERP"], "2024-01-01", "2024-01-01", interval="1H",
+        bracket_artifacts={"BTC-USDT-PERP": artifact},
+    )["BTC-USDT-PERP"]
+
+    versions = frame["maintenance_bracket_version"].unique().tolist()
+    assert versions == [artifact["content_hash"]]
+    assert json.loads(frame["maintenance_brackets"].iloc[0]) == _DEFAULT_BRACKET_RECORDS
     assert frame["maintenance_brackets"].nunique() == 1
 
 
-def test_perpetual_fetch_bracket_version_changes_with_bracket_contents(monkeypatch) -> None:
-    from backtest.loaders.ccxt_loader import DataLoader
-
-    exchange_a = _PerpetualExchange()
+def test_strict_perpetual_fetch_without_artifact_fails_closed_before_any_call(monkeypatch) -> None:
+    exchange = _PerpetualExchange()
     monkeypatch.setattr(
         "backtest.loaders.ccxt_loader.DataLoader._get_exchange",
-        lambda _self, instrument_type="spot": exchange_a,
+        lambda _self, instrument_type="spot": exchange,
     )
-    frame_a = DataLoader().fetch(
-        ["BTC-USDT-PERP"], "2024-01-01", "2024-01-01", interval="1H"
+
+    from backtest.loaders.ccxt_loader import DataLoader
+
+    with pytest.raises(ValueError, match="requires a maintenance-bracket artifact"):
+        DataLoader().fetch(
+            ["BTC-USDT-PERP"], "2024-01-01", "2024-01-01", interval="1H",
+            require_brackets=True,
+        )
+    assert exchange.calls == []
+
+
+def test_strict_perpetual_fetch_with_valid_artifact_succeeds(monkeypatch) -> None:
+    exchange = _PerpetualExchange()
+    monkeypatch.setattr(
+        "backtest.loaders.ccxt_loader.DataLoader._get_exchange",
+        lambda _self, instrument_type="spot": exchange,
+    )
+
+    from backtest.loaders.ccxt_loader import DataLoader
+
+    artifact = _make_bracket_artifact()
+    frame = DataLoader().fetch(
+        ["BTC-USDT-PERP"], "2024-01-01", "2024-01-01", interval="1H",
+        bracket_artifacts={"BTC-USDT-PERP": artifact}, require_brackets=True,
     )["BTC-USDT-PERP"]
 
-    exchange_b = _PerpetualExchange(brackets=[
-        {"bracket": 1, "notionalCap": 50_000, "maintMarginRatio": 0.005, "cum": 0.0},
+    assert frame["maintenance_bracket_version"].iloc[0] == artifact["content_hash"]
+
+
+def test_bracket_artifact_accepts_optional_notional_coefficient() -> None:
+    records = [
+        {**_DEFAULT_BRACKET_RECORDS[0], "notional_coefficient": 1.5},
+        _DEFAULT_BRACKET_RECORDS[1],
+    ]
+    artifact = _make_bracket_artifact(brackets=records)
+    brackets, version = _validate_bracket_artifact(artifact, expected_symbol="BTC/USDT:USDT")
+    assert brackets[0]["notional_coefficient"] == 1.5
+    assert "notional_coefficient" not in brackets[1]
+    assert version == artifact["content_hash"]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"schema_version": 2}, "schema_version"),
+        ({"symbol": "ETH/USDT:USDT"}, "symbol mismatch"),
+        ({"provenance_timestamp": ""}, "provenance_timestamp"),
+        ({"provenance_timestamp": "not-a-timestamp"}, "provenance_timestamp"),
+        ({"brackets": []}, "no brackets"),
+        ({"content_hash": "deadbeefdeadbeef"}, "content_hash mismatch"),
+    ],
+)
+def test_bracket_artifact_rejects_invalid_fields(overrides: dict, match: str) -> None:
+    artifact = _make_bracket_artifact(**overrides)
+    with pytest.raises(ValueError, match=match):
+        _validate_bracket_artifact(artifact, expected_symbol="BTC/USDT:USDT")
+
+
+def test_bracket_artifact_rejects_tier_missing_required_field() -> None:
+    artifact = _make_bracket_artifact(brackets=[
+        {"bracket_tier": 1, "notional_cap": 50_000.0, "maintenance_rate": 0.004},
     ])
-    monkeypatch.setattr(
-        "backtest.loaders.ccxt_loader.DataLoader._get_exchange",
-        lambda _self, instrument_type="spot": exchange_b,
-    )
-    frame_b = DataLoader().fetch(
-        ["BTC-USDT-PERP"], "2024-01-01", "2024-01-01", interval="1H"
-    )["BTC-USDT-PERP"]
-
-    assert (
-        frame_a["maintenance_bracket_version"].iloc[0]
-        != frame_b["maintenance_bracket_version"].iloc[0]
-    )
+    with pytest.raises(ValueError, match="missing a required field"):
+        _validate_bracket_artifact(artifact, expected_symbol="BTC/USDT:USDT")
 
 
-def test_perpetual_fetch_rejects_empty_maintenance_brackets(monkeypatch) -> None:
-    exchange = _PerpetualExchange(brackets=[])
-    monkeypatch.setattr(
-        "backtest.loaders.ccxt_loader.DataLoader._get_exchange",
-        lambda _self, instrument_type="spot": exchange,
-    )
-
-    from backtest.loaders.ccxt_loader import DataLoader
-
-    with pytest.raises(ValueError, match="maintenance bracket"):
-        DataLoader().fetch(
-            ["BTC-USDT-PERP"], "2024-01-01", "2024-01-01", interval="1H"
-        )
+def test_bracket_artifact_rejects_non_numeric_notional_coefficient() -> None:
+    records = [{**_DEFAULT_BRACKET_RECORDS[0], "notional_coefficient": "not-a-number"}]
+    artifact = _make_bracket_artifact(brackets=records)
+    with pytest.raises(ValueError, match="notional_coefficient must be numeric"):
+        _validate_bracket_artifact(artifact, expected_symbol="BTC/USDT:USDT")
 
 
-def test_perpetual_fetch_rejects_maintenance_bracket_missing_field(monkeypatch) -> None:
-    exchange = _PerpetualExchange(brackets=[
-        {"bracket": 1, "notionalCap": 50_000, "maintMarginRatio": 0.004},
+def test_bracket_artifact_rejects_non_monotonic_brackets() -> None:
+    artifact = _make_bracket_artifact(brackets=[
+        {
+            "bracket_tier": 1, "notional_cap": 250_000.0,
+            "maintenance_rate": 0.004, "cumulative_maintenance_amount": 0.0,
+        },
+        {
+            "bracket_tier": 2, "notional_cap": 50_000.0,
+            "maintenance_rate": 0.005, "cumulative_maintenance_amount": 50.0,
+        },
     ])
-    monkeypatch.setattr(
-        "backtest.loaders.ccxt_loader.DataLoader._get_exchange",
-        lambda _self, instrument_type="spot": exchange,
-    )
-
-    from backtest.loaders.ccxt_loader import DataLoader
-
-    with pytest.raises(ValueError, match="maintenance bracket"):
-        DataLoader().fetch(
-            ["BTC-USDT-PERP"], "2024-01-01", "2024-01-01", interval="1H"
-        )
-
-
-def test_perpetual_fetch_rejects_non_monotonic_maintenance_brackets(monkeypatch) -> None:
-    exchange = _PerpetualExchange(brackets=[
-        {"bracket": 1, "notionalCap": 250_000, "maintMarginRatio": 0.004, "cum": 0.0},
-        {"bracket": 2, "notionalCap": 50_000, "maintMarginRatio": 0.005, "cum": 50.0},
-    ])
-    monkeypatch.setattr(
-        "backtest.loaders.ccxt_loader.DataLoader._get_exchange",
-        lambda _self, instrument_type="spot": exchange,
-    )
-
-    from backtest.loaders.ccxt_loader import DataLoader
-
-    with pytest.raises(ValueError, match="maintenance bracket"):
-        DataLoader().fetch(
-            ["BTC-USDT-PERP"], "2024-01-01", "2024-01-01", interval="1H"
-        )
+    with pytest.raises(ValueError, match="not strictly increasing"):
+        _validate_bracket_artifact(artifact, expected_symbol="BTC/USDT:USDT")

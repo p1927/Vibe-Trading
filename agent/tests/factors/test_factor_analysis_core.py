@@ -52,3 +52,29 @@ def test_run_factor_analysis_nonpositive_n_groups_returns_json_error() -> None:
         )
         assert out["status"] == "error"
         assert "n_groups" in out["error"]
+
+
+def test_run_factor_analysis_single_day_ic_std_is_finite_json() -> None:
+    """One IC date must not emit NaN ic_std (ddof=1) into the JSON summary."""
+    factor, ret = _panel(n_dates=1, n_codes=8, seed=3)
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        factor.to_csv(root / "f.csv")
+        ret.to_csv(root / "r.csv")
+        raw = run_factor_analysis(
+            str(root / "f.csv"),
+            str(root / "r.csv"),
+            str(root / "out"),
+            n_groups=5,
+        )
+        out = json.loads(raw)
+        assert out["status"] == "ok"
+        assert out["ic_count"] == 1
+        assert out["ic_std"] == 0.0
+        assert out["ir"] == 0.0
+        summary = json.loads(
+            (root / "out" / "ic_summary.json").read_text(encoding="utf-8")
+        )
+        assert summary["ic_std"] == 0.0
+        json.dumps(out, allow_nan=False)
+        json.dumps(summary, allow_nan=False)

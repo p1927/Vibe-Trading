@@ -258,6 +258,9 @@ def calc_metrics(
         bpy = bars_per_year
 
     port_ret = equity_curve.pct_change().fillna(0.0)
+    # Equity that touches zero then recovers (100 → 0 → 50) yields non-finite
+    # pct_change values; options metrics already skip risk ratios in that case.
+    returns_finite = bool(np.isfinite(port_ret.to_numpy(dtype=float, copy=False)).all())
 
     total_ret = float(equity_curve.iloc[-1] / initial_cash - 1)
     # A leveraged/short book can end at or below zero equity (``total_ret <= -1``).
@@ -279,8 +282,14 @@ def calc_metrics(
     # ``Series.std()`` uses ddof=1, so a single-observation return series
     # (e.g. a one-bar backtest) yields NaN and poisons the Sharpe ratio.
     # Guard the small sample the same way ``downside_std`` is guarded below.
-    vol = float(port_ret.std()) if len(port_ret) > 1 else 0.0
-    sharpe = float(port_ret.mean() / (vol + 1e-10) * np.sqrt(bpy))
+    vol = float(port_ret.std()) if len(port_ret) > 1 and returns_finite else 0.0
+    sharpe = (
+        float(port_ret.mean() / (vol + 1e-10) * np.sqrt(bpy))
+        if returns_finite
+        else 0.0
+    )
+    if not np.isfinite(sharpe):
+        sharpe = 0.0
 
     # Drawdown
     peak = equity_curve.cummax()
@@ -290,9 +299,14 @@ def calc_metrics(
     calmar = ann_ret / abs(max_dd) if abs(max_dd) > 1e-10 else 0.0
 
     # Sortino
-    downside = port_ret[port_ret < 0]
-    downside_std = float(downside.std()) if len(downside) > 1 else 1e-10
-    sortino = float(port_ret.mean() / (downside_std + 1e-10) * np.sqrt(bpy))
+    if returns_finite:
+        downside = port_ret[port_ret < 0]
+        downside_std = float(downside.std()) if len(downside) > 1 else 1e-10
+        sortino = float(port_ret.mean() / (downside_std + 1e-10) * np.sqrt(bpy))
+    else:
+        sortino = 0.0
+    if not np.isfinite(sortino):
+        sortino = 0.0
 
     trade_stats = win_rate_and_stats(trades)
 
@@ -318,8 +332,14 @@ def calc_metrics(
         active_ret = port_ret - bench_ret.reindex(port_ret.index).fillna(0.0)
         # Same ddof=1 small-sample guard as ``vol`` / ``downside_std`` so the
         # information ratio stays finite for a single-observation series.
-        active_std = float(active_ret.std()) if len(active_ret) > 1 else 0.0
-        ir = float(active_ret.mean() / (active_std + 1e-10) * np.sqrt(bpy))
+        active_std = float(active_ret.std()) if len(active_ret) > 1 and returns_finite else 0.0
+        ir = (
+            float(active_ret.mean() / (active_std + 1e-10) * np.sqrt(bpy))
+            if returns_finite
+            else 0.0
+        )
+        if not np.isfinite(ir):
+            ir = 0.0
 
     return {
         "final_value": float(equity_curve.iloc[-1]),

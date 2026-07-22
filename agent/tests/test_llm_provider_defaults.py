@@ -7,6 +7,10 @@ from pathlib import Path
 
 import cli
 from cli.onboard import PROVIDERS as ONBOARD_PROVIDERS
+from src.providers.capabilities import (
+    _provider_default_base_urls,
+    get_llm_credentials,
+)
 
 
 EXPECTED_PROVIDER_DEFAULTS = {
@@ -130,3 +134,43 @@ def test_siliconflow_is_available_in_both_cli_onboarding_surfaces() -> None:
         assert onboard.key_env == legacy["key_env"] == key_env
         assert onboard.base_env == legacy["base_env"] == base_env
         assert onboard.base_url == legacy["base_url"] == base_url
+
+
+# ---------------------------------------------------------------------------
+# #758: backend credential resolution falls back to the catalog default_base_url
+# when no *_BASE_URL is set, so CLI / manual-.env users reach the right endpoint.
+# ---------------------------------------------------------------------------
+
+
+def test_zai_base_url_falls_back_to_catalog_default(monkeypatch) -> None:
+    """With no *_BASE_URL set, zai resolves to its catalog endpoint instead of
+    silently defaulting to api.openai.com (which 404s glm-5.1)."""
+    for var in ("ZAI_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE"):
+        monkeypatch.delenv(var, raising=False)
+    creds = get_llm_credentials("zai", "glm-5.1")
+    assert creds["base_url"] == "https://api.z.ai/api/coding/paas/v4"
+
+
+def test_explicit_provider_base_url_overrides_catalog_default(monkeypatch) -> None:
+    monkeypatch.setenv("ZAI_BASE_URL", "https://custom.example/v1")
+    creds = get_llm_credentials("zai", "glm-5.1")
+    assert creds["base_url"] == "https://custom.example/v1"
+
+
+def test_openai_base_url_env_overrides_catalog_default(monkeypatch) -> None:
+    monkeypatch.delenv("ZAI_BASE_URL", raising=False)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://proxy.example/v1")
+    creds = get_llm_credentials("zai", "glm-5.1")
+    assert creds["base_url"] == "https://proxy.example/v1"
+
+
+def test_credential_fallback_map_matches_provider_catalog() -> None:
+    """The base-URL fallback map must stay in sync with llm_providers.json."""
+    providers_path = (
+        Path(__file__).resolve().parents[1] / "src" / "providers" / "llm_providers.json"
+    )
+    catalog = {
+        item["name"]: item["default_base_url"]
+        for item in json.loads(providers_path.read_text(encoding="utf-8"))
+    }
+    assert _provider_default_base_urls() == catalog
