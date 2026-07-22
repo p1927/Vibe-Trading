@@ -149,6 +149,18 @@ def _strip_env_value(value: str) -> str:
     return value.strip()
 
 
+def _dotenv_key(raw_key: str) -> str:
+    """Return the canonical env key, stripping an optional ``export `` prefix.
+
+    python-dotenv accepts ``export KEY=value``; Settings must too so reads and
+    upserts hit the same key users set when sourcing a shell-style dotenv.
+    """
+    key = raw_key.strip()
+    if key.lower().startswith("export "):
+        key = key[7:].strip()
+    return key
+
+
 def _read_env_values(path: Path) -> Dict[str, str]:
     """Read active KEY=value entries from a dotenv file."""
     values: Dict[str, str] = {}
@@ -159,7 +171,7 @@ def _read_env_values(path: Path) -> Dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        key = key.strip()
+        key = _dotenv_key(key)
         if key:
             values[key] = _strip_env_value(value)
     return values
@@ -200,12 +212,14 @@ def _write_env_values(path: Path, updates: Dict[str, str]) -> None:
         stripped = raw.lstrip()
         if stripped.startswith("#") or "=" not in stripped:
             continue
-        key = stripped.split("=", 1)[0].strip()
+        key = _dotenv_key(stripped.split("=", 1)[0])
         if key in updates:
             last_active[key] = index
     seen: set[str] = set()
     for key, index in last_active.items():
-        lines[index] = f"{key}={_format_env_value(updates[key])}"
+        stripped = lines[index].lstrip()
+        prefix = "export " if stripped.lower().startswith("export ") else ""
+        lines[index] = f"{prefix}{key}={_format_env_value(updates[key])}"
         seen.add(key)
     missing = [key for key in updates if key not in seen]
     if missing:

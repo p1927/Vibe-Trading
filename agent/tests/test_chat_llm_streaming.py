@@ -289,3 +289,61 @@ def test_content_filter_triggered_flag_false_on_stop() -> None:
     assert response.content == "text"
     assert response.finish_reason == "stop"
     assert response.content_filter_triggered is False
+
+
+# ---------------------------------------------------------------------------
+# #758: no-SSE endpoints (e.g. some Z.ai coding-plan routes) stream zero
+# chunks; stream_chat must fall back to a non-streaming invoke, and a bare
+# base-URL misconfiguration must surface an actionable hint.
+# ---------------------------------------------------------------------------
+
+
+def test_empty_stream_value_error_falls_back_to_invoke() -> None:
+    """LangChain's 'No generation chunks were returned' → non-streaming invoke."""
+    fake = _FakeStreamingLLM(exc=ValueError("No generation chunks were returned"))
+    response = _client(fake).stream_chat([{"role": "user", "content": "hi"}])
+    assert fake.invoke_called is True
+    assert response.content == "fallback"
+
+
+def test_clean_zero_chunk_stream_falls_back_to_invoke() -> None:
+    """A stream that ends cleanly with no chunks (and no cancel) also falls back."""
+    fake = _FakeStreamingLLM(chunks=[])
+    response = _client(fake).stream_chat([{"role": "user", "content": "hi"}])
+    assert fake.invoke_called is True
+    assert response.content == "fallback"
+
+
+def test_generic_value_error_still_raises_provider_error() -> None:
+    """A ValueError that is NOT the empty-stream signal still surfaces as error."""
+    fake = _FakeStreamingLLM(exc=ValueError("malformed request payload"))
+    with patch.dict(
+        os.environ,
+        {"LANGCHAIN_PROVIDER": "zai", "LANGCHAIN_MODEL_NAME": "glm-5.1"},
+        clear=True,
+    ):
+        with pytest.raises(ProviderStreamError):
+            _client(fake).stream_chat([{"role": "user", "content": "hi"}])
+    assert fake.invoke_called is False
+
+
+def test_cancelled_empty_stream_returns_empty_without_fallback() -> None:
+    """A user cancel before any chunk returns empty — it must NOT invoke."""
+    fake = _FakeStreamingLLM([_FakeChunk(content="ignored")])
+    response = _client(fake).stream_chat(
+        [{"role": "user", "content": "hi"}], should_cancel=lambda: True
+    )
+    assert fake.invoke_called is False
+    assert response.content == ""
+
+
+def test_provider_stream_error_hints_at_base_url_on_html_body() -> None:
+    """An HTML error page (site root, not API root) appends a base-URL hint."""
+    original = RuntimeError(
+        '<!DOCTYPE html><html id="__next_error__">404 Not Found</html>'
+    )
+    err = ProviderStreamError(provider="zai", model="glm-5.1", original=original)
+    message = str(err)
+    assert "HTML page" in message
+    assert "base URL" in message
+    assert "zai" in message

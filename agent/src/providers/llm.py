@@ -538,7 +538,8 @@ def _sync_provider_env() -> None:
     """Map provider-specific env vars to OPENAI_* for ChatOpenAI.
 
     Each entry: provider_name -> (api_key_env, base_url_env).
-    All base URLs must be set explicitly in .env — no hardcoded defaults.
+    Base URLs come from .env; when unset, ``get_llm_credentials`` falls back to
+    the provider catalog's ``default_base_url`` (see ``capabilities.py``).
     api_key_env=None means no key required (e.g. Ollama local).
     """
     _ensure_dotenv()
