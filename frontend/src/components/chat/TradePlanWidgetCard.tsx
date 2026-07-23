@@ -52,7 +52,9 @@ const PayoffChart = lazy(() =>
 interface Props {
   widget: TradePlanWidget;
   autonomousMode?: boolean;
-  planApproved?: boolean;
+  approvalState?: "pending" | "approved" | "informational";
+  agentId?: string;
+  onPlanApprovalChange?: () => void;
 }
 
 function formatInr(value: unknown, precise = false): string {
@@ -122,8 +124,11 @@ function ScenarioTile({
 export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
   widget,
   autonomousMode = false,
-  planApproved = false,
+  approvalState = "informational",
+  agentId,
+  onPlanApprovalChange,
 }: Props) {
+  const [approvalLoading, setApprovalLoading] = useState(false);
   const agentPick = widget.agent_recommended_strategy || widget.recommended?.name || "";
   const [selectedScenario, setSelectedScenario] = useState(0);
   const [selectedStrategyName, setSelectedStrategyName] = useState(agentPick);
@@ -553,14 +558,48 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
   const isHoldCash =
     normalizeStrategyKey(displayRec.name || "") === "hold_cash" ||
     normalizeStrategyKey(agentPick) === "hold_cash";
-  const autonomousDisplayOnly = autonomousMode && !planApproved;
+  const isPendingApproval = autonomousMode && approvalState === "pending";
+  const isWatcherRevision =
+    autonomousMode &&
+    (approvalState === "informational" ||
+      widget.meta?.revision_source === "watcher");
   const hideExecute =
-    autonomousDisplayOnly ||
+    autonomousMode ||
     isHoldCash ||
     executeOrders.length === 0 ||
     (!isPaper && liveBlocked);
   const executeDisabled = executing || executed || hideExecute;
   const openAlgoUrl = execMode?.switch_url || "";
+
+  const handleApprovePlan = useCallback(async () => {
+    if (!agentId) return;
+    setApprovalLoading(true);
+    try {
+      await api.approveAutonomousPlan(agentId, widget.widget_id);
+      toast.success("Plan approved — Nautilus watchers are live");
+      onPlanApprovalChange?.();
+      window.dispatchEvent(new Event("autonomous-agents-refresh"));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Approval failed");
+    } finally {
+      setApprovalLoading(false);
+    }
+  }, [agentId, onPlanApprovalChange, widget.widget_id]);
+
+  const handleRejectPlan = useCallback(async () => {
+    if (!agentId) return;
+    setApprovalLoading(true);
+    try {
+      await api.rejectAutonomousPlan(agentId);
+      toast.message("Plan rejected — revise strategy in chat");
+      onPlanApprovalChange?.();
+      window.dispatchEvent(new Event("autonomous-agents-refresh"));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Reject failed");
+    } finally {
+      setApprovalLoading(false);
+    }
+  }, [agentId, onPlanApprovalChange]);
 
   if (
     showPayoff &&
@@ -615,7 +654,17 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
                 Paper
               </span>
             )}
-            {autonomousDisplayOnly && (
+            {isPendingApproval && (
+              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-700 dark:text-amber-400">
+                Awaiting approval
+              </span>
+            )}
+            {isWatcherRevision && !isPendingApproval && (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground">
+                Watcher update
+              </span>
+            )}
+            {autonomousMode && approvalState === "approved" && (
               <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase text-sky-700 dark:text-sky-400">
                 Autonomous · Nautilus
               </span>
@@ -966,6 +1015,27 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
         )}
 
         <div className="flex flex-wrap gap-2 pt-1">
+          {isPendingApproval && agentId ? (
+            <>
+              <button
+                type="button"
+                disabled={approvalLoading}
+                onClick={() => void handleApprovePlan()}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+              >
+                {approvalLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                Approve &amp; start watching
+              </button>
+              <button
+                type="button"
+                disabled={approvalLoading}
+                onClick={() => void handleRejectPlan()}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 px-3 py-1.5 text-xs font-semibold text-destructive disabled:opacity-50"
+              >
+                Reject
+              </button>
+            </>
+          ) : !hideExecute ? (
           <button
             type="button"
             disabled={executeDisabled}
@@ -975,6 +1045,11 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
             {executing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : executed ? <Check className="h-3.5 w-3.5" /> : null}
             {executed ? "Submitted" : executeLabel}
           </button>
+          ) : isWatcherRevision ? (
+            <p className="text-[11px] text-muted-foreground italic">
+              Updated by watcher — no approval needed
+            </p>
+          ) : null}
           {builderUrl && (
             <a
               href={builderUrl}

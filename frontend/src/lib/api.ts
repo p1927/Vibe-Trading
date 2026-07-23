@@ -701,10 +701,13 @@ export const api = {
       { method: "DELETE" },
     );
   },
-  approveAutonomousPlan: (agentId: string) =>
+  approveAutonomousPlan: (agentId: string, widgetId?: string) =>
     request<{ status: string; agent: AutonomousAgentInstance }>(
       `/autonomous-agents/${encodeURIComponent(agentId)}/approve-plan`,
-      { method: "POST" },
+      {
+        method: "POST",
+        body: JSON.stringify(widgetId ? { widget_id: widgetId } : {}),
+      },
     ),
   rejectAutonomousPlan: (agentId: string, note?: string) =>
     request<{ status: string; agent: AutonomousAgentInstance }>(
@@ -1142,21 +1145,11 @@ export const api = {
     request<HubNewsDiscardedListResponse>(
       `/trade/hub/news/discarded?entity_id=${encodeURIComponent(entityId)}&limit=${encodeURIComponent(String(limit))}`,
     ),
-  drainHubStaging: (entityId = "NIFTY", limit = 20) =>
+    drainHubStaging: (entityId = "NIFTY", limit = 20) =>
     request<HubStagingDrainResponse>(
       `/trade/hub/staging/drain?entity_id=${encodeURIComponent(entityId)}&limit=${encodeURIComponent(String(limit))}`,
       { method: "POST" },
     ),
-  bootstrapAutoPaper: (body: AutoPaperBootstrapRequest) =>
-    request<AutoPaperBootstrapResponse>("/trade/auto-paper/bootstrap", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  resumeAutoPaper: (body?: AutoPaperResumeRequest) =>
-    request<AutoPaperBootstrapResponse>("/trade/auto-paper/resume", {
-      method: "POST",
-      body: JSON.stringify(body ?? { dispatch: true, fresh_session: true }),
-    }),
 };
 
 // --- Swarm types ---
@@ -1936,6 +1929,7 @@ export interface ExternalPredictionSnapshot {
   sources_error?: number;
   sources_not_found?: number;
   had_errors?: boolean;
+  refresh_attempt_failures?: number;
 }
 
 export interface ExternalPredictionsResponse {
@@ -2066,6 +2060,7 @@ export interface TradePlanWidget {
     strategy_builder_pnl_url?: string;
     strategy_builder_execute_url?: string;
     superseded?: boolean;
+    revision_source?: "bootstrap" | "user_guidance" | "watcher" | string;
   };
   date_range?: NewsScenarioDateRange;
   event?: Record<string, unknown>;
@@ -2109,34 +2104,6 @@ export interface TradeExecutionMode {
   paper_env: boolean;
   live_allowed?: boolean;
   switch_url?: string;
-}
-
-export interface AutoPaperBootstrapRequest {
-  prompt?: string | null;
-  ticker?: string;
-  budget_inr?: number;
-  watchlist?: string[];
-  resume?: boolean;
-  fresh_session?: boolean;
-  dispatch?: boolean;
-  vibe_session_id?: string;
-}
-
-export interface AutoPaperResumeRequest {
-  vibe_session_id?: string;
-  dispatch?: boolean;
-  fresh_session?: boolean;
-  prompt?: string;
-}
-
-export interface AutoPaperBootstrapResponse {
-  status: string;
-  vibe_session_id?: string;
-  ui_url?: string;
-  attempt_id?: string;
-  message_id?: string;
-  prompt_injected?: boolean;
-  paper_session?: Record<string, unknown>;
 }
 
 export interface PlanPrediction {
@@ -3767,6 +3734,18 @@ export interface AutonomousAgentMandateSummary {
   allowed_instruments?: string[];
 }
 
+export interface AutonomousAgentExecutionContext {
+  broker?: string;
+  venue?: string;
+  market_region?: "IN" | "US";
+  analyze_mode?: boolean;
+  paper?: boolean;
+  context_generation?: string;
+  positions_authority?: string;
+  simulator_active?: boolean;
+  profile_id?: string;
+}
+
 export interface AutonomousAgentRuntime {
   mandate_summary?: AutonomousAgentMandateSummary;
   alert_rules_summary?: Record<string, unknown>;
@@ -3789,6 +3768,10 @@ export interface AutonomousAgentRuntime {
   last_revision_at?: string | null;
   last_bridge_alert_at?: string | null;
   open_positions?: number | null;
+  execution_context?: AutonomousAgentExecutionContext | null;
+  analyze_mode?: boolean | null;
+  watch_strategy?: string | null;
+  watch_spec_updated_at?: string | null;
 }
 
 export interface AutonomousStackHealth {
@@ -3861,6 +3844,9 @@ export interface AutonomousAgentInstance {
   bootstrap_error?: string | null;
   plan_approved_at?: string | null;
   plan_approval_required?: boolean;
+  active_trade_plan_widget_id?: string | null;
+  approved_trade_plan_widget_id?: string | null;
+  plan_revision_source?: "bootstrap" | "user_guidance" | "watcher" | string | null;
   watch_spec?: { rules?: Array<Record<string, unknown>>; strategy?: string };
   runtime?: AutonomousAgentRuntime;
   created_at?: string;
@@ -3905,7 +3891,7 @@ export interface ClearAllAutonomousAgentsResponse {
     openalgo?: { status?: string; remaining_positions?: number; error?: string } | null;
     alpaca?: Array<{ symbol: string; status?: string; error?: string }>;
   };
-  auto_paper_stopped?: boolean;
+  agents_stopped?: boolean;
   artifacts_cleared?: Record<string, number>;
   nautilus?: Record<string, unknown>;
   errors?: Array<{ agent_id: string; phase: string; error: string }>;

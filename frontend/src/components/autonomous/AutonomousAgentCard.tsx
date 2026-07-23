@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp, Loader2, Radio } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { AutonomousAgentInstance } from "@/lib/api";
+import type { AutonomousAgentExecutionContext, AutonomousAgentInstance } from "@/lib/api";
 
 function statusColor(status: string): string {
   switch (status) {
@@ -60,6 +60,13 @@ function relativeTime(iso: string | null | undefined): string {
   return `${Math.floor(ms / 3_600_000)}h ago`;
 }
 
+function executionContextLabel(ctx: AutonomousAgentExecutionContext | null | undefined): string | null {
+  if (!ctx?.broker) return null;
+  const mode = ctx.paper ? "sandbox" : "live";
+  const region = ctx.market_region ?? "—";
+  return `${ctx.broker} · ${mode} · ${region}`;
+}
+
 interface Props {
   agent: AutonomousAgentInstance;
   onOpen: () => void;
@@ -78,6 +85,8 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
     confidence?: number;
   } | null;
   const confidence = agent.thesis?.confidence ?? lastDecision?.confidence;
+  const executionLabel = executionContextLabel(runtime?.execution_context);
+  const watchStrategy = runtime?.watch_strategy ?? agent.thesis?.strategy;
 
   const schedState = runtime?.scheduler_health ?? "unknown";
   const nautilusState = runtime?.nautilus_state;
@@ -86,8 +95,12 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
     schedState === "initializing" ||
     agent.bootstrap_status === "pending" ||
     agent.bootstrap_status === "running" ||
+    agent.bootstrap_status === "awaiting_plan_approval" ||
+    agent.plan_approval_required ||
     runtime?.bootstrap_status === "pending" ||
     runtime?.bootstrap_status === "running";
+  const awaitingPlanApproval =
+    agent.bootstrap_status === "awaiting_plan_approval" || Boolean(agent.plan_approval_required);
   const bootstrapFailed =
     schedState === "bootstrap_failed" ||
     agent.bootstrap_status === "failed" ||
@@ -112,7 +125,7 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
               <p className="truncate text-xs text-muted-foreground">
                 {isDraft
                   ? "Draft · tap to continue setup"
-                  : `${(agent.symbols ?? []).join(" · ") || "—"} · ${agent.status}${waitingForInfra ? " · waiting for infra" : ""}${bootstrapFailed ? " · bootstrap failed" : isBootstrapping ? " · starting" : ""}`}
+                  : `${(agent.symbols ?? []).join(" · ") || "—"} · ${agent.status}${waitingForInfra ? " · waiting for infra" : ""}${awaitingPlanApproval ? " · awaiting plan approval" : ""}${bootstrapFailed ? " · bootstrap failed" : isBootstrapping && !awaitingPlanApproval ? " · starting" : ""}`}
               </p>
             </div>
           </div>
@@ -151,6 +164,24 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
         </div>
 
         <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px]">
+          {executionLabel && !isDraft && (
+            <span
+              className="rounded border border-primary/30 px-1.5 py-0.5 text-primary"
+              title="OpenAlgo market context"
+            >
+              {executionLabel}
+            </span>
+          )}
+          {watchStrategy && !isDraft && (
+            <span className="rounded border border-muted px-1.5 py-0.5 text-muted-foreground">
+              watch: {watchStrategy}
+            </span>
+          )}
+          {awaitingPlanApproval ? (
+            <span className="rounded border border-amber-500/40 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">
+              awaiting plan approval
+            </span>
+          ) : null}
           {waitingForInfra ? (
             <span className="rounded border border-amber-500/40 px-1.5 py-0.5 text-amber-700 dark:text-amber-300">
               waiting for infra
@@ -249,6 +280,11 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
             <p className="text-muted-foreground">
               Market {runtime.market_open ? "open" : "closed"}
               {runtime.open_positions != null ? ` · ${runtime.open_positions} open position(s)` : ""}
+            </p>
+          )}
+          {runtime?.watch_spec_updated_at && (
+            <p className="text-muted-foreground">
+              Watch rules updated {relativeTime(runtime.watch_spec_updated_at)}
             </p>
           )}
           <div className="flex flex-wrap gap-2">

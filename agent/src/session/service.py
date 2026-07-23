@@ -74,6 +74,28 @@ class SessionService:
         """Return a session by ID."""
         return self.store.get_session(session_id)
 
+    @staticmethod
+    def _maybe_mark_autonomous_user_turn(session: Session, content: str) -> None:
+        try:
+            from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
+            from src.trade.session_context import is_autonomous_agent_session
+
+            cfg = dict(session.config or {})
+            if not is_autonomous_agent_session(cfg) or is_autonomous_scheduler_turn(content):
+                return
+            agent_id = str(cfg.get("autonomous_agent_id") or "").strip()
+            if not agent_id:
+                return
+            from src.trade.plan_widget_hook import mark_user_chat_turn
+
+            mark_user_chat_turn(agent_id)
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "mark autonomous user turn failed for %s",
+                session.session_id,
+                exc_info=True,
+            )
+
     def list_sessions(self, limit: int = 50) -> list[Session]:
         """List all sessions."""
         return self.store.list_sessions(limit)
@@ -120,6 +142,7 @@ class SessionService:
         session.last_attempt_id = attempt.attempt_id
         session.updated_at = datetime.now().isoformat()
         self.store.update_session(session)
+        self._maybe_mark_autonomous_user_turn(session, content)
         self.event_bus.emit(session_id, "attempt.created", {"attempt_id": attempt.attempt_id, "prompt": content})
 
         asyncio.create_task(

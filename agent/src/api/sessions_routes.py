@@ -358,6 +358,12 @@ def _trade_plan_widget_frame_from_tool_result(event: Any) -> Optional[str]:
         return frame
     if isinstance(widget, dict) and _should_skip_duplicate_trade_widget(session_id, widget):
         return None
+    try:
+        from src.trade.plan_widget_hook import notify_trade_plan_widget
+
+        notify_trade_plan_widget(session_id, widget)
+    except Exception:
+        logger.debug("plan widget hook failed for session %s", session_id, exc_info=True)
     return frame
 
 
@@ -387,21 +393,21 @@ def _load_live_action_record(audit_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _load_paper_action_record(audit_id: str) -> Optional[Dict[str, Any]]:
+def _load_agent_audit_record(audit_id: str) -> Optional[Dict[str, Any]]:
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
-        from trade_integrations.auto_paper.audit import load_paper_action
+        from trade_integrations.autonomous_agents.audit import load_agent_audit
 
-        return load_paper_action(audit_id)
+        return load_agent_audit(audit_id)
     except Exception:
         logger.debug("paper.action reload failed for %s", audit_id, exc_info=True)
     return None
 
 
 def _paper_action_frame_from_tool_result(event: Any) -> Optional[str]:
-    """Build a paper.action SSE frame from auto-paper MCP tool_result."""
+    """Build a paper.action SSE frame from autonomous-agent MCP tool_result."""
     data = getattr(event, "data", None)
     if getattr(event, "event_type", None) != "tool_result" or not isinstance(data, dict):
         return None
@@ -411,7 +417,7 @@ def _paper_action_frame_from_tool_result(event: Any) -> Optional[str]:
     match = _PAPER_ACTION_ID_RE.search(preview)
     if not match:
         return None
-    record = _load_paper_action_record(match.group(1))
+    record = _load_agent_audit_record(match.group(1))
     if record is None:
         return None
 

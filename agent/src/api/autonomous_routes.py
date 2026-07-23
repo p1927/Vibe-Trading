@@ -49,6 +49,7 @@ class DraftAgentResponse(BaseModel):
 @autonomous_router.get("")
 def list_autonomous_agents() -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.infra_startup import maybe_heal_infra_paused_agents
+    from trade_integrations.autonomous_agents.agent_status import load_openalgo_authority
     from trade_integrations.autonomous_agents.runtime_status import build_stack_health, enrich_agent
     from trade_integrations.autonomous_agents.store import backfill_orphan_orchestrator_session, list_agents
 
@@ -101,8 +102,9 @@ def list_autonomous_agents() -> Dict[str, Any]:
     except Exception:
         logger.debug("infra heal on list failed", exc_info=True)
 
-    agents = [enrich_agent(a) for a in list_agents()]
-    return {"agents": agents, "stack_health": build_stack_health()}
+    shared_authority = load_openalgo_authority(agent=None)
+    agents = [enrich_agent(a, authority=shared_authority) for a in list_agents()]
+    return {"agents": agents, "stack_health": build_stack_health(authority=shared_authority)}
 
 
 @autonomous_router.get("/stack-health")
@@ -269,14 +271,16 @@ def get_or_create_orchestrator_session(
 
 class PlanApprovalRequest(BaseModel):
     note: Optional[str] = None
+    widget_id: Optional[str] = None
 
 
 @autonomous_router.post("/{agent_id}/approve-plan")
-def approve_plan_route(agent_id: str) -> Dict[str, Any]:
+def approve_plan_route(agent_id: str, body: PlanApprovalRequest | None = None) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.plan_approval import approve_agent_plan
     from trade_integrations.autonomous_agents.runtime_status import enrich_agent
 
-    result = approve_agent_plan(agent_id)
+    widget_id = (body.widget_id if body else None) or None
+    result = approve_agent_plan(agent_id, widget_id=widget_id)
     if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result.get("error"))
     agent = enrich_agent(result.get("agent") or {})
