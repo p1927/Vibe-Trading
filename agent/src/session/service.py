@@ -186,20 +186,27 @@ class SessionService:
 
         if is_orchestrator_session(session_config):
             return ""
+        blocks: list[str] = []
         try:
-            from src.trade.hub_bridge import prefetch_research_for_message
+            from src.trade.hub_bridge import prefetch_autonomous_context, prefetch_research_for_message
 
-            return prefetch_research_for_message(
+            agent_ctx = prefetch_autonomous_context(session_id, content, session_config)
+            if agent_ctx.strip():
+                blocks.append(agent_ctx.strip())
+            research_ctx = prefetch_research_for_message(
                 session_id,
                 content,
                 self.event_bus,
                 session_config,
             )
+            if research_ctx.strip():
+                blocks.append(research_ctx.strip())
         except Exception:
             import logging
 
             logging.getLogger(__name__).exception("Research prefetch hook failed")
             return ""
+        return "\n\n".join(blocks)
 
     def _emit_provenance_if_needed(
         self,

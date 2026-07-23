@@ -46,9 +46,9 @@ function nautilusChip(state: string | undefined, enabled: boolean | undefined): 
     case "expected":
       return "nautilus expected";
     case "stale":
-      return "nautilus stale";
+      return "nautilus down";
     default:
-      return "nautilus stale";
+      return "nautilus down";
   }
 }
 

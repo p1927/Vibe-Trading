@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Loader2, Newspaper, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, type IndexNewsImpactReport, type IndexPredictionArtifact } from "@/lib/api";
+import {
+  api,
+  type IndexNewsImpactReport,
+  type IndexPredictionArtifact,
+  type IndexPredictionNewsPipelineHealth,
+} from "@/lib/api";
 
 interface Props {
   horizonDays: number;
@@ -69,6 +74,7 @@ function consensusBadge(consensus?: {
 
 export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shockCalibration }: Props) {
   const [report, setReport] = useState<IndexNewsImpactReport | null>(null);
+  const [newsPipeline, setNewsPipeline] = useState<IndexPredictionNewsPipelineHealth | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRejected, setShowRejected] = useState(false);
@@ -99,6 +105,21 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shock
   }, [load]);
 
   useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await api.getIndexPredictionJobs();
+        if (!cancelled) setNewsPipeline(res.news_pipeline ?? null);
+      } catch {
+        if (!cancelled) setNewsPipeline(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!monitorEnabled || !pollMs || pollMs < 30_000) return;
     const id = window.setInterval(() => void load(false), pollMs);
     return () => window.clearInterval(id);
@@ -110,6 +131,13 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shock
   const rejectedCount = summary?.rejected_count ?? summary?.rejected_skipped ?? 0;
   const hubEmpty = report?.status === "hub_empty" || (!items.length && report?.status !== "ok");
   const pendingCount = (summary as { pending_count?: number } | undefined)?.pending_count ?? 0;
+  const ingestPaused = Boolean(
+    report?.ingest_blocked || report?.pipeline_paused || newsPipeline?.pipeline_paused,
+  );
+  const ingestBlockedMessage =
+    report?.user_message ||
+    newsPipeline?.user_message ||
+    "LLM-Wiki is not running — start LLM Wiki.app and set LLM_WIKI_PROJECT_ID in .env before ingesting news.";
 
   return (
     <div className="space-y-3">
@@ -135,7 +163,8 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shock
           <button
             type="button"
             onClick={() => void load(true)}
-            disabled={loading}
+            disabled={loading || ingestPaused}
+            title={ingestPaused ? ingestBlockedMessage : undefined}
             className="inline-flex items-center gap-1 rounded-md border px-2 py-1 hover:bg-muted/60 disabled:opacity-50"
           >
             {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
@@ -143,6 +172,13 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shock
           </button>
         </div>
       </div>
+
+      {ingestPaused ? (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300">
+          <p className="font-medium text-foreground">News ingest paused</p>
+          <p className="mt-0.5">{ingestBlockedMessage}</p>
+        </div>
+      ) : null}
 
       {debate?.view ? (
         <div className="rounded-lg border border-dashed bg-muted/20 px-3 py-2 text-[12px]">

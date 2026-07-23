@@ -96,6 +96,12 @@ def stale_running_ms_for(job: ScheduledResearchJob) -> int:
     job_type = str(job.config.get("job_type") or "")
     if job_type == "index_plan_refresh":
         return _index_plan_refresh_stale_ms()
+    if job_type == "autonomous_agent_watch":
+        try:
+            interval = int(str(job.schedule).strip())
+            return max(120_000, 2 * interval)
+        except ValueError:
+            return 120_000
     return _stale_running_ms()
 
 
@@ -468,6 +474,8 @@ class ScheduledResearchExecutor:
             if job.status != JobStatus.PENDING:
                 continue
             if job.next_run_at > now:
+                continue
+            if str((job.config or {}).get("job_type") or "") == "autonomous_agent_watch":
                 continue
             try:
                 job.next_run_at = next_due(job.schedule, now)

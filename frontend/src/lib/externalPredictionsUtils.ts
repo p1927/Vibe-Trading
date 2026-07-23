@@ -223,6 +223,35 @@ export function formatHorizonMatch(record: ExternalPredictionRecord): string | n
   return base;
 }
 
+const FORECAST_SECTION_LABELS: Record<string, string> = {
+  next_week_table: "Next week support/resistance table",
+  next_month_table: "Next month support/resistance table",
+  range_pattern: "Quoted range",
+  level_pattern: "Numeric levels in article",
+};
+
+export function formatForecastSection(section: string | undefined): string | null {
+  if (!section?.trim()) return null;
+  return FORECAST_SECTION_LABELS[section] ?? section.replace(/_/g, " ");
+}
+
+/** Human-readable proof line: which page section and date window produced the target. */
+export function formatForecastProvenance(record: ExternalPredictionRecord): string | null {
+  const prov = record.provenance;
+  if (!prov) return null;
+  const parts: string[] = [];
+  const section =
+    formatForecastSection(prov.forecast_section as string | undefined) ||
+    formatForecastSection(prov.regex_style as string | undefined);
+  if (section) parts.push(section);
+  if (prov.forecast_heading?.trim()) {
+    parts.push(prov.forecast_heading.trim().slice(0, 120));
+  } else if (prov.horizon_window?.trim()) {
+    parts.push(`Window ${prov.horizon_window.trim()}`);
+  }
+  return parts.length ? parts.join(" · ") : null;
+}
+
 export function computeStreetSummary(
   snapshot: ExternalPredictionSnapshot | null,
   horizonDays: number,

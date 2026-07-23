@@ -26,7 +26,10 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+try:
+    import typer
+except ImportError:
+    typer = None  # type: ignore[misc, assignment]
 
 from cli.intro import print_banner
 from cli.onboard import run_onboarding
@@ -1370,9 +1373,7 @@ def _entrypoint() -> None:
 
 def _build_typer_app():  # type: ignore[no-untyped-def]
     """Build a typer app that mirrors the legacy surface. Best-effort only."""
-    try:
-        import typer
-    except ImportError:
+    if typer is None:
         return None
 
     app = typer.Typer(

@@ -1200,7 +1200,13 @@ def get_hub_status(
         ensure_trade_stack_path()
         from trade_integrations.hub_storage.hub_status import build_hub_status
 
-        return HubStatusResponse(status="ok", hub=build_hub_status(entity_id=key))
+        hub = build_hub_status(entity_id=key)
+        gates = hub.get("gates") or {}
+        if not gates.get("hub_ready", True):
+            blocking = list(gates.get("blocking") or [])
+            message = str((blocking[0] or {}).get("user_message") or "Hub migration required")
+            return HubStatusResponse(status="migration_required", hub=hub, message=message)
+        return HubStatusResponse(status="ok", hub=hub)
     except Exception as exc:
         logger.exception("hub status failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -2090,6 +2096,18 @@ def get_index_prediction_news_impact(
                     macro[str(row["factor"])] = float(row["value"])
 
         if refresh:
+            from trade_integrations.dataflows.hub_wiki.probe import check_ingest_allowed
+
+            gate = check_ingest_allowed()
+            if gate.get("blocked"):
+                report = news_hub_bridge.resolve_news_impact(ticker=key, doc=doc, limit=12)
+                report = dict(report or {})
+                report["ingest_blocked"] = True
+                report["pipeline_paused"] = True
+                report["pause_reason"] = str(gate.get("reason") or "llm_wiki_unavailable")
+                report["user_message"] = str(gate.get("user_message") or "")
+                status = "paused"
+                return IndexNewsImpactResponse(status=status, ticker=key, report=report)
             report = news_hub_bridge.refresh_news_impact(
                 ticker=key,
                 horizon_days=horizon_days,
@@ -2508,20 +2526,6 @@ async def stream_external_predictions_refresh_job(
         raise HTTPException(status_code=400, detail="invalid job_id")
     if _get_job_record(job_id) is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
-    return _external_predictions_refresh_stream_response(job_id, request)
-
-
-@trade_router.post("/index-prediction/external-predictions/refresh/stream")
-async def stream_refresh_external_predictions(
-    body: ExternalPredictionsRefreshRequest,
-    request: Request,
-    _auth: None = Depends(require_local_or_auth),
-) -> StreamingResponse:
-    """SSE: kick refresh job and stream live activity (legacy entrypoint)."""
-    from src.trade.hub_bridge import ensure_trade_stack_path
-
-    ensure_trade_stack_path()
-    job_id, _, _ = _kick_external_predictions_refresh(body)
     return _external_predictions_refresh_stream_response(job_id, request)
 
 
@@ -3023,17 +3027,6 @@ async def stream_index_prediction_run_job(
         raise HTTPException(status_code=400, detail="invalid job_id")
     if _get_job_record(job_id) is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
-    return _index_prediction_run_stream_response(job_id, request)
-
-
-@trade_router.post("/index-prediction/run/stream")
-async def stream_index_prediction_run(
-    body: RunIndexPredictionRequest,
-    request: Request,
-    _auth: None = Depends(require_local_or_auth),
-) -> StreamingResponse:
-    """Run full index research pipeline and stream activity logs via SSE (legacy)."""
-    job_id, _, _ = _kick_index_prediction_run(body)
     return _index_prediction_run_stream_response(job_id, request)
 
 

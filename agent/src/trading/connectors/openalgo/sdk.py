@@ -208,7 +208,7 @@ def _brokerinfo(client: "_RestClient") -> dict[str, Any]:
 
 def _resolve_india(symbol: str) -> tuple[str, str]:
     try:
-        from trade_integrations.dataflows.openalgo import resolve_openalgo_symbol
+        from trade_integrations.openalgo.symbols import resolve_openalgo_symbol
 
         return resolve_openalgo_symbol(symbol)
     except Exception:  # noqa: BLE001
@@ -519,7 +519,7 @@ def get_quote(symbol: str, *, config: OpenAlgoConfig | None = None, **_: Any) ->
 
 def _us_quote(symbol: str, cfg: OpenAlgoConfig) -> dict[str, Any]:
     try:
-        from trade_integrations.dataflows.openalgo import fetch_openalgo_quote
+        from trade_integrations.openalgo.market_data import fetch_openalgo_quote
 
         quote = fetch_openalgo_quote(symbol)
         if not quote or quote.get("ltp") is None:
