@@ -1915,6 +1915,10 @@ export interface ExternalPredictionSnapshot {
   sources?: ExternalPredictionSource[];
   predictions?: ExternalPredictionRecord[];
   internal_forecast?: Record<string, unknown> | null;
+  sources_ok?: number;
+  sources_error?: number;
+  sources_not_found?: number;
+  had_errors?: boolean;
 }
 
 export interface ExternalPredictionsResponse {
@@ -2795,6 +2799,7 @@ export interface IndexPredictionNewsPipelineHealth {
   oldest_pending_seconds?: number;
   pipeline_paused?: boolean;
   pause_reason?: string;
+  user_message?: string;
   minimax_configured?: boolean;
   worker_last?: Record<string, unknown> | null;
   error?: string;
@@ -2944,6 +2949,9 @@ export interface HubStatusPayload {
     entity_pipeline_enabled?: boolean;
     pipeline_paused?: boolean;
     pause_reason?: string;
+    user_message?: string;
+    llm_wiki_ok?: boolean;
+    llm_wiki_required?: boolean;
     minimax_configured?: boolean;
     queued?: number;
     by_ticker?: Array<{ ticker: string; queued: number }>;

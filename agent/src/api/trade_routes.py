@@ -1322,6 +1322,25 @@ def run_hub_news_ingest_now(
             sources=body.sources or "default",
             lookback_days=body.lookback_days,
         )
+        if summary.get("blocked") or (
+            summary.get("pipeline_paused")
+            and str(summary.get("pause_reason") or "") == "llm_wiki_unavailable"
+        ):
+            return HubStagingDrainResponse(
+                status="paused",
+                summary=summary,
+                message=str(
+                    summary.get("user_message")
+                    or summary.get("pause_reason")
+                    or "News ingest blocked — LLM-Wiki unavailable."
+                ),
+            )
+        if summary.get("pipeline_paused"):
+            return HubStagingDrainResponse(
+                status="paused",
+                summary=summary,
+                message=str(summary.get("pause_reason") or "News distillation pipeline is paused."),
+            )
         return HubStagingDrainResponse(status="ok", summary=summary)
     except Exception as exc:
         logger.exception("hub news ingest now failed")
