@@ -160,6 +160,8 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
 
   const constraints = proposal.constraints || {};
   const schedules = proposal.schedules || {};
+  const observeMode =
+    (proposal.mandate_config as { agent_mode?: string } | undefined)?.agent_mode === "observe";
 
   return (
     <div className="flex gap-3">
@@ -175,6 +177,11 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-foreground">Create autonomous agent</p>
             <p className="text-xs text-muted-foreground">{proposal.name}</p>
+            {observeMode ? (
+              <p className="mt-1 inline-flex rounded-md border border-sky-500/40 bg-sky-500/5 px-2 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-300">
+                Observe only — no trading
+              </p>
+            ) : null}
             {expired ? (
               <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">
                 Proposal expired — re-propose or dismiss.
@@ -346,8 +353,12 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
 
       <ConfirmDialog
         open={confirmOpen}
-        title="Start autonomous agent?"
-        description="This agent will run on a schedule, watch markets, and paper-trade when confident."
+        title={observeMode ? "Start observe agent?" : "Start autonomous agent?"}
+        description={
+          observeMode
+            ? "This agent will watch markets and post reports on a schedule. It will not place trades unless you explicitly ask."
+            : "This agent will run on a schedule, watch markets, and paper-trade when confident."
+        }
         confirmLabel="Start agent"
         cancelLabel="Cancel"
         onCancel={() => setConfirmOpen(false)}

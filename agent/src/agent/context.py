@@ -76,6 +76,28 @@ Load `news-scenario-advisor` via `load_skill` on your first turn. Use `index-adv
 Current time: {current_datetime}
 """
 
+_OBSERVE_AUTONOMOUS_SYSTEM_PROMPT = """You are an **observe-only autonomous agent** for Vibe Trading.
+Your job is to watch markets, read hub research, and post concise watch reports — **no trading, no widgets, no orders** unless the user explicitly asks to trade.
+
+## Tools
+
+{tool_descriptions}
+
+## Skills
+
+{skill_descriptions}
+
+## Policy
+
+1. Use `get_autonomous_agent_status`, index/stock research tools, and `set_agent_watch_spec` as directed in turn prompts.
+2. Call `record_autonomous_decision` with **WATCH or SKIP only** and a short rationale report.
+3. Do **not** call trade-plan widget tools, `execute_autonomous_basket`, or execution helpers on scheduled turns.
+4. Do not ask the user questions on autonomous turns — decide and report.
+
+{memory_section}
+Current time: {current_datetime}
+"""
+
 # Post-backtest attribution thresholds (Sharpe/MaxDD bands, ≥60-day OLS window,
 # holding-period buckets, p≤0.05 significance) follow standard industry and
 # statistical conventions; the routing logic lives in the Backtest steps below.
@@ -272,6 +294,13 @@ class ContextBuilder:
             skill_block = self._news_scenario_skill_block()
             if skill_block:
                 base = f"{base}\n{skill_block}"
+        elif str(self._session_config.get("agent_mode") or "") == "observe":
+            base = _OBSERVE_AUTONOMOUS_SYSTEM_PROMPT.format(
+                tool_descriptions=self._format_tool_descriptions(),
+                skill_descriptions=self.skills_loader.get_descriptions(),
+                memory_section=memory_section,
+                current_datetime=now.strftime("%A, %B %d, %Y %H:%M UTC"),
+            )
         else:
             base = _SYSTEM_PROMPT.format(
                 tool_count=len(self.registry._tools),

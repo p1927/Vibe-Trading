@@ -16,6 +16,10 @@ const RUNTIME_POLL_BOOTSTRAP_MS = 3_000;
 
 export type AutonomousAgentLoadState = "idle" | "loading" | "ready" | "error";
 
+function isObserveAgent(agent: AutonomousAgentInstance | null | undefined): boolean {
+  return (agent?.mandate_config as { agent_mode?: string } | undefined)?.agent_mode === "observe";
+}
+
 function AgentRuntimeStrip({ agent }: { agent: AutonomousAgentInstance }) {
   const runtime = agent.runtime;
   if (!runtime) return null;
@@ -30,8 +34,13 @@ function AgentRuntimeStrip({ agent }: { agent: AutonomousAgentInstance }) {
     sched === "initializing" ||
     agent.bootstrap_status === "pending" ||
     agent.bootstrap_status === "running" ||
+    agent.bootstrap_status === "awaiting_plan_approval" ||
+    Boolean(agent.plan_approval_required) ||
     runtime?.bootstrap_status === "pending" ||
     runtime?.bootstrap_status === "running";
+  const awaitingPlanApproval =
+    agent.bootstrap_status === "awaiting_plan_approval" || Boolean(agent.plan_approval_required);
+  const agentMode = (agent.mandate_config as { agent_mode?: string } | undefined)?.agent_mode;
   const bootstrapFailed =
     sched === "bootstrap_failed" ||
     agent.bootstrap_status === "failed" ||
@@ -68,7 +77,14 @@ function AgentRuntimeStrip({ agent }: { agent: AutonomousAgentInstance }) {
         </span>
       )}
       {isBootstrapping && !bootstrapFailed && !infraPaused && (
-        <span className="font-medium text-primary">starting…</span>
+        <span className="font-medium text-primary">
+          {awaitingPlanApproval ? "awaiting plan approval…" : "starting…"}
+        </span>
+      )}
+      {agentMode === "observe" && !isBootstrapping && (
+        <span className="rounded border border-sky-500/40 px-1.5 py-0.5 text-sky-700 dark:text-sky-300">
+          observe
+        </span>
       )}
       {lastDecision?.decision && (
         <span className="font-medium text-foreground/80">
@@ -104,6 +120,27 @@ function AgentRuntimeStrip({ agent }: { agent: AutonomousAgentInstance }) {
       )}
       {runtime.watch_configured && !runtime.position_tracked && (
         <span className="rounded border px-1.5 py-0.5 text-muted-foreground">watch ready</span>
+      )}
+      {runtime.watch_path && (
+        <span
+          className={cn(
+            "rounded border px-1.5 py-0.5",
+            runtime.nautilus_in_registry
+              ? "border-emerald-500/40 text-emerald-700"
+              : runtime.watch_path === "nautilus_scheduler_poll"
+                ? "border-emerald-500/40 text-emerald-700"
+                : "border-amber-500/40 text-amber-700",
+          )}
+          title={
+            runtime.nautilus_in_registry
+              ? "Detached Nautilus watch active for this agent"
+              : runtime.watch_path === "nautilus_scheduler_poll"
+                ? "Scheduler inline poll — Nautilus node not bound"
+                : "Watch path degraded — check Nautilus / registry"
+          }
+        >
+          {runtime.watch_path.replace(/_/g, " ")}
+        </span>
       )}
     </div>
   );
@@ -221,7 +258,7 @@ export function Autonomous() {
           <span className="text-sm font-medium text-foreground">{title}</span>
           {agent && !isDraftView && <AgentRuntimeStrip agent={agent} />}
         </header>
-        {agent && !isDraftView && (
+        {agent && !isDraftView && !isObserveAgent(agent) && (
           <PlanApprovalBanner agent={agent} />
         )}
         <div className="min-h-0 flex-1">

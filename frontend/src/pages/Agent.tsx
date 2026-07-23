@@ -57,6 +57,25 @@ function groupMessages(msgs: AgentMessage[]): MsgGroup[] {
 
 const act = () => useAgentStore.getState();
 
+/** Local optimistic ids from nextId(); server message_ids are UUIDs. */
+function isLocalOptimisticMessageId(id: string): boolean {
+  return /^\d+$/.test(id);
+}
+
+function reconcileOptimisticUserMessage(messageId: string): boolean {
+  const msgs = act().messages;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.type !== "user") continue;
+    if (isLocalOptimisticMessageId(m.id)) {
+      act().updateMessageId(m.id, messageId);
+      return true;
+    }
+    break;
+  }
+  return false;
+}
+
 // i18n hook for Agent component — used inside the component below
 // (declared at module scope for helper usage is fine since t() reads from i18n singleton)
 
@@ -305,11 +324,15 @@ function goalContinuePrompt(snapshot: GoalSnapshot): string {
   ].join("\n");
 }
 
+function isObserveAgent(agent: AutonomousAgentInstance | null | undefined): boolean {
+  return (agent?.mandate_config as { agent_mode?: string } | undefined)?.agent_mode === "observe";
+}
+
 function widgetApprovalState(
   widget: TradePlanWidget,
   agent: AutonomousAgentInstance | null | undefined,
 ): "pending" | "approved" | "informational" {
-  if (!agent) return "informational";
+  if (!agent || isObserveAgent(agent)) return "informational";
   if (widget.meta?.revision_source === "watcher" || agent.plan_revision_source === "watcher") {
     return "informational";
   }
@@ -444,9 +467,19 @@ export function Agent({
   const isOrchestratorView = urlAgentId === "orchestrator";
   const isDraftCreateView = isOrchestratorView || autonomousAgent?.status === "draft";
   const isEmbeddedAutonomousView = Boolean(_embedded && urlAgentId && urlAgentId !== "orchestrator" && autonomousAgent?.status !== "draft");
+  const shouldHydrateAutonomousProposal = useMemo(() => {
+    const sid = sessionId || urlSessionId;
+    if (!sid || !_embedded || !urlAgentId) return false;
+    if (urlAgentId === "orchestrator") return true;
+    if (autonomousAgent?.status === "draft") return true;
+    // Draft record still loading after refresh — URL session id matches persisted proposal.
+    if (autonomousAgentLoadState === "loading") return true;
+    return false;
+  }, [_embedded, autonomousAgent?.status, autonomousAgentLoadState, sessionId, urlAgentId, urlSessionId]);
 
   useEffect(() => {
     if (!isEmbeddedAutonomousView || !autonomousAgent) return;
+    if (isObserveAgent(autonomousAgent)) return;
     const wid = autonomousAgent.active_trade_plan_widget_id;
     const awaiting =
       autonomousAgent.bootstrap_status === "awaiting_plan_approval" ||
@@ -495,17 +528,18 @@ export function Agent({
   ]);
 
   useEffect(() => {
-    if (urlAgentId && urlAgentId !== "orchestrator") {
-      // Stop showing orchestrator welcome/proposal poll state after promotion.
-      setLiveItems((items) =>
-        items.filter(
-          (item) =>
-            item.kind !== "autonomous_proposal" ||
-            committedAutonomous[item.proposal.proposal_id] != null,
-        ),
-      );
-    }
-  }, [urlAgentId]);
+    if (!urlAgentId || urlAgentId === "orchestrator") return;
+    if (autonomousAgent?.status === "draft") return;
+    if (autonomousAgentLoadState === "loading") return;
+    // Stop showing orchestrator proposal cards after promotion to an active agent.
+    setLiveItems((items) =>
+      items.filter(
+        (item) =>
+          item.kind !== "autonomous_proposal" ||
+          committedAutonomous[item.proposal.proposal_id] != null,
+      ),
+    );
+  }, [urlAgentId, autonomousAgent?.status, autonomousAgentLoadState, committedAutonomous]);
 
   /* Smart scroll — only auto-scroll when near bottom */
   const isNearBottom = useCallback(() => {
@@ -532,6 +566,63 @@ export function Agent({
       if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
     });
   }, []);
+
+  const applyPersistedAutonomousProposal = useCallback(
+    (proposal: AutonomousAgentProposal | null | undefined, sid: string): boolean => {
+      if (!proposal?.proposal_id || !["ready", "incomplete"].includes(proposal.status ?? "")) {
+        return false;
+      }
+      setOrchestratorMissingProposal(false);
+      setLiveItems((items) => upsertAutonomousProposalItems(items, proposal, sid));
+      return true;
+    },
+    [],
+  );
+
+  const hydrateAutonomousProposal = useCallback(
+    async (
+      sid: string,
+      opts?: { retryMs?: number; scroll?: boolean; markMissingIfAbsent?: boolean },
+    ): Promise<boolean> => {
+      if (!sid) return false;
+      const apply = (proposal: AutonomousAgentProposal | null | undefined) => {
+        const ok = applyPersistedAutonomousProposal(proposal, sid);
+        if (ok && opts?.scroll) scrollToBottom();
+        return ok;
+      };
+      try {
+        const latest = await api.getLatestAutonomousProposal(sid);
+        if (apply(latest.proposal)) return true;
+        if (opts?.retryMs) {
+          await new Promise((resolve) => setTimeout(resolve, opts.retryMs));
+          const retry = await api.getLatestAutonomousProposal(sid);
+          if (apply(retry.proposal)) return true;
+        }
+      } catch {
+        /* persisted proposal hydrate is best-effort */
+      }
+      if (opts?.markMissingIfAbsent) {
+        setLiveItems((items) => {
+          const hasCard = items.some(
+            (item) =>
+              item.kind === "autonomous_proposal" &&
+              !item.proposal.committed_agent_id &&
+              !item.proposal.superseded,
+          );
+          setOrchestratorMissingProposal(!hasCard);
+          return items;
+        });
+      }
+      return false;
+    },
+    [applyPersistedAutonomousProposal, scrollToBottom],
+  );
+
+  useEffect(() => {
+    const sid = sessionId || urlSessionId;
+    if (!shouldHydrateAutonomousProposal || !sid) return;
+    void hydrateAutonomousProposal(sid, { scroll: true });
+  }, [shouldHydrateAutonomousProposal, sessionId, urlSessionId, hydrateAutonomousProposal]);
 
   /* Track scroll position to show/hide scroll button */
   useEffect(() => {
@@ -885,37 +976,11 @@ export function Agent({
         }
 
         if (isDraftCreateView && sid) {
-          let foundProposal = false;
-          const applyLatestProposal = (proposal: AutonomousAgentProposal | null | undefined) => {
-            if (!proposal?.proposal_id || !["ready", "incomplete"].includes(proposal.status ?? "")) return false;
-            setOrchestratorMissingProposal(false);
-            setLiveItems((items) => upsertAutonomousProposalItems(items, proposal, sid));
-            scrollToBottom();
-            foundProposal = true;
-            return true;
-          };
-          try {
-            const latest = await api.getLatestAutonomousProposal(sid);
-            if (!applyLatestProposal(latest.proposal)) {
-              await new Promise((resolve) => setTimeout(resolve, 2000));
-              const retry = await api.getLatestAutonomousProposal(sid);
-              applyLatestProposal(retry.proposal);
-            }
-          } catch {
-            /* proposal poll fallback is best-effort */
-          }
-          if (!foundProposal) {
-            setLiveItems((items) => {
-              const hasCard = items.some(
-                (item) =>
-                  item.kind === "autonomous_proposal" &&
-                  !item.proposal.committed_agent_id &&
-                  !item.proposal.superseded,
-              );
-              setOrchestratorMissingProposal(!hasCard);
-              return items;
-            });
-          }
+          void hydrateAutonomousProposal(sid, {
+            retryMs: 2000,
+            scroll: true,
+            markMissingIfAbsent: true,
+          });
         }
 
         // Reset
@@ -1024,6 +1089,10 @@ export function Agent({
         if (!messageId || !content) return;
         const s = act();
         if (s.messages.some((m) => m.id === messageId)) return;
+        if (role === "user" && reconcileOptimisticUserMessage(messageId)) {
+          scrollToBottom();
+          return;
+        }
         s.addMessage({
           id: messageId,
           type: role === "user" ? "user" : "answer",
@@ -1229,7 +1298,7 @@ export function Agent({
       heartbeat: () => {},
       reconnect: (d) => { act().setSseStatus("reconnecting", Number(d.attempt ?? 0)); },
     });
-  }, [connect, disconnect, isDraftCreateView, loadGoalSnapshot, newsScenarioMode, onAutonomousAgentCommitted, onNewsScenarioWidget, refreshSessionMessages, scrollToBottom, urlAgentId]);
+  }, [connect, disconnect, hydrateAutonomousProposal, isDraftCreateView, loadGoalSnapshot, newsScenarioMode, onAutonomousAgentCommitted, onNewsScenarioWidget, refreshSessionMessages, scrollToBottom, urlAgentId]);
 
   useEffect(() => {
     setSessionLoadError(null);
@@ -1426,6 +1495,7 @@ export function Agent({
         forceScrollToBottom();
         setupSSE(sid);
         const sent = await api.sendMessage(sid, kickoff);
+        reconcileOptimisticUserMessage(sent.message_id);
         void syncCompletedAttempt(sid, sent.attempt_id);
       } catch (error) {
         act().setStatus("idle");
@@ -1474,6 +1544,7 @@ export function Agent({
       }
       setupSSE(sid);
       const sent = await api.sendMessage(sid, apiPrompt);
+      reconcileOptimisticUserMessage(sent.message_id);
       void syncCompletedAttempt(sid, sent.attempt_id);
     } catch (error) {
       act().setStatus("error");
@@ -1586,6 +1657,7 @@ export function Agent({
     try {
       setupSSE(sessionId);
       const sent = await api.sendMessage(sessionId, prompt);
+      reconcileOptimisticUserMessage(sent.message_id);
       void syncCompletedAttempt(sessionId, sent.attempt_id);
     } catch (error) {
       act().setStatus("error");
