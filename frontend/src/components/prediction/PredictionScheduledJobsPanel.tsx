@@ -57,7 +57,12 @@ function NewsPipelineHealthBanner({ pipeline }: { pipeline: IndexPredictionNewsP
         {pipeline.oldest_pending_seconds != null ? ` · oldest ${fmtAge(pipeline.oldest_pending_seconds)}` : ""}
         {paused ? " · pipeline paused" : ""}
       </p>
-      {paused && pipeline.pause_reason ? (
+      {paused && pipeline.pause_reason === "llm_wiki_unavailable" ? (
+        <p className="mt-1 text-amber-700 dark:text-amber-400">
+          {pipeline.user_message ||
+            "LLM-Wiki is not running — start LLM Wiki.app and set LLM_WIKI_PROJECT_ID in .env."}
+        </p>
+      ) : paused && pipeline.pause_reason ? (
         <p className="mt-1 text-amber-700 dark:text-amber-400">{pipeline.pause_reason}</p>
       ) : null}
       {!paused && queued > 0 ? (

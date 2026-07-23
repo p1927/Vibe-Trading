@@ -438,7 +438,10 @@ export function Hub() {
     setBusy(`ingest-${mode}`);
     setError(null);
     try {
-      await api.runHubNewsIngest({ mode, ticker: "NIFTY" });
+      const res = await api.runHubNewsIngest({ mode, ticker: "NIFTY" });
+      if (res.status === "paused") {
+        setError(res.message || "News ingest is paused — check LLM-Wiki and MiniMax configuration.");
+      }
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : `${mode} ingest failed`);
@@ -540,8 +543,11 @@ export function Hub() {
         >
           <p className="font-medium">News distillation paused</p>
           <p className="mt-1 text-[13px] leading-relaxed opacity-90">
-            {staging.pause_reason ||
-              "Configure MINIMAX_API_KEY and MINIMAX_BASE_URL in .env, then use Drain staging to process queued headlines."}
+            {staging.pause_reason === "llm_wiki_unavailable"
+              ? staging.user_message ||
+                "LLM-Wiki is not running — start LLM Wiki.app and set LLM_WIKI_PROJECT_ID in .env."
+              : staging.pause_reason ||
+                "Configure MINIMAX_API_KEY and MINIMAX_BASE_URL in .env, then use Drain staging to process queued headlines."}
           </p>
           <p className="mt-2 text-[12px] tabular-nums opacity-80">
             {newsInventory?.pending_count ?? staging.queued ?? 0} headline(s) waiting in staging queue.
