@@ -984,6 +984,7 @@ class ExternalPredictionSourceRequest(BaseModel):
     id: str | None = None
     display_name: str
     domains: List[str] = Field(default_factory=list)
+    entry_urls: List[str] = Field(default_factory=list)
     search_queries: List[str] = Field(default_factory=list)
     kind: str = "media"
 
@@ -2562,10 +2563,23 @@ def add_external_prediction_source(
         )
 
         ensure_trade_stack_path()
+        from trade_integrations.dataflows.index_research.external_predictions.source_validation import (
+            validate_user_source_request,
+        )
+
+        domains, entry_urls, validation_error = validate_user_source_request(
+            display_name=body.display_name,
+            domains=body.domains,
+            entry_urls=body.entry_urls,
+            require_entry_urls=not bool(body.id and str(body.id).strip()),
+        )
+        if validation_error:
+            raise HTTPException(status_code=400, detail=validation_error)
         add_source_to_watchlist(
             source_id=body.id,
             display_name=body.display_name,
-            domains=body.domains,
+            domains=domains,
+            entry_urls=entry_urls,
             search_queries=body.search_queries,
             kind=body.kind,
             added_by="user",
@@ -2650,6 +2664,51 @@ def discover_external_prediction_sources(
         )
     except Exception as exc:
         logger.exception("discover external prediction sources failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.post(
+    "/index-prediction/external-predictions/sources/{source_id}/approve-path",
+    response_model=ExternalPredictionSourcesResponse,
+)
+def approve_external_prediction_path(
+    source_id: str,
+    ticker: str = "NIFTY",
+    horizon_days: int = 14,
+    _auth: None = Depends(require_local_or_auth),
+) -> ExternalPredictionSourcesResponse:
+    """Promote auto-saved navigation path to user-approved for fast-path replay."""
+    key = (ticker or "NIFTY").strip().upper()
+    sid = (source_id or "").strip().lower()
+    if not sid:
+        raise HTTPException(status_code=400, detail="source_id required")
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+        from trade_integrations.dataflows.index_research.external_predictions.path_store import (
+            approve_path,
+        )
+        from trade_integrations.dataflows.index_research.external_predictions.source_registry import (
+            load_registry,
+        )
+
+        ensure_trade_stack_path()
+        promoted = approve_path(sid, horizon_days=horizon_days)
+        registry = load_registry()
+        if promoted is None:
+            return ExternalPredictionSourcesResponse(
+                status="not_found",
+                ticker=key,
+                sources=[s.to_dict() for s in registry],
+                message=f"No saved path to approve for {sid} ({horizon_days}d)",
+            )
+        return ExternalPredictionSourcesResponse(
+            status="ok",
+            ticker=key,
+            sources=[s.to_dict() for s in registry],
+            message=f"Approved navigation path for {sid} ({horizon_days}d)",
+        )
+    except Exception as exc:
+        logger.exception("approve external prediction path failed for %s", sid)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
