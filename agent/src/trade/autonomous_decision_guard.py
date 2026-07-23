@@ -27,6 +27,20 @@ def is_autonomous_scheduler_turn(user_message: str) -> bool:
     return bool(_AUTONOMOUS_TURN_RE.search(user_message or ""))
 
 
+def infer_scheduler_turn_kind(user_message: str) -> str:
+    """Best-effort turn kind from scheduler prompt text (bootstrap/research/revision)."""
+    lower = (user_message or "").lower()
+    if "bootstrap" in lower:
+        return "bootstrap"
+    if "revision" in lower:
+        return "revision"
+    if "research" in lower:
+        return "research"
+    if "decision retry" in lower:
+        return "decision_retry"
+    return "scheduler"
+
+
 def needs_decision_guard(
     user_message: str,
     tools_called: set[str] | list[str],
@@ -45,8 +59,10 @@ def needs_decision_guard(
     return _DECISION_TOOL not in called
 
 
-def build_decision_retry_message(*, agent_id: str) -> str:
+def build_decision_retry_message(*, agent_id: str, turn_kind: str = "scheduler") -> str:
+    kind = str(turn_kind or "scheduler").strip() or "scheduler"
     return (
+        f"# Autonomous agent turn (decision retry — {kind})\n\n"
         "## Autonomous turn incomplete\n"
         f"This scheduler turn for agent `{agent_id}` must end with structured output.\n"
         f"1. Call `{_STATUS_TOOL}(agent_id=\"{agent_id}\")` if not already done this turn.\n"
@@ -72,7 +88,10 @@ async def maybe_retry_autonomous_decision(
     try:
         await session_service.send_message(
             session_id,
-            build_decision_retry_message(agent_id=agent_id),
+            build_decision_retry_message(
+                agent_id=agent_id,
+                turn_kind=infer_scheduler_turn_kind(user_message),
+            ),
         )
         logger.info("Autonomous decision guard enqueued retry for agent %s session=%s", agent_id, session_id)
         return True

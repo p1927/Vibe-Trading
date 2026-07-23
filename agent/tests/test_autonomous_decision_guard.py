@@ -37,3 +37,27 @@ def test_retry_message_includes_agent_id():
     msg = build_decision_retry_message(agent_id="aa_abc")
     assert "aa_abc" in msg
     assert "record_autonomous_decision" in msg
+
+
+def test_decision_retry_message_matches_scheduler_turn_for_compact_defer():
+    msg = build_decision_retry_message(agent_id="aa_abc", turn_kind="bootstrap")
+    assert is_autonomous_scheduler_turn(msg)
+    assert "bootstrap" in msg.lower()
+
+
+def test_decision_retry_message_gets_defer_compact_policy():
+    from src.agent.loop import COMPACT_POLICY_DEFER, _resolve_compact_policy
+
+    msg = build_decision_retry_message(agent_id="aa_abc", turn_kind="bootstrap")
+    policy = _resolve_compact_policy(
+        msg,
+        {"session_kind": "autonomous_agent", "autonomous_agent_id": "aa_abc"},
+    )
+    assert policy == COMPACT_POLICY_DEFER
+
+
+def test_infer_scheduler_turn_kind_from_bootstrap_prompt():
+    from src.trade.autonomous_decision_guard import infer_scheduler_turn_kind
+
+    assert infer_scheduler_turn_kind("# Autonomous agent turn (bootstrap)\n## Bootstrap checklist") == "bootstrap"
+    assert infer_scheduler_turn_kind("# Autonomous agent turn (research)") == "research"
