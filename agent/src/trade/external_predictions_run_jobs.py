@@ -96,6 +96,7 @@ def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
         "created_at": job.get("created_at"),
         "logs": list(job.get("logs") or []),
         "snapshot": job.get("snapshot"),
+        "partial_snapshot": job.get("partial_snapshot"),
         "error": job.get("error"),
         "worker_pid": job.get("worker_pid"),
         "_finished_at": job.get("_finished_at"),
@@ -224,6 +225,8 @@ def _job_snapshot(job: dict[str, Any], *, include_logs: bool = True) -> dict[str
     }
     if include_logs:
         out["logs"] = list(job.get("logs") or [])
+    if job.get("partial_snapshot") is not None:
+        out["partial_snapshot"] = job["partial_snapshot"]
     if job.get("status") == "done" and job.get("snapshot") is not None:
         out["snapshot"] = job["snapshot"]
     return out
@@ -327,6 +330,33 @@ def append_log(job_id: str, entry: dict[str, Any]) -> None:
     _write_job_to_disk(job)
 
 
+def append_source_complete(
+    job_id: str,
+    *,
+    source_id: str,
+    record: dict[str, Any],
+    partial_snapshot: dict[str, Any],
+) -> None:
+    """Record per-source completion for incremental SSE + partial UI updates."""
+    job = _get_job_record(job_id)
+    if job is None:
+        return
+    if job.get("status") == "queued":
+        job["status"] = "running"
+    entry = {
+        "stage": "source_complete",
+        "level": "info",
+        "message": f"{source_id} complete",
+        "source_id": source_id,
+        "record": record,
+        "partial_snapshot": partial_snapshot,
+        "at": _now_iso(),
+    }
+    job.setdefault("logs", []).append(entry)
+    job["partial_snapshot"] = partial_snapshot
+    _write_job_to_disk(job)
+
+
 def complete_job(job_id: str, *, ticker: str, snapshot: dict[str, Any]) -> None:
     job = _get_job_record(job_id)
     if job is None:
@@ -366,6 +396,14 @@ def run_worker(job_id: str) -> None:
     def on_log(entry) -> None:
         append_log(job_id, entry.to_dict())
 
+    def on_source_complete(source_id: str, record, partial_snapshot) -> None:
+        append_source_complete(
+            job_id,
+            source_id=source_id,
+            record=record.to_dict(),
+            partial_snapshot=partial_snapshot.to_dict(),
+        )
+
     try:
         from trade_integrations.dataflows.index_research.external_predictions.refresh import (
             refresh_all_external_predictions,
@@ -379,6 +417,7 @@ def run_worker(job_id: str) -> None:
             symbol=key,
             horizon_days=horizon_days,
             pipeline=plog,
+            on_source_complete=on_source_complete,
         )
         complete_job(job_id, ticker=key, snapshot=snap.to_dict())
     except Exception as exc:

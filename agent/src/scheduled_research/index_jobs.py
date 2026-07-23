@@ -33,7 +33,6 @@ JOB_TYPE_COMPANY_RESEARCH_ARCHIVE = "company_research_archive"
 JOB_TYPE_INDEX_PREDICTION_POST_CLOSE = "index_prediction_post_close"
 JOB_TYPE_HUB_NEWS_ENTITY = "hub_news_entity"
 JOB_TYPE_HUB_NEWS_INGEST = "hub_news_ingest"
-JOB_TYPE_EXTERNAL_PREDICTIONS_REFRESH = "external_predictions_refresh"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -44,7 +43,6 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_PREDICTION_POST_CLOSE,
     JOB_TYPE_HUB_NEWS_ENTITY,
     JOB_TYPE_HUB_NEWS_INGEST,
-    JOB_TYPE_EXTERNAL_PREDICTIONS_REFRESH,
 })
 
 LAST_RESULT_CONFIG_KEY = "_last_result_summary"
@@ -444,34 +442,6 @@ def run_hub_news_ingest_job(config: dict[str, Any] | None = None) -> dict[str, A
         return {"status": "error", "error": str(exc), "mode": mode, "had_errors": True}
 
 
-def run_external_predictions_refresh_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Refresh third-party NIFTY forecasts for default horizons."""
-    _ensure_trade_integrations_on_path()
-    cfg = dict(config or {})
-    ticker = str(cfg.get("ticker") or "NIFTY").upper()
-    horizons = cfg.get("horizon_days")
-    if isinstance(horizons, int):
-        horizon_list = [horizons]
-    elif isinstance(horizons, list):
-        horizon_list = [int(h) for h in horizons if int(h) > 0]
-    else:
-        horizon_list = [14, 30]
-    try:
-        from trade_integrations.dataflows.index_research.external_predictions.refresh import (
-            refresh_all_external_predictions,
-        )
-
-        summaries = []
-        for horizon in horizon_list:
-            snap = refresh_all_external_predictions(symbol=ticker, horizon_days=horizon)
-            ok = sum(1 for p in snap.predictions if p.fetch_status == "ok")
-            summaries.append({"horizon_days": horizon, "ok_predictions": ok, "fetched_at": snap.fetched_at})
-        return {"status": "ok", "ticker": ticker, "horizons": summaries}
-    except Exception as exc:
-        logger.exception("external predictions refresh job failed")
-        return {"status": "error", "error": str(exc), "ticker": ticker}
-
-
 def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
     """Execute one index scheduled job synchronously."""
     try:
@@ -515,11 +485,6 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         summary = run_hub_news_ingest_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("hub news ingest completed for job %s: %s", job.id, summary)
-        return
-    if job_type == JOB_TYPE_EXTERNAL_PREDICTIONS_REFRESH:
-        summary = run_external_predictions_refresh_job(job.config)
-        _attach_job_result_summary(job, summary)
-        logger.info("external predictions refresh completed for job %s: %s", job.id, summary)
         return
     raise ValueError(f"unsupported index job_type: {job_type!r}")
 
@@ -614,19 +579,6 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "ticker": "NIFTY",
                 "sources": os.getenv("HUB_NEWS_FULL_SOURCES", "all"),
                 "lookback_days": 3,
-            },
-        ),
-        ScheduledResearchJob(
-            id="nifty-external-predictions-refresh",
-            prompt="Refresh third-party NIFTY street forecasts (SearXNG + LLM)",
-            schedule=os.getenv("EXTERNAL_PREDICTIONS_REFRESH_CRON", "0 8 * * *").strip(),
-            next_run_at=now_ms,
-            status=JobStatus.PENDING,
-            created_at=now_ms,
-            config={
-                "job_type": JOB_TYPE_EXTERNAL_PREDICTIONS_REFRESH,
-                "ticker": "NIFTY",
-                "horizon_days": [14, 30],
             },
         ),
         ScheduledResearchJob(

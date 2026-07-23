@@ -1,5 +1,16 @@
-import type { ExternalPredictionRecord } from "@/lib/api";
+import type { ExternalPredictionRecord, ExternalPredictionSnapshot } from "@/lib/api";
 import type { LiveForecastInput } from "@/lib/forecastReplayUtils";
+
+export interface StreetSummaryStats {
+  horizonDays: number;
+  watchlistCount: number;
+  forecastCount: number;
+  targetMin: number | null;
+  targetMax: number | null;
+  targetMedian: number | null;
+  spot: number | null;
+  fetchedAt: string | null;
+}
 
 export function filterVisiblePredictions(
   predictions: ExternalPredictionRecord[] | undefined,
@@ -33,4 +44,29 @@ export function formatHorizonMatch(record: ExternalPredictionRecord): string | n
   const ahead = match.target_days_ahead;
   if (ahead == null) return `Selected ${selected}d horizon`;
   return `Selected ${selected}d · Target ~${ahead}d ahead`;
+}
+
+export function computeStreetSummary(
+  snapshot: ExternalPredictionSnapshot | null,
+  horizonDays: number,
+): StreetSummaryStats {
+  const visible = filterVisiblePredictions(snapshot?.predictions);
+  const mids = visible
+    .map((p) => p.target?.mid)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
+    .sort((a, b) => a - b);
+  const spot =
+    snapshot?.internal_forecast?.spot ??
+    visible.find((p) => p.spot_at_fetch != null)?.spot_at_fetch ??
+    null;
+  return {
+    horizonDays,
+    watchlistCount: snapshot?.sources?.filter((s) => s.watchlisted).length ?? 0,
+    forecastCount: visible.length,
+    targetMin: mids.length ? mids[0] : null,
+    targetMax: mids.length ? mids[mids.length - 1] : null,
+    targetMedian: mids.length ? mids[Math.floor(mids.length / 2)] : null,
+    spot: typeof spot === "number" ? spot : null,
+    fetchedAt: snapshot?.fetched_at ?? null,
+  };
 }
