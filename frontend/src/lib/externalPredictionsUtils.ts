@@ -19,6 +19,127 @@ type HorizonMatchProvenance = {
   soft_mismatch?: boolean;
 };
 
+export interface AddSourcePayload {
+  display_name: string;
+  domains: string[];
+  entry_urls: string[];
+  id?: string;
+  kind?: string;
+}
+
+export interface AddSourceValidationResult {
+  ok: boolean;
+  error?: string;
+  payload?: AddSourcePayload;
+}
+
+export function normalizeDomain(raw: string): string {
+  let text = String(raw || "").trim().toLowerCase();
+  text = text.replace(/^https?:\/\//, "");
+  if (text.startsWith("www.")) text = text.slice(4);
+  return text.split("/")[0]?.trim() ?? "";
+}
+
+function hostMatchesDomains(host: string, domains: string[]): boolean {
+  const hostNorm = host.toLowerCase().replace(/^www\./, "");
+  return domains.some((domain) => {
+    const d = normalizeDomain(domain);
+    if (!d) return false;
+    return hostNorm === d || hostNorm.endsWith(`.${d}`);
+  });
+}
+
+export function parseMultilineList(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+/** Mirror backend ``validate_user_source_request`` for add-site forms. */
+export function validateAddSourceRequest(input: {
+  displayName: string;
+  domains: string[];
+  entryUrls: string[];
+  requireEntryUrls?: boolean;
+  id?: string;
+  kind?: string;
+}): AddSourceValidationResult {
+  const name = String(input.displayName || "").trim();
+  if (!name) return { ok: false, error: "Display name is required." };
+
+  const domainList = [...new Set(input.domains.map(normalizeDomain).filter(Boolean))];
+  if (!domainList.length) return { ok: false, error: "At least one domain is required." };
+
+  const urlList: string[] = [];
+  for (const raw of input.entryUrls) {
+    const url = String(raw || "").trim();
+    if (!url) continue;
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return { ok: false, error: `Invalid entry URL: ${url}` };
+      }
+      const host = parsed.hostname.toLowerCase();
+      if (!host) {
+        return { ok: false, error: `Invalid entry URL: ${url}` };
+      }
+      if (!hostMatchesDomains(host, domainList)) {
+        return { ok: false, error: `Entry URL must match domain ${domainList[0]}: ${url}` };
+      }
+      urlList.push(url);
+    } catch {
+      return { ok: false, error: `Invalid entry URL: ${url}` };
+    }
+  }
+  const uniqueUrls = [...new Set(urlList)];
+  const requireEntryUrls = input.requireEntryUrls ?? !(input.id && String(input.id).trim());
+  if (requireEntryUrls && !uniqueUrls.length) {
+    return { ok: false, error: "At least one entry URL is required (one per line)." };
+  }
+
+  return {
+    ok: true,
+    payload: {
+      display_name: name,
+      domains: domainList,
+      entry_urls: uniqueUrls,
+      id: input.id?.trim() || undefined,
+      kind: input.kind,
+    },
+  };
+}
+
+export function candidateNeedsEntryUrls(candidate: Record<string, unknown>): boolean {
+  const urls = candidate.entry_urls;
+  if (Array.isArray(urls) && urls.some((u) => String(u || "").trim())) return false;
+  return true;
+}
+
+export function buildAddSourcePayload(
+  candidate: Record<string, unknown>,
+  entryUrlsOverride?: string[],
+): AddSourceValidationResult {
+  const domains = candidate.domains
+    ? (candidate.domains as string[])
+    : candidate.domain
+      ? [String(candidate.domain)]
+      : [];
+  const entry_urls =
+    entryUrlsOverride ??
+    (Array.isArray(candidate.entry_urls)
+      ? (candidate.entry_urls as string[]).map((u) => String(u))
+      : []);
+  return validateAddSourceRequest({
+    displayName: String(candidate.display_name ?? candidate.domain ?? "Source"),
+    domains,
+    entryUrls: entry_urls,
+    id: candidate.id ? String(candidate.id) : undefined,
+    kind: candidate.kind ? String(candidate.kind) : undefined,
+    requireEntryUrls: entryUrlsOverride !== undefined ? true : undefined,
+  });
+}
+
 function horizonMatch(record: ExternalPredictionRecord): HorizonMatchProvenance | undefined {
   return record.provenance?.horizon_match as HorizonMatchProvenance | undefined;
 }

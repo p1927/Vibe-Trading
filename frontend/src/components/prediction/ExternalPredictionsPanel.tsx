@@ -6,7 +6,7 @@ import { ExternalPredictionsRefreshLogPanel } from "@/components/prediction/Exte
 import { HORIZON_OPTIONS } from "@/components/prediction/PredictionControls";
 import type { ExternalRefreshPhase } from "@/hooks/useExternalPredictions";
 import type { ExternalPredictionSnapshot, PipelineLogEntry } from "@/lib/api";
-import { filterVisiblePredictions, computeStreetSummary } from "@/lib/externalPredictionsUtils";
+import { filterVisiblePredictions, computeStreetSummary, validateAddSourceRequest, buildAddSourcePayload, candidateNeedsEntryUrls, parseMultilineList, normalizeDomain, hasHorizonMismatch } from "@/lib/externalPredictionsUtils";
 import { cn } from "@/lib/utils";
 
 function fmtTimestamp(iso: string | undefined): string {
@@ -29,13 +29,83 @@ interface DiscoverPanelProps {
   sources: ExternalPredictionSnapshot["sources"];
   discovering: boolean;
   busySourceId: string | null;
+  onRequestAdd: (candidate: Record<string, unknown>) => void;
 }
 
 function parseLines(text: string): string[] {
-  return text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  return parseMultilineList(text);
+}
+
+interface EntryUrlsPromptProps {
+  candidate: Record<string, unknown>;
+  onCancel: () => void;
+  onSubmit: (entryUrls: string[]) => Promise<void>;
+  submitting: boolean;
+  error: string | null;
+}
+
+function EntryUrlsPrompt({ candidate, onCancel, onSubmit, submitting, error }: EntryUrlsPromptProps) {
+  const domain =
+    normalizeDomain(String(candidate.domain ?? "")) ||
+    normalizeDomain(String((candidate.domains as string[] | undefined)?.[0] ?? ""));
+  const sampleUrl = String(candidate.sample_url ?? "").trim();
+  const [entryUrlsText, setEntryUrlsText] = useState(sampleUrl);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const handleSubmit = useCallback(async () => {
+    const entry_urls = parseLines(entryUrlsText);
+    const validated = buildAddSourcePayload(candidate, entry_urls);
+    if (!validated.ok) {
+      setLocalError(validated.error ?? "Invalid entry URLs.");
+      return;
+    }
+    setLocalError(null);
+    await onSubmit(entry_urls);
+  }, [candidate, entryUrlsText, onSubmit]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-xl border border-border/60 bg-card p-4 shadow-lg">
+        <h3 className="text-sm font-semibold">Entry URLs required</h3>
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          Add at least one landing page URL for{" "}
+          <span className="font-medium text-foreground">
+            {String(candidate.display_name ?? domain ?? "this source")}
+          </span>
+          {domain ? ` (${domain})` : ""} so the browse agent can reach forecast pages.
+        </p>
+        <textarea
+          value={entryUrlsText}
+          onChange={(e) => setEntryUrlsText(e.target.value)}
+          rows={4}
+          className="mt-3 w-full rounded-md border border-border/60 bg-background px-2 py-1.5 text-[11px]"
+          placeholder={domain ? `https://${domain}/markets\nhttps://${domain}/markets/{horizon}d` : "https://example.com/markets"}
+        />
+        {localError || error ? (
+          <p className="mt-2 text-[10px] text-red-600 dark:text-red-400">{localError ?? error}</p>
+        ) : null}
+        <div className="mt-3 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={submitting}
+            className="rounded-md border border-border/60 px-3 py-1.5 text-[11px] font-medium hover:bg-muted/40 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleSubmit()}
+            disabled={submitting}
+            className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {submitting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+            Add to watchlist
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ExternalSourceDiscoverPanel({
@@ -46,6 +116,7 @@ function ExternalSourceDiscoverPanel({
   sources = [],
   discovering,
   busySourceId,
+  onRequestAdd,
 }: DiscoverPanelProps) {
   const watchlisted = sources?.filter((s) => s.watchlisted) ?? [];
   const discovered = sources?.filter((s) => !s.watchlisted) ?? [];
@@ -56,46 +127,25 @@ function ExternalSourceDiscoverPanel({
   const [addingManual, setAddingManual] = useState(false);
 
   const submitManualAdd = useCallback(async () => {
-    const display_name = manualName.trim();
-    const domain = manualDomain.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0];
-    const entry_urls = parseLines(manualEntryUrls);
-    if (!display_name) {
-      setManualError("Display name is required.");
+    const validated = validateAddSourceRequest({
+      displayName: manualName,
+      domains: [manualDomain],
+      entryUrls: parseLines(manualEntryUrls),
+      kind: "media",
+    });
+    if (!validated.ok) {
+      setManualError(validated.error ?? "Invalid add-site request.");
       return;
-    }
-    if (!domain) {
-      setManualError("Domain is required.");
-      return;
-    }
-    if (!entry_urls.length) {
-      setManualError("At least one entry URL is required (one per line).");
-      return;
-    }
-    for (const url of entry_urls) {
-      try {
-        const parsed = new URL(url);
-        const host = parsed.hostname.replace(/^www\./, "");
-        if (!host.endsWith(domain) && host !== domain) {
-          setManualError(`Entry URL must match domain ${domain}: ${url}`);
-          return;
-        }
-      } catch {
-        setManualError(`Invalid entry URL: ${url}`);
-        return;
-      }
     }
     setManualError(null);
     setAddingManual(true);
     try {
-      await onAddSource({
-        display_name,
-        domains: [domain],
-        entry_urls,
-        kind: "media",
-      });
+      await onAddSource(validated.payload!);
       setManualName("");
       setManualDomain("");
       setManualEntryUrls("");
+    } catch (err) {
+      setManualError(err instanceof Error ? err.message : "Failed to add source.");
     } finally {
       setAddingManual(false);
     }
@@ -188,7 +238,7 @@ function ExternalSourceDiscoverPanel({
                 </div>
                 <button
                   type="button"
-                  onClick={() => void onAddSource(row)}
+                  onClick={() => onRequestAdd(row)}
                   disabled={busySourceId === key}
                   className="inline-flex shrink-0 items-center gap-1 rounded-md bg-primary px-2 py-1 text-[10px] font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                 >
@@ -243,10 +293,12 @@ function ExternalSourceDiscoverPanel({
                   <button
                     type="button"
                     onClick={() =>
-                      void onAddSource({
+                      onRequestAdd({
                         display_name: src.display_name,
-                        domain: src.domains?.[0],
+                        domains: src.domains,
+                        entry_urls: src.entry_urls,
                         id: src.id,
+                        kind: src.kind,
                       })
                     }
                     disabled={busySourceId === src.id}
@@ -308,6 +360,9 @@ export function ExternalPredictionsPanel({
   const [candidates, setCandidates] = useState<Array<Record<string, unknown>>>([]);
   const [busySourceId, setBusySourceId] = useState<string | null>(null);
   const [approvingSourceId, setApprovingSourceId] = useState<string | null>(null);
+  const [pendingAddCandidate, setPendingAddCandidate] = useState<Record<string, unknown> | null>(null);
+  const [addFlowError, setAddFlowError] = useState<string | null>(null);
+  const [addingWithPrompt, setAddingWithPrompt] = useState(false);
 
   const handleDiscover = useCallback(async () => {
     setDiscovering(true);
@@ -320,16 +375,54 @@ export function ExternalPredictionsPanel({
   }, [onDiscover]);
 
   const handleAdd = useCallback(
-    async (candidate: Record<string, unknown>) => {
-      const key = String(candidate.domain ?? candidate.display_name ?? "");
+    async (candidate: Record<string, unknown>, entryUrlsOverride?: string[]) => {
+      const key = String(candidate.id ?? candidate.domain ?? candidate.display_name ?? "");
       setBusySourceId(key);
+      setAddFlowError(null);
       try {
-        await onAddSource(candidate);
+        const validated = buildAddSourcePayload(candidate, entryUrlsOverride);
+        if (!validated.ok) {
+          setAddFlowError(validated.error ?? "Invalid add-site request.");
+          return;
+        }
+        await onAddSource(validated.payload!);
+        setPendingAddCandidate(null);
+      } catch (err) {
+        setAddFlowError(err instanceof Error ? err.message : "Failed to add source.");
+        throw err;
       } finally {
         setBusySourceId(null);
       }
     },
     [onAddSource],
+  );
+
+  const handleRequestAdd = useCallback(
+    (candidate: Record<string, unknown>) => {
+      setAddFlowError(null);
+      if (candidateNeedsEntryUrls(candidate)) {
+        setPendingAddCandidate(candidate);
+        return;
+      }
+      void handleAdd(candidate);
+    },
+    [handleAdd],
+  );
+
+  const handlePromptSubmit = useCallback(
+    async (entryUrls: string[]) => {
+      if (!pendingAddCandidate) return;
+      setAddingWithPrompt(true);
+      setAddFlowError(null);
+      try {
+        await handleAdd(pendingAddCandidate, entryUrls);
+      } catch {
+        // error surfaced via addFlowError
+      } finally {
+        setAddingWithPrompt(false);
+      }
+    },
+    [handleAdd, pendingAddCandidate],
   );
 
   const handleRemove = useCallback(
@@ -361,6 +454,7 @@ export function ExternalPredictionsPanel({
   const allPredictions = snapshot?.predictions ?? [];
   const visiblePredictions = filterVisiblePredictions(allPredictions);
   const skippedCount = allPredictions.length - visiblePredictions.length;
+  const mismatchCount = visiblePredictions.filter((p) => hasHorizonMismatch(p)).length;
   const summary = computeStreetSummary(snapshot, horizonDays);
 
   return (
@@ -480,7 +574,12 @@ export function ExternalPredictionsPanel({
 
       {snapshot ? (
         <>
-          <ExternalPredictionsComparisonChart snapshot={snapshot} />
+          <ExternalPredictionsComparisonChart snapshot={snapshot} horizonDays={horizonDays} />
+          {mismatchCount > 0 ? (
+            <p className="text-[11px] text-amber-800 dark:text-amber-300">
+              {mismatchCount} source(s) have horizon mismatch — comparison chart uses each article&apos;s target date horizon.
+            </p>
+          ) : null}
           {visiblePredictions.length === 0 && !refreshing ? (
             <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-8 text-center text-[12px] text-muted-foreground">
               No NIFTY 50 index forecasts found for {horizonDays}d — try another horizon or click Refresh.
@@ -502,6 +601,7 @@ export function ExternalPredictionsPanel({
             sources={snapshot.sources}
             discovering={discovering}
             busySourceId={busySourceId}
+            onRequestAdd={handleRequestAdd}
           />
           <div className="grid gap-4">
             {visiblePredictions.map((record) => (
@@ -520,6 +620,23 @@ export function ExternalPredictionsPanel({
             ))}
           </div>
         </>
+      ) : null}
+      {pendingAddCandidate ? (
+        <EntryUrlsPrompt
+          candidate={pendingAddCandidate}
+          onCancel={() => {
+            setPendingAddCandidate(null);
+            setAddFlowError(null);
+          }}
+          onSubmit={handlePromptSubmit}
+          submitting={addingWithPrompt}
+          error={addFlowError}
+        />
+      ) : null}
+      {addFlowError && !pendingAddCandidate ? (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-700 dark:text-red-300">
+          {addFlowError}
+        </div>
       ) : null}
     </div>
   );

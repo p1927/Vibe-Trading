@@ -2591,6 +2591,8 @@ def add_external_prediction_source(
             sources=[s.to_dict() for s in registry],
             message=f"Added {body.display_name} to watchlist",
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("add external prediction source failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -2707,6 +2709,8 @@ def approve_external_prediction_path(
             sources=[s.to_dict() for s in registry],
             message=f"Approved navigation path for {sid} ({horizon_days}d)",
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("approve external prediction path failed for %s", sid)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
