@@ -12,15 +12,16 @@ from src.session.models import Attempt, AttemptStatus
 
 logger = logging.getLogger(__name__)
 
-_STALE_RUNNING_SECONDS = 120
+_STALE_ORPHAN_SECONDS = 120
+_ORPHAN_STATUSES = frozenset({AttemptStatus.RUNNING, AttemptStatus.PENDING})
 
 
 def recover_stale_running_attempts(
     store,
     *,
-    stale_after_seconds: int = _STALE_RUNNING_SECONDS,
+    stale_after_seconds: int = _STALE_ORPHAN_SECONDS,
 ) -> list[dict[str, Any]]:
-    """Mark orphaned ``running`` attempts as failed after restart."""
+    """Mark orphaned ``running``/``pending`` attempts failed after restart."""
     base_dir: Path = store.base_dir
     if not base_dir.is_dir():
         return []
@@ -46,7 +47,7 @@ def recover_stale_running_attempts(
             except (OSError, json.JSONDecodeError):
                 continue
             attempt = Attempt.from_dict(data)
-            if attempt.status != AttemptStatus.RUNNING:
+            if attempt.status not in _ORPHAN_STATUSES:
                 continue
 
             age_seconds = stale_after_seconds + 1
@@ -59,16 +60,21 @@ def recover_stale_running_attempts(
             if age_seconds < stale_after_seconds:
                 continue
 
-            attempt.mark_failed("Recovered after API restart — prior turn did not complete")
+            prior_status = attempt.status.value
+            attempt.mark_failed(
+                f"Recovered after API restart — prior turn stuck in {prior_status}"
+            )
             store.update_attempt(attempt)
             entry = {
                 "session_id": session_id,
                 "attempt_id": attempt.attempt_id,
                 "age_seconds": age_seconds,
+                "prior_status": prior_status,
             }
             recovered.append(entry)
             logger.warning(
-                "Recovered stale running attempt %s in session %s (%.0fs old)",
+                "Recovered stale %s attempt %s in session %s (%.0fs old)",
+                prior_status,
                 attempt.attempt_id,
                 session_id,
                 age_seconds,
