@@ -67,7 +67,7 @@ def needs_bootstrap_finalize_guard(
         integrations = trade_root / "integrations"
         if integrations.is_dir() and str(integrations) not in sys.path:
             sys.path.insert(0, str(integrations))
-        from trade_integrations.autonomous_agents.bootstrap import _bootstrap_structured_plan_ready
+        from trade_integrations.autonomous_agents.bootstrap import bootstrap_finalize_prerequisites_met
         from trade_integrations.autonomous_agents.store import get_agent
         from trade_integrations.execution.profile import resolve_profile
     except Exception:
@@ -80,20 +80,16 @@ def needs_bootstrap_finalize_guard(
     profile = resolve_profile(agent=agent)
     if "options" not in profile.allowed_instruments:
         return False
-    if _bootstrap_structured_plan_ready(agent):
+    if bootstrap_finalize_prerequisites_met(agent):
         return False
-    # Retry when decision recorded without widget, or widget did not yield structured legs.
+    # Retry when decision recorded without structured plan and/or watch_spec.
     return True
 
 
 def build_bootstrap_widget_retry_message(*, agent_id: str, focus: str) -> str:
-    return (
-        "## Bootstrap turn incomplete\n"
-        f"Agent `{agent_id}` recorded a decision but the options plan is not structured yet.\n"
-        f"1. Call `get_options_trade_plan(ticker=\"{focus}\")` or `get_options_trade_widget` once.\n"
-        "2. Call `set_agent_watch_spec` with the chosen strategy.\n"
-        f"3. Update `record_autonomous_decision` if needed — then stop.\n"
-    )
+    from trade_integrations.autonomous_agents.recovery import build_bootstrap_structure_recovery_message
+
+    return build_bootstrap_structure_recovery_message(agent_id=agent_id, focus=focus)
 
 
 async def maybe_retry_bootstrap_widget(
@@ -123,6 +119,15 @@ async def maybe_retry_bootstrap_widget(
     agent = get_agent(agent_id) or {}
     symbols = list(agent.get("symbols") or ["NIFTY"])
     focus = str(symbols[0] if symbols else "NIFTY")
+
+    from trade_integrations.autonomous_agents.recovery import reserve_bootstrap_structure_recovery_slot
+
+    if not reserve_bootstrap_structure_recovery_slot(agent_id):
+        logger.info(
+            "Bootstrap finalize guard skipped for %s (recovery throttled or in flight)",
+            agent_id,
+        )
+        return False
 
     try:
         await session_service.send_message(
