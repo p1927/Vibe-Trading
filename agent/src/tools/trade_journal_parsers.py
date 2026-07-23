@@ -223,7 +223,7 @@ def parse_tonghuashun(df: pd.DataFrame) -> list[TradeRecord]:
         amount = _to_float(row.get("成交金额")) or qty * price
         fee = _to_float(row.get("手续费")) + _to_float(row.get("印花税")) + _to_float(row.get("过户费"))
         records.append(TradeRecord(
-            datetime=str(row.get("成交时间", "")).strip(),
+            datetime=_ths_datetime(row.get("成交时间", "")),
             symbol=_qualify_a_share(raw_code),
             name=str(row.get("证券名称", "")).strip(),
             side=_normalize_side(row.get("操作")),
@@ -234,6 +234,21 @@ def parse_tonghuashun(df: pd.DataFrame) -> list[TradeRecord]:
             market="china_a",
         ))
     return records
+
+
+def _ths_datetime(val: Any) -> str:
+    """Normalize 成交时间; Excel serial floats become ISO datetime."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    # iterrows yields numpy integer/float scalars; bare pd.to_datetime(int) is ns-epoch.
+    if pd.api.types.is_number(val) and not isinstance(val, (bool,)):
+        ts = pd.to_datetime(float(val), unit="D", origin="1899-12-30", errors="coerce")
+        if pd.notna(ts):
+            return ts.strftime("%Y-%m-%d %H:%M:%S")
+    ts = pd.to_datetime(val, errors="coerce")
+    if pd.notna(ts):
+        return ts.strftime("%Y-%m-%d %H:%M:%S")
+    return str(val).strip()
 
 
 def parse_eastmoney(df: pd.DataFrame) -> list[TradeRecord]:
