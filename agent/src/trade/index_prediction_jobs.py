@@ -94,6 +94,7 @@ def _hub_news_pipeline_health() -> dict[str, Any]:
             "oldest_pending_seconds": staging.get("oldest_pending_seconds"),
             "pipeline_paused": bool(pause.get("pipeline_paused")),
             "pause_reason": str(pause.get("pause_reason") or ""),
+            "user_message": str(pause.get("user_message") or ""),
             "minimax_configured": bool(pause.get("minimax_configured")),
             "worker_last": worker_last,
             "backpressure_active": queued >= threshold,

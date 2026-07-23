@@ -109,9 +109,31 @@ def _write_job_to_disk(job: dict[str, Any]) -> None:
         return
     path = _job_file(job_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(_serialize_job(job), ensure_ascii=False, default=str), encoding="utf-8")
-    tmp.replace(path)
+    payload = json.dumps(_serialize_job(job), ensure_ascii=False, default=str)
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_text(payload, encoding="utf-8")
+        tmp.replace(path)
+    finally:
+        if tmp.is_file():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+def _mutate_job(job_id: str, mutator) -> dict[str, Any] | None:
+    """Apply in-memory job mutation under lock, then persist atomically."""
+    with _JOBS_LOCK:
+        job = EXTERNAL_PREDICTIONS_RUN_JOBS.get(job_id)
+        if job is None:
+            job = _read_job_from_disk(job_id)
+            if job is None:
+                return None
+            EXTERNAL_PREDICTIONS_RUN_JOBS[job_id] = job
+        mutator(job)
+        _write_job_to_disk(job)
+        return job
 
 
 def _read_job_from_disk(job_id: str) -> dict[str, Any] | None:
@@ -312,22 +334,20 @@ def start_job(*, ticker: str, horizon_days: int) -> tuple[str, bool]:
 
 
 def mark_running(job_id: str) -> None:
-    job = _get_job_record(job_id)
-    if job is None:
-        return
-    if job.get("status") == "queued":
-        job["status"] = "running"
-        _write_job_to_disk(job)
+    def _apply(job: dict[str, Any]) -> None:
+        if job.get("status") == "queued":
+            job["status"] = "running"
+
+    _mutate_job(job_id, _apply)
 
 
 def append_log(job_id: str, entry: dict[str, Any]) -> None:
-    job = _get_job_record(job_id)
-    if job is None:
-        return
-    if job.get("status") == "queued":
-        job["status"] = "running"
-    job.setdefault("logs", []).append(dict(entry))
-    _write_job_to_disk(job)
+    def _apply(job: dict[str, Any]) -> None:
+        if job.get("status") == "queued":
+            job["status"] = "running"
+        job.setdefault("logs", []).append(dict(entry))
+
+    _mutate_job(job_id, _apply)
 
 
 def append_source_complete(
@@ -338,51 +358,46 @@ def append_source_complete(
     partial_snapshot: dict[str, Any],
 ) -> None:
     """Record per-source completion for incremental SSE + partial UI updates."""
-    job = _get_job_record(job_id)
-    if job is None:
-        return
-    if job.get("status") == "queued":
-        job["status"] = "running"
-    entry = {
-        "stage": "source_complete",
-        "level": "info",
-        "message": f"{source_id} complete",
-        "source_id": source_id,
-        "record": record,
-        "partial_snapshot": partial_snapshot,
-        "at": _now_iso(),
-    }
-    job.setdefault("logs", []).append(entry)
-    job["partial_snapshot"] = partial_snapshot
-    _write_job_to_disk(job)
+    def _apply(job: dict[str, Any]) -> None:
+        if job.get("status") == "queued":
+            job["status"] = "running"
+        entry = {
+            "stage": "source_complete",
+            "level": "info",
+            "message": f"{source_id} complete",
+            "source_id": source_id,
+            "record": record,
+            "partial_snapshot": partial_snapshot,
+            "at": _now_iso(),
+        }
+        job.setdefault("logs", []).append(entry)
+        job["partial_snapshot"] = partial_snapshot
+
+    _mutate_job(job_id, _apply)
 
 
 def complete_job(job_id: str, *, ticker: str, snapshot: dict[str, Any]) -> None:
-    job = _get_job_record(job_id)
-    if job is None:
-        return
-    job["status"] = "done"
-    job["snapshot"] = snapshot
-    job["_finished_at"] = time.time()
-    scope = _scope_key(str(job.get("ticker") or ticker), int(job.get("horizon_days") or 14))
-    with _JOBS_LOCK:
+    def _apply(job: dict[str, Any]) -> None:
+        job["status"] = "done"
+        job["snapshot"] = snapshot
+        job["_finished_at"] = time.time()
+        scope = _scope_key(str(job.get("ticker") or ticker), int(job.get("horizon_days") or 14))
         if _ACTIVE_BY_SCOPE.get(scope) == job_id:
             _ACTIVE_BY_SCOPE.pop(scope, None)
-    _write_job_to_disk(job)
+
+    _mutate_job(job_id, _apply)
 
 
 def fail_job(job_id: str, message: str) -> None:
-    job = _get_job_record(job_id)
-    if job is None:
-        return
-    job["status"] = "error"
-    job["error"] = message
-    job["_finished_at"] = time.time()
-    scope = _scope_key(str(job.get("ticker") or "NIFTY"), int(job.get("horizon_days") or 14))
-    with _JOBS_LOCK:
+    def _apply(job: dict[str, Any]) -> None:
+        job["status"] = "error"
+        job["error"] = message
+        job["_finished_at"] = time.time()
+        scope = _scope_key(str(job.get("ticker") or "NIFTY"), int(job.get("horizon_days") or 14))
         if _ACTIVE_BY_SCOPE.get(scope) == job_id:
             _ACTIVE_BY_SCOPE.pop(scope, None)
-    _write_job_to_disk(job)
+
+    _mutate_job(job_id, _apply)
 
 
 def run_worker(job_id: str) -> None:
