@@ -1,6 +1,6 @@
 import { NiftyForecastReplayChart } from "@/components/charts/NiftyForecastReplayChart";
 import type { ExternalPredictionRecord } from "@/lib/api";
-import { recordToLiveForecast } from "@/lib/externalPredictionsUtils";
+import { recordToLiveForecast, effectiveChartHorizonDays } from "@/lib/externalPredictionsUtils";
 
 const DIRECTION_COLORS: Record<string, string> = {
   bullish: "#22c55e",
@@ -24,6 +24,7 @@ export function ExternalPredictionReplayChart({
   height = 280,
 }: Props) {
   const liveForecast = recordToLiveForecast(record);
+  const chartHorizonDays = effectiveChartHorizonDays(record, horizonDays);
   if (!liveForecast) {
     return (
       <div className="flex h-[220px] items-center justify-center rounded-lg bg-muted/20 text-[11px] text-muted-foreground">
@@ -34,7 +35,7 @@ export function ExternalPredictionReplayChart({
 
   return (
     <NiftyForecastReplayChart
-      horizonDays={horizonDays}
+      horizonDays={chartHorizonDays}
       priceSeries={priceSeries}
       priceLoading={priceLoading}
       liveForecast={liveForecast}

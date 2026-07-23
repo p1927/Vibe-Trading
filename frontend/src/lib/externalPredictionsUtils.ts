@@ -12,6 +12,34 @@ export interface StreetSummaryStats {
   fetchedAt: string | null;
 }
 
+type HorizonMatchProvenance = {
+  selected_days?: number;
+  target_days_ahead?: number | null;
+  in_window?: boolean | null;
+  soft_mismatch?: boolean;
+};
+
+function horizonMatch(record: ExternalPredictionRecord): HorizonMatchProvenance | undefined {
+  return record.provenance?.horizon_match as HorizonMatchProvenance | undefined;
+}
+
+export function hasHorizonMismatch(record: ExternalPredictionRecord): boolean {
+  const match = horizonMatch(record);
+  if (!match) return false;
+  return match.soft_mismatch === true || match.in_window === false;
+}
+
+/** Use article target horizon on chart when tab horizon differs (soft mismatch). */
+export function effectiveChartHorizonDays(
+  record: ExternalPredictionRecord,
+  tabHorizonDays: number,
+): number {
+  if (!hasHorizonMismatch(record)) return tabHorizonDays;
+  const ahead = horizonMatch(record)?.target_days_ahead;
+  if (typeof ahead === "number" && ahead > 0) return Math.max(1, Math.round(ahead));
+  return tabHorizonDays;
+}
+
 export function filterVisiblePredictions(
   predictions: ExternalPredictionRecord[] | undefined,
 ): ExternalPredictionRecord[] {
@@ -36,14 +64,16 @@ export function recordToLiveForecast(record: ExternalPredictionRecord): LiveFore
 }
 
 export function formatHorizonMatch(record: ExternalPredictionRecord): string | null {
-  const match = record.provenance?.horizon_match as
-    | { selected_days?: number; target_days_ahead?: number | null; in_window?: boolean | null }
-    | undefined;
+  const match = horizonMatch(record);
   if (!match) return null;
   const selected = match.selected_days ?? record.horizon_days;
   const ahead = match.target_days_ahead;
-  if (ahead == null) return `Selected ${selected}d horizon`;
-  return `Selected ${selected}d · Target ~${ahead}d ahead`;
+  const base =
+    ahead == null ? `Selected ${selected}d horizon` : `Selected ${selected}d · Target ~${ahead}d ahead`;
+  if (hasHorizonMismatch(record)) {
+    return `${base} · Horizon mismatch (chart uses article target date)`;
+  }
+  return base;
 }
 
 export function computeStreetSummary(
