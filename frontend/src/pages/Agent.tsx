@@ -2424,6 +2424,11 @@ export function Agent({
     </div>
     <ContextDrawer
       sessionId={sessionId}
+      agentId={
+        isEmbeddedAutonomousView
+          ? (autonomousAgentId ?? urlAgentId ?? undefined)
+          : undefined
+      }
       ticker={newsScenarioMode ? null : researchTicker}
       assetType={researchAssetType}
       planArtifact={newsScenarioMode ? null : planArtifact}
