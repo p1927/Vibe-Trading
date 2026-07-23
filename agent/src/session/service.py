@@ -163,12 +163,38 @@ class SessionService:
         *,
         include_shell_tools: bool = False,
     ) -> None:
-        research_context = await asyncio.to_thread(
-            self._prefetch_research_for_message,
-            session.session_id,
-            content,
-            dict(session.config),
-        )
+        attempt.mark_running()
+        self.store.update_attempt(attempt)
+        self.event_bus.emit(session.session_id, "attempt.started", {"attempt_id": attempt.attempt_id})
+
+        prefetch_timeout = 120.0
+        try:
+            import os
+
+            prefetch_timeout = float(os.getenv("VIBE_ATTEMPT_PREFETCH_TIMEOUT_S", "120"))
+        except ValueError:
+            pass
+
+        try:
+            research_context = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._prefetch_research_for_message,
+                    session.session_id,
+                    content,
+                    dict(session.config),
+                ),
+                timeout=max(5.0, prefetch_timeout),
+            )
+        except asyncio.TimeoutError:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Research prefetch timed out after %.0fs for session %s attempt %s",
+                prefetch_timeout,
+                session.session_id,
+                attempt.attempt_id,
+            )
+            research_context = ""
         await self._run_attempt(
             session,
             attempt,
@@ -186,6 +212,10 @@ class SessionService:
 
         if is_orchestrator_session(session_config):
             return ""
+        from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
+        from src.trade.session_context import is_autonomous_agent_session
+
+        cfg = dict(session_config or {})
         blocks: list[str] = []
         try:
             from src.trade.hub_bridge import prefetch_autonomous_context, prefetch_research_for_message
@@ -193,6 +223,10 @@ class SessionService:
             agent_ctx = prefetch_autonomous_context(session_id, content, session_config)
             if agent_ctx.strip():
                 blocks.append(agent_ctx.strip())
+
+            if is_autonomous_agent_session(cfg) and is_autonomous_scheduler_turn(content):
+                return "\n\n".join(blocks)
+
             research_ctx = prefetch_research_for_message(
                 session_id,
                 content,
@@ -205,7 +239,7 @@ class SessionService:
             import logging
 
             logging.getLogger(__name__).exception("Research prefetch hook failed")
-            return ""
+            return "\n\n".join(blocks)
         return "\n\n".join(blocks)
 
     def _emit_provenance_if_needed(

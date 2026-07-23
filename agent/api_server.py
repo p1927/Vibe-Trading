@@ -198,7 +198,23 @@ async def _app_lifespan(app: FastAPI):
                 svc.event_bus.set_loop(loop)
             recovered = recover_stale_running_attempts(svc.store)
             if recovered:
-                logger.info("Recovered %d stale running session attempts", len(recovered))
+                logger.info("Recovered %d stale session attempts", len(recovered))
+            try:
+                from src.scheduled_research.autonomous_bootstrap import (
+                    resume_stale_pending_bootstraps,
+                    resume_stale_running_bootstraps,
+                )
+
+                pending_n = resume_stale_pending_bootstraps(max_age_s=30)
+                running_n = resume_stale_running_bootstraps(max_age_s=60)
+                if pending_n or running_n:
+                    logger.info(
+                        "Re-scheduled autonomous bootstrap (pending=%d running=%d)",
+                        pending_n,
+                        running_n,
+                    )
+            except Exception:
+                logger.debug("autonomous bootstrap recovery skipped", exc_info=True)
     except Exception:
         logger.exception("Session recovery failed")
 
