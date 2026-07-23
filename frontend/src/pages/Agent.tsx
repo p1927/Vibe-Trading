@@ -281,6 +281,29 @@ function goalContinuePrompt(snapshot: GoalSnapshot): string {
   ].join("\n");
 }
 
+function widgetApprovalState(
+  widget: TradePlanWidget,
+  agent: AutonomousAgentInstance | null | undefined,
+): "pending" | "approved" | "informational" {
+  if (!agent) return "informational";
+  if (widget.meta?.revision_source === "watcher" || agent.plan_revision_source === "watcher") {
+    return "informational";
+  }
+  const awaiting =
+    agent.bootstrap_status === "awaiting_plan_approval" || Boolean(agent.plan_approval_required);
+  const activeId = agent.active_trade_plan_widget_id;
+  if (awaiting && activeId && widget.widget_id === activeId) {
+    return "pending";
+  }
+  if (agent.approved_trade_plan_widget_id && widget.widget_id === agent.approved_trade_plan_widget_id) {
+    return "approved";
+  }
+  if (awaiting) {
+    return "pending";
+  }
+  return "informational";
+}
+
 /* ---------- Component ---------- */
 interface AgentProps {
   embedded?: boolean;
@@ -289,6 +312,7 @@ interface AgentProps {
   autonomousAgent?: AutonomousAgentInstance | null;
   autonomousAgentId?: string | null;
   autonomousAgentLoadState?: "idle" | "loading" | "ready" | "error";
+  onAutonomousAgentRefresh?: () => void;
   newsScenarioMode?: boolean;
   onNewsScenarioWidget?: (widget: TradePlanWidget) => void;
   boundPipelineAsOf?: string;
@@ -302,6 +326,7 @@ export function Agent({
   autonomousAgent,
   autonomousAgentId,
   autonomousAgentLoadState = "idle",
+  onAutonomousAgentRefresh,
   newsScenarioMode = false,
   onNewsScenarioWidget,
   boundPipelineAsOf: _boundPipelineAsOf,
@@ -391,12 +416,59 @@ export function Agent({
   const { connect, disconnect, onStatusChange } = useSSE();
 
   const urlSessionId = searchParams.get("session");
-  const autoPaperMode = searchParams.get("auto_paper");
   const urlAgentId = searchParams.get("agent");
   const isOrchestratorView = urlAgentId === "orchestrator";
   const isDraftCreateView = isOrchestratorView || autonomousAgent?.status === "draft";
   const isEmbeddedAutonomousView = Boolean(_embedded && urlAgentId && urlAgentId !== "orchestrator" && autonomousAgent?.status !== "draft");
-  const autoPaperBootstrappedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isEmbeddedAutonomousView || !autonomousAgent) return;
+    const wid = autonomousAgent.active_trade_plan_widget_id;
+    const awaiting =
+      autonomousAgent.bootstrap_status === "awaiting_plan_approval" ||
+      Boolean(autonomousAgent.plan_approval_required);
+    if (!wid || !awaiting) return;
+    let cancelled = false;
+    void api
+      .getTradeWidget(wid)
+      .then((widget) => {
+        if (cancelled || !widget?.widget_id) return;
+        setLiveItems((items) => {
+          if (
+            items.some(
+              (item) =>
+                item.kind === "trade_plan_widget" &&
+                item.widget.widget_id === widget.widget_id,
+            )
+          ) {
+            return items;
+          }
+          return [
+            ...items.filter(
+              (item) =>
+                !(
+                  item.kind === "trade_plan_widget" &&
+                  item.widget.underlying === widget.underlying
+                ),
+            ),
+            {
+              kind: "trade_plan_widget",
+              timestamp: Date.now(),
+              widget: { ...widget, meta: { ...widget.meta, superseded: false } },
+            },
+          ];
+        });
+      })
+      .catch(() => null);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isEmbeddedAutonomousView,
+    autonomousAgent?.active_trade_plan_widget_id,
+    autonomousAgent?.bootstrap_status,
+    autonomousAgent?.plan_approval_required,
+  ]);
 
   useEffect(() => {
     if (urlAgentId && urlAgentId !== "orchestrator") {
@@ -977,7 +1049,18 @@ export function Agent({
               {
                 kind: "trade_plan_widget",
                 timestamp: Date.now(),
-                widget: { ...widget, meta: { ...widget.meta, superseded: false } },
+                widget: {
+                  ...widget,
+                  meta: {
+                    ...widget.meta,
+                    superseded: false,
+                    revision_source:
+                      widget.meta?.revision_source ||
+                      (autonomousAgent?.plan_revision_source === "watcher"
+                        ? "watcher"
+                        : undefined),
+                  },
+                },
               },
             ];
           }
@@ -1171,38 +1254,6 @@ export function Agent({
       reset();
     }
   }, [urlSessionId, urlAgentId, doDisconnect, loadSessionMessages, setupSSE, forceScrollToBottom]);
-
-  useEffect(() => {
-    if (!autoPaperMode || autoPaperBootstrappedRef.current) return;
-    autoPaperBootstrappedRef.current = true;
-
-    const run = async () => {
-      try {
-        const result =
-          autoPaperMode === "resume"
-            ? await api.resumeAutoPaper({ dispatch: true, fresh_session: true })
-            : await api.bootstrapAutoPaper({
-                ticker: "NIFTY",
-                dispatch: true,
-                fresh_session: autoPaperMode === "fresh",
-              });
-        const sid = result.vibe_session_id;
-        if (!sid) {
-          toast.error(t("agent.failedToSend"));
-          return;
-        }
-        setSearchParams({ session: sid }, { replace: true });
-        toast.success(
-          autoPaperMode === "resume"
-            ? "Paper session resumed — agent turn started"
-            : "Paper session started in chat",
-        );
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : t("agent.failedToSend"));
-      }
-    };
-    void run();
-  }, [autoPaperMode, setSearchParams, t]);
 
   /* Single shared poller for `GET /live/status`. RunnerStatus consumes this snapshot
    * as a prop rather than polling independently, and the global kill switch reads it
@@ -1761,15 +1812,15 @@ export function Agent({
                 );
               }
               if (row.item.kind === "trade_plan_widget") {
+                const approvalState = widgetApprovalState(row.item.widget, autonomousAgent);
                 return (
                   <TradePlanWidgetCard
                     key={row.key}
                     widget={row.item.widget}
-                    autonomousMode={Boolean(_embedded && urlAgentId && urlAgentId !== "orchestrator")}
-                    planApproved={
-                      Boolean(autonomousAgent?.plan_approved_at) ||
-                      autonomousAgent?.bootstrap_status === "done"
-                    }
+                    autonomousMode={isEmbeddedAutonomousView}
+                    approvalState={approvalState}
+                    agentId={autonomousAgentId ?? urlAgentId ?? undefined}
+                    onPlanApprovalChange={onAutonomousAgentRefresh}
                   />
                 );
               }

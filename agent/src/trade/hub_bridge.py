@@ -213,6 +213,10 @@ def _emit(event_bus: EventBus | None, session_id: str, event_type: str, data: di
     try:
         event_bus.emit(session_id, event_type, data)
         _emit_provenance(event_bus, session_id, event_type, data)
+        if event_type == "trade_plan.widget" and isinstance(data, dict):
+            from src.trade.plan_widget_hook import notify_trade_plan_widget
+
+            notify_trade_plan_widget(session_id, data)
     except Exception:
         logger.exception("Failed to emit %s for session %s", event_type, session_id)
 

@@ -144,6 +144,8 @@ export function Autonomous() {
     Boolean(agent?.streaming) ||
     agent?.bootstrap_status === "pending" ||
     agent?.bootstrap_status === "running" ||
+    agent?.bootstrap_status === "awaiting_plan_approval" ||
+    Boolean(agent?.plan_approval_required) ||
     agent?.runtime?.bootstrap_status === "pending" ||
     agent?.runtime?.bootstrap_status === "running" ||
     agent?.runtime?.scheduler_health === "initializing";
@@ -220,7 +222,7 @@ export function Autonomous() {
           {agent && !isDraftView && <AgentRuntimeStrip agent={agent} />}
         </header>
         {agent && !isDraftView && (
-          <PlanApprovalBanner agent={agent} onApproved={() => void loadAgent()} />
+          <PlanApprovalBanner agent={agent} />
         )}
         <div className="min-h-0 flex-1">
           <Suspense
@@ -237,6 +239,7 @@ export function Autonomous() {
               autonomousAgent={agent}
               autonomousAgentId={agentId}
               autonomousAgentLoadState={agentLoadState}
+              onAutonomousAgentRefresh={() => void loadAgent()}
             />
           </Suspense>
         </div>

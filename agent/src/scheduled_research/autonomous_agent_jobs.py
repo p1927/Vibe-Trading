@@ -110,7 +110,7 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
     watch_next_run = now_ms + int(watch_ms)
     research_next_run = (
         now_ms + int(research_ms)
-        if bootstrap in {"pending", "running"}
+        if bootstrap in {"pending", "running", "awaiting_plan_approval"}
         else now_ms + 60_000
     )
 
@@ -150,24 +150,6 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
             )
         )
     logger.info("registered autonomous jobs for %s", agent_id)
-
-
-def schedule_first_research_after_bootstrap(agent_id: str, *, delay_ms: int = 30_000) -> None:
-    """Queue the first scheduled research turn shortly after bootstrap completes."""
-    if not is_autonomous_scheduler_enabled():
-        return
-    from src.scheduled_research.store import ScheduledResearchJobStore
-
-    store = ScheduledResearchJobStore()
-    research_id = f"{agent_id}-research"
-    job = store.get(research_id)
-    if job is None:
-        return
-    now_ms = int(time.time() * 1000)
-    target = now_ms + int(delay_ms)
-    if job.next_run_at is None or job.next_run_at < target:
-        job.next_run_at = target
-        store.upsert(job)
 
 
 def unregister_agent_jobs(agent_id: str) -> dict[str, bool]:

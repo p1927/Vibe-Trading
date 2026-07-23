@@ -118,6 +118,12 @@ def maybe_inject_widget(
         persist_trade_widget(widget)
         if event_bus is not None and session_id:
             event_bus.emit(session_id, "trade_plan.widget", widget)
+            try:
+                from src.trade.plan_widget_hook import notify_trade_plan_widget
+
+                notify_trade_plan_widget(session_id, widget)
+            except Exception:
+                pass
         logger.info("Widget guard injected trade_plan.widget for %s session=%s", ticker, session_id)
         return True
     except Exception:
