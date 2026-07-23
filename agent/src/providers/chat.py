@@ -6,6 +6,7 @@ ChatLLM is designed specifically for the AgentLoop ReAct cycle.
 from __future__ import annotations
 
 import html
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -20,6 +21,8 @@ from src.providers.minimax_content import (
     split_minimax_think_blocks,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _dedupe_finish_reason(raw: str) -> str:
     """Relays (OpenRouter) emit finish_reason per chunk; AIMessageChunk.__add__
@@ -31,6 +34,24 @@ def _dedupe_finish_reason(raw: str) -> str:
          if raw.endswith(m)),
         raw,
     )
+
+
+def _text_content(content: Any) -> str:
+    """Normalize provider text or content blocks to plain assistant text."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and isinstance(block.get("text"), str):
+            parts.append(block["text"])
+        elif isinstance(getattr(block, "text", None), str):
+            parts.append(block.text)
+    return "".join(parts)
 
 
 @dataclass
@@ -101,9 +122,20 @@ class ProviderStreamError(RuntimeError):
         self.original = original
         self.status_code: Optional[int] = getattr(original, "status_code", None)
         safe_message = _redact_provider_error(str(original))
+        hint = ""
+        lowered = safe_message.lower()
+        if any(m in lowered for m in ("<!doctype html", "<html", "__next_error__")):
+            # An HTML body from a JSON API almost always means the base URL
+            # points at a website root, not the API root (a frequent .env
+            # misconfiguration for OpenAI-compatible coding-plan gateways).
+            hint = (
+                " — the endpoint returned an HTML page instead of a JSON API "
+                f"response; verify the {provider} base URL points at the API "
+                "root (e.g. the OpenAI-compatible '/v1' path), not the site root"
+            )
         super().__init__(
             f"provider_stream_error provider={provider} model={model}: "
-            f"{type(original).__name__}: {safe_message}"
+            f"{type(original).__name__}: {safe_message}{hint}"
         )
 
     @property
@@ -132,6 +164,18 @@ def _redact_provider_error(message: str) -> str:
         if any(marker in key.upper() for marker in sensitive_markers):
             redacted = redacted.replace(value, "[redacted]")
     return redacted
+
+
+def _is_no_stream_chunk_error(exc: Exception) -> bool:
+    """True when a provider accepted the request but streamed zero chunks.
+
+    LangChain raises ``ValueError("No generation chunks were returned")`` when
+    an OpenAI-compatible endpoint returns a non-streaming (or empty-SSE) body.
+    That's a streaming-capability gap, not a provider failure — a plain
+    non-streaming ``invoke`` still succeeds, so ``stream_chat`` falls back
+    instead of surfacing it as a hard ``ProviderStreamError``.
+    """
+    return isinstance(exc, ValueError) and "no generation chunks" in str(exc).lower()
 
 
 _DSML_BAR = r"(?:\|\||｜｜)"
@@ -220,7 +264,7 @@ def _parse_dsml_tool_calls(content: Any) -> list[ToolCallRequest]:
 class ChatLLM:
     """LLM chat client with function calling support.
 
-    Uses build_llm() to obtain a ChatOpenAI instance and bind_tools() to attach tool definitions.
+    Uses build_llm() to obtain a provider model and bind_tools() to attach tool definitions.
 
     Attributes:
         model_name: Model name.
@@ -287,11 +331,14 @@ class ChatLLM:
             possible_dsml_text = True
             provider = get_env_config().llm.langchain_provider.strip().lower()
             think_filter = ThinkBlockStreamFilter() if provider == "minimax" else None
+            cancelled = False
             for chunk in llm.stream(messages, config=config):
                 if should_cancel and should_cancel():
+                    cancelled = True
                     break
-                if chunk.content and on_text_chunk:
-                    text_delta = chunk.content
+                chunk_text = _text_content(chunk.content)
+                if chunk_text and on_text_chunk:
+                    text_delta = chunk_text
                     if think_filter is not None:
                         visible, reasoning = think_filter.feed(text_delta)
                         if reasoning and on_reasoning_chunk:
@@ -314,7 +361,15 @@ class ChatLLM:
                     on_reasoning_chunk(reasoning)
                 accumulated = chunk if accumulated is None else accumulated + chunk
             if accumulated is None:
-                return LLMResponse(content="", tool_calls=[], finish_reason="stop")
+                if cancelled:
+                    return LLMResponse(content="", tool_calls=[], finish_reason="stop")
+                # Endpoint streamed nothing (no SSE support); a non-streaming
+                # invoke still works — fall back rather than return empty.
+                logger.warning(
+                    "Provider stream returned no chunks; falling back to "
+                    "non-streaming invoke."
+                )
+                return self.chat(messages, tools=tools, timeout=timeout)
             response = self._parse_response(accumulated)
             if think_filter is not None:
                 trailing_text, trailing_reasoning = think_filter.flush()
@@ -326,6 +381,15 @@ class ChatLLM:
                 on_text_chunk(pending_text)
             return response
         except Exception as exc:
+            if _is_no_stream_chunk_error(exc):
+                # Provider streamed zero chunks (endpoint lacks real SSE); a
+                # non-streaming invoke still returns a valid response.
+                logger.warning(
+                    "Provider stream produced no chunks (%s); falling back to "
+                    "non-streaming invoke.",
+                    type(exc).__name__,
+                )
+                return self.chat(messages, tools=tools, timeout=timeout)
             _cfg = get_env_config()
             provider = _cfg.llm.langchain_provider.strip().lower() or "openai"
             model = self.model_name or _cfg.llm.langchain_model_name.strip() or "(unset)"
@@ -412,18 +476,26 @@ class ChatLLM:
                 )
             )
 
-        dsml_tool_calls = [] if native_tool_calls else _parse_dsml_tool_calls(ai_message.content)
+        content = _text_content(ai_message.content)
+        dsml_tool_calls = [] if native_tool_calls else _parse_dsml_tool_calls(content)
         tool_calls = native_tool_calls or dsml_tool_calls
 
+        raw_finish_reason = (
+            ai_message.response_metadata.get("finish_reason")
+            or ai_message.response_metadata.get("stop_reason")
+            or "stop"
+        )
         finish_reason = (
             "tool_calls"
             if dsml_tool_calls
+            else "tool_calls"
+            if raw_finish_reason == "tool_use"
             else _dedupe_finish_reason(
-                ai_message.response_metadata.get("finish_reason", "stop")
+                raw_finish_reason
             )
         )
         content_filter_triggered = is_content_filter_triggered(
-            ai_message.response_metadata.get("finish_reason")
+            raw_finish_reason
         )
 
         content = "" if dsml_tool_calls else ai_message.content

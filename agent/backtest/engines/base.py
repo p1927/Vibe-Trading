@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import math
 import re as _re
 import sys
 from abc import ABC, abstractmethod
@@ -38,6 +39,15 @@ from backtest.metrics import (
     calc_metrics,
     calc_trade_turnover_series,
 )
+
+
+def _json_safe_scalar_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    """Scalar metrics for stdout JSON; non-finite floats become null."""
+    return {
+        k: (None if isinstance(v, float) and not math.isfinite(v) else v)
+        for k, v in metrics.items()
+        if not isinstance(v, dict)
+    }
 from backtest.models import EquitySnapshot, Position, TradeRecord
 
 logger = logging.getLogger(__name__)
@@ -92,6 +102,31 @@ def _detect_market_for_align(code: str) -> str:
     return "equity"
 
 
+# ─── Forward-fill helpers (numpy, avoid pandas overhead) ───
+
+
+def _ffill_1d(col: np.ndarray, limit: int) -> None:
+    """In-place forward-fill a 1D array with limit."""
+    count = 0
+    last_valid = np.nan
+    for i in range(len(col)):
+        if np.isnan(col[i]):
+            count += 1
+            if count <= limit and not np.isnan(last_valid):
+                col[i] = last_valid
+        else:
+            last_valid = col[i]
+            count = 0
+
+
+def _ffill_2d(arr: np.ndarray, limit: int = 5) -> np.ndarray:
+    """Forward-fill NaN values column-wise with limit."""
+    out = arr.copy()
+    for col in range(out.shape[1]):
+        _ffill_1d(out[:, col], limit)
+    return out
+
+
 # ─── Signal alignment (reused from daily_portfolio logic) ───
 
 
@@ -115,37 +150,74 @@ def _align(
     Returns:
         (dates, close_df, positions_df, returns_df)
     """
-    all_dates: set = set()
-    for c in codes:
-        all_dates.update(data_map[c].index)
-    dates = pd.DatetimeIndex(sorted(all_dates))
+    # Build unified sorted date index from all symbols' trading calendars
+    all_idx_arrays = [data_map[c].index.values for c in codes]
+    merged = np.unique(np.concatenate(all_idx_arrays))
+    dates = pd.DatetimeIndex(merged)
 
-    close = pd.DataFrame(index=dates, columns=codes, dtype=float)
-    for c in codes:
-        close[c] = data_map[c]["close"].reindex(dates)
+    n_dates = len(dates)
+    n_codes = len(codes)
+
+    # Use int64 view for O(log n) searchsorted lookups
+    dates_i8 = dates.values.view("i8")
 
     # ffill with limit to avoid masking long suspensions (e.g. 3-week halt)
     # Cross-market needs larger limit (Chinese New Year can be 9-10 bars)
     ffill_limit = 10 if len({_detect_market_for_align(c) for c in codes}) > 1 else 5
-    close = close.ffill(limit=ffill_limit)
+
+    # Build close matrix via numpy direct fill + searchsorted index mapping
+    close_arr = np.full((n_dates, n_codes), np.nan)
+    for j, c in enumerate(codes):
+        series = data_map[c]["close"]
+        row_idx = np.searchsorted(dates_i8, series.index.values.view("i8"))
+        close_arr[row_idx, j] = series.values
+
+    # Vectorized ffill with limit using pandas (C-optimized internals)
+    _tmp = pd.DataFrame(close_arr)
+    close_arr = _tmp.ffill(limit=ffill_limit).values
 
     # Drop symbols that are entirely NaN (no data overlap with date range)
-    all_nan_cols = [c for c in codes if close[c].isna().all()]
+    all_nan_mask = np.all(np.isnan(close_arr), axis=0)
+    all_nan_cols = [codes[j] for j in range(n_codes) if all_nan_mask[j]]
     if all_nan_cols:
         logger.warning("Symbols dropped (no usable price data): %s", all_nan_cols)
-        codes = [c for c in codes if c not in all_nan_cols]
+        keep_mask = ~all_nan_mask
+        codes = [codes[j] for j in range(n_codes) if keep_mask[j]]
         if not codes:
             raise ValueError("All symbols have no data in the requested date range")
-        close = close[codes]
+        close_arr = close_arr[:, keep_mask]
+        n_codes = len(codes)
 
-    pos = pd.DataFrame(0.0, index=dates, columns=codes)
-    for c in codes:
-        # Shift on each symbol's OWN trading calendar, then ffill to unified
-        own_dates = data_map[c].index
-        raw = signal_map[c].reindex(own_dates).fillna(0.0).clip(-1.0, 1.0)
-        shifted = raw.shift(1).fillna(0.0)
-        pos[c] = shifted.reindex(dates).ffill(limit=ffill_limit).fillna(0.0)
+    # Build position matrix: shift on each symbol's OWN calendar, then fill
+    pos_arr = np.full((n_dates, n_codes), np.nan)
+    for j, c in enumerate(codes):
+        # Get signal values aligned to own trading calendar.
+        # copy=True guarantees a writable array: with copy=False, an already
+        # float64 source returns a read-only view (e.g. pandas copy-on-write),
+        # which the in-place nan_to_num/clip below would reject.
+        own_idx = data_map[c].index
+        sig_vals = signal_map[c].reindex(own_idx).values.astype(np.float64, copy=True)
+        # fillna(0) + clip in numpy
+        np.nan_to_num(sig_vals, copy=False, nan=0.0)
+        np.clip(sig_vals, -1.0, 1.0, out=sig_vals)
+        # shift(1) + fillna(0): prepend 0, drop last
+        shifted_vals = np.empty_like(sig_vals)
+        shifted_vals[0] = 0.0
+        shifted_vals[1:] = sig_vals[:-1]
+        # Place into unified grid via searchsorted
+        row_idx = np.searchsorted(dates_i8, own_idx.values.view("i8"))
+        pos_arr[row_idx, j] = shifted_vals
 
+    # Vectorized ffill with limit using pandas (C-optimized)
+    _tmp = pd.DataFrame(pos_arr)
+    # ``.values`` may be a read-only view under pandas copy-on-write; take the
+    # copy-returning nan_to_num (not in-place) so the fill never writes a
+    # read-only destination.
+    pos_arr = np.nan_to_num(_tmp.ffill(limit=ffill_limit).values, nan=0.0)
+
+    # Construct DataFrames for return
+    close = pd.DataFrame(close_arr, index=dates, columns=codes)
+    pos = pd.DataFrame(pos_arr, index=dates, columns=codes)
     ret = close.pct_change().fillna(0.0)
 
     if optimizer is not None:
@@ -376,6 +448,11 @@ class BaseEngine(ABC):
         """Convert target notional exposure to number of units/contracts."""
         return target_notional / price
 
+    def _leverage_for_symbol(self, symbol: str) -> float:
+        """Return leverage used to size and margin one symbol."""
+        del symbol
+        return self.default_leverage
+
     # ── Main entry ──
 
     def run_backtest(
@@ -463,13 +540,18 @@ class BaseEngine(ABC):
         bench_ticker = config.get("benchmark")
         if bench_ticker and bench_ticker != "auto":
             from backtest.benchmark import resolve_benchmark
+            bench_source = config.get("source", "yfinance")
             bench_result = resolve_benchmark(
                 strategy_codes=codes,
-                source=config.get("source", "yfinance"),
+                source=bench_source,
                 start_date=config.get("start_date", ""),
                 end_date=config.get("end_date", ""),
                 interval=interval,
                 explicit=bench_ticker,
+                # Explicit source: fetch the benchmark through its own loader
+                # (keeps e.g. source=local offline). Auto keeps the yfinance
+                # default — its loader only wraps the preloaded strategy data.
+                loader=loader if bench_source != "auto" else None,
             )
             if bench_result is not None:
                 bench_ret = bench_result.ret_series.reindex(dates).fillna(0.0)
@@ -495,6 +577,22 @@ class BaseEngine(ABC):
         m.update(benchmark_metadata)
         m["by_symbol"] = by_symbol_stats(self.trades)
         m["by_exit_reason"] = by_exit_reason_stats(self.trades)
+
+        # Portfolio Studio: per-rebalance weight-drift notes from the target
+        # positions. Optimizer-agnostic, so they land for the baseline too.
+        from backtest.rebalance_notes import (
+            compute_rebalance_notes,
+            render_rebalance_notes_markdown,
+            write_rebalance_notes,
+        )
+        rebalance_notes = compute_rebalance_notes(target_pos)
+        write_rebalance_notes(run_dir / "artifacts" / "rebalance_notes.json", rebalance_notes)
+        (run_dir / "artifacts" / "rebalance_notes.md").write_text(
+            render_rebalance_notes_markdown(rebalance_notes), encoding="utf-8"
+        )
+        m["rebalance_count"] = rebalance_notes["summary"]["rebalance_count"]
+        m["rebalance_turnover_mean"] = rebalance_notes["summary"]["turnover_mean"]
+        m["rebalance_turnover_max"] = rebalance_notes["summary"]["turnover_max"]
 
         # 7. Validation (optional — triggered by config["validation"])
         if config.get("validation"):
@@ -527,8 +625,10 @@ class BaseEngine(ABC):
             warnings=config.get("content_filter_warnings") or None,
         )
 
-        # Print scalar metrics (skip nested dicts for JSON compat)
-        print(json.dumps({k: v for k, v in m.items() if not isinstance(v, dict)}, indent=2))
+        # Print scalar metrics (skip nested dicts for JSON compat).
+        # Explosive annual_return may be +inf; match options/run_card and emit
+        # null instead of a bare Infinity token (invalid RFC-8259 JSON).
+        print(json.dumps(_json_safe_scalar_metrics(m), indent=2, allow_nan=False))
         return m
 
     # ── Execution loop ──
@@ -542,6 +642,16 @@ class BaseEngine(ABC):
         codes: List[str],
     ) -> None:
         """Bar-by-bar execution with market rule enforcement."""
+        # Pre-extract numpy arrays for O(1) indexed access instead of DataFrame.at[]
+        # Explicit column reindex ensures array column order matches codes parameter,
+        # regardless of DataFrame internal column ordering (which may be alphabetical).
+        _target_arr = target_pos[codes].values  # (n_dates, n_codes) ndarray
+        _close_arr = close_df[codes].values  # (n_dates, n_codes) ndarray
+        _code_to_col = {c: j for j, c in enumerate(codes)}
+        # Store as instance attrs for use in _calc_equity / _safe_price
+        self._close_arr = _close_arr
+        self._code_to_col = _code_to_col
+
         for i, ts in enumerate(dates):
             self._bar_idx = i
 
@@ -552,9 +662,8 @@ class BaseEngine(ABC):
             target_weights: Dict[str, Optional[float]] = {}
             for c in codes:
                 try:
-                    target_weights[c] = (
-                        float(target_pos.at[ts, c]) if ts in target_pos.index else 0.0
-                    )
+                    val = _target_arr[i, _code_to_col[c]]
+                    target_weights[c] = float(val) if not np.isnan(val) else 0.0
                 except Exception as exc:
                     target_weights[c] = None
                     logger.warning("Target weight failed for %s at %s: %s", c, ts, exc)
@@ -643,14 +752,21 @@ class BaseEngine(ABC):
                 _eps = np.array([p.entry_price for p in self.positions.values()])
                 _dirs = np.array([p.direction for p in self.positions.values()])
                 _sizes = np.array([p.size for p in self.positions.values()])
-                _cps = np.array(
-                    [self._safe_price(close_df, ts, s, ep) for s, ep in zip(_syms, _eps)]
-                )
+                _cps = np.array([
+                    self._safe_price(
+                        close_df, ts, s, ep,
+                        _arr=_close_arr, _row=i, _col=_code_to_col.get(s),
+                    )
+                    for s, ep in zip(_syms, _eps)
+                ])
                 total_unrealized = float(np.sum(_dirs * _sizes * (_cps - _eps)))
             else:
                 total_unrealized = 0.0
                 for p in self.positions.values():
-                    cp = self._safe_price(close_df, ts, p.symbol, p.entry_price)
+                    cp = self._safe_price(
+                        close_df, ts, p.symbol, p.entry_price,
+                        _arr=_close_arr, _row=i, _col=_code_to_col.get(p.symbol),
+                    )
                     total_unrealized += self._calc_pnl(p.symbol, p.direction, p.size, p.entry_price, cp)
             self.equity_snapshots.append(EquitySnapshot(
                 timestamp=ts,
@@ -663,9 +779,13 @@ class BaseEngine(ABC):
         # f. Force close all remaining positions
         if len(dates) > 0:
             last_ts = dates[-1]
+            _last_row = len(dates) - 1
             for c in list(self.positions.keys()):
                 pos = self.positions[c]
-                mark_price = self._safe_price(close_df, last_ts, c, pos.entry_price)
+                mark_price = self._safe_price(
+                    close_df, last_ts, c, pos.entry_price,
+                    _arr=_close_arr, _row=_last_row, _col=_code_to_col.get(c),
+                )
                 self._active_symbol = c
                 exit_price = self.apply_slippage(mark_price, -pos.direction)
                 self._close_position(c, exit_price, last_ts, "end_of_backtest")
@@ -681,6 +801,10 @@ class BaseEngine(ABC):
                     equity=self.capital,
                     positions=0,
                 )
+
+        # Clean up temporary instance attributes
+        self._close_arr = None
+        self._code_to_col = None
 
     def _calc_open_equity(
         self,
@@ -700,7 +824,13 @@ class BaseEngine(ABC):
 
         equity = self.capital
         for sym, pos in self.positions.items():
-            current_price = self._safe_price(close_df, ts, sym, pos.entry_price)
+            _arr = getattr(self, "_close_arr", None)
+            _row = getattr(self, "_bar_idx", None)
+            _c2c = getattr(self, "_code_to_col", None)
+            current_price = self._safe_price(
+                close_df, ts, sym, pos.entry_price,
+                _arr=_arr, _row=_row, _col=(_c2c.get(sym) if _c2c else None),
+            )
             frame = data_map.get(sym)
             if frame is not None and ts in frame.index:
                 open_price = frame.loc[ts].get("open")
@@ -730,6 +860,11 @@ class BaseEngine(ABC):
         _base_pnl = type(self)._calc_pnl is BaseEngine._calc_pnl
         _base_margin = type(self)._calc_margin is BaseEngine._calc_margin
 
+        # Use array fast-path when available
+        _arr = getattr(self, "_close_arr", None)
+        _row = getattr(self, "_bar_idx", None)
+        _c2c = getattr(self, "_code_to_col", None)
+
         if _base_pnl and _base_margin:
             syms = list(self.positions.keys())
             sizes = np.array([p.size for p in self.positions.values()])
@@ -737,9 +872,13 @@ class BaseEngine(ABC):
             directions = np.array([p.direction for p in self.positions.values()])
             leverages = np.array([p.leverage for p in self.positions.values()])
 
-            current_prices = np.array(
-                [self._safe_price(close_df, ts, s, ep) for s, ep in zip(syms, entry_prices)]
-            )
+            current_prices = np.array([
+                self._safe_price(
+                    close_df, ts, s, ep,
+                    _arr=_arr, _row=_row, _col=(_c2c.get(s) if _c2c else None),
+                )
+                for s, ep in zip(syms, entry_prices)
+            ])
 
             margins = sizes * entry_prices / leverages
             pnls = directions * sizes * (current_prices - entry_prices)
@@ -747,7 +886,10 @@ class BaseEngine(ABC):
 
         equity = self.capital
         for sym, pos in self.positions.items():
-            cp = self._safe_price(close_df, ts, sym, pos.entry_price)
+            cp = self._safe_price(
+                close_df, ts, sym, pos.entry_price,
+                _arr=_arr, _row=_row, _col=(_c2c.get(sym) if _c2c else None),
+            )
             margin = self._calc_margin(sym, pos.size, pos.entry_price, pos.leverage)
             unrealized = self._calc_pnl(sym, pos.direction, pos.size, pos.entry_price, cp)
             equity += margin + unrealized
@@ -810,7 +952,7 @@ class BaseEngine(ABC):
         if open_price <= 0:
             return None
         price = self.apply_slippage(open_price, direction)
-        leverage = self.default_leverage
+        leverage = self._leverage_for_symbol(symbol)
         target_notional = abs(target_weight) * equity * leverage
         size = self.round_size(
             self._calc_raw_size(symbol, target_notional, price), price
@@ -977,8 +1119,17 @@ class BaseEngine(ABC):
         ts: pd.Timestamp,
         symbol: str,
         fallback: float,
+        *,
+        _arr: "np.ndarray | None" = None,
+        _row: "int | None" = None,
+        _col: "int | None" = None,
     ) -> float:
-        """Get close price with fallback."""
+        """Get close price with fallback. Uses array fast-path when available."""
+        # Fast path: pre-computed array indexing (O(1) vs DataFrame.at hash lookup)
+        if _arr is not None and _row is not None and _col is not None:
+            val = _arr[_row, _col]
+            return float(val) if not np.isnan(val) else fallback
+        # Original path (backward compatible for subclasses)
         if ts in close_df.index and symbol in close_df.columns:
             val = close_df.at[ts, symbol]
             if pd.notna(val):

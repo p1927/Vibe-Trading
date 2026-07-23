@@ -35,6 +35,7 @@ class LLMProviderOption(BaseModel):
     base_url_env: str
     default_model: str
     default_base_url: str
+    base_url_options: List[str] = Field(default_factory=list)
     api_key_required: bool = True
     auth_type: str = "api_key"
     login_command: Optional[str] = None

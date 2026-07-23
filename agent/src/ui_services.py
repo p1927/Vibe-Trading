@@ -166,9 +166,11 @@ def infer_indicator_periods(run_dir: Path) -> List[int]:
     for key, value in signal_params.items():
         if "ma" in str(key).lower():
             try:
-                periods.add(int(value))
+                period = int(value)
             except (TypeError, ValueError):
                 continue
+            if period > 0:
+                periods.add(period)
 
     design = load_json_file(run_dir / "design_spec.json") or {}
     defaults = design.get("defaults_and_tunables") or {}
@@ -176,9 +178,11 @@ def infer_indicator_periods(run_dir: Path) -> List[int]:
     for key, value in assumptions.items():
         if "ma" in str(key).lower():
             try:
-                periods.add(int(value))
+                period = int(value)
             except (TypeError, ValueError):
                 continue
+            if period > 0:
+                periods.add(period)
 
     if not periods:
         return list(DEFAULT_ANALYSIS_PERIODS)
@@ -331,6 +335,8 @@ def build_indicator_series(
         closes = [float(row["close"]) for row in ordered_rows]
         code_series: Dict[str, List[Dict[str, Any]]] = {}
         for period in indicator_periods:
+            if period <= 0:
+                continue
             label = f"ma{period}"
             values: List[Dict[str, Any]] = []
             for index, row in enumerate(ordered_rows):

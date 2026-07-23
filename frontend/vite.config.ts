@@ -4,6 +4,7 @@ import { nodePolyfills } from "vite-plugin-node-polyfills";
 import path from "path";
 
 const PROXY_PATHS = [
+  "/auth",
   "/sessions",
   "/swarm/presets",
   "/swarm/runs",

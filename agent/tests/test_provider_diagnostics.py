@@ -78,6 +78,19 @@ def test_requesty_capabilities_mirror_openrouter() -> None:
     assert requesty.send_reasoning_content is False
 
 
+def test_spark_capabilities_use_generic_openai_path() -> None:
+    """iFlytek Spark rides the plain OpenAI-compatible path; iflytek is an alias."""
+    spark = get_provider_capabilities("spark", "4.0Ultra")
+
+    assert spark.name == "spark"
+    assert spark.api_key_env == "SPARK_API_KEY"
+    assert spark.base_url_env == "SPARK_BASE_URL"
+    assert spark.capture_reasoning is False
+    assert spark.send_reasoning_content is False
+    assert spark.openrouter_reasoning_body is False
+    assert get_provider_capabilities("iflytek", "4.0Ultra") is spark
+
+
 def test_reasoning_effort_extra_body_is_openrouter_only() -> None:
     """LANGCHAIN_REASONING_EFFORT should not leak into official DeepSeek payloads."""
     import src.providers.llm as llm_mod
