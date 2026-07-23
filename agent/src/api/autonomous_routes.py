@@ -40,17 +40,36 @@ class OrchestratorSessionResponse(BaseModel):
     title: str
 
 
+class DraftAgentResponse(BaseModel):
+    agent_id: str
+    session_id: str
+    agent: Dict[str, Any]
+
+
 @autonomous_router.get("")
 def list_autonomous_agents() -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.infra_startup import maybe_heal_infra_paused_agents
     from trade_integrations.autonomous_agents.runtime_status import build_stack_health, enrich_agent
-    from trade_integrations.autonomous_agents.store import list_agents
+    from trade_integrations.autonomous_agents.store import backfill_orphan_orchestrator_session, list_agents
+
+    svc = _session_service()
+    if svc is not None:
+        try:
+            backfill_orphan_orchestrator_session(session_service=svc)
+        except Exception:
+            logger.debug("orchestrator backfill failed", exc_info=True)
 
     try:
         from src.scheduled_research.autonomous_agent_jobs import finalize_infra_heal
-        from src.scheduled_research.autonomous_bootstrap import resume_stale_pending_bootstraps
+        from src.scheduled_research.autonomous_bootstrap import (
+            resume_stale_pending_bootstraps,
+            resume_stale_running_bootstraps,
+        )
+        from trade_integrations.autonomous_agents.recovery import run_autonomous_agent_recovery
 
         resume_stale_pending_bootstraps()
+        resume_stale_running_bootstraps()
+        run_autonomous_agent_recovery()
 
         before = {
             str(a.get("id") or ""): str(a.get("status") or "")
@@ -92,7 +111,8 @@ def clear_all_agents_route(
         agent_id = str(agent.get("id") or "").strip()
         if agent_id:
             unregister_agent_jobs(agent_id)
-    return clear_all_autonomous_agents()
+    svc = _session_service()
+    return clear_all_autonomous_agents(session_service=svc)
 
 
 @autonomous_router.get("/proposals/latest")
@@ -103,6 +123,51 @@ def get_latest_autonomous_proposal(orchestrator_session_id: str) -> Dict[str, An
     if proposal is None:
         return {"status": "not_found", "proposal": None}
     return {"status": "ok", "proposal": proposal}
+
+
+@autonomous_router.get("/drafts")
+def drafts_get_not_allowed() -> Dict[str, Any]:
+    raise HTTPException(
+        status_code=405,
+        detail={"error": "method_not_allowed", "message": "Use POST /autonomous-agents/drafts to create a draft agent"},
+    )
+
+
+@autonomous_router.post("/drafts", response_model=DraftAgentResponse)
+def create_draft_agent_route(
+    _auth: None = Depends(require_local_or_auth),
+) -> DraftAgentResponse:
+    from trade_integrations.autonomous_agents.store import backfill_orphan_orchestrator_session, create_draft_agent
+
+    svc = _session_service()
+    if svc is None:
+        raise HTTPException(status_code=503, detail="session runtime not enabled")
+    try:
+        backfilled = backfill_orphan_orchestrator_session(session_service=svc)
+    except Exception:
+        logger.debug("orchestrator backfill failed", exc_info=True)
+        backfilled = None
+    if backfilled and backfilled.get("agent"):
+        agent = backfilled["agent"]
+        return DraftAgentResponse(
+            agent_id=str(backfilled.get("agent_id") or agent.get("id") or ""),
+            session_id=str(backfilled.get("session_id") or agent.get("vibe_session_id") or ""),
+            agent=agent,
+        )
+    result = create_draft_agent(session_service=svc)
+    return DraftAgentResponse(
+        agent_id=str(result["agent_id"]),
+        session_id=str(result["session_id"]),
+        agent=result["agent"],
+    )
+
+
+@autonomous_router.get("/commit")
+def commit_get_not_allowed() -> Dict[str, Any]:
+    raise HTTPException(
+        status_code=405,
+        detail={"error": "method_not_allowed", "message": "Use POST /autonomous-agents/commit to activate a draft agent"},
+    )
 
 
 @autonomous_router.get("/{agent_id}")
@@ -139,6 +204,7 @@ def commit_autonomous_agent_route(
         if (
             not result.get("already_committed")
             and agent.get("id")
+            and str(agent.get("status") or "") != "draft"
             and not result.get("infra_paused")
         ):
             from src.scheduled_research.autonomous_bootstrap import schedule_agent_bootstrap
@@ -161,35 +227,31 @@ def commit_autonomous_agent_route(
 
 
 @autonomous_router.post("/orchestrator/session", response_model=OrchestratorSessionResponse)
-def get_or_create_orchestrator_session() -> OrchestratorSessionResponse:
-    from trade_integrations.autonomous_agents.store import (
-        get_active_orchestrator_session_id,
-        set_active_orchestrator_session_id,
-    )
-    from trade_integrations.autonomous_agents.turns import build_orchestrator_system_note
+def get_or_create_orchestrator_session(
+    _auth: None = Depends(require_local_or_auth),
+) -> OrchestratorSessionResponse:
+    """Legacy alias — returns backfilled orphan draft or creates a fresh draft agent + session."""
+    from trade_integrations.autonomous_agents.store import backfill_orphan_orchestrator_session, create_draft_agent
 
     svc = _session_service()
     if svc is None:
         raise HTTPException(status_code=503, detail="session runtime not enabled")
 
-    from src.session.orchestrator_profile import is_orchestrator_session
-
-    active_sid = get_active_orchestrator_session_id()
-    if active_sid:
-        existing = svc.get_session(active_sid)
-        if existing is not None and is_orchestrator_session(existing.config):
-            return OrchestratorSessionResponse(session_id=existing.session_id, title=existing.title)
-
-    session = svc.create_session(
-        title="autonomous:orchestrator",
-        config={
-            "session_kind": "autonomous_orchestrator",
-            "orchestrator": True,
-            "system_note": build_orchestrator_system_note(),
-        },
+    try:
+        backfilled = backfill_orphan_orchestrator_session(session_service=svc)
+    except Exception:
+        logger.debug("orchestrator backfill failed", exc_info=True)
+        backfilled = None
+    if backfilled and backfilled.get("session_id"):
+        return OrchestratorSessionResponse(
+            session_id=str(backfilled["session_id"]),
+            title=str((backfilled.get("agent") or {}).get("name") or "Agent draft"),
+        )
+    result = create_draft_agent(session_service=svc)
+    return OrchestratorSessionResponse(
+        session_id=str(result["session_id"]),
+        title=str((result.get("agent") or {}).get("name") or "New agent draft"),
     )
-    set_active_orchestrator_session_id(session.session_id)
-    return OrchestratorSessionResponse(session_id=session.session_id, title=session.title)
 
 
 class PlanApprovalRequest(BaseModel):
@@ -245,13 +307,21 @@ def pause_agent(
 def resume_agent(agent_id: str) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.proposals import resume_autonomous_agent
     from trade_integrations.autonomous_agents.store import get_agent
-    from src.scheduled_research.autonomous_agent_jobs import register_agent_jobs
+    from src.scheduled_research.autonomous_agent_jobs import finalize_infra_heal, register_agent_jobs
 
     try:
+        before = get_agent(agent_id)
+        was_infra = before is not None and str(before.get("pause_reason") or "") == "infra"
         result = resume_autonomous_agent(agent_id)
         agent = get_agent(agent_id)
-        if agent:
-            register_agent_jobs(agent)
+        if agent and str(agent.get("status")) == "running":
+            bootstrap = str(agent.get("bootstrap_status") or "")
+            if was_infra and bootstrap in {"pending", "failed"}:
+                finalize_infra_heal(agent_id)
+                agent = get_agent(agent_id) or agent
+                result = {**result, "agent": agent}
+            else:
+                register_agent_jobs(agent)
         return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -275,13 +345,55 @@ def stop_agent(
 @autonomous_router.delete("/{agent_id}")
 def delete_agent_route(
     agent_id: str,
+    flatten_positions: bool = False,
     _auth: None = Depends(require_local_or_auth),
 ) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.proposals import delete_autonomous_agent
+    from trade_integrations.autonomous_agents.teardown import (
+        FlattenIncompleteError,
+        OpenPositionsConflictError,
+        OpenPositionsLookupError,
+    )
     from src.scheduled_research.autonomous_agent_jobs import unregister_agent_jobs
 
+    svc = _session_service()
     try:
         unregister_agent_jobs(agent_id)
-        return delete_autonomous_agent(agent_id)
+        return delete_autonomous_agent(
+            agent_id,
+            session_service=svc,
+            flatten_positions=flatten_positions,
+        )
+    except OpenPositionsConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "open_positions",
+                "agent_id": exc.agent_id,
+                "count": exc.count,
+                "openalgo_count": exc.openalgo_count,
+                "alpaca_count": exc.alpaca_count,
+            },
+        ) from exc
+    except OpenPositionsLookupError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "position_lookup_failed",
+                "agent_id": exc.agent_id,
+                "message": exc.reason,
+            },
+        ) from exc
+    except FlattenIncompleteError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "flatten_incomplete",
+                "agent_id": exc.agent_id,
+                "openalgo_remaining": exc.openalgo_remaining,
+                "alpaca_remaining": exc.alpaca_remaining,
+                "count": exc.openalgo_remaining + exc.alpaca_remaining,
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

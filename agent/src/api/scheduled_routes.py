@@ -205,6 +205,7 @@ def _start_scheduled_research_executor() -> None:
         from src.scheduled_research.autonomous_bootstrap import (
             resume_pending_bootstraps,
             resume_stale_pending_bootstraps,
+            resume_stale_running_bootstraps,
         )
 
         resumed = resume_pending_bootstraps()
@@ -213,6 +214,17 @@ def _start_scheduled_research_executor() -> None:
         stale = resume_stale_pending_bootstraps()
         if stale:
             logger.info("re-scheduled %d stale pending autonomous bootstrap(s)", stale)
+        stale_running = resume_stale_running_bootstraps()
+        if stale_running:
+            logger.info("re-scheduled %d stale running autonomous bootstrap(s)", stale_running)
+        try:
+            from trade_integrations.autonomous_agents.recovery import run_autonomous_agent_recovery
+
+            recovery = run_autonomous_agent_recovery()
+            if any(recovery.values()):
+                logger.info("autonomous agent recovery: %s", recovery)
+        except Exception:
+            logger.debug("autonomous agent recovery on startup failed", exc_info=True)
     except Exception:
         logger.exception("failed to resume pending autonomous bootstraps")
     try:

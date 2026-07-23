@@ -12,6 +12,7 @@ from src.api.async_bridge import schedule_coroutine
 logger = logging.getLogger(__name__)
 
 _PENDING_BOOTSTRAP_MAX_AGE_S = 60.0
+_STALE_RUNNING_BOOTSTRAP_MAX_AGE_S = 600.0
 
 
 def _ensure_integrations_on_path() -> None:
@@ -98,5 +99,55 @@ def resume_stale_pending_bootstraps(*, max_age_s: float = _PENDING_BOOTSTRAP_MAX
             latest = get_agent(agent_id)
             if latest and str(latest.get("bootstrap_status") or "") == "pending":
                 latest["bootstrap_error"] = "bootstrap schedule retry failed"
+                save_agent(latest)
+    return count
+
+
+def resume_stale_running_bootstraps(*, max_age_s: float = _STALE_RUNNING_BOOTSTRAP_MAX_AGE_S) -> int:
+    """Re-schedule bootstrap stuck at running with no decision (hung prefetch or API restart)."""
+    _ensure_integrations_on_path()
+    from trade_integrations.autonomous_agents.store import get_agent, list_agents, save_agent
+
+    now = datetime.now(timezone.utc)
+    count = 0
+    for agent in list_agents():
+        if str(agent.get("status")) != "running":
+            continue
+        if str(agent.get("bootstrap_status") or "") != "running":
+            continue
+        if agent.get("last_decision"):
+            continue
+        if agent.get("streaming"):
+            continue
+        if str(agent.get("pause_reason") or "") == "infra":
+            continue
+        age_anchor = str(agent.get("updated_at") or agent.get("created_at") or "")
+        if not age_anchor:
+            continue
+        try:
+            anchor = datetime.fromisoformat(age_anchor.replace("Z", "+00:00"))
+            age_s = (now - anchor).total_seconds()
+        except ValueError:
+            continue
+        if age_s < max_age_s:
+            continue
+        agent_id = str(agent.get("id") or "")
+        if not agent_id:
+            continue
+        logger.warning(
+            "re-scheduling stale running bootstrap for %s (running %.0fs, no decision)",
+            agent_id,
+            age_s,
+        )
+        agent["bootstrap_status"] = "pending"
+        agent["bootstrap_error"] = f"bootstrap timed out after {int(age_s)}s; retrying"
+        save_agent(agent)
+        if schedule_agent_bootstrap(agent_id):
+            count += 1
+        else:
+            latest = get_agent(agent_id)
+            if latest and str(latest.get("bootstrap_status") or "") == "pending":
+                latest["bootstrap_status"] = "failed"
+                latest["bootstrap_error"] = "bootstrap retry schedule failed"
                 save_agent(latest)
     return count

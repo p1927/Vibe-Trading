@@ -12,6 +12,9 @@ const EmbeddedAgent = lazy(() =>
 );
 
 const RUNTIME_POLL_MS = 15_000;
+const RUNTIME_POLL_BOOTSTRAP_MS = 3_000;
+
+export type AutonomousAgentLoadState = "idle" | "loading" | "ready" | "error";
 
 function AgentRuntimeStrip({ agent }: { agent: AutonomousAgentInstance }) {
   const runtime = agent.runtime;
@@ -113,36 +116,65 @@ export function Autonomous() {
   const agentId = searchParams.get("agent");
   const isOrchestrator = agentId === "orchestrator" || searchParams.get("create") === "1";
   const [agent, setAgent] = useState<AutonomousAgentInstance | null>(null);
+  const [agentLoadState, setAgentLoadState] = useState<AutonomousAgentLoadState>("idle");
 
   const loadAgent = useCallback(async () => {
     if (!agentId || agentId === "orchestrator") {
       setAgent(null);
+      setAgentLoadState("idle");
       return;
     }
+    setAgentLoadState((prev) => (prev === "ready" ? prev : "loading"));
     try {
       const a = await api.getAutonomousAgent(agentId);
       setAgent(a);
+      setAgentLoadState("ready");
     } catch {
       setAgent(null);
+      setAgentLoadState("error");
     }
   }, [agentId]);
+
+  const isBootstrappingAgent =
+    Boolean(agent?.streaming) ||
+    agent?.bootstrap_status === "pending" ||
+    agent?.bootstrap_status === "running" ||
+    agent?.runtime?.bootstrap_status === "pending" ||
+    agent?.runtime?.bootstrap_status === "running" ||
+    agent?.runtime?.scheduler_health === "initializing";
 
   useEffect(() => {
     void loadAgent();
     if (!agentId || agentId === "orchestrator") return;
-    const timer = window.setInterval(() => void loadAgent(), RUNTIME_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [agentId, loadAgent]);
+    const pollMs = isBootstrappingAgent ? RUNTIME_POLL_BOOTSTRAP_MS : RUNTIME_POLL_MS;
+    const timer = window.setInterval(() => void loadAgent(), pollMs);
+    const onRefresh = () => {
+      void loadAgent();
+    };
+    window.addEventListener("autonomous-agents-refresh", onRefresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("autonomous-agents-refresh", onRefresh);
+    };
+  }, [agentId, loadAgent, isBootstrappingAgent]);
 
-  const openOrchestrator = useCallback(async () => {
+  useEffect(() => {
+    if (!agentId || agentId === "orchestrator") {
+      setAgentLoadState("idle");
+      return;
+    }
+    setAgentLoadState("loading");
+  }, [agentId]);
+
+  const openDraft = useCallback(async () => {
     try {
-      const orch = await api.getOrchestratorSession();
+      const draft = await api.createDraftAutonomousAgent();
       setSearchParams({
-        agent: "orchestrator",
-        session: orch.session_id,
+        agent: draft.agent_id,
+        session: draft.session_id,
       });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to open orchestrator");
+      toast.error(err instanceof Error ? err.message : "Failed to create draft");
     }
   }, [setSearchParams]);
 
@@ -161,11 +193,11 @@ export function Autonomous() {
     [setSearchParams],
   );
 
+  const isDraftView =
+    agentId === "orchestrator" || agent?.status === "draft";
+
   if (sessionId && (agentId || isOrchestrator)) {
-    const title =
-      agentId === "orchestrator"
-        ? "Create agent"
-        : agent?.name || "Autonomous agent";
+    const title = isDraftView ? agent?.name || "Create agent" : agent?.name || "Autonomous agent";
 
     return (
       <div className="flex h-[calc(100vh-0px)] flex-col">
@@ -179,9 +211,9 @@ export function Autonomous() {
             Back to agents
           </button>
           <span className="text-sm font-medium text-foreground">{title}</span>
-          {agent && agentId !== "orchestrator" && <AgentRuntimeStrip agent={agent} />}
+          {agent && !isDraftView && <AgentRuntimeStrip agent={agent} />}
         </header>
-        {agent && agentId !== "orchestrator" && (
+        {agent && !isDraftView && (
           <PlanApprovalBanner agent={agent} onApproved={() => void loadAgent()} />
         )}
         <div className="min-h-0 flex-1">
@@ -197,6 +229,8 @@ export function Autonomous() {
               backToAutonomous={goBack}
               onAutonomousAgentCommitted={onAgentCommitted}
               autonomousAgent={agent}
+              autonomousAgentId={agentId}
+              autonomousAgentLoadState={agentLoadState}
             />
           </Suspense>
         </div>
@@ -204,5 +238,5 @@ export function Autonomous() {
     );
   }
 
-  return <AutonomousAgentHub onCreateAgent={() => void openOrchestrator()} />;
+  return <AutonomousAgentHub onCreateAgent={() => void openDraft()} />;
 }

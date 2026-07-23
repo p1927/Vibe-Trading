@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.api.security import require_local_or_auth
@@ -2631,6 +2631,35 @@ def discover_external_prediction_sources(
         )
     except Exception as exc:
         logger.exception("discover external prediction sources failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/index-prediction/external-predictions/sources/{source_id}/thumbnail")
+def get_external_prediction_thumbnail(
+    source_id: str,
+    ticker: str = "NIFTY",
+    run_id: str | None = None,
+    _auth: None = Depends(require_local_or_auth),
+):
+    key = (ticker or "NIFTY").strip().upper()
+    sid = (source_id or "").strip().lower()
+    if not sid:
+        raise HTTPException(status_code=400, detail="source_id required")
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+        from trade_integrations.dataflows.index_research.external_predictions.screenshot_utils import (
+            resolve_thumbnail_path,
+        )
+
+        ensure_trade_stack_path()
+        path = resolve_thumbnail_path(symbol=key, source_id=sid, run_id=run_id)
+        if path is None or not path.is_file():
+            raise HTTPException(status_code=404, detail="thumbnail not found")
+        return FileResponse(path, media_type="image/jpeg")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("external prediction thumbnail failed for %s", sid)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

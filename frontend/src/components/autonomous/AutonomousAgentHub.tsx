@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Radio, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { api, type AutonomousAgentInstance, type AutonomousStackHealth } from "@/lib/api";
+import { ApiError, api, autonomousDeleteErrorMessage, type AutonomousAgentInstance, type AutonomousStackHealth } from "@/lib/api";
 import { AutonomousAgentCard } from "@/components/autonomous/AutonomousAgentCard";
 import { cn } from "@/lib/utils";
 
@@ -76,7 +76,13 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
   const load = useCallback(async () => {
     try {
       const res = await api.listAutonomousAgents();
-      setAgents(Array.isArray(res.agents) ? res.agents : []);
+      const rows = Array.isArray(res.agents) ? res.agents : [];
+      rows.sort((a, b) => {
+        if (a.status === "draft" && b.status !== "draft") return -1;
+        if (b.status === "draft" && a.status !== "draft") return 1;
+        return 0;
+      });
+      setAgents(rows);
       setStackHealth(res.stack_health);
     } catch (err) {
       console.warn("Failed to load autonomous agents", err);
@@ -128,14 +134,50 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("Delete this autonomous agent?")) return;
+  const confirmFlattenDelete = (agent: AutonomousAgentInstance, prompt: string) => {
+    if (!window.confirm(prompt)) return false;
+    return window.confirm(
+      "This will flatten agent-scoped positions before delete. Continue?",
+    );
+  };
+
+  const handleDelete = async (agent: AutonomousAgentInstance) => {
+    const isDraft = agent.status === "draft";
+    const prompt = isDraft
+      ? "Delete this draft? Chat and proposal will be removed."
+      : "Delete this autonomous agent?";
+    if (!window.confirm(prompt)) return;
     try {
-      await api.deleteAutonomousAgent(id);
+      await api.deleteAutonomousAgent(agent.id);
       await load();
-      toast.success("Agent deleted");
+      toast.success(isDraft ? "Draft deleted" : "Agent deleted");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Delete failed");
+      if (err instanceof ApiError && (err.status === 409 || err.status === 503)) {
+        const detail = (err.detail ?? {}) as Record<string, unknown>;
+        const needsFlatten =
+          err.status === 409
+            ? detail.error === "open_positions" || detail.error === "flatten_incomplete"
+            : detail.error === "position_lookup_failed";
+        if (needsFlatten) {
+          const flattenPrompt =
+            detail.error === "flatten_incomplete"
+              ? `${err.message}\n\nTry delete and flatten again?`
+              : detail.error === "position_lookup_failed"
+                ? `${err.message}\n\nDelete and flatten anyway?`
+                : `${err.message}\n\nDelete and flatten positions?`;
+          if (confirmFlattenDelete(agent, flattenPrompt)) {
+            try {
+              await api.deleteAutonomousAgent(agent.id, { flattenPositions: true });
+              await load();
+              toast.success("Agent deleted and positions flattened");
+            } catch (flattenErr) {
+              toast.error(autonomousDeleteErrorMessage(flattenErr));
+            }
+          }
+          return;
+        }
+      }
+      toast.error(autonomousDeleteErrorMessage(err));
     }
   };
 
@@ -242,7 +284,7 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
             onOpen={() => openAgent(agent)}
             onPause={agent.status === "running" ? () => handlePause(agent.id) : undefined}
             onResume={agent.status === "paused" ? () => handleResume(agent.id) : undefined}
-            onDelete={() => handleDelete(agent.id)}
+            onDelete={() => void handleDelete(agent)}
           />
         ))}
       </div>

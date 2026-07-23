@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 from src.config.paths import get_runtime_root
@@ -21,33 +20,20 @@ from src.trading.connectors.tiger.profiles import TIGER_PROFILES
 from src.trading.connectors.trading212.profiles import TRADING212_PROFILES
 from src.trading.types import TradingProfile
 
+from trade_integrations.execution.default_profile import (
+    ALPACA_PAPER_PROFILE_ID,
+    DEFAULT_PROFILE_ID,
+    OPENALGO_LIVE_READONLY_PROFILE_ID,
+    OPENALGO_PAPER_PROFILE_ID,
+    infer_default_profile_id as _shared_infer_default_profile_id,
+)
+
 CONFIG_FILENAME = "trading-connections.json"
-DEFAULT_PROFILE_ID = "ibkr-paper-local"
-OPENALGO_PAPER_PROFILE_ID = "openalgo-paper-sdk"
-OPENALGO_LIVE_READONLY_PROFILE_ID = "openalgo-live-sdk-readonly"
-ALPACA_PAPER_PROFILE_ID = "alpaca-paper-sdk"
 
 
 def infer_default_profile_id() -> str:
     """Pick a sensible default when no profile has been saved yet."""
-    openalgo_key = os.getenv("OPENALGO_API_KEY", "").strip()
-    openalgo_host = (os.getenv("OPENALGO_HOST") or "http://127.0.0.1:5001").strip()
-    if openalgo_key and openalgo_host:
-        paper_mode = os.getenv("OPENALGO_PAPER_MODE", "true").strip().lower()
-        if paper_mode in ("0", "false", "no", "off"):
-            return OPENALGO_LIVE_READONLY_PROFILE_ID
-        return OPENALGO_PAPER_PROFILE_ID
-
-    alpaca_key = os.getenv("ALPACA_API_KEY", "").strip()
-    alpaca_secret = (
-        os.getenv("ALPACA_API_SECRET", "").strip()
-        or os.getenv("ALPACA_SECRET_KEY", "").strip()
-    )
-    if alpaca_key and alpaca_secret:
-        return ALPACA_PAPER_PROFILE_ID
-
-    return DEFAULT_PROFILE_ID
-
+    return _shared_infer_default_profile_id()
 BUILTIN_PROFILES: tuple[TradingProfile, ...] = (
     *IBKR_PROFILES,
     *ROBINHOOD_PROFILES,

@@ -85,6 +85,9 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
     if not agent_id:
         return
 
+    if str(agent.get("status") or "") == "draft":
+        return
+
     if str(agent.get("pause_reason") or "") == "infra":
         register_infra_heal_job(agent_id)
         return

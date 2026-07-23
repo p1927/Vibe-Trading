@@ -61,50 +61,35 @@ function ProposalInfraStrip({
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
       <span className="font-medium text-muted-foreground">Infra</span>
-      {market === "US" ? (
-        <span
-          className={cn(
-            "rounded border px-1.5 py-0.5",
-            backend === "alpaca" ? "border-emerald-500/40 text-emerald-700" : "border-muted text-muted-foreground",
-          )}
-        >
-          Alpaca paper
-        </span>
-      ) : (
-        <>
-          <span
-            className={cn(
-              "rounded border px-1.5 py-0.5",
-              health?.paper_session_enabled
-                ? "border-emerald-500/40 text-emerald-700"
-                : "border-amber-500/40 text-amber-700",
-            )}
-          >
-            OpenAlgo {health?.paper_session_enabled ? "ready" : "check"}
-          </span>
-          <span
-            className={cn(
-              "rounded border px-1.5 py-0.5",
-              !nautilusOn && "text-muted-foreground",
-              nautilusOn && nautilusAlive && "border-emerald-500/40 text-emerald-700",
-              nautilusOn && !nautilusAlive && "border-amber-500/40 text-amber-700",
-            )}
-          >
-            Nautilus {nautilusOn ? (nautilusAlive ? "running" : "start watch") : "off"}
-          </span>
-        </>
-      )}
-      {market !== "US" && (
-        <span
-          className={cn(
-            "rounded border px-1.5 py-0.5",
-            sched === "ok" && "border-emerald-500/40 text-emerald-700",
-            sched === "stale" && "border-amber-500/40 text-amber-700",
-          )}
-        >
-          scheduler {sched}
-        </span>
-      )}
+      <span
+        className={cn(
+          "rounded border px-1.5 py-0.5",
+          health?.paper_session_enabled
+            ? "border-emerald-500/40 text-emerald-700"
+            : "border-amber-500/40 text-amber-700",
+        )}
+      >
+        OpenAlgo {health?.paper_session_enabled ? "ready" : "check"}
+      </span>
+      <span
+        className={cn(
+          "rounded border px-1.5 py-0.5",
+          !nautilusOn && "text-muted-foreground",
+          nautilusOn && nautilusAlive && "border-emerald-500/40 text-emerald-700",
+          nautilusOn && !nautilusAlive && "border-amber-500/40 text-amber-700",
+        )}
+      >
+        Nautilus {nautilusOn ? (nautilusAlive ? "running" : "start watch") : "off"}
+      </span>
+      <span
+        className={cn(
+          "rounded border px-1.5 py-0.5",
+          sched === "ok" && "border-emerald-500/40 text-emerald-700",
+          sched === "stale" && "border-amber-500/40 text-amber-700",
+        )}
+      >
+        scheduler {sched}
+      </span>
     </div>
   );
 }
@@ -271,7 +256,7 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
           {market ? (
             <div className="col-span-2">
               <dt className="text-muted-foreground">Execution</dt>
-              <dd>{market === "US" ? "US · Alpaca paper" : "India · Nautilus watch + OpenAlgo"}</dd>
+              <dd>{market === "US" ? "US · Nautilus watch + OpenAlgo (Alpaca plugin)" : "India · Nautilus watch + OpenAlgo"}</dd>
             </div>
           ) : null}
         </dl>
