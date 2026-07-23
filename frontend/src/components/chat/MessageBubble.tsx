@@ -1,18 +1,27 @@
 import i18n from '@/i18n';
 import { memo, useState, useCallback } from "react";
 import { User, XCircle, RefreshCw, Copy, Check } from "lucide-react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Options as ReactMarkdownOptions } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 import rehypeHighlight from "rehype-highlight";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import { formatTimestamp } from "@/lib/formatters";
+import { normalizeMathDelimiters } from "@/lib/markdown";
 import type { AgentMessage } from "@/types/agent";
 import { SourceCitationLink } from "@/components/research/ContextDrawer";
 import { preprocessCitationLinks } from "@/stores/provenance";
 import { AgentAvatar } from "./AgentAvatar";
 import { RunCompleteCard } from "./RunCompleteCard";
 
-const remarkPlugins = [remarkGfm];
-const rehypePlugins = [rehypeHighlight];
+// singleDollarTextMath off: dollar amounts ("$150 to $120") must never parse as
+// formulas; LLM \(...\)/\[...\] delimiters are normalized to $$ before render.
+const remarkPlugins: ReactMarkdownOptions["remarkPlugins"] = [
+  remarkGfm,
+  [remarkMath, { singleDollarTextMath: false }],
+];
+const rehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [rehypeHighlight, rehypeKatex];
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -91,7 +100,7 @@ export const MessageBubble = memo(function MessageBubble({ msg, onRetry }: Props
                 },
               }}
             >
-              {markdown}
+              {normalizeMathDelimiters(markdown)}
             </ReactMarkdown>
           </div>
           {ts && <span className="text-[9px] text-muted-foreground/30 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">{ts}</span>}

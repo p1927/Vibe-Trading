@@ -138,9 +138,19 @@ def _atomic_write_secret(path: Path, content: str) -> None:
         return
     try:
         os.write(fd, data)
-        os.fchmod(fd, 0o600)
+        # ``os.fchmod`` is unavailable on Windows.  Keep descriptor-level
+        # permission hardening on platforms that support it, then use the
+        # portable path-based best effort after the descriptor is closed.
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
     finally:
         os.close(fd)
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        # Windows ACLs govern effective access and chmod may be unsupported
+        # or map only to the read-only flag.
+        pass
     try:
         os.replace(tmp, path)
     except BaseException:
@@ -164,11 +174,32 @@ def _ensure_agent_env_file(path: Path | None = None) -> Path:
 def _strip_env_value(value: str) -> str:
     """Remove basic dotenv quotes and inline comments."""
     value = value.strip()
+    if value[:1] in {"'", '"'}:
+        q = value[0]
+        i = 1
+        while i < len(value):
+            if value[i] == "\\" and i + 1 < len(value):
+                i += 2
+                continue
+            if value[i] == q:
+                return value[1:i].strip()
+            i += 1
+        return value
     if " #" in value:
         value = value.split(" #", 1)[0].rstrip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        value = value[1:-1]
     return value.strip()
+
+
+def _dotenv_key(raw_key: str) -> str:
+    """Return the canonical env key, stripping an optional ``export `` prefix.
+
+    python-dotenv accepts ``export KEY=value``; Settings must too so reads and
+    upserts hit the same key users set when sourcing a shell-style dotenv.
+    """
+    key = raw_key.strip()
+    if key.lower().startswith("export "):
+        key = key[7:].strip()
+    return key
 
 
 def _read_env_values(path: Path) -> Dict[str, str]:
@@ -181,7 +212,7 @@ def _read_env_values(path: Path) -> Dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        key = key.strip()
+        key = _dotenv_key(key)
         if key:
             values[key] = _strip_env_value(value)
     return values
@@ -216,17 +247,21 @@ def _write_env_values(path: Path, updates: Dict[str, str]) -> None:
     """Upsert active dotenv values while preserving comments and ordering."""
     _ensure_agent_env_file(path)
     lines = path.read_text(encoding="utf-8").splitlines()
-    seen: set[str] = set()
+    # Last active KEY= wins on read; update that line so upserts stick.
+    last_active: Dict[str, int] = {}
     for index, raw in enumerate(lines):
         stripped = raw.lstrip()
-        is_comment = stripped.startswith("#")
-        candidate = stripped[1:].lstrip() if is_comment else stripped
-        if "=" not in candidate:
+        if stripped.startswith("#") or "=" not in stripped:
             continue
-        key = candidate.split("=", 1)[0].strip()
-        if key in updates and key not in seen:
-            lines[index] = f"{key}={_format_env_value(updates[key])}"
-            seen.add(key)
+        key = _dotenv_key(stripped.split("=", 1)[0])
+        if key in updates:
+            last_active[key] = index
+    seen: set[str] = set()
+    for key, index in last_active.items():
+        stripped = lines[index].lstrip()
+        prefix = "export " if stripped.lower().startswith("export ") else ""
+        lines[index] = f"{prefix}{key}={_format_env_value(updates[key])}"
+        seen.add(key)
     missing = [key for key in updates if key not in seen]
     if missing:
         if lines and lines[-1].strip():

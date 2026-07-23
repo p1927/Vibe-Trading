@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -137,6 +138,48 @@ def test_update_deepseek_settings_uses_exact_reported_payload(
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")
     assert "DEEPSEEK_API_KEY=sk-deepseek-test" in env_text
     assert "DEEPSEEK_BASE_URL=https://api.deepseek.com/v1" in env_text
+
+
+@pytest.mark.parametrize(
+    ("provider", "api_key_env", "base_url_env", "base_url"),
+    [
+        (
+            "siliconflow-cn",
+            "SILICONFLOW_API_KEY",
+            "SILICONFLOW_BASE_URL",
+            "https://api.siliconflow.cn/v1",
+        ),
+        (
+            "siliconflow-global",
+            "SILICONFLOW_GLOBAL_API_KEY",
+            "SILICONFLOW_GLOBAL_BASE_URL",
+            "https://api.siliconflow.com/v1",
+        ),
+    ],
+)
+def test_update_siliconflow_settings_uses_provider_namespace(
+    client: TestClient,
+    tmp_path: Path,
+    provider: str,
+    api_key_env: str,
+    base_url_env: str,
+    base_url: str,
+) -> None:
+    response = client.put(
+        "/settings/llm",
+        json={
+            "provider": provider,
+            "model_name": "deepseek-ai/DeepSeek-V3.1-Terminus",
+            "base_url": base_url,
+            "api_key": "sk-siliconflow-test",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == provider
+    env_text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert f"{api_key_env}=sk-siliconflow-test" in env_text
+    assert f"{base_url_env}={base_url}" in env_text
 
 
 def test_settings_write_migrates_legacy_env_to_canonical_path(
@@ -291,7 +334,7 @@ def test_settings_reads_reject_remote_dev_mode_clients(
     assert "ts-s...oken" not in data_source_response.text
 
 
-def test_settings_reads_allow_loopback_without_bearer_even_when_api_auth_key_configured(
+def test_settings_reads_require_bearer_on_loopback_when_api_auth_key_configured(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     env_path = tmp_path / ".env"
@@ -318,7 +361,9 @@ def test_settings_reads_allow_loopback_without_bearer_even_when_api_auth_key_con
         headers={"Authorization": "Bearer settings-secret"},
     )
 
-    assert unauthenticated_response.status_code == 200
+    # GHSA-7wgj: a configured key gates settings reads even on loopback (the
+    # bundled frontend sends the bearer once the key is stored in Settings).
+    assert unauthenticated_response.status_code == 401
     assert authenticated_response.status_code == 200
     assert authenticated_response.json()["api_key_configured"] is True
     assert authenticated_response.json()["api_key_hint"] is None
@@ -376,7 +421,8 @@ def test_update_settings_writes_env_file_with_0600_mode(
 
     assert response.status_code == 200
     mode = (tmp_path / ".env").stat().st_mode & 0o777
-    assert mode == 0o600
+    if os.name != "nt":
+        assert mode == 0o600
 
 
 def test_atomic_write_secret_is_crash_safe(
@@ -411,4 +457,19 @@ def test_atomic_write_secret_creates_0600_file(tmp_path: Path) -> None:
     helpers._atomic_write_secret(target, "KEY=value\n")
 
     assert target.read_text(encoding="utf-8") == "KEY=value\n"
-    assert (target.stat().st_mode & 0o777) == 0o600
+    if os.name != "nt":
+        assert (target.stat().st_mode & 0o777) == 0o600
+
+
+def test_atomic_write_secret_supports_platforms_without_fchmod(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows must be able to persist Web UI settings without ``os.fchmod``."""
+    from src.api import helpers
+
+    monkeypatch.delattr(helpers.os, "fchmod", raising=False)
+    target = tmp_path / ".env"
+
+    helpers._atomic_write_secret(target, "KEY=value\n")
+
+    assert target.read_text(encoding="utf-8") == "KEY=value\n"
