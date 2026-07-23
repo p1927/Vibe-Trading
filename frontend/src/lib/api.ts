@@ -3693,6 +3693,15 @@ export interface LiveAction {
   error?: string | null;
 }
 
+/** Payload of the `agent.action` SSE event (autonomous agent audit notify). */
+export interface AgentAudit {
+  audit_id?: string;
+  kind?: string;
+  outcome?: string;
+  at?: string;
+  detail?: Record<string, unknown>;
+}
+
 export interface CommitMandateRequest {
   broker: string;
   proposal_id: string;

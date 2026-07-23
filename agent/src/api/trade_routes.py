@@ -275,7 +275,7 @@ def execute_basket(
     analyze = False
     if paper_env:
         from trade_integrations.execution.context_verify import ensure_paper_execution_ready
-        from trade_integrations.auto_paper.openalgo_client import OpenAlgoClient
+        from trade_integrations.execution.openalgo_client import OpenAlgoClient
 
         client = OpenAlgoClient(host=host, api_key=api_key)
         ctx = ensure_paper_execution_ready(client, env_paper_lock=True)
@@ -945,6 +945,16 @@ class ExternalPredictionsResponse(BaseModel):
     ticker: str = "NIFTY"
     snapshot: Dict[str, Any] | None = None
     message: str = ""
+
+
+def _external_predictions_status(snapshot: Any) -> str:
+    if snapshot is None:
+        return "ok"
+    had_errors = bool(getattr(snapshot, "had_errors", False))
+    attempt_failures = int(getattr(snapshot, "refresh_attempt_failures", 0) or 0)
+    if had_errors or attempt_failures > 0:
+        return "partial"
+    return "ok"
 
 
 class ExternalPredictionsRefreshRequest(BaseModel):
@@ -2306,7 +2316,7 @@ def get_external_predictions(
         ensure_trade_stack_path()
         snapshot = load_snapshot(symbol=key, horizon_days=horizon_days)
         return ExternalPredictionsResponse(
-            status="ok",
+            status=_external_predictions_status(snapshot),
             ticker=key,
             snapshot=snapshot.to_dict(),
         )
@@ -2337,7 +2347,7 @@ def refresh_external_predictions(
             horizon_days=body.horizon_days,
         )
         return ExternalPredictionsResponse(
-            status="ok",
+            status=_external_predictions_status(snapshot),
             ticker=key,
             snapshot=snapshot.to_dict(),
         )
@@ -3378,310 +3388,3 @@ def run_debate(
         logger.exception("run-debate failed for %s", key)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return AgentDebateResponse(status="running", ticker=key, running=True)
-
-
-class AutoPaperStatusResponse(BaseModel):
-    enabled: bool
-    env_enabled: bool
-    halted: bool = False
-    halt_reason: str | None = None
-    budget_inr: float = 20_000.0
-    watchlist: List[str] = Field(default_factory=list)
-    open_positions: int = 0
-    trades_today: int = 0
-    last_tick_at: str | None = None
-    last_tick: Dict[str, Any] | None = None
-    market_open: bool = False
-
-
-class AutoPaperStartRequest(BaseModel):
-    budget_inr: float | None = None
-    watchlist: List[str] | None = None
-    primary_ticker: str | None = None
-    goal: str | None = None
-    mandate: str | None = None
-    max_daily_loss_inr: float | None = None
-    agent_mode: bool = True
-    prompt: str | None = None
-    vibe_session_id: str | None = None
-    dispatch: bool = False
-
-
-class AutoPaperBootstrapRequest(BaseModel):
-    prompt: str | None = None
-    ticker: str = "NIFTY"
-    budget_inr: float | None = None
-    watchlist: List[str] | None = None
-    max_daily_loss_inr: float | None = None
-    goal: str | None = None
-    mandate: str | None = None
-    vibe_session_id: str | None = None
-    resume: bool = False
-    fresh_session: bool = False
-    dispatch: bool = True
-
-
-@trade_router.get("/auto-paper/status", response_model=AutoPaperStatusResponse)
-def auto_paper_status(
-    _auth: None = Depends(require_local_or_auth),
-) -> AutoPaperStatusResponse:
-    """Return automated paper trading session state."""
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-
-        ensure_trade_stack_path()
-        from trade_integrations.auto_paper.config import get_auto_paper_config, is_auto_paper_active
-        from trade_integrations.auto_paper.engine import is_market_session_open
-        from trade_integrations.auto_paper.session_store import load_session
-        from trade_integrations.monitor.execution_ledger import list_open_entries
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    cfg = get_auto_paper_config()
-    session = load_session()
-    return AutoPaperStatusResponse(
-        enabled=is_auto_paper_active() or bool(session.get("enabled")),
-        env_enabled=cfg.enabled,
-        halted=bool(session.get("halted")),
-        halt_reason=session.get("halt_reason"),
-        budget_inr=float(session.get("budget_inr") or cfg.budget_inr),
-        watchlist=session.get("watchlist") or list(cfg.watchlist),
-        open_positions=len(list_open_entries()),
-        trades_today=int(session.get("trades_today") or 0),
-        last_tick_at=session.get("last_tick_at"),
-        last_tick=session.get("last_tick"),
-        market_open=is_market_session_open(cfg),
-    )
-
-
-@trade_router.post("/auto-paper/bootstrap")
-async def auto_paper_bootstrap(
-    body: AutoPaperBootstrapRequest,
-    _auth: None = Depends(require_local_or_auth),
-) -> Dict[str, Any]:
-    """Create a Vibe UI session, inject the paper-trading prompt, and start the agent."""
-    try:
-        from src.api.state import _get_session_service
-        from src.trade.auto_paper_bootstrap import bootstrap_auto_paper_in_vibe
-        from trade_integrations.auto_paper.config import get_auto_paper_config
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    svc = _get_session_service()
-    if svc is None:
-        raise HTTPException(status_code=501, detail="Session runtime not enabled")
-
-    cfg = get_auto_paper_config()
-    budget = float(body.budget_inr if body.budget_inr is not None else cfg.budget_inr)
-    watchlist = (
-        [item.strip().upper() for item in body.watchlist if item.strip()]
-        if body.watchlist
-        else list(cfg.watchlist)
-    )
-    return await bootstrap_auto_paper_in_vibe(
-        svc,
-        prompt=body.prompt,
-        ticker=body.ticker,
-        budget_inr=budget,
-        watchlist=watchlist,
-        max_daily_loss_inr=float(body.max_daily_loss_inr or cfg.max_daily_loss_inr),
-        goal=body.goal,
-        mandate=body.mandate,
-        vibe_session_id=body.vibe_session_id,
-        resume=body.resume,
-        fresh_session=body.fresh_session,
-        dispatch=body.dispatch,
-    )
-
-
-@trade_router.post("/auto-paper/start")
-async def auto_paper_start(
-    body: AutoPaperStartRequest | None = None,
-    _auth: None = Depends(require_local_or_auth),
-):
-    """Start automated intraday paper trading; optionally bootstrap Vibe UI session + prompt."""
-    if body and (body.prompt or body.dispatch):
-        try:
-            from src.api.state import _get_session_service
-            from src.trade.auto_paper_bootstrap import bootstrap_auto_paper_in_vibe
-            from trade_integrations.auto_paper.config import get_auto_paper_config
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-        svc = _get_session_service()
-        if svc is None:
-            raise HTTPException(status_code=501, detail="Session runtime not enabled")
-
-        cfg = get_auto_paper_config()
-        budget = float(body.budget_inr if body.budget_inr is not None else cfg.budget_inr)
-        watchlist = (
-            [item.strip().upper() for item in body.watchlist if item.strip()]
-            if body.watchlist
-            else list(cfg.watchlist)
-        )
-        primary = (body.primary_ticker or "").strip().upper() or (watchlist[0] if watchlist else "NIFTY")
-        if primary not in watchlist:
-            watchlist.insert(0, primary)
-        result = await bootstrap_auto_paper_in_vibe(
-            svc,
-            prompt=body.prompt,
-            ticker=primary,
-            budget_inr=budget,
-            watchlist=watchlist,
-            max_daily_loss_inr=float(body.max_daily_loss_inr or cfg.max_daily_loss_inr),
-            goal=body.goal,
-            mandate=body.mandate,
-            vibe_session_id=body.vibe_session_id,
-            resume=False,
-            dispatch=body.dispatch,
-        )
-        result["status_snapshot"] = auto_paper_status()
-        return result
-
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-
-        ensure_trade_stack_path()
-        from trade_integrations.auto_paper.config import get_auto_paper_config
-        from trade_integrations.auto_paper.openalgo_client import OpenAlgoClient
-        from trade_integrations.auto_paper.session_store import save_session, start_session
-        from trade_integrations.auto_paper.agent_mandate import DEFAULT_GOAL
-        from src.scheduled_research.auto_paper_jobs import ensure_vibe_research_jobs
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    cfg = get_auto_paper_config()
-    budget = float(body.budget_inr) if body and body.budget_inr is not None else cfg.budget_inr
-    watchlist = (
-        [item.strip().upper() for item in body.watchlist if item.strip()]
-        if body and body.watchlist
-        else list(cfg.watchlist)
-    )
-    primary = (
-        (body.primary_ticker or "").strip().upper()
-        if body and body.primary_ticker
-        else (watchlist[0] if watchlist else "NIFTY")
-    )
-    if primary and primary not in watchlist:
-        watchlist.insert(0, primary)
-    try:
-        client = OpenAlgoClient()
-        from trade_integrations.execution.context_verify import ensure_paper_execution_ready
-
-        ensure_paper_execution_ready(client, env_paper_lock=_paper_mode_env_enabled())
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    start_session(budget_inr=budget, watchlist=watchlist)
-    session_patch = {
-        "agent_mode": body.agent_mode if body else True,
-        "primary_ticker": primary,
-        "goal": (body.goal if body and body.goal else DEFAULT_GOAL),
-        "mandate": body.mandate if body and body.mandate else None,
-        "max_daily_loss_inr": (
-            float(body.max_daily_loss_inr)
-            if body and body.max_daily_loss_inr is not None
-            else cfg.max_daily_loss_inr
-        ),
-    }
-    from trade_integrations.auto_paper.session_store import load_session
-
-    session = load_session()
-    session.update({k: v for k, v in session_patch.items() if v is not None})
-    from trade_integrations.auto_paper.lifecycle import default_lifecycle
-
-    if not session.get("lifecycle"):
-        session["lifecycle"] = default_lifecycle()
-    save_session(session)
-
-    if session.get("agent_mode", True):
-        ensure_vibe_research_jobs()
-
-    return auto_paper_status()
-
-
-@trade_router.post("/auto-paper/stop", response_model=AutoPaperStatusResponse)
-def auto_paper_stop(
-    _auth: None = Depends(require_local_or_auth),
-) -> AutoPaperStatusResponse:
-    """Stop automated paper trading."""
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-
-        ensure_trade_stack_path()
-        from trade_integrations.auto_paper.mcp_actions import stop_auto_paper
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    stop_auto_paper()
-    return auto_paper_status()
-
-
-class AutoPaperResumeRequest(BaseModel):
-    vibe_session_id: str | None = None
-    dispatch: bool = True
-    fresh_session: bool = True
-    prompt: str | None = None
-
-
-@trade_router.post("/auto-paper/resume")
-async def auto_paper_resume(
-    body: AutoPaperResumeRequest | None = None,
-    dispatch: bool = True,
-    _auth: None = Depends(require_local_or_auth),
-) -> Dict[str, Any]:
-    """Resume paper trading in Vibe UI — fresh attempt with continuity in the prompt."""
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-        from src.api.state import _get_session_service
-        from src.trade.auto_paper_bootstrap import bootstrap_auto_paper_in_vibe
-        from trade_integrations.auto_paper.session_store import load_session
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    svc = _get_session_service()
-    if svc is None:
-        raise HTTPException(status_code=501, detail="Session runtime not enabled")
-
-    paper = load_session()
-    ticker = str(paper.get("primary_ticker") or (paper.get("watchlist") or ["NIFTY"])[0])
-    should_dispatch = body.dispatch if body is not None else dispatch
-    return await bootstrap_auto_paper_in_vibe(
-        svc,
-        prompt=body.prompt if body else None,
-        ticker=ticker,
-        vibe_session_id=body.vibe_session_id if body else None,
-        resume=True,
-        fresh_session=body.fresh_session if body is not None else True,
-        dispatch=should_dispatch,
-    )
-
-
-@trade_router.post("/auto-paper/tick")
-def auto_paper_tick(
-    dry_run: bool = False,
-    agent: bool = False,
-    _auth: None = Depends(require_local_or_auth),
-) -> Dict[str, Any]:
-    """Run one auto paper cycle or one agent turn when agent=true."""
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-
-        ensure_trade_stack_path()
-        if agent:
-            import asyncio
-
-            from trade_integrations.auto_paper.runner import resolve_runner
-
-            vibe_url = os.getenv(
-                "VIBE_BACKEND_URL",
-                f"http://127.0.0.1:{os.getenv('VIBE_BACKEND_PORT', '8899')}",
-            )
-            runner = resolve_runner(vibe_url=vibe_url)
-            result = asyncio.run(runner.run_once())
-            return result.to_dict()
-        from trade_integrations.auto_paper.engine import run_auto_paper_tick
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    return run_auto_paper_tick(dry_run=dry_run)

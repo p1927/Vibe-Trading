@@ -60,7 +60,7 @@ class ChannelRuntime:
         """Start channel processing and, optionally, platform adapters."""
         if self._running:
             return
-        self._session_map = self._load_session_map()
+        self._session_map = self._load_legacy_session_map()
         self._running = True
         if start_manager and self.manager is not None:
             self._manager_task = asyncio.create_task(self.manager.start_all())
@@ -200,7 +200,7 @@ class ChannelRuntime:
             return last_assistant
         raise TimeoutError("timed out waiting for assistant reply")
 
-    def _load_session_map(self) -> dict[str, str]:
+    def _load_legacy_session_map(self) -> dict[str, str]:
         try:
             data = json.loads(self.session_map_path.read_text(encoding="utf-8"))
         except FileNotFoundError:

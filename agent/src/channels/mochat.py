@@ -308,7 +308,7 @@ class MochatChannel(BaseChannel):
         self._running = True
         self._http = httpx.AsyncClient(timeout=30.0)
         self._state_dir.mkdir(parents=True, exist_ok=True)
-        await self._load_session_cursors()
+        await self._load_legacy_session_cursors()
         self._seed_targets_from_config()
         await self._refresh_targets(subscribe_new=False)
 
@@ -878,7 +878,7 @@ class MochatChannel(BaseChannel):
         await asyncio.sleep(CURSOR_SAVE_DEBOUNCE_S)
         await self._save_session_cursors()
 
-    async def _load_session_cursors(self) -> None:
+    async def _load_legacy_session_cursors(self) -> None:
         if not self._cursor_path.exists():
             return
         try:

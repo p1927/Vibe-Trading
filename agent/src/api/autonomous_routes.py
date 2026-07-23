@@ -119,13 +119,13 @@ def clear_all_agents_route(
     _auth: None = Depends(require_local_or_auth),
 ) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.proposals import clear_all_autonomous_agents
+    from trade_integrations.autonomous_agents.scheduler_cleanup import remove_agent_scheduler_jobs
     from trade_integrations.autonomous_agents.store import list_agents
-    from src.scheduled_research.autonomous_agent_jobs import unregister_agent_jobs
 
     for agent in list_agents():
         agent_id = str(agent.get("id") or "").strip()
         if agent_id:
-            unregister_agent_jobs(agent_id)
+            remove_agent_scheduler_jobs(agent_id)
     svc = _session_service()
     return clear_all_autonomous_agents(session_service=svc)
 
@@ -311,10 +311,10 @@ def pause_agent(
     _auth: None = Depends(require_local_or_auth),
 ) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.proposals import pause_autonomous_agent
-    from src.scheduled_research.autonomous_agent_jobs import unregister_agent_jobs
+    from trade_integrations.autonomous_agents.scheduler_cleanup import remove_agent_scheduler_jobs
 
     try:
-        unregister_agent_jobs(agent_id)
+        remove_agent_scheduler_jobs(agent_id)
         return pause_autonomous_agent(agent_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -350,11 +350,16 @@ def stop_agent(
     _auth: None = Depends(require_local_or_auth),
 ) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.proposals import stop_autonomous_agent
-    from src.scheduled_research.autonomous_agent_jobs import unregister_agent_jobs
+    from trade_integrations.autonomous_agents.scheduler_cleanup import (
+        remove_agent_scheduler_jobs,
+        remove_obsolete_scheduler_jobs,
+    )
 
     try:
-        unregister_agent_jobs(agent_id)
-        return stop_autonomous_agent(agent_id)
+        result = stop_autonomous_agent(agent_id)
+        remove_agent_scheduler_jobs(agent_id)
+        remove_obsolete_scheduler_jobs()
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -366,16 +371,16 @@ def delete_agent_route(
     _auth: None = Depends(require_local_or_auth),
 ) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.proposals import delete_autonomous_agent
+    from trade_integrations.autonomous_agents.scheduler_cleanup import remove_agent_scheduler_jobs
     from trade_integrations.autonomous_agents.teardown import (
         FlattenIncompleteError,
         OpenPositionsConflictError,
         OpenPositionsLookupError,
     )
-    from src.scheduled_research.autonomous_agent_jobs import unregister_agent_jobs
 
     svc = _session_service()
     try:
-        unregister_agent_jobs(agent_id)
+        remove_agent_scheduler_jobs(agent_id)
         return delete_autonomous_agent(
             agent_id,
             session_service=svc,

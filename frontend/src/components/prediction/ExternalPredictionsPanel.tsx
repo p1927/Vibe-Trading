@@ -536,6 +536,26 @@ export function ExternalPredictionsPanel({
 
       <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
         <span>Last updated: {fmtTimestamp(snapshot?.fetched_at)}</span>
+        {snapshot?.sources_ok != null ? (
+          <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 tabular-nums text-emerald-800 dark:text-emerald-300">
+            {snapshot.sources_ok} forecast{snapshot.sources_ok === 1 ? "" : "s"}
+          </span>
+        ) : null}
+        {(snapshot?.sources_error ?? 0) > 0 ? (
+          <span className="rounded-full bg-red-500/10 px-2 py-0.5 tabular-nums text-red-700 dark:text-red-300">
+            {snapshot.sources_error} crawl error{(snapshot.sources_error ?? 0) === 1 ? "" : "s"}
+          </span>
+        ) : null}
+        {(snapshot?.sources_not_found ?? 0) > 0 ? (
+          <span className="rounded-full bg-amber-500/10 px-2 py-0.5 tabular-nums text-amber-800 dark:text-amber-300">
+            {snapshot.sources_not_found} no forecast
+          </span>
+        ) : null}
+        {(snapshot?.refresh_attempt_failures ?? 0) > 0 ? (
+          <span className="rounded-full bg-amber-500/15 px-2 py-0.5 font-medium text-amber-800 dark:text-amber-300">
+            {snapshot.refresh_attempt_failures} refresh failed — cached kept
+          </span>
+        ) : null}
         {refreshing && runJobId ? (
           <span className="rounded-full bg-blue-500/15 px-2 py-0.5 font-mono text-[10px] text-blue-700 dark:text-blue-300">
             Run {runJobId.slice(0, 8)}

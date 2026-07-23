@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { useAgentStore } from "@/stores/agent";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useSSE } from "@/hooks/useSSE";
-import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource, type AutonomousAgentProposal, type AutonomousAgentInstance, type TradingConnectorsResponse } from "@/lib/api";
+import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type AgentAudit, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource, type AutonomousAgentProposal, type AutonomousAgentInstance, type TradingConnectorsResponse } from "@/lib/api";
 import { isReportWorthyRun } from "@/lib/runReports";
 import type { AgentMessage, ToolCallEntry } from "@/types/agent";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
@@ -83,6 +83,11 @@ interface LiveActionItem {
   timestamp: number;
   action: LiveAction;
 }
+interface AgentAuditItem {
+  kind: "agent_audit";
+  timestamp: number;
+  audit: AgentAudit;
+}
 interface TradePlanWidgetItem {
   kind: "trade_plan_widget";
   timestamp: number;
@@ -93,7 +98,7 @@ interface AutonomousProposalItem {
   timestamp: number;
   proposal: AutonomousAgentProposal;
 }
-type LiveItem = ProposalItem | LiveActionItem | TradePlanWidgetItem | AutonomousProposalItem;
+type LiveItem = ProposalItem | LiveActionItem | AgentAuditItem | TradePlanWidgetItem | AutonomousProposalItem;
 
 function proposalSessionId(
   proposal: AutonomousAgentProposal,
@@ -203,6 +208,25 @@ function LiveActionChip({ action }: { action: LiveAction }) {
             <span className="shrink-0 font-mono text-[10px] text-muted-foreground">· {action.remote_tool}</span>
           )}
           {action.error && <span className="truncate text-destructive">· {action.error}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AgentAuditChip({ audit }: { audit: AgentAudit }) {
+  const kind = audit.kind?.replace(/_/g, " ") || "audit";
+  return (
+    <div className="flex gap-3">
+      <AgentAvatar />
+      <div className="flex-1 min-w-0">
+        <div className="inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-lg border border-violet-500/40 bg-violet-500/5 px-2.5 py-1 text-xs text-violet-700 dark:text-violet-300">
+          <Activity className="h-3 w-3 shrink-0" />
+          <span className="shrink-0 font-medium uppercase tracking-wide text-[10px]">Agent</span>
+          <span className="shrink-0 font-medium">{kind}</span>
+          {audit.outcome && (
+            <span className="shrink-0 font-mono text-[10px] text-muted-foreground">· {audit.outcome}</span>
+          )}
         </div>
       </div>
     </div>
@@ -1194,6 +1218,14 @@ export function Agent({
         scrollToBottom();
       },
 
+      "agent.action": (d) => {
+        touch();
+        const audit = d as unknown as AgentAudit;
+        if (!audit.kind) return;
+        setLiveItems((items) => [...items, { kind: "agent_audit", timestamp: Date.now(), audit }]);
+        scrollToBottom();
+      },
+
       heartbeat: () => {},
       reconnect: (d) => { act().setSseStatus("reconnecting", Number(d.attempt ?? 0)); },
     });
@@ -1672,6 +1704,8 @@ export function Agent({
           ? `ap_${item.proposal.proposal_id}`
         : item.kind === "trade_plan_widget"
           ? `tw_${item.widget.widget_id}`
+          : item.kind === "agent_audit"
+            ? `aa_${item.audit.audit_id || item.timestamp}`
           : `la_${item.action.audit_id || item.timestamp}`;
       rows.push({ sort: item.timestamp, render: "live", item, key });
     }
@@ -1823,6 +1857,9 @@ export function Agent({
                     onPlanApprovalChange={onAutonomousAgentRefresh}
                   />
                 );
+              }
+              if (row.item.kind === "agent_audit") {
+                return <AgentAuditChip key={row.key} audit={row.item.audit} />;
               }
               return <LiveActionChip key={row.key} action={row.item.action} />;
             }

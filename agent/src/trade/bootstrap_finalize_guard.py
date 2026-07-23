@@ -9,18 +9,6 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _DECISION_TOOL = "record_autonomous_decision"
-_WIDGET_TOOLS = frozenset(
-    {
-        "get_options_trade_widget",
-        "mcp_openalgo_get_options_trade_widget",
-        "get_stock_trade_widget",
-        "mcp_openalgo_get_stock_trade_widget",
-        "get_index_trade_widget",
-        "mcp_openalgo_get_index_trade_widget",
-        "get_options_trade_plan",
-        "mcp_openalgo_get_options_trade_plan",
-    }
-)
 
 
 def _guard_enabled() -> bool:
@@ -120,7 +108,10 @@ async def maybe_retry_bootstrap_widget(
     symbols = list(agent.get("symbols") or ["NIFTY"])
     focus = str(symbols[0] if symbols else "NIFTY")
 
-    from trade_integrations.autonomous_agents.recovery import reserve_bootstrap_structure_recovery_slot
+    from trade_integrations.autonomous_agents.recovery import (
+        release_bootstrap_structure_recovery_slot,
+        reserve_bootstrap_structure_recovery_slot,
+    )
 
     if not reserve_bootstrap_structure_recovery_slot(agent_id):
         logger.info(
@@ -141,5 +132,6 @@ async def maybe_retry_bootstrap_widget(
         )
         return True
     except Exception:
+        release_bootstrap_structure_recovery_slot(agent_id)
         logger.exception("Bootstrap finalize guard failed for session=%s", session_id)
         return False
