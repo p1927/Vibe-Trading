@@ -2,7 +2,7 @@ import { ExternalLink } from "lucide-react";
 import { ExternalPredictionReplayChart } from "@/components/charts/ExternalPredictionReplayChart";
 import type { ExternalPredictionRecord, ExternalPredictionSource } from "@/lib/api";
 import { resolveApiBase } from "@/lib/apiBase";
-import { canApproveNavigationPath, formatHorizonMatch, hasHorizonMismatch } from "@/lib/externalPredictionsUtils";
+import { canApproveNavigationPath, formatForecastProvenance, formatHorizonMatch, hasHorizonMismatch } from "@/lib/externalPredictionsUtils";
 import { cn } from "@/lib/utils";
 
 const KIND_LABELS: Record<string, string> = {
@@ -56,6 +56,7 @@ export function ExternalPredictionCard({
     ? `${resolveApiBase()}${thumbPath.startsWith("/") ? thumbPath : `/${thumbPath}`}`
     : undefined;
   const horizonLabel = formatHorizonMatch(record);
+  const forecastProof = formatForecastProvenance(record);
   const showHorizonBadge = hasHorizonMismatch(record);
   const showApprove = canApproveNavigationPath(source, horizonDays) && onApprovePath;
   const fetchStatus = record.fetch_status || "unknown";
@@ -125,6 +126,16 @@ export function ExternalPredictionCard({
           {horizonLabel ? (
             <p className="mt-0.5 text-[10px] text-muted-foreground">{horizonLabel}</p>
           ) : null}
+          {forecastProof ? (
+            <p className="mt-1 text-[10px] text-foreground/80">
+              <span className="font-medium text-muted-foreground">Extracted from:</span> {forecastProof}
+            </p>
+          ) : null}
+          {record.provenance?.horizon_window && forecastProof && !forecastProof.includes("Window") ? (
+            <p className="mt-0.5 text-[10px] text-muted-foreground">
+              Date window: {record.provenance.horizon_window}
+            </p>
+          ) : null}
           {url ? (
             <a
               href={url}
@@ -155,19 +166,24 @@ export function ExternalPredictionCard({
       </div>
 
       {thumbnailSrc ? (
-        <a
-          href={url || thumbnailSrc}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="block overflow-hidden rounded-lg border border-border/50 bg-muted/20"
-        >
-          <img
-            src={thumbnailSrc}
-            alt={`${name} forecast page screenshot`}
-            className="max-h-40 w-full object-cover object-top"
-            loading="lazy"
-          />
-        </a>
+        <div className="space-y-1">
+          <a
+            href={url || thumbnailSrc}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block overflow-hidden rounded-lg border border-border/50 bg-muted/20"
+          >
+            <img
+              src={thumbnailSrc}
+              alt={`${name} forecast page screenshot`}
+              className="max-h-40 w-full object-cover object-top"
+              loading="lazy"
+            />
+          </a>
+          <p className="text-[10px] text-muted-foreground">
+            Page screenshot at fetch — verify levels against source
+          </p>
+        </div>
       ) : null}
 
       <ExternalPredictionReplayChart

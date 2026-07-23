@@ -668,6 +668,42 @@ def prefetch_research_for_message(
     return context
 
 
+def prefetch_autonomous_context(
+    session_id: str,
+    content: str,
+    session_config: dict[str, Any] | None = None,
+) -> str:
+    """Inject expanded agent learning/progress for autonomous scheduler turns."""
+    try:
+        ensure_trade_stack_path()
+    except RuntimeError:
+        return ""
+    from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
+    from src.trade.session_context import is_autonomous_agent_session
+
+    cfg = dict(session_config or {})
+    if not is_autonomous_agent_session(cfg) or not is_autonomous_scheduler_turn(content):
+        return ""
+    agent_id = str(cfg.get("autonomous_agent_id") or "").strip()
+    if not agent_id:
+        return ""
+    try:
+        from trade_integrations.autonomous_agents.context_prefetch import (
+            format_autonomous_context_for_prefetch,
+            infer_turn_kind_from_prompt,
+        )
+        from trade_integrations.autonomous_agents.store import get_agent
+
+        agent = get_agent(agent_id)
+        if not agent:
+            return ""
+        turn_kind = infer_turn_kind_from_prompt(content)
+        return format_autonomous_context_for_prefetch(agent=agent, turn_kind=turn_kind)
+    except Exception:
+        logger.exception("Autonomous context prefetch failed for %s", agent_id)
+        return ""
+
+
 def _maybe_start_debate(
     session_id: str,
     ticker: str,

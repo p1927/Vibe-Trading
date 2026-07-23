@@ -35,11 +35,6 @@ class CommitAutonomousAgentRequest(BaseModel):
     session_id: Optional[str] = None
 
 
-class OrchestratorSessionResponse(BaseModel):
-    session_id: str
-    title: str
-
-
 class DraftAgentResponse(BaseModel):
     agent_id: str
     session_id: str
@@ -51,14 +46,7 @@ def list_autonomous_agents() -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.infra_startup import maybe_heal_infra_paused_agents
     from trade_integrations.autonomous_agents.agent_status import load_openalgo_authority
     from trade_integrations.autonomous_agents.runtime_status import build_stack_health, enrich_agent
-    from trade_integrations.autonomous_agents.store import backfill_orphan_orchestrator_session, list_agents
-
-    svc = _session_service()
-    if svc is not None:
-        try:
-            backfill_orphan_orchestrator_session(session_service=svc)
-        except Exception:
-            logger.debug("orchestrator backfill failed", exc_info=True)
+    from trade_integrations.autonomous_agents.store import list_agents
 
     try:
         from src.scheduled_research.autonomous_bootstrap import (
@@ -152,23 +140,11 @@ def drafts_get_not_allowed() -> Dict[str, Any]:
 def create_draft_agent_route(
     _auth: None = Depends(require_local_or_auth),
 ) -> DraftAgentResponse:
-    from trade_integrations.autonomous_agents.store import backfill_orphan_orchestrator_session, create_draft_agent
+    from trade_integrations.autonomous_agents.store import create_draft_agent
 
     svc = _session_service()
     if svc is None:
         raise HTTPException(status_code=503, detail="session runtime not enabled")
-    try:
-        backfilled = backfill_orphan_orchestrator_session(session_service=svc)
-    except Exception:
-        logger.debug("orchestrator backfill failed", exc_info=True)
-        backfilled = None
-    if backfilled and backfilled.get("agent"):
-        agent = backfilled["agent"]
-        return DraftAgentResponse(
-            agent_id=str(backfilled.get("agent_id") or agent.get("id") or ""),
-            session_id=str(backfilled.get("session_id") or agent.get("vibe_session_id") or ""),
-            agent=agent,
-        )
     result = create_draft_agent(session_service=svc)
     return DraftAgentResponse(
         agent_id=str(result["agent_id"]),
@@ -239,34 +215,6 @@ def commit_autonomous_agent_route(
         return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@autonomous_router.post("/orchestrator/session", response_model=OrchestratorSessionResponse)
-def get_or_create_orchestrator_session(
-    _auth: None = Depends(require_local_or_auth),
-) -> OrchestratorSessionResponse:
-    """Legacy alias — returns backfilled orphan draft or creates a fresh draft agent + session."""
-    from trade_integrations.autonomous_agents.store import backfill_orphan_orchestrator_session, create_draft_agent
-
-    svc = _session_service()
-    if svc is None:
-        raise HTTPException(status_code=503, detail="session runtime not enabled")
-
-    try:
-        backfilled = backfill_orphan_orchestrator_session(session_service=svc)
-    except Exception:
-        logger.debug("orchestrator backfill failed", exc_info=True)
-        backfilled = None
-    if backfilled and backfilled.get("session_id"):
-        return OrchestratorSessionResponse(
-            session_id=str(backfilled["session_id"]),
-            title=str((backfilled.get("agent") or {}).get("name") or "Agent draft"),
-        )
-    result = create_draft_agent(session_service=svc)
-    return OrchestratorSessionResponse(
-        session_id=str(result["session_id"]),
-        title=str((result.get("agent") or {}).get("name") or "New agent draft"),
-    )
 
 
 class PlanApprovalRequest(BaseModel):

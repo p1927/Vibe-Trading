@@ -40,6 +40,48 @@ def _job_ids(agent_id: str) -> tuple[str, str, str]:
     return f"{agent_id}-watch", f"{agent_id}-research", f"{agent_id}-quant"
 
 
+def _resolve_watch_job_timing(
+    existing: ScheduledResearchJob | None,
+    *,
+    watch_ms: int,
+    now_ms: int,
+) -> tuple[int, int, int | None]:
+    """Return (next_run_at, created_at, last_run_at) preserving overdue pending jobs."""
+    default_next = now_ms + watch_ms
+    if existing is None:
+        return default_next, now_ms, None
+    created_at = existing.created_at or now_ms
+    last_run_at = existing.last_run_at
+    if existing.status == JobStatus.RUNNING:
+        return existing.next_run_at, created_at, last_run_at
+    if str(existing.schedule) == str(watch_ms) and existing.status == JobStatus.PENDING:
+        return existing.next_run_at, created_at, last_run_at
+    return default_next, created_at, last_run_at
+
+
+def nudge_watch_job_after_plan_approval(agent_id: str) -> None:
+    """Fire the next scheduled watch tick soon after plan approval."""
+    if not is_autonomous_scheduler_enabled():
+        return
+    from src.scheduled_research.store import ScheduledResearchJobStore
+
+    store = ScheduledResearchJobStore()
+    watch_id, _, _ = _job_ids(agent_id)
+    job = store.get(watch_id)
+    if job is None or job.status == JobStatus.RUNNING:
+        return
+    now_ms = int(time.time() * 1000)
+    job.next_run_at = now_ms
+    job.status = JobStatus.PENDING
+    store.upsert(job)
+    try:
+        from src.api.scheduled_routes import _get_scheduled_research_executor
+
+        _get_scheduled_research_executor().wake()
+    except Exception:
+        logger.debug("watch job wake after plan approval failed for %s", agent_id, exc_info=True)
+
+
 def _is_index_agent(agent: dict[str, Any]) -> bool:
     symbols = [str(s).upper() for s in (agent.get("symbols") or [])]
     return any(s in {"NIFTY", "NIFTY50", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "^NSEI"} for s in symbols)
@@ -107,24 +149,34 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
     watch_id, research_id, quant_id = _job_ids(agent_id)
     # Post-commit bootstrap runs an immediate watch tick; defer the first scheduled one.
     bootstrap = str(agent.get("bootstrap_status") or "")
-    watch_next_run = now_ms + int(watch_ms)
+    watch_ms_int = int(watch_ms)
+    existing_watch = store.get(watch_id)
+    watch_next_run, watch_created_at, watch_last_run = _resolve_watch_job_timing(
+        existing_watch,
+        watch_ms=watch_ms_int,
+        now_ms=now_ms,
+    )
+    if existing_watch is None:
+        watch_next_run = now_ms + watch_ms_int
     research_next_run = (
         now_ms + int(research_ms)
         if bootstrap in {"pending", "running", "awaiting_plan_approval"}
         else now_ms + 60_000
     )
 
-    store.upsert(
-        ScheduledResearchJob(
-            id=watch_id,
-            prompt=f"Autonomous watch tick for {agent.get('name') or agent_id}",
-            schedule=watch_ms,
-            next_run_at=watch_next_run,
-            status=JobStatus.PENDING,
-            created_at=now_ms,
-            config={"job_type": JOB_TYPE_WATCH, "autonomous_agent_id": agent_id},
+    if not (existing_watch and existing_watch.status == JobStatus.RUNNING):
+        store.upsert(
+            ScheduledResearchJob(
+                id=watch_id,
+                prompt=f"Autonomous watch tick for {agent.get('name') or agent_id}",
+                schedule=watch_ms,
+                next_run_at=watch_next_run,
+                status=JobStatus.PENDING,
+                created_at=watch_created_at,
+                last_run_at=watch_last_run,
+                config={"job_type": JOB_TYPE_WATCH, "autonomous_agent_id": agent_id},
+            )
         )
-    )
     store.upsert(
         ScheduledResearchJob(
             id=research_id,

@@ -471,89 +471,6 @@ export async function streamIndexPredictionJob(
   }
 }
 
-export async function streamIndexPredictionRun(
-  body: RunIndexPredictionRequest,
-  handlers: StreamIndexPredictionHandlers,
-  signal?: AbortSignal,
-): Promise<void> {
-  const now = () => new Date().toISOString();
-  let res: Response;
-  try {
-    res = await fetch(`${BASE}/trade/index-prediction/run/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify(body),
-      signal,
-    });
-  } catch (err) {
-    const hint =
-      BASE.includes(":8899") || !BASE
-        ? " Check the Vibe API is running on port 8899."
-        : " Check your network connection and API URL.";
-    throw new ApiError(
-      `Network error reaching analysis API.${hint} ${err instanceof Error ? err.message : ""}`.trim(),
-      0,
-    );
-  }
-
-  if (!res.ok) {
-    // Older API builds lack SSE stream route — fall back to blocking POST /run.
-    if (res.status === 404 || res.status === 405) {
-      handlers.onLog?.({
-        stage: "start",
-        message: "Streaming unavailable — running full analysis via standard API…",
-        level: "warn",
-        at: now(),
-      });
-      if (body.refresh_constituents) {
-        handlers.onLog?.({
-          stage: "constituents",
-          message: "Refreshing all 50 constituents — this can take several minutes…",
-          level: "info",
-          at: now(),
-        });
-      }
-      let fallback: Response;
-      try {
-        fallback = await fetch(`${BASE}/trade/index-prediction/run`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
-          body: JSON.stringify(body),
-          signal,
-        });
-      } catch (err) {
-        throw new ApiError(
-          `Network error during analysis.${body.refresh_constituents ? " Try unchecking “Refresh all constituents” for a faster run (~1 min)." : ""} ${err instanceof Error ? err.message : ""}`.trim(),
-          0,
-        );
-      }
-      if (!fallback.ok) {
-        throw await errorFromResponse(fallback);
-      }
-      const payload = (await fallback.json()) as IndexPredictionResponse;
-      if (payload.status !== "ok" || !payload.artifact) {
-        handlers.onError?.(payload.message || "Analysis failed");
-        return;
-      }
-      handlers.onLog?.({
-        stage: "done",
-        message: "Analysis complete",
-        level: "info",
-        at: now(),
-      });
-      handlers.onDone?.(payload.artifact);
-      return;
-    }
-    throw await errorFromResponse(res);
-  }
-
-  const gotDone = await consumeIndexPredictionSse(res, handlers);
-  if (!gotDone) {
-    handlers.onError?.(
-      "Analysis stream ended without a result — the server may have timed out. Try without “Refresh all constituents”.",
-    );
-  }
-}
 
 export const api = {
   uploadFile,
@@ -692,10 +609,6 @@ export const api = {
     request<CommitAutonomousAgentResponse>("/autonomous-agents/commit", {
       method: "POST",
       body: JSON.stringify(body),
-    }),
-  getOrchestratorSession: () =>
-    request<OrchestratorSessionResponse>("/autonomous-agents/orchestrator/session", {
-      method: "POST",
     }),
   createDraftAutonomousAgent: () =>
     request<DraftAutonomousAgentResponse>("/autonomous-agents/drafts", {
@@ -877,7 +790,6 @@ export const api = {
   streamIndexPredictionJob: streamIndexPredictionJob,
   getIndexPredictionFactors: () =>
     request<IndexFactorCatalogResponse>("/trade/index-prediction/factors"),
-  streamIndexPredictionRun: streamIndexPredictionRun,
   simulateIndexPrediction: (body: SimulateIndexPredictionRequest) =>
     request<SimulateIndexPredictionResponse>("/trade/index-prediction/simulate", {
       method: "POST",
@@ -1072,26 +984,6 @@ export const api = {
       { signal },
     ),
   streamExternalPredictionsJob: streamExternalPredictionsJob,
-  streamExternalPredictionsRefresh: async (
-    ticker = "NIFTY",
-    horizonDays = 14,
-    handlers: StreamExternalPredictionsHandlers,
-    signal?: AbortSignal,
-  ) => {
-    const res = await fetch(`${BASE}/trade/index-prediction/external-predictions/refresh/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ ticker, horizon_days: horizonDays }),
-      signal,
-    });
-    if (!res.ok) {
-      throw await errorFromResponse(res);
-    }
-    const gotDone = await consumeExternalPredictionsSse(res, handlers);
-    if (!gotDone) {
-      handlers.onError?.("Refresh stream ended without a result");
-    }
-  },
   listExternalPredictionSources: (ticker = "NIFTY", watchlistedOnly = false) =>
     request<ExternalPredictionSourcesResponse>(
       `/trade/index-prediction/external-predictions/sources?ticker=${encodeURIComponent(ticker)}&watchlisted_only=${watchlistedOnly}`,
@@ -1904,6 +1796,32 @@ export interface ExternalPredictionTarget {
   high?: number | null;
 }
 
+export interface ExternalPredictionProvenance {
+  url?: string;
+  title?: string;
+  snippet?: string;
+  summary?: string;
+  horizon_days?: number;
+  thumbnail_url?: string;
+  forecast_section?: string;
+  forecast_heading?: string;
+  horizon_window?: string;
+  regex_style?: string;
+  horizon_match?: {
+    selected_days?: number;
+    target_days_ahead?: number | null;
+    in_window?: boolean | null;
+    soft_mismatch?: boolean;
+  };
+  last_refresh_attempt?: {
+    fetch_status?: string;
+    error_message?: string;
+  };
+  fetch_method?: string;
+  navigation_mode?: string;
+  [key: string]: unknown;
+}
+
 export interface ExternalPredictionRecord {
   source_id: string;
   symbol?: string;
@@ -1917,7 +1835,7 @@ export interface ExternalPredictionRecord {
   expected_return_pct?: number | null;
   rationale_bullets?: string[];
   confidence?: "high" | "medium" | "low";
-  provenance?: { url?: string; title?: string; snippet?: string; summary?: string; horizon_days?: number };
+  provenance?: ExternalPredictionProvenance;
   extraction?: { model?: string; extracted_at?: string };
   fetch_status?: "ok" | "stale" | "not_found" | "error";
   error_message?: string;
@@ -3396,6 +3314,10 @@ export interface IndexNewsImpactReport {
   ticker?: string;
   horizon_days?: number;
   spot?: number;
+  ingest_blocked?: boolean;
+  pipeline_paused?: boolean;
+  pause_reason?: string;
+  user_message?: string;
   debate_summary?: {
     view?: string;
     confidence?: number;
@@ -3950,11 +3872,6 @@ export interface CommitAutonomousAgentResponse {
   paper_session_warnings?: string[];
   already_committed?: boolean;
   infra_paused?: boolean;
-}
-
-export interface OrchestratorSessionResponse {
-  session_id: string;
-  title: string;
 }
 
 export interface DraftAutonomousAgentResponse {

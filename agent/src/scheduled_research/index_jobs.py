@@ -411,7 +411,13 @@ def run_hub_news_entity_job(config: dict[str, Any] | None = None) -> dict[str, A
     from trade_integrations.dataflows.index_research.news_entity_worker import run_hub_news_entity_job as _fn
 
     try:
-        return _fn(config)
+        summary = _fn(config)
+        if summary.get("pipeline_paused") and str(summary.get("pause_reason") or "") == "llm_wiki_unavailable":
+            logger.warning(
+                "hub news entity job blocked: %s",
+                summary.get("pause_reason"),
+            )
+        return summary
     except Exception as exc:
         logger.exception("hub news entity job failed")
         return {"status": "error", "error": str(exc), "had_errors": True}

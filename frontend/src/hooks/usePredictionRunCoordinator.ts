@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import {
   api,
-  ApiError,
   streamIndexPredictionJob,
-  streamIndexPredictionRun,
   type IndexPredictionRunJobSnapshot,
 } from "@/lib/api";
 import { mergePipelineLogs } from "@/lib/pipelineLogUtils";
@@ -289,46 +287,6 @@ export async function runPredictionAnalysis(
     });
   } catch (e) {
     if (gen !== attachGenRef.current) return;
-    if (e instanceof ApiError && (e.status === 404 || e.status === 405)) {
-      const controller = new AbortController();
-      abortRef.current = controller;
-      try {
-        await streamIndexPredictionRun(
-          body,
-          {
-            onLog: (entry) => {
-              if (gen !== attachGenRef.current) return;
-              usePredictionRunStore.getState().appendPipelineLog(entry);
-            },
-            onDone: (next) => {
-              if (gen !== attachGenRef.current) return;
-              const s = usePredictionRunStore.getState();
-              s.setRunArtifact(next);
-              s.setPipelineLogs((prev) => mergePipelineLogs(prev, next.pipeline_log));
-              s.finishRun();
-            },
-            onError: (message) => {
-              if (gen !== attachGenRef.current) return;
-              usePredictionRunStore.getState().setRunError(message);
-            },
-          },
-          controller.signal,
-        );
-      } catch (legacyErr) {
-        if (controller.signal.aborted) {
-          usePredictionRunStore.getState().finishRun();
-          return;
-        }
-        if (gen !== attachGenRef.current) return;
-        const msg = legacyErr instanceof Error ? legacyErr.message : "Analysis failed";
-        usePredictionRunStore.getState().setRunError(msg);
-      } finally {
-        if (!controller.signal.aborted && gen === attachGenRef.current) {
-          usePredictionRunStore.getState().finishRun();
-        }
-      }
-      return;
-    }
     const msg = e instanceof Error ? e.message : "Analysis failed";
     usePredictionRunStore.getState().setRunError(msg);
     usePredictionRunStore.getState().finishRun();
