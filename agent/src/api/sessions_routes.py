@@ -402,17 +402,21 @@ def _load_agent_audit_record(audit_id: str) -> Optional[Dict[str, Any]]:
 
         return load_agent_audit(audit_id)
     except Exception:
-        logger.debug("paper.action reload failed for %s", audit_id, exc_info=True)
+        logger.debug("agent.action reload failed for %s", audit_id, exc_info=True)
     return None
 
 
-def _paper_action_frame_from_tool_result(event: Any) -> Optional[str]:
-    """Build a paper.action SSE frame from autonomous-agent MCP tool_result."""
+def _agent_audit_frame_from_tool_result(event: Any) -> Optional[str]:
+    """Build an agent.action SSE frame from autonomous-agent MCP tool_result."""
     data = getattr(event, "data", None)
     if getattr(event, "event_type", None) != "tool_result" or not isinstance(data, dict):
         return None
     preview = str(data.get("preview") or "")
-    if '"paper_action"' not in preview and '"audit_id"' not in preview:
+    if (
+        '"agent_audit"' not in preview
+        and '"paper_action"' not in preview
+        and '"audit_id"' not in preview
+    ):
         return None
     match = _PAPER_ACTION_ID_RE.search(preview)
     if not match:
@@ -424,7 +428,7 @@ def _paper_action_frame_from_tool_result(event: Any) -> Optional[str]:
     from src.session.events import SSEEvent
 
     frame = SSEEvent(
-        event_type="paper.action",
+        event_type="agent.action",
         data=record,
         session_id=getattr(event, "session_id", "") or "",
     )
@@ -910,9 +914,9 @@ def register_sessions_routes(app: FastAPI) -> None:
                 live_action = _live_action_frame_from_tool_result(event)
                 if live_action is not None:
                     yield live_action
-                paper_action = _paper_action_frame_from_tool_result(event)
-                if paper_action is not None:
-                    yield paper_action
+                agent_audit = _agent_audit_frame_from_tool_result(event)
+                if agent_audit is not None:
+                    yield agent_audit
                 trade_widget = _trade_plan_widget_frame_from_tool_result(event)
                 if trade_widget is not None:
                     yield trade_widget

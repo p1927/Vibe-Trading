@@ -94,13 +94,34 @@ def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
         "ticker": job.get("ticker"),
         "horizon_days": job.get("horizon_days"),
         "created_at": job.get("created_at"),
-        "logs": list(job.get("logs") or []),
-        "snapshot": job.get("snapshot"),
-        "partial_snapshot": job.get("partial_snapshot"),
-        "error": job.get("error"),
+        "logs": [_sanitize_log_entry(row) for row in list(job.get("logs") or [])],
+        "snapshot": _sanitize_json_value(job.get("snapshot")),
+        "partial_snapshot": _sanitize_json_value(job.get("partial_snapshot")),
+        "error": _sanitize_json_text(job.get("error")),
         "worker_pid": job.get("worker_pid"),
         "_finished_at": job.get("_finished_at"),
     }
+
+
+def _sanitize_json_text(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    return "".join(ch if ord(ch) >= 32 or ch in "\n\r\t" else " " for ch in value)
+
+
+def _sanitize_json_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _sanitize_json_text(value)
+    if isinstance(value, dict):
+        return {k: _sanitize_json_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_json_value(v) for v in value]
+    return value
+
+
+def _sanitize_log_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    sanitized = _sanitize_json_value(entry)
+    return sanitized if isinstance(sanitized, dict) else dict(entry)
 
 
 def _write_job_to_disk(job: dict[str, Any]) -> None:
@@ -345,7 +366,7 @@ def append_log(job_id: str, entry: dict[str, Any]) -> None:
     def _apply(job: dict[str, Any]) -> None:
         if job.get("status") == "queued":
             job["status"] = "running"
-        job.setdefault("logs", []).append(dict(entry))
+        job.setdefault("logs", []).append(_sanitize_log_entry(dict(entry)))
 
     _mutate_job(job_id, _apply)
 
@@ -361,17 +382,19 @@ def append_source_complete(
     def _apply(job: dict[str, Any]) -> None:
         if job.get("status") == "queued":
             job["status"] = "running"
-        entry = {
-            "stage": "source_complete",
-            "level": "info",
-            "message": f"{source_id} complete",
-            "source_id": source_id,
-            "record": record,
-            "partial_snapshot": partial_snapshot,
-            "at": _now_iso(),
-        }
+        entry = _sanitize_log_entry(
+            {
+                "stage": "source_complete",
+                "level": "info",
+                "message": f"{source_id} complete",
+                "source_id": source_id,
+                "record": record,
+                "partial_snapshot": partial_snapshot,
+                "at": _now_iso(),
+            }
+        )
         job.setdefault("logs", []).append(entry)
-        job["partial_snapshot"] = partial_snapshot
+        job["partial_snapshot"] = _sanitize_json_value(partial_snapshot)
 
     _mutate_job(job_id, _apply)
 

@@ -63,7 +63,6 @@ async def _dispatch_scheduled_research_job(job) -> None:
     ``COMPLETED`` state for those paths means "successfully enqueued" or
     "pipeline finished" respectively.
     """
-    from src.scheduled_research.auto_paper_jobs import AUTO_PAPER_JOB_TYPES, dispatch_auto_paper_job
     from src.scheduled_research.index_jobs import INDEX_JOB_TYPES, dispatch_index_job
     from src.scheduled_research.options_jobs import OPTIONS_JOB_TYPES, dispatch_options_job
     from src.scheduled_research.trade_data_jobs import TRADE_DATA_JOB_TYPES, dispatch_trade_data_job
@@ -78,9 +77,6 @@ async def _dispatch_scheduled_research_job(job) -> None:
         return
     if job_type in OPTIONS_JOB_TYPES:
         await dispatch_options_job(job)
-        return
-    if job_type in AUTO_PAPER_JOB_TYPES:
-        await dispatch_auto_paper_job(job)
         return
     if job_type in TRADE_DATA_JOB_TYPES:
         await dispatch_trade_data_job(job)
@@ -167,10 +163,6 @@ def _start_scheduled_research_executor() -> None:
         is_index_scheduler_enabled,
         register_default_index_jobs,
     )
-    from src.scheduled_research.auto_paper_jobs import (
-        is_auto_paper_scheduler_enabled,
-        register_default_auto_paper_job,
-    )
     from src.scheduled_research.options_jobs import (
         is_options_scheduler_enabled,
         register_default_options_jobs,
@@ -192,8 +184,6 @@ def _start_scheduled_research_executor() -> None:
         register_default_index_jobs(_get_scheduled_research_store())
     if is_options_scheduler_enabled():
         register_default_options_jobs(_get_scheduled_research_store())
-    if is_auto_paper_scheduler_enabled():
-        register_default_auto_paper_job(_get_scheduled_research_store())
     if is_hub_calibration_scheduler_enabled():
         register_default_hub_calibration_jobs(_get_scheduled_research_store())
     elif is_trade_data_scheduler_enabled():

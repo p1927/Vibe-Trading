@@ -190,7 +190,7 @@ async def _app_lifespan(app: FastAPI):
 
     try:
         from src.api.state import _get_session_service
-        from src.session.recovery import maybe_resume_auto_paper_session, recover_stale_running_attempts
+        from src.session.recovery import recover_stale_running_attempts
 
         svc = _get_session_service()
         if svc is not None:
@@ -199,23 +199,8 @@ async def _app_lifespan(app: FastAPI):
             recovered = recover_stale_running_attempts(svc.store)
             if recovered:
                 logger.info("Recovered %d stale running session attempts", len(recovered))
-
-            async def _startup_paper_resume() -> None:
-                try:
-                    result = await maybe_resume_auto_paper_session(svc.store, svc)
-                    if result and result.get("ui_url"):
-                        logger.info(
-                            "Auto-resumed paper session in Vibe UI: %s",
-                            result.get("ui_url"),
-                        )
-                except Exception:
-                    logger.exception("Auto paper resume dispatch failed")
-
-            from src.api.runtime_activity import tracked_create_task
-
-            tracked_create_task(_startup_paper_resume(), name="startup:auto-paper-resume")
     except Exception:
-        logger.exception("Session recovery / auto paper resume failed")
+        logger.exception("Session recovery failed")
 
     from src.config.accessor import get_env_config
 

@@ -53,13 +53,12 @@ KEEP_RECENT = 3
 _PROTECTED_TOOL_NAMES = frozenset(
     {
         "get_autonomous_agent_status",
-        "get_auto_paper_status",
-        "get_auto_paper_market_feedback",
+        "get_autonomous_market_feedback",
         "get_options_trade_widget",
         "get_stock_trade_widget",
         "record_autonomous_decision",
-        "record_auto_paper_decision",
-        "execute_auto_paper_basket",
+        "execute_autonomous_basket",
+        "stop_autonomous_agents",
         "get_us_quote",
         "get_stock_browse",
         "place_order",
@@ -534,31 +533,6 @@ def _normalize_tool_run_dir(args: dict[str, Any], memory_run_dir: str | None) ->
     candidate = Path(run_dir_value)
     if not candidate.is_absolute():
         normalized["run_dir"] = str((Path(memory_run_dir) / candidate).resolve())
-    return normalized
-
-
-_AUTO_PAPER_SESSION_TOOLS = frozenset(
-    {
-        "start_auto_paper_trading",
-        "resume_auto_paper_trading",
-        "mcp_openalgo_start_auto_paper_trading",
-        "mcp_openalgo_resume_auto_paper_trading",
-    }
-)
-
-
-def _inject_auto_paper_session_context(
-    args: dict[str, Any],
-    *,
-    session_id: str,
-    tool_name: str,
-) -> dict[str, Any]:
-    """Wire Vibe chat session id into auto-paper MCP tools for crash recovery."""
-    if not session_id or tool_name not in _AUTO_PAPER_SESSION_TOOLS:
-        return args
-    normalized = dict(args)
-    if not normalized.get("vibe_session_id"):
-        normalized["vibe_session_id"] = session_id
     return normalized
 
 
@@ -1309,9 +1283,6 @@ class AgentLoop:
         runnable: list[tuple] = []
         for tc in tool_calls:
             args = _normalize_tool_run_dir(tc.arguments, self.memory.run_dir)
-            args = _inject_auto_paper_session_context(
-                args, session_id=self._session_id, tool_name=tc.name
-            )
             args = _inject_news_scenario_session_context(
                 args,
                 session_id=self._session_id,
@@ -1362,9 +1333,6 @@ class AgentLoop:
             iteration: Current iteration.
         """
         args = _normalize_tool_run_dir(tc.arguments, self.memory.run_dir)
-        args = _inject_auto_paper_session_context(
-            args, session_id=self._session_id, tool_name=tc.name
-        )
         args = _inject_news_scenario_session_context(
             args,
             session_id=self._session_id,

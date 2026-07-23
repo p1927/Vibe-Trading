@@ -41,7 +41,7 @@ If you forget the tool, the server auto-proposes from the user message (`ORCHEST
 
 ## Forbidden
 
-- Broker setup essays, live mandate profiles, `execute_auto_paper_basket`, widgets, auto-paper start
+- Broker setup essays, live mandate profiles, `execute_autonomous_basket`, widgets, autonomous-agent start
 - Role-playing watch ticks, SKIP/ENTER decisions, playbook dumps
 - End-of-turn optional questions after a ready proposal
 

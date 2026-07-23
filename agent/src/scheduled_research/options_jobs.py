@@ -268,6 +268,9 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
             supersedes=widget_id,
             revision_reason=revision_reason,
         )
+        ledger_agent_id = str(entry.get("agent_id") or "").strip()
+        if ledger_agent_id:
+            widget["autonomous_agent_id"] = ledger_agent_id
         new_widget_id = widget.get("widget_id")
         if new_widget_id:
             widget_dir = Path.home() / ".vibe-trading" / "trade_widgets"
@@ -294,55 +297,30 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
         )
 
         try:
-            from trade_integrations.auto_paper.session_store import load_session, save_session
+            from trade_integrations.autonomous_agents.thesis_break import dispatch_thesis_break_revision
 
-            paper_session = load_session()
-            if paper_session.get("enabled") and paper_session.get("autonomous"):
-                urgent = list(paper_session.get("urgent_alerts") or [])
-                urgent.append(
-                    {
-                        "type": "thesis_break",
-                        "widget_id": widget_id,
-                        "underlying": underlying,
-                        "reasons": list(report.reasons or []),
-                    }
+            dispatch_widget_id = str(widget_id or "").strip()
+            new_plan_widget_id = str(new_widget_id or "").strip() or None
+            try:
+                asyncio.get_event_loop().create_task(
+                    dispatch_thesis_break_revision(
+                        underlying=underlying,
+                        widget_id=dispatch_widget_id,
+                        reasons=list(report.reasons or []),
+                        new_plan_widget_id=new_plan_widget_id,
+                    )
                 )
-                paper_session["urgent_alerts"] = urgent[-20:]
-                save_session(paper_session)
-
-                try:
-                    from src.scheduled_research.auto_paper_jobs import dispatch_thesis_break_agent_turn
-
-                    asyncio.get_event_loop().create_task(
-                        dispatch_thesis_break_agent_turn(
-                            underlying,
-                            widget_id,
-                            list(report.reasons or []),
-                        )
+            except RuntimeError:
+                asyncio.run(
+                    dispatch_thesis_break_revision(
+                        underlying=underlying,
+                        widget_id=dispatch_widget_id,
+                        reasons=list(report.reasons or []),
+                        new_plan_widget_id=new_plan_widget_id,
                     )
-                except RuntimeError:
-                    asyncio.run(
-                        dispatch_thesis_break_agent_turn(
-                            underlying,
-                            widget_id,
-                            list(report.reasons or []),
-                        )
-                    )
-                except Exception:
-                    logger.debug("thesis break agent dispatch failed", exc_info=True)
-
-                agent_id = str(paper_session.get("autonomous_agent_id") or "").strip()
-                if agent_id:
-                    try:
-                        from trade_integrations.autonomous_agents.watch import dispatch_full_reasoning
-
-                        asyncio.get_event_loop().create_task(
-                            dispatch_full_reasoning(agent_id, turn_kind="strategy_revision")
-                        )
-                    except Exception:
-                        logger.debug("autonomous agent thesis revision skipped", exc_info=True)
+                )
         except Exception:
-            logger.debug("auto paper urgent alert skipped", exc_info=True)
+            logger.debug("thesis break agent dispatch failed", exc_info=True)
 
     return {"skipped": False, "broken": broken, "refreshed": refreshed}
 

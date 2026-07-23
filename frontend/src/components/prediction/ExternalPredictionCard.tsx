@@ -58,6 +58,28 @@ export function ExternalPredictionCard({
   const horizonLabel = formatHorizonMatch(record);
   const showHorizonBadge = hasHorizonMismatch(record);
   const showApprove = canApproveNavigationPath(source, horizonDays) && onApprovePath;
+  const fetchStatus = record.fetch_status || "unknown";
+  const statusLabel =
+    fetchStatus === "ok"
+      ? "Forecast"
+      : fetchStatus === "error"
+        ? "Crawl error"
+        : fetchStatus === "not_found"
+          ? "No forecast"
+          : fetchStatus;
+  const statusClass =
+    fetchStatus === "ok"
+      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+      : fetchStatus === "error"
+        ? "bg-red-500/15 text-red-700 dark:text-red-300"
+        : "bg-muted text-muted-foreground";
+  const lastAttempt = record.provenance?.last_refresh_attempt as
+    | { fetch_status?: string; error_message?: string }
+    | undefined;
+  const staleRefresh =
+    fetchStatus === "ok" &&
+    lastAttempt?.fetch_status != null &&
+    lastAttempt.fetch_status !== "ok";
 
   return (
     <article
@@ -80,7 +102,23 @@ export function ExternalPredictionCard({
                 Horizon mismatch
               </span>
             ) : null}
+            <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold", statusClass)}>
+              {statusLabel}
+            </span>
+            {staleRefresh ? (
+              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300">
+                Refresh failed — cached
+              </span>
+            ) : null}
           </div>
+          {staleRefresh && lastAttempt?.error_message ? (
+            <p className="mt-1 text-[10px] text-amber-800 dark:text-amber-300 line-clamp-2">
+              Last refresh: {lastAttempt.error_message}
+            </p>
+          ) : null}
+          {record.error_message && fetchStatus !== "ok" ? (
+            <p className="mt-1 text-[10px] text-muted-foreground line-clamp-2">{record.error_message}</p>
+          ) : null}
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             NIFTY 50 index · Spot {fmtLevel(record.spot_at_fetch)} · Published {fmtDate(record.published_at)}
           </p>

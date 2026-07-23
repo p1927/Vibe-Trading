@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 _DEFAULT_FILENAMES = ("agent.json", "agent.yaml", "agent.yml")
@@ -20,6 +21,9 @@ def get_runtime_root(config_path: Path | None = None) -> Path:
     """
     if config_path is not None:
         return config_path.expanduser().parent
+    custom = os.getenv("VIBE_TRADING_RUNTIME_ROOT", "").strip()
+    if custom:
+        return Path(custom).expanduser()
     return Path.home() / ".vibe-trading"
 
 
