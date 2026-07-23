@@ -242,8 +242,26 @@ def run_session_close_flatten_sync() -> dict:
         return {"skipped": True, "reason": "no_open_positions"}
 
     client = OpenAlgoClient()
-    if not client.ensure_analyzer_mode():
-        return {"status": "error", "reason": "analyzer_mode_failed"}
+    try:
+        from trade_integrations.execution.context_verify import ensure_paper_execution_ready
+        from trade_integrations.execution.default_profile import paper_mode_env_enabled
+
+        agent = None
+        agent_id = session.get("autonomous_agent_id")
+        if agent_id:
+            try:
+                from trade_integrations.autonomous_agents.store import get_agent
+
+                agent = get_agent(str(agent_id))
+            except Exception:
+                agent = None
+        ensure_paper_execution_ready(
+            client,
+            agent=agent or {"constraints": {"mode": "paper"}},
+            env_paper_lock=paper_mode_env_enabled(),
+        )
+    except RuntimeError as exc:
+        return {"status": "error", "reason": str(exc)}
 
     result = client.close_all_positions(strategy="auto_paper_session_close")
     append_outcome(

@@ -5,6 +5,8 @@ import type { AutonomousAgentInstance } from "@/lib/api";
 
 function statusColor(status: string): string {
   switch (status) {
+    case "draft":
+      return "bg-muted-foreground/60";
     case "running":
       return "bg-emerald-500";
     case "paused":
@@ -69,6 +71,7 @@ interface Props {
 export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete }: Props) {
   const [expanded, setExpanded] = useState(false);
   const runtime = agent.runtime;
+  const isDraft = agent.status === "draft";
   const mandate = runtime?.mandate_summary;
   const lastDecision = (runtime?.last_decision || agent.last_decision) as {
     decision?: string;
@@ -107,9 +110,9 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-foreground">{agent.name}</p>
               <p className="truncate text-xs text-muted-foreground">
-                {(agent.symbols ?? []).join(" · ") || "—"} · {agent.status}
-                {waitingForInfra ? " · waiting for infra" : ""}
-                {bootstrapFailed ? " · bootstrap failed" : isBootstrapping ? " · starting" : ""}
+                {isDraft
+                  ? "Draft · tap to continue setup"
+                  : `${(agent.symbols ?? []).join(" · ") || "—"} · ${agent.status}${waitingForInfra ? " · waiting for infra" : ""}${bootstrapFailed ? " · bootstrap failed" : isBootstrapping ? " · starting" : ""}`}
               </p>
             </div>
           </div>
@@ -210,6 +213,19 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
         </div>
       </button>
 
+      {isDraft && onDelete && (
+        <div className="mt-2 flex justify-end">
+          <button
+            type="button"
+            onClick={onDelete}
+            className="rounded border border-destructive/40 px-2 py-0.5 text-[11px] text-destructive hover:bg-destructive/10"
+          >
+            Delete draft
+          </button>
+        </div>
+      )}
+
+      {!isDraft && (
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -218,8 +234,9 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
         {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
         {expanded ? "Less" : "More"}
       </button>
+      )}
 
-      {expanded && (
+      {expanded && !isDraft && (
         <div className="mt-2 space-y-2 border-t border-border/60 pt-2 text-[11px]">
           {bootstrapFailed && agent.bootstrap_error && (
             <p className="text-red-600/90">{agent.bootstrap_error}</p>

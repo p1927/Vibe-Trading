@@ -18,6 +18,7 @@ import { ToolProgressIndicator } from "@/components/chat/ToolProgressIndicator";
 import { MandateProposalCard } from "@/components/chat/MandateProposalCard";
 import { AutonomousAgentProposalCard } from "@/components/autonomous/AutonomousAgentProposalCard";
 import { OrchestratorWelcome } from "@/components/autonomous/OrchestratorWelcome";
+import { AutonomousSessionEmptyState } from "@/components/autonomous/AutonomousSessionEmptyState";
 import { TradePlanWidgetCard } from "@/components/chat/TradePlanWidgetCard";
 import { ContextDrawer } from "@/components/research/ContextDrawer";
 import {
@@ -286,6 +287,8 @@ interface AgentProps {
   backToAutonomous?: () => void;
   onAutonomousAgentCommitted?: (agentId: string, sessionId: string) => void;
   autonomousAgent?: AutonomousAgentInstance | null;
+  autonomousAgentId?: string | null;
+  autonomousAgentLoadState?: "idle" | "loading" | "ready" | "error";
   newsScenarioMode?: boolean;
   onNewsScenarioWidget?: (widget: TradePlanWidget) => void;
   boundPipelineAsOf?: string;
@@ -297,6 +300,8 @@ export function Agent({
   backToAutonomous: _backToAutonomous,
   onAutonomousAgentCommitted,
   autonomousAgent,
+  autonomousAgentId,
+  autonomousAgentLoadState = "idle",
   newsScenarioMode = false,
   onNewsScenarioWidget,
   boundPipelineAsOf: _boundPipelineAsOf,
@@ -374,6 +379,7 @@ export function Agent({
   const [debateArtifact, setDebateArtifact] = useState<AgentDebateArtifact | null>(null);
   const [debateRunning, setDebateRunning] = useState(false);
   const [debateError, setDebateError] = useState<string | null>(null);
+  const [sessionLoadError, setSessionLoadError] = useState<string | null>(null);
 
   const messages = useAgentStore(s => s.messages);
   const streamingText = useAgentStore(s => s.streamingText);
@@ -388,6 +394,8 @@ export function Agent({
   const autoPaperMode = searchParams.get("auto_paper");
   const urlAgentId = searchParams.get("agent");
   const isOrchestratorView = urlAgentId === "orchestrator";
+  const isDraftCreateView = isOrchestratorView || autonomousAgent?.status === "draft";
+  const isEmbeddedAutonomousView = Boolean(_embedded && urlAgentId && urlAgentId !== "orchestrator" && autonomousAgent?.status !== "draft");
   const autoPaperBootstrappedRef = useRef(false);
 
   useEffect(() => {
@@ -565,11 +573,15 @@ export function Agent({
       act().loadHistory(agentMsgs);
       act().setSessionLoading(false);
       act().cacheSession(sid, agentMsgs);
+      setSessionLoadError(null);
       setTimeout(() => forceScrollToBottom(), 50);
-    } catch {
+    } catch (error) {
       act().setSessionLoading(false);
+      const message = error instanceof Error ? error.message : t('agent.failedToLoadSession');
+      setSessionLoadError(message);
+      toast.error(message);
     }
-  }, [forceScrollToBottom]);
+  }, [forceScrollToBottom, t]);
 
   const refreshSessionMessages = useCallback(async (sid: string) => {
     const gen = genRef.current + 1;
@@ -776,7 +788,7 @@ export function Agent({
           s.addMessage({ id: "", type: "run_complete", content: "", shadowId, timestamp: Date.now() });
         }
 
-        if (isOrchestratorView && sid) {
+        if (isDraftCreateView && sid) {
           let foundProposal = false;
           const applyLatestProposal = (proposal: AutonomousAgentProposal | null | undefined) => {
             if (!proposal?.proposal_id || !["ready", "incomplete"].includes(proposal.status ?? "")) return false;
@@ -895,6 +907,7 @@ export function Agent({
         const payload = d as { agent_id?: string; vibe_session_id?: string; name?: string };
         if (!payload.agent_id || !payload.vibe_session_id) return;
         window.dispatchEvent(new Event("autonomous-agents-refresh"));
+        void refreshSessionMessages(sid);
         onAutonomousAgentCommitted?.(payload.agent_id, payload.vibe_session_id);
       },
 
@@ -902,8 +915,26 @@ export function Agent({
         touch();
         const payload = d as { agent_id?: string; session_id?: string };
         if (payload.agent_id && payload.session_id) {
+          void refreshSessionMessages(sid);
           onAutonomousAgentCommitted?.(payload.agent_id, payload.session_id);
         }
+      },
+
+      "message.received": (d) => {
+        touch();
+        const messageId = String(d.message_id || "");
+        const role = String(d.role || "");
+        const content = String(d.content || "");
+        if (!messageId || !content) return;
+        const s = act();
+        if (s.messages.some((m) => m.id === messageId)) return;
+        s.addMessage({
+          id: messageId,
+          type: role === "user" ? "user" : "answer",
+          content,
+          timestamp: Date.now(),
+        });
+        scrollToBottom();
       },
 
       "trade_plan.widget": (d) => {
@@ -1083,9 +1114,10 @@ export function Agent({
       heartbeat: () => {},
       reconnect: (d) => { act().setSseStatus("reconnecting", Number(d.attempt ?? 0)); },
     });
-  }, [connect, disconnect, isOrchestratorView, loadGoalSnapshot, newsScenarioMode, onAutonomousAgentCommitted, onNewsScenarioWidget, scrollToBottom, urlAgentId]);
+  }, [connect, disconnect, isDraftCreateView, loadGoalSnapshot, newsScenarioMode, onAutonomousAgentCommitted, onNewsScenarioWidget, refreshSessionMessages, scrollToBottom, urlAgentId]);
 
   useEffect(() => {
+    setSessionLoadError(null);
     const { sessionId: curSid, messages: curMsgs, cacheSession, reset, getCachedSession, switchSession } = act();
 
     if (urlSessionId && urlSessionId !== curSid) {
@@ -1638,15 +1670,36 @@ export function Agent({
               ))}
             </div>
           )}
+          {sessionLoadError && (
+            <div className="rounded-xl border border-red-500/40 bg-red-500/5 px-4 py-3 text-sm text-red-800 dark:text-red-200">
+              <p className="font-medium">Could not load session messages</p>
+              <p className="mt-1 text-xs opacity-90">{sessionLoadError}</p>
+              {sessionId && (
+                <button
+                  type="button"
+                  onClick={() => void refreshSessionMessages(sessionId)}
+                  className="mt-2 rounded-lg border border-red-600/30 px-2.5 py-1 text-xs font-medium hover:bg-red-500/10"
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+          )}
           {!sessionLoading && messages.length === 0 && (
-            isOrchestratorView ? (
+            isDraftCreateView ? (
               <OrchestratorWelcome onExample={runPrompt} />
+            ) : isEmbeddedAutonomousView ? (
+              <AutonomousSessionEmptyState
+                agent={autonomousAgent}
+                agentId={autonomousAgentId ?? urlAgentId}
+                loadState={autonomousAgentLoadState}
+              />
             ) : (
               <WelcomeScreen onExample={runPrompt} />
             )
           )}
 
-          {isOrchestratorView && orchestratorMissingProposal && (
+          {isDraftCreateView && orchestratorMissingProposal && (
             <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-xs text-amber-900 dark:text-amber-100">
               <p className="font-medium">No proposal card yet</p>
               <p className="mt-1 text-amber-800/90 dark:text-amber-200/90">

@@ -58,8 +58,6 @@ def needs_bootstrap_finalize_guard(
     called = {str(t).strip() for t in tools_called if t}
     if _DECISION_TOOL not in called:
         return False
-    if called & _WIDGET_TOOLS:
-        return False
 
     try:
         import sys
@@ -84,6 +82,7 @@ def needs_bootstrap_finalize_guard(
         return False
     if _bootstrap_structured_plan_ready(agent):
         return False
+    # Retry when decision recorded without widget, or widget did not yield structured legs.
     return True
 
 

@@ -3,8 +3,8 @@
 Paper vs live follows OpenAlgo's Analyze toggle (not a separate host). Paper
 profiles expect ``analyze_mode=True``; live profiles expect it OFF.
 
-India symbols use OpenAlgo quotes/history/orders. US symbols are data-only and
-route to Alpaca paper when ``ALPACA_API_KEY`` is configured.
+India and US symbols route through OpenAlgo quotes/history/orders. US execution
+uses the Alpaca broker plugin inside OpenAlgo.
 """
 
 from __future__ import annotations
@@ -323,6 +323,33 @@ class _RestClient:
         return data if isinstance(data, dict) else {}
 
 
+def _marketcontext(client: "_RestClient") -> dict[str, Any]:
+    try:
+        body = client.post("marketcontext", {})
+    except RuntimeError as exc:
+        return {"status": "error", "error": str(exc)}
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    if str(body.get("status") or "").lower() != "success" or not data:
+        message = body.get("message") or body.get("error") or "MarketContext unavailable"
+        return {"status": "error", "error": str(message)}
+    return {"status": "success", "data": data}
+
+
+def market_context(config: OpenAlgoConfig | None = None) -> dict[str, Any]:
+    """Fetch authoritative OpenAlgo market context (broker, analyze mode, simulator)."""
+    cfg = config or load_config()
+    missing = _missing_fields(cfg)
+    if missing:
+        return {
+            "status": "error",
+            "error": f"OpenAlgo connector not configured: missing {', '.join(missing)}.",
+        }
+    try:
+        return _marketcontext(_client(cfg))
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "error": str(exc)}
+
+
 def check_status(config: OpenAlgoConfig | None = None) -> dict[str, Any]:
     cfg = config or load_config()
     report: dict[str, Any] = {
@@ -492,19 +519,11 @@ def get_quote(symbol: str, *, config: OpenAlgoConfig | None = None, **_: Any) ->
 
 def _us_quote(symbol: str, cfg: OpenAlgoConfig) -> dict[str, Any]:
     try:
-        from trade_integrations.dataflows.alpaca import alpaca_configured, fetch_alpaca_quote
+        from trade_integrations.dataflows.openalgo import fetch_openalgo_quote
 
-        if not alpaca_configured():
-            return {
-                "status": "error",
-                "error": (
-                    f"US symbol {symbol} requires Alpaca paper data. "
-                    "Set ALPACA_API_KEY and ALPACA_API_SECRET in .env."
-                ),
-            }
-        quote = fetch_alpaca_quote(symbol)
+        quote = fetch_openalgo_quote(symbol)
         if not quote or quote.get("ltp") is None:
-            return {"status": "error", "error": f"no Alpaca quote for {symbol}"}
+            return {"status": "error", "error": f"no OpenAlgo quote for {symbol}"}
         return {
             "status": "ok",
             "symbol": symbol,
@@ -516,9 +535,9 @@ def _us_quote(symbol: str, cfg: OpenAlgoConfig) -> dict[str, Any]:
                 "bid": quote.get("bid"),
                 "ask": quote.get("ask"),
                 "volume": quote.get("volume"),
-                "feed": quote.get("feed"),
+                "feed": quote.get("feed") or "openalgo",
             },
-            "note": "US data only — no US order placement on OpenAlgo connector profiles.",
+            "note": "US quotes via OpenAlgo Alpaca broker plugin.",
         }
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "error": str(exc)}
@@ -582,27 +601,52 @@ def get_historical_bars(
 
 
 def _us_history(symbol: str, *, period: str, limit: int) -> dict[str, Any]:
+    cfg = load_config()
+    interval = _history_interval(period)
+    end = date.today()
+    start = end - timedelta(days=max(int(limit), 1))
     try:
-        from src.trading.connectors.alpaca.sdk import build_config, get_historical_bars as alpaca_bars
-
-        result = alpaca_bars(
-            symbol,
-            config=build_config({"profile": "paper", "feed": "iex"}),
-            period=period,
-            limit=int(limit),
+        client = _client(cfg)
+        if not cfg.is_paper:
+            mode_error = _assert_mode(cfg, client.analyzer_status())
+            if mode_error:
+                return mode_error
+        body = client.post(
+            "history",
+            {
+                "symbol": symbol,
+                "exchange": "NASDAQ",
+                "interval": interval,
+                "start_date": start.isoformat(),
+                "end_date": end.isoformat(),
+            },
         )
-        if result.get("status") != "ok":
-            return result
-        return {
-            "status": "ok",
-            "symbol": symbol,
-            "market": "US",
-            "period": period,
-            "bars": result.get("bars") or [],
-            "note": "US data via Alpaca paper — read-only on OpenAlgo connector profiles.",
-        }
+        rows = body.get("data") or []
     except Exception as exc:  # noqa: BLE001
         return {"status": "error", "error": str(exc)}
+
+    bars = []
+    for item in rows if isinstance(rows, list) else []:
+        if not isinstance(item, dict):
+            continue
+        bars.append(
+            {
+                "timestamp": item.get("timestamp") or item.get("date"),
+                "open": item.get("open"),
+                "high": item.get("high"),
+                "low": item.get("low"),
+                "close": item.get("close"),
+                "volume": item.get("volume"),
+            }
+        )
+    return {
+        "status": "ok",
+        "symbol": symbol,
+        "market": "US",
+        "period": period,
+        "bars": bars,
+        "note": "US history via OpenAlgo Alpaca broker plugin.",
+    }
 
 
 def _history_interval(period: str) -> str:

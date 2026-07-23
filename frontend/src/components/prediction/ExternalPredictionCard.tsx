@@ -1,6 +1,7 @@
 import { ExternalLink } from "lucide-react";
 import { ExternalPredictionReplayChart } from "@/components/charts/ExternalPredictionReplayChart";
 import type { ExternalPredictionRecord, ExternalPredictionSource } from "@/lib/api";
+import { resolveApiBase } from "@/lib/apiBase";
 import { formatHorizonMatch } from "@/lib/externalPredictionsUtils";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +47,10 @@ export function ExternalPredictionCard({
 }: Props) {
   const name = source?.display_name || record.source_id;
   const url = record.provenance?.url;
+  const thumbPath = record.provenance?.thumbnail_url as string | undefined;
+  const thumbnailSrc = thumbPath
+    ? `${resolveApiBase()}${thumbPath.startsWith("/") ? thumbPath : `/${thumbPath}`}`
+    : undefined;
   const horizonLabel = formatHorizonMatch(record);
 
   return (
@@ -99,6 +104,22 @@ export function ExternalPredictionCard({
           </span>
         ) : null}
       </div>
+
+      {thumbnailSrc ? (
+        <a
+          href={url || thumbnailSrc}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block overflow-hidden rounded-lg border border-border/50 bg-muted/20"
+        >
+          <img
+            src={thumbnailSrc}
+            alt={`${name} forecast page screenshot`}
+            className="max-h-40 w-full object-cover object-top"
+            loading="lazy"
+          />
+        </a>
+      ) : null}
 
       <ExternalPredictionReplayChart
         record={record}

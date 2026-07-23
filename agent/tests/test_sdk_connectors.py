@@ -627,6 +627,34 @@ def test_openalgo_service_unconfigured(monkeypatch, tmp_path) -> None:
     assert "api_key" in result["error"].lower()
 
 
+def test_openalgo_market_context(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("OPENALGO_API_KEY", "test-key")
+    monkeypatch.setattr(oa, "get_runtime_root", lambda: tmp_path)
+    cfg = oa.OpenAlgoConfig(api_key="test-key", host="http://127.0.0.1:5001")
+    monkeypatch.setattr(
+        oa,
+        "_marketcontext",
+        lambda _client: {
+            "status": "success",
+            "data": {
+                "context_generation": "2026-07-23T09:15:00+05:30",
+                "data_broker": "zerodha",
+                "execution_venue": "sandbox",
+                "analyze_mode": True,
+                "market_region": "IN",
+                "positions_authority": "sandbox.db",
+                "quotes_source": "broker_plugin",
+                "simulator": {"active": False},
+                "capabilities": ["equity"],
+            },
+        },
+    )
+    result = oa.market_context(cfg)
+    assert result["status"] == "success"
+    assert result["data"]["execution_venue"] == "sandbox"
+    assert result["data"]["positions_authority"] == "sandbox.db"
+
+
 def test_openalgo_check_status_includes_broker(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("OPENALGO_API_KEY", "test-key")
     monkeypatch.setattr(oa, "get_runtime_root", lambda: tmp_path)
