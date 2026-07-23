@@ -6,7 +6,7 @@ import { ExternalPredictionsRefreshLogPanel } from "@/components/prediction/Exte
 import { HORIZON_OPTIONS } from "@/components/prediction/PredictionControls";
 import type { ExternalRefreshPhase } from "@/hooks/useExternalPredictions";
 import type { ExternalPredictionSnapshot, PipelineLogEntry } from "@/lib/api";
-import { filterVisiblePredictions } from "@/lib/externalPredictionsUtils";
+import { filterVisiblePredictions, computeStreetSummary } from "@/lib/externalPredictionsUtils";
 import { cn } from "@/lib/utils";
 
 function fmtTimestamp(iso: string | undefined): string {
@@ -49,7 +49,7 @@ function ExternalSourceDiscoverPanel({
         <div>
           <h2 className="text-sm font-semibold">Sources & discovery</h2>
           <p className="text-[11px] text-muted-foreground">
-            Crawl4AI fetches landing pages and linked articles for the selected horizon. MiniMax extracts targets and rationale.
+            Crawl4AI + expert agent fetch landing pages for the selected horizon. Click Refresh — never runs automatically.
           </p>
         </div>
         <button
@@ -240,9 +240,38 @@ export function ExternalPredictionsPanel({
   const allPredictions = snapshot?.predictions ?? [];
   const visiblePredictions = filterVisiblePredictions(allPredictions);
   const skippedCount = allPredictions.length - visiblePredictions.length;
+  const summary = computeStreetSummary(snapshot, horizonDays);
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="rounded-xl border border-border/60 bg-card/30 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold">Street forecast summary</h2>
+            <p className="text-[11px] text-muted-foreground">
+              {summary.forecastCount} of {summary.watchlistCount} sources · {horizonDays}d horizon
+              {summary.spot != null ? ` · NIFTY spot ${summary.spot.toLocaleString("en-IN")}` : ""}
+            </p>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Last updated: {fmtTimestamp(summary.fetchedAt ?? undefined)}
+          </p>
+        </div>
+        {summary.targetMedian != null ? (
+          <p className="mt-2 text-[12px]">
+            Target range{" "}
+            <span className="font-semibold tabular-nums">
+              {summary.targetMin?.toLocaleString("en-IN")} – {summary.targetMax?.toLocaleString("en-IN")}
+            </span>{" "}
+            (median {summary.targetMedian.toLocaleString("en-IN")})
+          </p>
+        ) : (
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            No cached forecasts — click Refresh to fetch street views.
+          </p>
+        )}
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-card/40 p-3">
         <div>
           <h1 className="text-base font-semibold">Miscellaneous — Street views</h1>

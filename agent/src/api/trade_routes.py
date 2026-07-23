@@ -175,25 +175,6 @@ def _openalgo_analyzer_status(host: str, api_key: str) -> bool:
     return bool(data.get("analyze_mode"))
 
 
-def _ensure_openalgo_analyzer_mode(host: str, api_key: str) -> bool:
-    """Enable OpenAlgo analyzer (paper) mode when OPENALGO_PAPER_MODE is on."""
-    if _openalgo_analyzer_status(host, api_key):
-        return True
-    try:
-        from trade_integrations.openalgo.rest_client import get_rest_client
-
-        body = get_rest_client(host=host, api_key=api_key).post(
-            "analyzer/toggle",
-            {"apikey": api_key, "mode": True},
-            timeout=15,
-        )
-    except RuntimeError as exc:
-        logger.warning("OpenAlgo analyzer toggle failed: %s", exc)
-        return False
-    data = body.get("data") if isinstance(body.get("data"), dict) else body
-    return bool(data.get("analyze_mode", True))
-
-
 def _assert_execution_allowed(analyze: bool) -> None:
     """Block live basket execution from Vibe when OPENALGO_PAPER_MODE safety lock is on."""
     if not analyze and _paper_mode_env_enabled():
@@ -290,9 +271,23 @@ def execute_basket(
         raise HTTPException(status_code=400, detail="No orders to execute")
 
     host, api_key = _openalgo_config()
-    if _paper_mode_env_enabled():
-        _ensure_openalgo_analyzer_mode(host, api_key)
-    analyze = _openalgo_analyzer_status(host, api_key)
+    paper_env = _paper_mode_env_enabled()
+    analyze = False
+    if paper_env:
+        from trade_integrations.execution.context_verify import ensure_paper_execution_ready
+        from trade_integrations.auto_paper.openalgo_client import OpenAlgoClient
+
+        client = OpenAlgoClient(host=host, api_key=api_key)
+        ctx = ensure_paper_execution_ready(client, env_paper_lock=True)
+        analyze = ctx.analyze_mode
+    else:
+        from trade_integrations.openalgo.market_context import fetch_market_context
+
+        try:
+            ctx = fetch_market_context(host=host, api_key=api_key)
+            analyze = ctx.analyze_mode
+        except Exception:
+            analyze = _openalgo_analyzer_status(host, api_key)
     _assert_execution_allowed(analyze)
     execution_mode = "paper" if analyze else "live"
 
@@ -2364,7 +2359,18 @@ async def _external_predictions_refresh_event_stream(job_id: str, request: Reque
         ticker = str(job.get("ticker") or "")
 
         while last_log_idx < len(logs):
-            yield _index_prediction_run_sse_frame("log", {"entry": logs[last_log_idx]})
+            entry = logs[last_log_idx]
+            if str(entry.get("stage") or "") == "source_complete":
+                yield _index_prediction_run_sse_frame(
+                    "source_complete",
+                    {
+                        "source_id": entry.get("source_id"),
+                        "record": entry.get("record"),
+                        "partial_snapshot": entry.get("partial_snapshot"),
+                    },
+                )
+            else:
+                yield _index_prediction_run_sse_frame("log", {"entry": entry})
             last_log_idx += 1
             last_emit = time_mod.monotonic()
 
@@ -3449,7 +3455,9 @@ async def auto_paper_start(
         watchlist.insert(0, primary)
     try:
         client = OpenAlgoClient()
-        client.ensure_analyzer_mode()
+        from trade_integrations.execution.context_verify import ensure_paper_execution_ready
+
+        ensure_paper_execution_ready(client, env_paper_lock=_paper_mode_env_enabled())
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

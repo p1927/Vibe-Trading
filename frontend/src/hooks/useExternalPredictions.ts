@@ -165,6 +165,11 @@ export function useExternalPredictions(horizonDays: number, enabled = true) {
               setRefreshPhase("running");
               setRefreshLogs((prev) => [...prev, entry]);
             },
+            onSourceComplete: (partialSnapshot) => {
+              if (gen !== attachGenRef.current) return;
+              setSnapshot(partialSnapshot);
+              setRefreshPhase("running");
+            },
             onDone: (nextSnapshot) => {
               if (gen !== attachGenRef.current) return;
               setSnapshot(nextSnapshot);

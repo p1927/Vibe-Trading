@@ -5,12 +5,40 @@ const BASE = resolveApiBase();
 
 export class ApiError extends Error {
   status: number;
+  detail?: unknown;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, detail?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.detail = detail;
   }
+}
+
+function formatApiDetail(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object") {
+    const d = detail as Record<string, unknown>;
+    if (d.error === "open_positions") {
+      const count = d.count ?? "?";
+      return `Agent has ${count} open position(s). Close them first or confirm flatten.`;
+    }
+    if (d.error === "flatten_incomplete") {
+      const count = d.count ?? "?";
+      const openalgo = d.openalgo_remaining ?? 0;
+      return `Flatten incomplete — ${count} position(s) remain in OpenAlgo (${openalgo}). Retry when market is open.`;
+    }
+    if (d.error === "position_lookup_failed") {
+      return String(d.message || "Could not verify open positions. Retry or confirm flatten.");
+    }
+    if (typeof d.message === "string") return d.message;
+  }
+  return "Request failed";
+}
+
+export function autonomousDeleteErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) return error.message;
+  return error instanceof Error ? error.message : "Delete failed";
 }
 
 export const AUTH_REQUIRED_MESSAGE =
@@ -26,15 +54,15 @@ export interface CorrelationResponse {
 }
 
 async function errorFromResponse(res: Response): Promise<ApiError> {
-  let detail = `HTTP ${res.status}`;
+  let detail: unknown = `HTTP ${res.status}`;
   try {
     const body = await res.json();
-    detail = body.detail || body.message || detail;
+    detail = body.detail ?? body.message ?? detail;
   } catch { /* ignore */ }
   if (res.status === 401 || res.status === 403) {
-    detail = AUTH_REQUIRED_MESSAGE;
+    return new ApiError(AUTH_REQUIRED_MESSAGE, res.status, detail);
   }
-  return new ApiError(detail, res.status);
+  return new ApiError(formatApiDetail(detail), res.status, detail);
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -124,6 +152,7 @@ export interface StreamIndexPredictionHandlers {
 
 export interface StreamExternalPredictionsHandlers {
   onLog?: (entry: PipelineLogEntry) => void;
+  onSourceComplete?: (snapshot: ExternalPredictionSnapshot, sourceId?: string) => void;
   onDone?: (snapshot: ExternalPredictionSnapshot) => void;
   onError?: (message: string) => void;
 }
@@ -146,6 +175,13 @@ async function consumeExternalPredictionsSse(
     buffer = parseSseChunk(buffer, (eventType, data) => {
       if (eventType === "log" && data.entry) {
         handlers.onLog?.(data.entry as PipelineLogEntry);
+        return;
+      }
+      if (eventType === "source_complete" && data.partial_snapshot) {
+        handlers.onSourceComplete?.(
+          data.partial_snapshot as ExternalPredictionSnapshot,
+          typeof data.source_id === "string" ? data.source_id : undefined,
+        );
         return;
       }
       if (eventType === "done" && data.snapshot) {
@@ -635,6 +671,10 @@ export const api = {
     request<OrchestratorSessionResponse>("/autonomous-agents/orchestrator/session", {
       method: "POST",
     }),
+  createDraftAutonomousAgent: () =>
+    request<DraftAutonomousAgentResponse>("/autonomous-agents/drafts", {
+      method: "POST",
+    }),
   getLatestAutonomousProposal: (orchestratorSessionId: string) =>
     request<{ status: string; proposal: AutonomousAgentProposal | null }>(
       `/autonomous-agents/proposals/latest?orchestrator_session_id=${encodeURIComponent(orchestratorSessionId)}`,
@@ -654,11 +694,13 @@ export const api = {
       `/autonomous-agents/${encodeURIComponent(agentId)}/stop`,
       { method: "POST" },
     ),
-  deleteAutonomousAgent: (agentId: string) =>
-    request<{ status: string; deleted: string }>(
-      `/autonomous-agents/${encodeURIComponent(agentId)}`,
+  deleteAutonomousAgent: (agentId: string, opts?: { flattenPositions?: boolean }) => {
+    const q = opts?.flattenPositions ? "?flatten_positions=true" : "";
+    return request<{ status: string; deleted: string }>(
+      `/autonomous-agents/${encodeURIComponent(agentId)}${q}`,
       { method: "DELETE" },
-    ),
+    );
+  },
   approveAutonomousPlan: (agentId: string) =>
     request<{ status: string; agent: AutonomousAgentInstance }>(
       `/autonomous-agents/${encodeURIComponent(agentId)}/approve-plan`,
@@ -3861,6 +3903,12 @@ export interface CommitAutonomousAgentResponse {
 export interface OrchestratorSessionResponse {
   session_id: string;
   title: string;
+}
+
+export interface DraftAutonomousAgentResponse {
+  agent_id: string;
+  session_id: string;
+  agent: AutonomousAgentInstance;
 }
 
 export interface HaltLiveResponse {
