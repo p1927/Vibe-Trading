@@ -291,6 +291,33 @@ def _futu_market(symbol: str, market_hint: str) -> str:
     return "other"
 
 
+def _futu_datetime(date_val: Any, time_val: Any) -> str:
+    """Combine Futu Date+Time cells; Excel serial floats become ISO datetime."""
+    # iterrows yields numpy integer/float scalars; bare pd.to_datetime(int) is ns-epoch.
+    if pd.api.types.is_number(date_val) and not isinstance(date_val, (bool,)):
+        if not (isinstance(date_val, float) and pd.isna(date_val)):
+            serial = float(date_val)
+            frac = 0.0
+            time_is_frac = False
+            if pd.api.types.is_number(time_val) and not isinstance(time_val, (bool,)):
+                if not (isinstance(time_val, float) and pd.isna(time_val)):
+                    candidate = float(time_val)
+                    if 0.0 <= candidate < 1.0:
+                        frac = candidate
+                        time_is_frac = True
+            ts = pd.to_datetime(serial + frac, unit="D", origin="1899-12-30", errors="coerce")
+            if pd.notna(ts):
+                if time_is_frac or time_val is None or (
+                    isinstance(time_val, float) and pd.isna(time_val)
+                ):
+                    return ts.strftime("%Y-%m-%d %H:%M:%S")
+                # Numeric Excel date + string/clock Time column.
+                return f"{ts.strftime('%Y-%m-%d')} {str(time_val).strip()}".strip()
+    date = "" if date_val is None or (isinstance(date_val, float) and pd.isna(date_val)) else str(date_val).strip()
+    time = "" if time_val is None or (isinstance(time_val, float) and pd.isna(time_val)) else str(time_val).strip()
+    return f"{date} {time}".strip()
+
+
 def parse_futu(df: pd.DataFrame) -> list[TradeRecord]:
     """Parse 富途 exports (English headers, HK+US mix).
 
@@ -302,9 +329,7 @@ def parse_futu(df: pd.DataFrame) -> list[TradeRecord]:
         raw_symbol = row.get("Symbol", "")
         if _is_empty_code(raw_symbol):
             continue
-        date = str(row.get("Date", "")).strip()
-        time = str(row.get("Time", "")).strip()
-        dt = f"{date} {time}".strip()
+        dt = _futu_datetime(row.get("Date", ""), row.get("Time", ""))
         symbol = str(raw_symbol).strip().upper()
         qty = _to_float(row.get("Quantity"))
         price = _to_float(row.get("Price"))
