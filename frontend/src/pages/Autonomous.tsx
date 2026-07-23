@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
@@ -117,6 +117,7 @@ export function Autonomous() {
   const isOrchestrator = agentId === "orchestrator" || searchParams.get("create") === "1";
   const [agent, setAgent] = useState<AutonomousAgentInstance | null>(null);
   const [agentLoadState, setAgentLoadState] = useState<AutonomousAgentLoadState>("idle");
+  const agentLoadGenRef = useRef(0);
 
   const loadAgent = useCallback(async () => {
     if (!agentId || agentId === "orchestrator") {
@@ -124,12 +125,16 @@ export function Autonomous() {
       setAgentLoadState("idle");
       return;
     }
+    const gen = agentLoadGenRef.current + 1;
+    agentLoadGenRef.current = gen;
     setAgentLoadState((prev) => (prev === "ready" ? prev : "loading"));
     try {
       const a = await api.getAutonomousAgent(agentId);
+      if (agentLoadGenRef.current !== gen) return;
       setAgent(a);
       setAgentLoadState("ready");
     } catch {
+      if (agentLoadGenRef.current !== gen) return;
       setAgent(null);
       setAgentLoadState("error");
     }
@@ -163,6 +168,7 @@ export function Autonomous() {
       setAgentLoadState("idle");
       return;
     }
+    agentLoadGenRef.current += 1;
     setAgentLoadState("loading");
   }, [agentId]);
 

@@ -428,7 +428,7 @@ def run_hub_news_ingest_job(config: dict[str, Any] | None = None) -> dict[str, A
     if sources is None:
         sources = "default"
     try:
-        return run_hub_news_ingest(
+        summary = run_hub_news_ingest(
             ticker=str(cfg.get("ticker") or "NIFTY"),
             sources=sources,
             mode=mode,
@@ -437,6 +437,16 @@ def run_hub_news_ingest_job(config: dict[str, Any] | None = None) -> dict[str, A
             watcher_since_hours=int(cfg.get("watcher_since_hours") or 6),
             watcher_tickers=cfg.get("watcher_tickers"),
         )
+        if summary.get("blocked") or (
+            summary.get("pipeline_paused")
+            and str(summary.get("pause_reason") or "") == "llm_wiki_unavailable"
+        ):
+            logger.warning(
+                "hub news ingest blocked: %s (%s)",
+                summary.get("pause_reason"),
+                summary.get("user_message") or summary.get("detail") or "llm_wiki_unavailable",
+            )
+        return summary
     except Exception as exc:
         logger.exception("hub news ingest job failed (mode=%s)", mode)
         return {"status": "error", "error": str(exc), "mode": mode, "had_errors": True}

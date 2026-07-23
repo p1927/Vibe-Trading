@@ -121,6 +121,17 @@ def resume_stale_running_bootstraps(*, max_age_s: float = _STALE_RUNNING_BOOTSTR
             continue
         if str(agent.get("pause_reason") or "") == "infra":
             continue
+        agent_id = str(agent.get("id") or "")
+        if not agent_id:
+            continue
+        from trade_integrations.autonomous_agents.bootstrap import is_bootstrap_coroutine_active
+        from trade_integrations.autonomous_agents.recovery import is_session_turn_in_flight
+
+        if is_bootstrap_coroutine_active(agent_id):
+            continue
+        session_id = str(agent.get("vibe_session_id") or "")
+        if session_id and is_session_turn_in_flight(session_id):
+            continue
         age_anchor = str(agent.get("updated_at") or agent.get("created_at") or "")
         if not age_anchor:
             continue
@@ -130,9 +141,6 @@ def resume_stale_running_bootstraps(*, max_age_s: float = _STALE_RUNNING_BOOTSTR
         except ValueError:
             continue
         if age_s < max_age_s:
-            continue
-        agent_id = str(agent.get("id") or "")
-        if not agent_id:
             continue
         logger.warning(
             "re-scheduling stale running bootstrap for %s (running %.0fs, no decision)",
