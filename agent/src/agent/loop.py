@@ -54,6 +54,7 @@ _PROTECTED_TOOL_NAMES = frozenset(
     {
         "get_autonomous_agent_status",
         "get_autonomous_market_feedback",
+        "get_research_status",
         "get_options_trade_widget",
         "get_stock_trade_widget",
         "record_autonomous_decision",
@@ -74,6 +75,11 @@ COLLAPSE_HEAD = 900
 COLLAPSE_TAIL = 500
 
 TAIL_TOKEN_BUDGET = 20_000
+TAIL_TOKEN_BUDGET_MIN = 10_000
+TAIL_TOKEN_BUDGET_STEPS = (20_000, 15_000, 10_000)
+
+COMPACT_POLICY_NORMAL = "normal"
+COMPACT_POLICY_DEFER = "defer_until_attempt_end"
 
 
 def _override(name: str):
@@ -90,6 +96,24 @@ def _token_threshold() -> int:
         return ov
     from src.config.accessor import get_env_config
     return get_env_config().agent_tuning.token_threshold
+
+
+def _compact_hard_cap() -> int:
+    ov = _override("COMPACT_HARD_CAP")
+    if ov is not None:
+        return int(ov)
+    return max(int(_token_threshold() * 2.5), 100_000)
+
+
+def _resolve_compact_policy(user_message: str, session_config: dict[str, Any] | None) -> str:
+    """Defer mid-attempt compaction for autonomous scheduler turns (bootstrap/research/revision)."""
+    from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
+    from src.trade.session_context import is_autonomous_agent_session
+
+    cfg = session_config or {}
+    if is_autonomous_agent_session(cfg) and is_autonomous_scheduler_turn(user_message):
+        return COMPACT_POLICY_DEFER
+    return COMPACT_POLICY_NORMAL
 
 
 def _heartbeat_interval_s() -> float:
@@ -301,6 +325,61 @@ def _context_collapse(messages: list) -> None:
         tail = content[-COLLAPSE_TAIL:]
         trimmed = len(content) - COLLAPSE_HEAD - COLLAPSE_TAIL
         msg["content"] = f"{head}\n\n...[{trimmed} chars collapsed]...\n\n{tail}"
+
+
+def _assistant_tool_batch_end(body: list, assistant_idx: int) -> int:
+    """Return index after the last tool result following an assistant tool_call message."""
+    j = assistant_idx + 1
+    while j < len(body) and body[j].get("role") == "tool":
+        j += 1
+    return j
+
+
+def _adjust_cut_idx_for_tool_batches(body: list, cut_idx: int) -> int:
+    """Keep assistant tool_call batches intact in the preserved tail when compacting."""
+    if not body:
+        return cut_idx
+    cut_idx = max(0, min(cut_idx, len(body)))
+    for i in range(cut_idx - 1, -1, -1):
+        msg = body[i]
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            batch_end = _assistant_tool_batch_end(body, i)
+            if i < cut_idx < batch_end:
+                cut_idx = i
+            break
+        if msg.get("role") != "tool":
+            break
+    while 0 < cut_idx < len(body) and body[cut_idx].get("role") == "tool":
+        cut_idx += 1
+    return cut_idx
+
+
+def _compute_tail_cut_idx(body: list, tail_budget: int) -> int:
+    """Choose head/tail split index honoring a token budget on the preserved tail."""
+    accumulated = 0
+    cut_idx = len(body)
+    for i in range(len(body) - 1, -1, -1):
+        content = body[i].get("content", "")
+        msg_tokens = (len(str(content)) // 4) + 10
+        if accumulated + msg_tokens > tail_budget:
+            cut_idx = i + 1
+            break
+        accumulated += msg_tokens
+        cut_idx = i
+    return _adjust_cut_idx_for_tool_batches(body, cut_idx)
+
+
+def _shrink_tail_to_threshold(messages: list, threshold: int) -> None:
+    """Drop oldest post-summary messages until under threshold (no re-summarize)."""
+    while len(messages) > 2 and estimate_tokens(messages) > threshold:
+        if messages[2].get("role") == "assistant" and messages[2].get("tool_calls"):
+            removed = messages.pop(2)
+            while len(messages) > 2 and messages[2].get("role") == "tool":
+                messages.pop(2)
+            del removed
+        else:
+            messages.pop(2)
+        _fix_tool_pairs(messages)
 
 
 def _fix_tool_pairs(messages: list) -> None:
@@ -606,6 +685,10 @@ class AgentLoop:
         self._run_iteration: int = 0
         self._session_id: str = ""
         self._has_run = False
+        self._compact_policy: str = COMPACT_POLICY_NORMAL
+        self._auto_compact_count: int = 0
+        self._emergency_compact_used: bool = False
+        self._tail_token_budget: int = TAIL_TOKEN_BUDGET
 
     def cancel(self) -> None:
         """Cancel the current loop.
@@ -645,6 +728,10 @@ class AgentLoop:
         self._previous_summary = ""
         self._session_id = session_id
         self._session_config: dict[str, Any] = dict(session_config or {})
+        self._compact_policy = _resolve_compact_policy(user_message, session_config)
+        self._auto_compact_count = 0
+        self._emergency_compact_used = False
+        self._tail_token_budget = TAIL_TOKEN_BUDGET
 
         state_store = RunStateStore()
         RUNS_DIR.mkdir(parents=True, exist_ok=True)
@@ -727,26 +814,9 @@ class AgentLoop:
 
                 # Estimate transcript size once; each compaction layer below
                 # escalates only when its own token threshold is crossed.
-                tokens = estimate_tokens(messages)
-
-                # Layer 1: microcompact — prune old tool results only under
-                # memory pressure, so short, low-pressure runs keep their full
-                # tool history available for the model to reference instead of
-                # having every result past the most recent few cleared.
-                if tokens > int(_token_threshold() * 0.5):
-                    _microcompact(messages)
-                    tokens = estimate_tokens(messages)
-
-                # Layer 2: context collapse (fold long text, zero API cost)
-                if tokens > int(_token_threshold() * 0.7):
-                    _context_collapse(messages)
-                    tokens = estimate_tokens(messages)
-
-                # Layer 3: auto_compact (token threshold exceeded)
-                _tok_threshold = _token_threshold()
-                if tokens > _tok_threshold:
-                    logger.info(f"Auto compact triggered: {tokens} tokens > {_tok_threshold}")
-                    self._auto_compact(messages, run_dir, trace, iteration=current_iter)
+                self._apply_context_pressure_management(
+                    messages, run_dir, trace, iteration=current_iter,
+                )
 
                 logger.info(f"ReAct iteration {iteration}/{self.max_iterations}")
 
@@ -1061,7 +1131,14 @@ class AgentLoop:
                 # Layer 3: compress after all tools have executed
                 if compact_requested:
                     logger.info("Manual compact triggered by model")
-                    self._auto_compact(messages, run_dir, trace, focus_topic=focus_topic, iteration=current_iter)
+                    self._auto_compact(
+                        messages,
+                        run_dir,
+                        trace,
+                        focus_topic=focus_topic,
+                        iteration=current_iter,
+                        manual=True,
+                    )
 
         except Exception as exc:
             logger.exception(f"AgentLoop error: {exc}")
@@ -1594,6 +1671,40 @@ class AgentLoop:
 
     # -- Context compression ---------------------------------------------------
 
+    def _apply_context_pressure_management(
+        self,
+        messages: list,
+        run_dir: Path,
+        trace: TraceWriter,
+        *,
+        iteration: int = 0,
+    ) -> None:
+        """Run micro/collapse/auto compact layers according to attempt compact policy."""
+        tokens = estimate_tokens(messages)
+        threshold = _token_threshold()
+
+        if self._compact_policy == COMPACT_POLICY_DEFER:
+            hard_cap = _compact_hard_cap()
+            if tokens > hard_cap and not self._emergency_compact_used and self._auto_compact_count < 1:
+                logger.info("Emergency compact: %s tokens > hard cap %s", tokens, hard_cap)
+                self._emergency_compact_used = True
+                self._auto_compact(messages, run_dir, trace, iteration=iteration)
+            if estimate_tokens(messages) > hard_cap:
+                _shrink_tail_to_threshold(messages, hard_cap)
+            return
+
+        if tokens > int(threshold * 0.5):
+            _microcompact(messages)
+            tokens = estimate_tokens(messages)
+
+        if tokens > int(threshold * 0.7):
+            _context_collapse(messages)
+            tokens = estimate_tokens(messages)
+
+        if tokens > threshold and self._auto_compact_count < 1:
+            logger.info("Auto compact triggered: %s tokens > %s", tokens, threshold)
+            self._auto_compact(messages, run_dir, trace, iteration=iteration)
+
     def _auto_compact(
         self,
         messages: list,
@@ -1601,6 +1712,8 @@ class AgentLoop:
         trace: TraceWriter,
         focus_topic: str = "",
         iteration: int = 0,
+        *,
+        manual: bool = False,
     ) -> None:
         """Layer 3/4/5: structured LLM summary with token-budget tail protection.
 
@@ -1617,8 +1730,13 @@ class AgentLoop:
             trace: TraceWriter.
             focus_topic: Optional topic to prioritize in the summary.
             iteration: Current trace iteration.
+            manual: True when the model explicitly requested compact (Layer 4).
         """
         del run_dir
+        if not manual and self._auto_compact_count >= 1:
+            logger.info("Skipping auto compact: already compacted once this attempt")
+            return
+
         # Save full transcript before compressing next to the active trace.
         transcript_path = trace.dir_path / f"transcript_{int(_time.time())}.jsonl"
         with open(transcript_path, "w", encoding="utf-8") as f:
@@ -1628,22 +1746,7 @@ class AgentLoop:
         system_msg = messages[0]
         body = messages[1:]
 
-        # Token-budget tail: walk backward to find how many recent messages to preserve
-        accumulated = 0
-        cut_idx = len(body)
-        for i in range(len(body) - 1, -1, -1):
-            content = body[i].get("content", "")
-            msg_tokens = (len(str(content)) // 4) + 10
-            if accumulated + msg_tokens > TAIL_TOKEN_BUDGET:
-                cut_idx = i + 1
-                break
-            accumulated += msg_tokens
-            cut_idx = i
-
-        # Don't split in the middle of a tool_call/tool_result pair
-        while 0 < cut_idx < len(body) and body[cut_idx].get("role") == "tool":
-            cut_idx += 1
-
+        cut_idx = _compute_tail_cut_idx(body, self._tail_token_budget)
         head = body[:cut_idx]
         tail = body[cut_idx:]
 
@@ -1651,6 +1754,7 @@ class AgentLoop:
             # All body fits in tail budget — force a split to avoid infinite loop
             if len(body) > 2:
                 cut_idx = max(1, len(body) // 2)
+                cut_idx = _adjust_cut_idx_for_tool_batches(body, cut_idx)
                 head = body[:cut_idx]
                 tail = body[cut_idx:]
             else:
@@ -1703,6 +1807,13 @@ class AgentLoop:
 
         # Fix orphaned tool pairs in the reconstructed message list
         _fix_tool_pairs(messages)
+
+        threshold = _token_threshold()
+        if estimate_tokens(messages) > threshold:
+            _shrink_tail_to_threshold(messages, threshold)
+
+        if not manual:
+            self._auto_compact_count += 1
 
     def _emit(self, event_type: str, data: Dict[str, Any]) -> None:
         """Fire an event via the callback."""
