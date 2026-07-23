@@ -2,7 +2,7 @@ import { ExternalLink } from "lucide-react";
 import { ExternalPredictionReplayChart } from "@/components/charts/ExternalPredictionReplayChart";
 import type { ExternalPredictionRecord, ExternalPredictionSource } from "@/lib/api";
 import { resolveApiBase } from "@/lib/apiBase";
-import { formatHorizonMatch } from "@/lib/externalPredictionsUtils";
+import { canApproveNavigationPath, formatHorizonMatch, hasHorizonMismatch } from "@/lib/externalPredictionsUtils";
 import { cn } from "@/lib/utils";
 
 const KIND_LABELS: Record<string, string> = {
@@ -34,6 +34,8 @@ interface Props {
   horizonDays: number;
   priceSeries?: Array<{ date?: string; close?: number | null }>;
   priceLoading?: boolean;
+  onApprovePath?: () => Promise<void>;
+  approvingPath?: boolean;
   className?: string;
 }
 
@@ -43,6 +45,8 @@ export function ExternalPredictionCard({
   horizonDays,
   priceSeries,
   priceLoading,
+  onApprovePath,
+  approvingPath,
   className,
 }: Props) {
   const name = source?.display_name || record.source_id;
@@ -52,6 +56,8 @@ export function ExternalPredictionCard({
     ? `${resolveApiBase()}${thumbPath.startsWith("/") ? thumbPath : `/${thumbPath}`}`
     : undefined;
   const horizonLabel = formatHorizonMatch(record);
+  const showHorizonBadge = hasHorizonMismatch(record);
+  const showApprove = canApproveNavigationPath(source, horizonDays) && onApprovePath;
 
   return (
     <article
@@ -67,6 +73,11 @@ export function ExternalPredictionCard({
             {source?.kind ? (
               <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                 {KIND_LABELS[source.kind] || source.kind}
+              </span>
+            ) : null}
+            {showHorizonBadge ? (
+              <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300">
+                Horizon mismatch
               </span>
             ) : null}
           </div>
@@ -152,6 +163,16 @@ export function ExternalPredictionCard({
               ),
             )}
           </ul>
+          {showApprove ? (
+            <button
+              type="button"
+              onClick={() => void onApprovePath?.()}
+              disabled={approvingPath}
+              className="mt-1 inline-flex w-fit items-center rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary hover:bg-primary/15 disabled:opacity-50"
+            >
+              {approvingPath ? "Approving…" : "Approve navigation path"}
+            </button>
+          ) : null}
         </div>
       </div>
     </article>

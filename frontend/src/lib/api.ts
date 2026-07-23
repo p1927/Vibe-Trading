@@ -1073,6 +1073,11 @@ export const api = {
       `/trade/index-prediction/external-predictions/sources/${encodeURIComponent(sourceId)}?ticker=${encodeURIComponent(ticker)}`,
       { method: "DELETE" },
     ),
+  approveExternalPredictionPath: (sourceId: string, ticker = "NIFTY", horizonDays = 14) =>
+    request<ExternalPredictionSourcesResponse>(
+      `/trade/index-prediction/external-predictions/sources/${encodeURIComponent(sourceId)}/approve-path?ticker=${encodeURIComponent(ticker)}&horizon_days=${encodeURIComponent(String(horizonDays))}`,
+      { method: "POST" },
+    ),
   discoverExternalPredictionSources: (ticker = "NIFTY", limit = 12) =>
     request<ExternalPredictionSourcesResponse>(
       `/trade/index-prediction/external-predictions/discover?ticker=${encodeURIComponent(ticker)}&limit=${encodeURIComponent(String(limit))}`,
@@ -1894,12 +1899,24 @@ export interface ExternalPredictionRecord {
   error_message?: string;
 }
 
+export interface NavigationTrace {
+  steps?: Array<{ action?: string; url?: string; text?: string }>;
+  final_url?: string;
+  approved_by?: string;
+  stale?: boolean;
+  created_at?: string;
+  last_success_at?: string;
+}
+
 export interface ExternalPredictionSource {
   id: string;
   display_name: string;
   kind?: "media" | "broker" | "global_bank";
   search_queries?: string[];
   domains?: string[];
+  entry_urls?: string[];
+  saved_paths?: Record<string, NavigationTrace>;
+  approved_paths?: Record<string, NavigationTrace>;
   watchlisted?: boolean;
   discovered_at?: string | null;
   added_by?: "seed" | "user" | "discover";
@@ -1968,6 +1985,7 @@ export interface ExternalPredictionSourceRequest {
   id?: string;
   display_name: string;
   domains?: string[];
+  entry_urls?: string[];
   search_queries?: string[];
   kind?: string;
 }

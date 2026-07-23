@@ -31,6 +31,13 @@ interface DiscoverPanelProps {
   busySourceId: string | null;
 }
 
+function parseLines(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 function ExternalSourceDiscoverPanel({
   onDiscover,
   onAddSource,
@@ -42,6 +49,57 @@ function ExternalSourceDiscoverPanel({
 }: DiscoverPanelProps) {
   const watchlisted = sources?.filter((s) => s.watchlisted) ?? [];
   const discovered = sources?.filter((s) => !s.watchlisted) ?? [];
+  const [manualName, setManualName] = useState("");
+  const [manualDomain, setManualDomain] = useState("");
+  const [manualEntryUrls, setManualEntryUrls] = useState("");
+  const [manualError, setManualError] = useState<string | null>(null);
+  const [addingManual, setAddingManual] = useState(false);
+
+  const submitManualAdd = useCallback(async () => {
+    const display_name = manualName.trim();
+    const domain = manualDomain.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0];
+    const entry_urls = parseLines(manualEntryUrls);
+    if (!display_name) {
+      setManualError("Display name is required.");
+      return;
+    }
+    if (!domain) {
+      setManualError("Domain is required.");
+      return;
+    }
+    if (!entry_urls.length) {
+      setManualError("At least one entry URL is required (one per line).");
+      return;
+    }
+    for (const url of entry_urls) {
+      try {
+        const parsed = new URL(url);
+        const host = parsed.hostname.replace(/^www\./, "");
+        if (!host.endsWith(domain) && host !== domain) {
+          setManualError(`Entry URL must match domain ${domain}: ${url}`);
+          return;
+        }
+      } catch {
+        setManualError(`Invalid entry URL: ${url}`);
+        return;
+      }
+    }
+    setManualError(null);
+    setAddingManual(true);
+    try {
+      await onAddSource({
+        display_name,
+        domains: [domain],
+        entry_urls,
+        kind: "media",
+      });
+      setManualName("");
+      setManualDomain("");
+      setManualEntryUrls("");
+    } finally {
+      setAddingManual(false);
+    }
+  }, [manualDomain, manualEntryUrls, manualName, onAddSource]);
 
   return (
     <section className="rounded-xl border border-border/60 bg-card/30 p-4">
@@ -60,6 +118,53 @@ function ExternalSourceDiscoverPanel({
         >
           {discovering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
           Discover sources
+        </button>
+      </div>
+
+      <div className="mt-4 rounded-lg border border-border/50 bg-background/60 p-3">
+        <p className="text-[11px] font-medium text-muted-foreground">Add site manually</p>
+        <p className="mt-0.5 text-[10px] text-muted-foreground">
+          Domain and entry URLs are required so the browse agent can reach forecast pages.
+        </p>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <label className="flex flex-col gap-1 text-[10px]">
+            <span className="font-medium text-muted-foreground">Display name</span>
+            <input
+              value={manualName}
+              onChange={(e) => setManualName(e.target.value)}
+              className="rounded-md border border-border/60 bg-background px-2 py-1.5 text-[11px]"
+              placeholder="Example Research"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-[10px]">
+            <span className="font-medium text-muted-foreground">Domain</span>
+            <input
+              value={manualDomain}
+              onChange={(e) => setManualDomain(e.target.value)}
+              className="rounded-md border border-border/60 bg-background px-2 py-1.5 text-[11px]"
+              placeholder="example.com"
+            />
+          </label>
+        </div>
+        <label className="mt-2 flex flex-col gap-1 text-[10px]">
+          <span className="font-medium text-muted-foreground">Entry URLs (one per line)</span>
+          <textarea
+            value={manualEntryUrls}
+            onChange={(e) => setManualEntryUrls(e.target.value)}
+            rows={3}
+            className="rounded-md border border-border/60 bg-background px-2 py-1.5 text-[11px]"
+            placeholder={"https://example.com/markets\nhttps://example.com/markets/{horizon}d"}
+          />
+        </label>
+        {manualError ? <p className="mt-2 text-[10px] text-red-600 dark:text-red-400">{manualError}</p> : null}
+        <button
+          type="button"
+          onClick={() => void submitManualAdd()}
+          disabled={addingManual}
+          className="mt-2 inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-[10px] font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          {addingManual ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+          Add site
         </button>
       </div>
 
@@ -177,6 +282,7 @@ interface Props {
   onDiscover: () => Promise<Array<Record<string, unknown>>>;
   onAddSource: (candidate: Record<string, unknown>) => Promise<void>;
   onRemoveSource: (sourceId: string) => Promise<void>;
+  onApprovePath?: (sourceId: string) => Promise<void>;
 }
 
 export function ExternalPredictionsPanel({
@@ -196,10 +302,12 @@ export function ExternalPredictionsPanel({
   onDiscover,
   onAddSource,
   onRemoveSource,
+  onApprovePath,
 }: Props) {
   const [discovering, setDiscovering] = useState(false);
   const [candidates, setCandidates] = useState<Array<Record<string, unknown>>>([]);
   const [busySourceId, setBusySourceId] = useState<string | null>(null);
+  const [approvingSourceId, setApprovingSourceId] = useState<string | null>(null);
 
   const handleDiscover = useCallback(async () => {
     setDiscovering(true);
@@ -234,6 +342,19 @@ export function ExternalPredictionsPanel({
       }
     },
     [onRemoveSource],
+  );
+
+  const handleApprovePath = useCallback(
+    async (sourceId: string) => {
+      if (!onApprovePath) return;
+      setApprovingSourceId(sourceId);
+      try {
+        await onApprovePath(sourceId);
+      } finally {
+        setApprovingSourceId(null);
+      }
+    },
+    [onApprovePath],
   );
 
   const sourceMap = new Map((snapshot?.sources ?? []).map((s) => [s.id, s]));
@@ -391,6 +512,10 @@ export function ExternalPredictionsPanel({
                 horizonDays={horizonDays}
                 priceSeries={priceSeries}
                 priceLoading={priceLoading}
+                onApprovePath={
+                  onApprovePath ? () => handleApprovePath(record.source_id) : undefined
+                }
+                approvingPath={approvingSourceId === record.source_id}
               />
             ))}
           </div>

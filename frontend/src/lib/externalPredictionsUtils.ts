@@ -1,4 +1,4 @@
-import type { ExternalPredictionRecord, ExternalPredictionSnapshot } from "@/lib/api";
+import type { ExternalPredictionRecord, ExternalPredictionSnapshot, ExternalPredictionSource } from "@/lib/api";
 import type { LiveForecastInput } from "@/lib/forecastReplayUtils";
 
 export interface StreetSummaryStats {
@@ -30,14 +30,40 @@ export function hasHorizonMismatch(record: ExternalPredictionRecord): boolean {
 }
 
 /** Use article target horizon on chart when tab horizon differs (soft mismatch). */
+export function calendarDaysBetween(startIso: string, endIso: string): number {
+  const start = new Date(`${startIso.slice(0, 10)}T12:00:00Z`);
+  const end = new Date(`${endIso.slice(0, 10)}T12:00:00Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+  const ms = end.getTime() - start.getTime();
+  return Math.max(0, Math.round(ms / 86_400_000));
+}
+
 export function effectiveChartHorizonDays(
   record: ExternalPredictionRecord,
   tabHorizonDays: number,
 ): number {
+  const targetDate = record.target_date?.slice(0, 10);
+  const anchor = record.as_of?.slice(0, 10) || record.published_at?.slice(0, 10);
+  if (hasHorizonMismatch(record) && targetDate && anchor) {
+    const fromTargetDate = calendarDaysBetween(anchor, targetDate);
+    if (fromTargetDate > 0) return fromTargetDate;
+  }
   if (!hasHorizonMismatch(record)) return tabHorizonDays;
   const ahead = horizonMatch(record)?.target_days_ahead;
   if (typeof ahead === "number" && ahead > 0) return Math.max(1, Math.round(ahead));
   return tabHorizonDays;
+}
+
+export function canApproveNavigationPath(
+  source: ExternalPredictionSource | undefined,
+  horizonDays: number,
+): boolean {
+  if (!source) return false;
+  const key = String(horizonDays);
+  const saved = source.saved_paths?.[key];
+  if (!saved || saved.stale) return false;
+  const approved = source.approved_paths?.[key];
+  return approved?.approved_by !== "user";
 }
 
 export function filterVisiblePredictions(

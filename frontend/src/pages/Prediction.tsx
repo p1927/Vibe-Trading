@@ -173,17 +173,35 @@ export function Prediction() {
 
   const handleExternalAddSource = useCallback(
     async (candidate: Record<string, unknown>) => {
+      const domains = candidate.domains
+        ? (candidate.domains as string[])
+        : candidate.domain
+          ? [String(candidate.domain)]
+          : undefined;
+      const entry_urls = candidate.entry_urls
+        ? (candidate.entry_urls as string[])
+        : undefined;
       await api.addExternalPredictionSource(
         {
           id: candidate.id ? String(candidate.id) : undefined,
           display_name: String(candidate.display_name ?? candidate.domain ?? "Source"),
-          domains: candidate.domain ? [String(candidate.domain)] : undefined,
+          domains,
+          entry_urls,
+          kind: candidate.kind ? String(candidate.kind) : undefined,
         },
         "NIFTY",
       );
       await reloadExternalPredictions();
     },
     [reloadExternalPredictions],
+  );
+
+  const handleExternalApprovePath = useCallback(
+    async (sourceId: string) => {
+      await api.approveExternalPredictionPath(sourceId, "NIFTY", horizonDays);
+      await reloadExternalPredictions();
+    },
+    [horizonDays, reloadExternalPredictions],
   );
 
   const handleExternalRemoveSource = useCallback(
@@ -693,6 +711,7 @@ export function Prediction() {
             onDiscover={handleExternalDiscover}
             onAddSource={handleExternalAddSource}
             onRemoveSource={handleExternalRemoveSource}
+            onApprovePath={handleExternalApprovePath}
           />
         ) : predictionMode === SCOREBOARD_MODE ? (
           <>
