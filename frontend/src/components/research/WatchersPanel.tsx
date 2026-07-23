@@ -1,13 +1,27 @@
 import { Eye, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { api, type WatchRecord } from "@/lib/api";
+import { api, type AutonomousAgentInstance, type WatchRecord } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 interface Props {
   sessionId?: string | null;
   agentId?: string | null;
   className?: string;
+}
+
+function resolveAgentWatchSpec(agent: AutonomousAgentInstance): WatchRecord | null {
+  const raw =
+    agent.watch_spec ??
+    (agent.mandate_config?.watch_spec as AutonomousAgentInstance["watch_spec"] | undefined);
+  const rules = raw?.rules;
+  if (!Array.isArray(rules) || rules.length === 0) return null;
+  return {
+    watch_id: `agent:${agent.id}`,
+    label: "strategy watch",
+    symbols: agent.symbols ?? [],
+    watch_spec: raw as Record<string, unknown>,
+  };
 }
 
 export function WatchersPanel({ sessionId, agentId, className }: Props) {
@@ -23,10 +37,20 @@ export function WatchersPanel({ sessionId, agentId, className }: Props) {
     setLoading(true);
     try {
       const res = await api.listWatches({
-        sessionId: sessionId ?? undefined,
+        sessionId: agentId ? undefined : (sessionId ?? undefined),
         agentId: agentId ?? undefined,
       });
-      setWatches(res.watches ?? []);
+      let rows = res.watches ?? [];
+      if (rows.length === 0 && agentId) {
+        try {
+          const agent = await api.getAutonomousAgent(agentId);
+          const pending = resolveAgentWatchSpec(agent);
+          if (pending) rows = [pending];
+        } catch {
+          /* registry is authoritative when agent fetch fails */
+        }
+      }
+      setWatches(rows);
     } catch {
       setWatches([]);
     } finally {
@@ -41,6 +65,10 @@ export function WatchersPanel({ sessionId, agentId, className }: Props) {
   }, [load]);
 
   const onDelete = async (watchId: string) => {
+    if (watchId.startsWith("agent:")) {
+      toast.message("Watch activates with the agent — edit rules in chat.");
+      return;
+    }
     setDeletingId(watchId);
     try {
       await api.deleteWatch(watchId);
@@ -96,6 +124,7 @@ export function WatchersPanel({ sessionId, agentId, className }: Props) {
                 .map((r) => `${r.symbol ?? "?"} ${r.metric ?? "rule"} ${r.threshold ?? ""}`.trim())
                 .join(" · ")
             : (watch.symbols ?? []).join(", ") || "watch";
+        const pendingOnly = watch.watch_id.startsWith("agent:");
         return (
           <div
             key={watch.watch_id}
@@ -105,21 +134,28 @@ export function WatchersPanel({ sessionId, agentId, className }: Props) {
               <div className="min-w-0">
                 <div className="truncate font-medium">{watch.label || ruleSummary}</div>
                 <div className="mt-0.5 truncate text-muted-foreground">{ruleSummary}</div>
+                {pendingOnly && (
+                  <div className="mt-1 text-[10px] text-muted-foreground">
+                    On agent record — Nautilus registry syncs after plan approval or bootstrap completes.
+                  </div>
+                )}
                 {watch.last_fired_at && (
                   <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
                     Last fired {new Date(watch.last_fired_at).toLocaleString()}
                   </div>
                 )}
               </div>
-              <button
-                type="button"
-                title="Remove watch"
-                disabled={deletingId === watch.watch_id}
-                onClick={() => void onDelete(watch.watch_id)}
-                className="shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
+              {!pendingOnly && (
+                <button
+                  type="button"
+                  title="Remove watch"
+                  disabled={deletingId === watch.watch_id}
+                  onClick={() => void onDelete(watch.watch_id)}
+                  className="shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
           </div>
         );

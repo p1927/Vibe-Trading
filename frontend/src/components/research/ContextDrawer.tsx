@@ -21,6 +21,7 @@ const SECTIONS: { id: ContextSection; label: string }[] = [
 
 interface Props {
   sessionId: string | null;
+  agentId?: string | null;
   ticker: string | null;
   assetType?: string;
   planArtifact?: HubPlanArtifact | null;
@@ -32,6 +33,7 @@ interface Props {
 
 export function ContextDrawer({
   sessionId,
+  agentId,
   ticker,
   assetType = "options",
   planArtifact,
@@ -237,7 +239,9 @@ export function ContextDrawer({
                 </>
               )}
 
-              {activeSection === "watchers" && <WatchersPanel sessionId={sessionId} />}
+              {activeSection === "watchers" && (
+                <WatchersPanel sessionId={sessionId} agentId={agentId} />
+              )}
             </div>
           </>
         )}
