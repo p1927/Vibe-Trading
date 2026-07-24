@@ -612,6 +612,7 @@ def run_worker(job_id: str) -> None:
     started = time.monotonic()
     job_failed = False
     job_error = ""
+    pipeline_logger = None
 
     def on_log(entry) -> None:
         append_log(job_id, entry.to_dict())
@@ -637,6 +638,7 @@ def run_worker(job_id: str) -> None:
         set_pipeline_job_id(job_id)
         ensure_trade_stack_path()
         plog = PipelineLogger(on_entry=on_log)
+        pipeline_logger = plog
         doc = run_index_research(
             key,
             horizon_days=horizon_days,
@@ -691,16 +693,11 @@ def run_worker(job_id: str) -> None:
         job_error = str(exc)
     finally:
         had_pipeline_errors = False
-        try:
-            from trade_integrations.dataflows.index_research.pipeline_log import get_pipeline_log
-            plog = get_pipeline_log(job_id)
-            if plog:
-                had_pipeline_errors = any(
-                    str(getattr(entry, "level", "") or "").lower() == "error"
-                    for entry in plog.entries()
-                )
-        except Exception:
-            pass
+        if pipeline_logger is not None:
+            had_pipeline_errors = any(
+                str(getattr(entry, "level", "") or "").lower() == "error"
+                for entry in pipeline_logger.entries
+            )
 
         try:
             from trade_integrations.observability.hooks import emit_pipeline_job_done
