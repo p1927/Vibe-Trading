@@ -75,7 +75,12 @@ class SessionService:
         return self.store.get_session(session_id)
 
     @staticmethod
-    def _maybe_refresh_agent_intent(session: Session, content: str, message_id: str) -> None:
+    def _maybe_refresh_agent_intent(
+        service: "SessionService",
+        session: Session,
+        content: str,
+        message_id: str,
+    ) -> None:
         try:
             import sys
             from pathlib import Path
@@ -84,8 +89,11 @@ class SessionService:
             integrations = trade_root / "integrations"
             if integrations.is_dir() and str(integrations) not in sys.path:
                 sys.path.insert(0, str(integrations))
+            from trade_integrations.autonomous_agents.intent_capabilities import summarize_intent_change
             from trade_integrations.autonomous_agents.intent_hooks import maybe_refresh_intent_on_user_message
+            from trade_integrations.autonomous_agents.intent_store import load_intent_from_session_config
 
+            prior = load_intent_from_session_config(dict(session.config or {}))
             updated = maybe_refresh_intent_on_user_message(
                 dict(session.config or {}),
                 content,
@@ -93,8 +101,17 @@ class SessionService:
             )
             if updated:
                 session.config = updated
+                current = load_intent_from_session_config(updated)
+                if current is not None:
+                    change = summarize_intent_change(prior, current)
+                    if change:
+                        service.event_bus.emit(
+                            session.session_id,
+                            "autonomous_agent.intent_updated",
+                            change,
+                        )
         except Exception:
-            logging.getLogger(__name__).debug(
+            logging.getLogger(__name__).warning(
                 "refresh agent intent failed for %s",
                 session.session_id,
                 exc_info=True,
@@ -167,7 +184,7 @@ class SessionService:
         session.config["include_shell_tools"] = include_shell_tools
         session.last_attempt_id = attempt.attempt_id
         self._maybe_mark_autonomous_user_turn(session, content)
-        self._maybe_refresh_agent_intent(session, content, message.message_id)
+        self._maybe_refresh_agent_intent(self, session, content, message.message_id)
         session.updated_at = datetime.now().isoformat()
         self.store.update_session(session)
         self.event_bus.emit(session_id, "attempt.created", {"attempt_id": attempt.attempt_id, "prompt": content})
@@ -512,6 +529,10 @@ class SessionService:
                 registry = filter_registry_for_orchestrator(registry)
             elif is_news_scenario_session(session_config):
                 registry = filter_registry_for_news_scenario(registry)
+            else:
+                from src.session.autonomous_agent_profile import filter_registry_for_autonomous_agent
+
+                registry = filter_registry_for_autonomous_agent(registry, session_config)
 
         agent = AgentLoop(
             registry=registry,

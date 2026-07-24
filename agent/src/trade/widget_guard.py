@@ -39,6 +39,19 @@ def _guard_enabled() -> bool:
     return raw not in {"0", "false", "no", "off"}
 
 
+def _resolve_guard_widget_intent(user_message: str, session_config: dict | None) -> str:
+    try:
+        from src.trade.session_context import classify_prefetch_widget_intent, is_autonomous_agent_session
+
+        if is_autonomous_agent_session(session_config):
+            return classify_prefetch_widget_intent(session_config, user_message)
+    except Exception:
+        pass
+    from src.trade.widget_intent import classify_widget_intent
+
+    return classify_widget_intent(user_message)
+
+
 def needs_widget_guard(
     user_message: str,
     assistant_text: str,
@@ -50,19 +63,15 @@ def needs_widget_guard(
         return False
     try:
         from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
-        from src.trade.session_context import classify_prefetch_widget_intent, is_autonomous_agent_session
+        from src.trade.session_context import is_autonomous_agent_session
 
         if is_autonomous_agent_session(session_config):
             if is_autonomous_scheduler_turn(user_message):
                 return False
-            intent = classify_prefetch_widget_intent(session_config, user_message)
-            if intent == "none":
-                return False
     except Exception:
         pass
-    from src.trade.widget_intent import classify_widget_intent
 
-    intent = classify_widget_intent(user_message)
+    intent = _resolve_guard_widget_intent(user_message, session_config)
     if intent not in ("options_strategy", "execute_refresh"):
         return False
     if not assistant_text or not _STRATEGY_KEYWORDS.search(assistant_text):
@@ -115,19 +124,30 @@ def maybe_inject_widget(
         return False
 
     try:
+        from trade_integrations.autonomous_agents.intent_capabilities import attach_capabilities_metadata
         from trade_integrations.dataflows.options_research.market import is_options_research_eligible
         from trade_integrations.dataflows.options_research.widget_payload import build_options_trade_widget
         from trade_integrations.trade_widgets.presentability import is_widget_presentable
         from trade_integrations.trade_widgets.store import persist_trade_widget
-        from src.trade.widget_intent import classify_widget_intent
 
         if not is_options_research_eligible(ticker):
             return False
 
-        intent = classify_widget_intent(user_message)
-        widget = build_options_trade_widget(ticker, refresh=False, widget_intent=intent)
-        if not is_widget_presentable(widget, intent):
+        intent = _resolve_guard_widget_intent(user_message, session_config)
+        if intent not in ("options_strategy", "execute_refresh"):
+            logger.debug("Widget guard skip: intent=%s is not options for session=%s", intent, session_id)
             return False
+
+        widget = build_options_trade_widget(ticker, refresh=False, widget_intent=intent)
+        if not is_widget_presentable(widget, intent, session_config=session_config):
+            logger.debug(
+                "Widget guard skip: presentability failed intent=%s ticker=%s session=%s",
+                intent,
+                ticker,
+                session_id,
+            )
+            return False
+        attach_capabilities_metadata(widget, session_config=session_config)
         persist_trade_widget(widget)
         if event_bus is not None and session_id:
             event_bus.emit(session_id, "trade_plan.widget", widget)

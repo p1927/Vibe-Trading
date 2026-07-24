@@ -124,11 +124,22 @@ def _maybe_emit_options_widget(
 
         caps = resolve_capabilities(session_config=session_config)
         if not prefetch_widget_intent_allowed(widget_intent, caps):
+            logger.debug(
+                "Skip options widget emit: capabilities block intent=%s session=%s",
+                widget_intent,
+                session_id,
+            )
             return
         refresh = widget_intent == "execute_refresh"
         widget = build_options_trade_widget(ticker, refresh=refresh, widget_intent=widget_intent)
         _annotate_widget_intent(widget, widget_intent)
         if not is_widget_presentable(widget, widget_intent, session_config=session_config):
+            logger.debug(
+                "Skip options widget emit: presentability failed intent=%s ticker=%s session=%s",
+                widget_intent,
+                ticker,
+                session_id,
+            )
             return
         attach_capabilities_metadata(widget, session_config=session_config)
         persist_trade_widget(widget)
@@ -164,11 +175,22 @@ def _maybe_emit_index_widget(
 
         caps = resolve_capabilities(session_config=session_config)
         if not prefetch_widget_intent_allowed(widget_intent, caps):
+            logger.debug(
+                "Skip index widget emit: capabilities block intent=%s session=%s",
+                widget_intent,
+                session_id,
+            )
             return
         refresh = widget_intent == "execute_refresh"
         widget = build_index_trade_widget(ticker, refresh=refresh, widget_intent=widget_intent)
         _annotate_widget_intent(widget, widget_intent)
         if not is_widget_presentable(widget, widget_intent, session_config=session_config):
+            logger.debug(
+                "Skip index widget emit: presentability failed intent=%s ticker=%s session=%s",
+                widget_intent,
+                ticker,
+                session_id,
+            )
             return
         attach_capabilities_metadata(widget, session_config=session_config)
         persist_trade_widget(widget)
@@ -639,6 +661,7 @@ def prefetch_research_for_message(
                     session_id,
                     ticker,
                     widget_intent=widget_intent,
+                    session_config=session_config,
                 )
 
         from trade_integrations.tools.index_research_tools import is_index_research_eligible
@@ -662,6 +685,7 @@ def prefetch_research_for_message(
                         session_id,
                         ticker,
                         widget_intent=widget_intent,
+                        session_config=session_config,
                     )
         elif news_scenario_mode and index_artifact:
             _emit(

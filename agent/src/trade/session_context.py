@@ -66,7 +66,7 @@ def is_autonomous_us_equity_session(session_config: dict[str, Any] | None) -> bo
         import sys
         from pathlib import Path
 
-        trade_root = Path(__file__).resolve().parents[3]
+        trade_root = Path(__file__).resolve().parents[4]
         integrations = trade_root / "integrations"
         if integrations.is_dir() and str(integrations) not in sys.path:
             sys.path.insert(0, str(integrations))
@@ -149,7 +149,7 @@ def classify_prefetch_widget_intent(
             import sys
             from pathlib import Path
 
-            trade_root = Path(__file__).resolve().parents[3]
+            trade_root = Path(__file__).resolve().parents[4]
             integrations = trade_root / "integrations"
             if integrations.is_dir() and str(integrations) not in sys.path:
                 sys.path.insert(0, str(integrations))
@@ -170,13 +170,19 @@ def classify_prefetch_widget_intent(
             if intent == "execute_refresh":
                 intent = "stock_trade"
             return intent if prefetch_widget_intent_allowed(intent, caps) else "none"
-        if caps.get("payoff"):
-            return "options_strategy"
-        if caps.get("index_outlook"):
-            return "index_outlook"
-        if caps.get("charges"):
-            return "stock_trade"
-        return "none"
+        from src.trade.widget_intent import classify_widget_intent
+
+        intent = classify_widget_intent(content)
+        if intent in {"none", ""}:
+            if caps.get("payoff"):
+                intent = "options_strategy"
+            elif caps.get("index_outlook"):
+                intent = "index_outlook"
+            elif caps.get("charges"):
+                intent = "stock_trade"
+            else:
+                return "none"
+        return intent if prefetch_widget_intent_allowed(intent, caps) else "none"
 
     from src.trade.widget_intent import WidgetIntent, classify_widget_intent
 

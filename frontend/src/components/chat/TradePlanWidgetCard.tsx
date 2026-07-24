@@ -165,13 +165,15 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
     widget.asset_type !== "index" &&
     widget.instrument_type !== "stock";
   const isIndex = widget.asset_type === "index";
+  const caps = widget.agent_capabilities;
   const presentationMode =
     widget.presentation_mode ??
     (isIndex ? "index_outlook" : isOptions ? "options_strategy" : "stock_trade");
-  const showPayoff = presentationMode === "options_strategy";
-  const showCharges =
-    presentationMode === "options_strategy" || presentationMode === "stock_trade";
-  const showIndexChart = presentationMode === "index_outlook";
+  const showPayoff = caps ? Boolean(caps.payoff) : presentationMode === "options_strategy";
+  const showCharges = caps
+    ? Boolean(caps.charges)
+    : presentationMode === "options_strategy" || presentationMode === "stock_trade";
+  const showIndexChart = caps ? Boolean(caps.index_outlook) : presentationMode === "index_outlook";
 
   const strategyIndex = useMemo(() => {
     if (!ranked.length) return 0;
@@ -565,6 +567,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
       widget.meta?.revision_source === "watcher");
   const hideExecute =
     autonomousMode ||
+    (caps && caps.execution === false) ||
     isHoldCash ||
     executeOrders.length === 0 ||
     (!isPaper && liveBlocked);

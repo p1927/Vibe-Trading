@@ -1075,6 +1075,15 @@ export function Agent({
         onAutonomousAgentCommitted?.(payload.agent_id, payload.vibe_session_id);
       },
 
+      "autonomous_agent.intent_updated": (d) => {
+        touch();
+        const payload = d as { summary?: string };
+        const summary = String(payload.summary || "").replace(/\*\*/g, "");
+        if (summary) {
+          toast.message(summary);
+        }
+      },
+
       "session.promoted": (d) => {
         touch();
         const payload = d as { agent_id?: string; session_id?: string };

@@ -2042,6 +2042,13 @@ export interface TradePlanWidget {
   selected_outcome_id?: string | null;
   scenario_id?: string;
   pipeline_as_of?: string;
+  agent_capabilities?: {
+    widgets?: boolean;
+    payoff?: boolean;
+    charges?: boolean;
+    execution?: boolean;
+    index_outlook?: boolean;
+  };
 }
 
 export interface ExecuteTradeBasketRequest {
