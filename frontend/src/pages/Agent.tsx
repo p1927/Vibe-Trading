@@ -6,12 +6,14 @@ import { toast } from "sonner";
 import { useAgentStore } from "@/stores/agent";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useSSE } from "@/hooks/useSSE";
+import { useThrottledValue } from "@/hooks/useThrottledValue";
 import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type AgentAudit, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource, type AutonomousAgentProposal, type AutonomousAgentInstance, type TradingConnectorsResponse } from "@/lib/api";
 import { isReportWorthyRun } from "@/lib/runReports";
 import type { AgentMessage, ToolCallEntry } from "@/types/agent";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
 import { WelcomeScreen } from "@/components/chat/WelcomeScreen";
 import { MessageBubble } from "@/components/chat/MessageBubble";
+import { MarkdownContent } from "@/components/chat/MarkdownContent";
 import { ThinkingTimeline } from "@/components/chat/ThinkingTimeline";
 import { ConversationTimeline } from "@/components/chat/ConversationTimeline";
 import { ToolProgressIndicator } from "@/components/chat/ToolProgressIndicator";
@@ -455,6 +457,7 @@ export function Agent({
 
   const messages = useAgentStore(s => s.messages);
   const streamingText = useAgentStore(s => s.streamingText);
+  const throttledStreamingText = useThrottledValue(streamingText);
   const status = useAgentStore(s => s.status);
   const sessionId = useAgentStore(s => s.sessionId);
   const toolCalls = useAgentStore(s => s.toolCalls);
@@ -1470,6 +1473,7 @@ export function Agent({
       if (lastEventRef.current && Date.now() - lastEventRef.current > sseTimeoutMsRef.current && act().status === "streaming") {
         setReasoningActive(false);
         act().setStatus("idle");
+        act().clearStreaming();
         toast.warning(t('agent.executionTimedOut'));
       }
     }, 10_000);
@@ -1572,6 +1576,7 @@ export function Agent({
     setReasoningActive(false);
     if (!sessionId) {
       act().setStatus("idle");
+      act().clearStreaming();
       return;
     }
     try {
@@ -1979,10 +1984,7 @@ export function Agent({
                   </div>
                 )}
                 {streamingText && (
-                  <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed">
-                    {streamingText}
-                    <span className="inline-block w-0.5 h-4 bg-primary ml-0.5 animate-pulse align-middle" />
-                  </div>
+                  <MarkdownContent content={throttledStreamingText} showCursor />
                 )}
                 {toolCalls.length > 0 && (
                   <ToolProgressIndicator toolCalls={toolCalls} />

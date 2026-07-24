@@ -73,6 +73,16 @@ export function useWatchersLive({
 
   const liveInFlightRef = useRef(false);
   const registryInFlightRef = useRef(false);
+  const fetchGenRef = useRef(0);
+
+  useEffect(() => {
+    fetchGenRef.current += 1;
+    setLiveWatches([]);
+    setPendingSnapshot(null);
+    setError(null);
+    setFetchedAt(undefined);
+    setMarketOpen(undefined);
+  }, [sessionId, agentId]);
 
   const loadRegistry = useCallback(async () => {
     if (!sessionId && !agentId) {
@@ -100,7 +110,7 @@ export function useWatchersLive({
       setPendingSnapshot(null);
       return;
     }
-    if (liveInFlightRef.current) return;
+    const gen = fetchGenRef.current;
     liveInFlightRef.current = true;
     setLoading(true);
     try {
@@ -108,12 +118,15 @@ export function useWatchersLive({
         sessionId: agentId ? undefined : (sessionId ?? undefined),
         agentId: agentId ?? undefined,
       });
+      if (gen !== fetchGenRef.current) return;
       const rows = res.watches ?? [];
       if (rows.length === 0 && agentId) {
         try {
           const agent = await api.getAutonomousAgent(agentId);
+          if (gen !== fetchGenRef.current) return;
           setPendingSnapshot(resolveAgentPendingRules(agent));
         } catch {
+          if (gen !== fetchGenRef.current) return;
           setPendingSnapshot(null);
         }
       } else {
@@ -122,8 +135,13 @@ export function useWatchersLive({
       setLiveWatches(rows);
       setFetchedAt(res.fetched_at);
       setMarketOpen(res.market_open ?? undefined);
-      setError(null);
+      if (res.status === "degraded" || res.quotes_ok === false) {
+        setError("Live quotes unavailable — showing last known rules");
+      } else {
+        setError(null);
+      }
     } catch (err) {
+      if (gen !== fetchGenRef.current) return;
       setError(err instanceof Error ? err.message : "Failed to load live watches");
     } finally {
       setLoading(false);

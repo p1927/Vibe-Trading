@@ -430,9 +430,19 @@ def run_worker(job_id: str) -> None:
     key = str(job["ticker"]).upper()
     horizon_days = int(job.get("horizon_days") or 14)
     mark_running(job_id)
+    started = time.monotonic()
+    job_failed = False
+    job_error = ""
+    had_errors = False
 
     def on_log(entry) -> None:
         append_log(job_id, entry.to_dict())
+        try:
+            from trade_integrations.observability.hooks import bridge_pipeline_entry
+
+            bridge_pipeline_entry(entry)
+        except ImportError:
+            pass
 
     def on_source_complete(source_id: str, record, partial_snapshot) -> None:
         append_source_complete(
@@ -457,6 +467,7 @@ def run_worker(job_id: str) -> None:
             pipeline=plog,
             on_source_complete=on_source_complete,
         )
+        had_errors = bool(getattr(snap, "had_errors", False))
         complete_job(job_id, ticker=key, snapshot=snap.to_dict())
     except Exception as exc:
         logger.exception("external-predictions refresh worker failed (job=%s)", job_id)
@@ -465,6 +476,25 @@ def run_worker(job_id: str) -> None:
             {"stage": "error", "message": str(exc), "level": "error", "at": _now_iso()},
         )
         fail_job(job_id, str(exc))
+        job_failed = True
+        job_error = str(exc)
+        had_errors = True
+    finally:
+        try:
+            from trade_integrations.observability.hooks import emit_pipeline_job_done
+
+            emit_pipeline_job_done(
+                job_type="external_predictions",
+                job_id=job_id,
+                ticker=key,
+                status="error" if job_failed else "ok",
+                had_errors=had_errors or job_failed,
+                had_work=True,
+                duration_ms=int((time.monotonic() - started) * 1000),
+                detail={"error": job_error[:400] if job_error else ""},
+            )
+        except ImportError:
+            pass
 
 
 def _agent_dir() -> Path:

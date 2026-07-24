@@ -281,17 +281,58 @@ def run_index_research_job(config: dict[str, Any] | None = None) -> None:
     _ensure_trade_integrations_on_path()
     from trade_integrations.context.hub import save_index_research
     from trade_integrations.dataflows.index_research.aggregator import run_index_research
+    from trade_integrations.dataflows.index_research.pipeline_log import PipelineLogger
 
     cfg = config or {}
     ticker = str(cfg.get("ticker") or "NIFTY").strip().upper()
+    job_id = str(cfg.get("job_id") or f"scheduled:{ticker}:index_research")
     if cfg.get("run_snapshot_first"):
         run_index_factor_snapshot_job(cfg)
-    doc = run_index_research(
-        ticker,
-        horizon_days=cfg.get("horizon_days"),
-        refresh_constituents=bool(cfg.get("refresh_constituents")),
-    )
-    save_index_research(doc)
+    try:
+        from trade_integrations.observability.hooks import bridge_pipeline_entry
+
+        plog = PipelineLogger(on_entry=bridge_pipeline_entry)
+    except ImportError:
+        plog = PipelineLogger()
+    try:
+        doc = run_index_research(
+            ticker,
+            horizon_days=cfg.get("horizon_days"),
+            refresh_constituents=bool(cfg.get("refresh_constituents")),
+            pipeline=plog,
+        )
+        save_index_research(doc)
+    except Exception as exc:
+        try:
+            from trade_integrations.observability.hooks import emit_pipeline_job_done
+
+            emit_pipeline_job_done(
+                job_type="index_research_scheduled",
+                job_id=job_id,
+                ticker=ticker,
+                status="error",
+                had_errors=True,
+                detail={"error": str(exc)[:400]},
+            )
+        except ImportError:
+            pass
+        raise
+    else:
+        had_pipeline_errors = any(
+            str(getattr(entry, "level", "") or "").lower() == "error" for entry in plog.entries
+        )
+        try:
+            from trade_integrations.observability.hooks import emit_pipeline_job_done
+
+            emit_pipeline_job_done(
+                job_type="index_research_scheduled",
+                job_id=job_id,
+                ticker=ticker,
+                status="partial" if had_pipeline_errors else "ok",
+                had_errors=had_pipeline_errors,
+            )
+        except ImportError:
+            pass
 
 
 def run_index_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[str, Any]:

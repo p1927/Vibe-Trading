@@ -804,6 +804,16 @@ class AgentLoop:
                 iteration += 1
                 self._run_iteration += 1
                 current_iter = self._run_iteration
+                try:
+                    from trade_integrations.observability.hooks import emit_react_iteration
+
+                    emit_react_iteration(
+                        iteration=iteration,
+                        max_iterations=self.max_iterations,
+                        session_id=str(getattr(self, "session_id", "") or ""),
+                    )
+                except ImportError:
+                    pass
 
                 # Inject background task notifications
                 bg = get_background_manager()

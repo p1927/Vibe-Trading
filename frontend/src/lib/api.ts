@@ -1049,6 +1049,8 @@ export const api = {
     ),
   getHubStatus: (entityId = "NIFTY") =>
     request<HubStatusResponse>(`/trade/hub/status?entity_id=${encodeURIComponent(entityId)}`),
+  getObservabilitySummary: () =>
+    request<ObservabilitySummaryResponse>("/trade/observability/summary"),
   getHubNewsPipelineConfig: () =>
     request<HubNewsPipelineConfigResponse>("/trade/hub/news-pipeline/config"),
   updateHubNewsPipelineConfig: (body: HubNewsPipelineConfigUpdate) =>
@@ -2991,6 +2993,13 @@ export interface HubStatusResponse {
   message?: string;
 }
 
+export interface ObservabilitySummaryResponse {
+  open_issue_count: number;
+  recent_events: Record<string, unknown>[];
+  events_path: string;
+  issues_path: string;
+}
+
 export interface HubStagingDrainResponse {
   status: string;
   summary?: Record<string, number | string | boolean | Record<string, unknown>>;
@@ -3854,6 +3863,7 @@ export interface WatchesLiveResponse {
   status: string;
   fetched_at: string;
   market_open?: boolean | null;
+  quotes_ok?: boolean;
   watches: WatchLiveSnapshot[];
   count?: number;
 }

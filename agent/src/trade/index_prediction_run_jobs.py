@@ -609,9 +609,18 @@ def run_worker(job_id: str) -> None:
     run_forecast_lab = bool(job.get("run_forecast_lab"))
 
     mark_running(job_id)
+    started = time.monotonic()
+    job_failed = False
+    job_error = ""
 
     def on_log(entry) -> None:
         append_log(job_id, entry.to_dict())
+        try:
+            from trade_integrations.observability.hooks import bridge_pipeline_entry
+
+            bridge_pipeline_entry(entry)
+        except ImportError:
+            pass
 
     try:
         from trade_integrations.context.hub import save_index_research
@@ -664,6 +673,8 @@ def run_worker(job_id: str) -> None:
             },
         )
         fail_job(job_id, message)
+        job_failed = True
+        job_error = message
     except Exception as exc:
         logger.exception("index-prediction run worker failed (job=%s ticker=%s)", job_id, key)
         append_log(
@@ -676,7 +687,36 @@ def run_worker(job_id: str) -> None:
             },
         )
         fail_job(job_id, str(exc))
+        job_failed = True
+        job_error = str(exc)
     finally:
+        had_pipeline_errors = False
+        try:
+            from trade_integrations.dataflows.index_research.pipeline_log import get_pipeline_log
+            plog = get_pipeline_log(job_id)
+            if plog:
+                had_pipeline_errors = any(
+                    str(getattr(entry, "level", "") or "").lower() == "error"
+                    for entry in plog.entries()
+                )
+        except Exception:
+            pass
+
+        try:
+            from trade_integrations.observability.hooks import emit_pipeline_job_done
+
+            emit_pipeline_job_done(
+                job_type="index_prediction",
+                job_id=job_id,
+                ticker=key,
+                status="error" if job_failed else ("partial" if had_pipeline_errors else "ok"),
+                had_errors=job_failed or had_pipeline_errors,
+                had_work=True,
+                duration_ms=int((time.monotonic() - started) * 1000),
+                detail={"error": job_error[:400] if job_error else ""},
+            )
+        except ImportError:
+            pass
         from trade_integrations.dataflows.index_research.pipeline_cancel import (
             clear_pipeline_cancel,
             set_pipeline_job_id,

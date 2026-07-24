@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import { useAgentStore } from "@/stores/agent";
 import type { AgentMessage } from "@/types/agent";
+import { MarkdownContent } from "@/components/chat/MarkdownContent";
+import { useThrottledValue } from "@/hooks/useThrottledValue";
 
 /**
  * Extracted streaming area component matching Agent.tsx structure.
@@ -10,6 +12,7 @@ import type { AgentMessage } from "@/types/agent";
 function StreamingArea() {
   const status = useAgentStore((s) => s.status);
   const streamingText = useAgentStore((s) => s.streamingText);
+  const throttledStreamingText = useThrottledValue(streamingText);
   const toolCalls = useAgentStore((s) => s.toolCalls);
   const messages = useAgentStore((s) => s.messages);
 
@@ -34,8 +37,7 @@ function StreamingArea() {
           )}
           {streamingText && (
             <div data-testid="streaming-text">
-              {streamingText}
-              <span data-testid="cursor" />
+              <MarkdownContent content={throttledStreamingText} showCursor />
             </div>
           )}
           {toolCalls.length > 0 && (
@@ -53,6 +55,15 @@ function StreamingArea() {
 
 beforeEach(() => {
   useAgentStore.getState().reset();
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+    cb(0);
+    return 1;
+  });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("StreamingArea — DOM stability during state transitions", () => {

@@ -294,6 +294,7 @@ class ScheduledResearchExecutor:
         self._recovered_stale_running = False
         self._startup_backlog_deferred = False
         self._watchdog_task: asyncio.Task | None = None
+        self._executor_tick_count = 0
 
     @property
     def is_running(self) -> bool:
@@ -404,6 +405,18 @@ class ScheduledResearchExecutor:
             now_ms: Optional explicit reference time. Defaults to ``now_fn``.
         """
         now = self._now_fn() if now_ms is None else now_ms
+        self._executor_tick_count += 1
+        if self._executor_tick_count % 60 == 0:
+            try:
+                from trade_integrations.observability.hooks import safe_emit
+
+                safe_emit(
+                    "schedule",
+                    "scheduler_tick_heartbeat",
+                    detail={"tick_count": self._executor_tick_count},
+                )
+            except ImportError:
+                pass
         self.recover_stale_running(now, startup=True)
         self.recover_stale_running(now, startup=False)
         jobs = sorted(
@@ -637,13 +650,45 @@ class ScheduledResearchExecutor:
 
         finally:
             finish_named_task(task_id)
+            elapsed_ms = int((time.monotonic() - started) * 1000)
             logger.info(
                 "scheduled research dispatch done job=%s type=%s status=%s (%.1fs)",
                 job.id,
                 job_type,
                 final_status.value,
-                time.monotonic() - started,
+                elapsed_ms / 1000.0,
             )
+            try:
+                from trade_integrations.observability.emitter import emit_job_rollup
+                from trade_integrations.observability.rollup import JobRollup
+
+                emit_job_rollup(
+                    JobRollup(
+                        status=final_status.value,
+                        had_errors=bool(job.last_error),
+                        had_work=final_status != JobStatus.FAILED or bool(job.last_error),
+                        job_type=job_type,
+                        job_id=job.id,
+                        detail={"last_error": job.last_error or ""},
+                    ),
+                    module="schedule",
+                )
+                from trade_integrations.observability.emitter import emit
+
+                emit(
+                    "schedule",
+                    "job_dispatch_done",
+                    level="error" if job.last_error else "info",
+                    job_id=job.id,
+                    duration_ms=elapsed_ms,
+                    detail={
+                        "job_type": job_type,
+                        "final_status": final_status.value,
+                        "last_error": job.last_error or "",
+                    },
+                )
+            except ImportError:
+                pass
 
         job.last_run_at = now_ms
         try:

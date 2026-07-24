@@ -242,6 +242,18 @@ async def dispatch_autonomous_job(job: ScheduledResearchJob) -> None:
         return
 
     job_type = str((job.config or {}).get("job_type") or "")
+    try:
+        from trade_integrations.observability.hooks import safe_emit
+
+        safe_emit(
+            "watch",
+            "autonomous_scheduled_job_start",
+            agent_id=agent_id,
+            job_id=job.id,
+            detail={"job_type": job_type},
+        )
+    except ImportError:
+        pass
     if job_type == JOB_TYPE_INFRA_HEAL:
         from trade_integrations.autonomous_agents.infra_startup import attempt_infra_heal
 

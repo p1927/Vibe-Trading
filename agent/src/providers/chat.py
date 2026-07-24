@@ -290,6 +290,22 @@ class ChatLLM:
         Returns:
             LLMResponse.
         """
+        _cfg = get_env_config()
+        provider = _cfg.llm.langchain_provider.strip().lower() or "openai"
+        model = self.model_name or _cfg.llm.langchain_model_name.strip() or "(unset)"
+        try:
+            from trade_integrations.observability.hooks import llm_call_span
+
+            with llm_call_span(provider=provider, model=model, tier="vibe") as llm_meta:
+                llm = self._llm.bind_tools(tools) if tools else self._llm
+                config = {"timeout": timeout} if timeout else {}
+                ai_message = llm.invoke(messages, config=config)
+                response = self._parse_response(ai_message)
+                llm_meta["tool_calls"] = len(response.tool_calls or [])
+                llm_meta["finish_reason"] = response.finish_reason
+                return response
+        except ImportError:
+            pass
         llm = self._llm.bind_tools(tools) if tools else self._llm
         config = {"timeout": timeout} if timeout else {}
         ai_message = llm.invoke(messages, config=config)
@@ -323,6 +339,44 @@ class ChatLLM:
         Returns:
             Parsed ``LLMResponse``.
         """
+        _cfg = get_env_config()
+        provider = _cfg.llm.langchain_provider.strip().lower() or "openai"
+        model = self.model_name or _cfg.llm.langchain_model_name.strip() or "(unset)"
+        try:
+            from trade_integrations.observability.hooks import llm_call_span
+
+            with llm_call_span(provider=provider, model=model, tier="vibe") as llm_meta:
+                response = self._stream_chat_impl(
+                    messages,
+                    tools=tools,
+                    on_text_chunk=on_text_chunk,
+                    on_reasoning_chunk=on_reasoning_chunk,
+                    timeout=timeout,
+                    should_cancel=should_cancel,
+                )
+                llm_meta["tool_calls"] = len(response.tool_calls or [])
+                llm_meta["finish_reason"] = response.finish_reason
+                return response
+        except ImportError:
+            return self._stream_chat_impl(
+                messages,
+                tools=tools,
+                on_text_chunk=on_text_chunk,
+                on_reasoning_chunk=on_reasoning_chunk,
+                timeout=timeout,
+                should_cancel=should_cancel,
+            )
+
+    def _stream_chat_impl(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        on_text_chunk: Optional[Any] = None,
+        on_reasoning_chunk: Optional[Any] = None,
+        timeout: Optional[int] = None,
+        should_cancel: Optional[Callable[[], bool]] = None,
+    ) -> LLMResponse:
+        """Internal stream_chat body (instrumentation wraps the public method)."""
         try:
             llm = self._llm.bind_tools(tools) if tools else self._llm
             config = {"timeout": timeout} if timeout else {}

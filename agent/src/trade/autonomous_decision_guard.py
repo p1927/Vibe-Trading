@@ -41,6 +41,14 @@ def infer_scheduler_turn_kind(user_message: str) -> str:
     return "scheduler"
 
 
+def _tool_matches(called: set[str], bare_name: str) -> bool:
+    """Match bare MCP tool names against local wrappers (e.g. mcp_openalgo_record_autonomous_decision)."""
+    if bare_name in called:
+        return True
+    suffix = f"_{bare_name}"
+    return any(t.endswith(suffix) for t in called)
+
+
 def needs_decision_guard(
     user_message: str,
     tools_called: set[str] | list[str],
@@ -56,7 +64,7 @@ def needs_decision_guard(
     if not is_autonomous_scheduler_turn(user_message):
         return False
     called = {str(t).strip() for t in tools_called if t}
-    return _DECISION_TOOL not in called
+    return not _tool_matches(called, _DECISION_TOOL)
 
 
 def build_decision_retry_message(*, agent_id: str, turn_kind: str = "scheduler") -> str:

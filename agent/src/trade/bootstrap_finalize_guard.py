@@ -44,7 +44,9 @@ def needs_bootstrap_finalize_guard(
         return False
 
     called = {str(t).strip() for t in tools_called if t}
-    if _DECISION_TOOL not in called:
+    from src.trade.autonomous_decision_guard import _tool_matches
+
+    if not _tool_matches(called, _DECISION_TOOL):
         return False
 
     try:

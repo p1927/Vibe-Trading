@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Database, ExternalLink, Loader2, Newspaper, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, type HubDiscardedNewsItem, type HubNewsItem, type HubNewsPipelineConfig, type HubStatusResponse } from "@/lib/api";
+import { api, type HubDiscardedNewsItem, type HubNewsItem, type HubNewsPipelineConfig, type HubStatusResponse, type ObservabilitySummaryResponse } from "@/lib/api";
 
 type NewsFilter = "all" | "staging" | "distilled" | "discarded";
 
@@ -327,6 +327,7 @@ function DiscardedRow({
 
 export function Hub() {
   const [data, setData] = useState<HubStatusResponse | null>(null);
+  const [obsSummary, setObsSummary] = useState<ObservabilitySummaryResponse | null>(null);
   const [pipelineConfig, setPipelineConfig] = useState<HubNewsPipelineConfig | null>(null);
   const [pipelineDraft, setPipelineDraft] = useState<HubNewsPipelineConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -340,11 +341,13 @@ export function Hub() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [res, cfgRes] = await Promise.all([
+      const [res, cfgRes, obsRes] = await Promise.all([
         api.getHubStatus("NIFTY"),
         api.getHubNewsPipelineConfig().catch(() => null),
+        api.getObservabilitySummary().catch(() => null),
       ]);
       setData(res);
+      setObsSummary(obsRes);
       if (cfgRes?.config) {
         setPipelineConfig(cfgRes.config);
         setPipelineDraft(cfgRes.config);
@@ -548,7 +551,17 @@ export function Hub() {
     <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Hub inventory</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-semibold tracking-tight">Hub inventory</h1>
+            {(obsSummary?.open_issue_count ?? 0) > 0 ? (
+              <span
+                className="rounded-full bg-red-500/15 px-2.5 py-0.5 text-[11px] font-medium text-red-800 dark:text-red-200"
+                title="Open observability issues (Tier 0)"
+              >
+                {obsSummary?.open_issue_count} open issue{(obsSummary?.open_issue_count ?? 0) === 1 ? "" : "s"}
+              </span>
+            ) : null}
+          </div>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             Live news union (staging refs + distilled hub events), references, cache health, and capture stats.
           </p>

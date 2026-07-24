@@ -1,27 +1,11 @@
 import i18n from '@/i18n';
 import { memo, useState, useCallback } from "react";
 import { User, XCircle, RefreshCw, Copy, Check } from "lucide-react";
-import ReactMarkdown, { type Options as ReactMarkdownOptions } from "react-markdown";
-import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
-import rehypeHighlight from "rehype-highlight";
-import rehypeKatex from "rehype-katex";
-import "katex/dist/katex.min.css";
 import { formatTimestamp } from "@/lib/formatters";
-import { normalizeMathDelimiters } from "@/lib/markdown";
 import type { AgentMessage } from "@/types/agent";
-import { SourceCitationLink } from "@/components/research/ContextDrawer";
-import { preprocessCitationLinks } from "@/stores/provenance";
 import { AgentAvatar } from "./AgentAvatar";
+import { MarkdownContent } from "./MarkdownContent";
 import { RunCompleteCard } from "./RunCompleteCard";
-
-// singleDollarTextMath off: dollar amounts ("$150 to $120") must never parse as
-// formulas; LLM \(...\)/\[...\] delimiters are normalized to $$ before render.
-const remarkPlugins: ReactMarkdownOptions["remarkPlugins"] = [
-  remarkGfm,
-  [remarkMath, { singleDollarTextMath: false }],
-];
-const rehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [rehypeHighlight, rehypeKatex];
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -76,33 +60,12 @@ export const MessageBubble = memo(function MessageBubble({ msg, onRetry }: Props
   }
 
   if (msg.type === "answer") {
-    const markdown = preprocessCitationLinks(msg.content);
     return (
       <div className="flex gap-3 group">
         <AgentAvatar />
         <div className="flex-1 min-w-0 relative">
           <CopyButton text={msg.content} />
-          <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed prose-table:border prose-table:border-border/50 prose-th:bg-muted/30 prose-th:px-3 prose-th:py-1.5 prose-td:px-3 prose-td:py-1.5 prose-th:text-left prose-th:text-xs prose-th:font-medium prose-td:text-xs prose-hr:hidden">
-            <ReactMarkdown
-              remarkPlugins={remarkPlugins}
-              rehypePlugins={rehypePlugins}
-              components={{
-                a: ({ href, children }) => {
-                  if (href?.startsWith("#source-")) {
-                    const refId = href.slice("#source-".length);
-                    return <SourceCitationLink refId={refId} label={String(children)} />;
-                  }
-                  return (
-                    <a href={href} target="_blank" rel="noopener noreferrer">
-                      {children}
-                    </a>
-                  );
-                },
-              }}
-            >
-              {normalizeMathDelimiters(markdown)}
-            </ReactMarkdown>
-          </div>
+          <MarkdownContent content={msg.content} />
           {ts && <span className="text-[9px] text-muted-foreground/30 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">{ts}</span>}
         </div>
       </div>
