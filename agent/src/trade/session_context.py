@@ -62,12 +62,25 @@ def is_autonomous_us_equity_session(session_config: dict[str, Any] | None) -> bo
         return False
     if session_execution_market(cfg) != "US":
         return False
+    try:
+        import sys
+        from pathlib import Path
+
+        trade_root = Path(__file__).resolve().parents[3]
+        integrations = trade_root / "integrations"
+        if integrations.is_dir() and str(integrations) not in sys.path:
+            sys.path.insert(0, str(integrations))
+        from trade_integrations.autonomous_agents.intent_capabilities import resolve_capabilities
+
+        caps = resolve_capabilities(session_config=cfg)
+        if caps:
+            return not caps.get("payoff")
+    except Exception:
+        pass
     profile = str(cfg.get("execution_profile") or "")
     if "equity" in profile:
         return True
-    if cfg.get("options_advisor_autonomous"):
-        return False
-    return True
+    return False
 
 
 def resolve_prefetch_ticker(
@@ -132,34 +145,37 @@ def classify_prefetch_widget_intent(
     """Classify widget intent; autonomous agents use persisted intent.capabilities first."""
     cfg = session_config or {}
     if is_autonomous_agent_session(cfg):
-        mc = cfg.get("mandate_config") if isinstance(cfg.get("mandate_config"), dict) else {}
-        agent_mode = str(cfg.get("agent_mode") or mc.get("agent_mode") or "").lower()
-        raw_intent = mc.get("intent") if isinstance(mc.get("intent"), dict) else {}
-        if agent_mode == "observe" or str(raw_intent.get("engagement") or "").lower() == "observe":
-            return "none"
-        caps = raw_intent.get("capabilities") if isinstance(raw_intent.get("capabilities"), dict) else {}
-        if not caps and raw_intent:
-            from trade_integrations.autonomous_agents.intent_merge import derive_capabilities
-            from trade_integrations.autonomous_agents.intent_schema import AgentIntent
+        try:
+            import sys
+            from pathlib import Path
 
-            caps = derive_capabilities(AgentIntent.from_dict(raw_intent))
-        if raw_intent or agent_mode:
-            if not caps.get("widgets"):
-                return "none"
-            if caps.get("payoff"):
-                return "options_strategy"
-            if caps.get("index_outlook") and not caps.get("payoff"):
-                return "index_outlook"
-            if caps.get("charges"):
-                return "stock_trade"
+            trade_root = Path(__file__).resolve().parents[3]
+            integrations = trade_root / "integrations"
+            if integrations.is_dir() and str(integrations) not in sys.path:
+                sys.path.insert(0, str(integrations))
+            from trade_integrations.autonomous_agents.intent_capabilities import (
+                prefetch_widget_intent_allowed,
+                resolve_capabilities,
+            )
+        except Exception:
+            return "none"
+
+        caps = resolve_capabilities(session_config=cfg)
+        if not caps.get("widgets"):
             return "none"
         if is_autonomous_us_equity_session(cfg):
-            from src.trade.widget_intent import WidgetIntent, classify_widget_intent
+            from src.trade.widget_intent import classify_widget_intent
 
-            intent: WidgetIntent = classify_widget_intent(content)
+            intent = classify_widget_intent(content)
             if intent == "execute_refresh":
-                return "stock_trade"
-            return intent
+                intent = "stock_trade"
+            return intent if prefetch_widget_intent_allowed(intent, caps) else "none"
+        if caps.get("payoff"):
+            return "options_strategy"
+        if caps.get("index_outlook"):
+            return "index_outlook"
+        if caps.get("charges"):
+            return "stock_trade"
         return "none"
 
     from src.trade.widget_intent import WidgetIntent, classify_widget_intent

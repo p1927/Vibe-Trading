@@ -104,23 +104,33 @@ def _maybe_emit_options_widget(
     ticker: str,
     *,
     widget_intent: str = "options_strategy",
+    session_config: dict[str, Any] | None = None,
 ) -> None:
     now = time.time()
     if not _should_emit_widget(session_id, ticker, now, widget_kind="options"):
         return
     try:
         ensure_trade_stack_path()
+        from trade_integrations.autonomous_agents.intent_capabilities import (
+            attach_capabilities_metadata,
+            prefetch_widget_intent_allowed,
+            resolve_capabilities,
+        )
         from trade_integrations.dataflows.options_research.widget_payload import (
             build_options_trade_widget,
         )
         from trade_integrations.trade_widgets.presentability import is_widget_presentable
         from trade_integrations.trade_widgets.store import persist_trade_widget
 
+        caps = resolve_capabilities(session_config=session_config)
+        if not prefetch_widget_intent_allowed(widget_intent, caps):
+            return
         refresh = widget_intent == "execute_refresh"
         widget = build_options_trade_widget(ticker, refresh=refresh, widget_intent=widget_intent)
         _annotate_widget_intent(widget, widget_intent)
-        if not is_widget_presentable(widget, widget_intent):
+        if not is_widget_presentable(widget, widget_intent, session_config=session_config):
             return
+        attach_capabilities_metadata(widget, session_config=session_config)
         persist_trade_widget(widget)
         _emit(event_bus, session_id, "trade_plan.widget", widget)
         _record_widget_emitted(session_id, ticker, now, widget_kind="options")
@@ -134,23 +144,33 @@ def _maybe_emit_index_widget(
     ticker: str,
     *,
     widget_intent: str = "index_outlook",
+    session_config: dict[str, Any] | None = None,
 ) -> None:
     now = time.time()
     if not _should_emit_widget(session_id, ticker, now, widget_kind="index"):
         return
     try:
         ensure_trade_stack_path()
+        from trade_integrations.autonomous_agents.intent_capabilities import (
+            attach_capabilities_metadata,
+            prefetch_widget_intent_allowed,
+            resolve_capabilities,
+        )
         from trade_integrations.dataflows.index_research.widget_payload import (
             build_index_trade_widget,
         )
         from trade_integrations.trade_widgets.presentability import is_widget_presentable
         from trade_integrations.trade_widgets.store import persist_trade_widget
 
+        caps = resolve_capabilities(session_config=session_config)
+        if not prefetch_widget_intent_allowed(widget_intent, caps):
+            return
         refresh = widget_intent == "execute_refresh"
         widget = build_index_trade_widget(ticker, refresh=refresh, widget_intent=widget_intent)
         _annotate_widget_intent(widget, widget_intent)
-        if not is_widget_presentable(widget, widget_intent):
+        if not is_widget_presentable(widget, widget_intent, session_config=session_config):
             return
+        attach_capabilities_metadata(widget, session_config=session_config)
         persist_trade_widget(widget)
         _emit(event_bus, session_id, "trade_plan.widget", widget)
         _record_widget_emitted(session_id, ticker, now, widget_kind="index")
