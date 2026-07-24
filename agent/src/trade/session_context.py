@@ -154,35 +154,14 @@ def classify_prefetch_widget_intent(
             if integrations.is_dir() and str(integrations) not in sys.path:
                 sys.path.insert(0, str(integrations))
             from trade_integrations.autonomous_agents.intent_capabilities import (
-                prefetch_widget_intent_allowed,
+                classify_prefetch_intent_from_capabilities,
                 resolve_capabilities,
             )
         except Exception:
             return "none"
 
         caps = resolve_capabilities(session_config=cfg)
-        if not caps.get("widgets"):
-            return "none"
-        if is_autonomous_us_equity_session(cfg):
-            from src.trade.widget_intent import classify_widget_intent
-
-            intent = classify_widget_intent(content)
-            if intent == "execute_refresh":
-                intent = "stock_trade"
-            return intent if prefetch_widget_intent_allowed(intent, caps) else "none"
-        from src.trade.widget_intent import classify_widget_intent
-
-        intent = classify_widget_intent(content)
-        if intent in {"none", ""}:
-            if caps.get("payoff"):
-                intent = "options_strategy"
-            elif caps.get("index_outlook"):
-                intent = "index_outlook"
-            elif caps.get("charges"):
-                intent = "stock_trade"
-            else:
-                return "none"
-        return intent if prefetch_widget_intent_allowed(intent, caps) else "none"
+        return classify_prefetch_intent_from_capabilities(content, caps)
 
     from src.trade.widget_intent import WidgetIntent, classify_widget_intent
 
