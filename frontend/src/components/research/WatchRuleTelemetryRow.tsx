@@ -56,6 +56,9 @@ function currentValueText(rule: WatchRuleTelemetry): string {
 }
 
 function statusChip(rule: WatchRuleTelemetry): { label: string; className: string } {
+  if (rule.metric === "session_close") {
+    return { label: "Timer", className: "border-muted text-muted-foreground" };
+  }
   if (!rule.quote_available) {
     return { label: "No quote", className: "border-muted text-muted-foreground" };
   }

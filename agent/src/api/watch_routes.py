@@ -66,7 +66,7 @@ def create_session_watch(session_id: str, body: CreateWatchRequest) -> Dict[str,
         label=body.label,
         one_shot=body.one_shot,
     )
-    if result.get("status") != "ok":
+    if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result.get("error") or "create failed")
     return result
 
@@ -91,7 +91,7 @@ def create_agent_watch(agent_id: str, body: CreateWatchRequest) -> Dict[str, Any
         label=body.label,
         one_shot=body.one_shot,
     )
-    if result.get("status") != "ok":
+    if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result.get("error") or "create failed")
     return result
 
@@ -101,7 +101,7 @@ def update_watch_route(watch_id: str, body: UpdateWatchRequest) -> Dict[str, Any
     from trade_integrations.watch_registry.api import mcp_update_watch
 
     result = mcp_update_watch(watch_id, watch_spec=body.watch_spec, label=body.label)
-    if result.get("status") != "ok":
+    if result.get("status") == "error":
         raise HTTPException(status_code=404, detail=result.get("error") or "update failed")
     return result
 
@@ -111,6 +111,6 @@ def delete_watch_route(watch_id: str) -> Dict[str, Any]:
     from trade_integrations.watch_registry.api import mcp_delete_watch
 
     result = mcp_delete_watch(watch_id)
-    if result.get("status") != "ok":
+    if result.get("status") == "error":
         raise HTTPException(status_code=404, detail=result.get("error") or "delete failed")
     return result

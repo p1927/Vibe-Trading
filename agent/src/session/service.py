@@ -75,6 +75,32 @@ class SessionService:
         return self.store.get_session(session_id)
 
     @staticmethod
+    def _maybe_refresh_agent_intent(session: Session, content: str, message_id: str) -> None:
+        try:
+            import sys
+            from pathlib import Path
+
+            trade_root = Path(__file__).resolve().parents[4]
+            integrations = trade_root / "integrations"
+            if integrations.is_dir() and str(integrations) not in sys.path:
+                sys.path.insert(0, str(integrations))
+            from trade_integrations.autonomous_agents.intent_hooks import maybe_refresh_intent_on_user_message
+
+            updated = maybe_refresh_intent_on_user_message(
+                dict(session.config or {}),
+                content,
+                source_message_id=message_id,
+            )
+            if updated:
+                session.config = updated
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "refresh agent intent failed for %s",
+                session.session_id,
+                exc_info=True,
+            )
+
+    @staticmethod
     def _maybe_mark_autonomous_user_turn(session: Session, content: str) -> None:
         try:
             from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
@@ -140,9 +166,10 @@ class SessionService:
         self.store.create_attempt(attempt)
         session.config["include_shell_tools"] = include_shell_tools
         session.last_attempt_id = attempt.attempt_id
+        self._maybe_mark_autonomous_user_turn(session, content)
+        self._maybe_refresh_agent_intent(session, content, message.message_id)
         session.updated_at = datetime.now().isoformat()
         self.store.update_session(session)
-        self._maybe_mark_autonomous_user_turn(session, content)
         self.event_bus.emit(session_id, "attempt.created", {"attempt_id": attempt.attempt_id, "prompt": content})
 
         asyncio.create_task(
