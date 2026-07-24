@@ -1313,6 +1313,12 @@ def run_hub_news_maintenance_now(
                 summary=summary,
                 message=str(summary.get("pause_reason") or "News distillation pipeline is paused."),
             )
+        if summary.get("had_errors"):
+            return HubStagingDrainResponse(
+                status="partial",
+                summary=summary,
+                message="Maintainer finished with one or more stage errors; see summary.had_errors.",
+            )
         return HubStagingDrainResponse(status="ok", summary=summary)
     except Exception as exc:
         logger.exception("hub news maintenance failed")

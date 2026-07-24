@@ -660,10 +660,23 @@ export const api = {
 
   listWatches: (params: { sessionId?: string; agentId?: string }) => {
     const q = new URLSearchParams();
-    if (params.sessionId) q.set("session_id", params.sessionId);
-    if (params.agentId) q.set("agent_id", params.agentId);
+    if (params.agentId) {
+      q.set("agent_id", params.agentId);
+    } else if (params.sessionId) {
+      q.set("session_id", params.sessionId);
+    }
     const qs = q.toString();
     return request<WatchesListResponse>(`/watches${qs ? `?${qs}` : ""}`);
+  },
+  getWatchesLive: (params: { sessionId?: string; agentId?: string }) => {
+    const q = new URLSearchParams();
+    if (params.agentId) {
+      q.set("agent_id", params.agentId);
+    } else if (params.sessionId) {
+      q.set("session_id", params.sessionId);
+    }
+    const qs = q.toString();
+    return request<WatchesLiveResponse>(`/watches/live${qs ? `?${qs}` : ""}`);
   },
   deleteWatch: (watchId: string) =>
     request<{ status: string; watch_id: string }>(`/watches/${encodeURIComponent(watchId)}`, {
@@ -1803,6 +1816,11 @@ export interface ExternalPredictionProvenance {
   summary?: string;
   horizon_days?: number;
   thumbnail_url?: string;
+  thumbnail_path?: string;
+  artifact_run_id?: string;
+  page_kind?: string;
+  fetch_method?: string;
+  navigation_mode?: string;
   forecast_section?: string;
   forecast_heading?: string;
   horizon_window?: string;
@@ -1814,11 +1832,13 @@ export interface ExternalPredictionProvenance {
     soft_mismatch?: boolean;
   };
   last_refresh_attempt?: {
+    at?: string;
     fetch_status?: string;
     error_message?: string;
+    searxng_trigger?: string;
+    searxng_attempted?: boolean;
+    urls_tried?: string[];
   };
-  fetch_method?: string;
-  navigation_mode?: string;
   [key: string]: unknown;
 }
 
@@ -1869,6 +1889,7 @@ export interface ExternalPredictionSnapshot {
   symbol?: string;
   horizon_days?: number;
   fetched_at?: string;
+  refresh_completed_at?: string;
   cache_ttl_hours?: number;
   is_stale?: boolean;
   sources?: ExternalPredictionSource[];
@@ -2878,6 +2899,33 @@ export interface HubStatusPayload {
   entity_id?: string;
   hub_dir?: string;
   paths?: Record<string, string>;
+  gates?: {
+    hub_ready?: boolean;
+    blocking?: Array<{
+      id?: string;
+      passes?: boolean;
+      needed?: boolean;
+      action?: string;
+      user_message?: string;
+    }>;
+  };
+  source_availability?: Array<{
+    vendor?: string;
+    capability?: string;
+    status?: string;
+    last_error_code?: string;
+  }>;
+  news_events_migration?: {
+    needed?: boolean;
+    state?: Record<string, unknown>;
+    error?: string;
+  };
+  news_maintainer?: {
+    present?: boolean;
+    had_errors?: boolean;
+    mode?: string;
+    stages?: Array<Record<string, unknown>>;
+  };
   news_pipeline?: Record<string, unknown>;
   news_staging?: {
     entity_pipeline_enabled?: boolean;
@@ -3772,6 +3820,42 @@ export interface WatchesListResponse {
   status: string;
   watches: WatchRecord[];
   count: number;
+}
+
+export interface WatchRuleTelemetry {
+  symbol: string;
+  metric: string;
+  condition_text: string;
+  threshold: number;
+  direction?: string;
+  current: {
+    ltp?: number;
+    baseline_ltp?: number;
+    move_pct?: number;
+    oi?: number;
+    volume?: number;
+  };
+  distance: {
+    fired: boolean;
+    remaining?: number | null;
+    unit: "pct" | "points";
+  };
+  quote_available: boolean;
+}
+
+export interface WatchLiveSnapshot {
+  watch_id: string;
+  label?: string | null;
+  rules: WatchRuleTelemetry[];
+  last_fired_at?: string | null;
+}
+
+export interface WatchesLiveResponse {
+  status: string;
+  fetched_at: string;
+  market_open?: boolean | null;
+  watches: WatchLiveSnapshot[];
+  count?: number;
 }
 
 export interface AutonomousAgentThesis {

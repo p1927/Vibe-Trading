@@ -89,6 +89,17 @@ function marketImpactBadge(status?: string) {
   );
 }
 
+function predictionHiddenBadge(item: HubNewsItem) {
+  if (item.provenance === "staging") return null;
+  const refCount = item.ref_count ?? item.references?.length ?? item.sources?.length ?? 1;
+  if (refCount >= 2) return null;
+  return (
+    <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] font-medium text-violet-800 dark:text-violet-200">
+      hidden from prediction
+    </span>
+  );
+}
+
 function consensusBadge(consensus?: {
   direction?: string;
   confidence?: number;
@@ -134,6 +145,7 @@ function NewsRow({
             {statusBadge(item.verification_status)}
             {item.market_impact_status ? marketImpactBadge(item.market_impact_status) : null}
             {consensusBadge(item.consensus)}
+            {predictionHiddenBadge(item)}
             {item.ticker ? (
               <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                 {item.ticker}
@@ -323,6 +335,8 @@ export function Hub() {
   const [newsFilter, setNewsFilter] = useState<NewsFilter>("all");
   const [showQueue, setShowQueue] = useState(false);
 
+  const [maintainerSummary, setMaintainerSummary] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setError(null);
     try {
@@ -351,6 +365,9 @@ export function Hub() {
   }, [load]);
 
   const hub = data?.hub;
+  const gates = hub?.gates;
+  const sourceAvailability = hub?.source_availability;
+  const newsMaintainer = hub?.news_maintainer;
   const staging = hub?.news_staging;
   const newsInventory = hub?.news_inventory;
   const verified = hub?.verified_news;
@@ -453,8 +470,28 @@ export function Hub() {
   const runMaintenance = async () => {
     setBusy("maintenance");
     setError(null);
+    setMaintainerSummary(null);
     try {
-      await api.runHubNewsMaintenance("NIFTY", 365);
+      const res = await api.runHubNewsMaintenance("NIFTY", 365);
+      if (res.status === "paused") {
+        setError(res.message || "Maintainer paused — check migration, LLM-Wiki, or MiniMax configuration.");
+      } else if (res.summary?.had_errors) {
+        setError("Maintainer finished with errors — see stage summary below.");
+      }
+      const summary = res.summary;
+      if (summary && typeof summary === "object") {
+        const compact = summary.compact_events as Record<string, unknown> | undefined;
+        const parts = [
+          compact?.groups_merged != null ? `${String(compact.groups_merged)} merged` : null,
+          compact?.rows_removed != null ? `${String(compact.rows_removed)} removed` : null,
+          summary.repair && typeof summary.repair === "object"
+            ? `${String((summary.repair as Record<string, unknown>).repaired ?? 0)} repaired`
+            : null,
+        ].filter(Boolean);
+        if (parts.length) {
+          setMaintainerSummary(`Maintainer: ${parts.join(" · ")}`);
+        }
+      }
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Maintainer run failed");
@@ -535,6 +572,26 @@ export function Hub() {
       </div>
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {maintainerSummary ? (
+        <p className="text-sm text-muted-foreground">{maintainerSummary}</p>
+      ) : null}
+
+      {data?.status === "migration_required" || gates?.hub_ready === false ? (
+        <div
+          role="status"
+          className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-950 dark:text-red-100"
+        >
+          <p className="font-medium">Hub migration required</p>
+          <p className="mt-1 text-[13px] leading-relaxed opacity-90">
+            {data?.message ||
+              gates?.blocking?.[0]?.user_message ||
+              "Legacy news records must migrate to events SSOT before the hub is reliable."}
+          </p>
+          {gates?.blocking?.[0]?.action ? (
+            <p className="mt-2 font-mono text-[11px] opacity-80">{gates.blocking[0].action}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       {staging?.pipeline_paused ? (
         <div
@@ -598,7 +655,9 @@ export function Hub() {
               />
             </label>
             <label className="space-y-1 text-sm">
-              <span className="text-[11px] text-muted-foreground">Maintainer cron (compact/cleanup)</span>
+              <span className="text-[11px] text-muted-foreground">
+                Maintainer cron (repair · backfill · merge · cleanup)
+              </span>
               <input
                 type="text"
                 value={pipelineDraft.entity_maintenance_cron ?? ""}
@@ -1011,6 +1070,55 @@ export function Hub() {
               </p>
             </div>
           ) : null}
+        </StatCard>
+
+        <StatCard title="Source health">
+          {(sourceAvailability?.length ?? 0) > 0 ? (
+            <ul className="max-h-40 space-y-1 overflow-y-auto text-[11px]">
+              {sourceAvailability?.slice(0, 12).map((row) => (
+                <li key={`${row.vendor}:${row.capability}`} className="flex justify-between gap-2">
+                  <span className="truncate">
+                    {row.vendor}
+                    {row.capability ? ` · ${row.capability}` : ""}
+                  </span>
+                  <span
+                    className={cn(
+                      "shrink-0 capitalize tabular-nums",
+                      row.status === "available"
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : row.status === "rate_limited"
+                          ? "text-amber-600 dark:text-amber-400"
+                          : "text-red-600 dark:text-red-400",
+                    )}
+                  >
+                    {row.status ?? "unknown"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">No source circuit data</p>
+          )}
+        </StatCard>
+
+        <StatCard title="Last maintainer run">
+          {newsMaintainer?.present ? (
+            <div className="space-y-1 text-sm">
+              <p>
+                <span className="text-muted-foreground">Status:</span>{" "}
+                {newsMaintainer.had_errors ? (
+                  <span className="text-amber-700 dark:text-amber-300">errors</span>
+                ) : (
+                  <span className="text-emerald-700 dark:text-emerald-300">ok</span>
+                )}
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                Mode {newsMaintainer.mode ?? "maintenance"} · {newsMaintainer.stages?.length ?? 0} stages
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No maintenance run recorded yet</p>
+          )}
         </StatCard>
       </div>
 
