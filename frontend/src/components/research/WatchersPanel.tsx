@@ -1,7 +1,15 @@
 import { Eye, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
-import { api, type AutonomousAgentInstance, type WatchRecord } from "@/lib/api";
+import { WatchRuleTelemetryRow } from "@/components/research/WatchRuleTelemetryRow";
+import { WatchersPollControls } from "@/components/research/WatchersPollControls";
+import { usePollIntervalPreference } from "@/hooks/usePollIntervalPreference";
+import { useWatchersLive } from "@/hooks/useWatchersLive";
+import { api } from "@/lib/api";
+import {
+  WATCHERS_DEFAULT_POLL_MS,
+  WATCHERS_POLL_STORAGE_KEY,
+} from "@/lib/pollIntervalOptions";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -10,59 +18,23 @@ interface Props {
   className?: string;
 }
 
-function resolveAgentWatchSpec(agent: AutonomousAgentInstance): WatchRecord | null {
-  const raw =
-    agent.watch_spec ??
-    (agent.mandate_config?.watch_spec as AutonomousAgentInstance["watch_spec"] | undefined);
-  const rules = raw?.rules;
-  if (!Array.isArray(rules) || rules.length === 0) return null;
-  return {
-    watch_id: `agent:${agent.id}`,
-    label: "strategy watch",
-    symbols: agent.symbols ?? [],
-    watch_spec: raw as Record<string, unknown>,
-  };
-}
-
 export function WatchersPanel({ sessionId, agentId, className }: Props) {
-  const [watches, setWatches] = useState<WatchRecord[]>([]);
-  const [loading, setLoading] = useState(false);
+  const { pollMs, setPollMs } = usePollIntervalPreference(
+    WATCHERS_POLL_STORAGE_KEY,
+    WATCHERS_DEFAULT_POLL_MS,
+  );
+  const {
+    watches,
+    loading,
+    error,
+    fetchedAt,
+    marketOpen,
+    countdownSec,
+    refresh,
+    liveEnabled,
+  } = useWatchersLive({ sessionId, agentId, pollMs, enabled: Boolean(sessionId || agentId) });
+
   const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    if (!sessionId && !agentId) {
-      setWatches([]);
-      return;
-    }
-    setLoading(true);
-    try {
-      const res = await api.listWatches({
-        sessionId: agentId ? undefined : (sessionId ?? undefined),
-        agentId: agentId ?? undefined,
-      });
-      let rows = res.watches ?? [];
-      if (rows.length === 0 && agentId) {
-        try {
-          const agent = await api.getAutonomousAgent(agentId);
-          const pending = resolveAgentWatchSpec(agent);
-          if (pending) rows = [pending];
-        } catch {
-          /* registry is authoritative when agent fetch fails */
-        }
-      }
-      setWatches(rows);
-    } catch {
-      setWatches([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId, agentId]);
-
-  useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => void load(), 30_000);
-    return () => window.clearInterval(timer);
-  }, [load]);
 
   const onDelete = async (watchId: string) => {
     if (watchId.startsWith("agent:")) {
@@ -73,7 +45,7 @@ export function WatchersPanel({ sessionId, agentId, className }: Props) {
     try {
       await api.deleteWatch(watchId);
       toast.success("Watch removed");
-      await load();
+      await refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to delete watch");
     } finally {
@@ -90,20 +62,35 @@ export function WatchersPanel({ sessionId, agentId, className }: Props) {
   }
 
   return (
-    <div className={cn("space-y-2", className)}>
+    <div className={cn("space-y-3", className)}>
+      <WatchersPollControls
+        pollMs={pollMs}
+        onPollChange={setPollMs}
+        countdownSec={countdownSec}
+        liveEnabled={liveEnabled}
+        fetchedAt={fetchedAt}
+      />
+
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 text-xs font-semibold">
           <Eye className="h-3.5 w-3.5 text-muted-foreground" />
           Active watches
+          {marketOpen === false && (
+            <span className="text-[10px] font-normal text-muted-foreground">· market closed</span>
+          )}
         </div>
         <button
           type="button"
-          onClick={() => void load()}
+          onClick={() => void refresh()}
           className="text-[10px] text-muted-foreground hover:text-foreground"
         >
           Refresh
         </button>
       </div>
+
+      {error && (
+        <p className="text-[11px] text-destructive">{error}</p>
+      )}
 
       {loading && watches.length === 0 && (
         <p className="text-[11px] text-muted-foreground">Loading watches…</p>
@@ -116,14 +103,6 @@ export function WatchersPanel({ sessionId, agentId, className }: Props) {
       )}
 
       {watches.map((watch) => {
-        const rules = (watch.watch_spec?.rules as Array<{ symbol?: string; metric?: string; threshold?: number }>) ?? [];
-        const ruleSummary =
-          rules.length > 0
-            ? rules
-                .slice(0, 3)
-                .map((r) => `${r.symbol ?? "?"} ${r.metric ?? "rule"} ${r.threshold ?? ""}`.trim())
-                .join(" · ")
-            : (watch.symbols ?? []).join(", ") || "watch";
         const pendingOnly = watch.watch_id.startsWith("agent:");
         return (
           <div
@@ -131,19 +110,21 @@ export function WatchersPanel({ sessionId, agentId, className }: Props) {
             className="rounded-md border bg-muted/30 px-2.5 py-2 text-[11px]"
           >
             <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="truncate font-medium">{watch.label || ruleSummary}</div>
-                <div className="mt-0.5 truncate text-muted-foreground">{ruleSummary}</div>
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <div className="truncate font-medium">{watch.label || watch.watch_id}</div>
                 {pendingOnly && (
-                  <div className="mt-1 text-[10px] text-muted-foreground">
+                  <div className="text-[10px] text-muted-foreground">
                     On agent record — Nautilus registry syncs after plan approval or bootstrap completes.
                   </div>
                 )}
                 {watch.last_fired_at && (
-                  <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
+                  <div className="text-[10px] text-amber-600 dark:text-amber-400">
                     Last fired {new Date(watch.last_fired_at).toLocaleString()}
                   </div>
                 )}
+                {watch.rules.map((rule, idx) => (
+                  <WatchRuleTelemetryRow key={`${watch.watch_id}-${rule.symbol}-${rule.metric}-${idx}`} rule={rule} />
+                ))}
               </div>
               {!pendingOnly && (
                 <button
