@@ -1,7 +1,12 @@
 import { memo, useCallback, useMemo, useState } from "react";
 import { Check, Loader2, Radio, ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
-import { api, type AutonomousAgentProposal, type AutonomousStackHealth } from "@/lib/api";
+import {
+  api,
+  type AgentIntentSnapshot,
+  type AutonomousAgentProposal,
+  type AutonomousStackHealth,
+} from "@/lib/api";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { cn } from "@/lib/utils";
@@ -27,12 +32,56 @@ function isProposalExpired(proposal: AutonomousAgentProposal): boolean {
   return Boolean(expires && Date.now() > expires);
 }
 
-function formatInstruments(proposal: AutonomousAgentProposal, market?: "IN" | "US"): string {
+function proposalIntent(proposal: AutonomousAgentProposal): AgentIntentSnapshot | undefined {
+  return proposal.mandate_config?.intent;
+}
+
+function formatInstrumentsFromIntent(
+  intent: AgentIntentSnapshot | undefined,
+  proposal: AutonomousAgentProposal,
+  market?: "IN" | "US",
+): string {
+  if (intent?.instruments?.length) {
+    const labels: Record<string, string> = {
+      equity: "Equity",
+      options: "Options",
+      futures: "Futures",
+      index: "Index watch",
+    };
+    return intent.instruments.map((x) => labels[x] ?? x).join(" · ");
+  }
   const raw = proposal.mandate_config?.allowed_instruments as string[] | undefined;
   if (raw?.length) {
     return raw.map((x) => x.charAt(0).toUpperCase() + x.slice(1)).join(" · ");
   }
   return market === "US" ? "Equity" : "Equity";
+}
+
+function formatWatchCondition(cond: NonNullable<AgentIntentSnapshot["watch_conditions"]>[number]): string {
+  if (cond.label) return cond.label;
+  const sym = (cond.symbol || "NIFTY").toUpperCase();
+  const params = cond.params || {};
+  if (cond.kind === "schedule") {
+    const everyMin = params.every_min;
+    return typeof everyMin === "number" ? `Poll every ${everyMin} min` : "Scheduled poll";
+  }
+  if (cond.kind === "price_level") {
+    const parts: string[] = [];
+    if (params.above != null) parts.push(`above ${params.above}`);
+    if (params.below != null) parts.push(`below ${params.below}`);
+    return parts.length ? `${sym} ${parts.join(" & ")}` : `${sym} price level`;
+  }
+  if (cond.kind === "price_move") {
+    if (params.points != null) return `${sym} moves ${params.points} points`;
+    if (params.pct != null) return `${sym} moves ${params.pct}%`;
+    return `${sym} price move`;
+  }
+  if (cond.kind === "vix") {
+    if (params.above != null) return `VIX above ${params.above}`;
+    if (params.below != null) return `VIX below ${params.below}`;
+    return "VIX level";
+  }
+  return cond.kind || "condition";
 }
 
 function formatMoney(amount: number | undefined, market: "IN" | "US" | undefined): string {
@@ -106,6 +155,7 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
   const [adjustText, setAdjustText] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  const intent = useMemo(() => proposalIntent(proposal), [proposal]);
   const expired = useMemo(() => isProposalExpired(proposal), [proposal]);
   const superseded = Boolean(proposal.superseded);
   const market = proposal.execution_market;
@@ -115,6 +165,16 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
   const hasMissingFields = missingFields.length > 0;
   const notReady = proposal.status !== "ready";
   const blocked = expired || superseded || hasRoutingErrors || hasMissingFields || notReady;
+
+  const observeMode =
+    intent?.engagement === "observe" ||
+    proposal.mandate_config?.agent_mode === "observe";
+
+  const watchConditions = useMemo(
+    () =>
+      (intent?.watch_conditions ?? []).filter((cond) => cond.kind && cond.kind !== "schedule"),
+    [intent?.watch_conditions],
+  );
 
   const handleCommit = useCallback(async () => {
     if (busy || blocked) return;
@@ -160,8 +220,9 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
 
   const constraints = proposal.constraints || {};
   const schedules = proposal.schedules || {};
-  const observeMode =
-    (proposal.mandate_config as { agent_mode?: string } | undefined)?.agent_mode === "observe";
+  const watchMs = intent?.schedules?.watch_ms ?? schedules.watch_ms;
+  const researchMs = intent?.schedules?.research_ms ?? schedules.research_ms;
+  const clarifyingPrompt = proposal.clarifying_prompt;
 
   return (
     <div className="flex gap-3">
@@ -179,7 +240,7 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
             <p className="text-xs text-muted-foreground">{proposal.name}</p>
             {observeMode ? (
               <p className="mt-1 inline-flex rounded-md border border-sky-500/40 bg-sky-500/5 px-2 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-300">
-                Observe only — no trading
+                Observe only — watch & report, no trading
               </p>
             ) : null}
             {expired ? (
@@ -204,6 +265,9 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
         {hasMissingFields ? (
           <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-200">
             <p className="font-medium">Missing details — confirm is disabled until resolved:</p>
+            {clarifyingPrompt ? (
+              <p className="mt-1 text-amber-900/90 dark:text-amber-100">{clarifyingPrompt}</p>
+            ) : null}
             <ul className="mt-1 list-disc pl-4">
               {missingFields.map((field) => (
                 <li key={field}>{field}</li>
@@ -226,44 +290,71 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
         <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
           <div className="col-span-2">
             <dt className="text-muted-foreground">Symbols</dt>
-            <dd className="font-medium">{(proposal.symbols ?? []).join(", ") || "—"}</dd>
+            <dd className="font-medium">{(intent?.symbols ?? proposal.symbols ?? []).join(", ") || "—"}</dd>
           </div>
           <div className="col-span-2">
             <dt className="text-muted-foreground">Mandate</dt>
             <dd className="font-medium text-foreground">{proposal.mandate || "—"}</dd>
           </div>
-          <div>
-            <dt className="text-muted-foreground">{market === "US" ? "Budget (USD est.)" : "Budget"}</dt>
-            <dd className="font-mono">{formatMoney(constraints.budget_inr, market)}</dd>
-          </div>
-          <div>
-            <dt className="text-muted-foreground">{market === "US" ? "Max loss (USD est.)" : "Max loss"}</dt>
-            <dd className="font-mono">{formatMoney(constraints.max_daily_loss_inr, market)}</dd>
-          </div>
-          <div>
-            <dt className="text-muted-foreground">Confidence</dt>
-            <dd>{constraints.confidence_threshold ?? 75}% to act</dd>
-          </div>
-          <div>
-            <dt className="text-muted-foreground">Mode</dt>
-            <dd>{constraints.mode || "paper"}</dd>
-          </div>
           <div className="col-span-2">
             <dt className="text-muted-foreground">Instruments</dt>
-            <dd className="font-medium">{formatInstruments(proposal, market)}</dd>
+            <dd className="font-medium">{formatInstrumentsFromIntent(intent, proposal, market)}</dd>
           </div>
+          {!observeMode ? (
+            <>
+              <div>
+                <dt className="text-muted-foreground">{market === "US" ? "Budget (USD est.)" : "Budget"}</dt>
+                <dd className="font-mono">{formatMoney(constraints.budget_inr, market)}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">{market === "US" ? "Max loss (USD est.)" : "Max loss"}</dt>
+                <dd className="font-mono">{formatMoney(constraints.max_daily_loss_inr, market)}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Confidence</dt>
+                <dd>{constraints.confidence_threshold ?? 75}% to act</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Mode</dt>
+                <dd>{constraints.mode || "paper"}</dd>
+              </div>
+            </>
+          ) : null}
           <div>
-            <dt className="text-muted-foreground">Watch</dt>
-            <dd>every {formatMs(schedules.watch_ms)}</dd>
+            <dt className="text-muted-foreground">Watch cadence</dt>
+            <dd>every {formatMs(watchMs)}</dd>
           </div>
-          <div>
-            <dt className="text-muted-foreground">Research</dt>
-            <dd>every {formatMs(schedules.research_ms)}</dd>
-          </div>
-          {market ? (
+          {!observeMode ? (
+            <div>
+              <dt className="text-muted-foreground">Research</dt>
+              <dd>every {formatMs(researchMs)}</dd>
+            </div>
+          ) : null}
+          {watchConditions.length > 0 ? (
+            <div className="col-span-2">
+              <dt className="text-muted-foreground">Alert conditions</dt>
+              <dd className="font-medium">
+                <ul className="mt-0.5 list-disc pl-4">
+                  {watchConditions.map((cond, idx) => (
+                    <li key={`${cond.kind}-${idx}`}>{formatWatchCondition(cond)}</li>
+                  ))}
+                </ul>
+              </dd>
+            </div>
+          ) : observeMode ? (
+            <div className="col-span-2">
+              <dt className="text-muted-foreground">Alert conditions</dt>
+              <dd className="text-muted-foreground">Polling only — no price alerts unless you add them</dd>
+            </div>
+          ) : null}
+          {market && !observeMode ? (
             <div className="col-span-2">
               <dt className="text-muted-foreground">Execution</dt>
-              <dd>{market === "US" ? "US · Nautilus watch + OpenAlgo (Alpaca plugin)" : "India · Nautilus watch + OpenAlgo"}</dd>
+              <dd>
+                {market === "US"
+                  ? "US · Nautilus watch + OpenAlgo (Alpaca plugin)"
+                  : "India · Nautilus watch + OpenAlgo"}
+              </dd>
             </div>
           ) : null}
         </dl>
@@ -345,7 +436,7 @@ export const AutonomousAgentProposalCard = memo(function AutonomousAgentProposal
               className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-40"
             >
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              {busy ? "Creating…" : "Confirm & start agent"}
+              {busy ? "Creating…" : observeMode ? "Confirm & start watch agent" : "Confirm & start agent"}
             </button>
           </div>
         )}

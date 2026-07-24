@@ -284,6 +284,22 @@ class ContextBuilder:
             skill_block = self._orchestrator_skill_block()
             if skill_block:
                 base = f"{base}\n{skill_block}"
+            try:
+                import sys
+                from pathlib import Path
+
+                trade_root = Path(__file__).resolve().parents[4]
+                integrations = trade_root / "integrations"
+                if integrations.is_dir() and str(integrations) not in sys.path:
+                    sys.path.insert(0, str(integrations))
+                from trade_integrations.autonomous_agents.intent_orchestrator_footer import (
+                    format_orchestrator_arq_footer,
+                )
+
+                base = f"{base}{format_orchestrator_arq_footer(self._session_config)}"
+            except Exception:
+                logger.debug("orchestrator ARQ footer skipped", exc_info=True)
+            return base
         elif session_kind == "news_scenario_advisor":
             base = _NEWS_SCENARIO_SYSTEM_PROMPT.format(
                 tool_descriptions=self._format_tool_descriptions(),

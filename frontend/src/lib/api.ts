@@ -2844,6 +2844,29 @@ export interface CaptureRegistryBackfillRequest {
   days?: number;
 }
 
+export interface HubNewsCauseIndicator {
+  factor?: string;
+  mechanism?: string;
+  direction_hint?: string;
+  confidence?: number;
+  evidence_quote?: string;
+}
+
+export interface HubNewsFutureEvent {
+  event?: string;
+  expected_date?: string;
+  timeline_phrase?: string;
+  date_confidence?: string;
+  index_impact_mechanism?: string;
+}
+
+export interface HubNewsArticleOpinion {
+  kind?: string;
+  text?: string;
+  use_for_prediction?: boolean;
+  reason_discarded?: string;
+}
+
 export interface HubNewsReference {
   ref_id?: string;
   title?: string;
@@ -2852,6 +2875,11 @@ export interface HubNewsReference {
   published_at?: string;
   vendor?: string;
   publisher?: string;
+  enrichment_mode?: string;
+  cause_indicators?: HubNewsCauseIndicator[];
+  future_events?: HubNewsFutureEvent[];
+  article_opinions?: HubNewsArticleOpinion[];
+  hindsight_causes?: Array<Record<string, unknown>>;
 }
 
 export interface HubNewsItem {
@@ -2878,6 +2906,10 @@ export interface HubNewsItem {
   predicted_impact?: Record<string, unknown>;
   actual_impact?: Record<string, unknown>;
   tags?: { topics?: string[]; themes?: string[]; factors?: string[] };
+  cause_indicators?: HubNewsCauseIndicator[];
+  future_events?: HubNewsFutureEvent[];
+  article_opinions?: HubNewsArticleOpinion[];
+  enrichment_modes?: string[];
 }
 
 export interface HubDiscardedNewsItem {
@@ -3913,6 +3945,7 @@ export interface AutonomousAgentProposal {
   proposal_id: string;
   status: string;
   missing_fields?: string[];
+  clarifying_prompt?: string;
   symbols: string[];
   name: string;
   mandate?: string;
@@ -3927,10 +3960,34 @@ export interface AutonomousAgentProposal {
   routing_errors?: string[];
   routing_warnings?: string[];
   stack_health?: AutonomousStackHealth;
-  mandate_config?: Record<string, unknown>;
+  mandate_config?: Record<string, unknown> & {
+    agent_mode?: string;
+    intent?: AgentIntentSnapshot;
+  };
   committed_agent_id?: string;
   superseded?: boolean;
   superseded_by?: string;
+}
+
+export interface AgentIntentSnapshot {
+  engagement?: "observe" | "trade";
+  instruments?: Array<"equity" | "options" | "futures" | "index">;
+  symbols?: string[];
+  schedules?: { watch_ms?: number; research_ms?: number };
+  watch_conditions?: Array<{
+    kind?: string;
+    symbol?: string;
+    label?: string;
+    params?: Record<string, unknown>;
+  }>;
+  capabilities?: {
+    widgets?: boolean;
+    payoff?: boolean;
+    charges?: boolean;
+    execution?: boolean;
+    index_outlook?: boolean;
+  };
+  needs_clarification?: string[];
 }
 
 export interface AutonomousAgentsListResponse {

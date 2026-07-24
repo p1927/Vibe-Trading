@@ -5,6 +5,14 @@ import { api, type HubDiscardedNewsItem, type HubNewsItem, type HubNewsPipelineC
 
 type NewsFilter = "all" | "staging" | "distilled" | "discarded";
 
+function matchesNewsProvenance(provenance: string | undefined, filter: NewsFilter): boolean {
+  if (filter === "all") return true;
+  const value = (provenance || "").toLowerCase();
+  if (filter === "staging") return value === "staging";
+  if (filter === "distilled") return value === "distilled" || value === "distilled_event";
+  return value === filter;
+}
+
 function StatCard({
   title,
   children,
@@ -121,6 +129,125 @@ function consensusBadge(consensus?: {
   );
 }
 
+function directionHintBadge(hint?: string) {
+  const value = (hint || "unclear").toLowerCase();
+  const tone =
+    value.includes("bull") || value === "up" || value === "positive"
+      ? "text-emerald-700 dark:text-emerald-400 bg-emerald-500/10"
+      : value.includes("bear") || value === "down" || value === "negative"
+        ? "text-red-700 dark:text-red-400 bg-red-500/10"
+        : "text-muted-foreground bg-muted";
+  return (
+    <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize", tone)}>
+      {value}
+    </span>
+  );
+}
+
+function enrichmentModeBadge(mode?: string) {
+  if (!mode) return null;
+  const label = mode === "full" ? "full article" : mode === "snippet_fallback" ? "snippet" : mode;
+  return (
+    <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-800 dark:text-sky-200">
+      {label}
+    </span>
+  );
+}
+
+function NewsEnrichmentPanel({ item }: { item: HubNewsItem }) {
+  const causes = item.cause_indicators ?? [];
+  const futureEvents = item.future_events ?? [];
+  const opinions = item.article_opinions ?? [];
+  const modes = item.enrichment_modes ?? [];
+
+  if (!causes.length && !futureEvents.length && !opinions.length && !modes.length) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 space-y-2 rounded-lg border border-dashed bg-muted/10 p-2.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Enrichment
+        </span>
+        {modes.map((mode) => (
+          <span key={mode}>{enrichmentModeBadge(mode)}</span>
+        ))}
+      </div>
+
+      {causes.length ? (
+        <div>
+          <p className="mb-1 text-[10px] font-medium text-muted-foreground">Cause indicators</p>
+          <ul className="space-y-1.5">
+            {causes.slice(0, 6).map((cause, idx) => (
+              <li
+                key={`${cause.factor || "cause"}-${idx}`}
+                className="rounded-md border bg-background/80 px-2 py-1.5 text-[11px]"
+              >
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {cause.factor ? (
+                    <span className="font-medium text-foreground">{cause.factor}</span>
+                  ) : null}
+                  {cause.direction_hint ? directionHintBadge(cause.direction_hint) : null}
+                </div>
+                {cause.mechanism ? (
+                  <p className="mt-0.5 leading-snug text-foreground/90 line-clamp-2">{cause.mechanism}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {futureEvents.length ? (
+        <div>
+          <p className="mb-1 text-[10px] font-medium text-muted-foreground">Future timeline</p>
+          <ul className="space-y-1.5">
+            {futureEvents.slice(0, 6).map((event, idx) => (
+              <li
+                key={`${event.event || "event"}-${event.expected_date || idx}`}
+                className="rounded-md border bg-background/80 px-2 py-1.5 text-[11px]"
+              >
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <span className="font-medium text-foreground">{event.event || "Upcoming event"}</span>
+                  {event.expected_date ? (
+                    <span className="text-[10px] tabular-nums text-muted-foreground">{event.expected_date}</span>
+                  ) : event.timeline_phrase ? (
+                    <span className="text-[10px] text-muted-foreground">{event.timeline_phrase}</span>
+                  ) : null}
+                </div>
+                {event.index_impact_mechanism ? (
+                  <p className="mt-0.5 leading-snug text-muted-foreground line-clamp-2">
+                    {event.index_impact_mechanism}
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {opinions.length ? (
+        <details className="text-[11px]">
+          <summary className="cursor-pointer text-amber-800 hover:text-amber-900 dark:text-amber-200">
+            Article opinions ({opinions.length}) — not used for prediction
+          </summary>
+          <ul className="mt-1 space-y-1 pl-1">
+            {opinions.slice(0, 5).map((opinion, idx) => (
+              <li key={`opinion-${idx}`} className="rounded border border-amber-500/20 bg-amber-500/5 px-2 py-1">
+                <p className="text-foreground/90 line-clamp-2">{opinion.text || opinion.kind || "Opinion"}</p>
+                {opinion.reason_discarded ? (
+                  <p className="text-[10px] text-muted-foreground">{opinion.reason_discarded}</p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 function NewsRow({
   item,
   onDiscard,
@@ -202,6 +329,8 @@ function NewsRow({
         <p className="mt-2 text-[12px] leading-relaxed text-foreground/90 line-clamp-3">{item.summary}</p>
       ) : null}
 
+      <NewsEnrichmentPanel item={item} />
+
       {references.length ? (
         <details className="mt-2 text-[11px]">
           <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
@@ -211,19 +340,30 @@ function NewsRow({
             {references.map((ref, idx) => {
               const refUrl = ref.url;
               const label = ref.title || ref.publisher || ref.source || ref.vendor || ref.ref_id || `Ref ${idx + 1}`;
+              const refCauses = ref.cause_indicators?.length ?? 0;
+              const refFuture = ref.future_events?.length ?? 0;
               return (
-                <li key={`${ref.ref_id || ref.url || idx}`} className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="font-medium text-foreground/90">{label}</span>
-                  {refUrl ? (
-                    <a
-                      href={refUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="truncate text-blue-600 hover:underline dark:text-blue-400"
-                    >
-                      {refUrl}
-                    </a>
-                  ) : null}
+                <li key={`${ref.ref_id || ref.url || idx}`} className="space-y-1">
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="font-medium text-foreground/90">{label}</span>
+                    {ref.enrichment_mode ? enrichmentModeBadge(ref.enrichment_mode) : null}
+                    {refCauses ? (
+                      <span className="text-[10px] text-muted-foreground">{refCauses} cause(s)</span>
+                    ) : null}
+                    {refFuture ? (
+                      <span className="text-[10px] text-muted-foreground">{refFuture} upcoming</span>
+                    ) : null}
+                    {refUrl ? (
+                      <a
+                        href={refUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="truncate text-blue-600 hover:underline dark:text-blue-400"
+                      >
+                        {refUrl}
+                      </a>
+                    ) : null}
+                  </div>
                 </li>
               );
             })}
@@ -385,7 +525,7 @@ export function Hub() {
     }
     const items = showQueue ? newsInventory?.staging_queue ?? [] : newsInventory?.items ?? [];
     if (newsFilter === "all") return items;
-    return items.filter((item) => item.provenance === newsFilter);
+    return items.filter((item) => matchesNewsProvenance(item.provenance, newsFilter));
   }, [newsFilter, newsInventory?.discarded_items, newsInventory?.items, newsInventory?.staging_queue, showQueue]);
 
   const resolveItemId = (item: HubNewsItem) =>

@@ -129,7 +129,39 @@ def classify_prefetch_widget_intent(
     session_config: dict[str, Any] | None,
     content: str,
 ) -> str:
-    """Classify widget intent; autonomous US equity avoids bare 'execution' → execute_refresh."""
+    """Classify widget intent; autonomous agents use persisted intent.capabilities first."""
+    cfg = session_config or {}
+    if is_autonomous_agent_session(cfg):
+        mc = cfg.get("mandate_config") if isinstance(cfg.get("mandate_config"), dict) else {}
+        agent_mode = str(cfg.get("agent_mode") or mc.get("agent_mode") or "").lower()
+        raw_intent = mc.get("intent") if isinstance(mc.get("intent"), dict) else {}
+        if agent_mode == "observe" or str(raw_intent.get("engagement") or "").lower() == "observe":
+            return "none"
+        caps = raw_intent.get("capabilities") if isinstance(raw_intent.get("capabilities"), dict) else {}
+        if not caps and raw_intent:
+            from trade_integrations.autonomous_agents.intent_merge import derive_capabilities
+            from trade_integrations.autonomous_agents.intent_schema import AgentIntent
+
+            caps = derive_capabilities(AgentIntent.from_dict(raw_intent))
+        if raw_intent or agent_mode:
+            if not caps.get("widgets"):
+                return "none"
+            if caps.get("payoff"):
+                return "options_strategy"
+            if caps.get("index_outlook") and not caps.get("payoff"):
+                return "index_outlook"
+            if caps.get("charges"):
+                return "stock_trade"
+            return "none"
+        if is_autonomous_us_equity_session(cfg):
+            from src.trade.widget_intent import WidgetIntent, classify_widget_intent
+
+            intent: WidgetIntent = classify_widget_intent(content)
+            if intent == "execute_refresh":
+                return "stock_trade"
+            return intent
+        return "none"
+
     from src.trade.widget_intent import WidgetIntent, classify_widget_intent
 
     intent: WidgetIntent = classify_widget_intent(content)
