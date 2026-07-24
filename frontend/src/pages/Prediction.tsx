@@ -36,6 +36,7 @@ import { QuantReviewPanel } from "@/components/prediction/QuantReviewPanel";
 import { ExternalPredictionsPanel } from "@/components/prediction/ExternalPredictionsPanel";
 import { NewsScenarioCanvas } from "@/components/prediction/NewsScenarioCanvas";
 import { useExternalPredictions } from "@/hooks/useExternalPredictions";
+import { useExternalNiftyPriceSeries } from "@/hooks/useExternalNiftyPriceSeries";
 import { useIndexPrediction } from "@/hooks/useIndexPrediction";
 import { useIndexPredictionLive } from "@/hooks/useIndexPredictionLive";
 import { usePlaygroundContext } from "@/hooks/usePlaygroundContext";
@@ -164,6 +165,9 @@ export function Prediction() {
     refresh: refreshExternalPredictions,
     load: reloadExternalPredictions,
   } = useExternalPredictions(horizonDays, externalPredictionsEnabled);
+
+  const { priceSeries: externalPriceSeries, priceLoading: externalPriceLoading } =
+    useExternalNiftyPriceSeries(externalPredictionsEnabled, horizonDays);
 
   const handleExternalDiscover = useCallback(async () => {
     const res = await api.discoverExternalPredictionSources("NIFTY", 12);
@@ -630,6 +634,16 @@ export function Prediction() {
     return merged;
   }, [factorHistory, backtest?.nifty_series, artifact?.spot, artifact?.as_of]);
 
+  const externalChartPriceSeries = useMemo(() => {
+    if (externalPriceSeries.length) return externalPriceSeries;
+    return niftyPriceSeries;
+  }, [externalPriceSeries, niftyPriceSeries]);
+
+  const externalChartPriceLoading =
+    externalPredictionsEnabled && externalPriceSeries.length === 0
+      ? externalPriceLoading || (backtestLoading && !niftyPriceSeries.length)
+      : backtestLoading && !externalChartPriceSeries.length;
+
   return (
     <div className="mx-auto flex w-full max-w-[90rem] flex-col gap-4 p-4 pb-10 lg:flex-row lg:items-start lg:gap-5 md:p-6">
       <div className="flex min-w-0 flex-1 flex-col gap-6">
@@ -704,8 +718,8 @@ export function Prediction() {
             reattached={externalReattached}
             error={externalError}
             horizonDays={horizonDays}
-            priceSeries={niftyPriceSeries}
-            priceLoading={backtestLoading && !niftyPriceSeries.length}
+            priceSeries={externalChartPriceSeries}
+            priceLoading={externalChartPriceLoading}
             onHorizonChange={setHorizonDays}
             onRefresh={refreshExternalPredictions}
             onDiscover={handleExternalDiscover}

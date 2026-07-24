@@ -2,8 +2,11 @@ import {
   buildAddSourcePayload,
   candidateNeedsEntryUrls,
   effectiveChartHorizonDays,
+  filterIssuePredictions,
+  filterVisiblePredictions,
   hasHorizonMismatch,
   normalizeDomain,
+  snapshotDisplayUpdatedAt,
   validateAddSourceRequest,
 } from "../externalPredictionsUtils";
 import type { ExternalPredictionRecord } from "@/lib/api";
@@ -128,5 +131,34 @@ describe("horizon helpers", () => {
   it("uses tab horizon when article horizon matches", () => {
     expect(hasHorizonMismatch(baseRecord)).toBe(false);
     expect(effectiveChartHorizonDays(baseRecord, 14)).toBe(14);
+  });
+});
+
+describe("filterIssuePredictions", () => {
+  it("includes error and not_found but excludes ok forecasts", () => {
+    const rows = filterIssuePredictions([
+      { source_id: "a", fetch_status: "ok", target: { mid: 25000 } },
+      { source_id: "b", fetch_status: "not_found", error_message: "listing_page_not_forecast" },
+      { source_id: "c", fetch_status: "error", error_message: "timeout" },
+      { source_id: "d", fetch_status: "ok", target: {} },
+    ]);
+    expect(rows.map((r) => r.source_id)).toEqual(["b", "c"]);
+  });
+});
+
+describe("snapshotDisplayUpdatedAt", () => {
+  it("prefers refresh_completed_at over fetched_at", () => {
+    expect(
+      snapshotDisplayUpdatedAt({
+        fetched_at: "2026-07-23T10:00:00+00:00",
+        refresh_completed_at: "2026-07-23T10:45:00+00:00",
+      }),
+    ).toBe("2026-07-23T10:45:00+00:00");
+  });
+
+  it("falls back to fetched_at when completion missing", () => {
+    expect(snapshotDisplayUpdatedAt({ fetched_at: "2026-07-23T10:00:00+00:00" })).toBe(
+      "2026-07-23T10:00:00+00:00",
+    );
   });
 });

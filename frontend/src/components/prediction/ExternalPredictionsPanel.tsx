@@ -1,12 +1,13 @@
 import { useCallback, useState } from "react";
 import { Loader2, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { ExternalPredictionCard } from "@/components/prediction/ExternalPredictionCard";
+import { ExternalPredictionIssueCard } from "@/components/prediction/ExternalPredictionIssueCard";
 import { ExternalPredictionsComparisonChart } from "@/components/charts/ExternalPredictionsComparisonChart";
 import { ExternalPredictionsRefreshLogPanel } from "@/components/prediction/ExternalPredictionsRefreshLogPanel";
 import { HORIZON_OPTIONS } from "@/components/prediction/PredictionControls";
 import type { ExternalRefreshPhase } from "@/hooks/useExternalPredictions";
 import type { ExternalPredictionSnapshot, PipelineLogEntry } from "@/lib/api";
-import { filterVisiblePredictions, computeStreetSummary, validateAddSourceRequest, buildAddSourcePayload, candidateNeedsEntryUrls, parseMultilineList, normalizeDomain, hasHorizonMismatch } from "@/lib/externalPredictionsUtils";
+import { filterVisiblePredictions, filterIssuePredictions, computeStreetSummary, validateAddSourceRequest, buildAddSourcePayload, candidateNeedsEntryUrls, parseMultilineList, normalizeDomain, primarySourceDomain, hasHorizonMismatch, snapshotDisplayUpdatedAt } from "@/lib/externalPredictionsUtils";
 import { cn } from "@/lib/utils";
 
 function fmtTimestamp(iso: string | undefined): string {
@@ -259,12 +260,19 @@ function ExternalSourceDiscoverPanel({
         <div>
           <p className="mb-2 text-[11px] font-medium text-muted-foreground">Watchlist ({watchlisted.length})</p>
           <ul className="space-y-1">
-            {watchlisted.map((src) => (
+            {watchlisted.map((src) => {
+              const primaryDomain = primarySourceDomain(src);
+              return (
               <li
                 key={src.id}
                 className="flex items-center justify-between rounded-md bg-muted/20 px-2 py-1.5 text-[11px]"
               >
-                <span>{src.display_name}</span>
+                <div className="min-w-0">
+                  <span className="font-medium">{src.display_name}</span>
+                  {primaryDomain ? (
+                    <p className="truncate text-[10px] text-muted-foreground">{primaryDomain}</p>
+                  ) : null}
+                </div>
                 {src.removable ? (
                   <button
                     type="button"
@@ -277,19 +285,27 @@ function ExternalSourceDiscoverPanel({
                   </button>
                 ) : null}
               </li>
-            ))}
+            );
+            })}
           </ul>
         </div>
         {discovered.length ? (
           <div>
             <p className="mb-2 text-[11px] font-medium text-muted-foreground">Discovered (not watchlisted)</p>
             <ul className="space-y-1">
-              {discovered.map((src) => (
+              {discovered.map((src) => {
+                const primaryDomain = primarySourceDomain(src);
+                return (
                 <li
                   key={src.id}
                   className="flex items-center justify-between rounded-md bg-muted/10 px-2 py-1.5 text-[11px]"
                 >
-                  <span>{src.display_name}</span>
+                  <div className="min-w-0">
+                    <span className="font-medium">{src.display_name}</span>
+                    {primaryDomain ? (
+                      <p className="truncate text-[10px] text-muted-foreground">{primaryDomain}</p>
+                    ) : null}
+                  </div>
                   <button
                     type="button"
                     onClick={() =>
@@ -308,7 +324,8 @@ function ExternalSourceDiscoverPanel({
                     Add
                   </button>
                 </li>
-              ))}
+              );
+              })}
             </ul>
           </div>
         ) : null}
@@ -453,9 +470,11 @@ export function ExternalPredictionsPanel({
   const sourceMap = new Map((snapshot?.sources ?? []).map((s) => [s.id, s]));
   const allPredictions = snapshot?.predictions ?? [];
   const visiblePredictions = filterVisiblePredictions(allPredictions);
-  const skippedCount = allPredictions.length - visiblePredictions.length;
+  const issuePredictions = filterIssuePredictions(allPredictions);
+  const skippedCount = allPredictions.length - visiblePredictions.length - issuePredictions.length;
   const mismatchCount = visiblePredictions.filter((p) => hasHorizonMismatch(p)).length;
   const summary = computeStreetSummary(snapshot, horizonDays);
+  const displayUpdatedAt = snapshotDisplayUpdatedAt(snapshot);
 
   return (
     <div className="flex flex-col gap-4">
@@ -535,7 +554,7 @@ export function ExternalPredictionsPanel({
       </div>
 
       <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-        <span>Last updated: {fmtTimestamp(snapshot?.fetched_at)}</span>
+        <span>Last updated: {fmtTimestamp(displayUpdatedAt ?? undefined)}</span>
         {snapshot?.sources_ok != null ? (
           <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 tabular-nums text-emerald-800 dark:text-emerald-300">
             {snapshot.sources_ok} forecast{snapshot.sources_ok === 1 ? "" : "s"}
@@ -602,16 +621,35 @@ export function ExternalPredictionsPanel({
           ) : null}
           {visiblePredictions.length === 0 && !refreshing ? (
             <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-8 text-center text-[12px] text-muted-foreground">
-              No NIFTY 50 index forecasts found for {horizonDays}d — try another horizon or click Refresh.
+              {issuePredictions.length > 0
+                ? `No usable NIFTY 50 forecasts for ${horizonDays}d — see ${issuePredictions.length} source issue(s) below.`
+                : `No NIFTY 50 index forecasts found for ${horizonDays}d — try another horizon or click Refresh.`}
               {skippedCount > 0 ? (
-                <p className="mt-2 text-[11px]">{skippedCount} source(s) skipped (no index forecast for this horizon).</p>
+                <p className="mt-2 text-[11px]">{skippedCount} source(s) had no forecast row for this horizon.</p>
               ) : null}
             </div>
           ) : null}
           {skippedCount > 0 && visiblePredictions.length > 0 ? (
             <p className="text-[11px] text-muted-foreground">
-              {skippedCount} source(s) hidden — no usable NIFTY 50 index forecast for {horizonDays}d.
+              {skippedCount} source(s) hidden — no forecast row for {horizonDays}d (see issues below if any).
             </p>
+          ) : null}
+          {issuePredictions.length > 0 ? (
+            <section className="space-y-2">
+              <h2 className="text-sm font-semibold text-foreground">Sources with issues ({issuePredictions.length})</h2>
+              <p className="text-[11px] text-muted-foreground">
+                These sources did not produce a usable NIFTY 50 forecast on the latest refresh attempt.
+              </p>
+              <div className="grid gap-3">
+                {issuePredictions.map((record) => (
+                  <ExternalPredictionIssueCard
+                    key={record.source_id}
+                    record={record}
+                    source={sourceMap.get(record.source_id)}
+                  />
+                ))}
+              </div>
+            </section>
           ) : null}
           <ExternalSourceDiscoverPanel
             onDiscover={handleDiscover}

@@ -2,7 +2,7 @@ import { ExternalLink } from "lucide-react";
 import { ExternalPredictionReplayChart } from "@/components/charts/ExternalPredictionReplayChart";
 import type { ExternalPredictionRecord, ExternalPredictionSource } from "@/lib/api";
 import { resolveApiBase } from "@/lib/apiBase";
-import { canApproveNavigationPath, formatForecastProvenance, formatHorizonMatch, hasHorizonMismatch } from "@/lib/externalPredictionsUtils";
+import { canApproveNavigationPath, formatFetchMethodLabel, formatForecastProvenance, formatHorizonMatch, formatPageKindLabel, hasHorizonMismatch } from "@/lib/externalPredictionsUtils";
 import { cn } from "@/lib/utils";
 
 const KIND_LABELS: Record<string, string> = {
@@ -60,20 +60,33 @@ export function ExternalPredictionCard({
   const showHorizonBadge = hasHorizonMismatch(record);
   const showApprove = canApproveNavigationPath(source, horizonDays) && onApprovePath;
   const fetchStatus = record.fetch_status || "unknown";
+  const pageKind = String(record.provenance?.page_kind || "");
+  const pageKindLabel = formatPageKindLabel(pageKind);
+  const fetchMethodLabel = formatFetchMethodLabel(record.provenance?.fetch_method as string | undefined);
+  const confidence = record.confidence;
+  const showCompactThumb = Boolean(thumbnailSrc) && pageKind !== "listing";
   const statusLabel =
-    fetchStatus === "ok"
-      ? "Forecast"
-      : fetchStatus === "error"
-        ? "Crawl error"
-        : fetchStatus === "not_found"
-          ? "No forecast"
-          : fetchStatus;
+    fetchStatus === "ok" && pageKind === "listing"
+      ? "Listing page"
+      : fetchStatus === "ok" && confidence
+        ? `${confidence} confidence`
+        : fetchStatus === "ok"
+          ? "Forecast"
+          : fetchStatus === "error"
+            ? "Crawl error"
+            : fetchStatus === "not_found"
+              ? "No forecast"
+              : fetchStatus;
   const statusClass =
-    fetchStatus === "ok"
-      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-      : fetchStatus === "error"
-        ? "bg-red-500/15 text-red-700 dark:text-red-300"
-        : "bg-muted text-muted-foreground";
+    fetchStatus === "ok" && pageKind === "listing"
+      ? "bg-amber-500/15 text-amber-800 dark:text-amber-300"
+      : fetchStatus === "ok" && confidence === "low"
+        ? "bg-amber-500/15 text-amber-800 dark:text-amber-300"
+        : fetchStatus === "ok"
+          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+          : fetchStatus === "error"
+            ? "bg-red-500/15 text-red-700 dark:text-red-300"
+            : "bg-muted text-muted-foreground";
   const lastAttempt = record.provenance?.last_refresh_attempt as
     | { fetch_status?: string; error_message?: string }
     | undefined;
@@ -109,6 +122,16 @@ export function ExternalPredictionCard({
             {staleRefresh ? (
               <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300">
                 Refresh failed — cached
+              </span>
+            ) : null}
+            {pageKindLabel ? (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                {pageKindLabel}
+              </span>
+            ) : null}
+            {fetchMethodLabel ? (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                {fetchMethodLabel}
               </span>
             ) : null}
           </div>
@@ -151,82 +174,86 @@ export function ExternalPredictionCard({
             </a>
           ) : null}
         </div>
-        {record.direction ? (
-          <span
-            className={cn(
-              "rounded-md px-2 py-1 text-[11px] font-semibold capitalize",
-              record.direction === "bullish" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-              record.direction === "bearish" && "bg-red-500/10 text-red-700 dark:text-red-300",
-              record.direction === "neutral" && "bg-muted text-muted-foreground",
-            )}
-          >
-            {record.direction}
-          </span>
-        ) : null}
+        <div className="flex shrink-0 items-start gap-2">
+          {showCompactThumb ? (
+            <a
+              href={url || thumbnailSrc}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block overflow-hidden rounded-md border border-border/50 bg-muted/20"
+            >
+              <img
+                src={thumbnailSrc}
+                alt={`${name} forecast page screenshot`}
+                className="h-24 w-24 object-contain object-top"
+                loading="lazy"
+              />
+            </a>
+          ) : null}
+          {record.direction ? (
+            <span
+              className={cn(
+                "rounded-md px-2 py-1 text-[11px] font-semibold capitalize",
+                record.direction === "bullish" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+                record.direction === "bearish" && "bg-red-500/10 text-red-700 dark:text-red-300",
+                record.direction === "neutral" && "bg-muted text-muted-foreground",
+              )}
+            >
+              {record.direction}
+            </span>
+          ) : null}
+        </div>
       </div>
 
-      {thumbnailSrc ? (
-        <div className="space-y-1">
-          <a
-            href={url || thumbnailSrc}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block overflow-hidden rounded-lg border border-border/50 bg-muted/20"
-          >
-            <img
-              src={thumbnailSrc}
-              alt={`${name} forecast page screenshot`}
-              className="max-h-40 w-full object-cover object-top"
-              loading="lazy"
-            />
-          </a>
-          <p className="text-[10px] text-muted-foreground">
-            Page screenshot at fetch — verify levels against source
-          </p>
-        </div>
+      {thumbnailSrc && !showCompactThumb ? (
+        <p className="text-[10px] text-muted-foreground">
+          Listing-page screenshot hidden — open article link for full page
+        </p>
       ) : null}
 
-      <ExternalPredictionReplayChart
-        record={record}
-        horizonDays={horizonDays}
-        priceSeries={priceSeries}
-        priceLoading={priceLoading}
-        height={280}
-      />
+      <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
+        <ExternalPredictionReplayChart
+          record={record}
+          horizonDays={horizonDays}
+          priceSeries={priceSeries}
+          priceLoading={priceLoading}
+          height={280}
+        />
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
-        <div className="space-y-1 rounded-lg bg-muted/30 p-2.5 text-[11px]">
-          <p>
-            Target mid: <span className="font-semibold">{fmtLevel(record.target?.mid)}</span>
-          </p>
-          <p>
-            Range: {fmtLevel(record.target?.low)} – {fmtLevel(record.target?.high)}
-          </p>
-          <p>Expected return: {fmtPct(record.expected_return_pct)}</p>
-          <p>Target date: {fmtDate(record.target_date)}</p>
-        </div>
-        <div className="flex flex-col gap-2 text-[12px]">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Rationale</p>
-          {record.provenance?.summary ? (
-            <p className="text-[12px] leading-relaxed text-foreground/90">{record.provenance.summary}</p>
-          ) : null}
-          <ul className="list-disc space-y-1.5 ps-4 text-foreground/90">
-            {(record.rationale_bullets?.length ? record.rationale_bullets : ["No rationale extracted"]).map(
-              (bullet) => (
-                <li key={bullet}>{bullet}</li>
-              ),
-            )}
-          </ul>
-          {showApprove ? (
-            <button
-              type="button"
-              onClick={() => void onApprovePath?.()}
-              disabled={approvingPath}
-              className="mt-1 inline-flex w-fit items-center rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary hover:bg-primary/15 disabled:opacity-50"
-            >
-              {approvingPath ? "Approving…" : "Approve navigation path"}
-            </button>
-          ) : null}
+        <div className="flex flex-col gap-4">
+          <div className="space-y-1 rounded-lg bg-muted/30 p-2.5 text-[11px]">
+            <p>
+              Target mid: <span className="font-semibold">{fmtLevel(record.target?.mid)}</span>
+            </p>
+            <p>
+              Range: {fmtLevel(record.target?.low)} – {fmtLevel(record.target?.high)}
+            </p>
+            <p>Expected return: {fmtPct(record.expected_return_pct)}</p>
+            <p>Target date: {fmtDate(record.target_date)}</p>
+          </div>
+          <div className="flex flex-col gap-2 text-[12px]">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Rationale</p>
+            {record.provenance?.summary ? (
+              <p className="text-[12px] leading-relaxed text-foreground/90">{record.provenance.summary}</p>
+            ) : null}
+            <ul className="list-disc space-y-1.5 ps-4 text-foreground/90">
+              {(record.rationale_bullets?.length ? record.rationale_bullets : ["No rationale extracted"]).map(
+                (bullet) => (
+                  <li key={bullet}>{bullet}</li>
+                ),
+              )}
+            </ul>
+            {showApprove ? (
+              <button
+                type="button"
+                onClick={() => void onApprovePath?.()}
+                disabled={approvingPath}
+                className="mt-1 inline-flex w-fit items-center rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary hover:bg-primary/15 disabled:opacity-50"
+              >
+                {approvingPath ? "Approving…" : "Approve navigation path"}
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
     </article>

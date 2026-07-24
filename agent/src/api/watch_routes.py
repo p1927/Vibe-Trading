@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
 watch_router = APIRouter(prefix="/watches", tags=["watches"])
@@ -38,6 +38,18 @@ def list_watches_route(
     from trade_integrations.watch_registry.api import mcp_list_watches
 
     return mcp_list_watches(session_id=session_id, agent_id=agent_id)
+
+
+@watch_router.get("/live")
+def list_watches_live_route(
+    response: Response,
+    session_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    from trade_integrations.watch_registry.telemetry import build_watches_live_snapshot
+
+    response.headers["X-Suggested-Poll-Ms"] = "5000"
+    return build_watches_live_snapshot(session_id=session_id, agent_id=agent_id)
 
 
 @watch_router.post("/session/{session_id}")

@@ -20,6 +20,8 @@ interface AgentState {
   sseRetryAttempt: number;
 
   addMessage: (msg: Omit<AgentMessage, "id"> & { id?: string }) => void;
+  /** Replace a local optimistic id (numeric) with the persisted server message_id. */
+  updateMessageId: (oldId: string, newId: string) => void;
   appendDelta: (delta: string) => void;
   setStatus: (s: AgentState["status"]) => void;
   setSessionId: (id: string | null) => void;
@@ -60,6 +62,11 @@ export const useAgentStore = create<AgentState>((set) => ({
 
   addMessage: (msg) =>
     set((s) => ({ messages: [...s.messages, { ...msg, id: msg.id || nextId() } as AgentMessage] })),
+
+  updateMessageId: (oldId, newId) =>
+    set((s) => ({
+      messages: s.messages.map((m) => (m.id === oldId ? { ...m, id: newId } : m)),
+    })),
 
   appendDelta: (delta) =>
     set((s) => ({ streamingText: s.streamingText + delta })),

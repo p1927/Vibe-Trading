@@ -33,6 +33,23 @@ export interface AddSourceValidationResult {
   payload?: AddSourcePayload;
 }
 
+const SYNDICATION_DOMAINS = new Set([
+  "economictimes.indiatimes.com",
+  "economictimes.com",
+  "moneycontrol.com",
+  "livemint.com",
+]);
+
+/** Mirror backend primary_domain — native publisher host, not syndication fallback. */
+export function primarySourceDomain(source: ExternalPredictionSource | undefined): string {
+  if (!source?.domains?.length) return "";
+  for (const domain of source.domains) {
+    const d = normalizeDomain(domain);
+    if (d && !SYNDICATION_DOMAINS.has(d)) return d;
+  }
+  return normalizeDomain(source.domains[0] ?? "");
+}
+
 export function normalizeDomain(raw: string): string {
   let text = String(raw || "").trim().toLowerCase();
   text = text.replace(/^https?:\/\//, "");
@@ -195,6 +212,24 @@ export function filterVisiblePredictions(
   );
 }
 
+/** Sources that failed refresh or have no usable forecast — shown outside ok cards. */
+export function filterIssuePredictions(
+  predictions: ExternalPredictionRecord[] | undefined,
+): ExternalPredictionRecord[] {
+  return (predictions ?? []).filter((p) => {
+    if (p.fetch_status === "ok" && p.target?.mid != null) return false;
+    return p.fetch_status === "error" || p.fetch_status === "not_found";
+  });
+}
+
+/** Prefer refresh completion time for UI; fall back to batch start / cache time. */
+export function snapshotDisplayUpdatedAt(snapshot: ExternalPredictionSnapshot | null | undefined): string | null {
+  const completed = snapshot?.refresh_completed_at?.trim();
+  if (completed) return completed;
+  const fetched = snapshot?.fetched_at?.trim();
+  return fetched || null;
+}
+
 export function recordToLiveForecast(record: ExternalPredictionRecord): LiveForecastInput | undefined {
   const spot = record.spot_at_fetch;
   const mid = record.target?.mid;
@@ -235,7 +270,6 @@ export function formatForecastSection(section: string | undefined): string | nul
   return FORECAST_SECTION_LABELS[section] ?? section.replace(/_/g, " ");
 }
 
-/** Human-readable proof line: which page section and date window produced the target. */
 export function formatForecastProvenance(record: ExternalPredictionRecord): string | null {
   const prov = record.provenance;
   if (!prov) return null;
@@ -250,6 +284,30 @@ export function formatForecastProvenance(record: ExternalPredictionRecord): stri
     parts.push(`Window ${prov.horizon_window.trim()}`);
   }
   return parts.length ? parts.join(" · ") : null;
+}
+
+const PAGE_KIND_LABELS: Record<string, string> = {
+  article: "Broker/article page",
+  hub: "Forecast hub",
+  listing: "Listing/topic page",
+  other: "Other page",
+};
+
+const FETCH_METHOD_LABELS: Record<string, string> = {
+  crawl4ai: "Crawl4AI",
+  browse_agent: "Browse agent",
+  path_replay: "Saved path",
+  searxng_text: "SearXNG text",
+};
+
+export function formatPageKindLabel(pageKind: string | undefined): string | null {
+  if (!pageKind?.trim()) return null;
+  return PAGE_KIND_LABELS[pageKind] ?? pageKind.replace(/_/g, " ");
+}
+
+export function formatFetchMethodLabel(fetchMethod: string | undefined): string | null {
+  if (!fetchMethod?.trim()) return null;
+  return FETCH_METHOD_LABELS[fetchMethod] ?? fetchMethod.replace(/_/g, " ");
 }
 
 export function computeStreetSummary(
@@ -273,6 +331,6 @@ export function computeStreetSummary(
     targetMax: mids.length ? mids[mids.length - 1] : null,
     targetMedian: mids.length ? mids[Math.floor(mids.length / 2)] : null,
     spot: typeof spot === "number" ? spot : null,
-    fetchedAt: snapshot?.fetched_at ?? null,
+    fetchedAt: snapshotDisplayUpdatedAt(snapshot),
   };
 }
