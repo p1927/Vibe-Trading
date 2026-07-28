@@ -20,6 +20,7 @@ type BackendManagerOptions = {
   logDirectory: string;
   apiAuthKey: string;
   messages: DesktopMessages;
+  credentialEnvironment?: NodeJS.ProcessEnv;
   onStatus: (message: string) => void;
   onUnexpectedExit: (message: string) => void;
 };
@@ -91,7 +92,9 @@ export class BackendManager {
     const gtkBin = path.join(path.dirname(executable), "gtk", "bin");
     const childEnvironment: NodeJS.ProcessEnv = {
       ...process.env,
+      ...this.options.credentialEnvironment,
       API_AUTH_KEY: this.options.apiAuthKey,
+      VIBE_TRADING_DESKTOP_SECURE_CREDENTIALS: "1",
       PYTHONUTF8: "1",
       PYTHONUNBUFFERED: "1",
       ELECTRON_RUN_AS_NODE: "1",

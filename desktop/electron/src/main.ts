@@ -17,6 +17,7 @@ import {
   getRendererLocale,
   resolveDesktopLocale,
 } from "./locales";
+import { SecureCredentialStore } from "./secure-credentials";
 
 let mainWindow: BrowserWindow | undefined;
 let backend: BackendManager | undefined;
@@ -27,6 +28,7 @@ let desktopMessages = getDesktopMessages(desktopLocale);
 const apiAuthKey = randomBytes(32).toString("base64url");
 const productName = "Vibe-Trading Desktop (Unofficial Community Build)";
 const testUserData = process.env.VIBE_TRADING_DESKTOP_TEST_USER_DATA;
+const credentialStore = new SecureCredentialStore();
 
 if (testUserData) app.setPath("userData", path.resolve(testUserData));
 app.setName(productName);
@@ -51,6 +53,7 @@ async function ready(): Promise<void> {
   desktopMessages = getDesktopMessages(desktopLocale);
   nativeTheme.themeSource = "dark";
   app.setAppLogsPath();
+  await credentialStore.initialize();
   createWindow();
   registerIpc();
   createMenu();
@@ -126,6 +129,18 @@ function registerIpc(): void {
     await boot();
     return true;
   });
+  ipcMain.handle("desktop:get-credential-status", (event) => {
+    assertMainWindowSender(event.sender);
+    return credentialStore.status();
+  });
+  ipcMain.handle("desktop:set-credential", async (event, name: unknown, value: unknown) => {
+    assertMainWindowSender(event.sender);
+    if (typeof name !== "string" || (typeof value !== "string" && value !== null)) {
+      throw new Error("Invalid credential request");
+    }
+    await credentialStore.set(name, value);
+    return credentialStore.status();
+  });
 }
 
 async function showLoadingPage(): Promise<void> {
@@ -157,6 +172,7 @@ async function bootInternal(): Promise<void> {
     logDirectory: app.getPath("logs"),
     apiAuthKey,
     messages: desktopMessages,
+    credentialEnvironment: credentialStore.environment(),
     onStatus: (message) => mainWindow?.webContents.send("desktop:status", message),
     onUnexpectedExit: (message) => {
       if (!quitting) void reportBootError(message);

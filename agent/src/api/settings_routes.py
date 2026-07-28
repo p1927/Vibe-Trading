@@ -152,6 +152,19 @@ LLM_API_KEY_PLACEHOLDERS = {"", "sk-or-v1-your-key-here", "sk-xxx", "xxx", "gsk_
 TUSHARE_TOKEN_PLACEHOLDERS = {"", "your-tushare-token"}
 
 
+def _desktop_secure_credential_names() -> set[str]:
+    """Return secrets owned by the desktop host when secure storage is active."""
+    names = {"TUSHARE_TOKEN", "QVERIS_API_KEY"}
+    names.update(
+        provider.api_key_env for provider in LLM_PROVIDERS if provider.api_key_env
+    )
+    return names
+
+
+def _desktop_secure_credentials_enabled() -> bool:
+    return os.environ.get("VIBE_TRADING_DESKTOP_SECURE_CREDENTIALS") == "1"
+
+
 # ---------------------------------------------------------------------------
 # Host access helpers (late-binding for test monkeypatch compat)
 # ---------------------------------------------------------------------------
@@ -206,6 +219,13 @@ def _read_settings_env_values() -> Dict[str, str]:
     else:
         values = {}
 
+    if _desktop_secure_credentials_enabled():
+        for name in _desktop_secure_credential_names():
+            runtime_value = os.environ.get(name, "")
+            if runtime_value:
+                values[name] = runtime_value
+            else:
+                values.pop(name, None)
     return values
 
 
@@ -306,8 +326,6 @@ async def _list_provider_models(
         models=models or fallback,
         source="provider" if discovered else "default",
     )
-
-
 # ---------------------------------------------------------------------------
 # Response builders
 # ---------------------------------------------------------------------------
@@ -429,6 +447,10 @@ def _persist_settings_updates(updates: Dict[str, str]) -> Dict[str, str]:
     merged = dict(updates)
     if not target.exists() and legacy != target and legacy.exists():
         merged = {**host._read_env_values(legacy), **updates}
+    if _desktop_secure_credentials_enabled():
+        # Empty known secret keys in dotenv while preserving the decrypted
+        # environment values injected by Electron for this process.
+        merged.update({name: "" for name in _desktop_secure_credential_names()})
     try:
         host._write_env_values(target, merged)
     except OSError as exc:
@@ -439,7 +461,7 @@ def _persist_settings_updates(updates: Dict[str, str]) -> Dict[str, str]:
                 "~/.vibe-trading/.env"
             ),
         ) from exc
-    return host._read_env_values(target)
+    return _read_settings_env_values()
 
 
 # ---------------------------------------------------------------------------
