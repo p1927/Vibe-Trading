@@ -170,7 +170,7 @@ export function QVerisSettings() {
       setForm(formFromConfig(nextConfig));
       toast.success(t("qveris.saved"));
       if (trimmedApiKey && window.vibeDesktop) {
-        toast.info("Credential encrypted. Restarting the local service...");
+        toast.info(t("settings.desktopCredentialRestarting"));
         await window.vibeDesktop.restartBackend();
         return;
       }

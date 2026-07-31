@@ -14,9 +14,11 @@
     "smoke:parent-death": "npm run build && node scripts/smoke-parent-death.mjs",
     "prepare:electron": "node scripts/prepare-electron.mjs",
     "runtime:win": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
+    "smoke:credentials": "npm run build && electron scripts/smoke-credentials.cjs",
     "smoke:lifecycle": "npm run build && node scripts/test-locales.mjs && node scripts/test-backend-resolution.mjs && node scripts/smoke-lifecycle.mjs && node scripts/smoke-parent-death.mjs",
     "pack:win": "npm run build && npm run prepare:electron && electron-builder --publish never --win dir",
-    "installer:win": "npm run build && npm run prepare:electron && electron-builder --publish never --win nsis",
+    "installer:win:review": "npm run build && npm run prepare:electron && node scripts/build-review-installer.mjs",
+    "installer:win:signed": "node scripts/build-signed-installer.mjs",
     "sbom": "npm sbom --sbom-format cyclonedx"
   },
   "devDependencies": {

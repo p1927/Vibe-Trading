@@ -47,19 +47,33 @@ export type CredentialStatus = {
   migrated: string[];
 };
 
+export type SecureCredentialStoreOptions = {
+  userDataDirectory?: string;
+  homeDirectory?: string;
+};
+
 export class SecureCredentialStore {
-  private readonly filePath = path.join(app.getPath("userData"), "credentials.v1.json");
+  private readonly filePath: string;
+  private readonly homeDirectory: string;
   private values: Record<string, string> = {};
   private migrated: string[] = [];
+
+  constructor(options: SecureCredentialStoreOptions = {}) {
+    this.filePath = path.join(
+      options.userDataDirectory ?? app.getPath("userData"),
+      "credentials.v1.json",
+    );
+    this.homeDirectory = options.homeDirectory ?? os.homedir();
+  }
 
   async initialize(): Promise<void> {
     if (!safeStorage.isEncryptionAvailable()) {
       throw new Error("Windows credential encryption is unavailable for this user session.");
     }
     await this.load();
-    await this.migrateDotenv(path.join(os.homedir(), ".vibe-trading", ".env"));
+    await this.migrateDotenv(path.join(this.homeDirectory, ".vibe-trading", ".env"));
     await this.migrateJsonField(
-      path.join(os.homedir(), ".vibe-trading", "qveris.json"),
+      path.join(this.homeDirectory, ".vibe-trading", "qveris.json"),
       "api_key",
       "QVERIS_API_KEY",
     );

@@ -2,9 +2,11 @@
 
 This directory contains an Electron host for the existing Vibe-Trading FastAPI
 and React application. The Windows packaging layer can assemble an unsigned
-NSIS installer with an isolated Python runtime and encrypted credential
-storage. It does not contain an updater, optional IM adapters, personal
-WeChat pairing, or changes to the agent loop and provider behavior.
+NSIS review artifact or require and verify Authenticode signing for a
+publishable installer. Both use an isolated Python runtime and encrypted
+credential storage. This layer does not contain an updater, optional IM
+adapters, personal WeChat pairing, or changes to the agent loop and provider
+behavior.
 
 ## What the shell does
 

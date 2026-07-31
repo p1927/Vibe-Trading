@@ -44,6 +44,10 @@ jobs:
         working-directory: desktop/electron
         run: npm ci
 
+      - name: Verify encrypted credential storage
+        working-directory: desktop/electron
+        run: npm run smoke:credentials
+
       - name: Assemble minimal Python runtime
         working-directory: desktop/electron
         shell: powershell
@@ -57,7 +61,7 @@ jobs:
         working-directory: desktop/electron
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: npm run installer:win
+        run: npm run installer:win:review
 
       - name: Verify installer and record checksum
         working-directory: desktop/electron

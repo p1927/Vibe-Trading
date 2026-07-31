@@ -254,6 +254,11 @@ Copy-Item `
     -Force
 
 $runtimePython = Join-Path $runtimeRoot 'python.exe'
+& $BuildPython -m pip --python $runtimePython check
+if ($LASTEXITCODE -ne 0) {
+    throw 'The embedded runtime does not satisfy the checked-out project dependency metadata.'
+}
+
 & {
     $gtkBin = Join-Path $runtimeRoot 'gtk\bin'
     $previousPath = $env:PATH

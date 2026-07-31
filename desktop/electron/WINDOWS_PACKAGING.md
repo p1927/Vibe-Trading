@@ -31,12 +31,19 @@ npm run build
 
 cd ..\desktop\electron
 npm ci
+npm run smoke:credentials
 npm run runtime:win -- -Clean
 npm run smoke:lifecycle
-npm run installer:win
+npm run installer:win:review
 ```
 
 The installer and checksum are written under `desktop/electron/release/`.
+The `installer:win:review` artifact is deliberately unsigned and must never be
+published to users. The command strips all supported signing credentials,
+disables certificate auto-discovery, and fails unless both the application
+executable and installer report `NotSigned`. Both review and signed builds use
+Electron Builder's supported compression-level override at level 7 to bound
+build time without changing installed build-tool code.
 Python dependencies are installed from
 `desktop/electron/requirements-windows-lock.txt` with `--require-hashes`; the
 checked-out Vibe-Trading package is then installed with `--no-deps` so
@@ -72,6 +79,24 @@ Local and pull-request artifacts are unsigned. Windows SmartScreen may warn
 when they are launched. Code signing and release ownership remain with the
 community publisher unless HKUDS explicitly takes them over later.
 
+There is intentionally no generic `installer:win` command. A publishable build
+must use:
+
+```powershell
+$env:WIN_CSC_LINK = 'C:\secure-location\publisher-certificate.pfx'
+$env:WIN_CSC_KEY_PASSWORD = '<provided outside source control>'
+npm run installer:win:signed
+```
+
+The signed command fails closed when either signing input is missing and then
+enables Electron Builder's `forceCodeSigning` gate. It then verifies that
+Windows reports both the packaged application executable and the resulting
+installer's Authenticode status as `Valid`. The certificate and password must
+come from CI secrets or an equivalent external secret store; they must never
+be committed. The generic `CSC_LINK` and `CSC_KEY_PASSWORD` names remain
+supported as fallbacks. This PR does not add a release workflow or upload an
+artifact.
+
 ## Dependency-audit note
 
 `npm audit --omit=dev` reports zero production dependency vulnerabilities.
@@ -83,22 +108,30 @@ be re-audited whenever Electron Builder publishes a repaired dependency tree.
 
 ## Local validation record
 
-Windows host validation on 2026-07-28:
+Windows host validation on 2026-07-31:
 
 - [x] all 183 installed third-party Python distributions exactly match the
   committed Windows lock; the checked-out `vibe-trading-ai` package is the only
   additional distribution;
+- [x] `pip check` confirms that the locked runtime satisfies the checked-out
+  project dependency metadata;
 - [x] embedded Python reports version 3.12.10;
 - [x] backend, CLI, and WeasyPrint PDF imports succeed;
 - [x] DingTalk, Discord, Telegram, Neonize/WeChat, and QR-code modules are
   absent;
 - [x] authenticated random-port startup and graceful shutdown succeed with no
   residual embedded Python process;
-- [x] the packaged application loads the frontend and backend from an isolated
-  empty Windows user profile and closes its owned process tree cleanly;
+- [x] safeStorage migration, plaintext removal, allowlisting, replacement, and
+  clearing succeed against an isolated temporary Windows profile;
+- [ ] the exact current branch's packaged application loads the frontend and
+  backend on a clean Windows VM and closes its owned process tree cleanly;
 - [x] the generated installer is reported as `NotSigned` by Windows
-  Authenticode inspection.
+  Authenticode inspection;
+- [x] the unsigned review installer is 323.2 MiB and its generated
+  `SHA256SUMS.txt` matches an independent SHA-256 calculation.
 
-The assembled backend is 801.4 MiB before installer compression. A clean
-Windows VM re-run remains a release/review gate; this host record is not a
-substitute for that independent environment check.
+The assembled backend is 801.1 MiB before installer compression. An earlier
+prototype passed the isolated-profile startup/shutdown check, but that result
+predates the current-main rebuild and is deliberately not credited above. A
+clean Windows VM re-run remains a release/review gate; this host record is not
+a substitute for that independent environment check.
