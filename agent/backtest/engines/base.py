@@ -539,6 +539,35 @@ class BaseEngine(ABC):
         Default: no-op. Override in subclass as needed.
         """
 
+    def before_rebalance_bar(
+        self,
+        timestamp: pd.Timestamp,
+        data_map: Dict[str, pd.DataFrame],
+        codes: List[str],
+    ) -> bool:
+        """Run pre-execution hooks; return True to stop after this snapshot."""
+        return False
+
+    def after_rebalance_bar(
+        self,
+        timestamp: pd.Timestamp,
+        data_map: Dict[str, pd.DataFrame],
+        codes: List[str],
+    ) -> bool:
+        """Run the legacy post-fill bar hooks; return True to stop."""
+        for code in codes:
+            if timestamp in data_map[code].index:
+                self.on_bar(code, data_map[code].loc[timestamp], timestamp)
+        return False
+
+    def execution_open(self, bar: pd.Series) -> float:
+        """Return the normal market-fill price for a bar."""
+        return float(bar.get("open", bar.get("close", 0)))
+
+    def valuation_open(self, bar: pd.Series) -> float:
+        """Return the price observable when open orders are sized."""
+        return float(bar.get("open", bar.get("close", 0)))
+
     # ── PnL / margin calculation hooks ──
     # Override in FuturesBaseEngine to inject contract multiplier.
 
@@ -805,6 +834,8 @@ class BaseEngine(ABC):
         for i, ts in enumerate(dates):
             self._bar_idx = i
 
+            stop_run = self.before_rebalance_bar(ts, data_map, codes)
+
             # a. Value the book at prices observable when orders execute.
             # Rebalances happen at the bar open, so using close_df[ts] here
             # would let the yet-unknown decision-bar close affect order size.
@@ -813,7 +844,9 @@ class BaseEngine(ABC):
             for c in codes:
                 try:
                     val = _target_arr[i, _code_to_col[c]]
-                    target_weights[c] = float(val) if not np.isnan(val) else 0.0
+                    target_weights[c] = (
+                        None if stop_run else (float(val) if not np.isnan(val) else 0.0)
+                    )
                 except Exception as exc:
                     target_weights[c] = None
                     logger.warning("Target weight failed for %s at %s: %s", c, ts, exc)
@@ -887,13 +920,9 @@ class BaseEngine(ABC):
             for order in planned:
                 self._execute_open_order(order, ts)
 
-            # d. Apply close/within-bar hooks after open execution.  Hooks use
-            # the current bar's close for funding, swaps, and liquidation, so
-            # running them first could liquidate a position that was scheduled
-            # to exit at the open (or charge a position before it was opened).
-            for c in codes:
-                if ts in data_map[c].index:
-                    self.on_bar(c, data_map[c].loc[ts], ts)
+            # d. Apply post-execution hooks after all normal market fills.
+            if not stop_run:
+                stop_run = self.after_rebalance_bar(ts, data_map, codes)
 
             # e. Record equity snapshot
             snap_equity = self._calc_equity(close_df, ts)
@@ -926,10 +955,13 @@ class BaseEngine(ABC):
                 positions=len(self.positions),
             ))
 
+            if stop_run:
+                break
+
         # f. Force close all remaining positions
         if len(dates) > 0:
-            last_ts = dates[-1]
-            _last_row = len(dates) - 1
+            _last_row = min(self._bar_idx, len(dates) - 1)
+            last_ts = dates[_last_row]
             for c in list(self.positions.keys()):
                 pos = self.positions[c]
                 mark_price = self._safe_price(
@@ -983,10 +1015,9 @@ class BaseEngine(ABC):
             )
             frame = data_map.get(sym)
             if frame is not None and ts in frame.index:
-                open_price = frame.loc[ts].get("open")
+                open_price = self.valuation_open(frame.loc[ts])
                 if (
-                    open_price is not None
-                    and pd.notna(open_price)
+                    pd.notna(open_price)
                     and float(open_price) > 0
                 ):
                     current_price = float(open_price)
@@ -1071,7 +1102,7 @@ class BaseEngine(ABC):
             need_close = target_dir == 0 or target_dir != current_pos.direction
             if need_close:
                 if self.can_execute(symbol, 0, bar):
-                    open_price = float(bar.get("open", bar.get("close", 0)))
+                    open_price = self.execution_open(bar)
                     price = self.apply_slippage(open_price, -current_pos.direction)
                     self._close_position(symbol, price, ts, "signal")
                 else:
@@ -1098,7 +1129,7 @@ class BaseEngine(ABC):
         bar = df.loc[ts]
         if not self.can_execute(symbol, direction, bar):
             return None
-        open_price = float(bar.get("open", bar.get("close", 0)))
+        open_price = self.execution_open(bar)
         # Zero is always rejected (size = notional / price is undefined);
         # negatives are rejected unless this engine opted into non-positive
         # prices, in which case abs()-based sizing/margin below handle them.

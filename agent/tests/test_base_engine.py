@@ -14,6 +14,51 @@ from backtest.engines.china_a import ChinaAEngine
 from backtest.models import Position
 
 
+class _LifecycleEngine(ChinaAEngine):
+    def __init__(self, *, stop_before: bool = False):
+        super().__init__({"initial_cash": 1_000_000.0})
+        self.stop_before = stop_before
+        self.lifecycle: list[str] = []
+
+    def before_rebalance_bar(self, timestamp, data_map, codes):
+        self.lifecycle.append("pre")
+        return self.stop_before
+
+    def after_rebalance_bar(self, timestamp, data_map, codes):
+        self.lifecycle.append("post")
+        return False
+
+    def _execute_open_order(self, order, ts):
+        self.lifecycle.append("fill")
+        super()._execute_open_order(order, ts)
+
+
+def _run_lifecycle(engine: _LifecycleEngine) -> None:
+    dates = pd.DatetimeIndex([pd.Timestamp("2026-01-02")])
+    frame = pd.DataFrame({"open": [100.0], "close": [100.0]}, index=dates)
+    engine._execute_bars(
+        dates,
+        {"TEST": frame},
+        frame[["close"]].rename(columns={"close": "TEST"}),
+        pd.DataFrame({"TEST": [1.0]}, index=dates),
+        ["TEST"],
+    )
+
+
+@pytest.mark.parametrize(("stop_before", "expected"), [
+    (False, ["pre", "fill", "post"]), (True, ["pre"]),
+])
+def test_execute_bars_lifecycle_and_pre_fill_stop(
+    stop_before: bool, expected: list[str]
+) -> None:
+    engine = _LifecycleEngine(stop_before=stop_before)
+    _run_lifecycle(engine)
+    assert engine.lifecycle == expected
+    assert len(engine.equity_snapshots) == 1
+    if stop_before:
+        assert engine.trades == []
+
+
 # ---------------------------------------------------------------------------
 # _align: signal alignment and normalization
 # ---------------------------------------------------------------------------

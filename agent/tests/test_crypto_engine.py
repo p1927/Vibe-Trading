@@ -17,12 +17,14 @@ import pytest
 from backtest.engines.crypto import CryptoEngine
 from backtest.engines._market_hooks import (
     FUNDING_HOURS as _FUNDING_HOURS,
-    _TIER_TABLE,
-    calc_crypto_funding_fee,
-    check_crypto_liquidation,
     _maintenance_rate,
 )
 from backtest.models import Position
+
+_BRACKETS = (
+    '[{"bracket_tier":1,"notional_cap":1000000.0,'
+    '"maintenance_rate":0.004,"cumulative_maintenance_amount":0.0}]'
+)
 
 
 # ---------------------------------------------------------------------------
@@ -44,6 +46,68 @@ def _make_engine(**overrides) -> CryptoEngine:
     }
     config.update(overrides)
     return CryptoEngine(config)
+
+
+def _strict_engine(**overrides) -> CryptoEngine:
+    config = {
+        "initial_cash": 1_000.0,
+        "leverage": 10.0,
+        "maker_rate": 0.0002,
+        "taker_rate": 0.0005,
+        "slippage": 0.0,
+        "perpetual_strict": True,
+        "funding_mode": "data",
+        "margin_mode": "isolated",
+    }
+    config.update(overrides)
+    return CryptoEngine(config)
+
+
+def _strict_frame(
+    dates: pd.DatetimeIndex,
+    *,
+    price: float = 100.0,
+    mark: list[float] | None = None,
+    execution_open: list[float] | None = None,
+    mark_open: list[float] | None = None,
+    mark_high: list[float] | None = None,
+    mark_low: list[float] | None = None,
+    mark_close: list[float] | None = None,
+    funding_rate: list[float] | None = None,
+    settlements: list[pd.Timestamp | None] | None = None,
+) -> pd.DataFrame:
+    base = [price] * len(dates)
+    marks = mark or base
+    return pd.DataFrame(
+        {
+            "execution_open": execution_open or base,
+            "mark_open": mark_open or marks,
+            "mark_high": mark_high or marks,
+            "mark_low": mark_low or marks,
+            "mark_close": mark_close or marks,
+            "funding_rate": funding_rate or [0.0] * len(dates),
+            "funding_settlement_time": settlements or [pd.NaT] * len(dates),
+            "maintenance_brackets": [_BRACKETS] * len(dates),
+            "maintenance_bracket_version": ["fixture-v1"] * len(dates),
+        },
+        index=dates,
+    )
+
+
+def _run_strict(
+    engine: CryptoEngine,
+    data_map: dict[str, pd.DataFrame],
+    targets: dict[str, list[float]],
+) -> None:
+    dates = next(iter(data_map.values())).index
+    codes = list(data_map)
+    engine._execute_bars(
+        dates,
+        data_map,
+        pd.DataFrame(index=dates),
+        pd.DataFrame(targets, index=dates),
+        codes,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -368,3 +432,116 @@ class TestHistoricalFundingRate:
         ts = pd.Timestamp("2025-01-01 08:00:00")
         engine.on_bar("BTC-USDT-PERP", bar, ts)
         assert engine.capital == pytest.approx(initial_capital - 6.0)
+
+
+class TestStrictPerpetualLifecycle:
+    def test_market_fills_use_execution_open_and_taker_rate(self) -> None:
+        dates = pd.date_range("2026-01-01", periods=2, freq="h", tz="UTC")
+        frame = _strict_frame(
+            dates,
+            execution_open=[60_123.0, 60_234.0],
+            mark_open=[60_000.0, 60_100.0],
+            mark_high=[60_200.0, 60_300.0],
+            mark_low=[59_900.0, 60_000.0],
+            mark_close=[60_100.0, 60_200.0],
+        )
+        engine = _strict_engine()
+
+        _run_strict(engine, {"BTC-USDT-PERP": frame}, {"BTC-USDT-PERP": [1.0, 0.0]})
+
+        trade = engine.trades[0]
+        assert trade.entry_price == 60_123.0
+        assert trade.exit_price == 60_234.0
+        assert trade.commission == pytest.approx(
+            trade.size * (trade.entry_price + trade.exit_price) * engine.taker_rate
+        )
+
+    def test_funding_applies_only_to_position_open_before_settlement(self) -> None:
+        dates = pd.date_range("2026-01-01", periods=2, freq="8h", tz="UTC")
+        frame = _strict_frame(
+            dates,
+            price=60_000.0,
+            funding_rate=[0.001, 0.001],
+            settlements=list(dates),
+        )
+        engine = _strict_engine(taker_rate=0.0, maker_rate=0.0)
+
+        _run_strict(engine, {"BTC-USDT-PERP": frame}, {"BTC-USDT-PERP": [1.0, 0.0]})
+
+        assert engine.capital == pytest.approx(990.0, abs=0.001)
+
+    def test_isolated_liquidation_closes_only_breached_position(self) -> None:
+        dates = pd.date_range("2026-01-01", periods=2, freq="h", tz="UTC")
+        btc = _strict_frame(
+            dates,
+            mark_low=[90.0, 100.0],
+            mark_close=[95.0, 100.0],
+        )
+        eth = _strict_frame(dates)
+        engine = _strict_engine(
+            initial_cash=2_000.0,
+            taker_rate=0.0,
+            maker_rate=0.0,
+            liquidation_fee_rate=0.01,
+        )
+
+        _run_strict(
+            engine,
+            {"BTC-USDT-PERP": btc, "ETH-USDT-PERP": eth},
+            {"BTC-USDT-PERP": [0.5, 0.0], "ETH-USDT-PERP": [0.5, 0.5]},
+        )
+
+        reasons = {trade.symbol: trade.exit_reason for trade in engine.trades}
+        assert reasons == {
+            "BTC-USDT-PERP": "position_liquidation",
+            "ETH-USDT-PERP": "end_of_backtest",
+        }
+        assert engine.terminal_status == "completed"
+        assert engine.capital == pytest.approx(910.0)
+
+    def test_open_mark_liquidation_blocks_same_bar_reopen(self) -> None:
+        dates = pd.date_range("2026-01-01", periods=2, freq="h", tz="UTC")
+        frame = _strict_frame(
+            dates,
+            mark=[100.0, 90.0],
+        )
+        engine = _strict_engine(taker_rate=0.0, maker_rate=0.0)
+
+        _run_strict(engine, {"BTC-USDT-PERP": frame}, {"BTC-USDT-PERP": [1.0, 1.0]})
+
+        assert [trade.exit_reason for trade in engine.trades] == [
+            "position_liquidation"
+        ]
+        assert not engine.positions
+
+    def test_cross_liquidation_closes_account_and_stops_later_bars(self) -> None:
+        dates = pd.date_range("2026-01-01", periods=3, freq="h", tz="UTC")
+        frames = {
+            symbol: _strict_frame(
+                dates,
+                mark_low=[100.0, low, 100.0],
+            )
+            for symbol, low in (
+                ("BTC-USDT-PERP", 80.0),
+                ("ETH-USDT-PERP", 100.0),
+            )
+        }
+        engine = _strict_engine(
+            initial_cash=2_000.0,
+            taker_rate=0.0,
+            maker_rate=0.0,
+            margin_mode="cross",
+        )
+
+        _run_strict(
+            engine,
+            frames,
+            {symbol: [0.5] * 3 for symbol in frames},
+        )
+
+        assert {trade.exit_reason for trade in engine.trades} == {
+            "account_liquidation"
+        }
+        assert engine.terminal_status == "account_liquidation"
+        assert len(engine.equity_snapshots) == 2
+        assert engine.equity_snapshots[-1].timestamp == dates[1]
