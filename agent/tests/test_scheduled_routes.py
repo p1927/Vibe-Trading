@@ -72,6 +72,10 @@ def test_create_persists_job_and_returns_201(
     body = response.json()
     assert body["id"] == "daily-scan"
     assert body["status"] == "pending"
+    assert body["last_run_at"] is None
+    assert body["consecutive_failures"] == 0
+    assert body["last_error"] is None
+    assert body["failure_kind"] is None
     assert body["config"] == {"universe": "sp500"}
 
     stored = store.get("daily-scan")
@@ -131,6 +135,29 @@ def test_list_filters_by_status(
     assert response.status_code == 200
     body = response.json()
     assert [job["id"] for job in body] == ["done-one"]
+
+
+def test_list_surfaces_retry_diagnostics(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    _seed(
+        store,
+        id="retrying",
+        status=JobStatus.PENDING,
+        last_run_at=1_700_000_100_000,
+        consecutive_failures=2,
+        last_error="TimeoutError: provider timed out",
+        failure_kind="dispatch",
+    )
+
+    response = client.get("/scheduled-runs")
+
+    assert response.status_code == 200
+    body = response.json()[0]
+    assert body["last_run_at"] == 1_700_000_100_000
+    assert body["consecutive_failures"] == 2
+    assert body["last_error"] == "TimeoutError: provider timed out"
+    assert body["failure_kind"] == "dispatch"
 
 
 def test_list_rejects_out_of_range_limit(client: TestClient):

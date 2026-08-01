@@ -136,6 +136,9 @@ class TestEnvConfigDefaults:
         assert c.agent_tuning.content_filter_warning_threshold == 0.05
         assert c.agent_tuning.vibe_trading_enable_advisory is False
         assert c.agent_tuning.vibe_trading_enable_scheduler is False
+        assert c.agent_tuning.vibe_trading_scheduler_max_consecutive_failures == 3
+        assert c.agent_tuning.vibe_trading_scheduler_retry_base_delay_ms == 60_000
+        assert c.agent_tuning.vibe_trading_scheduler_retry_max_delay_ms == 3_600_000
         assert c.agent_tuning.vibe_trading_channels_auto_start is False
         assert c.agent_tuning.vibe_trading_disable_bottleneck is False
         assert c.agent_tuning.vibe_trading_bench_workers == 0
@@ -194,6 +197,17 @@ class TestEnvConfigTypeCoercion:
         monkeypatch.setenv("SWARM_HEARTBEAT_INTERVAL_S", "5.5")
         c = EnvConfig()
         assert c.swarm.swarm_heartbeat_interval_s == 5.5
+
+    def test_scheduler_retry_int_coercion(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VIBE_TRADING_SCHEDULER_MAX_CONSECUTIVE_FAILURES", "5")
+        monkeypatch.setenv("VIBE_TRADING_SCHEDULER_RETRY_BASE_DELAY_MS", "2500")
+        monkeypatch.setenv("VIBE_TRADING_SCHEDULER_RETRY_MAX_DELAY_MS", "10000")
+
+        tuning = EnvConfig().agent_tuning
+
+        assert tuning.vibe_trading_scheduler_max_consecutive_failures == 5
+        assert tuning.vibe_trading_scheduler_retry_base_delay_ms == 2500
+        assert tuning.vibe_trading_scheduler_retry_max_delay_ms == 10000
 
 
 # ===================================================================

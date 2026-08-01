@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
@@ -18,11 +17,13 @@ from typing import Awaitable, Callable
 from src.config.accessor import get_env_config
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
 from src.scheduled_research.store import ScheduledResearchJobStore
+from src.tools.redaction import redact_internal_paths, redact_text
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TICK_INTERVAL_MS = 60 * 1000
 SCHEDULER_ENABLED_ENV = "VIBE_TRADING_ENABLE_SCHEDULER"
+_MAX_PERSISTED_ERROR_CHARS = 1000
 
 NowFn = Callable[[], int]
 DispatchCallback = Callable[[ScheduledResearchJob], Awaitable[None]]
@@ -63,6 +64,15 @@ def is_due(job: ScheduledResearchJob, now_ms: int) -> bool:
     if job.status in {JobStatus.CANCELLED, JobStatus.RUNNING, JobStatus.FAILED}:
         return False
     return job.next_run_at <= now_ms
+
+
+def _persisted_error(exc: Exception) -> str:
+    """Return a bounded, redaction-safe error for durable job state."""
+    message = f"{type(exc).__name__}: {exc}"
+    safe = redact_text(redact_internal_paths(message)).replace("\x00", "")
+    if len(safe) <= _MAX_PERSISTED_ERROR_CHARS:
+        return safe
+    return f"{safe[: _MAX_PERSISTED_ERROR_CHARS - 3]}..."
 
 
 def next_due(schedule: str, after_ms: int) -> int:
@@ -137,6 +147,9 @@ class ScheduledResearchExecutor:
         tick_interval_ms: int = DEFAULT_TICK_INTERVAL_MS,
         now_fn: NowFn = _now_ms,
         enabled: bool = True,
+        max_consecutive_failures: int | None = None,
+        retry_base_delay_ms: int | None = None,
+        retry_max_delay_ms: int | None = None,
     ) -> None:
         """Initialize the executor.
 
@@ -146,12 +159,43 @@ class ScheduledResearchExecutor:
             tick_interval_ms: Poll interval for the background loop.
             now_fn: Injectable wall-clock source returning epoch milliseconds.
             enabled: When false, :meth:`start` and :meth:`stop` are no-ops.
+            max_consecutive_failures: Dispatch failures allowed before a job
+                becomes terminal. Defaults to environment configuration.
+            retry_base_delay_ms: Base delay for exponential retry backoff.
+            retry_max_delay_ms: Upper bound for exponential retry backoff.
+
+        Raises:
+            ValueError: If the retry policy is invalid.
         """
+        tuning = None
+        if None in (max_consecutive_failures, retry_base_delay_ms, retry_max_delay_ms):
+            tuning = get_env_config().agent_tuning
         self._store = store
         self._dispatch = dispatch
         self._tick_interval_ms = tick_interval_ms
         self._now_fn = now_fn
         self._enabled = enabled
+        self._max_consecutive_failures = (
+            max_consecutive_failures
+            if max_consecutive_failures is not None
+            else tuning.vibe_trading_scheduler_max_consecutive_failures
+        )
+        self._retry_base_delay_ms = (
+            retry_base_delay_ms
+            if retry_base_delay_ms is not None
+            else tuning.vibe_trading_scheduler_retry_base_delay_ms
+        )
+        self._retry_max_delay_ms = (
+            retry_max_delay_ms
+            if retry_max_delay_ms is not None
+            else tuning.vibe_trading_scheduler_retry_max_delay_ms
+        )
+        if self._max_consecutive_failures < 1:
+            raise ValueError("max_consecutive_failures must be at least 1")
+        if self._retry_base_delay_ms < 0:
+            raise ValueError("retry_base_delay_ms must be non-negative")
+        if self._retry_max_delay_ms < self._retry_base_delay_ms:
+            raise ValueError("retry_max_delay_ms must be at least retry_base_delay_ms")
         self._task: asyncio.Task | None = None
         self._wakeup: asyncio.Event | None = None
         self._stopping = False
@@ -278,27 +322,59 @@ class ScheduledResearchExecutor:
         job.status = JobStatus.RUNNING
         self._store.upsert(job)
 
+        dispatch_error: Exception | None = None
         try:
             await self._dispatch(job)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             logger.error("scheduled research dispatch failed for job %s", job.id, exc_info=True)
-            final_status = JobStatus.FAILED
+            dispatch_error = exc
+            job.consecutive_failures += 1
         else:
-            final_status = JobStatus.COMPLETED
+            job.consecutive_failures = 0
 
         job.last_run_at = now_ms
         try:
-            job.next_run_at = next_due(job.schedule, now_ms)
-        except Exception:
+            scheduled_next_run = next_due(job.schedule, now_ms)
+        except Exception as exc:
             logger.error("scheduled research schedule advancement failed for job %s", job.id, exc_info=True)
             job.status = JobStatus.FAILED
+            job.failure_kind = "schedule"
+            job.last_error = _persisted_error(exc)
             self._persist_completion(job)
             return
 
-        job.status = final_status
+        job.next_run_at = scheduled_next_run
+        if dispatch_error is None:
+            job.status = JobStatus.COMPLETED
+            job.failure_kind = None
+            job.last_error = None
+        else:
+            job.failure_kind = "dispatch"
+            job.last_error = _persisted_error(dispatch_error)
+            if job.consecutive_failures >= self._max_consecutive_failures:
+                job.status = JobStatus.FAILED
+            else:
+                job.status = JobStatus.PENDING
+                retry_delay = self._retry_delay_ms(job.consecutive_failures)
+                job.next_run_at = max(scheduled_next_run, now_ms + retry_delay)
+                logger.warning(
+                    "scheduled research job %s will retry after failure %d/%d at %d",
+                    job.id,
+                    job.consecutive_failures,
+                    self._max_consecutive_failures,
+                    job.next_run_at,
+                )
         self._persist_completion(job)
+
+    def _retry_delay_ms(self, consecutive_failures: int) -> int:
+        """Return bounded exponential backoff for a dispatch failure count."""
+        exponent = max(0, consecutive_failures - 1)
+        if self._retry_base_delay_ms == 0:
+            return 0
+        delay = self._retry_base_delay_ms * (2 ** min(exponent, 62))
+        return min(delay, self._retry_max_delay_ms)
 
     @staticmethod
     def _same_record(current: ScheduledResearchJob, job: ScheduledResearchJob) -> bool:

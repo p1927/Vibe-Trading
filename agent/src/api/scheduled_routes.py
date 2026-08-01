@@ -6,7 +6,6 @@ Mounted by ``agent/api_server.py`` via ``register_scheduled_routes(app, ...)``.
 from __future__ import annotations
 
 import logging
-import os
 import sys as _sys
 import time
 import uuid
@@ -137,6 +136,10 @@ class ScheduledRunResponse(BaseModel):
     next_run_at: int
     status: str
     created_at: int
+    last_run_at: Optional[int] = None
+    consecutive_failures: int = 0
+    last_error: Optional[str] = None
+    failure_kind: Optional[str] = None
     config: Dict[str, Any] = Field(default_factory=dict)
 
 

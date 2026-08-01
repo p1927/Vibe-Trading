@@ -114,7 +114,7 @@ def test_cron_wildcard_day_field_leaves_other_day_field_authoritative() -> None:
     assert next_due("0 0 * * 5", thursday) == _ms(2026, 6, 12, 0, 0)
 
 
-def test_dispatch_failure_marks_failed_and_tick_continues(tmp_path: Path) -> None:
+def test_dispatch_failure_stays_retryable_and_tick_continues(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.upsert(_job("bad", next_run_at=10))
     store.upsert(_job("good", next_run_at=20))
@@ -126,7 +126,13 @@ def test_dispatch_failure_marks_failed_and_tick_continues(tmp_path: Path) -> Non
             raise RuntimeError("boom")
 
     async def scenario() -> None:
-        executor = ScheduledResearchExecutor(store, dispatch)
+        executor = ScheduledResearchExecutor(
+            store,
+            dispatch,
+            max_consecutive_failures=3,
+            retry_base_delay_ms=1000,
+            retry_max_delay_ms=4000,
+        )
         await executor.tick(100)
 
     asyncio.run(scenario())
@@ -136,8 +142,115 @@ def test_dispatch_failure_marks_failed_and_tick_continues(tmp_path: Path) -> Non
     assert bad is not None
     assert good is not None
     assert calls == ["bad", "good"]
-    assert bad.status == JobStatus.FAILED
+    assert bad.status == JobStatus.PENDING
+    assert bad.consecutive_failures == 1
+    assert bad.failure_kind == "dispatch"
+    assert bad.last_error == "RuntimeError: boom"
+    assert bad.next_run_at == 1100
     assert good.status == JobStatus.COMPLETED
+
+
+def test_transient_dispatch_failure_retries_then_success_resets_state(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.upsert(_job(schedule="1000", next_run_at=0))
+    calls = 0
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise TimeoutError("provider timed out")
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(
+            store,
+            dispatch,
+            max_consecutive_failures=3,
+            retry_base_delay_ms=1000,
+            retry_max_delay_ms=4000,
+        )
+        await executor.tick(100)
+        await executor.tick(1099)
+        assert calls == 1
+        await executor.tick(1100)
+
+    asyncio.run(scenario())
+
+    saved = store.get("job-001")
+    assert saved is not None
+    assert calls == 2
+    assert saved.status == JobStatus.COMPLETED
+    assert saved.consecutive_failures == 0
+    assert saved.failure_kind is None
+    assert saved.last_error is None
+    assert saved.last_run_at == 1100
+    assert saved.next_run_at == 2100
+
+
+def test_repeated_dispatch_failures_become_terminal_at_threshold(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.upsert(_job(schedule="1000", next_run_at=0))
+    calls = 0
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        nonlocal calls
+        calls += 1
+        raise ConnectionError("provider unavailable")
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(
+            store,
+            dispatch,
+            max_consecutive_failures=2,
+            retry_base_delay_ms=0,
+            retry_max_delay_ms=0,
+        )
+        await executor.tick(100)
+        await executor.tick(1100)
+        await executor.tick(10_000)
+
+    asyncio.run(scenario())
+
+    saved = store.get("job-001")
+    assert saved is not None
+    assert calls == 2
+    assert saved.status == JobStatus.FAILED
+    assert saved.consecutive_failures == 2
+    assert saved.failure_kind == "dispatch"
+    assert saved.last_error == "ConnectionError: provider unavailable"
+    assert saved.next_run_at == 2100
+
+
+def test_persisted_dispatch_error_is_redacted_and_bounded(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.upsert(_job(next_run_at=0))
+    secret = "scheduler-secret-value"
+    raw_error = f"api_key={secret} path={Path.home()}/private/trace " + ("x" * 2000)
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        raise RuntimeError(raw_error)
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(
+            store,
+            dispatch,
+            max_consecutive_failures=1,
+            retry_base_delay_ms=0,
+            retry_max_delay_ms=0,
+        )
+        await executor.tick(100)
+
+    asyncio.run(scenario())
+
+    saved = store.get("job-001")
+    assert saved is not None
+    assert saved.last_error is not None
+    assert secret not in saved.last_error
+    assert str(Path.home()) not in saved.last_error
+    assert "[redacted]" in saved.last_error
+    assert "<redacted>/private/trace" in saved.last_error
+    assert len(saved.last_error) == 1000
+    assert saved.last_error.endswith("...")
 
 
 def test_stale_running_job_recovers_to_pending_and_fires_on_next_tick(tmp_path: Path) -> None:
@@ -193,6 +306,8 @@ def test_impossible_cron_marks_failed_and_tick_continues(tmp_path: Path) -> None
     assert bad.status == JobStatus.FAILED
     assert bad.last_run_at == now
     assert bad.next_run_at == 10
+    assert bad.failure_kind == "schedule"
+    assert "cron schedule has no matching time" in (bad.last_error or "")
     assert good.status == JobStatus.COMPLETED
 
 
@@ -240,6 +355,56 @@ def test_failed_job_is_not_redispatched(tmp_path: Path) -> None:
     assert is_due(store.get("failed"), 100) is False  # type: ignore[arg-type]
     assert calls == []
     assert store.get("failed").status == JobStatus.FAILED  # type: ignore[union-attr]
+
+
+def test_retry_backoff_is_exponential_and_capped(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.upsert(_job(schedule="100", next_run_at=0))
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        raise TimeoutError("outage")
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(
+            store,
+            dispatch,
+            max_consecutive_failures=4,
+            retry_base_delay_ms=1000,
+            retry_max_delay_ms=1500,
+        )
+        await executor.tick(0)
+        first = store.get("job-001")
+        assert first is not None
+        assert first.next_run_at == 1000
+        await executor.tick(1000)
+
+    asyncio.run(scenario())
+
+    saved = store.get("job-001")
+    assert saved is not None
+    assert saved.consecutive_failures == 2
+    assert saved.next_run_at == 2500
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"max_consecutive_failures": 0}, "max_consecutive_failures"),
+        ({"retry_base_delay_ms": -1}, "retry_base_delay_ms"),
+        (
+            {"retry_base_delay_ms": 100, "retry_max_delay_ms": 99},
+            "retry_max_delay_ms",
+        ),
+    ],
+)
+def test_invalid_retry_policy_is_rejected(
+    tmp_path: Path, kwargs: dict[str, int], message: str
+) -> None:
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        return None
+
+    with pytest.raises(ValueError, match=message):
+        ScheduledResearchExecutor(_store(tmp_path), dispatch, **kwargs)
 
 
 def test_job_deleted_during_dispatch_is_not_resurrected(tmp_path: Path) -> None:

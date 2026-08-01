@@ -327,6 +327,15 @@ class AgentTuningConfig(_EnvBase):
     vibe_trading_enable_scheduler: EnvBool = Field(
         alias="VIBE_TRADING_ENABLE_SCHEDULER", default=False,
     )
+    vibe_trading_scheduler_max_consecutive_failures: int = Field(
+        alias="VIBE_TRADING_SCHEDULER_MAX_CONSECUTIVE_FAILURES", default=3,
+    )
+    vibe_trading_scheduler_retry_base_delay_ms: int = Field(
+        alias="VIBE_TRADING_SCHEDULER_RETRY_BASE_DELAY_MS", default=60_000,
+    )
+    vibe_trading_scheduler_retry_max_delay_ms: int = Field(
+        alias="VIBE_TRADING_SCHEDULER_RETRY_MAX_DELAY_MS", default=3_600_000,
+    )
     vibe_trading_channels_auto_start: EnvBool = Field(
         alias="VIBE_TRADING_CHANNELS_AUTO_START", default=False,
     )

@@ -6,6 +6,7 @@ idempotent upsert, and empty-store behaviour.
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -223,6 +224,35 @@ class TestScheduledResearchJobStore:
         assert fetched is not None
         assert fetched.prompt == job.prompt
         assert fetched.schedule == "0 */4 * * *"
+
+    def test_retry_state_round_trips_and_legacy_jobs_get_defaults(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "jobs.json"
+        store = ScheduledResearchJobStore(path=store_path)
+        job = _make_job("retrying")
+        job.consecutive_failures = 2
+        job.last_error = "TimeoutError: provider timed out"
+        job.failure_kind = "dispatch"
+        store.upsert(job)
+
+        fetched = ScheduledResearchJobStore(path=store_path).get("retrying")
+        assert fetched is not None
+        assert fetched.consecutive_failures == 2
+        assert fetched.last_error == "TimeoutError: provider timed out"
+        assert fetched.failure_kind == "dispatch"
+
+        legacy = _make_job("legacy").to_dict()
+        for field in ("consecutive_failures", "last_error", "failure_kind"):
+            legacy.pop(field)
+        store_path.write_text(
+            json.dumps({"schema_version": 1, "jobs": [legacy]}),
+            encoding="utf-8",
+        )
+
+        migrated = ScheduledResearchJobStore(path=store_path).get("legacy")
+        assert migrated is not None
+        assert migrated.consecutive_failures == 0
+        assert migrated.last_error is None
+        assert migrated.failure_kind is None
 
     def test_cron_schedule_accepted(self, tmp_path: Path) -> None:
         store = ScheduledResearchJobStore(path=tmp_path / "jobs.json")
