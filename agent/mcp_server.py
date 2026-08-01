@@ -6,7 +6,7 @@ Zero API key required for HK/US/crypto research markets (yfinance, OKX,
 AKShare are free). Trading connector tools are profile-scoped and require the
 selected connector's own local app or OAuth setup.
 
-Surfaces 54 tools: skills, research goals, backtest/factor/options/pattern
+Surfaces 55 tools: skills, research goals, backtest/factor/options/pattern
 analysis, market data, fundamentals & capital-flow & news & discovery
 (get_fund_flow / get_dragon_tiger / get_northbound_flow / get_margin_trading /
 get_block_trades / get_shareholder_count / get_lockup_expiry / get_sector_info /
@@ -780,6 +780,64 @@ def analyze_options(
             "option_type": option_type,
         },
     )
+
+
+@mcp.tool
+def analyze_options_payoff(
+    legs: list[dict[str, Any]],
+    entry_spot: float,
+    expiry_days: float,
+    risk_free_rate: float = 0.05,
+    volatility: float = 0.3,
+    multiplier: float = 1.0,
+    commission_rate: float = 0.001,
+    spot_min: float | None = None,
+    spot_max: float | None = None,
+    spot_points: int = 121,
+    scenario_iv_values: list[float] | None = None,
+) -> str:
+    """Analyze a multi-leg option strategy's payoff and spot/IV scenarios.
+
+    The expiry summary is analytic rather than chart-grid dependent. Returns
+    entry debit/credit and commission, breakevens, bounded or unbounded maximum
+    profit/loss, an expiry curve, and a Black-Scholes spot/IV P&L matrix.
+    Research only; this tool cannot place orders.
+
+    Args:
+        legs: Option leg objects with ``option_type`` (call/put), positive
+            ``strike``, signed integer ``qty``, and optional per-share
+            ``premium``. Positive quantity is long; negative is short.
+        entry_spot: Positive underlying spot at entry.
+        expiry_days: Non-negative calendar days to expiry.
+        risk_free_rate: Annual continuously compounded risk-free rate.
+        volatility: Annualized entry volatility, e.g. 0.3 for 30%.
+        multiplier: Currency multiplier per option price unit.
+        commission_rate: Entry commission fraction, aligned with the options
+            backtest engine.
+        spot_min: Optional non-negative chart/scenario lower bound.
+        spot_max: Optional chart/scenario upper bound above ``spot_min``.
+        spot_points: Display-grid size from 21 through 501.
+        scenario_iv_values: Optional positive annualized IV scenarios. Omit for
+            50%, 75%, 100%, 125%, and 150% of entry volatility.
+    """
+    params: dict[str, Any] = {
+        "legs": legs,
+        "entry_spot": entry_spot,
+        "expiry_days": expiry_days,
+        "risk_free_rate": risk_free_rate,
+        "volatility": volatility,
+        "multiplier": multiplier,
+        "commission_rate": commission_rate,
+        "spot_points": spot_points,
+    }
+    if spot_min is not None:
+        params["spot_min"] = spot_min
+    if spot_max is not None:
+        params["spot_max"] = spot_max
+    if scenario_iv_values is not None:
+        params["scenario_iv_values"] = scenario_iv_values
+    registry = _get_registry()
+    return registry.execute("options_payoff", params)
 
 
 # ---------------------------------------------------------------------------

@@ -1012,6 +1012,7 @@
     "link_autopilot_backtest": "自動リサーチにバックテストを関連付け",
     "link_backtest": "仮説にバックテストを関連付け",
     "load_skill": "戦略知識を読み込む",
+    "options_payoff": "オプション損益を分析",
     "options_pricing": "オプションを評価",
     "patch_skill": "カスタムスキルを更新",
     "pattern": "チャートパターンを検出",

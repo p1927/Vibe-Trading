@@ -1012,6 +1012,7 @@
     "link_autopilot_backtest": "关联自动回测",
     "link_backtest": "关联假设回测",
     "load_skill": "加载策略知识",
+    "options_payoff": "分析期权盈亏",
     "options_pricing": "计算期权价格",
     "patch_skill": "更新自定义技能",
     "pattern": "识别图表形态",

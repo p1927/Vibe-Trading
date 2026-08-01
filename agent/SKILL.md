@@ -130,7 +130,7 @@ Comprehensive knowledge base covering:
 
 Use `load_skill(name)` to access full methodology docs with code templates.
 
-## Available MCP Tools (54)
+## Available MCP Tools (55)
 
 | Tool | Description | API Key |
 |------|-------------|---------|
@@ -143,6 +143,7 @@ Use `load_skill(name)` to access full methodology docs with code templates.
 | `backtest` | Run vectorized backtest engine | None* |
 | `factor_analysis` | IC/IR analysis + layered backtest | None* |
 | `analyze_options` | Black-Scholes price + Greeks | None |
+| `analyze_options_payoff` | Multi-leg expiry payoff + spot/IV scenarios | None |
 | `pattern_recognition` | Detect chart patterns (H&S, double top, etc.) | None |
 | `get_market_data` | Fetch OHLCV data (auto-detect + ordered fallback across 24 sources) | None* |
 | `get_fund_flow` | Capital fund-flow (main/retail net inflow) | None* |
@@ -353,3 +354,6 @@ Without `ALLOW_SESSION_MCP_SERVERS=1`, any `mcpServers` key in `session.config` 
 
 **Options analysis:**
 > Use analyze_options: spot=100, strike=105, 90 days, vol=25%, rate=3%
+
+**Multi-leg options payoff:**
+> Use analyze_options_payoff for a 95/105 bull call spread at spot 100 with 30 days remaining: long one 95 call at premium 8, short one 105 call at premium 3, multiplier 100, commission rate 0.001.

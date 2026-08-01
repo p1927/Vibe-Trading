@@ -1012,6 +1012,7 @@
     "link_autopilot_backtest": "자동 리서치에 백테스트 연결",
     "link_backtest": "가설에 백테스트 연결",
     "load_skill": "전략 지식 불러오기",
+    "options_payoff": "옵션 손익 분석",
     "options_pricing": "옵션 가격 계산",
     "patch_skill": "사용자 스킬 업데이트",
     "pattern": "차트 패턴 감지",
