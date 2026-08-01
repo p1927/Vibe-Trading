@@ -95,4 +95,5 @@ class MarketDataTool(BaseTool):
             source=kwargs.get("source", "auto"),
             interval=kwargs.get("interval", "1D"),
             max_rows=kwargs.get("max_rows", DEFAULT_MAX_ROWS),
+            include_provenance=True,
         )

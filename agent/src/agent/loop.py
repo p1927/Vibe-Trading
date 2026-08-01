@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from src.agent.context import ContextBuilder
+from src.agent.grounding import GroundingLedger
 from src.agent.memory import WorkspaceMemory
 from src.agent.progress import HeartbeatTimer, ProgressEvent, _set_emitter
 from src.agent.tools import ToolRegistry
@@ -462,8 +463,12 @@ def _is_tool_success(result: str) -> bool:
     """Return True if the tool result does not look like an error response."""
     try:
         data = json.loads(result)
-        if isinstance(data, dict) and data.get("status") == "error":
-            return False
+        if isinstance(data, dict):
+            status = str(data.get("status") or "").strip().casefold()
+            if status in {"error", "failed", "failure", "cancelled", "canceled"}:
+                return False
+            if data.get("ok") is False or data.get("success") is False:
+                return False
     except (json.JSONDecodeError, TypeError):
         pass
     return True
@@ -534,6 +539,7 @@ class AgentLoop:
         self._persistent_memory = persistent_memory
         self._run_iteration: int = 0
         self._has_run = False
+        self._grounding: GroundingLedger | None = None
 
     def cancel(self) -> None:
         """Cancel the current loop.
@@ -575,6 +581,11 @@ class AgentLoop:
             self.memory.run_dir = str(run_dir)
 
         state_store.save_request(run_dir, user_message, {"session_id": session_id})
+        self._grounding = GroundingLedger(
+            run_dir=run_dir,
+            user_message=user_message,
+            history=history,
+        )
 
         context = ContextBuilder(self.registry, self.memory,
                                   persistent_memory=self._persistent_memory)
@@ -687,10 +698,14 @@ class AgentLoop:
                 reasoning_chars = 0
                 reasoning_tail = ""
                 last_reasoning_emit: float | None = None
+                buffer_text_output = bool(
+                    self._grounding and self._grounding.should_buffer_output
+                )
 
                 def _on_text_chunk(delta: str) -> None:
                     thinking_chunks.append(delta)
-                    self._emit("text_delta", {"delta": delta, "iter": current_iter})
+                    if not buffer_text_output:
+                        self._emit("text_delta", {"delta": delta, "iter": current_iter})
 
                 def _on_reasoning_chunk(delta: str) -> None:
                     # Throttled: long reasoning streams produce hundreds of
@@ -711,10 +726,13 @@ class AgentLoop:
                     ):
                         return
                     last_reasoning_emit = now
-                    self._emit(
-                        "reasoning_delta",
-                        {"iter": current_iter, "chars": reasoning_chars, "tail": reasoning_tail},
-                    )
+                    reasoning_event = {
+                        "iter": current_iter,
+                        "chars": reasoning_chars,
+                    }
+                    if not buffer_text_output:
+                        reasoning_event["tail"] = reasoning_tail
+                    self._emit("reasoning_delta", reasoning_event)
 
                 # On last iteration, drop tool definitions to force text output
                 is_last_iteration = (iteration == self.max_iterations)
@@ -818,7 +836,11 @@ class AgentLoop:
                         value=thinking_text,
                         offload_kind=f"thinking-{current_iter}",
                     )
-                    self._emit("thinking_done", {"iter": current_iter, "content": thinking_text[:500]})
+                    if not buffer_text_output:
+                        self._emit(
+                            "thinking_done",
+                            {"iter": current_iter, "content": thinking_text[:500]},
+                        )
 
                 # Content-filter skip: provider blocked the response — continue
                 # to the next iteration instead of finalising on empty/garbage
@@ -859,6 +881,50 @@ class AgentLoop:
                             }
                         )
                         break
+                    if self._grounding is not None:
+                        validation = self._grounding.validate_final_answer(final_content)
+                        if not validation.valid:
+                            trace.write_text_entry(
+                                {
+                                    "type": "answer_rejected",
+                                    "iter": current_iter,
+                                    "issues": validation.issues,
+                                },
+                                field="content",
+                                value=final_content,
+                                offload_kind=f"answer-rejected-{current_iter}",
+                            )
+                            react_trace.append(
+                                {
+                                    "type": "answer_rejected",
+                                    "issues": validation.issues,
+                                }
+                            )
+                            messages.append(
+                                {"role": "assistant", "content": final_content}
+                            )
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": self._grounding.correction_prompt(validation),
+                                }
+                            )
+                            final_content = ""
+                            if (
+                                iteration < self.max_iterations
+                                and self._grounding.validation_count < 3
+                            ):
+                                continue
+                            final_content = self._grounding.safe_fallback()
+                            self._emit(
+                                "text_delta",
+                                {"delta": final_content, "iter": current_iter},
+                            )
+                        elif buffer_text_output:
+                            self._emit(
+                                "text_delta",
+                                {"delta": final_content, "iter": current_iter},
+                            )
                     should_continue_goal = False
                     continuation_snapshot = None
                     _max_cont = _goal_max_continuations()
@@ -1078,7 +1144,17 @@ class AgentLoop:
         """
         compact_requested = False
         focus_topic = ""
-        to_execute = []
+        execution_plan: list[tuple[Any, str | None]] = []
+        batch_authorized_symbols = (
+            set(self._grounding.authorized_symbols)
+            if self._grounding is not None
+            else set()
+        )
+        batch_identity_status = (
+            self._grounding.identity_status
+            if self._grounding is not None
+            else "not_required"
+        )
 
         # Cancelled before this turn's tools ran — skip execution entirely.
         if self._cancel_event.is_set():
@@ -1103,18 +1179,132 @@ class AgentLoop:
                 react_trace.append({"type": "tool_skipped", "tool": tc.name})
                 continue
 
-            to_execute.append(tc)
+            if self._grounding is not None:
+                authorization = self._grounding.authorize_tool_call(
+                    tc.name,
+                    tc.arguments,
+                    batch_authorized_symbols=batch_authorized_symbols,
+                    call_id=tc.id,
+                    batch_identity_status=batch_identity_status,
+                )
+                if not authorization.allowed:
+                    execution_plan.append(
+                        (
+                            tc,
+                            authorization.error_payload(
+                                tc.name,
+                                self._grounding.identity_summary(),
+                            ),
+                        )
+                    )
+                    continue
 
-        if not to_execute:
+            execution_plan.append((tc, None))
+
+        if not execution_plan:
             return compact_requested, focus_topic
 
-        # Batch execute: consecutive readonly → parallel, write → serial
-        if len(to_execute) == 1:
-            self._execute_single(to_execute[0], context, messages, trace, react_trace, iteration)
-        else:
-            self._batch_execute(to_execute, context, messages, trace, react_trace, iteration)
+        # Preserve provider tool-result ordering. A synthetic blocked result
+        # acts as a batch boundary, while adjacent authorized calls retain the
+        # existing readonly-parallel/write-serial scheduler.
+        authorized_segment: list[Any] = []
+
+        def flush_authorized_segment() -> None:
+            if not authorized_segment:
+                return
+            if len(authorized_segment) == 1:
+                self._execute_single(
+                    authorized_segment[0],
+                    context,
+                    messages,
+                    trace,
+                    react_trace,
+                    iteration,
+                )
+            else:
+                self._batch_execute(
+                    authorized_segment,
+                    context,
+                    messages,
+                    trace,
+                    react_trace,
+                    iteration,
+                )
+            authorized_segment.clear()
+
+        for tc, blocked_result in execution_plan:
+            if blocked_result is None:
+                authorized_segment.append(tc)
+                continue
+            flush_authorized_segment()
+            self._record_blocked_tool_call(
+                tc,
+                blocked_result,
+                context,
+                messages,
+                trace,
+                react_trace,
+                iteration,
+            )
+        flush_authorized_segment()
 
         return compact_requested, focus_topic
+
+    def _record_blocked_tool_call(
+        self,
+        tc: Any,
+        result: str,
+        context: ContextBuilder,
+        messages: list,
+        trace: TraceWriter,
+        react_trace: list,
+        iteration: int,
+    ) -> None:
+        """Record an identity-gated call without invoking its implementation.
+
+        Args:
+            tc: Provider tool-call object.
+            result: Structured identity-gate error payload.
+            context: Context builder.
+            messages: Conversation messages.
+            trace: Persistent trace writer.
+            react_trace: Compact returned trace.
+            iteration: Current iteration.
+        """
+        args = _normalize_tool_run_dir(tc.arguments, self.memory.run_dir)
+        redacted_args = redact_payload(args)
+        event_args = {key: str(value)[:200] for key, value in redacted_args.items()}
+        self._emit(
+            "tool_call",
+            {
+                "tool": tc.name,
+                "arguments": event_args,
+                "iter": iteration,
+                "call_id": tc.id,
+                "blocked": True,
+            },
+        )
+        trace.write(
+            {
+                "type": "tool_call",
+                "iter": iteration,
+                "tool": tc.name,
+                "call_id": tc.id,
+                "args": redacted_args,
+                "blocked": True,
+            }
+        )
+        self._finalize_tool_result(
+            tc,
+            result,
+            0,
+            context,
+            messages,
+            trace,
+            react_trace,
+            iteration,
+            update_memory=False,
+        )
 
     def _batch_execute(
         self,
@@ -1448,6 +1638,8 @@ class AgentLoop:
         trace: TraceWriter,
         react_trace: list,
         iteration: int,
+        *,
+        update_memory: bool = True,
     ) -> None:
         """Record a tool result: update memory, append message, write trace, emit event.
 
@@ -1460,12 +1652,32 @@ class AgentLoop:
             trace: TraceWriter.
             react_trace: React trace list.
             iteration: Current iteration.
+            update_memory: Whether this call reached the tool implementation.
         """
-        self._update_memory(tc.name)
+        if update_memory:
+            self._update_memory(tc.name)
 
         success = _is_tool_success(result)
         if success:
             self._called_ok.add(tc.name)
+
+        if self._grounding is not None:
+            self._grounding.ingest_tool_result(
+                tool_name=tc.name,
+                arguments=_normalize_tool_run_dir(tc.arguments, self.memory.run_dir),
+                result=result,
+                call_id=tc.id,
+                success=success,
+            )
+            if tc.name == "search_symbol":
+                trace.write(
+                    {
+                        "type": "identity_state",
+                        "iter": iteration,
+                        "call_id": tc.id,
+                        "identity": self._grounding.identity_summary(),
+                    }
+                )
 
         status = "ok" if success else "error"
         truncated = result[:TOOL_RESULT_LIMIT]

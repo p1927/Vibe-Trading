@@ -103,6 +103,7 @@ def fetch_market_data(
     loader_resolver: Callable[[str], type] = get_loader,
     fallback_chain_provider: Callable[[str], list[str]] | None = None,
     max_fallback_attempts: int = 3,
+    include_provenance: bool = False,
 ) -> dict[str, Any]:
     """Fetch normalized OHLCV data through the repository loader layer.
 
@@ -116,6 +117,7 @@ def fetch_market_data(
     from backtest.loaders.registry import FALLBACK_CHAINS
 
     results: dict[str, Any] = {}
+    provenance: dict[str, dict[str, Any]] = {}
     result_aliases = {
         code: code.split(":", 1)[1]
         if code.lower().startswith("local:")
@@ -156,16 +158,13 @@ def fetch_market_data(
 
         data_map: dict[str, Any] = {}
         used_source: str | None = None
-        last_exc: Exception | None = None
         for attempt_src in attempts:
             try:
                 loader_cls = loader_resolver(attempt_src)
             except NoAvailableSourceError as exc:
-                last_exc = exc
                 logger.debug("loader %r unavailable: %s", attempt_src, exc)
                 continue
             except Exception as exc:  # noqa: BLE001 — resolver may raise for non-network reasons
-                last_exc = exc
                 logger.debug("loader %r resolver failed: %s", attempt_src, exc)
                 continue
             try:
@@ -175,7 +174,6 @@ def fetch_market_data(
                 if data_map:
                     break
             except Exception as exc:  # noqa: BLE001 — contained per-symbol fallback
-                last_exc = exc
                 logger.error(
                     "market-data loader %r failed for %s; trying next source in chain: %s",
                     attempt_src, src_codes, exc,
@@ -194,6 +192,14 @@ def fetch_market_data(
                 for key, value in row.items():
                     row[key] = _json_safe(value)
             results[symbol] = cap_rows(records, max_rows)
+            if include_provenance:
+                provenance[symbol] = {
+                    "source": used_source or src,
+                    "requested_source": source,
+                    "detected_source": src,
+                    "fallback_used": bool(used_source and used_source != src),
+                    "currency_conversion": "none",
+                }
 
     unresolved = [
         code
@@ -202,6 +208,8 @@ def fetch_market_data(
     ]
     if unresolved:
         results["_unresolved"] = unresolved
+    if include_provenance and provenance:
+        results["_provenance"] = provenance
 
     return results
 

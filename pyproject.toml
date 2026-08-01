@@ -1,6 +1,6 @@
 [project]
 name = "vibe-trading-ai"
-version = "0.1.12"
+version = "0.1.13"
 description = "Natural-language finance research AI agent with backtesting"
 # Upper bound is real, not cautionary: smartmoneyconcepts -> numba -> llvmlite,
 # and llvmlite ships no 3.14 wheel, so pip falls back to a source build that
