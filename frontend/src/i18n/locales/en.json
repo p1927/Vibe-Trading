@@ -1012,6 +1012,7 @@
     "link_autopilot_backtest": "Link autopilot backtest",
     "link_backtest": "Link hypothesis backtest",
     "load_skill": "Load strategy knowledge",
+    "options_payoff": "Analyze options payoff",
     "options_pricing": "Price options",
     "patch_skill": "Update custom skill",
     "pattern": "Detect chart patterns",
