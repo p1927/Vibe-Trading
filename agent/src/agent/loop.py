@@ -38,7 +38,7 @@ from src.goal.context import (
     goal_needs_continuation,
     goal_progress_tuple,
 )
-from src.providers.chat import ChatLLM, ProviderStreamError
+from src.providers.chat import ChatLLM, LLMRuntimeSnapshot, ProviderStreamError
 from src.providers.content_filter import (
     CONTENT_FILTER_SKIP_MESSAGE,
     MAX_CONSECUTIVE_CONTENT_FILTER_SKIPS,
@@ -530,6 +530,20 @@ class AgentLoop:
         """
         self.registry = registry
         self.llm = llm
+        runtime_snapshot = getattr(llm, "runtime_snapshot", None)
+        if not isinstance(runtime_snapshot, LLMRuntimeSnapshot):
+            runtime_cfg = get_env_config().llm
+            runtime_snapshot = LLMRuntimeSnapshot(
+                provider=runtime_cfg.langchain_provider.strip().lower() or "openai",
+                configured_model=(
+                    getattr(llm, "model_name", None)
+                    or runtime_cfg.langchain_model_name
+                ).strip(),
+                reasoning_effort=(
+                    runtime_cfg.langchain_reasoning_effort.strip().lower()
+                ),
+            )
+        self._llm_runtime = runtime_snapshot
         self.memory = memory or WorkspaceMemory()
         self._event_callback = event_callback
         self.max_iterations = max_iterations
@@ -629,6 +643,7 @@ class AgentLoop:
         content_filter_circuit_breaker = False
         empty_model_response_iter: int | None = None
         llm_usage_summary = _new_llm_usage_summary(self.llm)
+        last_response_model: str | None = None
         goal_continuations = 0
         goal_last_progress: tuple[int, int] | None = None
         wrap_up_at = max(1, int(self.max_iterations * 0.8))
@@ -788,6 +803,8 @@ class AgentLoop:
                     break
 
                 usage = getattr(response, "usage_metadata", None)
+                if getattr(response, "response_model", None):
+                    last_response_model = response.response_model
                 usage_delta = _record_llm_usage(
                     run_dir,
                     llm_usage_summary,
@@ -1070,9 +1087,8 @@ class AgentLoop:
             state_store.mark_success(run_dir)
             final_status = "success"
         elif empty_model_response_iter is not None:
-            _cfg = get_env_config()
-            provider = _cfg.llm.langchain_provider.strip().lower() or "openai"
-            model = getattr(self.llm, "model_name", None) or _cfg.llm.langchain_model_name.strip() or "(unset)"
+            provider = self._llm_runtime.provider
+            model = self._llm_runtime.configured_model or "(unset)"
             final_reason = (
                 "empty_model_response: "
                 f"provider={provider} model={model} iteration {empty_model_response_iter} "
@@ -1107,6 +1123,16 @@ class AgentLoop:
             "iterations": iteration,
             "max_iterations": self.max_iterations,
         }
+        configured_model = self._llm_runtime.configured_model
+        result.update(
+            {
+                "provider": self._llm_runtime.provider,
+                "configured_model": configured_model,
+                "model": last_response_model or configured_model,
+                "model_source": "provider_response" if last_response_model else "configured",
+                "reasoning_effort": self._llm_runtime.reasoning_effort,
+            }
+        )
         if final_reason is not None:
             result["reason"] = final_reason
 
