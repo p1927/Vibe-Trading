@@ -125,6 +125,14 @@ class CreateScheduledRunRequest(BaseModel):
     config: Dict[str, Any] = Field(
         default_factory=dict, description="Optional backtest parameters"
     )
+    timezone: Optional[str] = Field(
+        None,
+        description=(
+            "IANA timezone key the cron schedule is evaluated in "
+            "(e.g. 'Pacific/Auckland'); null = UTC, the pre-existing "
+            "semantics. Ignored by interval schedules."
+        ),
+    )
 
 
 class ScheduledRunResponse(BaseModel):
@@ -141,6 +149,7 @@ class ScheduledRunResponse(BaseModel):
     last_error: Optional[str] = None
     failure_kind: Optional[str] = None
     config: Dict[str, Any] = Field(default_factory=dict)
+    timezone: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -193,22 +202,40 @@ def register_scheduled_routes(
             JobStatus,
             ScheduledResearchJob,
             validate_schedule,
+            validate_timezone,
         )
+
+        from src.scheduled_research.executor import next_due
 
         try:
             validate_schedule(request.schedule)
+            validate_timezone(request.timezone)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         now_ms = int(time.time() * 1000)
+        next_run_at = request.next_run_at
+        if next_run_at is None:
+            next_run_at = now_ms
+            if request.timezone is not None and not request.schedule.strip().isdigit():
+                # A timezone-carrying cron job's contract is the authored wall
+                # clock, so its first fire is the first authored occurrence —
+                # not the creation moment. Interval jobs and timezone-less
+                # jobs keep the pre-existing immediate-first-fire default.
+                try:
+                    next_run_at = next_due(request.schedule, now_ms, request.timezone)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+
         job = ScheduledResearchJob(
             id=request.id or str(uuid.uuid4()),
             prompt=request.prompt,
             schedule=request.schedule,
-            next_run_at=request.next_run_at if request.next_run_at is not None else now_ms,
+            next_run_at=next_run_at,
             status=JobStatus.PENDING,
             created_at=now_ms,
             config=request.config,
+            timezone=request.timezone,
         )
         _get_scheduled_research_store().upsert(job)
         return ScheduledRunResponse(**job.to_dict())
