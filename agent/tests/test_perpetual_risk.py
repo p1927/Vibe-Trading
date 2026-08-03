@@ -378,6 +378,14 @@ def test_empty_accounts_are_healthy(margin_mode: str) -> None:
     assert snapshot.margin_balance == pytest.approx(1_000.0)
 
 
+def test_cross_empty_account_with_negative_balance_is_liquidated() -> None:
+    account = AccountState(-100.0, (), "cross")
+    snapshot = CrossMarginRiskModel().evaluate(account, {})
+    assert snapshot.status == "account_liquidation"
+    assert snapshot.liquidation_targets == ()
+    assert snapshot.margin_balance == pytest.approx(-100.0)
+    assert snapshot.maintenance_margin == pytest.approx(0.0)
+
 @pytest.mark.parametrize(
     ("evaluate", "account", "match"),
     [
