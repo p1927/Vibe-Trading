@@ -507,7 +507,7 @@ def calc_metrics(
 
     # Drawdown
     peak = equity_curve.cummax()
-    dd = (equity_curve - peak) / peak.replace(0, 1)
+    dd = (equity_curve - peak) / peak.abs().replace(0, 1)
     max_dd = float(dd.min())
 
     calmar = ann_ret / abs(max_dd) if abs(max_dd) > 1e-10 else 0.0

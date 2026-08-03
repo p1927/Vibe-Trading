@@ -427,6 +427,14 @@ class TestCalcMetrics:
         if m["annual_return"] > 0:
             assert m["calmar"] > 0
 
+    def test_calmar_and_drawdown_negative_equity(self) -> None:
+        """Negative equity curves must compute negative drawdown and non-zero Calmar, not zero."""
+        dates = pd.bdate_range("2025-01-01", periods=3)
+        eq = pd.Series([-20.0, -50.0, -100.0], index=dates)
+        m = calc_metrics(eq, [], 100.0, 252)
+        assert m["max_drawdown"] == pytest.approx(-4.0)
+        assert m["calmar"] < 0
+
     def test_zero_final_equity(self) -> None:
         """A full wipeout (equity reaches 0) annualises to -100%, not a crash."""
         dates = pd.bdate_range("2025-01-01", periods=252)
