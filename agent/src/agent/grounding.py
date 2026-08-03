@@ -18,7 +18,7 @@ import hashlib
 import json
 import math
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -56,6 +56,12 @@ _SYMBOL_ARGUMENT_KEYS = {
     "underlying",
     "underlyings",
 }
+# Workflow selection must not race an in-flight resolution or proceed on
+# contradicted identity. It may proceed once the resolver has answered — and
+# ``ambiguous`` is an answer: a screening request ("推荐低价高增长股票") resolves to
+# many candidates by design. Requiring a locked identity there stalls every
+# discovery task before it can load a screening skill, which is #955.
+_RESOLUTION_INCOMPLETE_STATUSES = {"unresolved", "conflicting", "invalidated"}
 _PRICE_FIELDS = {"open", "high", "low", "close", "adj_close", "price"}
 _TIMESTAMP_FIELDS = ("trade_date", "date", "datetime", "timestamp", "time", "index")
 _MAX_GENERIC_EVIDENCE = 2_000
@@ -103,6 +109,32 @@ _NUMBER_RE = re.compile(
     r"(?![A-Za-z0-9_])"
 )
 _DATE_RE = re.compile(r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b")
+# Localized calendar text carries digits that the ISO pattern above leaves
+# behind: "8 月 3 日" otherwise contributes 8 and 3 as candidate prices.
+_LOCALIZED_DATE_RE = re.compile(
+    r"(?:(?:19|20)\d{2}\s*年\s*)?\d{1,2}\s*月(?:\s*\d{1,2}\s*[日号])?|(?:19|20)\d{2}\s*年"
+)
+# An aggregate amount is not a quoted price. "100 股成本 820 CNY" states a
+# position cost; comparing 820 against a per-share OHLC range is a category
+# error. The tradeoff is that a per-share figure written only as "成本 8.20"
+# goes unchecked — provenance still requires symbol, source, and currency.
+_AGGREGATE_AMOUNT_RE = re.compile(
+    r"(?:成本|总额|总价|总市值|市值|合计|金额|cost|total|notional|market value)"
+    r"\s*(?:为|是|约)?\s*[:：]?\s*[-+]?\d[\d,]*(?:\.\d+)?",
+    re.IGNORECASE,
+)
+# Quantities, horizons, and lot sizes are unit-bearing: "100 股", "1–4 周",
+# "3 个月". None of them are prices.
+_QUANTITY_WITH_UNIT_RE = re.compile(
+    r"\d[\d,]*(?:\.\d+)?(?:\s*[-–—~至]\s*\d[\d,]*(?:\.\d+)?)?\s*"
+    r"(?:股|手|张|份|口|笔|倍|个月|周|天|日|年|次|"
+    r"shares?|contracts?|lots?|units?|weeks?|months?|days?|years?)",
+    re.IGNORECASE,
+)
+# Full-width brackets and enumeration commas delimit prose clauses. ASCII
+# parentheses are deliberately not separators: an explicit derivation such as
+# "(8.5 - 7.9) / 2" must stay in one segment for the formula check.
+_CLAUSE_SEPARATOR_RE = re.compile(r"[,，;；。、\n（）【】]")
 _TABLE_SEPARATOR_RE = re.compile(r"^:?-{3,}:?$")
 
 _TABLE_FIELD_ALIASES = {
@@ -436,17 +468,15 @@ class GroundingLedger:
             return self._authorize_private_company_skill()
 
         if tool_name == "load_skill" and self._identity_required:
-            authorized = {
-                _normalize_symbol(item) for item in batch_authorized_symbols
-            }
             frozen_status = batch_identity_status or self.identity_status
-            if frozen_status != "locked" or not authorized:
+            if frozen_status in _RESOLUTION_INCOMPLETE_STATUSES:
                 return ToolAuthorization(
                     allowed=False,
                     error_code="identity_required",
                     message=(
-                        "Market-sensitive workflow selection is blocked until identity "
-                        "was locked in an earlier assistant tool turn."
+                        "Market-sensitive workflow selection is blocked while instrument "
+                        "resolution is in flight or contradicted; a resolver result from "
+                        "this same batch cannot be consumed."
                     ),
                 )
             return ToolAuthorization(allowed=True)
@@ -834,6 +864,29 @@ class GroundingLedger:
             candidates=candidates,
             version=version,
         )
+        self._supersede_shortlists(symbol)
+
+    def _supersede_shortlists(self, symbol: str) -> None:
+        """Retire ambiguous shortlists that this lock has just answered.
+
+        A screening query resolves to many candidates by design. Once one of
+        them is locked by a later, narrower resolution, the earlier shortlist is
+        answered rather than unresolved — leaving it ``ambiguous`` blocks every
+        final answer in the run for the rest of the session (#955).
+
+        Args:
+            symbol: Canonical symbol locked by the current resolution.
+        """
+        for key, record in self._identities.items():
+            if record.status != "ambiguous":
+                continue
+            offered = {
+                _normalize_symbol(candidate.get("symbol")) for candidate in record.candidates
+            }
+            if symbol in offered:
+                self._identities[key] = replace(
+                    record, status="superseded", updated_at=_utc_now()
+                )
 
     @staticmethod
     def _choose_candidate(
@@ -1115,7 +1168,7 @@ class GroundingLedger:
             if index in table_lines or "|" in line:
                 continue
             line_symbol = self._symbol_for_claim(line, records)
-            for segment in re.split(r"[,，;；。\n]", line):
+            for segment in _CLAUSE_SEPARATOR_RE.split(line):
                 if not _PRICE_CONTEXT_RE.search(segment):
                     continue
                 values = self._numbers_without_dates_or_percent(segment)
@@ -1389,8 +1442,24 @@ class GroundingLedger:
 
     @staticmethod
     def _numbers_without_dates_or_percent(text: str) -> list[float]:
-        """Extract numbers while excluding dates and percentages."""
-        without_dates = _DATE_RE.sub(" ", text)
+        """Extract the numbers in a claim that could plausibly be prices.
+
+        Digits that belong to a canonical symbol, a calendar date, an aggregate
+        amount, a unit-bearing quantity, or a percentage are masked first. Left
+        unmasked they are compared against observed OHLC ranges and reject a
+        correct draft: ``000543.SZ`` alone contributes 543.
+
+        Args:
+            text: One claim segment or table cell.
+
+        Returns:
+            Candidate price values, in order of appearance.
+        """
+        masked = _CANONICAL_SYMBOL_RE.sub(" ", text)
+        masked = _LOCALIZED_DATE_RE.sub(" ", masked)
+        masked = _DATE_RE.sub(" ", masked)
+        masked = _AGGREGATE_AMOUNT_RE.sub(" ", masked)
+        without_dates = _QUANTITY_WITH_UNIT_RE.sub(" ", masked)
         values: list[float] = []
         for match in _NUMBER_RE.finditer(without_dates):
             tail = without_dates[match.end() :].lstrip()

@@ -731,3 +731,183 @@ def test_agent_loop_rejects_then_corrects_ungrounded_final_answer(
     )
     assert artifact["validations"][0]["valid"] is False
     assert artifact["validations"][-1]["valid"] is True
+
+
+_SHORTLIST_QUERY = "A股低价高增长股票"
+_SHORTLIST_PAYLOAD = _resolver_payload(
+    candidates=[
+        {"symbol": "000543.SZ", "name": "皖能电力", "market": "cn", "source": "eastmoney"},
+        {"symbol": "000727.SZ", "name": "冠捷科技", "market": "cn", "source": "eastmoney"},
+    ],
+    query=_SHORTLIST_QUERY,
+)
+_NARROWED_PAYLOAD = _resolver_payload(
+    candidates=[
+        {"symbol": "000543.SZ", "name": "皖能电力", "market": "cn", "source": "eastmoney"},
+    ],
+    query="000543.SZ",
+)
+_SCREENED_MARKET_PAYLOAD = json.dumps(
+    {
+        "000543.SZ": [
+            {
+                "trade_date": "2026-08-01",
+                "open": 7.9,
+                "high": 8.5,
+                "low": 7.9,
+                "close": 8.2,
+                "volume": 100000,
+            }
+        ],
+        "_provenance": {
+            "000543.SZ": {
+                "source": "tencent",
+                "requested_source": "auto",
+                "detected_source": "tencent",
+                "fallback_used": False,
+                "currency_conversion": "none",
+            }
+        },
+    }
+)
+
+
+def _screened_ledger(tmp_path: Path) -> GroundingLedger:
+    """Return a ledger that screened broadly, then locked one candidate."""
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message="推荐A股低价高增长股票并给出买入价",
+    )
+    for call_id, query, payload in (
+        ("shortlist", _SHORTLIST_QUERY, _SHORTLIST_PAYLOAD),
+        ("narrow", "000543.SZ", _NARROWED_PAYLOAD),
+    ):
+        ledger.authorize_tool_call(
+            "search_symbol",
+            {"query": query},
+            batch_authorized_symbols=ledger.authorized_symbols,
+            call_id=call_id,
+        )
+        ledger.ingest_tool_result(
+            tool_name="search_symbol",
+            arguments={"query": query},
+            result=payload,
+            call_id=call_id,
+            success=True,
+        )
+    ledger.ingest_tool_result(
+        tool_name="get_market_data",
+        arguments={"codes": ["000543.SZ"]},
+        result=_SCREENED_MARKET_PAYLOAD,
+        call_id="prices",
+        success=True,
+    )
+    return ledger
+
+
+def test_screening_shortlist_does_not_block_workflow_selection(tmp_path: Path) -> None:
+    """A many-candidate screening result is an answer, not a stalled resolution (#955)."""
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message="推荐A股低价高增长股票并给出买入价",
+    )
+    ledger.authorize_tool_call(
+        "search_symbol",
+        {"query": _SHORTLIST_QUERY},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        call_id="shortlist",
+    )
+    ledger.ingest_tool_result(
+        tool_name="search_symbol",
+        arguments={"query": _SHORTLIST_QUERY},
+        result=_SHORTLIST_PAYLOAD,
+        call_id="shortlist",
+        success=True,
+    )
+
+    assert ledger.identity_status == "ambiguous"
+    skill = ledger.authorize_tool_call(
+        "load_skill",
+        {"name": "stock-selection"},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        call_id="skill",
+        batch_identity_status=ledger.identity_status,
+    )
+
+    assert skill.allowed is True
+
+
+def test_narrowed_lock_retires_the_screening_shortlist(tmp_path: Path) -> None:
+    """Locking a shortlisted candidate must unblock the run's final answer (#955)."""
+    ledger = _screened_ledger(tmp_path)
+
+    assert ledger.identity_status == "locked"
+    assert ledger.authorized_symbols == {"000543.SZ"}
+    prices = ledger.authorize_tool_call(
+        "get_market_data",
+        {"codes": ["000543.SZ"]},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        call_id="prices",
+        batch_identity_status=ledger.identity_status,
+    )
+
+    assert prices.allowed is True
+
+
+def test_price_validation_ignores_symbol_date_and_quantity_digits(tmp_path: Path) -> None:
+    """Ticker, calendar, holding-period, and position-cost digits are not prices (#955)."""
+    ledger = _screened_ledger(tmp_path)
+
+    for draft in (
+        "000543.SZ 截至 8 月 3 日收盘价 8.20 CNY（source: tencent）",
+        "000543.SZ 买入价 8.20 CNY（100 股成本 820 CNY；source: tencent）",
+        "000543.SZ 建议持有 1–4 周，买入价 8.20 CNY（source: tencent）",
+    ):
+        result = ledger.validate_final_answer(draft)
+        assert result.valid is True, (draft, result.issues)
+
+
+def test_price_validation_still_rejects_a_quote_outside_observed_range(
+    tmp_path: Path,
+) -> None:
+    """Masking non-price digits must not weaken the contradiction check (#955)."""
+    ledger = _screened_ledger(tmp_path)
+
+    result = ledger.validate_final_answer("000543.SZ 收盘价 42.00 CNY（source: tencent）")
+
+    assert result.valid is False
+    assert [issue["code"] for issue in result.issues] == ["numeric_claim_conflict"]
+
+
+def test_screening_run_reaches_a_final_answer_through_the_agent_loop(
+    tmp_path: Path,
+) -> None:
+    """End-to-end: screen, load a workflow skill, narrow, quote, and answer (#955)."""
+    agent, resolver, market, skill, trace = _build_direct_agent(tmp_path, _SHORTLIST_PAYLOAD)
+    market.result = _SCREENED_MARKET_PAYLOAD
+    agent._grounding = GroundingLedger(
+        run_dir=Path(agent.memory.run_dir),
+        user_message="推荐A股低价高增长股票并给出买入价",
+    )
+    messages: list[dict[str, Any]] = []
+    react_trace: list[dict[str, Any]] = []
+
+    def batch(*calls: SimpleNamespace, iteration: int) -> None:
+        agent._process_tool_calls(
+            list(calls), ContextBuilder, messages, trace, react_trace, iteration
+        )
+
+    batch(_tool_call("shortlist", "search_symbol", query=_SHORTLIST_QUERY), iteration=1)
+    batch(_tool_call("workflow", "load_skill", name="stock-selection"), iteration=2)
+    assert skill.calls == 1
+
+    resolver.result = _NARROWED_PAYLOAD
+    batch(_tool_call("narrow", "search_symbol", query="000543.SZ"), iteration=3)
+    batch(_tool_call("prices", "get_market_data", codes=["000543.SZ"]), iteration=4)
+    trace.close()
+
+    assert market.calls == 1
+    validation = agent._grounding.validate_final_answer(
+        "000543.SZ 买入价 8.20 CNY（100 股成本 820 CNY；source: tencent）"
+    )
+    assert validation.valid is True, validation.issues
