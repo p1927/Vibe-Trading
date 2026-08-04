@@ -11,6 +11,7 @@ import pandas as pd
 
 from backtest.loaders._symbol_utils import _is_etf_listed
 from backtest.loaders.base import cached_loader_fetch, validate_date_range
+from backtest.loaders.cn_adjust import apply_qfq
 from backtest.loaders.registry import register
 
 logger = logging.getLogger(__name__)
@@ -149,15 +150,21 @@ class DataLoader:
         if _is_etf_listed(code):
             endpoint_name = "fund_daily"
             df = self.api.fund_daily(ts_code=code, start_date=start_date, end_date=end_date)
+            adjust = getattr(self.api, "fund_adj", None)
         elif _is_index(code):
             endpoint_name = "index_daily"
             df = self.api.index_daily(ts_code=code, start_date=start_date, end_date=end_date)
+            # An index level is already continuous across its members' ex-dates.
+            adjust = None
         elif _is_hk_equity(code):
             endpoint_name = "hk_daily"
             df = self.api.hk_daily(ts_code=code, start_date=start_date, end_date=end_date)
+            # Tushare publishes no HK adjustment-factor series.
+            adjust = None
         else:
             endpoint_name = "daily"
             df = self.api.daily(ts_code=code, start_date=start_date, end_date=end_date)
+            adjust = getattr(self.api, "adj_factor", None)
 
         if df is None or df.empty:
             logger.warning("tushare returned empty for %s via %s", code, endpoint_name)
@@ -172,7 +179,25 @@ class DataLoader:
         ohlcv = df[["open", "high", "low", "close", "volume"]].dropna(
             subset=["open", "high", "low", "close"]
         )
-        return ohlcv
+        if adjust is None:
+            return ohlcv
+
+        try:
+            factor = adjust(ts_code=code, start_date=start_date, end_date=end_date)
+        except Exception as exc:  # noqa: BLE001 - one bad fetch must not raise
+            logger.warning("tushare adjustment-factor fetch failed for %s: %s", code, exc)
+            factor = None
+        adjusted = apply_qfq(ohlcv, factor)
+        if adjusted is None:
+            # Returning the raw frame here is what produced the defect: a
+            # close-to-close return across an ex-date spans the mechanical gap,
+            # measured at -47.2%% on 300750.SZ 2023-04-26 against a true +5.4%%.
+            logger.warning(
+                "tushare: no usable adjustment factors for %s — dropping the "
+                "symbol rather than backtesting it on unadjusted prices",
+                code,
+            )
+        return adjusted
 
     def _merge_basic_fields(
         self,

@@ -135,12 +135,29 @@ def _make_ohlcv_df() -> pd.DataFrame:
     })
 
 
+def _make_adj_df(factors=(1.0, 1.0, 2.0)) -> pd.DataFrame:
+    """Build the adjustment-factor frame tushare pairs with the bars above.
+
+    The default doubles on the last bar, i.e. a 2-for-1 split, so a test can
+    tell an adjusted frame from a raw one.
+    """
+    return pd.DataFrame({
+        "ts_code": ["X"] * 3,
+        "trade_date": ["20250102", "20250103", "20250106"],
+        "adj_factor": list(factors),
+    })
+
+
 class TestFetchDailyFrameRouting:
     """Verify _fetch_daily_frame calls the correct tushare endpoint per symbol type."""
 
     def _make_loader(self) -> DataLoader:
         loader = object.__new__(DataLoader)
         loader.api = MagicMock()
+        # Equities and funds are corporate-action adjusted before they are
+        # returned, so the factor endpoints must answer with a real frame.
+        loader.api.adj_factor.return_value = _make_adj_df((1.0, 1.0, 1.0))
+        loader.api.fund_adj.return_value = _make_adj_df((1.0, 1.0, 1.0))
         return loader
 
     def test_stock_routes_to_daily(self) -> None:
@@ -190,6 +207,45 @@ class TestFetchDailyFrameRouting:
         result = loader._fetch_daily_frame("BTC-USDT", "20250102", "20250110")
         assert result is None
         loader.api.daily.assert_not_called()
+
+    def test_stock_prices_are_corporate_action_adjusted(self) -> None:
+        loader = self._make_loader()
+        loader.api.daily.return_value = _make_ohlcv_df()
+        loader.api.adj_factor.return_value = _make_adj_df((1.0, 1.0, 2.0))
+
+        result = loader._fetch_daily_frame("000001.SZ", "20250102", "20250110")
+
+        loader.api.adj_factor.assert_called_once()
+        # Forward-adjusted to the last bar: earlier closes are halved, the last
+        # keeps its traded price.
+        assert result["close"].tolist() == [5.25, 5.5, 11.5]
+
+    def test_etf_prices_are_corporate_action_adjusted(self) -> None:
+        loader = self._make_loader()
+        loader.api.fund_daily.return_value = _make_ohlcv_df()
+        loader.api.fund_adj.return_value = _make_adj_df((1.0, 1.0, 2.0))
+
+        result = loader._fetch_daily_frame("510050.SH", "20250102", "20250110")
+
+        loader.api.fund_adj.assert_called_once()
+        assert result["close"].tolist() == [5.25, 5.5, 11.5]
+
+    def test_a_symbol_with_no_factors_is_dropped_not_returned_raw(self) -> None:
+        # Falling back to raw prices is the defect this guard exists to stop.
+        loader = self._make_loader()
+        loader.api.daily.return_value = _make_ohlcv_df()
+        loader.api.adj_factor.return_value = pd.DataFrame()
+
+        assert loader._fetch_daily_frame("000001.SZ", "20250102", "20250110") is None
+
+    def test_an_index_is_not_adjusted(self) -> None:
+        loader = self._make_loader()
+        loader.api.index_daily.return_value = _make_ohlcv_df()
+
+        result = loader._fetch_daily_frame("000001.SH", "20250102", "20250110")
+
+        loader.api.adj_factor.assert_not_called()
+        assert result["close"].tolist() == [10.5, 11.0, 11.5]
 
     def test_empty_result_warns(self) -> None:
         loader = self._make_loader()
