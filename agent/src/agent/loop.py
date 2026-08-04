@@ -47,12 +47,12 @@ from src.providers.content_filter import (
 from src.config.accessor import get_env_config
 from src.config.paths import get_runs_dir, get_sessions_dir
 from src.tools.background_tools import get_background_manager
+from src.config.limits import TOOL_RESULT_LIMIT, truncate_tool_result
 from src.tools.redaction import redact_payload, redact_tool_result
 
 RUNS_DIR = get_runs_dir()
 SESSIONS_DIR = get_sessions_dir()
 KEEP_RECENT = 3
-TOOL_RESULT_LIMIT = 10_000
 LLM_USAGE_ARTIFACT = "llm_usage.json"
 
 COLLAPSE_PRESERVE_RECENT = 6
@@ -1706,7 +1706,7 @@ class AgentLoop:
                 )
 
         status = "ok" if success else "error"
-        truncated = result[:TOOL_RESULT_LIMIT]
+        truncated = truncate_tool_result(result)
         messages.append(context.format_tool_result(tc.id, tc.name, truncated))
 
         # One redaction feeds every subscriber below: the persisted trace
