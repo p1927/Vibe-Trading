@@ -156,6 +156,31 @@ def iv_smile_adjustment(S: float, K: float, base_iv: float,
     return max(adj, 0.01)
 
 
+def leg_iv(S: float, K: float, base_iv: float, skew: float, curvature: float) -> float:
+    """Return the implied vol a single leg is priced at.
+
+    Every site that prices a leg must go through this — opening, marking to
+    market, Greeks, and the American continuation value. Opening a leg on the
+    smile and marking it at flat at-the-money vol books a fictitious profit the
+    instant the position exists: on a 30-day 10%-OTM call at ``skew=-0.15`` the
+    gap is +16.7% of premium, and +93.0% at 20% OTM, which then contaminates
+    Sharpe, Calmar and drawdown.
+
+    Args:
+        S: Spot price.
+        K: Strike price.
+        base_iv: At-the-money implied volatility.
+        skew: Slope of the smile; ``0`` with ``curvature`` disables the smile.
+        curvature: Curvature of the smile.
+
+    Returns:
+        The leg's implied volatility.
+    """
+    if skew == 0 and curvature == 0:
+        return base_iv
+    return iv_smile_adjustment(S, K, base_iv, skew, curvature)
+
+
 # --- Option positions ---
 
 
@@ -328,7 +353,10 @@ def run_options_backtest(
                 if T_ex <= 0:
                     continue
                 intrinsic = pos.intrinsic_value(spot)
-                continuation = bs_price(spot, pos.strike, T_ex, risk_free_rate, iv_val_ex, pos.option_type)
+                # The continuation value must use the same vol the leg is
+                # marked at, or early exercise triggers off a mispriced hold.
+                iv_ex = leg_iv(spot, pos.strike, iv_val_ex, iv_skew, iv_curvature)
+                continuation = bs_price(spot, pos.strike, T_ex, risk_free_rate, iv_ex, pos.option_type)
                 if intrinsic > 0 and intrinsic > continuation * 1.02:
                     # Early exercise is optimal
                     settlement = intrinsic * pos.qty * contract_multiplier
@@ -393,12 +421,7 @@ def run_options_backtest(
                 expiry_ts = pd.Timestamp(expiry)
                 T = max((expiry_ts - ts).days / 365.0, 0.001)
 
-                # Apply IV smile adjustment (v2) if configured
-                adj_iv = iv_val
-                if iv_skew != 0 or iv_curvature != 0:
-                    adj_iv = iv_smile_adjustment(spot, strike, iv_val, iv_skew, iv_curvature)
-
-                # Black-Scholes price (with smile-adjusted IV if enabled)
+                adj_iv = leg_iv(spot, strike, iv_val, iv_skew, iv_curvature)
                 opt_price = bs_price(spot, strike, T, risk_free_rate, adj_iv, leg_type)
 
                 if action == "open":
@@ -499,10 +522,12 @@ def run_options_backtest(
             iv_val = ivs.get(pos.underlying_code, 0.3)
             T = pos.time_to_expiry(ts)
 
-            mark_price = bs_price(spot, pos.strike, T, risk_free_rate, iv_val, pos.option_type)
+            mark_iv = leg_iv(spot, pos.strike, iv_val, iv_skew, iv_curvature)
+
+            mark_price = bs_price(spot, pos.strike, T, risk_free_rate, mark_iv, pos.option_type)
             portfolio_value += mark_price * pos.qty * contract_multiplier
 
-            greeks = bs_greeks(spot, pos.strike, T, risk_free_rate, iv_val, pos.option_type)
+            greeks = bs_greeks(spot, pos.strike, T, risk_free_rate, mark_iv, pos.option_type)
             total_delta += greeks["delta"] * pos.qty * contract_multiplier
             total_gamma += greeks["gamma"] * pos.qty * contract_multiplier
             total_theta += greeks["theta"] * pos.qty * contract_multiplier
