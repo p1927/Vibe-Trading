@@ -3,9 +3,10 @@
 Source of truth for the user-facing slash commands. The literal
 :data:`SLASH_COMMANDS` tuple below holds the base set; further groups append
 themselves through idempotent, name-checked registration functions — the
-institutional research playbooks at the bottom of this module, and the live
-connector / data-routing groups from :mod:`cli.main` at ITS import time. Read
-the registry at runtime rather than assuming a fixed length.
+institutional workflow cards and the scheduled-research ``/playbook``
+catalogue further down this module, and the live connector / data-routing
+groups from :mod:`cli.main` at ITS import time. Read the registry at runtime
+rather than assuming a fixed length.
 
 Each :class:`Command` is a frozen dataclass — registry entries are
 immutable so callers can cache filtered slices without worrying about
@@ -118,6 +119,41 @@ def _register_institutional_slash_commands() -> None:
 
 
 _register_institutional_slash_commands()
+
+
+def _register_research_playbook_slash_command() -> None:
+    """Append ``/playbook`` — the scheduled-research template catalogue.
+
+    Registered here for the same reason the institutional group is: this module
+    is imported before ``cli.commands.help`` and ``cli.completer`` read the
+    registry, so one reassignment surfaces the command in the help screen, the
+    typeahead and the fuzzy matcher at once. Idempotent and never overwrites a
+    name that already exists.
+
+    The :class:`Command` is built literally rather than imported from the
+    handler module, so no import cycle (and no scheduler-store import cost) is
+    paid just to draw the completion menu.
+    """
+    global SLASH_COMMANDS
+
+    if any(cmd.name == "playbook" for cmd in SLASH_COMMANDS):
+        return
+    commands = list(SLASH_COMMANDS)
+    quit_idx = next(
+        (i for i, c in enumerate(commands) if c.name == "quit"), len(commands)
+    )
+    commands.insert(
+        quit_idx,
+        Command(
+            "playbook",
+            "Scheduled research templates (list / run / schedule)",
+            "cli.commands.research_playbook",
+        ),
+    )
+    SLASH_COMMANDS = tuple(commands)
+
+
+_register_research_playbook_slash_command()
 
 
 def _parse_token(input_text: str) -> str:
