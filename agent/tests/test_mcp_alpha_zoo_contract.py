@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import re
 from pathlib import Path
 
 import mcp_server
 from src.tools.alpha_bench_tool import AlphaBenchTool
 from src.tools.alpha_zoo_tool import AlphaZooTool
-
 
 _ALPHA_ZOO = getattr(mcp_server.alpha_zoo, "fn", None) or getattr(
     mcp_server.alpha_zoo, "__wrapped__", mcp_server.alpha_zoo
@@ -35,9 +35,7 @@ def test_wrapper_signatures_match_registered_contracts() -> None:
         signature = inspect.signature(wrapper)
         assert set(signature.parameters) == set(tool.parameters["properties"])
         required = {
-            name
-            for name, parameter in signature.parameters.items()
-            if parameter.default is inspect.Parameter.empty
+            name for name, parameter in signature.parameters.items() if parameter.default is inspect.Parameter.empty
         }
         assert required == set(tool.parameters["required"])
 
@@ -71,13 +69,14 @@ def test_alpha_zoo_forwards_filters(monkeypatch) -> None:
 def test_alpha_bench_forwards_selection(monkeypatch) -> None:
     registry = _RecordingRegistry()
     monkeypatch.setattr(mcp_server, "_get_registry", lambda: registry)
+    output_dir = Path.home() / ".vibe-trading" / "reports" / "alpha-zoo"
 
     _ALPHA_BENCH(
         universe="sp500",
         period="2018-2025",
         zoo="alpha101",
         top=10,
-        output_dir="/tmp/reports",
+        output_dir=str(output_dir),
     )
 
     assert registry.calls == [
@@ -88,7 +87,7 @@ def test_alpha_bench_forwards_selection(monkeypatch) -> None:
                 "period": "2018-2025",
                 "top": 10,
                 "zoo": "alpha101",
-                "output_dir": "/tmp/reports",
+                "output_dir": str(output_dir.resolve()),
             },
         )
     ]
@@ -110,3 +109,79 @@ def test_skill_inventory_matches_static_mcp_registration() -> None:
     listed = set(re.findall(r"^\| `([a-z_]+)` \|", tool_section, re.MULTILINE))
     assert int(header.group(1)) == len(static)
     assert listed == static
+
+
+def test_alpha_bench_requires_a_bounded_selection(monkeypatch) -> None:
+    registry = _RecordingRegistry()
+    monkeypatch.setattr(mcp_server, "_get_registry", lambda: registry)
+
+    result = json.loads(_ALPHA_BENCH(universe="sp500", period="2018-2025"))
+
+    assert result["status"] == "error"
+    assert "alpha_id or zoo" in result["error"]
+    assert registry.calls == []
+
+
+def test_alpha_bench_rejects_periods_over_ten_years(monkeypatch) -> None:
+    registry = _RecordingRegistry()
+    monkeypatch.setattr(mcp_server, "_get_registry", lambda: registry)
+
+    result = json.loads(_ALPHA_BENCH(universe="sp500", period="2010-2025", zoo="alpha101"))
+
+    assert result["status"] == "error"
+    assert "10 years" in result["error"]
+    assert registry.calls == []
+
+
+def test_alpha_bench_rejects_conflicting_selection(monkeypatch) -> None:
+    registry = _RecordingRegistry()
+    monkeypatch.setattr(mcp_server, "_get_registry", lambda: registry)
+
+    result = json.loads(
+        _ALPHA_BENCH(
+            universe="sp500",
+            period="2018-2025",
+            alpha_id="alpha101_001",
+            zoo="alpha101",
+        )
+    )
+
+    assert result["status"] == "error"
+    assert "mutually exclusive" in result["error"]
+    assert registry.calls == []
+
+
+def test_alpha_bench_rejects_unbounded_top(monkeypatch) -> None:
+    registry = _RecordingRegistry()
+    monkeypatch.setattr(mcp_server, "_get_registry", lambda: registry)
+
+    result = json.loads(
+        _ALPHA_BENCH(
+            universe="sp500",
+            period="2018-2025",
+            zoo="alpha101",
+            top=101,
+        )
+    )
+
+    assert result["status"] == "error"
+    assert "between 1 and 100" in result["error"]
+    assert registry.calls == []
+
+
+def test_alpha_bench_rejects_output_outside_allowed_roots(monkeypatch) -> None:
+    registry = _RecordingRegistry()
+    monkeypatch.setattr(mcp_server, "_get_registry", lambda: registry)
+
+    result = json.loads(
+        _ALPHA_BENCH(
+            universe="sp500",
+            period="2018-2025",
+            alpha_id="alpha101_001",
+            output_dir="/tmp/alpha-bench-reports",
+        )
+    )
+
+    assert result["status"] == "error"
+    assert "allowed" in result["error"]
+    assert registry.calls == []
