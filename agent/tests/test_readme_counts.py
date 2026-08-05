@@ -235,6 +235,121 @@ def test_feature_badges_state_the_real_counts(name: str) -> None:
         )
 
 
+@pytest.mark.parametrize("name", READMES)
+def test_the_slash_table_is_the_router(name: str) -> None:
+    """The documented TUI commands must be exactly the ones the router resolves.
+
+    This table had drifted furthest of anything in the file: it listed seven
+    commands the router does not resolve at all (they survive only in the
+    legacy REPL reached when prompt_toolkit fails to import) while omitting
+    twenty-one real ones, including the ``/halt`` kill switch.
+    """
+    if str(AGENT_DIR) not in sys.path:
+        sys.path.insert(0, str(AGENT_DIR))
+    from cli.commands.slash_router import SLASH_COMMANDS
+
+    # Scoped to the TUI table: the IM-channels section further down has its own
+    # slash table (``/new``, ``/pairing list``) for a different command set.
+    lines = _read(name).splitlines()
+    first = next(i for i, l in enumerate(lines) if l.startswith("| `/help`"))
+    last = next(i for i, l in enumerate(lines) if l.startswith("| `/quit`"))
+    rows = [line.split("`")[1].lstrip("/") for line in lines[first:last + 1]]
+    expected = [command.name for command in SLASH_COMMANDS]
+
+    assert rows == expected, (
+        f"{name}: documents {sorted(set(rows) - set(expected))}, "
+        f"missing {sorted(set(expected) - set(rows))}"
+    )
+
+
+@pytest.mark.parametrize("name", READMES)
+def test_every_skill_count_in_the_prose_is_current(name: str) -> None:
+    """No sentence may quote a stale skill count.
+
+    The badge is only one of seven places the number appears — the others are
+    a feature bullet, the ``/skill`` row, two OpenSpace paragraphs and two
+    repository-tree comments, and every one of them was a version behind.
+    Only prose is in scope. Dated news entries are frozen history, credit
+    lines carry issue numbers next to the word "skill", and the MCP tool list
+    contains ``list_skills`` beside its own count — none of those is a claim
+    about how many skills ship. ``8899`` is the server port.
+    """
+    skill_words = ("skill", "Skill", "스킬", "مهارة", "المهارات")
+    expected = str(_bundled_skill_count())
+
+    stale = [
+        line.strip()
+        for line in _read(name).splitlines()
+        if any(word in line for word in skill_words)
+        and re.search(r"\d\d", line)
+        and "8899" not in line
+        and not line.startswith("- @")
+        and len(re.findall(r"`[a-z_]+`", line)) < 5
+        and not NEWS_BULLET.match(line)
+        and expected not in line
+    ]
+
+    assert not stale, f"{name}: {len(stale)} line(s) quote a stale skill count: {stale}"
+
+
+@pytest.mark.parametrize("name", READMES)
+def test_brokers_without_paper_trading_are_named_as_exceptions(name: str) -> None:
+    """A broker with no paper order placement must be called out by name.
+
+    The Broker Connectors paragraph summarises what the connectors can do, and
+    a reader plans against it: "most do paper" invites them to rehearse on a
+    paper account first. Three connectors have no such account — IBKR, which
+    is read-only, Robinhood, whose only profile is live, and Trading 212,
+    which refuses order placement outright. Robinhood being missing from that
+    list survived two review passes, and it is the one that matters most:
+    it is the live execution channel, so a reader who believes it has a paper
+    mode places a real order while trying to test.
+    """
+    if str(AGENT_DIR) not in sys.path:
+        sys.path.insert(0, str(AGENT_DIR))
+    from src.trading.service import list_profiles
+
+    by_connector: dict[str, list] = {}
+    for profile in list_profiles():
+        by_connector.setdefault(profile.connector, []).append(profile)
+    no_paper = {
+        connector
+        for connector, profiles in by_connector.items()
+        if not any(p.environment == "paper" and not p.readonly for p in profiles)
+    }
+    assert no_paper, "expected at least one connector without paper order placement"
+
+    badges = [i for i, line in enumerate(_read(name).splitlines()) if SUMMARY_BADGE.search(line)]
+    # BADGE_ORDER[1] is the broker badge; its prose sits two lines below.
+    paragraph = _read(name).splitlines()[badges[1] + 2]
+    flattened = paragraph.replace(" ", "").lower()
+
+    missing = [c for c in sorted(no_paper) if c.replace("_", "") not in flattened]
+    assert not missing, (
+        f"{name}: connectors with no paper account are unnamed in the broker "
+        f"paragraph: {missing}"
+    )
+
+
+def test_the_skill_category_table_matches_the_frontmatter() -> None:
+    """Each category row must carry the number of skills declaring it."""
+    counts: dict[str, int] = {}
+    for skill_md in sorted((AGENT_DIR / "src" / "skills").glob("*/SKILL.md")):
+        declared = re.search(r"^category:\s*(.+)$", skill_md.read_text(encoding="utf-8"), re.M)
+        key = declared.group(1).strip() if declared else "(none)"
+        counts[key] = counts.get(key, 0) + 1
+
+    # Table labels are Title Case with spaces; frontmatter is kebab-case.
+    rows = re.findall(r"^\| ([A-Z][A-Za-z ]+) \| (\d+) \| `", _read("README.md"), re.M)
+    assert rows, "README.md: skill category table not found"
+
+    for label, stated in rows:
+        key = label.strip().lower().replace(" ", "-")
+        assert key in counts, f"unknown category row {label!r}"
+        assert int(stated) == counts[key], f"{label}: table says {stated}, code has {counts[key]}"
+    assert sum(int(n) for _, n in rows) == _bundled_skill_count()
+
+
 def test_all_five_readmes_agree_with_each_other() -> None:
     """No locale may drift from the others, whatever the code count is."""
     per_file = {name: [_numbers(b) for b in _badges(_read(name))] for name in READMES}
