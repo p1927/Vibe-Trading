@@ -11,7 +11,6 @@ ETORO_EXTENDED_CAPABILITIES = READ_CAPABILITIES + (
     "positions.edit",
     "copy.precheck",
     "copy.start",
-    "copy.adjust",
     "copy.poll",
     "copy.close",
 )

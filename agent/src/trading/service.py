@@ -146,6 +146,30 @@ def get_quote(
     return _call_remote(profile, "quote", {"symbols": [symbol], "symbol": symbol})
 
 
+def search_instruments(
+    query: str,
+    profile_id: str | None = None,
+    *,
+    limit: int = 10,
+    mode: str = "auto",
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Search tradable instruments (eToro Public API)."""
+    profile = profile_by_id(profile_id)
+    if profile.connector != "etoro":
+        return _unsupported_etoro(profile, "instruments.search")
+    module = _sdk_module(profile.connector)
+    return _with_profile(
+        profile,
+        module.search_instruments(
+            query,
+            module.build_config(profile.config, overrides),
+            limit=limit,
+            mode=mode,
+        ),
+    )
+
+
 def get_history(
     symbol: str,
     profile_id: str | None = None,

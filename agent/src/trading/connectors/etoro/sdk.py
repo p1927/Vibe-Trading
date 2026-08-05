@@ -23,7 +23,11 @@ from src.trading.connectors.etoro.copy_trading import (
     copy_precheck,
     copy_start_or_adjust,
 )
-from src.trading.connectors.etoro.instruments import resolve_instrument_id, search_instruments
+from src.trading.connectors.etoro.instruments import (
+    get_instrument_metadata,
+    resolve_instrument_id,
+    search_instruments,
+)
 from src.trading.connectors.etoro.trading import (
     cancel_close_order,
     cancel_order as cancel_open_order,
@@ -52,6 +56,7 @@ __all__ = [
     "copy_poll",
     "copy_close",
     "search_instruments",
+    "get_instrument_metadata",
     "EtoroConfig",
     "EtoroConfigError",
     "EtoroAPIError",
@@ -119,18 +124,18 @@ def get_positions(config: EtoroConfig | None = None) -> dict[str, Any]:
     cfg = config or load_config()
     payload = _client(cfg).request("GET", f"{info_root(cfg)}/portfolio", allow_retry=True)
     positions = _extract_positions(payload)
+    _enrich_positions_with_metadata(cfg, positions)
     return {"status": "ok", **_base_payload(cfg), "positions": positions}
 
 
 def get_open_orders(config: EtoroConfig | None = None, *, include_executions: bool = False) -> dict[str, Any]:
     cfg = config or load_config()
-    client = _client(cfg)
-    orders_payload = client.request("GET", f"{info_root(cfg)}/pendingOrders", allow_retry=True)
-    orders = _extract_orders(orders_payload)
+    portfolio_payload = _client(cfg).request("GET", f"{info_root(cfg)}/portfolio", allow_retry=True)
+    orders = _extract_portfolio_orders(portfolio_payload)
     result: dict[str, Any] = {"status": "ok", **_base_payload(cfg), "orders": orders}
     if include_executions:
         try:
-            history = client.request("GET", f"{info_root(cfg)}/history", allow_retry=True)
+            history = _client(cfg).request("GET", f"{info_root(cfg)}/history", allow_retry=True)
             result["history"] = history
         except EtoroAPIError as exc:
             result["history_error"] = str(exc)
@@ -259,6 +264,96 @@ def _position_row(item: dict[str, Any]) -> dict[str, Any]:
         "is_buy": item.get("isBuy"),
         "raw": item,
     }
+
+
+def _client_portfolio(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    client_portfolio = payload.get("clientPortfolio")
+    if isinstance(client_portfolio, dict):
+        return client_portfolio
+    for key in ("portfolio", "data"):
+        nested = payload.get(key)
+        if isinstance(nested, dict) and any(
+            isinstance(nested.get(field), list) for field in ("positions", "orders", "ordersForOpen")
+        ):
+            return nested
+    return None
+
+
+def _extract_portfolio_orders(payload: Any) -> list[dict[str, Any]]:
+    client_portfolio = _client_portfolio(payload)
+    if client_portfolio is None:
+        return []
+    order_keys = (
+        "orders",
+        "ordersForOpen",
+        "ordersForClose",
+        "ordersForCloseMultiple",
+        "entryOrders",
+        "exitOrders",
+        "stockOrders",
+        "pendingOrders",
+    )
+    seen_ids: set[Any] = set()
+    rows: list[dict[str, Any]] = []
+    for key in order_keys:
+        items = client_portfolio.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            order_id = item.get("orderID") or item.get("orderId") or item.get("id")
+            if order_id is not None and order_id in seen_ids:
+                continue
+            if order_id is not None:
+                seen_ids.add(order_id)
+            rows.append(
+                {
+                    "order_id": order_id,
+                    "instrument_id": item.get("instrumentID") or item.get("instrumentId"),
+                    "status": item.get("statusID") or item.get("status"),
+                    "order_kind": key,
+                    "raw": item,
+                }
+            )
+    return rows
+
+
+def _enrich_positions_with_metadata(cfg: EtoroConfig, positions: list[dict[str, Any]]) -> None:
+    missing_ids: list[int] = []
+    for row in positions:
+        if row.get("symbol"):
+            continue
+        instrument_id = row.get("instrument_id")
+        if instrument_id is None:
+            continue
+        try:
+            missing_ids.append(int(instrument_id))
+        except (TypeError, ValueError):
+            continue
+    if not missing_ids:
+        return
+    try:
+        metadata = get_instrument_metadata(missing_ids, cfg)
+    except EtoroAPIError:
+        return
+    labels = {
+        int(item["instrument_id"]): item.get("symbol") or item.get("display_name")
+        for item in metadata.get("instruments") or []
+        if isinstance(item, dict) and item.get("instrument_id") is not None
+    }
+    for row in positions:
+        instrument_id = row.get("instrument_id")
+        if row.get("symbol") or instrument_id is None:
+            continue
+        try:
+            label = labels.get(int(instrument_id))
+        except (TypeError, ValueError):
+            label = None
+        if label:
+            row["symbol"] = label
 
 
 def _extract_orders(payload: Any) -> list[dict[str, Any]]:

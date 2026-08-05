@@ -141,6 +141,78 @@ def test_classification_registered() -> None:
     assert classify_tool("place_order", None, curated) is ToolClass.WRITE
     assert classify_tool("unknown_etoro_op", None, curated) is ToolClass.UNKNOWN
     assert ETORO_TOOL_CLASS["copy_close"] is ToolClass.WRITE
+    assert ETORO_TOOL_CLASS["get_instrument_metadata"] is ToolClass.READ
+
+
+def test_resolve_btc_uses_internal_symbol_full(monkeypatch) -> None:
+    cfg = EtoroConfig(profile="paper", api_key="k", user_key="u")
+    captured_params: list[dict[str, Any]] = []
+
+    def _transport(method: str, url: str, **kwargs: Any) -> _FakeResponse:
+        if "/market-data/search" in url:
+            captured_params.append(dict(kwargs.get("params") or {}))
+            if kwargs.get("params", {}).get("internalSymbolFull") == "BTC":
+                return _FakeResponse(
+                    200,
+                    {
+                        "items": [
+                            {"instrumentId": 100134, "internalSymbolFull": "BTCA"},
+                            {"instrumentId": 100000, "internalSymbolFull": "BTC", "internalInstrumentDisplayName": "Bitcoin"},
+                        ],
+                    },
+                )
+        raise AssertionError(f"unexpected request {method} {url}")
+
+    set_client_factory(lambda c: EtoroClient(cfg, transport=_transport))
+    from src.trading.connectors.etoro.instruments import resolve_instrument_id
+
+    assert resolve_instrument_id("BTC", cfg) == 100000
+    assert resolve_instrument_id("Bitcoin", cfg) == 100000
+    assert any(p.get("internalSymbolFull") == "BTC" for p in captured_params)
+
+
+def test_fuzzy_search_filters_sentinel_ids(monkeypatch) -> None:
+    cfg = EtoroConfig(profile="paper", api_key="k", user_key="u")
+
+    def _transport(method: str, url: str, **kwargs: Any) -> _FakeResponse:
+        if kwargs.get("params", {}).get("search"):
+            return _FakeResponse(
+                200,
+                {"items": [{"instrumentId": -100000}, {"instrumentId": 100000, "internalSymbolFull": "BTC"}]},
+            )
+        return _FakeResponse(200, {"items": []})
+
+    set_client_factory(lambda c: EtoroClient(cfg, transport=_transport))
+    from src.trading.connectors.etoro.instruments import search_instruments
+
+    result = search_instruments("bitcoin", cfg, limit=5, mode="discover")
+    assert result["status"] == "ok"
+    assert result["instruments"][0]["instrument_id"] == 100000
+
+
+def test_get_open_orders_reads_portfolio_orders(monkeypatch) -> None:
+    cfg = EtoroConfig(profile="paper", api_key="k", user_key="u")
+
+    def _transport(method: str, url: str, **kwargs: Any) -> _FakeResponse:
+        assert method == "GET"
+        assert info_root(cfg) + "/portfolio" in url
+        return _FakeResponse(
+            200,
+            {
+                "clientPortfolio": {
+                    "ordersForOpen": [{"orderID": 99, "instrumentID": 100000}],
+                    "ordersForClose": [],
+                }
+            },
+        )
+
+    set_client_factory(lambda c: EtoroClient(cfg, transport=_transport))
+    from src.trading.connectors.etoro import sdk as etoro_sdk
+
+    result = etoro_sdk.get_open_orders(cfg)
+    assert result["status"] == "ok"
+    assert result["orders"][0]["order_id"] == 99
+    assert result["orders"][0]["order_kind"] == "ordersForOpen"
 
 
 def test_service_dispatches_positions(monkeypatch) -> None:

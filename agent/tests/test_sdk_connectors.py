@@ -31,6 +31,8 @@ from src.trading.connectors.okx import sdk as ox
 from src.trading.connectors.okx.classification import OKX_TOOL_CLASS
 from src.trading.connectors.shoonya import sdk as sh
 from src.trading.connectors.shoonya.classification import SHOONYA_TOOL_CLASS
+from src.trading.connectors.etoro import client as etoro_client
+from src.trading.connectors.etoro.classification import ETORO_TOOL_CLASS
 from src.trading.connectors.tiger import sdk as tg
 from src.trading.connectors.tiger.classification import TIGER_TOOL_CLASS
 
@@ -413,6 +415,17 @@ def test_service_check_connection_unconfigured_longbridge(monkeypatch, tmp_path)
     assert result["status"] == "error"
     assert "not configured" in result["error"]
     assert result["connector"] == "longbridge"
+    assert result["transport"] == "broker_sdk"
+
+
+def test_service_check_connection_unconfigured_etoro(monkeypatch, tmp_path) -> None:
+    for env_name in ("ETORO_API_KEY", "ETORO_USER_KEY"):
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setattr(etoro_client, "get_runtime_root", lambda: tmp_path)
+    result = service.check_connection("etoro-paper-sdk")
+    assert result["status"] == "error"
+    assert "not configured" in result["error"]
+    assert result["connector"] == "etoro"
     assert result["transport"] == "broker_sdk"
 
 

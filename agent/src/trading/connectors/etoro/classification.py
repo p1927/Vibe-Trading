@@ -1,4 +1,8 @@
-"""Curated read/write classification for eToro Public API operations."""
+"""Curated read/write classification for eToro Public API operations.
+
+Unlisted tool names are classified as UNKNOWN and fail closed as writes by the
+live registry (see ``src.live.registry``).
+"""
 
 from __future__ import annotations
 
@@ -13,6 +17,7 @@ ETORO_TOOL_CLASS: dict[str, ToolClass] = {
     "get_quote": ToolClass.READ,
     "get_historical_bars": ToolClass.READ,
     "search_instruments": ToolClass.READ,
+    "get_instrument_metadata": ToolClass.READ,
     "copy_poll": ToolClass.READ,
     "copy_precheck": ToolClass.READ,
     # WRITE — trading

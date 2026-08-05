@@ -1250,6 +1250,45 @@ The `mt5` market-data loader — the head of the forex fallback chain — shares
 
 ---
 
+## 🔌 eToro Public API Connector
+
+Connects to [eToro's Public API](https://builders.etoro.com/) for demo and real accounts via API key pair (`x-api-key` + `x-user-key`). Demo and real environments are separated structurally: demo keys only reach `/demo` API paths.
+
+Configure `~/.vibe-trading/etoro.json` (create it yourself; `chmod 600` where supported):
+
+```json
+{
+  "api_key": "YOUR_PUBLIC_API_KEY",
+  "user_key": "YOUR_USER_KEY",
+  "profile": "paper"
+}
+```
+
+Alternatively set `ETORO_API_KEY` and `ETORO_USER_KEY` in `~/.vibe-trading/.env`.
+
+Then:
+
+```bash
+vibe-trading connector use etoro-paper-sdk
+vibe-trading connector check
+vibe-trading connector account
+vibe-trading connector positions
+vibe-trading connector quote BTC
+```
+
+| Profile | Account | Orders |
+|---------|---------|--------|
+| `etoro-paper-sdk` | demo | read-only |
+| `etoro-live-sdk-readonly` | real | read-only |
+| `etoro-paper-trade` | demo | direct placement on demo paths |
+| `etoro-live-trade` | real | mandate + kill-switch gated |
+
+Symbol lookup uses eToro's `internalSymbolFull` search (e.g. `BTC` → instrument id `100000`). Use the `etoro_search_instruments` agent tool to resolve tickers before trading.
+
+Safety boundary: demo and real are path-separated and key-bound (`paper_guard: path_separated_key_bound`). Live risk-increasing actions (open, copy-start/increase, risk-increasing edits) require an authorized mandate and a clear halt state. Risk-reducing actions (cancel, full close, copy close) remain available when halted and are audit-logged. eToro-specific write tools (`etoro_close_position`, `etoro_copy_*`, etc.) are agent tools only — not exposed via MCP or CLI. Rollback: revert the connector commit(s) or disable profiles; halt blocks new live risk-increasing actions.
+
+---
+
 ## 🔌 Loading Tools from External MCP Servers (MCP Client Mode)
 
 > **This is the opposite direction from the MCP Plugin above.**

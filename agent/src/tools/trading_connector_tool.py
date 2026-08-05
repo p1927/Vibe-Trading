@@ -33,6 +33,7 @@ from src.trading.service import (
     get_positions,
     get_quote,
     place_order,
+    search_instruments,
 )
 
 
@@ -156,6 +157,9 @@ TRADING_COMMON_PARAMETERS = {
         "type": "string",
         "description": "Optional account code filter when supported by the connector.",
     },
+}
+
+ETORO_CREDENTIAL_PARAMETERS = {
     "api_key": {
         "type": "string",
         "description": "Optional eToro Public API key override.",
@@ -165,6 +169,9 @@ TRADING_COMMON_PARAMETERS = {
         "description": "Optional eToro user key override.",
     },
 }
+
+
+ETORO_TOOL_PARAMETERS = {**TRADING_COMMON_PARAMETERS, **ETORO_CREDENTIAL_PARAMETERS}
 
 
 def _overrides(kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -186,6 +193,13 @@ def _overrides(kwargs: dict[str, Any]) -> dict[str, Any]:
         "port": _int_or_none(kwargs.get("port"), "port"),
         "client_id": _int_or_none(kwargs.get("client_id"), "client_id"),
         "account": _connection(kwargs.get("account")),
+    }
+
+
+def _etoro_overrides(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Build override dict for eToro tools, including optional credential overrides."""
+    return {
+        **_overrides(kwargs),
         "api_key": _connection(kwargs.get("api_key")),
         "user_key": _connection(kwargs.get("user_key")),
     }
@@ -525,6 +539,52 @@ class TradingCancelOrderTool(BaseTool):
             return _json_result({"status": "error", "error": str(exc)})
 
 
+class EtoroSearchInstrumentsTool(BaseTool):
+    """Resolve eToro tickers via ``internalSymbolFull`` or fuzzy discovery."""
+
+    name = "etoro_search_instruments"
+    description = (
+        "Search eToro instruments by ticker (BTC, AAPL) or free text. "
+        "Tickers use exact internalSymbolFull lookup; discovery uses fuzzy search."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            **ETORO_TOOL_PARAMETERS,
+            "query": {"type": "string", "description": "Ticker or search text (e.g. BTC, Apple)."},
+            "limit": {"type": "integer", "description": "Max results (default 10, max 50)."},
+            "mode": {
+                "type": "string",
+                "enum": ["auto", "symbol", "discover"],
+                "description": "auto: ticker exact lookup then fuzzy; symbol: exact only; discover: fuzzy only.",
+            },
+        },
+        "required": ["query"],
+    }
+    repeatable = True
+    is_readonly = True
+
+    def execute(self, **kwargs: Any) -> str:
+        try:
+            overrides = _etoro_overrides(kwargs)
+            limit = _int_or_none(kwargs.get("limit"), "limit") or 10
+            mode = str(kwargs.get("mode") or "auto")
+        except InvalidTradingArgument as exc:
+            return _json_result({"status": "error", "error": str(exc)})
+        try:
+            return _json_result(
+                search_instruments(
+                    str(kwargs["query"]),
+                    _connection(kwargs.get("connection")),
+                    limit=limit,
+                    mode=mode,
+                    **overrides,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _json_result({"status": "error", "error": str(exc)})
+
+
 class EtoroClosePositionTool(BaseTool):
     """Close or partially close an eToro position."""
 
@@ -533,7 +593,7 @@ class EtoroClosePositionTool(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
-            **TRADING_COMMON_PARAMETERS,
+            **ETORO_TOOL_PARAMETERS,
             "position_id": {"type": "string", "description": "eToro position id."},
             "instrument_id": {"type": "integer", "description": "Optional instrument id."},
             "units_to_close": {"type": "number", "description": "Units to close; omit to close entire position."},
@@ -546,7 +606,7 @@ class EtoroClosePositionTool(BaseTool):
 
     def execute(self, **kwargs: Any) -> str:
         try:
-            overrides = _overrides(kwargs)
+            overrides = _etoro_overrides(kwargs)
             units = _num_or_none(kwargs.get("units_to_close"), "units_to_close")
         except InvalidTradingArgument as exc:
             return _json_result({"status": "error", "error": str(exc)})
@@ -571,7 +631,7 @@ class EtoroCancelCloseOrderTool(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
-            **TRADING_COMMON_PARAMETERS,
+            **ETORO_TOOL_PARAMETERS,
             "order_id": {"type": "string", "description": "Pending close order id."},
             "request_id": {"type": "string", "description": "Optional idempotency request id (UUID)."},
         },
@@ -582,7 +642,7 @@ class EtoroCancelCloseOrderTool(BaseTool):
 
     def execute(self, **kwargs: Any) -> str:
         try:
-            overrides = _overrides(kwargs)
+            overrides = _etoro_overrides(kwargs)
         except InvalidTradingArgument as exc:
             return _json_result({"status": "error", "error": str(exc)})
         try:
@@ -604,7 +664,7 @@ class EtoroEditPositionStopsTool(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
-            **TRADING_COMMON_PARAMETERS,
+            **ETORO_TOOL_PARAMETERS,
             "position_id": {"type": "string", "description": "eToro position id."},
             "stop_loss": {"type": "number", "description": "New stop-loss rate."},
             "take_profit": {"type": "number", "description": "New take-profit rate."},
@@ -618,7 +678,7 @@ class EtoroEditPositionStopsTool(BaseTool):
 
     def execute(self, **kwargs: Any) -> str:
         try:
-            overrides = _overrides(kwargs)
+            overrides = _etoro_overrides(kwargs)
             stop_loss = _num_or_none(kwargs.get("stop_loss"), "stop_loss")
             take_profit = _num_or_none(kwargs.get("take_profit"), "take_profit")
         except InvalidTradingArgument as exc:
@@ -646,7 +706,7 @@ class EtoroCopyPrecheckTool(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
-            **TRADING_COMMON_PARAMETERS,
+            **ETORO_TOOL_PARAMETERS,
             "parent_cid": {"type": "integer", "description": "Investor parent CID."},
             "amount_usd": {"type": "number", "description": "USD amount to copy or adjust."},
             "request_id": {"type": "string", "description": "Optional request id (UUID)."},
@@ -658,7 +718,7 @@ class EtoroCopyPrecheckTool(BaseTool):
 
     def execute(self, **kwargs: Any) -> str:
         try:
-            overrides = _overrides(kwargs)
+            overrides = _etoro_overrides(kwargs)
             amount = _finite_float(kwargs["amount_usd"], "amount_usd")
             parent_cid = _int_or_none(kwargs["parent_cid"], "parent_cid")
         except InvalidTradingArgument as exc:
@@ -683,7 +743,7 @@ class EtoroCopyStartTool(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
-            **TRADING_COMMON_PARAMETERS,
+            **ETORO_TOOL_PARAMETERS,
             "parent_cid": {"type": "integer", "description": "Investor parent CID."},
             "amount_usd": {"type": "number", "description": "USD amount to add (negative to reduce)."},
             "request_id": {"type": "string", "description": "Optional request id (UUID)."},
@@ -695,7 +755,7 @@ class EtoroCopyStartTool(BaseTool):
 
     def execute(self, **kwargs: Any) -> str:
         try:
-            overrides = _overrides(kwargs)
+            overrides = _etoro_overrides(kwargs)
             amount = _finite_float(kwargs["amount_usd"], "amount_usd")
             parent_cid = _int_or_none(kwargs["parent_cid"], "parent_cid")
         except InvalidTradingArgument as exc:
@@ -720,7 +780,7 @@ class EtoroCopyPollTool(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
-            **TRADING_COMMON_PARAMETERS,
+            **ETORO_TOOL_PARAMETERS,
             "reference_id": {"type": "string", "description": "Copy operation reference id."},
             "request_id": {"type": "string", "description": "Optional request id (UUID)."},
         },
@@ -731,7 +791,7 @@ class EtoroCopyPollTool(BaseTool):
 
     def execute(self, **kwargs: Any) -> str:
         try:
-            overrides = _overrides(kwargs)
+            overrides = _etoro_overrides(kwargs)
         except InvalidTradingArgument as exc:
             return _json_result({"status": "error", "error": str(exc)})
         try:
@@ -753,7 +813,7 @@ class EtoroCopyCloseTool(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
-            **TRADING_COMMON_PARAMETERS,
+            **ETORO_TOOL_PARAMETERS,
             "mirror_id": {"type": "integer", "description": "Copy mirror id."},
             "unregister_type": {
                 "type": "string",
@@ -769,7 +829,7 @@ class EtoroCopyCloseTool(BaseTool):
 
     def execute(self, **kwargs: Any) -> str:
         try:
-            overrides = _overrides(kwargs)
+            overrides = _etoro_overrides(kwargs)
             mirror_id = _int_or_none(kwargs["mirror_id"], "mirror_id")
         except InvalidTradingArgument as exc:
             return _json_result({"status": "error", "error": str(exc)})
