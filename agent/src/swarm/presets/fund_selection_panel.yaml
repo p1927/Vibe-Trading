@@ -48,10 +48,18 @@ agents:
 
       Attribution Framework:
       1. **Brinson Attribution Decomposition (for actively managed funds)**
+         Implemented — run it, do not estimate it:
+         `from src.quantlib.attribution import brinson_fachler, carino_link`
          - **Allocation Effect**: Excess return from overweighting/underweighting sectors vs benchmark; measures the manager's sector timing ability
          - **Selection Effect**: Excess return from superior stock selection within sectors vs benchmark; measures the manager's stock-picking ability
          - **Interaction Effect**: Residual effect of combined allocation and selection decisions
-         - Sum of three effects = total excess return; identifies the manager's primary alpha source
+         - `BrinsonResult.total_effect` is the total excess return the three effects reconcile to; use `carino_link` to compound multi-period effects rather than adding them
+         - Inputs come from data, not from memory: fund sector weights via
+           `etf_holdings` look-through (note the disclosed report period — holdings
+           are lagged, and `coverage` tells you whether you got the full book or
+           only a top-N), sector and benchmark return series via `get_market_data`.
+           A fund whose holdings you cannot retrieve gets NO Brinson table; say
+           the look-through was unavailable and fall back to return-based analysis.
       2. **Barra Style Factor Analysis**
          - Key style factor exposures: value (low P/B, P/E) / growth (high ROE growth) / size (large/mid/small cap) / momentum (recent strength) / volatility (low-vol premium) / quality (ROE / financial stability)
          - Style factor return decomposition: what proportion of performance comes from style exposure (beta return) vs pure alpha
@@ -69,8 +77,8 @@ agents:
          - Tracking error trend over time
 
       ## Output Requirements
-      1. **Brinson Attribution Report** — Three-effect decomposition for each candidate fund, clearly identifying primary alpha source (allocation ability / stock selection ability)
-      2. **Barra Style Profile** — Style factor exposure radar (text format) for each fund, noting deviation from benchmark
+      1. **Brinson Attribution Report** — Three-effect decomposition for each candidate fund from `brinson_fachler`, clearly identifying primary alpha source (allocation ability / stock selection ability); state the holdings report period and return series behind each table
+      2. **Barra Style Profile** — There is no Barra factor model in this system and no licensed Barra exposure feed. Build a proxy style profile from the look-through holdings and label it exactly that: a proxy, with the factor definitions you used. Never present a proxy exposure as a Barra number
       3. **Excess Return Quality Rating** — Composite rating (A/B/C/D) based on IR/hit rate/consistency, distinguishing genuine investment skill from style exposure
       4. **Up/Down Capture Matrix** — Offensive/defensive profile comparison across candidate funds, identifying funds with balanced attack and defense
       5. **Style Drift Warnings** — Flag style-inconsistent funds with drift severity, recommend style weight adjustments in FOF construction
@@ -79,8 +87,11 @@ agents:
       Use load_skill("performance-attribution") for the Brinson model and Barra factor analysis framework.
       Use load_skill("fund-analysis") for fund holdings and performance data retrieval.
       Use load_skill("multi-factor") for multi-factor style analysis tools.
-      Use the factor_analysis tool for actual factor exposure calculations and attribution decomposition.
-    tools: [bash, read_file, write_file, load_skill, factor_analysis]
+      `factor_analysis` computes IC/IR and layered NAV from a factor CSV and a return CSV
+      you write yourself; it does not fetch data and does not do Brinson attribution.
+      The attribution decomposition comes from `src.quantlib.attribution`, the holdings
+      from `etf_holdings`, and the return series from `get_market_data`.
+    tools: [bash, read_file, write_file, load_skill, factor_analysis, etf_holdings, get_market_data]
     skills: [performance-attribution, fund-analysis, multi-factor]
     max_iterations: 50
     timeout_seconds: 1800
@@ -146,7 +157,7 @@ tasks:
 
   - id: task-performance-attribution
     agent_id: attribution_analyst
-    prompt_template: "Conduct deep performance attribution analysis on candidate funds: Brinson three-effect decomposition, Barra style factor exposure, excess return quality rating, up/down capture rate comparison. Output attribution report and shortlist for FOF construction. Objective: {goal}."
+    prompt_template: "Conduct deep performance attribution analysis on candidate funds: Brinson three-effect decomposition via src.quantlib.attribution on retrieved holdings and return series, a clearly-labelled proxy style profile (no Barra model exists here), excess return quality rating, up/down capture rate comparison. Output attribution report and shortlist for FOF construction. Objective: {goal}."
     depends_on: [task-fund-screen]
     input_from:
       candidate_funds: task-fund-screen
