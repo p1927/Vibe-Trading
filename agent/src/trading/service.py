@@ -24,6 +24,7 @@ _SDK_CONNECTOR_MODULES = {
     "shoonya": "src.trading.connectors.shoonya.sdk",
     "trading212": "src.trading.connectors.trading212.sdk",
     "mt5": "src.trading.connectors.mt5.sdk",
+    "etoro": "src.trading.connectors.etoro.sdk",
 }
 
 
@@ -212,6 +213,7 @@ _CONNECTOR_INSTRUMENT = {
     "longbridge": ("equity", None),
     "futu": ("equity", None),
     "trading212": ("equity", None),
+    "etoro": ("equity", None),
 }
 
 
@@ -341,6 +343,285 @@ def cancel_order(
     if profile.environment == "live":
         _audit_live_cancel(profile, order_id, symbol, result, session_id)
     return _with_profile(profile, result)
+
+
+def _unsupported_etoro(profile: TradingProfile, capability: str) -> dict[str, Any]:
+    return _unsupported(profile, capability)
+
+
+def _route_sdk_write(
+    profile: TradingProfile,
+    *,
+    remote_tool: str,
+    risk_reducing: bool,
+    intent: Any | None,
+    audit_request: dict[str, Any],
+    execute: Any,
+    overrides: dict[str, Any],
+    unsupported_capability: str,
+) -> dict[str, Any]:
+    if profile.transport != "broker_sdk":
+        return _unsupported(profile, unsupported_capability)
+    if profile.readonly:
+        return _unsupported(profile, unsupported_capability)
+    module = _sdk_module(profile.connector)
+    config = module.build_config(profile.config, overrides)
+    if profile.environment == "paper":
+        return _with_profile(profile, execute(config))
+    from src.live.sdk_order_gate import execute_live_action
+
+    return _with_profile(
+        profile,
+        execute_live_action(
+            broker=profile.connector,
+            connector_module=module,
+            config=config,
+            remote_tool=remote_tool,
+            risk_reducing=risk_reducing,
+            intent=intent,
+            execute_fn=lambda: execute(config),
+            audit_request=audit_request,
+            session_id=str(overrides.get("session_id") or ""),
+        ),
+    )
+
+
+def close_position(
+    position_id: str | int,
+    profile_id: str | None = None,
+    *,
+    instrument_id: int | None = None,
+    units_to_close: float | None = None,
+    request_id: str | None = None,
+    session_id: str = "",
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Close or partially close a position (eToro connector)."""
+    profile = profile_by_id(profile_id)
+    if profile.connector != "etoro":
+        return _unsupported_etoro(profile, "positions.close")
+    overrides = dict(overrides)
+    overrides.pop("session_id", None)
+    module = _sdk_module(profile.connector)
+    audit = {
+        "position_id": str(position_id),
+        "instrument_id": instrument_id,
+        "units_to_close": units_to_close,
+        "request_id": request_id,
+    }
+    full_close = units_to_close is None
+    return _route_sdk_write(
+        profile,
+        remote_tool="close_position",
+        risk_reducing=full_close,
+        intent=None,
+        audit_request=audit,
+        execute=lambda cfg: module.close_position(
+            cfg,
+            position_id=position_id,
+            instrument_id=instrument_id,
+            units_to_close=units_to_close,
+            request_id=request_id,
+        ),
+        overrides={**overrides, "session_id": session_id},
+        unsupported_capability="positions.close",
+    )
+
+
+def cancel_close_order(
+    order_id: str,
+    profile_id: str | None = None,
+    *,
+    request_id: str | None = None,
+    session_id: str = "",
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Cancel a pending market close order (eToro connector)."""
+    profile = profile_by_id(profile_id)
+    if profile.connector != "etoro":
+        return _unsupported_etoro(profile, "orders.cancel_close")
+    overrides = dict(overrides)
+    overrides.pop("session_id", None)
+    module = _sdk_module(profile.connector)
+    audit = {"order_id": order_id, "request_id": request_id}
+    return _route_sdk_write(
+        profile,
+        remote_tool="cancel_close_order",
+        risk_reducing=True,
+        intent=None,
+        audit_request=audit,
+        execute=lambda cfg: module.cancel_close_order(cfg, order_id, request_id=request_id),
+        overrides={**overrides, "session_id": session_id},
+        unsupported_capability="orders.cancel_close",
+    )
+
+
+def edit_position_stops(
+    position_id: str | int,
+    profile_id: str | None = None,
+    *,
+    stop_loss: float | None = None,
+    take_profit: float | None = None,
+    trailing_stop_loss: bool | None = None,
+    request_id: str | None = None,
+    session_id: str = "",
+    **overrides: Any,
+) -> dict[str, Any]:
+    """Modify SL/TP on an open position (eToro connector)."""
+    profile = profile_by_id(profile_id)
+    if profile.connector != "etoro":
+        return _unsupported_etoro(profile, "positions.edit")
+    overrides = dict(overrides)
+    overrides.pop("session_id", None)
+    module = _sdk_module(profile.connector)
+    audit = {
+        "position_id": str(position_id),
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "trailing_stop_loss": trailing_stop_loss,
+        "request_id": request_id,
+    }
+    from src.live.enforcement import OrderIntent
+
+    intent = OrderIntent(
+        symbol=str(position_id),
+        side="sell",
+        notional_usd=0.0,
+        quantity=None,
+        instrument_type=_order_classification(profile.connector, str(position_id))[0],
+        asset_class=_order_classification(profile.connector, str(position_id))[1],
+    )
+    return _route_sdk_write(
+        profile,
+        remote_tool="edit_position_stops",
+        risk_reducing=False,
+        intent=intent,
+        audit_request=audit,
+        execute=lambda cfg: module.edit_position_stops(
+            cfg,
+            position_id=position_id,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            trailing_stop_loss=trailing_stop_loss,
+            request_id=request_id,
+        ),
+        overrides={**overrides, "session_id": session_id},
+        unsupported_capability="positions.edit",
+    )
+
+
+def etoro_copy_precheck(
+    parent_cid: int,
+    amount_usd: float,
+    profile_id: str | None = None,
+    *,
+    request_id: str | None = None,
+    **overrides: Any,
+) -> dict[str, Any]:
+    profile = profile_by_id(profile_id)
+    if profile.connector != "etoro":
+        return _unsupported_etoro(profile, "copy.precheck")
+    module = _sdk_module(profile.connector)
+    config = module.build_config(profile.config, overrides)
+    return _with_profile(
+        profile,
+        module.copy_precheck(config, parent_cid=parent_cid, amount_usd=amount_usd, request_id=request_id),
+    )
+
+
+def etoro_copy_start(
+    parent_cid: int,
+    amount_usd: float,
+    profile_id: str | None = None,
+    *,
+    request_id: str | None = None,
+    session_id: str = "",
+    **overrides: Any,
+) -> dict[str, Any]:
+    profile = profile_by_id(profile_id)
+    if profile.connector != "etoro":
+        return _unsupported_etoro(profile, "copy.start")
+    overrides = dict(overrides)
+    overrides.pop("session_id", None)
+    module = _sdk_module(profile.connector)
+    audit = {"parent_cid": parent_cid, "amount_usd": amount_usd, "request_id": request_id}
+    from src.live.enforcement import OrderIntent
+
+    risk_reducing = float(amount_usd) < 0
+    intent = None
+    if not risk_reducing:
+        instrument_type, asset_class = _order_classification(profile.connector, str(parent_cid))
+        intent = OrderIntent(
+            symbol=f"COPY:{parent_cid}",
+            side="buy",
+            notional_usd=abs(float(amount_usd)),
+            quantity=None,
+            instrument_type=instrument_type,
+            asset_class=asset_class,
+        )
+    return _route_sdk_write(
+        profile,
+        remote_tool="copy_start_or_adjust",
+        risk_reducing=risk_reducing,
+        intent=intent,
+        audit_request=audit,
+        execute=lambda cfg: module.copy_start_or_adjust(
+            cfg,
+            parent_cid=parent_cid,
+            amount_usd=amount_usd,
+            request_id=request_id,
+        ),
+        overrides={**overrides, "session_id": session_id},
+        unsupported_capability="copy.start",
+    )
+
+
+def etoro_copy_poll(
+    reference_id: str,
+    profile_id: str | None = None,
+    *,
+    request_id: str | None = None,
+    **overrides: Any,
+) -> dict[str, Any]:
+    profile = profile_by_id(profile_id)
+    if profile.connector != "etoro":
+        return _unsupported_etoro(profile, "copy.poll")
+    module = _sdk_module(profile.connector)
+    config = module.build_config(profile.config, overrides)
+    return _with_profile(profile, module.copy_poll(config, reference_id=reference_id, request_id=request_id))
+
+
+def etoro_copy_close(
+    mirror_id: int,
+    profile_id: str | None = None,
+    *,
+    unregister_type: str = "Close",
+    request_id: str | None = None,
+    session_id: str = "",
+    **overrides: Any,
+) -> dict[str, Any]:
+    profile = profile_by_id(profile_id)
+    if profile.connector != "etoro":
+        return _unsupported_etoro(profile, "copy.close")
+    overrides = dict(overrides)
+    overrides.pop("session_id", None)
+    module = _sdk_module(profile.connector)
+    audit = {"mirror_id": mirror_id, "unregister_type": unregister_type, "request_id": request_id}
+    return _route_sdk_write(
+        profile,
+        remote_tool="copy_close",
+        risk_reducing=True,
+        intent=None,
+        audit_request=audit,
+        execute=lambda cfg: module.copy_close(
+            cfg,
+            mirror_id=mirror_id,
+            unregister_type=unregister_type,
+            request_id=request_id,
+        ),
+        overrides={**overrides, "session_id": session_id},
+        unsupported_capability="copy.close",
+    )
 
 
 def _audit_live_cancel(profile, order_id, symbol, result, session_id) -> None:

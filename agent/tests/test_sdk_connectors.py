@@ -54,6 +54,8 @@ def test_sdk_profiles_registered() -> None:
         "futu-paper-sdk", "futu-live-sdk-readonly",
         "dhan-paper-sdk", "dhan-live-sdk-readonly",
         "shoonya-paper-sdk", "shoonya-live-sdk-readonly",
+        "etoro-paper-sdk", "etoro-paper-trade",
+        "etoro-live-sdk-readonly", "etoro-live-trade",
     } <= ids
 
 
@@ -89,6 +91,8 @@ def test_no_discriminator_brokers_expose_no_live_trade_profile() -> None:
         ("dhan-live-sdk-readonly", "dhan", "live"),
         ("shoonya-paper-sdk", "shoonya", "paper"),
         ("shoonya-live-sdk-readonly", "shoonya", "live"),
+        ("etoro-paper-sdk", "etoro", "paper"),
+        ("etoro-live-sdk-readonly", "etoro", "live"),
     ],
 )
 def test_sdk_profiles_are_readonly_broker_sdk(profile_id, connector, environment) -> None:

@@ -18,8 +18,15 @@ from src.trading.profiles import (
     save_selected_profile_id,
 )
 from src.trading.service import (
+    cancel_close_order,
     cancel_order,
     check_connection,
+    close_position,
+    edit_position_stops,
+    etoro_copy_close,
+    etoro_copy_poll,
+    etoro_copy_precheck,
+    etoro_copy_start,
     get_account,
     get_history,
     get_open_orders,
@@ -149,6 +156,14 @@ TRADING_COMMON_PARAMETERS = {
         "type": "string",
         "description": "Optional account code filter when supported by the connector.",
     },
+    "api_key": {
+        "type": "string",
+        "description": "Optional eToro Public API key override.",
+    },
+    "user_key": {
+        "type": "string",
+        "description": "Optional eToro user key override.",
+    },
 }
 
 
@@ -171,6 +186,8 @@ def _overrides(kwargs: dict[str, Any]) -> dict[str, Any]:
         "port": _int_or_none(kwargs.get("port"), "port"),
         "client_id": _int_or_none(kwargs.get("client_id"), "client_id"),
         "account": _connection(kwargs.get("account")),
+        "api_key": _connection(kwargs.get("api_key")),
+        "user_key": _connection(kwargs.get("user_key")),
     }
 
 
@@ -501,6 +518,268 @@ class TradingCancelOrderTool(BaseTool):
                     str(kwargs["order_id"]),
                     _connection(kwargs.get("connection")),
                     symbol=_connection(kwargs.get("symbol")),
+                    **overrides,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _json_result({"status": "error", "error": str(exc)})
+
+
+class EtoroClosePositionTool(BaseTool):
+    """Close or partially close an eToro position."""
+
+    name = "etoro_close_position"
+    description = "Close or partially close an open eToro position by position id."
+    parameters = {
+        "type": "object",
+        "properties": {
+            **TRADING_COMMON_PARAMETERS,
+            "position_id": {"type": "string", "description": "eToro position id."},
+            "instrument_id": {"type": "integer", "description": "Optional instrument id."},
+            "units_to_close": {"type": "number", "description": "Units to close; omit to close entire position."},
+            "request_id": {"type": "string", "description": "Optional idempotency request id (UUID)."},
+        },
+        "required": ["position_id"],
+    }
+    repeatable = False
+    is_readonly = False
+
+    def execute(self, **kwargs: Any) -> str:
+        try:
+            overrides = _overrides(kwargs)
+            units = _num_or_none(kwargs.get("units_to_close"), "units_to_close")
+        except InvalidTradingArgument as exc:
+            return _json_result({"status": "error", "error": str(exc)})
+        try:
+            return _json_result(
+                close_position(
+                    kwargs["position_id"],
+                    _connection(kwargs.get("connection")),
+                    instrument_id=_int_or_none(kwargs.get("instrument_id"), "instrument_id"),
+                    units_to_close=units,
+                    request_id=_connection(kwargs.get("request_id")),
+                    **overrides,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _json_result({"status": "error", "error": str(exc)})
+
+
+class EtoroCancelCloseOrderTool(BaseTool):
+    name = "etoro_cancel_close_order"
+    description = "Cancel a pending eToro market close order by order id."
+    parameters = {
+        "type": "object",
+        "properties": {
+            **TRADING_COMMON_PARAMETERS,
+            "order_id": {"type": "string", "description": "Pending close order id."},
+            "request_id": {"type": "string", "description": "Optional idempotency request id (UUID)."},
+        },
+        "required": ["order_id"],
+    }
+    repeatable = False
+    is_readonly = False
+
+    def execute(self, **kwargs: Any) -> str:
+        try:
+            overrides = _overrides(kwargs)
+        except InvalidTradingArgument as exc:
+            return _json_result({"status": "error", "error": str(exc)})
+        try:
+            return _json_result(
+                cancel_close_order(
+                    str(kwargs["order_id"]),
+                    _connection(kwargs.get("connection")),
+                    request_id=_connection(kwargs.get("request_id")),
+                    **overrides,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _json_result({"status": "error", "error": str(exc)})
+
+
+class EtoroEditPositionStopsTool(BaseTool):
+    name = "etoro_edit_position_stops"
+    description = "Modify stop-loss, take-profit, or trailing stop on an open eToro position."
+    parameters = {
+        "type": "object",
+        "properties": {
+            **TRADING_COMMON_PARAMETERS,
+            "position_id": {"type": "string", "description": "eToro position id."},
+            "stop_loss": {"type": "number", "description": "New stop-loss rate."},
+            "take_profit": {"type": "number", "description": "New take-profit rate."},
+            "trailing_stop_loss": {"type": "boolean", "description": "Enable trailing stop-loss."},
+            "request_id": {"type": "string", "description": "Optional idempotency request id (UUID)."},
+        },
+        "required": ["position_id"],
+    }
+    repeatable = False
+    is_readonly = False
+
+    def execute(self, **kwargs: Any) -> str:
+        try:
+            overrides = _overrides(kwargs)
+            stop_loss = _num_or_none(kwargs.get("stop_loss"), "stop_loss")
+            take_profit = _num_or_none(kwargs.get("take_profit"), "take_profit")
+        except InvalidTradingArgument as exc:
+            return _json_result({"status": "error", "error": str(exc)})
+        trailing = kwargs.get("trailing_stop_loss")
+        try:
+            return _json_result(
+                edit_position_stops(
+                    kwargs["position_id"],
+                    _connection(kwargs.get("connection")),
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    trailing_stop_loss=bool(trailing) if trailing is not None else None,
+                    request_id=_connection(kwargs.get("request_id")),
+                    **overrides,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _json_result({"status": "error", "error": str(exc)})
+
+
+class EtoroCopyPrecheckTool(BaseTool):
+    name = "etoro_copy_precheck"
+    description = "Dry-run whether the account can copy an investor with a given USD amount."
+    parameters = {
+        "type": "object",
+        "properties": {
+            **TRADING_COMMON_PARAMETERS,
+            "parent_cid": {"type": "integer", "description": "Investor parent CID."},
+            "amount_usd": {"type": "number", "description": "USD amount to copy or adjust."},
+            "request_id": {"type": "string", "description": "Optional request id (UUID)."},
+        },
+        "required": ["parent_cid", "amount_usd"],
+    }
+    repeatable = True
+    is_readonly = True
+
+    def execute(self, **kwargs: Any) -> str:
+        try:
+            overrides = _overrides(kwargs)
+            amount = _finite_float(kwargs["amount_usd"], "amount_usd")
+            parent_cid = _int_or_none(kwargs["parent_cid"], "parent_cid")
+        except InvalidTradingArgument as exc:
+            return _json_result({"status": "error", "error": str(exc)})
+        try:
+            return _json_result(
+                etoro_copy_precheck(
+                    parent_cid,
+                    amount,
+                    _connection(kwargs.get("connection")),
+                    request_id=_connection(kwargs.get("request_id")),
+                    **overrides,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _json_result({"status": "error", "error": str(exc)})
+
+
+class EtoroCopyStartTool(BaseTool):
+    name = "etoro_copy_start"
+    description = "Start copying an investor or adjust an existing copy allocation."
+    parameters = {
+        "type": "object",
+        "properties": {
+            **TRADING_COMMON_PARAMETERS,
+            "parent_cid": {"type": "integer", "description": "Investor parent CID."},
+            "amount_usd": {"type": "number", "description": "USD amount to add (negative to reduce)."},
+            "request_id": {"type": "string", "description": "Optional request id (UUID)."},
+        },
+        "required": ["parent_cid", "amount_usd"],
+    }
+    repeatable = False
+    is_readonly = False
+
+    def execute(self, **kwargs: Any) -> str:
+        try:
+            overrides = _overrides(kwargs)
+            amount = _finite_float(kwargs["amount_usd"], "amount_usd")
+            parent_cid = _int_or_none(kwargs["parent_cid"], "parent_cid")
+        except InvalidTradingArgument as exc:
+            return _json_result({"status": "error", "error": str(exc)})
+        try:
+            return _json_result(
+                etoro_copy_start(
+                    parent_cid,
+                    amount,
+                    _connection(kwargs.get("connection")),
+                    request_id=_connection(kwargs.get("request_id")),
+                    **overrides,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _json_result({"status": "error", "error": str(exc)})
+
+
+class EtoroCopyPollTool(BaseTool):
+    name = "etoro_copy_poll"
+    description = "Poll the outcome of an asynchronous eToro copy operation."
+    parameters = {
+        "type": "object",
+        "properties": {
+            **TRADING_COMMON_PARAMETERS,
+            "reference_id": {"type": "string", "description": "Copy operation reference id."},
+            "request_id": {"type": "string", "description": "Optional request id (UUID)."},
+        },
+        "required": ["reference_id"],
+    }
+    repeatable = True
+    is_readonly = True
+
+    def execute(self, **kwargs: Any) -> str:
+        try:
+            overrides = _overrides(kwargs)
+        except InvalidTradingArgument as exc:
+            return _json_result({"status": "error", "error": str(exc)})
+        try:
+            return _json_result(
+                etoro_copy_poll(
+                    str(kwargs["reference_id"]),
+                    _connection(kwargs.get("connection")),
+                    request_id=_connection(kwargs.get("request_id")),
+                    **overrides,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _json_result({"status": "error", "error": str(exc)})
+
+
+class EtoroCopyCloseTool(BaseTool):
+    name = "etoro_copy_close"
+    description = "Close or detach an eToro copy relationship by mirror id."
+    parameters = {
+        "type": "object",
+        "properties": {
+            **TRADING_COMMON_PARAMETERS,
+            "mirror_id": {"type": "integer", "description": "Copy mirror id."},
+            "unregister_type": {
+                "type": "string",
+                "enum": ["Close", "Detach"],
+                "description": "Close liquidates copy; Detach moves positions to main portfolio.",
+            },
+            "request_id": {"type": "string", "description": "Optional request id (UUID)."},
+        },
+        "required": ["mirror_id"],
+    }
+    repeatable = False
+    is_readonly = False
+
+    def execute(self, **kwargs: Any) -> str:
+        try:
+            overrides = _overrides(kwargs)
+            mirror_id = _int_or_none(kwargs["mirror_id"], "mirror_id")
+        except InvalidTradingArgument as exc:
+            return _json_result({"status": "error", "error": str(exc)})
+        try:
+            return _json_result(
+                etoro_copy_close(
+                    mirror_id,
+                    _connection(kwargs.get("connection")),
+                    unregister_type=str(kwargs.get("unregister_type") or "Close"),
+                    request_id=_connection(kwargs.get("request_id")),
                     **overrides,
                 )
             )

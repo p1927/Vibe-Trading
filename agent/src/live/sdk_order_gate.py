@@ -133,6 +133,159 @@ def execute_live_order(
     return _deny_breach(broker, session_id, breach, mandate, intent, reauth)
 
 
+def execute_live_action(
+    *,
+    broker: str,
+    connector_module: Any,
+    config: Any,
+    remote_tool: str,
+    risk_reducing: bool,
+    intent: OrderIntent | None,
+    execute_fn: Any,
+    audit_request: dict[str, Any] | None = None,
+    session_id: str = "",
+) -> dict[str, Any]:
+    """Run the live mandate gate around a direct-SDK write that is not ``place_order``.
+
+    Risk-reducing actions (cancel, full close, copy detach) skip halt and mandate
+  checks but are still audit-logged. Risk-increasing actions follow the same
+    ceremony as :func:`execute_live_order`.
+    """
+    broker = (broker or "").strip().lower()
+    mandate = load_mandate(broker)
+
+    if not risk_reducing:
+        if mandate is None or mandate.schema_version != MANDATE_SCHEMA_VERSION:
+            return _deny(broker, session_id, "no valid mandate on file", ["mandate"], mandate, intent=intent)
+
+        if _is_expired(mandate):
+            return _deny(
+                broker,
+                session_id,
+                "mandate expired — re-authorize",
+                ["mandate", "expiry"],
+                mandate,
+                intent=None,
+                reauth=True,
+            )
+
+        if halt_flag_set(broker):
+            return _deny(
+                broker,
+                session_id,
+                "live trading halted",
+                ["mandate", "expiry", "halt_flag"],
+                mandate,
+                intent=None,
+            )
+        if intent is None:
+            return _deny(
+                broker,
+                session_id,
+                "live action missing risk intent (fail-closed)",
+                ["mandate", "intent"],
+                mandate,
+                intent=None,
+            )
+        normalized = _normalize_notional(intent, connector_module, config)
+        if normalized is None:
+            return _deny(
+                broker,
+                session_id,
+                "quantity order notional could not be priced (fail-closed)",
+                ["mandate", "expiry", "halt_flag", "quote"],
+                mandate,
+                intent=intent,
+            )
+        intent = normalized
+        positions = _safe_read(connector_module, "get_positions", config)
+        balance = _safe_read(connector_module, "get_account_snapshot", config)
+        try:
+            with daily_order_lock(broker):
+                daily_count = read_daily_count(broker)
+                breach = check_mandate(
+                    mandate,
+                    intent,
+                    positions,
+                    balance,
+                    broker=broker,
+                    remote_tool=remote_tool,
+                    daily_count=daily_count,
+                )
+                if breach is not None:
+                    reauth = breach.kind not in (BREACH_KIND_UNIVERSE, BREACH_KIND_INSTRUMENT)
+                    return _deny_breach(broker, session_id, breach, mandate, intent, reauth)
+        except DailyOrderLockUnavailable as exc:
+            return _deny(
+                broker,
+                session_id,
+                str(exc),
+                ["mandate", "expiry", "halt_flag", "daily_order_lock"],
+                mandate,
+                intent=intent,
+            )
+
+    try:
+        result = execute_fn()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("live %s raised for %s: %s", remote_tool, broker, exc)
+        result = {"status": "error", "error": str(exc)}
+
+    is_error = not isinstance(result, dict) or str(result.get("status", "")).lower() != "ok"
+    checked = ["mandate", "expiry"]
+    if not risk_reducing:
+        checked.extend(
+            [
+                "halt_flag",
+                "exclude_symbols",
+                "allowed_instruments",
+                "asset_classes",
+                "max_order_notional_usd",
+                "max_total_exposure_usd",
+                "max_leverage",
+                "max_trades_per_day",
+                "account_funding_usd",
+                "universe_floors",
+            ]
+        )
+    else:
+        checked.append("risk_reducing")
+
+    if is_error:
+        record = _audit_action(
+            broker,
+            session_id,
+            remote_tool=remote_tool,
+            kind="order_rejected",
+            outcome="error",
+            mandate=mandate,
+            intent=intent,
+            broker_request=audit_request,
+            broker_response=result if isinstance(result, dict) else {"raw": result},
+            gate_decision={"allowed": True, "decision": _DECISION_ALLOW, "checked_limits": checked},
+            error=_error_message(result),
+        )
+    else:
+        if not risk_reducing:
+            increment_daily_count(broker)
+        record = _audit_action(
+            broker,
+            session_id,
+            remote_tool=remote_tool,
+            kind="order_placed",
+            outcome="accepted",
+            mandate=mandate,
+            intent=intent,
+            broker_request=audit_request,
+            broker_response=result,
+            gate_decision={"allowed": True, "decision": _DECISION_ALLOW, "checked_limits": checked},
+        )
+
+    if isinstance(result, dict) and record is not None:
+        result = {**result, LIVE_ACTION_RESULT_KEY: record}
+    return result if isinstance(result, dict) else {"status": "error", "error": "non-dict broker result"}
+
+
 # --------------------------------------------------------------------------- #
 # Decision helpers
 # --------------------------------------------------------------------------- #
@@ -340,6 +493,35 @@ def _safe_read(connector_module: Any, fn_name: str, config: Any) -> object:
 
 
 def _audit(broker, session_id, *, kind, outcome, mandate, intent, broker_request, broker_response, gate_decision, error=None) -> dict | None:
+    return _audit_action(
+        broker,
+        session_id,
+        remote_tool=_REMOTE_TOOL,
+        kind=kind,
+        outcome=outcome,
+        mandate=mandate,
+        intent=intent,
+        broker_request=broker_request,
+        broker_response=broker_response,
+        gate_decision=gate_decision,
+        error=error,
+    )
+
+
+def _audit_action(
+    broker,
+    session_id,
+    *,
+    remote_tool: str,
+    kind,
+    outcome,
+    mandate,
+    intent,
+    broker_request,
+    broker_response,
+    gate_decision,
+    error=None,
+) -> dict | None:
     consent = mandate.consent if mandate is not None else None
     try:
         event = LiveActionEvent(
@@ -347,7 +529,7 @@ def _audit(broker, session_id, *, kind, outcome, mandate, intent, broker_request
             session_id=session_id,
             outcome=outcome,  # type: ignore[arg-type]
             server=broker,
-            remote_tool=_REMOTE_TOOL,
+            remote_tool=remote_tool,
             intent_normalized=_describe_intent(intent),
             mandate_snapshot_ref=consent.consent_token_sha256 if consent else None,
             consent_record_ref=consent.account_ref if consent else None,
