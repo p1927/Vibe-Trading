@@ -30,10 +30,9 @@ MIRRORED_TOOL_NAMES = (
     "research_papers",
 )
 
-# Tools that mutate state (is_readonly is not True on the agent side) and were
-# ALREADY exposed on the MCP surface before the institutional-research tools
-# were added. They are sandbox/session writes — a backtest run, a session file
-# write, a swarm launch, research-goal bookkeeping, and selecting which broker
+# Tools that mutate state (is_readonly is not True on the agent side) but are
+# sanctioned sandbox/session writes: Alpha Bench reports, backtest runs, session
+# files, swarm launches, research-goal bookkeeping, and selecting which broker
 # profile subsequent READS use — not broker order flow.
 #
 # This snapshot is the regression gate: adding an MCP tool that mutates
@@ -41,6 +40,7 @@ MIRRORED_TOOL_NAMES = (
 KNOWN_MUTATING_MCP_TOOLS = frozenset(
     {
         "add_goal_evidence",
+        "alpha_bench",
         "backtest",
         "run_swarm",
         "start_research_goal",
