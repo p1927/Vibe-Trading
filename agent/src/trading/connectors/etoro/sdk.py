@@ -127,11 +127,15 @@ def get_account_snapshot(config: EtoroConfig | None = None) -> dict[str, Any]:
     cfg = config or load_config()
     client = _client(cfg)
     portfolio = client.request("GET", f"{info_root(cfg)}/portfolio", allow_retry=True)
-    pnl = client.request("GET", f"{info_root(cfg)}/pnl", allow_retry=True)
+    account: dict[str, Any] = {"portfolio": portfolio}
+    try:
+        account["pnl"] = client.request("GET", f"{info_root(cfg)}/pnl", allow_retry=True)
+    except EtoroAPIError as exc:
+        account["pnl_error"] = str(exc)
     return {
         "status": "ok",
         **_base_payload(cfg),
-        "account": {"portfolio": portfolio, "pnl": pnl},
+        "account": account,
     }
 
 
