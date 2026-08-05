@@ -1107,6 +1107,10 @@ vibe-trading-mcp --transport sse   # legacy SSE (deprecated)
 
 **暴露的 MCP tools（59）：** `list_skills`, `load_skill`, `start_research_goal`, `get_research_goal`, `add_goal_evidence`, `update_research_goal_status`, `backtest`, `factor_analysis`, `analyze_options`, `analyze_options_payoff`, `pattern_recognition`, `read_url`, `read_document`, `web_search`, `write_file`, `read_file`, `list_swarm_presets`, `run_swarm`, `get_market_data`, `get_fund_flow`, `get_dragon_tiger`, `get_northbound_flow`, `get_margin_trading`, `get_block_trades`, `get_shareholder_count`, `get_lockup_expiry`, `get_sector_info`, `get_research_reports`, `get_stock_news`, `get_sec_filings`, `get_financial_statements`, `get_options_chain`, `get_stock_profile`, `screen_market`, `search_symbol`, `get_macro_series`, `iwencai_search`, `get_institutional_holdings`, `etf_holdings`, `prediction_market`, `research_papers`, `get_swarm_status`, `get_run_result`, `list_runs`, `reap_stale_runs`, `retry_run`, `analyze_trade_journal`, `extract_shadow_strategy`, `run_shadow_backtest`, `render_shadow_report`, `scan_shadow_signals`, `trading_connections`, `trading_select_connection`, `trading_check`, `trading_account`, `trading_positions`, `trading_orders`, `trading_quote`, `trading_history`.
 
+### SWARM 的外部 MCP tools
+
+`run_swarm` 的 worker 可以调用运营方批准的外部 MCP server 工具。在 `VIBE_TRADING_SWARM_AGENT_CONFIG`、`~/.vibe-trading/swarm-agent.json` 或兜底的 `~/.vibe-trading/agent.json` 中配置服务端白名单；然后在 swarm preset 里用本地 MCP 包装名引用远程工具，例如 `mcp_internal_kb_search`。调用方传入的 `variables` 只作为模板数据，无法注入 MCP URL、命令、环境变量或白名单覆盖项。
+
 <details>
 <summary><b>从 ClawHub 安装（一条命令）</b></summary>
 
@@ -1186,12 +1190,225 @@ vibe-trading connector history EURUSD
 |---------|------|------|
 | `mt5-paper-sdk` | demo | 只读 |
 | `mt5-live-sdk-readonly` | real | 只读 |
-| `mt5-paper-trade` | demo | 直接下单（connector 仓位护栏生效） |
+| `mt5-paper-trade` | demo | 直接下单（connector 单笔规模护栏生效） |
 | `mt5-live-trade` | real | mandate + kill-switch 门控 |
 
-安全边界：**“paper” 即券商的 demo 账户**，且每次调用都会校验——终端会回传 `account_info().trade_mode` 和登录账号，因此 paper profile 挂到真实资金账户（或反之）会被硬性拒绝。MT5 以**手（lot）**为单位下单（1 lot EURUSD = 100,000 EUR）；live mandate 门控通过 connector 的 USD 计价 hook 为手数定价，且 connector 自身的 `max_order_volume` / `max_order_notional_usd` 护栏在 demo 和 live 上均生效。对冲账户（Exness 默认）注意：反向订单会**开出一笔对冲仓**——请按 ticket 平仓（用持仓 ticket 调 `trading_cancel_order`，或用 `close_position`），成交会被钉在该持仓上，只能减少敞口。回滚/停机路径：kill switch 阻断新的 live 订单；撤单始终可用并记入审计日志。Mandate 限额以 USD 计；非 USD 账户货币由券商侧按账户货币做保证金强制。
+安全边界：**“paper” 即券商的 demo 账户**，且每次调用都会校验——终端会回传 `account_info().trade_mode` 和登录账号，因此 paper profile 挂到真实资金账户（或反之）会被硬性拒绝。MT5 以**手（lot）**为单位下单（1 lot EURUSD = 100,000 EUR）；live mandate 门控通过 connector 的 USD 计价 hook 为手数定价，且 connector 自身的 `max_order_volume` / `max_order_notional_usd` 护栏在 demo 和 live 上均生效，且在无法为某笔名义金额定价时 fail-closed。对冲账户（Exness 默认）注意：反向订单会**开出一笔对冲仓**——请按 ticket 平仓（用持仓 ticket 调 `trading_cancel_order`），成交会被钉在该持仓上，只能减少敞口。回滚/停机路径：kill switch 阻断新的 live 订单；撤单始终可用并记入审计日志。Mandate 限额以 USD 计；非 USD 账户货币由券商侧按账户货币做保证金强制。
 
 `mt5` 行情 loader（外汇 fallback 链头）共用同一份 `mt5.json`——没有该文件时，它会以只读方式挂到最近使用且已登录的终端。
+
+---
+
+## 🔌 从外部 MCP Server 加载工具（MCP Client 模式）
+
+> **这与上面的 MCP Plugin 方向相反。**
+> MCP Plugin 让*其他* agent 调用 Vibe-Trading 的工具。
+> 本节让*内置*的 Vibe-Trading agent 调用*你自己*的外部 MCP server 上的工具。
+
+### 快速开始
+
+创建 `~/.vibe-trading/agent.json`：
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "uvx",
+      "args": ["my-mcp-server"]
+    }
+  }
+}
+```
+
+然后运行任意 CLI 命令——普通外部 server 的工具会在本地工具之后自动注入 agent 的注册表：
+
+```bash
+vibe-trading run "use my-server to do X"
+```
+
+### IBKR 官方 MCP 只读探针
+
+Vibe-Trading 可以以只读模式直连 Interactive Brokers 的官方远程 MCP endpoint。在
+`~/.vibe-trading/agent.json` 中加入：
+
+```json
+{
+  "mcpServers": {
+    "ibkr": {
+      "type": "streamableHttp",
+      "url": "https://api.ibkr.com/v1/api/mcp",
+      "auth": {
+        "type": "oauth",
+        "scopes": ["mcp.read"],
+        "clientName": "Vibe-Trading",
+        "cacheDir": "~/.vibe-trading/live/ibkr/oauth"
+      },
+      "enabledTools": ["*"]
+    }
+  }
+}
+```
+
+然后启动浏览器 OAuth 流程：
+
+```bash
+vibe-trading connector authorize ibkr-live-official-mcp-readonly
+```
+
+通配符仅对 IBKR 的 `mcp.read` 探针有效。授权该 profile 只是确认拿到了 IBKR 官方只读
+scope；在 IBKR 发布可被安全映射的稳定只读工具名之前，通用的 `trading_account` 与
+`trading_positions` 调用仍保持禁用。若配置中加入 `mcp.write`，必须显式钉死工具白名单，
+并且仍然要过实盘 order guard。
+
+如果 IBKR 下发了预注册的 OAuth client，请在 `auth` 内补上 `clientId` 与 `clientSecret`。
+
+### 交易连接器：最快路径
+
+如果你不想等 IBKR 的 OAuth client 审批，可以直接连本地的 TWS 或 IB Gateway 会话。
+凭证始终留在 IBKR 的桌面端内，Vibe-Trading 只连 `127.0.0.1`，并把它作为一个 connector
+profile 暴露出来。
+
+安装可选 SDK：
+
+```bash
+pip install "vibe-trading-ai[ibkr]"
+```
+
+打开 TWS 模拟盘或 IB Gateway 模拟盘，启用 API socket clients，然后运行：
+
+```bash
+vibe-trading connector list
+vibe-trading connector use ibkr-paper-local
+vibe-trading connector configure ibkr-paper-local --yes
+vibe-trading connector check
+vibe-trading connector account
+vibe-trading connector positions
+vibe-trading connector orders
+vibe-trading connector quote AAPL
+vibe-trading connector history AAPL --duration "30 D" --bar-size "1 day"
+```
+
+默认本地端口：
+
+| 应用 | 模拟盘 | 实盘只读 |
+|------|--------|----------|
+| TWS | `7497` | `7496` |
+| IB Gateway | `4002` | `4001` |
+
+Agent 暴露的 connector 作用域工具为 `trading_connections`、`trading_select_connection`、
+`trading_check`、`trading_account`、`trading_positions`、`trading_orders`、
+`trading_quote` 和 `trading_history`。实盘券商的原始 MCP 工具**不会**以 `mcp_<broker>_*`
+的形式直接注册。IBKR 的下单工具一个都没有注册。
+
+### 🔐 TAP 模式——凭证完全隔离 + 写操作人工审批
+
+**默认关闭，需显式开启。** 只要下面的 `TAP_*` 变量未设置，connector 的行为与之前完全一致
+（直连券商 SDK），什么都不会变。
+
+[TAP](https://tap.human.tech)（Tool Authorization Protocol）是一个凭证代理：agent 永远拿不到
+券商 API 的明文密钥，而有实质后果的写操作要过**人工审批**。开启 TAP 模式后，**每一次**
+Alpaca 调用——下单、撤单，以及全部读取（account / positions / orders / quote / bars）——都会
+发往 TAP 代理的 `/forward` endpoint，而不是券商 SDK；TAP 在服务端注入真实密钥后再转发上游。
+
+- agent 进程**完全不持有 Alpaca 密钥**，甚至不需要装 `alpaca-py`，因为整条出口都走 TAP。
+  密钥只按名字引用（`<CREDENTIAL:alpaca.key_id>`），由 TAP 替换。
+- **写操作阻塞等待人工审批。** 下单或撤单在有人批准前到不了券商；即使是被 prompt 注入的
+  “立刻买入”也会被扣住，拒绝后它永远不会到达 Alpaca。订单带确定性的 `client_order_id`，
+  所以审批竞态下的重试会被去重，而不是重复下单。
+- **读操作自动放行。** account / positions / orders / quote / bars 都是 GET，TAP 直接转发、
+  不插入人工环节——这是凭证*隔离*（进程内无密钥），不是一道闸，因此几乎没有额外摩擦。
+- TAP 凭证上的 `allowed_hosts` 钉死密钥可被发往哪里，被篡改的目标会在注入前就被拒绝（403）。
+
+**如何开启：**
+
+1. 在 TAP 面板创建一个名为 `alpaca` 的**多字段（multi-secret）**凭证，把 Alpaca 的密钥对
+   放进 `key_id` 和 `secret_key` 两个字段，分配给你的 agent，allowed hosts 填
+   `paper-api.alpaca.markets`（或实盘的 `api.alpaca.markets`）**以及** `data.alpaca.markets`
+   （quote / bars 用的行情主机）。**模拟盘和实盘请用两个独立的 TAP 凭证**（例如
+   `alpaca-paper` / `alpaca-live`，通过 `TAP_ALPACA_CREDENTIAL` 选择），各自把
+   `allowed_hosts` 钉死到自己的 API 主机——这样 TAP 在结构上就拒绝把模拟盘密钥发往实盘主机，
+   反之亦然，模拟/实盘的隔离从头到尾都是清晰的。
+2. 在 `agent/.env` 中加入：
+
+| 变量 | 必填 | 说明 |
+|------|:----:|------|
+| `TAP_PROXY_URL` | 是 | TAP 代理的 base URL（例如 `https://proxy.tap.human.tech`） |
+| `TAP_AGENT_KEY` | 是 | 你的 TAP agent API key（机密） |
+| `TAP_ALPACA_CREDENTIAL` | 否 | Alpaca 使用的 TAP 凭证名（默认 `alpaca`） |
+| `TAP_APPROVAL_TIMEOUT` | 否 | 等待人工决定的秒数（默认 `300`） |
+
+写操作发起后，在你的 TAP 通道（Telegram / 面板）里批准或拒绝。已批准的下单/撤单会转发给
+Alpaca；被拒绝或超时的**永远不会被发出**。
+
+> **已知限制——审批竞态。** 如果人恰好在 `TAP_APPROVAL_TIMEOUT` 边界上批准，TAP 可能已经把
+> 订单转发出去，而轮询这边已经放弃：此时闸门会报错，尽管订单其实已经到了券商，而
+> `max_trades_per_day` 计数会少算一笔。确定性的 `client_order_id` 能保证重试不会把那一单
+> 重复下出去；如果你依赖很紧的每日交易次数上限，遇到 TAP 超时报错后请先查一遍未成交订单
+> 再重试。
+
+**覆盖范围：** Alpaca 的**下单、撤单和全部五个读取**——即整条 connector 出口，所以任何路径上
+进程都不持有密钥。HMAC 签名类券商（Binance / OKX）是后续项（客户端签名不适合纯出口注入）。
+这些 hook 是增量的：它们只活在 Alpaca connector 内部，不改动实盘 mandate 闸门。
+
+### 配置项参考
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `type` | string | stdio 可省略；HTTP 必填 | stdio 时省略；URL 类 server 设为 `sse` / `streamableHttp`。 |
+| `command` | string | stdio 必填 | stdio server 要启动的可执行文件。对 `sse` / `streamableHttp` 无效。 |
+| `args` | array | `[]` | 仅 stdio server 的命令行参数。 |
+| `env` | object | `{}` | 仅 stdio server：并入子进程环境的额外环境变量。 |
+| `url` | string | `sse` / `streamableHttp` 必填 | 远程 SSE / streamable HTTP endpoint 的 URL。stdio 不使用。 |
+| `headers` | object | `{}` | 仅 `sse` / `streamableHttp` server 的额外 HTTP header。 |
+| `toolTimeout` | number | `30` | 单次工具调用超时（秒） |
+| `initTimeout` | number | 未设置（`max(toolTimeout, 30)`） | MCP initialize / OAuth 授权超时（秒）。用于浏览器授权较慢的场景，而不必放宽普通工具调用。 |
+| `enabledTools` | array | `["*"]` | 工具白名单。用 `["*"]` 暴露该 server 的全部工具 |
+
+配置文件位置：`~/.vibe-trading/agent.json`（JSON 或 YAML）。
+
+URL 类 transport 必须显式写 `type`。agent 不再根据 URL 后缀在 SSE 与 streamable HTTP 之间猜测。
+
+### 按会话覆盖（API）
+
+通过 API 创建 session 时，可以在 `session.config` 内传 `mcpServers`，仅对该会话扩展或覆盖全局配置：
+
+```json
+{
+  "config": {
+    "mcpServers": {
+      "research-server": {
+        "command": "uvx",
+        "args": ["research-mcp"],
+        "enabledTools": ["search", "fetch"]
+      }
+    }
+  }
+}
+```
+
+### 工具命名
+
+普通远程工具以稳定名称暴露：`mcp_<server>_<tool>`。
+实盘券商的 MCP server 一律留在 `trading_*` connector 表面之后。
+
+如果两个 server 名规范化后得到同一个 ASCII 安全前缀（例如 `foo-bar` 与 `foo_bar` 都变成
+`foo_bar`），系统会在 server 段追加一个确定性哈希后缀以保证名称唯一，并给运营方一条警告：
+
+```
+WARNING: Configured MCP server 'foo-bar' collides with another server after local name
+normalization. Using local tool prefix 'mcp_foo_bar_<hash>_<tool>' to keep generated
+tool names unique. Rename the server in agent config if you want a different prefix.
+```
+
+### v1 限制
+
+| 限制 | 细节 |
+|------|------|
+| Transport | stdio、SSE 与 streamable HTTP |
+| 执行 | 仅串行——MCP 工具不会进入并行只读通道 |
+| 表面 | 仅 tools（v1 不含 resources 与 prompts） |
+| 热重载 | 不支持——改完配置需重启进程 |
+| Swarm 路径 | v1 中 Swarm worker 的注册表内没有 MCP 工具 |
 
 ---
 

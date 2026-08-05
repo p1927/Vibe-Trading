@@ -1206,6 +1206,50 @@ OpenSpace will auto-discover all 89 skills, enabling auto-fix, auto-improve, and
 
 ---
 
+### MetaTrader 5 (Exness and other MT5 brokers)
+
+Connects to a **locally running MT5 terminal** through the official `MetaTrader5` package (**Windows only**):
+
+```bash
+pip install "vibe-trading-ai[mt5]"
+```
+
+Configure `~/.vibe-trading/mt5.json` (create it yourself; `chmod 600` where supported):
+
+```json
+{
+  "login": 12345678,
+  "password": "...",
+  "server": "Exness-MT5Trial8",
+  "symbol_suffix": "m",
+  "max_order_volume": 1.0,
+  "max_order_notional_usd": 10000
+}
+```
+
+Then:
+
+```bash
+vibe-trading connector use mt5-paper-sdk
+vibe-trading connector check
+vibe-trading connector account
+vibe-trading connector quote EURUSD
+vibe-trading connector history EURUSD
+```
+
+| Profile | Account | Orders |
+|---------|---------|--------|
+| `mt5-paper-sdk` | demo | read-only |
+| `mt5-live-sdk-readonly` | real | read-only |
+| `mt5-paper-trade` | demo | direct placement (connector per-order size guards apply) |
+| `mt5-live-trade` | real | mandate + kill-switch gated |
+
+Safety boundary: **"paper" means the broker's own demo account**, re-verified on every call — the terminal reports `account_info().trade_mode` and the logged-in account number, so pointing a paper profile at a real-money account (or the reverse) is refused outright. MT5 sizes orders in **lots** (1 lot EURUSD = 100,000 EUR); the live mandate gate prices lots through the connector's USD hook, and the connector's own `max_order_volume` / `max_order_notional_usd` guards apply on demo as well as live, failing closed when a notional cannot be priced. On hedging accounts (the Exness default), note that an opposing order **opens a hedge position** — close by ticket instead (pass the position ticket to `trading_cancel_order`) so the fill is pinned to that position and can only reduce exposure. Rollback / halt path: the kill switch blocks new live orders, while cancellation stays available and is written to the audit log. Mandate limits are denominated in USD; a non-USD account currency is margined by the broker in its own currency.
+
+The `mt5` market-data loader — the head of the forex fallback chain — shares this same `mt5.json`. With no such file it attaches read-only to the most recently used terminal that is already logged in.
+
+---
+
 ## 🔌 Loading Tools from External MCP Servers (MCP Client Mode)
 
 > **This is the opposite direction from the MCP Plugin above.**

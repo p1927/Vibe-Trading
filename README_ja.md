@@ -364,6 +364,36 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 - **暗号資産** → `okx` · `ccxt` · `binance` · `yfinance` · `local`
 - **為替/貴金属** → `mt5` · `yfinance` · `akshare` · `local` &nbsp;·&nbsp; *(先物 / ファンド / マクロ → `tushare`/`akshare` → `local`)*
 
+### Longbridge を明示的に使う
+
+Longbridge は米国株/香港株のヒストリカル OHLCV を提供する任意の loader です。SDK のインストール：
+
+```bash
+pip install "vibe-trading-ai[longbridge]"
+```
+
+`.env` に 3 つの認証情報を設定します：
+
+```dotenv
+LONGBRIDGE_APP_KEY=...
+LONGBRIDGE_APP_SECRET=...
+LONGBRIDGE_ACCESS_TOKEN=...
+```
+
+バックテストでは `config.json` の `source` を指定します：
+
+```json
+{
+  "codes": ["QQQ.US"],
+  "start_date": "2025-01-01",
+  "end_date": "2025-01-10",
+  "interval": "1D",
+  "source": "longbridge"
+}
+```
+
+Agent との対話では明示的に依頼してください：**「Longbridge を使って QQQ.US のヒストリカルデータを取得して」**。この明示指定は `source: "auto"` とは別物で、`auto` は市場ごとの通常のフォールバックチェーンをそのまま使います。
+
 OHLCV にとどまらず、**22 の読み取り専用データツール**がファンダメンタルズと資金フローまで踏み込みます。資金フロー、龍虎榜、北向資金、信用取引、大口取引、株主数、ロックアップ、セクター、調査レポート、ニュース、SEC filings、財務諸表、オプションチェーン、銘柄プロファイル、市場スクリーニング、銘柄検索、マクロ、問財、機関投資家保有（13F）、ETF ルックスルー、予測市場、論文検索まで、すべて MCP 経由で公開されます。明示的な `local:` 銘柄が暗黙のうちにネットワークソースへフォールバックすることは決してありません。
 
 <!-- QVERIS-START -->
@@ -1080,6 +1110,10 @@ vibe-trading-mcp --transport sse   # legacy SSE (deprecated)
 
 **公開される MCP tools（59）:** `list_skills`, `load_skill`, `start_research_goal`, `get_research_goal`, `add_goal_evidence`, `update_research_goal_status`, `backtest`, `factor_analysis`, `analyze_options`, `analyze_options_payoff`, `pattern_recognition`, `read_url`, `read_document`, `web_search`, `write_file`, `read_file`, `list_swarm_presets`, `run_swarm`, `get_market_data`, `get_fund_flow`, `get_dragon_tiger`, `get_northbound_flow`, `get_margin_trading`, `get_block_trades`, `get_shareholder_count`, `get_lockup_expiry`, `get_sector_info`, `get_research_reports`, `get_stock_news`, `get_sec_filings`, `get_financial_statements`, `get_options_chain`, `get_stock_profile`, `screen_market`, `search_symbol`, `get_macro_series`, `iwencai_search`, `get_institutional_holdings`, `etf_holdings`, `prediction_market`, `research_papers`, `get_swarm_status`, `get_run_result`, `list_runs`, `reap_stale_runs`, `retry_run`, `analyze_trade_journal`, `extract_shadow_strategy`, `run_shadow_backtest`, `render_shadow_report`, `scan_shadow_signals`, `trading_connections`, `trading_select_connection`, `trading_check`, `trading_account`, `trading_positions`, `trading_orders`, `trading_quote`, `trading_history`.
 
+### SWARM の外部 MCP tools
+
+`run_swarm` の worker は、運用者が承認した外部 MCP server のツールを呼び出せます。サーバー側の allowlist を `VIBE_TRADING_SWARM_AGENT_CONFIG`、`~/.vibe-trading/swarm-agent.json`、またはフォールバックの `~/.vibe-trading/agent.json` に設定し、swarm preset ではローカル MCP のラッパー名（例：`mcp_internal_kb_search`）でリモートツールを列挙します。呼び出し側が渡す `variables` はテンプレートのデータに留まり、MCP URL・コマンド・環境変数・allowlist の上書きを注入することはできません。
+
 <details>
 <summary><b>ClawHub からインストール（1 コマンド）</b></summary>
 
@@ -1162,9 +1196,232 @@ vibe-trading connector history EURUSD
 | `mt5-paper-trade` | デモ | 直接発注（connector のサイズガードが適用されます） |
 | `mt5-live-trade` | リアル | mandate + kill-switch によるゲート |
 
-安全境界: **「paper」はブローカーのデモ口座**を指し、毎回の呼び出しで検証されます — terminal が `account_info().trade_mode` と login を返すため、リアルマネー口座に接続された paper profile（またはその逆）は強制的に拒否されます。MT5 の注文サイズは**ロット**単位です（1 lot EURUSD = 100,000 EUR）。live の mandate ゲートは connector の USD サイジングフックを通じてロットを USD 換算し、connector 自身の `max_order_volume` / `max_order_notional_usd` ガードはデモと live の**両方**に適用されます。ヘッジ口座（Exness の既定）での注意: 反対サイドの注文は**ヘッジを新規に建てます** — ポジションは ticket 指定でクローズしてください（position ticket を指定した `trading_cancel_order`、または `close_position`）。これにより deal がそのポジションに固定され、エクスポージャーの削減のみが行われます。ロールバック / 停止経路: kill switch は新規の live 注文をブロックし、キャンセルは引き続き利用可能で監査ログに記録されます。Mandate の上限は USD 建てです。USD 以外の口座通貨の場合は、ブローカー側で口座通貨建ての証拠金として強制されます。
+安全境界: **「paper」はブローカーのデモ口座**を指し、毎回の呼び出しで検証されます — terminal が `account_info().trade_mode` と login を返すため、リアルマネー口座に接続された paper profile（またはその逆）は強制的に拒否されます。MT5 の注文サイズは**ロット**単位です（1 lot EURUSD = 100,000 EUR）。live の mandate ゲートは connector の USD サイジングフックを通じてロットを USD 換算し、connector 自身の `max_order_volume` / `max_order_notional_usd` ガードはデモと live の**両方**に適用され、名目額を価格換算できない場合は fail-closed になります。ヘッジ口座（Exness の既定）での注意: 反対サイドの注文は**ヘッジを新規に建てます** — ポジションは ticket 指定でクローズしてください（position ticket を指定した `trading_cancel_order`）。これにより deal がそのポジションに固定され、エクスポージャーの削減のみが行われます。ロールバック / 停止経路: kill switch は新規の live 注文をブロックし、キャンセルは引き続き利用可能で監査ログに記録されます。Mandate の上限は USD 建てです。USD 以外の口座通貨の場合は、ブローカー側で口座通貨建ての証拠金として強制されます。
 
 `mt5` マーケットデータ loader（為替フォールバックチェーンの先頭）は同じ `mt5.json` を共有します — ファイルがない場合は、最後に使用されたログイン済み terminal に読み取り専用で接続します。
+
+---
+
+## 🔌 外部 MCP Server からツールを読み込む（MCP Client モード）
+
+> **これは上の MCP Plugin とは逆方向です。**
+> MCP Plugin は*他の* agent に Vibe-Trading のツールを呼ばせるものです。
+> 本節は*組み込みの* Vibe-Trading agent が*あなたの*外部 MCP server のツールを呼ぶためのものです。
+
+### クイックスタート
+
+`~/.vibe-trading/agent.json` を作成します：
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "uvx",
+      "args": ["my-mcp-server"]
+    }
+  }
+}
+```
+
+あとは任意の CLI コマンドを実行するだけです。通常の外部 server のツールは、ローカルツールの後に
+agent のレジストリへ自動的に注入されます：
+
+```bash
+vibe-trading run "use my-server to do X"
+```
+
+### IBKR 公式 MCP の読み取り専用プローブ
+
+Vibe-Trading は Interactive Brokers の公式リモート MCP endpoint に読み取り専用で直接接続できます。
+`~/.vibe-trading/agent.json` に次を追加します：
+
+```json
+{
+  "mcpServers": {
+    "ibkr": {
+      "type": "streamableHttp",
+      "url": "https://api.ibkr.com/v1/api/mcp",
+      "auth": {
+        "type": "oauth",
+        "scopes": ["mcp.read"],
+        "clientName": "Vibe-Trading",
+        "cacheDir": "~/.vibe-trading/live/ibkr/oauth"
+      },
+      "enabledTools": ["*"]
+    }
+  }
+}
+```
+
+続いてブラウザでの OAuth フローを開始します：
+
+```bash
+vibe-trading connector authorize ibkr-live-official-mcp-readonly
+```
+
+ワイルドカードが認められるのは IBKR の `mcp.read` プローブに限られます。この profile を認可しても
+確認できるのは IBKR 公式の読み取り scope へのアクセスまでで、IBKR が安全にマッピングできる安定した
+読み取りツール名を公開するまで、汎用の `trading_account` と `trading_positions` の呼び出しは無効の
+ままです。`mcp.write` を加える設定では、ツールの allowlist を明示的に固定する必要があり、それでも
+ライブ発注ガードを通過します。
+
+IBKR から事前登録済みの OAuth client が発行されている場合は、`auth` の中に `clientId` と
+`clientSecret` を追加してください。
+
+### 取引 connectors：最短ルート
+
+IBKR の OAuth client 承認を待てない場合は、ローカルの TWS または IB Gateway セッションに接続します。
+認証情報は IBKR のデスクトップアプリ内に留まり、Vibe-Trading は `127.0.0.1` に接続して connector
+profile として公開するだけです。
+
+オプションの SDK をインストールします：
+
+```bash
+pip install "vibe-trading-ai[ibkr]"
+```
+
+TWS のペーパートレードまたは IB Gateway のペーパーを開き、API socket clients を有効にしてから実行します：
+
+```bash
+vibe-trading connector list
+vibe-trading connector use ibkr-paper-local
+vibe-trading connector configure ibkr-paper-local --yes
+vibe-trading connector check
+vibe-trading connector account
+vibe-trading connector positions
+vibe-trading connector orders
+vibe-trading connector quote AAPL
+vibe-trading connector history AAPL --duration "30 D" --bar-size "1 day"
+```
+
+ローカルの既定ポート：
+
+| アプリ | ペーパー | ライブ読み取り専用 |
+|--------|----------|--------------------|
+| TWS | `7497` | `7496` |
+| IB Gateway | `4002` | `4001` |
+
+agent が公開する connector スコープのツールは `trading_connections`、
+`trading_select_connection`、`trading_check`、`trading_account`、`trading_positions`、
+`trading_orders`、`trading_quote`、`trading_history` です。ライブブローカーの生の MCP ツールが
+`mcp_<broker>_*` として直接登録されることはありません。IBKR の発注ツールは一つも登録されません。
+
+### 🔐 TAP モード — 認証情報の完全分離と人間による書き込み承認
+
+**オプトイン、既定はオフ。** 下記の `TAP_*` 変数が未設定なら、connector の挙動はこれまでと完全に
+同じ（ブローカー SDK 直結）で、何も変わりません。
+
+[TAP](https://tap.human.tech)（Tool Authorization Protocol）は認証情報のプロキシです。agent が
+ブローカー API の生のシークレットを持つことはなく、影響のある書き込みは**人間の承認**で gate されます。
+TAP モードを有効にすると、**すべての** Alpaca 呼び出し（発注・キャンセル・および
+account / positions / orders / quote / bars の読み取り）が、ブローカー SDK ではなく TAP プロキシの
+`/forward` endpoint へ送られます。TAP がサーバー側で本物のキーを注入してから上流へ転送します。
+
+- agent プロセスは **Alpaca のキーを一切保持しません**。`alpaca-py` すら不要です。egress 全体が
+  TAP を通るためで、シークレットは名前（`<CREDENTIAL:alpaca.key_id>`）で参照され、TAP が置換します。
+- **書き込みは人間の承認でブロックされます。** 発注もキャンセルも、人が承認しない限りブローカーには
+  届きません。prompt インジェクションによる「今すぐ買え」も保留され、拒否すれば Alpaca に届くことは
+  ありません。注文には決定的な `client_order_id` が付くため、承認レースでの再試行は重複発注ではなく
+  重複排除されます。
+- **読み取りは自動承認。** account / positions / orders / quote / bars は GET であり、TAP は人間の
+  ステップなしに転送します。これは認証情報の*分離*（プロセス内にキーがない）であって gate ではないので、
+  追加の摩擦はほぼゼロです。
+- TAP 認証情報の `allowed_hosts` がキーの送信先を固定するため、改ざんされた宛先は注入前に拒否されます（403）。
+
+**有効化の手順：**
+
+1. TAP ダッシュボードで `alpaca` という名前の**マルチシークレット**認証情報を作成し、Alpaca のキーペアを
+   `key_id` と `secret_key` のフィールドに格納して agent に割り当て、allowed hosts に
+   `paper-api.alpaca.markets`（またはライブの `api.alpaca.markets`）**および** `data.alpaca.markets`
+   （quote / bars が使う市場データホスト）を指定します。**ペーパーとライブには別々の TAP 認証情報**を
+   使ってください（例：`alpaca-paper` / `alpaca-live`、`TAP_ALPACA_CREDENTIAL` で選択）。それぞれの
+   `allowed_hosts` を自分の API ホストに固定すれば、TAP は構造的にペーパーのキーをライブホストへ送ることを
+   拒否し、逆も同様で、ペーパー／ライブの分離が端から端まで明確に保たれます。
+2. `agent/.env` に追加します：
+
+| 変数 | 必須 | 説明 |
+|------|:----:|------|
+| `TAP_PROXY_URL` | はい | TAP プロキシのベース URL（例：`https://proxy.tap.human.tech`） |
+| `TAP_AGENT_KEY` | はい | あなたの TAP agent API キー（シークレット） |
+| `TAP_ALPACA_CREDENTIAL` | いいえ | Alpaca 用の TAP 認証情報名（既定は `alpaca`） |
+| `TAP_APPROVAL_TIMEOUT` | いいえ | 人間の判断を待つ秒数（既定は `300`） |
+
+書き込みが発生したら、TAP のチャンネル（Telegram / ダッシュボード）で承認または拒否します。承認された
+発注・キャンセルは Alpaca へ転送され、拒否またはタイムアウトしたものはエラーを返し、**決して送信されません**。
+
+> **既知の制限 — 承認レース。** ちょうど `TAP_APPROVAL_TIMEOUT` の境界で人が承認した場合、ポーリング側が
+> 既に諦めている一方で TAP が注文を転送してしまうことがあります。この場合、注文はブローカーに届いている
+> のに gate はエラーを報告し、`max_trades_per_day` のカウンタが 1 件少なく数えます。決定的な
+> `client_order_id` により再試行がその注文を二重に出すことは防げますが、1 日の取引回数上限を厳密に運用
+> している場合は、TAP のタイムアウトエラーの後に再試行する前に未約定注文を確認してください。
+
+**スコープ：** Alpaca の**発注・キャンセルと 5 つの読み取りすべて** — つまり connector の egress 全体を
+カバーするため、どの経路でもプロセスはキーを保持しません。HMAC 署名型のブローカー（Binance / OKX）は
+今後の課題です（クライアント側署名は純粋な egress 注入に馴染みません）。これらのフックは追加的で、
+Alpaca connector の内部に閉じており、ライブ mandate ゲートは変更しません。
+
+### 設定リファレンス
+
+| フィールド | 型 | 既定値 | 説明 |
+|------------|----|--------|------|
+| `type` | string | stdio では推論、HTTP では必須 | stdio では省略、URL ベースの server では `sse` / `streamableHttp` を指定。 |
+| `command` | string | stdio では必須 | stdio server で起動する実行ファイル。`sse` / `streamableHttp` では無効。 |
+| `args` | array | `[]` | stdio server 専用のコマンドライン引数。 |
+| `env` | object | `{}` | stdio server 専用。サブプロセスの環境にマージされる追加の環境変数。 |
+| `url` | string | `sse` / `streamableHttp` では必須 | リモート SSE / streamable HTTP endpoint の URL。stdio では未使用。 |
+| `headers` | object | `{}` | `sse` / `streamableHttp` server 専用の追加 HTTP ヘッダー。 |
+| `toolTimeout` | number | `30` | ツール呼び出し 1 回あたりのタイムアウト（秒） |
+| `initTimeout` | number | 未設定（`max(toolTimeout, 30)`） | MCP initialize / OAuth 認可のタイムアウト（秒）。通常のツール呼び出しを広げずに、遅いブラウザ認可に対応するために使います。 |
+| `enabledTools` | array | `["*"]` | ツールの allowlist。`["*"]` でその server の全ツールを公開 |
+
+設定ファイルの場所：`~/.vibe-trading/agent.json`（JSON または YAML）。
+
+URL ベースの transport では `type` が必須です。agent は URL の接尾辞から SSE と streamable HTTP を
+推測しなくなりました。
+
+### セッション単位の上書き（API）
+
+API で session を作成する際、`session.config` の中に `mcpServers` を渡すと、そのセッションに限って
+グローバル設定を拡張・上書きできます：
+
+```json
+{
+  "config": {
+    "mcpServers": {
+      "research-server": {
+        "command": "uvx",
+        "args": ["research-mcp"],
+        "enabledTools": ["search", "fetch"]
+      }
+    }
+  }
+}
+```
+
+### ツールの命名
+
+通常のリモートツールは安定した名前 `mcp_<server>_<tool>` で公開されます。
+ライブブローカーの MCP server は `trading_*` connector の表面の背後に留まります。
+
+2 つの server 名がローカル名の正規化後に同じ ASCII セーフな接頭辞になる場合（例：`foo-bar` と
+`foo_bar` がどちらも `foo_bar` になる）、名前の一意性を保つために server セグメントへ決定的なハッシュ
+接尾辞が付加され、運用者に警告が出ます：
+
+```
+WARNING: Configured MCP server 'foo-bar' collides with another server after local name
+normalization. Using local tool prefix 'mcp_foo_bar_<hash>_<tool>' to keep generated
+tool names unique. Rename the server in agent config if you want a different prefix.
+```
+
+### v1 の制限
+
+| 制限 | 詳細 |
+|------|------|
+| Transport | stdio、SSE、streamable HTTP |
+| 実行 | 直列のみ — MCP ツールが並列 readonly 経路に入ることはありません |
+| 対象面 | tools のみ（v1 では resources と prompts は対象外） |
+| ホットリロード | 非対応 — 設定変更の反映にはプロセス再起動が必要 |
+| Swarm 経路 | v1 では Swarm worker のレジストリに MCP ツールは入りません |
 
 ---
 

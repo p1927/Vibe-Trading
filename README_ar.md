@@ -364,6 +364,36 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 - **الكريبتو** → `okx` · `ccxt` · `binance` · `yfinance` · `local`
 - **الفوركس / المعادن** → `mt5` · `yfinance` · `akshare` · `local` &nbsp;·&nbsp; *(العقود الآجلة / الصناديق / الاقتصاد الكلي → `tushare`/`akshare` → `local`)*
 
+### استخدام Longbridge صراحةً
+
+Longbridge محمّل اختياري لبيانات OHLCV التاريخية للأسهم الأمريكية والهونغ كونغية. لتثبيت الـ SDK:
+
+```bash
+pip install "vibe-trading-ai[longbridge]"
+```
+
+اضبط بيانات الاعتماد الثلاثة في `.env`:
+
+```dotenv
+LONGBRIDGE_APP_KEY=...
+LONGBRIDGE_APP_SECRET=...
+LONGBRIDGE_ACCESS_TOKEN=...
+```
+
+في الاختبار الرجعي، حدّد `source` داخل `config.json`:
+
+```json
+{
+  "codes": ["QQQ.US"],
+  "start_date": "2025-01-01",
+  "end_date": "2025-01-10",
+  "interval": "1D",
+  "source": "longbridge"
+}
+```
+
+وفي محادثة الوكيل اطلبها صراحةً: **«استخدم Longbridge لجلب بيانات QQQ.US التاريخية.»** هذا الطلب الصريح منفصل عن `source: "auto"`؛ إذ يُبقي `auto` على سلسلة التراجع المعتادة لكل سوق.
+
 إلى جانب OHLCV، تصل **22 أداة بيانات للقراءة فقط** إلى الأساسيات والتدفقات — تدفق الأموال، والتنين والنمر، والتدفق الشمالي، والهامش، والصفقات الكتلية، وعدد المساهمين، وفترة الإغلاق، والقطاعات، وتقارير الأبحاث، والأخبار، وإيداعات SEC، والقوائم المالية، وسلاسل الخيارات، وملف الشركة، وفحص السوق، والبحث عن الرموز، والاقتصاد الكلي، وiwencai، والحيازات المؤسسية (13F)، وتفكيك محافظ ETF، وأسواق التنبؤ، والأوراق البحثية — وكلها مكشوفة عبر MCP. ولا يتراجع رمز `local:` صريح أبداً وبصمت إلى مصدر شبكي.
 
 <!-- QVERIS-START -->
@@ -1083,6 +1113,10 @@ vibe-trading-mcp --transport sse   # legacy SSE (deprecated)
 
 **أدوات MCP المعروضة (59):** `list_skills`, `load_skill`, `start_research_goal`, `get_research_goal`, `add_goal_evidence`, `update_research_goal_status`, `backtest`, `factor_analysis`, `analyze_options`, `analyze_options_payoff`, `pattern_recognition`, `read_url`, `read_document`, `web_search`, `write_file`, `read_file`, `trading_connections`, `trading_select_connection`, `trading_check`, `trading_account`, `trading_positions`, `trading_orders`, `trading_quote`, `trading_history`, `list_swarm_presets`, `run_swarm`, `get_market_data`, `get_fund_flow`, `get_dragon_tiger`, `get_northbound_flow`, `get_margin_trading`, `get_block_trades`, `get_shareholder_count`, `get_lockup_expiry`, `get_sector_info`, `get_research_reports`, `get_stock_news`, `get_sec_filings`, `get_financial_statements`, `get_options_chain`, `get_stock_profile`, `screen_market`, `search_symbol`, `get_macro_series`, `iwencai_search`, `get_institutional_holdings`, `etf_holdings`, `prediction_market`, `research_papers`, `get_swarm_status`, `get_run_result`, `list_runs`, `reap_stale_runs`, `retry_run`, `analyze_trade_journal`, `extract_shadow_strategy`, `run_shadow_backtest`, `render_shadow_report`, `scan_shadow_signals`.
 
+### أدوات MCP الخارجية في SWARM
+
+يمكن لعمّال `run_swarm` استدعاء أدوات من خوادم MCP خارجية بعد موافقة المشغّل. اضبط قائمة السماح على جانب الخادم في `VIBE_TRADING_SWARM_AGENT_CONFIG` أو `~/.vibe-trading/swarm-agent.json` أو الملف الاحتياطي `~/.vibe-trading/agent.json`، ثم اذكر الأدوات البعيدة داخل إعداد swarm باسم الغلاف المحلي مثل `mcp_internal_kb_search`. تبقى `variables` التي يمرّرها المستدعي بيانات قوالب فقط، ولا يمكنها حقن روابط MCP أو أوامر أو متغيرات بيئة أو تجاوزات لقائمة السماح.
+
 <details>
 <summary><b>التثبيت من ClawHub (أمر واحد)</b></summary>
 
@@ -1165,9 +1199,226 @@ vibe-trading connector history EURUSD
 | `mt5-paper-trade` | demo | مباشر (تسري حدود الحجم الخاصة بالموصل) |
 | `mt5-live-trade` | real | خاضع لبوابة التفويض (mandate) + مفتاح الإيقاف (kill-switch) |
 
-حدود الأمان: **"paper" هو حساب demo لدى الوسيط**، ويُتحقق من ذلك عند كل استدعاء — إذ تعيد الطرفية `account_info().trade_mode` ورقم تسجيل الدخول، لذا يُرفض رفضاً قاطعاً أي profile ورقي مربوط بحساب أموال حقيقية (أو العكس). يحدد MT5 أحجام الأوامر بوحدة **اللوت** (1 لوت EURUSD = 100,000 EUR)؛ وتسعّر بوابة التفويض في وضع live اللوتات عبر hook التسعير بالدولار الأمريكي في الموصل، كما تسري حدود `max_order_volume` / `max_order_notional_usd` الخاصة بالموصل على demo وlive معاً. ملاحظة لحسابات التحوط (وهي الوضع الافتراضي لدى Exness): أي أمر بالاتجاه المعاكس **يفتح تحوطاً** — أغلق المراكز عبر التذكرة (`trading_cancel_order` مع تذكرة المركز، أو `close_position`)، فذلك يثبّت الصفقة على المركز ولا يمكنه إلا تقليل الانكشاف. مسار التراجع/الإيقاف: يمنع مفتاح الإيقاف أوامر live الجديدة؛ وتبقى الإلغاءات متاحة وتُسجَّل في سجل التدقيق. حدود التفويض بالدولار الأمريكي؛ أما عملات الحسابات غير الدولارية فتُفرض هوامشها لدى الوسيط بعملة الحساب.
+حدود الأمان: **"paper" هو حساب demo لدى الوسيط**، ويُتحقق من ذلك عند كل استدعاء — إذ تعيد الطرفية `account_info().trade_mode` ورقم تسجيل الدخول، لذا يُرفض رفضاً قاطعاً أي profile ورقي مربوط بحساب أموال حقيقية (أو العكس). يحدد MT5 أحجام الأوامر بوحدة **اللوت** (1 لوت EURUSD = 100,000 EUR)؛ وتسعّر بوابة التفويض في وضع live اللوتات عبر hook التسعير بالدولار الأمريكي في الموصل، كما تسري حدود `max_order_volume` / `max_order_notional_usd` الخاصة بالموصل على demo وlive معاً، وتفشل مغلقةً (fail-closed) إذا تعذّر تسعير القيمة الاسمية. ملاحظة لحسابات التحوط (وهي الوضع الافتراضي لدى Exness): أي أمر بالاتجاه المعاكس **يفتح تحوطاً** — أغلق المراكز عبر التذكرة (`trading_cancel_order` مع تذكرة المركز)، فذلك يثبّت الصفقة على المركز ولا يمكنه إلا تقليل الانكشاف. مسار التراجع/الإيقاف: يمنع مفتاح الإيقاف أوامر live الجديدة؛ وتبقى الإلغاءات متاحة وتُسجَّل في سجل التدقيق. حدود التفويض بالدولار الأمريكي؛ أما عملات الحسابات غير الدولارية فتُفرض هوامشها لدى الوسيط بعملة الحساب.
 
 يتشارك مُحمّل بيانات السوق `mt5` (رأس سلسلة تراجع الفوركس) ملف `mt5.json` نفسه — ومن دون هذا الملف يرتبط للقراءة فقط بآخر طرفية مستخدمة ومسجَّلة الدخول.
+
+---
+
+## 🔌 تحميل الأدوات من خوادم MCP خارجية (وضع MCP Client)
+
+> **هذا هو الاتجاه المعاكس لقسم MCP Plugin أعلاه.**
+> يتيح MCP Plugin لوكلاء *آخرين* استدعاء أدوات Vibe-Trading.
+> أما هذا القسم فيتيح لوكيل Vibe-Trading *المدمج* استدعاء أدوات من خوادم MCP *الخاصة بك*.
+
+### بداية سريعة
+
+أنشئ الملف `~/.vibe-trading/agent.json`:
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "uvx",
+      "args": ["my-mcp-server"]
+    }
+  }
+}
+```
+
+ثم شغّل أي أمر CLI — تُحقَن أدوات الخوادم الخارجية العادية تلقائياً في سجل الوكيل بعد الأدوات المحلية:
+
+```bash
+vibe-trading run "use my-server to do X"
+```
+
+### مسبار MCP الرسمي من IBKR للقراءة فقط
+
+يستطيع Vibe-Trading الاتصال مباشرةً بنقطة نهاية MCP البعيدة الرسمية لدى Interactive Brokers في وضع
+القراءة فقط. أضف ما يلي إلى `~/.vibe-trading/agent.json`:
+
+```json
+{
+  "mcpServers": {
+    "ibkr": {
+      "type": "streamableHttp",
+      "url": "https://api.ibkr.com/v1/api/mcp",
+      "auth": {
+        "type": "oauth",
+        "scopes": ["mcp.read"],
+        "clientName": "Vibe-Trading",
+        "cacheDir": "~/.vibe-trading/live/ibkr/oauth"
+      },
+      "enabledTools": ["*"]
+    }
+  }
+}
+```
+
+ثم ابدأ تدفق OAuth عبر المتصفح:
+
+```bash
+vibe-trading connector authorize ibkr-live-official-mcp-readonly
+```
+
+لا يُقبل الرمز الشامل `*` إلا مع مسبار `mcp.read` من IBKR. والترخيص لهذا الملف يؤكد الوصول إلى نطاق
+القراءة الرسمي لدى IBKR فحسب؛ أما استدعاءات `trading_account` و`trading_positions` العامة فتبقى معطّلة
+إلى أن تنشر IBKR أسماء أدوات قراءة مستقرة يمكن لـ Vibe-Trading ربطها بأمان. وأي إعداد يضيف `mcp.write`
+يجب أن يثبّت قائمة أدوات صريحة، ويظل مع ذلك مارّاً عبر حارس الأوامر الحية.
+
+وإذا أصدرت IBKR عميل OAuth مُسجَّلاً مسبقاً، فأضف `clientId` و`clientSecret` داخل `auth`.
+
+### موصّلات التداول: أسرع مسار
+
+لمن لا يستطيع انتظار موافقة عميل OAuth من IBKR، اتصل بجلسة TWS أو IB Gateway محلية. تبقى بيانات الاعتماد
+داخل تطبيق IBKR على سطح المكتب، ولا يتصل Vibe-Trading إلا بـ `127.0.0.1` ويعرضه كملف موصّل.
+
+ثبّت الـ SDK الاختياري:
+
+```bash
+pip install "vibe-trading-ai[ibkr]"
+```
+
+افتح TWS للتداول الورقي أو IB Gateway الورقي، وفعّل API socket clients، ثم شغّل:
+
+```bash
+vibe-trading connector list
+vibe-trading connector use ibkr-paper-local
+vibe-trading connector configure ibkr-paper-local --yes
+vibe-trading connector check
+vibe-trading connector account
+vibe-trading connector positions
+vibe-trading connector orders
+vibe-trading connector quote AAPL
+vibe-trading connector history AAPL --duration "30 D" --bar-size "1 day"
+```
+
+المنافذ المحلية الافتراضية:
+
+| التطبيق | ورقي | حيّ للقراءة فقط |
+|---------|------|------------------|
+| TWS | `7497` | `7496` |
+| IB Gateway | `4002` | `4001` |
+
+يعرض الوكيل أدوات بنطاق الموصّل بأسماء `trading_connections` و`trading_select_connection` و
+`trading_check` و`trading_account` و`trading_positions` و`trading_orders` و`trading_quote` و
+`trading_history`. ولا تُسجَّل أدوات MCP الخام لوسطاء التداول الحي مباشرةً بصيغة `mcp_<broker>_*`،
+ولا تُسجَّل أي أداة لتنفيذ الأوامر لدى IBKR.
+
+### 🔐 وضع TAP — عزل كامل لبيانات الاعتماد وكتابة بموافقة بشرية
+
+**اختياري ومعطّل افتراضياً.** إن لم تُضبط متغيرات `TAP_*` أدناه، يتصرف الموصّل تماماً كما كان
+(اتصال مباشر بـ SDK الوسيط) ولا يتغير شيء.
+
+[TAP](https://tap.human.tech) (Tool Authorization Protocol) وسيط لبيانات الاعتماد: لا يحمل الوكيل أبداً
+المفتاح السري الخام لواجهة الوسيط، وتخضع عمليات الكتابة ذات الأثر **لموافقة بشرية**. ومع تفعيل وضع TAP
+يُرسَل **كل** استدعاء لـ Alpaca — تنفيذ الأمر والإلغاء وكذلك القراءات
+(account/positions/orders/quote/bars) — إلى نقطة النهاية `/forward` في وسيط TAP بدل SDK الوسيط؛ فيحقن
+TAP المفتاح الحقيقي على جانب الخادم ثم يمرّر الطلب إلى المصدر.
+
+- لا تحمل عملية الوكيل **أي مفتاح لـ Alpaca إطلاقاً** — ولا تحتاج حتى إلى `alpaca-py` — لأن كامل حركة
+  الخروج تمرّ عبر TAP. يُشار إلى السر بالاسم (`<CREDENTIAL:alpaca.key_id>`) ويستبدله TAP.
+- **تتوقف عمليات الكتابة بانتظار موافقة بشرية.** لا يصل أمر أو إلغاء إلى الوسيط دون موافقة إنسان؛ وحتى
+  عبارة «اشترِ الآن» المحقونة عبر التوجيه تُحتجَز، ورفضها يعني أنها لن تصل إلى Alpaca أبداً. وتحمل الأوامر
+  معرّف `client_order_id` حتمياً، فتُلغى تكرارات إعادة المحاولة عند تسابق الموافقة بدل تنفيذ الأمر مرتين.
+- **تُعتمد القراءات تلقائياً.** فـ account/positions/orders/quote/bars كلها طلبات GET يمرّرها TAP دون
+  خطوة بشرية — وهذا *عزل* لبيانات الاعتماد (لا مفتاح داخل العملية) لا بوابة، فلا احتكاك إضافي تقريباً.
+- يثبّت `allowed_hosts` على اعتماد TAP الجهات التي يجوز إرسال المفتاح إليها، فيُرفض أي هدف مُتلاعَب به
+  (403) قبل الحقن.
+
+**كيفية التفعيل:**
+
+1. في لوحة TAP، أنشئ اعتماداً **متعدد الأسرار** باسم `alpaca` يحمل زوج مفاتيح Alpaca في الحقلين
+   `key_id` و`secret_key`، وأسنِده إلى وكيلك، مع allowed hosts تشمل `paper-api.alpaca.markets`
+   (أو المضيف الحي `api.alpaca.markets`) **و**`data.alpaca.markets` (مضيف بيانات السوق الذي تستخدمه
+   quote/bars). واستخدم **اعتمادَي TAP منفصلين للورقي والحي** (مثل `alpaca-paper` / `alpaca-live`،
+   يُختاران عبر `TAP_ALPACA_CREDENTIAL`)، كلٌّ منهما بـ `allowed_hosts` مثبّت على مضيف واجهته الخاصة —
+   عندئذ يرفض TAP بنيوياً إرسال المفتاح الورقي إلى المضيف الحي والعكس، فيبقى الفصل بين الورقي والحي
+   واضحاً من طرف إلى طرف.
+2. أضف إلى `agent/.env`:
+
+| المتغير | إلزامي | الوصف |
+|---------|:------:|-------|
+| `TAP_PROXY_URL` | نعم | عنوان وسيط TAP الأساسي (مثل `https://proxy.tap.human.tech`) |
+| `TAP_AGENT_KEY` | نعم | مفتاح واجهة وكيل TAP الخاص بك (سرّي) |
+| `TAP_ALPACA_CREDENTIAL` | لا | اسم اعتماد TAP الخاص بـ Alpaca (الافتراضي `alpaca`) |
+| `TAP_APPROVAL_TIMEOUT` | لا | عدد الثواني لانتظار قرار بشري (الافتراضي `300`) |
+
+عند إجراء عملية كتابة، وافق عليها أو ارفضها من قناة TAP لديك (Telegram / اللوحة). يُمرَّر الأمر أو
+الإلغاء المُوافَق عليه إلى Alpaca، أما المرفوض أو الذي انتهت مهلته فيعيد خطأ و**لا يُرسَل إطلاقاً**.
+
+> **قيد معروف — تسابق الموافقة.** إذا وافق الإنسان تماماً عند حدّ `TAP_APPROVAL_TIMEOUT`، فقد يمرّر TAP
+> الأمر بينما يكون الاستطلاع قد استسلم بالفعل: عندها تُبلّغ البوابة عن خطأ رغم وصول الأمر إلى الوسيط،
+> ويَعُدّ عدّاد `max_trades_per_day` صفقةً أقل. ويمنع `client_order_id` الحتمي إعادةَ المحاولة من تنفيذ
+> الأمر مرتين؛ لكن إن كنت تعتمد على حدّ يومي ضيّق للصفقات، فتحقّق من الأوامر المفتوحة بعد خطأ مهلة TAP
+> قبل إعادة المحاولة.
+
+**النطاق:** يغطي **تنفيذ أوامر Alpaca وإلغاءها والقراءات الخمس جميعها** — أي كامل حركة خروج الموصّل،
+فلا تحمل العملية مفتاحاً على أي مسار. أما الوسطاء الذين يوقّعون بـ HMAC (Binance/OKX) فمتروكون لمرحلة
+لاحقة (التوقيع على جانب العميل لا يناسب حقن الخروج الصِّرف). وهذه الخطّافات إضافية: تعيش داخل موصّل
+Alpaca وتترك بوابة التفويض الحي كما هي.
+
+### مرجع الإعدادات
+
+| الحقل | النوع | الافتراضي | الوصف |
+|-------|-------|-----------|-------|
+| `type` | string | يُستنتج لـ stdio، وإلزامي لـ HTTP | يُحذف مع stdio، ويُضبط على `sse` / `streamableHttp` للخوادم القائمة على URL. |
+| `command` | string | إلزامي لـ stdio | الملف التنفيذي الذي يُشغَّل لخوادم stdio. غير صالح لخوادم `sse` / `streamableHttp`. |
+| `args` | array | `[]` | وسائط سطر الأوامر لخوادم stdio فقط. |
+| `env` | object | `{}` | متغيرات بيئة إضافية تُدمج في بيئة العملية الفرعية، لخوادم stdio فقط. |
+| `url` | string | إلزامي لـ `sse` / `streamableHttp` | عنوان نقطة النهاية البعيدة SSE / streamable HTTP. لا يُستخدم مع stdio. |
+| `headers` | object | `{}` | ترويسات HTTP إضافية لخوادم `sse` / `streamableHttp` فقط. |
+| `toolTimeout` | number | `30` | مهلة استدعاء الأداة الواحدة بالثواني |
+| `initTimeout` | number | غير مضبوط (`max(toolTimeout, 30)`) | مهلة تهيئة MCP / ترخيص OAuth بالثواني. استخدمها للترخيص البطيء عبر المتصفح دون توسيع مهلة الاستدعاءات العادية. |
+| `enabledTools` | array | `["*"]` | قائمة الأدوات المسموح بها. استخدم `["*"]` لعرض كل أدوات الخادم |
+
+موقع ملف الإعدادات: `~/.vibe-trading/agent.json` (بصيغة JSON أو YAML).
+
+ومع وسائط النقل القائمة على URL يكون `type` إلزامياً؛ إذ لم يعد الوكيل يخمّن بين SSE و streamable HTTP
+من لاحقة العنوان.
+
+### تجاوزات على مستوى الجلسة (API)
+
+عند إنشاء جلسة عبر الواجهة البرمجية يمكنك تمرير `mcpServers` داخل `session.config` لتوسيع الإعداد العام
+أو تجاوزه لتلك الجلسة وحدها:
+
+```json
+{
+  "config": {
+    "mcpServers": {
+      "research-server": {
+        "command": "uvx",
+        "args": ["research-mcp"],
+        "enabledTools": ["search", "fetch"]
+      }
+    }
+  }
+}
+```
+
+### تسمية الأدوات
+
+تُعرض الأدوات البعيدة العادية بأسماء مستقرة على الصيغة `mcp_<server>_<tool>`.
+أما خوادم MCP لوسطاء التداول الحي فتبقى خلف واجهة الموصّلات `trading_*`.
+
+وإذا أنتج اسما خادمين البادئةَ نفسها الآمنة بترميز ASCII (مثل `foo-bar` و`foo_bar` اللذين يصيران
+`foo_bar`)، تُضاف لاحقة تجزئة حتمية على مستوى مقطع الخادم للحفاظ على تفرّد الأسماء، ويصل المشغّل تحذير:
+
+```
+WARNING: Configured MCP server 'foo-bar' collides with another server after local name
+normalization. Using local tool prefix 'mcp_foo_bar_<hash>_<tool>' to keep generated
+tool names unique. Rename the server in agent config if you want a different prefix.
+```
+
+### حدود الإصدار v1
+
+| الحد | التفصيل |
+|------|---------|
+| وسائط النقل | stdio و SSE و streamable HTTP |
+| التنفيذ | تسلسلي فقط — لا تدخل أدوات MCP مسار القراءة المتوازي |
+| الأسطح | الأدوات فقط (الموارد والتوجيهات خارج نطاق v1) |
+| إعادة التحميل الساخن | غير مدعومة — أعد تشغيل العملية لالتقاط تغييرات الإعداد |
+| مسار Swarm | لا تتوفر أدوات MCP داخل سجلات عمّال Swarm في v1 |
 
 ---
 

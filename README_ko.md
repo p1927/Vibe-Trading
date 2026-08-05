@@ -364,6 +364,36 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 - **크립토** → `okx` · `ccxt` · `binance` · `yfinance` · `local`
 - **외환/귀금속** → `mt5` · `yfinance` · `akshare` · `local` &nbsp;·&nbsp; *(선물 / 펀드 / 매크로 → `tushare`/`akshare` → `local`)*
 
+### Longbridge를 명시적으로 사용하기
+
+Longbridge는 미국/홍콩 주식의 과거 OHLCV를 제공하는 선택적 loader입니다. SDK 설치:
+
+```bash
+pip install "vibe-trading-ai[longbridge]"
+```
+
+`.env`에 자격 증명 3개를 설정하세요:
+
+```dotenv
+LONGBRIDGE_APP_KEY=...
+LONGBRIDGE_APP_SECRET=...
+LONGBRIDGE_ACCESS_TOKEN=...
+```
+
+백테스트에서는 `config.json`의 `source`를 지정합니다:
+
+```json
+{
+  "codes": ["QQQ.US"],
+  "start_date": "2025-01-01",
+  "end_date": "2025-01-10",
+  "interval": "1D",
+  "source": "longbridge"
+}
+```
+
+Agent 대화에서는 명시적으로 요청하세요: **"Longbridge로 QQQ.US 과거 데이터를 가져와줘."** 이 명시적 소스 지정은 `source: "auto"`와 별개이며, `auto`는 시장별 기본 폴백 체인을 그대로 사용합니다.
+
 OHLCV를 넘어 **22개 읽기 전용 데이터 도구**가 펀더멘털과 자금 흐름까지 닿습니다 — 자금 흐름, 용호방(dragon-tiger), 북향(northbound), 신용거래, 대종거래, 주주 수, 보호예수, 섹터, 리서치 리포트, 뉴스, SEC 공시, 재무제표, 옵션 체인, 종목 프로필, 시장 스크리닝, 심볼 검색, 매크로, 원차이(iwencai), 기관 보유(13F), ETF 룩스루, 예측 시장, 논문 검색 — 모두 MCP로 노출됩니다. 명시적인 `local:` 심볼은 절대 조용히 네트워크 소스로 폴백하지 않습니다.
 
 <!-- QVERIS-START -->
@@ -1083,6 +1113,10 @@ vibe-trading-mcp --transport sse   # legacy SSE (deprecated)
 
 **노출되는 MCP tools(59):** `list_skills`, `load_skill`, `start_research_goal`, `get_research_goal`, `add_goal_evidence`, `update_research_goal_status`, `backtest`, `factor_analysis`, `analyze_options`, `analyze_options_payoff`, `pattern_recognition`, `read_url`, `read_document`, `web_search`, `write_file`, `read_file`, `trading_connections`, `trading_select_connection`, `trading_check`, `trading_account`, `trading_positions`, `trading_orders`, `trading_quote`, `trading_history`, `list_swarm_presets`, `run_swarm`, `get_market_data`, `get_fund_flow`, `get_dragon_tiger`, `get_northbound_flow`, `get_margin_trading`, `get_block_trades`, `get_shareholder_count`, `get_lockup_expiry`, `get_sector_info`, `get_research_reports`, `get_stock_news`, `get_sec_filings`, `get_financial_statements`, `get_options_chain`, `get_stock_profile`, `screen_market`, `search_symbol`, `get_macro_series`, `iwencai_search`, `get_institutional_holdings`, `etf_holdings`, `prediction_market`, `research_papers`, `get_swarm_status`, `get_run_result`, `list_runs`, `reap_stale_runs`, `retry_run`, `analyze_trade_journal`, `extract_shadow_strategy`, `run_shadow_backtest`, `render_shadow_report`, `scan_shadow_signals`.
 
+### SWARM 외부 MCP tools
+
+`run_swarm` worker는 운영자가 승인한 외부 MCP 서버의 도구를 호출할 수 있습니다. 서버 측 allowlist는 `VIBE_TRADING_SWARM_AGENT_CONFIG`, `~/.vibe-trading/swarm-agent.json`, 또는 폴백인 `~/.vibe-trading/agent.json`에 설정하고, swarm preset에서는 로컬 MCP 래퍼 이름(예: `mcp_internal_kb_search`)으로 원격 도구를 나열합니다. 호출자가 전달한 `variables`는 템플릿 데이터로만 남으며 MCP URL, 명령, 환경 변수, allowlist 재정의를 주입할 수 없습니다.
+
 <details>
 <summary><b>ClawHub에서 설치(한 번의 명령)</b></summary>
 
@@ -1165,9 +1199,228 @@ vibe-trading connector history EURUSD
 | `mt5-paper-trade` | 데모 | 직접 주문(connector 크기 가드 적용) |
 | `mt5-live-trade` | 실계좌 | mandate + kill-switch 게이트 |
 
-안전 경계: **"paper"는 브로커의 데모 계정**이며 모든 호출마다 검증됩니다 — 터미널이 `account_info().trade_mode`와 로그인 정보를 그대로 되돌려주므로, 실계좌에 붙은 paper 프로파일(또는 그 반대)은 강제 거부됩니다. MT5는 주문 크기를 **lot** 단위로 계산합니다(EURUSD 1 lot = 100,000 EUR); live mandate 게이트는 connector의 USD 사이징 훅으로 lot 가격을 환산하고, connector 자체의 `max_order_volume` / `max_order_notional_usd` 가드는 데모와 실계좌 모두에 적용됩니다. 헤징 계정(Exness 기본값) 참고: 반대 방향 주문은 **헤지를 새로 엽니다** — 포지션은 티켓으로 종료하세요(포지션 티켓을 넘긴 `trading_cancel_order`, 또는 `close_position`). 이렇게 하면 체결이 해당 포지션에 고정되어 익스포저를 줄이는 방향으로만 작동합니다. 롤백/중단 경로: kill switch는 신규 live 주문을 차단하며, 취소는 계속 사용할 수 있고 감사 로그에 기록됩니다. Mandate 한도는 USD 기준이며, USD가 아닌 계정 통화는 브로커 측에서 계정 통화 기준 마진으로 강제됩니다.
+안전 경계: **"paper"는 브로커의 데모 계정**이며 모든 호출마다 검증됩니다 — 터미널이 `account_info().trade_mode`와 로그인 정보를 그대로 되돌려주므로, 실계좌에 붙은 paper 프로파일(또는 그 반대)은 강제 거부됩니다. MT5는 주문 크기를 **lot** 단위로 계산합니다(EURUSD 1 lot = 100,000 EUR); live mandate 게이트는 connector의 USD 사이징 훅으로 lot 가격을 환산하고, connector 자체의 `max_order_volume` / `max_order_notional_usd` 가드는 데모와 실계좌 모두에 적용되며, 명목 금액을 가격으로 환산할 수 없으면 fail-closed 처리됩니다. 헤징 계정(Exness 기본값) 참고: 반대 방향 주문은 **헤지를 새로 엽니다** — 포지션은 티켓으로 종료하세요(포지션 티켓을 넘긴 `trading_cancel_order`). 이렇게 하면 체결이 해당 포지션에 고정되어 익스포저를 줄이는 방향으로만 작동합니다. 롤백/중단 경로: kill switch는 신규 live 주문을 차단하며, 취소는 계속 사용할 수 있고 감사 로그에 기록됩니다. Mandate 한도는 USD 기준이며, USD가 아닌 계정 통화는 브로커 측에서 계정 통화 기준 마진으로 강제됩니다.
 
 `mt5` 시장 데이터 로더(외환 폴백 체인의 선두)는 같은 `mt5.json`을 공유합니다 — 파일이 없으면 마지막으로 사용된, 로그인된 터미널에 읽기 전용으로 연결됩니다.
+
+---
+
+## 🔌 외부 MCP 서버에서 도구 불러오기 (MCP Client 모드)
+
+> **위의 MCP Plugin과는 반대 방향입니다.**
+> MCP Plugin은 *다른* agent가 Vibe-Trading의 도구를 호출하게 합니다.
+> 이 절은 *내장* Vibe-Trading agent가 *당신의* 외부 MCP 서버에 있는 도구를 호출하게 합니다.
+
+### 빠른 시작
+
+`~/.vibe-trading/agent.json`을 만듭니다:
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "uvx",
+      "args": ["my-mcp-server"]
+    }
+  }
+}
+```
+
+그런 다음 아무 CLI 명령이나 실행하면 됩니다 — 일반 외부 서버의 도구는 로컬 도구 뒤에 agent
+레지스트리로 자동 주입됩니다:
+
+```bash
+vibe-trading run "use my-server to do X"
+```
+
+### IBKR 공식 MCP 읽기 전용 프로브
+
+Vibe-Trading은 Interactive Brokers의 공식 원격 MCP endpoint에 읽기 전용으로 직접 연결할 수 있습니다.
+`~/.vibe-trading/agent.json`에 다음을 추가하세요:
+
+```json
+{
+  "mcpServers": {
+    "ibkr": {
+      "type": "streamableHttp",
+      "url": "https://api.ibkr.com/v1/api/mcp",
+      "auth": {
+        "type": "oauth",
+        "scopes": ["mcp.read"],
+        "clientName": "Vibe-Trading",
+        "cacheDir": "~/.vibe-trading/live/ibkr/oauth"
+      },
+      "enabledTools": ["*"]
+    }
+  }
+}
+```
+
+이어서 브라우저 OAuth 플로우를 시작합니다:
+
+```bash
+vibe-trading connector authorize ibkr-live-official-mcp-readonly
+```
+
+와일드카드는 IBKR의 `mcp.read` 프로브에만 허용됩니다. 이 profile을 승인해도 확인되는 것은 IBKR 공식
+읽기 scope 접근까지이며, IBKR이 안전하게 매핑할 수 있는 안정적인 읽기 도구 이름을 공개하기 전까지
+범용 `trading_account`와 `trading_positions` 호출은 계속 비활성 상태입니다. `mcp.write`를 추가하는
+설정은 도구 allowlist를 명시적으로 고정해야 하며, 그래도 실거래 order guard를 통과합니다.
+
+IBKR이 사전 등록된 OAuth client를 발급했다면 `auth` 안에 `clientId`와 `clientSecret`을 추가하세요.
+
+### 트레이딩 커넥터: 가장 빠른 경로
+
+IBKR의 OAuth client 승인을 기다릴 수 없다면 로컬 TWS 또는 IB Gateway 세션에 연결하세요. 자격 증명은
+IBKR 데스크톱 앱 안에 남고, Vibe-Trading은 `127.0.0.1`에만 접속해 이를 커넥터 profile로 노출합니다.
+
+선택적 SDK를 설치합니다:
+
+```bash
+pip install "vibe-trading-ai[ibkr]"
+```
+
+TWS 페이퍼 트레이딩 또는 IB Gateway 페이퍼를 열고 API socket clients를 활성화한 뒤 실행합니다:
+
+```bash
+vibe-trading connector list
+vibe-trading connector use ibkr-paper-local
+vibe-trading connector configure ibkr-paper-local --yes
+vibe-trading connector check
+vibe-trading connector account
+vibe-trading connector positions
+vibe-trading connector orders
+vibe-trading connector quote AAPL
+vibe-trading connector history AAPL --duration "30 D" --bar-size "1 day"
+```
+
+로컬 기본 포트:
+
+| 앱 | 페이퍼 | 실거래 읽기 전용 |
+|----|--------|------------------|
+| TWS | `7497` | `7496` |
+| IB Gateway | `4002` | `4001` |
+
+agent가 노출하는 커넥터 범위 도구는 `trading_connections`, `trading_select_connection`,
+`trading_check`, `trading_account`, `trading_positions`, `trading_orders`, `trading_quote`,
+`trading_history`입니다. 실거래 브로커의 원시 MCP 도구는 `mcp_<broker>_*` 형태로 직접 등록되지
+않습니다. IBKR 주문 실행 도구는 하나도 등록되지 않습니다.
+
+### 🔐 TAP 모드 — 자격 증명 완전 격리와 사람 승인 기반 쓰기
+
+**옵트인이며 기본은 꺼져 있습니다.** 아래 `TAP_*` 변수가 설정되지 않으면 커넥터는 이전과 똑같이
+(브로커 SDK 직결) 동작하며 달라지는 것이 없습니다.
+
+[TAP](https://tap.human.tech)(Tool Authorization Protocol)은 자격 증명 프록시입니다. agent는 브로커
+API의 원본 시크릿을 결코 보유하지 않고, 결과가 있는 쓰기는 **사람의 승인**으로 게이트됩니다. TAP 모드를
+켜면 **모든** Alpaca 호출 — 주문 실행, 취소, 그리고 읽기(account/positions/orders/quote/bars) — 가
+브로커 SDK 대신 TAP 프록시의 `/forward` endpoint로 전송되고, TAP가 서버 측에서 실제 키를 주입한 뒤
+상류로 전달합니다.
+
+- agent 프로세스는 **Alpaca 키를 전혀 보유하지 않으며** `alpaca-py`조차 필요 없습니다. 전체 egress가
+  TAP를 지나가기 때문이며, 시크릿은 이름(`<CREDENTIAL:alpaca.key_id>`)으로만 참조되고 TAP가 치환합니다.
+- **쓰기는 사람 승인에서 차단됩니다.** 주문이나 취소는 사람이 승인하지 않으면 브로커에 도달하지 못합니다.
+  프롬프트 인젝션으로 들어온 "지금 사라"도 보류되며, 거부하면 Alpaca에 절대 도달하지 않습니다. 주문에는
+  결정적 `client_order_id`가 붙으므로 승인 경쟁 상황의 재시도는 중복 주문이 아니라 중복 제거됩니다.
+- **읽기는 자동 승인됩니다.** account/positions/orders/quote/bars는 GET이며 TAP가 사람 단계 없이
+  전달합니다. 이는 게이트가 아니라 자격 증명 *격리*(프로세스 안에 키가 없음)이므로 추가 마찰이 거의 없습니다.
+- TAP 자격 증명의 `allowed_hosts`가 키를 보낼 수 있는 대상을 고정하므로, 변조된 대상은 주입 전에
+  거부됩니다(403).
+
+**활성화 방법:**
+
+1. TAP 대시보드에서 `alpaca`라는 이름의 **멀티 시크릿** 자격 증명을 만들고 Alpaca 키 쌍을 `key_id`와
+   `secret_key` 필드에 담아 agent에 할당한 뒤, allowed hosts에 `paper-api.alpaca.markets`(또는 실거래
+   호스트 `api.alpaca.markets`) **그리고** `data.alpaca.markets`(quote/bars가 쓰는 시장 데이터 호스트)를
+   지정하세요. **페이퍼와 실거래에는 서로 다른 TAP 자격 증명**을 쓰세요(예: `alpaca-paper` /
+   `alpaca-live`, `TAP_ALPACA_CREDENTIAL`로 선택). 각각 `allowed_hosts`를 자기 API 호스트로 고정하면
+   TAP가 구조적으로 페이퍼 키를 실거래 호스트로 보내는 것을 거부하고 그 반대도 마찬가지여서, 페이퍼와
+   실거래의 분리가 끝까지 명확하게 유지됩니다.
+2. `agent/.env`에 추가합니다:
+
+| 변수 | 필수 | 설명 |
+|------|:----:|------|
+| `TAP_PROXY_URL` | 예 | TAP 프록시 기본 URL (예: `https://proxy.tap.human.tech`) |
+| `TAP_AGENT_KEY` | 예 | 당신의 TAP agent API 키(시크릿) |
+| `TAP_ALPACA_CREDENTIAL` | 아니오 | Alpaca용 TAP 자격 증명 이름(기본 `alpaca`) |
+| `TAP_APPROVAL_TIMEOUT` | 아니오 | 사람의 결정을 기다리는 초(기본 `300`) |
+
+쓰기가 발생하면 TAP 채널(Telegram / 대시보드)에서 승인하거나 거부하세요. 승인된 주문·취소는 Alpaca로
+전달되고, 거부되거나 시간이 초과된 것은 오류를 반환하며 **절대 전송되지 않습니다**.
+
+> **알려진 한계 — 승인 경쟁.** 사람이 정확히 `TAP_APPROVAL_TIMEOUT` 경계에서 승인하면, 폴링 쪽은 이미
+> 포기했는데 TAP가 주문을 전달할 수 있습니다. 이때 주문은 브로커에 도달했는데도 게이트는 오류를 보고하고
+> `max_trades_per_day` 카운터는 하나 적게 셉니다. 결정적 `client_order_id` 덕분에 재시도가 그 주문을
+> 이중으로 내지는 않지만, 일일 거래 한도를 빡빡하게 운용한다면 TAP 타임아웃 오류 뒤 재시도하기 전에
+> 미체결 주문을 확인하세요.
+
+**범위:** Alpaca의 **주문 실행, 취소, 다섯 가지 읽기 전부** — 즉 커넥터 egress 전체를 덮으므로 어떤
+경로에서도 프로세스가 키를 보유하지 않습니다. HMAC 서명 방식 브로커(Binance/OKX)는 후속 과제입니다
+(클라이언트 측 서명은 순수 egress 주입과 맞지 않습니다). 이 훅들은 추가적이며 Alpaca 커넥터 내부에만
+있고 실거래 mandate 게이트는 그대로 둡니다.
+
+### 설정 레퍼런스
+
+| 필드 | 타입 | 기본값 | 설명 |
+|------|------|--------|------|
+| `type` | string | stdio는 추론, HTTP는 필수 | stdio에서는 생략하고, URL 기반 서버에는 `sse` / `streamableHttp`를 지정합니다. |
+| `command` | string | stdio 필수 | stdio 서버에서 실행할 실행 파일. `sse` / `streamableHttp`에는 무효입니다. |
+| `args` | array | `[]` | stdio 서버 전용 커맨드라인 인자. |
+| `env` | object | `{}` | stdio 서버 전용. 서브프로세스 환경에 병합되는 추가 환경 변수. |
+| `url` | string | `sse` / `streamableHttp` 필수 | 원격 SSE / streamable HTTP endpoint URL. stdio에서는 쓰지 않습니다. |
+| `headers` | object | `{}` | `sse` / `streamableHttp` 서버 전용 추가 HTTP 헤더. |
+| `toolTimeout` | number | `30` | 도구 호출 1회 타임아웃(초) |
+| `initTimeout` | number | 미설정(`max(toolTimeout, 30)`) | MCP initialize / OAuth 인가 타임아웃(초). 일반 도구 호출을 넓히지 않고 느린 브라우저 인가를 처리할 때 씁니다. |
+| `enabledTools` | array | `["*"]` | 도구 allowlist. `["*"]`로 해당 서버의 모든 도구를 노출 |
+
+설정 파일 위치: `~/.vibe-trading/agent.json` (JSON 또는 YAML).
+
+URL 기반 transport에는 `type`이 필수입니다. agent는 더 이상 URL 접미사로 SSE와 streamable HTTP를
+추측하지 않습니다.
+
+### 세션별 재정의 (API)
+
+API로 session을 만들 때 `session.config` 안에 `mcpServers`를 넘기면 그 세션에 한해 전역 설정을
+확장하거나 덮어쓸 수 있습니다:
+
+```json
+{
+  "config": {
+    "mcpServers": {
+      "research-server": {
+        "command": "uvx",
+        "args": ["research-mcp"],
+        "enabledTools": ["search", "fetch"]
+      }
+    }
+  }
+}
+```
+
+### 도구 이름 규칙
+
+일반 원격 도구는 안정적인 이름 `mcp_<server>_<tool>`로 노출됩니다.
+실거래 브로커의 MCP 서버는 `trading_*` 커넥터 표면 뒤에 남습니다.
+
+두 서버 이름이 로컬 이름 정규화 후 같은 ASCII 안전 접두사가 되는 경우(예: `foo-bar`와 `foo_bar`가 모두
+`foo_bar`가 되는 경우), 이름의 유일성을 지키기 위해 서버 세그먼트에 결정적 해시 접미사가 붙고 운영자에게
+경고가 표시됩니다:
+
+```
+WARNING: Configured MCP server 'foo-bar' collides with another server after local name
+normalization. Using local tool prefix 'mcp_foo_bar_<hash>_<tool>' to keep generated
+tool names unique. Rename the server in agent config if you want a different prefix.
+```
+
+### v1 제한
+
+| 제한 | 상세 |
+|------|------|
+| Transport | stdio, SSE, streamable HTTP |
+| 실행 | 직렬만 — MCP 도구는 병렬 readonly 경로에 들어가지 않습니다 |
+| 대상 | tools만(v1에서는 resources와 prompts 제외) |
+| 핫 리로드 | 미지원 — 설정 변경을 반영하려면 프로세스를 재시작해야 합니다 |
+| Swarm 경로 | v1에서는 Swarm worker 레지스트리에 MCP 도구가 없습니다 |
 
 ---
 
