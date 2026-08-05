@@ -1,4 +1,10 @@
-"""HTTP transport and path builders for the eToro Public API."""
+"""HTTP transport and path builders for the eToro Public API.
+
+Paper-vs-live is structural: ``profile == "paper"`` routes to ``/demo`` API
+paths; live profiles use production paths on the same host. eToro uses one API
+key pair for both environments — the configured profile selects paths, not
+different credentials.
+"""
 
 from __future__ import annotations
 
@@ -45,7 +51,15 @@ Transport = Callable[..., requests.Response]
 
 @dataclass(frozen=True)
 class EtoroConfig:
-    """eToro connector connection settings."""
+    """eToro connector connection settings.
+
+    Args:
+        api_key: eToro Public API key (shared across demo and real paths).
+        user_key: eToro user key (shared across demo and real paths).
+        profile: ``paper``, ``live-readonly`` or ``live``.
+        timeout: Network timeout in seconds.
+        readonly: Always true for this layer unless trade profiles call writes.
+    """
 
     api_key: str = ""
     user_key: str = ""
@@ -55,6 +69,7 @@ class EtoroConfig:
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any] | None = None) -> "EtoroConfig":
+        """Build a config from a JSON-like mapping, normalizing the profile."""
         payload = dict(data or {})
         profile = str(payload.get("profile") or "paper").strip().lower()
         if profile not in PROFILE_ENVIRONMENTS:
@@ -74,6 +89,7 @@ class EtoroConfig:
         user_key: str | None = None,
         profile: str | None = None,
     ) -> "EtoroConfig":
+        """Return a copy with CLI/tool overrides applied."""
         payload = asdict(self)
         if api_key is not None:
             payload["api_key"] = api_key
@@ -85,10 +101,12 @@ class EtoroConfig:
 
     @property
     def environment(self) -> str:
+        """Return ``paper`` or ``live`` for this profile."""
         return PROFILE_ENVIRONMENTS.get(self.profile, "paper")
 
     @property
     def is_paper(self) -> bool:
+        """Return whether this profile targets demo API paths."""
         return self.environment == "paper"
 
 
@@ -99,11 +117,27 @@ _ENV_KEY_MAP = {
 }
 
 
+def build_config(
+    profile_config: Mapping[str, Any] | None = None,
+    overrides: Mapping[str, Any] | None = None,
+) -> EtoroConfig:
+    """Resolve config: saved file ← profile defaults ← CLI overrides."""
+    base = asdict(load_config())
+    for key, value in dict(profile_config or {}).items():
+        if value is not None:
+            base[key] = value
+    cfg = EtoroConfig.from_mapping(base)
+    clean = {k: v for k, v in dict(overrides or {}).items() if k in _OVERRIDE_KEYS and v not in (None, "")}
+    return cfg.with_overrides(**clean) if clean else cfg
+
+
 def config_path() -> Path:
+    """Return the user-level eToro config path."""
     return get_runtime_root() / CONFIG_FILENAME
 
 
 def load_config() -> EtoroConfig:
+    """Load eToro settings from ``~/.vibe-trading/etoro.json`` and env fallbacks."""
     path = config_path()
     base: dict[str, Any] = {}
     if path.exists():
@@ -115,10 +149,13 @@ def load_config() -> EtoroConfig:
         env_val = os.getenv(env_name, "").strip()  # noqa: env-gate — connector credential helper
         if env_val:
             base[field] = env_val
+    if not base:
+        return EtoroConfig()
     return EtoroConfig.from_mapping(base)
 
 
 def save_config(config: EtoroConfig) -> Path:
+    """Persist eToro settings with owner-only permissions."""
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(asdict(config), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -127,19 +164,6 @@ def save_config(config: EtoroConfig) -> Path:
     except OSError:
         pass
     return path
-
-
-def build_config(
-    profile_config: Mapping[str, Any] | None = None,
-    overrides: Mapping[str, Any] | None = None,
-) -> EtoroConfig:
-    base = asdict(load_config())
-    for key, value in dict(profile_config or {}).items():
-        if value is not None:
-            base[key] = value
-    cfg = EtoroConfig.from_mapping(base)
-    clean = {k: v for k, v in dict(overrides or {}).items() if k in _OVERRIDE_KEYS and v not in (None, "")}
-    return cfg.with_overrides(**clean) if clean else cfg
 
 
 def _missing_fields(cfg: EtoroConfig) -> list[str]:
@@ -173,6 +197,10 @@ def execution_v1_root(cfg: EtoroConfig) -> str:
 
 def info_root(cfg: EtoroConfig) -> str:
     return "/api/v1/trading/info/demo" if cfg.is_paper else "/api/v1/trading/info"
+
+
+def trade_history_root(cfg: EtoroConfig) -> str:
+    return "/api/v1/trading/info/trade/demo" if cfg.is_paper else "/api/v1/trading/info/trade"
 
 
 def positions_root(cfg: EtoroConfig) -> str:

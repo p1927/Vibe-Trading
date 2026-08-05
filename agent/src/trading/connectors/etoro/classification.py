@@ -11,6 +11,7 @@ from src.live.classification import ToolClass
 ETORO_TOOL_CLASS: dict[str, ToolClass] = {
     # READ
     "check_status": ToolClass.READ,
+    "get_user_profile": ToolClass.READ,
     "get_account_snapshot": ToolClass.READ,
     "get_positions": ToolClass.READ,
     "get_open_orders": ToolClass.READ,

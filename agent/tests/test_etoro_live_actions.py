@@ -18,13 +18,32 @@ class _FakeEtoroModule:
     def __init__(self):
         self.calls: list[str] = []
 
+    def build_config(self, profile_config, overrides):
+        return None
+
     def close_position(self, config, **kwargs):
         self.calls.append("close")
         return {"status": "ok", "position_id": kwargs.get("position_id")}
 
+    def cancel_close_order(self, config, order_id="", *, request_id=None, **kwargs):
+        self.calls.append("cancel_close")
+        return {"status": "ok", "order_id": order_id}
+
+    def edit_position_stops(self, config, **kwargs):
+        self.calls.append("edit")
+        return {"status": "ok", "position_id": kwargs.get("position_id")}
+
+    def copy_start_or_adjust(self, config, **kwargs):
+        self.calls.append("copy_start")
+        return {"status": "ok", "reference_id": "ref-1"}
+
     def copy_close(self, config, **kwargs):
         self.calls.append("copy_close")
         return {"status": "ok", "mirror_id": kwargs.get("mirror_id")}
+
+    def cancel_order(self, config, order_id, **kwargs):
+        self.calls.append("cancel")
+        return {"status": "ok", "order_id": order_id}
 
     def get_positions(self, config):
         return {"status": "ok", "positions": []}
@@ -110,10 +129,58 @@ def test_risk_increasing_edit_requires_mandate_when_halted(monkeypatch) -> None:
     assert result["status"] == "blocked"
 
 
+def test_copy_close_allowed_when_halted(monkeypatch) -> None:
+    module = _FakeEtoroModule()
+    _patch_gate(monkeypatch, mandate=_mandate(), halted=True)
+    result = gate.execute_live_action(
+        broker="etoro",
+        connector_module=module,
+        config=None,
+        remote_tool="copy_close",
+        risk_reducing=True,
+        intent=None,
+        execute_fn=lambda: module.copy_close(None, mirror_id=1),
+        audit_request={"mirror_id": 1},
+    )
+    assert result["status"] == "ok"
+    assert module.calls == ["copy_close"]
+
+
 def test_service_close_position_paper_bypasses_gate(monkeypatch) -> None:
     module = _FakeEtoroModule()
-    module.build_config = lambda profile_config, overrides: None  # type: ignore[method-assign]
     monkeypatch.setattr(service, "_sdk_module", lambda connector: module)
     result = service.close_position("99", "etoro-paper-trade")
     assert result["status"] == "ok"
     assert module.calls == ["close"]
+
+
+def test_service_cancel_close_order_paper_bypasses_gate(monkeypatch) -> None:
+    module = _FakeEtoroModule()
+    monkeypatch.setattr(service, "_sdk_module", lambda connector: module)
+    result = service.cancel_close_order("55", "etoro-paper-trade")
+    assert result["status"] == "ok"
+    assert module.calls == ["cancel_close"]
+
+
+def test_service_edit_position_stops_paper_bypasses_gate(monkeypatch) -> None:
+    module = _FakeEtoroModule()
+    monkeypatch.setattr(service, "_sdk_module", lambda connector: module)
+    result = service.edit_position_stops("7", "etoro-paper-trade", stop_loss=90.0)
+    assert result["status"] == "ok"
+    assert module.calls == ["edit"]
+
+
+def test_service_etoro_copy_start_paper_bypasses_gate(monkeypatch) -> None:
+    module = _FakeEtoroModule()
+    monkeypatch.setattr(service, "_sdk_module", lambda connector: module)
+    result = service.etoro_copy_start(123, 100.0, "etoro-paper-trade")
+    assert result["status"] == "ok"
+    assert module.calls == ["copy_start"]
+
+
+def test_service_cancel_order_paper_bypasses_gate(monkeypatch) -> None:
+    module = _FakeEtoroModule()
+    monkeypatch.setattr(service, "_sdk_module", lambda connector: module)
+    result = service.cancel_order("42", "etoro-paper-trade", symbol="BTC")
+    assert result["status"] == "ok"
+    assert module.calls == ["cancel"]

@@ -1,4 +1,9 @@
-"""Built-in eToro connector profiles."""
+"""Built-in eToro connector profiles.
+
+Layer A ships read-only paper and live profiles; the trade profiles add order
+placement, position management, and copy-trading workflows. Demo and real share
+one API key pair — the profile selects ``/demo`` vs production API paths.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +11,7 @@ from src.trading.types import READ_CAPABILITIES, TradingProfile
 
 ETORO_EXTENDED_CAPABILITIES = READ_CAPABILITIES + (
     "orders.place",
+    "orders.cancel",
     "positions.close",
     "orders.cancel_close",
     "positions.edit",
@@ -25,7 +31,7 @@ ETORO_PROFILES: tuple[TradingProfile, ...] = (
         capabilities=READ_CAPABILITIES,
         readonly=True,
         config={"profile": "paper"},
-        notes="Reads a demo account via eToro Public API. Demo keys only reach demo paths.",
+        notes="Reads a demo account via eToro Public API demo paths.",
     ),
     TradingProfile(
         id="etoro-live-sdk-readonly",
@@ -36,7 +42,7 @@ ETORO_PROFILES: tuple[TradingProfile, ...] = (
         capabilities=READ_CAPABILITIES,
         readonly=True,
         config={"profile": "live-readonly"},
-        notes="Reads a real account only. Order placement is not exposed in this profile.",
+        notes="Reads a real account only (production API paths). Order placement is not exposed in this profile.",
     ),
     TradingProfile(
         id="etoro-paper-trade",
@@ -61,6 +67,9 @@ ETORO_PROFILES: tuple[TradingProfile, ...] = (
         ),
         readonly=False,
         config={"profile": "live"},
-        notes="Real trading and copy workflows. Risk-increasing actions require an authorized mandate.",
+        notes=(
+            "Real trading and copy workflows via production API paths. "
+            "Risk-increasing actions require an authorized mandate; the caller enforces it."
+        ),
     ),
 )

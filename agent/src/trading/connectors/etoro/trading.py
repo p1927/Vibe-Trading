@@ -14,7 +14,7 @@ from src.trading.connectors.etoro.client import (
     make_client,
     positions_root,
 )
-from src.trading.connectors.etoro.instruments import resolve_instrument_id
+from src.trading.connectors.etoro.instruments import resolve_instrument_id, _looks_like_ticker
 
 
 def _base(cfg: EtoroConfig) -> dict[str, Any]:
@@ -58,14 +58,14 @@ def place_order(
         return _order_error(cfg, "order_type must be 'market' or 'limit'", symbol=symbol, side=clean_side)
 
     try:
-        instrument_id = resolve_instrument_id(symbol, cfg)
+        instrument_ref = _order_instrument_ref(symbol, cfg)
     except EtoroAPIError as exc:
         return _order_error(cfg, str(exc), symbol=symbol, side=clean_side)
 
     body: dict[str, Any] = {
         "action": "open",
         "transaction": clean_side,
-        "instrumentId": instrument_id,
+        **instrument_ref,
         "orderType": "mkt" if clean_type == "market" else "mit",
         "orderCurrency": "usd",
         "leverage": 1,
@@ -76,7 +76,7 @@ def place_order(
     else:
         body["units"] = float(quantity)
     if clean_type == "limit" and limit_price is not None:
-        body["rate"] = float(limit_price)
+        body["TriggerRate"] = float(limit_price)
 
     req_id = (request_id or str(uuid.uuid4())).strip()
     path = f"{execution_root(cfg)}/orders"
@@ -86,6 +86,7 @@ def place_order(
         return _order_error(cfg, str(exc), symbol=symbol, side=clean_side, request_id=req_id)
 
     order_id = _extract_order_id(payload)
+    instrument_id = instrument_ref.get("instrumentId")
     return {
         "status": "ok",
         **_base(cfg),
@@ -227,6 +228,17 @@ def edit_position_stops(
         return _order_error(cfg, str(exc), position_id=pos_id, request_id=req_id)
 
     return {"status": "ok", **_base(cfg), "position_id": pos_id, "request_id": req_id, "raw": payload}
+
+
+def _order_instrument_ref(symbol: str, cfg: EtoroConfig) -> dict[str, Any]:
+    """Build exactly one of ``symbol`` or ``instrumentId`` for open-order bodies."""
+    token = str(symbol or "").strip()
+    if not token:
+        raise EtoroAPIError("symbol is required")
+    if _looks_like_ticker(token):
+        return {"symbol": token}
+    instrument_id = resolve_instrument_id(token, cfg)
+    return {"instrumentId": instrument_id}
 
 
 def _extract_order_id(payload: Any) -> str | None:

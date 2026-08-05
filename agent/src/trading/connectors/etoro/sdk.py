@@ -16,6 +16,7 @@ from src.trading.connectors.etoro.client import (
     make_client,
     public_config,
     save_config,
+    trade_history_root,
 )
 from src.trading.connectors.etoro.copy_trading import (
     copy_close,
@@ -41,6 +42,7 @@ __all__ = [
     "load_config",
     "save_config",
     "check_status",
+    "get_user_profile",
     "get_account_snapshot",
     "get_positions",
     "get_open_orders",
@@ -92,6 +94,7 @@ def check_status(config: EtoroConfig | None = None) -> dict[str, Any]:
         report["error"] = f"eToro connector not configured: missing {', '.join(missing_fields)}."
         return report
     try:
+        me = get_user_profile(cfg)
         portfolio = get_account_snapshot(cfg)
     except (EtoroConfigError, EtoroAPIError) as exc:
         report["status"] = "error"
@@ -104,8 +107,20 @@ def check_status(config: EtoroConfig | None = None) -> dict[str, Any]:
     report["account"] = {
         "profile": cfg.profile,
         "portfolio_status": portfolio.get("status"),
+        "scopes": me.get("scopes"),
+        "real_cid": me.get("realCid") or me.get("realCID"),
+        "demo_cid": me.get("demoCid") or me.get("demoCID"),
     }
     return report
+
+
+def get_user_profile(config: EtoroConfig | None = None) -> dict[str, Any]:
+    """Return authenticated user profile and granted API scopes (`GET /api/v1/me`)."""
+    cfg = config or load_config()
+    payload = _client(cfg).request("GET", "/api/v1/me", allow_retry=True)
+    if isinstance(payload, dict):
+        return payload
+    return {"raw": payload}
 
 
 def get_account_snapshot(config: EtoroConfig | None = None) -> dict[str, Any]:
@@ -135,7 +150,7 @@ def get_open_orders(config: EtoroConfig | None = None, *, include_executions: bo
     result: dict[str, Any] = {"status": "ok", **_base_payload(cfg), "orders": orders}
     if include_executions:
         try:
-            history = _client(cfg).request("GET", f"{info_root(cfg)}/history", allow_retry=True)
+            history = _client(cfg).request("GET", f"{trade_history_root(cfg)}/history", allow_retry=True)
             result["history"] = history
         except EtoroAPIError as exc:
             result["history_error"] = str(exc)
@@ -415,18 +430,27 @@ def _normalize_candles(payload: Any) -> list[dict[str, Any]]:
             candles = raw
     elif isinstance(payload, list):
         candles = payload
+
     rows: list[dict[str, Any]] = []
     for candle in candles:
         if not isinstance(candle, dict):
             continue
-        rows.append(
-            {
-                "timestamp": candle.get("fromDate") or candle.get("timestamp") or candle.get("t"),
-                "open": candle.get("open"),
-                "high": candle.get("high"),
-                "low": candle.get("low"),
-                "close": candle.get("close"),
-                "volume": candle.get("volume"),
-            }
-        )
+        nested = candle.get("candles")
+        if isinstance(nested, list) and nested:
+            for inner in nested:
+                if isinstance(inner, dict):
+                    rows.append(_normalize_candle_row(inner))
+            continue
+        rows.append(_normalize_candle_row(candle))
     return rows
+
+
+def _normalize_candle_row(candle: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "timestamp": candle.get("fromDate") or candle.get("timestamp") or candle.get("t"),
+        "open": candle.get("open"),
+        "high": candle.get("high"),
+        "low": candle.get("low"),
+        "close": candle.get("close"),
+        "volume": candle.get("volume"),
+    }
