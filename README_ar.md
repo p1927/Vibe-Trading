@@ -268,6 +268,7 @@ Vibe-Trading مساحة عمل بحثية مفتوحة المصدر تحول ا�
 | **اختبار فكرة استراتيجية رجعياً** | كود استراتيجية، ومقاييس، وسياق معياري، ومخرجات تحقق، وبطاقات تشغيل. |
 | **مراجعة صفقاتك الخاصة** | قراءة سجلات الوسطاء، وتشخيص السلوك، واستخراج القواعد، ومقارنات Shadow Account. |
 | **قراءة المستندات والرسوم البيانية** | تحليل ملفات PDF / DOCX / XLSX / PPTX / الصور عبر OCR قابل للتوصيل (`read_document`)، وقراءة لقطات الرسوم البيانية دلالياً بنموذج رؤية (`analyze_image`). |
+| **قراءة إفصاحات المؤسسات ومحافظ الصناديق** | حيازات SEC 13F مع فروق المراكز ربعاً بربع، ومكوّنات ETF عبر الأسواق، والاحتمال الضمني لعقود الأحداث، واستخراج العوامل من arXiv / OpenAlex — كلها للقراءة فقط ومن مصادر عامة مجانية. |
 | **تحسين الأبحاث المتكررة** | الذاكرة الدائمة والمهارات القابلة للتحرير تحول الروتينات المفيدة إلى تدفقات قابلة لإعادة الاستخدام. |
 | **تشغيل فرق محللين** | مراجعات بحث متعددة الوكلاء لتدفقات الاستثمار والكم والكريبتو والماكرو والمخاطر. |
 | **وصل الأبحاث بقنوات IM** | إدارة بيئة جلسة واحدة عبر WebSocket وTelegram وSlack وDiscord وMatrix وWhatsApp وSignal وQQ/NapCat وWeChat/WeCom وFeishu/Lark وDingTalk وTeams وemail وMochat من CLI وREST وWeb UI. |
@@ -363,7 +364,7 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 - **الكريبتو** → `okx` · `ccxt` · `binance` · `yfinance` · `local`
 - **الفوركس / المعادن** → `mt5` · `yfinance` · `akshare` · `local` &nbsp;·&nbsp; *(العقود الآجلة / الصناديق / الاقتصاد الكلي → `tushare`/`akshare` → `local`)*
 
-إلى جانب OHLCV، تصل **18 أداة بيانات للقراءة فقط** إلى الأساسيات والتدفقات — تدفق الأموال، والتنين والنمر، والتدفق الشمالي، والهامش، والصفقات الكتلية، وعدد المساهمين، وفترة الإغلاق، والقطاعات، وتقارير الأبحاث، والأخبار، وإيداعات SEC، والقوائم المالية، وسلاسل الخيارات، والحيازات المؤسسية، وفحص السوق، والبحث عن الرموز، والاقتصاد الكلي — وكلها مكشوفة عبر MCP. ولا يتراجع رمز `local:` صريح أبداً وبصمت إلى مصدر شبكي.
+إلى جانب OHLCV، تصل **22 أداة بيانات للقراءة فقط** إلى الأساسيات والتدفقات — تدفق الأموال، والتنين والنمر، والتدفق الشمالي، والهامش، والصفقات الكتلية، وعدد المساهمين، وفترة الإغلاق، والقطاعات، وتقارير الأبحاث، والأخبار، وإيداعات SEC، والقوائم المالية، وسلاسل الخيارات، وملف الشركة، وفحص السوق، والبحث عن الرموز، والاقتصاد الكلي، وiwencai، والحيازات المؤسسية (13F)، وتفكيك محافظ ETF، وأسواق التنبؤ، والأوراق البحثية — وكلها مكشوفة عبر MCP. ولا يتراجع رمز `local:` صريح أبداً وبصمت إلى مصدر شبكي.
 
 <!-- QVERIS-START -->
 ### 💎 بيانات مدفوعة اختيارية — QVeris
@@ -384,7 +385,7 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 <details>
 <summary><b>مكتبة المهارات المالية</b> <sub>89 مهارة عبر 9 فئات</sub></summary>
 
-- 📊 88 مهارة مالية متخصصة منظمة في 9 فئات
+- 📊 89 مهارة مالية متخصصة منظمة في 9 فئات
 - 🌐 تغطية كاملة من الأسواق التقليدية إلى الكريبتو وDeFi
 - 🔬 قدرات شاملة من مصادر البيانات إلى البحث الكمي
 
@@ -392,7 +393,7 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 |----------|--------|----------|
 | Data Source | 10 | `data-routing`, `tushare`, `yfinance`, `okx-market`, `akshare`, `mootdx`, `ccxt`, `eastmoney`, `sec-edgar`, `qveris` |
 | Strategy | 19 | `strategy-generate`, `cross-market-strategy`, `technical-basic`, `candlestick`, `ichimoku`, `elliott-wave`, `smc`, `multi-factor`, `ml-strategy` |
-| Analysis | 22 | `factor-research`, `correlation-regime`, `macro-analysis`, `global-macro`, `valuation-model`, `earnings-forecast`, `credit-analysis`, `dividend-analysis` |
+| Analysis | 23 | `factor-research`, `correlation-regime`, `macro-analysis`, `global-macro`, `valuation-model`, `investor-lenses`, `credit-analysis`, `dividend-analysis` |
 | Asset Class | 9 | `options-strategy`, `options-advanced`, `convertible-bond`, `etf-analysis`, `asset-allocation`, `sector-rotation` |
 | Crypto | 7 | `perp-funding-basis`, `liquidation-heatmap`, `stablecoin-flow`, `defi-yield`, `onchain-analysis` |
 | Flow | 8 | `hk-connect-flow`, `us-etf-flow`, `edgar-sec-filings`, `financial-statement`, `adr-hshare` |
@@ -449,7 +450,7 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 <details>
 <summary><b>موصّلات الوسطاء</b> <sub>12 وسيطاً — قراءة + حساب ورقي، وتداول حي محدود حيثما يُدعم</sub></summary>
 
-ملفات تعريف قائمة على الموصّل. يوفّر كل موصّل قراءةً وتنفيذ أوامر على حساب ورقي (paper)؛ أما تنفيذ الأوامر الحية فمحدود بتفويض يحدّده المستخدم (قائمة رموز مسموح بها، وحدود لحجم الأمر / الانكشاف، وحد يومي للصفقات، ومفتاح إيقاف فوري) ولا يحتفظ الموصّل بأي أموال — الوسيط هو من ينفّذ. تبقى أدوات تنفيذ الأوامر خارج MCP (عبر agent + CLI فقط). ومسارات البحث / الاختبار الرجعي محظورة بنيوياً من أي نقطة نهاية حية.
+ملفات تعريف قائمة على الموصّل. يوفّر معظم الموصّلات قراءةً وتنفيذ أوامر على حساب ورقي (paper) — أما IBKR فللقراءة فقط، وRobinhood حيّ فقط (بلا حساب ورقي)، وTrading 212 يرفض تنفيذ الأوامر كلياً بما فيها الورقية؛ أما تنفيذ الأوامر الحية فمحدود بتفويض يحدّده المستخدم (قائمة رموز مسموح بها، وحدود لحجم الأمر / الانكشاف، وحد يومي للصفقات، ومفتاح إيقاف فوري) ولا يحتفظ الموصّل بأي أموال — الوسيط هو من ينفّذ. تبقى أدوات تنفيذ الأوامر خارج MCP (عبر agent + CLI فقط). ومسارات البحث / الاختبار الرجعي محظورة بنيوياً من أي نقطة نهاية حية.
 
 | الوسيط | الأسواق | القدرات |
 |--------|---------|---------|
@@ -725,7 +726,9 @@ vibe-trading               # interactive TUI
 vibe-trading run -p "..."  # single run
 vibe-trading serve         # API server
 vibe-trading alpha list    # استعرض 462 ألفا جاهز؛ متاح show / bench / compare / export-manifest
+vibe-trading playbook list # خمسة قوالب بحث مجدولة؛ متاح show / create
 vibe-trading channels status --local  # فحص إعدادات قنوات IM وتلميحات التثبيت
+vibe-trading provider doctor  # طباعة تشخيصات المزود/الوكيل/الحزم بعد إخفاء الأسرار
 ```
 
 <details>
@@ -733,23 +736,33 @@ vibe-trading channels status --local  # فحص إعدادات قنوات IM وت
 
 | الأمر | الوصف |
 |---------|-------------|
-| `/help` | عرض كل الأوامر |
-| `/skills` | عرض كل المهارات المالية الـ 88 |
-| `/swarm` | عرض إعدادات فرق السرب الـ 30 |
-| `/swarm run <preset> [vars_json]` | تشغيل فريق سرب مع بث مباشر |
-| `/swarm list` | سجل تشغيلات السرب |
-| `/swarm show <run_id>` | تفاصيل تشغيل السرب |
-| `/swarm cancel <run_id>` | إلغاء سرب قيد التشغيل |
-| `/list` | التشغيلات الأخيرة |
-| `/show <run_id>` | تفاصيل التشغيل + المقاييس |
-| `/code <run_id>` | كود الاستراتيجية المولدة |
-| `/pine <run_id>` | تصدير المؤشرات (TradingView + TDX + MT5) |
-| `/trace <run_id>` | إعادة تشغيل التنفيذ كاملة |
-| `/continue <run_id> <prompt>` | متابعة تشغيل بتعليمات جديدة |
-| `/sessions` | عرض جلسات الدردشة |
-| `/settings` | عرض إعدادات التشغيل |
-| `/clear` | مسح الشاشة |
-| `/quit` | خروج |
+| `/help` | عرض اختصارات لوحة المفاتيح وقائمة الأوامر |
+| `/model` | تبديل مزوّد LLM والنموذج |
+| `/memory` | عرض / إدارة الذاكرة الدائمة |
+| `/history` | تصفّح الجلسات السابقة واستئنافها |
+| `/goal` | بدء / فحص هدف بحث مالي |
+| `/search` | بحث نصي كامل عبر كل الجلسات |
+| `/swarm` | إعدادات متعددة الوكلاء (لجنة / كمّي / مخاطر) |
+| `/skill` | سرد / تحميل / إلغاء تحميل المهارات |
+| `/show` | عرض تشغيل سابق بالمعرّف |
+| `/clear` | مسح المحادثة الحالية |
+| `/pine` | تصدير الاستراتيجية الحالية كـ Pine Script |
+| `/journal` | تحليل ملف CSV لسجل التداول |
+| `/shadow` | تدريب / عرض الحساب الظلّي |
+| `/export` | تصدير الجلسة الحالية (md / json) |
+| `/debug` | تبديل لوحة التشخيص (استهلاك التوكن / زمن الاستجابة) |
+| `/comps` | تحليل الشركات المماثلة (مضاعفات النظراء ← نطاق ضمني) |
+| `/dcf` | تقييم بالتدفقات النقدية المخصومة مع شبكة حساسية |
+| `/attrib` | إسناد Brinson-Fachler (التوزيع مقابل الانتقاء) |
+| `/memo` | مذكرة استثمار — الأطروحة، الرأي المخالف، السيناريوهات، معايير الخروج |
+| `/earnings` | مراجعة الأرباح — جسر المفاجأة من الإيرادات إلى ربحية السهم |
+| `/screen` | فرز منهجي للأفكار — الفرضية، القمع، قائمة الناجين |
+| `/playbook` | قوالب البحث المجدولة (سرد / تشغيل / جدولة) |
+| `/connector` | ملفات موصّلات التداول (الحالة / التشغيل / الإيقاف) |
+| `/halt` | مفتاح الإيقاف — أوقف كل التداول الحي فوراً |
+| `/resume` | إلغاء مفتاح الإيقاف (إعادة تفعيل التداول الحي) |
+| `/data` | وضع توجيه البيانات |
+| `/quit` | خروج (أيضاً q و exit و :q) |
 
 </details>
 
@@ -938,6 +951,9 @@ vibe-trading serve --port 8899
 | `POST` | `/scheduled-runs` | إنشاء مهمة بحث مجدولة (interval-ms أو cron) |
 | `GET` | `/scheduled-runs` | سرد المهام المجدولة |
 | `DELETE` | `/scheduled-runs/{job_id}` | إلغاء مهمة مجدولة |
+| `GET` | `/scheduled-runs/playbooks` | سرد قوالب البحث |
+| `GET` | `/scheduled-runs/playbooks/{slug}` | عرض قالب واحد ومتغيّراته |
+| `POST` | `/scheduled-runs/playbooks/{slug}` | جدولة مهمة من قالب |
 | `POST` | `/sessions/{id}/cancel` | إيقاف التشغيل الجاري للجلسة (يُسجَّل كإلغاء لا كفشل) |
 | `POST` | `/sessions/{id}/title/auto` | توليد عنوان الجلسة من أول تبادل (لا يستبدل تسمية يدوية) |
 | `GET` | `/correlation/regime` | الخط الزمني لنظام كثافة حواف الارتباط |
@@ -986,6 +1002,24 @@ curl -X DELETE http://localhost:8899/scheduled-runs/<job_id>
 ```
 
 كل تشغيل ينفّذ `prompt` في جلسة agent جديدة (تُوضع معلمات backtest الاختيارية في `config`)، وتُحفظ المهام تحت `~/.vibe-trading/` فتبقى بعد إعادة التشغيل. بدون هذه الراية، تسجّل نقاط `/scheduled-runs` المهام لكن لا يُطلق شيء. أضف `-H "Authorization: Bearer <key>"` لكل طلب عند ضبط `API_AUTH_KEY`.
+
+يأتي المجدول ومعه **خمسة قوالب بحث جاهزة للجدولة** — `premarket-brief` و`earnings-season-tracker` و`portfolio-checkup` و`a-share-money-flow` و`institutional-holdings-diff`. يصرّح كل قالب بالبيانات التي يحتاجها بلغة طبيعية بدل تسمية أداة بعينها، فيظل صالحاً مع توسّع مجموعة الأدوات، ويُطلب منه **ذكر أي مُدخل مفقود** بدل ملئه من الذاكرة. يمكن الوصول إليها من CLI أو REST أو عبر `/playbook` داخل واجهة TUI:
+
+```bash
+vibe-trading playbook list                     # القوالب الخمسة
+vibe-trading playbook show premarket-brief     # النص والمتغيرات المعلنة والوتيرة المقترحة
+vibe-trading playbook create premarket-brief \
+  --var home_market="US equities" --var watchlist="AAPL, MSFT, NVDA" \
+  --timezone America/New_York
+
+curl http://localhost:8899/scheduled-runs/playbooks
+curl http://localhost:8899/scheduled-runs/playbooks/premarket-brief
+curl -X POST http://localhost:8899/scheduled-runs/playbooks/premarket-brief \
+  -H "Content-Type: application/json" \
+  -d '{"variables":{"home_market":"US equities","watchlist":"AAPL, MSFT, NVDA"}}'
+```
+
+إرسال `{}` يجدول القالب على وتيرته المقترحة بقيمه الافتراضية المعلنة. يصبح النص المُصاغ هو prompt المهمة حرفياً، ويُرفض أي متغير غير معلن بدل تجاهله بصمت.
 
 ---
 
@@ -1067,7 +1101,7 @@ npx clawhub@latest install vibe-trading --force
 <details>
 <summary><b>OpenSpace — مهارات ذاتية التطور</b></summary>
 
-كل المهارات المالية الـ 88 منشورة على [open-space.cloud](https://open-space.cloud) وتتطور ذاتياً عبر محرك التطور الذاتي في OpenSpace.
+كل المهارات المالية الـ 89 منشورة على [open-space.cloud](https://open-space.cloud) وتتطور ذاتياً عبر محرك التطور الذاتي في OpenSpace.
 
 للاستخدام مع OpenSpace، أضف خادمي MCP إلى إعداد وكيلك:
 
@@ -1089,7 +1123,7 @@ npx clawhub@latest install vibe-trading --force
 }
 ```
 
-سيكتشف OpenSpace كل المهارات الـ 88 تلقائياً، مما يتيح auto-fix وauto-improve والمشاركة المجتمعية. ابحث عن مهارات Vibe-Trading عبر `search_skills("finance backtest")` في أي وكيل متصل بـ OpenSpace.
+سيكتشف OpenSpace كل المهارات الـ 89 تلقائياً، مما يتيح auto-fix وauto-improve والمشاركة المجتمعية. ابحث عن مهارات Vibe-Trading عبر `search_skills("finance backtest")` في أي وكيل متصل بـ OpenSpace.
 
 </details>
 
@@ -1153,7 +1187,7 @@ Vibe-Trading/
 │   │   ├── agent/                  # ReAct agent core
 │   │   │   ├── loop.py             #   5-layer compression + read/write tool batching
 │   │   │   ├── context.py          #   system prompt + auto-recall from persistent memory
-│   │   │   ├── skills.py           #   skill loader (88 bundled + user-created via CRUD)
+│   │   │   ├── skills.py           #   skill loader (89 bundled + user-created via CRUD)
 │   │   │   ├── tools.py            #   tool base class + registry
 │   │   │   ├── memory.py           #   lightweight workspace state per run
 │   │   │   ├── frontmatter.py      #   shared YAML frontmatter parser
@@ -1180,7 +1214,7 @@ Vibe-Trading/
 │   │   ├── api/                    # وحدات مسارات FastAPI
 │   │   │   └── alpha_routes.py     #   /alpha/list, /alpha/{id}, /alpha/bench, SSE stream
 │   │   │
-│   │   ├── skills/                 # 88 finance skills in 9 categories (SKILL.md each)
+│   │   ├── skills/                 # 89 finance skills in 9 categories (SKILL.md each)
 │   │   ├── swarm/                  # Swarm DAG execution engine
 │   │   │   └── presets/            #   30 swarm preset YAML definitions
 │   │   ├── session/                # Multi-turn chat + FTS5 session search

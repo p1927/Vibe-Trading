@@ -267,13 +267,14 @@ Vibe-Trading은 금융 질문을 실행 가능한 분석으로 바꾸는 오픈�
 | **트레이딩 질문하기** | 도구, 데이터, 문서, 재사용 가능한 세션 컨텍스트를 활용한 시장 리서치. |
 | **전략 아이디어 백테스트** | 전략 코드, 지표, 벤치마크 컨텍스트, 검증 artifacts, run cards. |
 | **내 거래 검토하기** | 브로커 일지 파싱, 행동 진단, 규칙 추출, Shadow Account 비교. |
-| **Read documents & charts** | Parse PDF / DOCX / XLSX / PPTX / images with pluggable OCR (`read_document`), and read chart screenshots semantically with a vision model (`analyze_image`). |
+| **문서와 차트 읽기** | 플러그형 OCR로 PDF / DOCX / XLSX / PPTX / 이미지를 파싱하고(`read_document`), 비전 모델로 차트 스크린샷을 의미 단위로 읽습니다(`analyze_image`). |
+| **기관 보고서와 펀드 편입종목 읽기** | SEC 13F 보유(분기 대비 증감 포함), 시장을 가로지르는 ETF 구성종목, 이벤트 계약 내재확률, arXiv / OpenAlex 팩터 추출 — 모두 읽기 전용, 무료 공개 데이터. |
 | **반복 리서치 개선하기** | 영구 메모리와 편집 가능한 스킬로 유용한 루틴을 재사용 가능한 워크플로로 전환. |
 | **애널리스트 팀 실행하기** | 투자, 퀀트, 크립토, 매크로, 리스크 워크플로를 위한 멀티 에이전트 리서치 리뷰. |
 | **리서치를 IM 채널에 연결하기** | WebSocket, Telegram, Slack, Discord, Matrix, WhatsApp, Signal, QQ/NapCat, WeChat/WeCom, Feishu/Lark, DingTalk, Teams, email, Mochat에서 같은 session runtime을 CLI, REST, Web UI로 관리. |
 | **사용 가능한 artifacts 만들기** | 리포트, TradingView Pine Script, TDX, MetaTrader 5, MCP tools, 이후 리서치 세션. |
 | **사전 빌드된 alpha zoo 벤치** | 462개의 alpha 인자(Qlib 158 + Kakushadze 101 + GTJA 191 + academic + PIT-safe fundamental)에 대해 한 줄 CLI로 IC + IR + alive/reversed/dead 분류 수행 |
-| **Spot correlation regimes** | An edge-density + hysteresis timeline on the `/correlation` surface showing when markets fuse into one bloc — descriptive risk context, not a signal. |
+| **상관관계 국면 포착하기** | `/correlation` 화면의 엣지 밀도 + 히스테리시스 타임라인으로 시장이 한 덩어리로 움직이기 시작하는 시점을 보여줍니다 — 시그널이 아니라 서술적 리스크 컨텍스트입니다. |
 
 ---
 
@@ -363,7 +364,7 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 - **크립토** → `okx` · `ccxt` · `binance` · `yfinance` · `local`
 - **외환/귀금속** → `mt5` · `yfinance` · `akshare` · `local` &nbsp;·&nbsp; *(선물 / 펀드 / 매크로 → `tushare`/`akshare` → `local`)*
 
-OHLCV를 넘어 **18개 읽기 전용 데이터 도구**가 펀더멘털과 자금 흐름까지 닿습니다 — 자금 흐름, 용호방(dragon-tiger), 북향(northbound), 신용거래, 대종거래, 주주 수, 보호예수, 섹터, 리서치 리포트, 뉴스, SEC 공시, 재무제표, 옵션 체인, 기관 보유, 시장 스크리닝, 심볼 검색, 매크로 — 모두 MCP로 노출됩니다. 명시적인 `local:` 심볼은 절대 조용히 네트워크 소스로 폴백하지 않습니다.
+OHLCV를 넘어 **22개 읽기 전용 데이터 도구**가 펀더멘털과 자금 흐름까지 닿습니다 — 자금 흐름, 용호방(dragon-tiger), 북향(northbound), 신용거래, 대종거래, 주주 수, 보호예수, 섹터, 리서치 리포트, 뉴스, SEC 공시, 재무제표, 옵션 체인, 종목 프로필, 시장 스크리닝, 심볼 검색, 매크로, 원차이(iwencai), 기관 보유(13F), ETF 룩스루, 예측 시장, 논문 검색 — 모두 MCP로 노출됩니다. 명시적인 `local:` 심볼은 절대 조용히 네트워크 소스로 폴백하지 않습니다.
 
 <!-- QVERIS-START -->
 ### 💎 선택형 프리미엄 데이터 — QVeris
@@ -384,7 +385,7 @@ OHLCV를 넘어 **18개 읽기 전용 데이터 도구**가 펀더멘털과 자�
 <details>
 <summary><b>금융 스킬 라이브러리</b> <sub>9개 카테고리 89개 스킬</sub></summary>
 
-- 📊 9개 카테고리로 구성된 88개 전문 금융 스킬
+- 📊 9개 카테고리로 구성된 89개 전문 금융 스킬
 - 🌐 전통 시장부터 크립토 & DeFi까지 완전한 커버리지
 - 🔬 데이터 sourcing부터 정량 리서치까지 포괄하는 기능
 
@@ -392,7 +393,7 @@ OHLCV를 넘어 **18개 읽기 전용 데이터 도구**가 펀더멘털과 자�
 |----------|------|------|
 | Data Source | 10 | `data-routing`, `tushare`, `yfinance`, `okx-market`, `akshare`, `mootdx`, `ccxt`, `eastmoney`, `sec-edgar`, `qveris` |
 | Strategy | 19 | `strategy-generate`, `cross-market-strategy`, `technical-basic`, `candlestick`, `ichimoku`, `elliott-wave`, `smc`, `multi-factor`, `ml-strategy` |
-| Analysis | 22 | `factor-research`, `correlation-regime`, `macro-analysis`, `global-macro`, `valuation-model`, `earnings-forecast`, `credit-analysis`, `dividend-analysis` |
+| Analysis | 23 | `factor-research`, `correlation-regime`, `macro-analysis`, `global-macro`, `valuation-model`, `investor-lenses`, `credit-analysis`, `dividend-analysis` |
 | Asset Class | 9 | `options-strategy`, `options-advanced`, `convertible-bond`, `etf-analysis`, `asset-allocation`, `sector-rotation` |
 | Crypto | 7 | `perp-funding-basis`, `liquidation-heatmap`, `stablecoin-flow`, `defi-yield`, `onchain-analysis` |
 | Flow | 8 | `hk-connect-flow`, `us-etf-flow`, `edgar-sec-filings`, `financial-statement`, `adr-hshare` |
@@ -449,7 +450,7 @@ clone에서 실행하세요(`pip install -e .`).
 <details>
 <summary><b>브로커 커넥터</b> <sub>12개 브로커 — read + paper, 지원 시 bounded-live</sub></summary>
 
-connector-first 프로필. 각 브로커는 read + 페이퍼 계정 주문 실행을 지원하며, 실거래 주문 실행은 사용자 정의 mandate(심볼 허용목록, 주문 크기 / 익스포저 상한, 일일 거래 한도, 즉시 kill switch)로 제한되고 자금을 보관하지 않습니다 — 실행은 브로커가 합니다. 주문 실행 도구는 MCP에 노출되지 않습니다(agent + CLI 전용). 리서치 / 백테스트 경로는 구조적으로 모든 실거래 엔드포인트에서 차단됩니다.
+connector-first 프로필. 대부분의 브로커가 read + 페이퍼 계정 주문 실행을 지원하지만 IBKR은 읽기 전용이고, Robinhood는 페이퍼 계정 없이 실거래 전용이며, Trading 212는 페이퍼를 포함해 주문 실행을 모두 거부하고, 실거래 주문 실행은 사용자 정의 mandate(심볼 허용목록, 주문 크기 / 익스포저 상한, 일일 거래 한도, 즉시 kill switch)로 제한되고 자금을 보관하지 않습니다 — 실행은 브로커가 합니다. 주문 실행 도구는 MCP에 노출되지 않습니다(agent + CLI 전용). 리서치 / 백테스트 경로는 구조적으로 모든 실거래 엔드포인트에서 차단됩니다.
 
 | Broker | Markets | Capabilities |
 |--------|---------|--------------|
@@ -725,7 +726,9 @@ vibe-trading               # interactive TUI
 vibe-trading run -p "..."  # single run
 vibe-trading serve         # API server
 vibe-trading alpha list    # 사전 빌드된 462개 alpha 탐색; show / bench / compare / export-manifest 서브커맨드 사용 가능
+vibe-trading playbook list # 예약 리서치 템플릿 5개; show / create 서브커맨드 사용 가능
 vibe-trading channels status --local  # IM 채널 설정과 설치 힌트 확인
+vibe-trading provider doctor  # 마스킹된 provider/proxy/패키지 진단 출력
 ```
 
 <details>
@@ -733,23 +736,33 @@ vibe-trading channels status --local  # IM 채널 설정과 설치 힌트 확인
 
 | Command | Description |
 |---------|-------------|
-| `/help` | 모든 명령 표시 |
-| `/skills` | 88개 finance skills 목록 |
-| `/swarm` | 30개 swarm team presets 목록 |
-| `/swarm run <preset> [vars_json]` | live streaming으로 swarm team 실행 |
-| `/swarm list` | Swarm run history |
-| `/swarm show <run_id>` | Swarm run details |
-| `/swarm cancel <run_id>` | 실행 중인 swarm 취소 |
-| `/list` | Recent runs |
-| `/show <run_id>` | Run details + metrics |
-| `/code <run_id>` | Generated strategy code |
-| `/pine <run_id>` | indicators export(TradingView + TDX + MT5) |
-| `/trace <run_id>` | Full execution replay |
-| `/continue <run_id> <prompt>` | 새 instruction으로 run 계속 |
-| `/sessions` | Chat sessions 목록 |
-| `/settings` | Runtime config 표시 |
-| `/clear` | 화면 지우기 |
-| `/quit` | 종료 |
+| `/help` | 단축키와 명령 목록 표시 |
+| `/model` | LLM 제공자와 모델 전환 |
+| `/memory` | 영속 메모리 보기 / 관리 |
+| `/history` | 이전 세션 탐색 및 재개 |
+| `/goal` | 금융 리서치 goal 시작 / 확인 |
+| `/search` | 모든 세션 전문 검색 |
+| `/swarm` | 멀티 에이전트 preset(위원회 / 퀀트 / 리스크) |
+| `/skill` | skills 목록 / 로드 / 해제 |
+| `/show` | 이전 run을 id로 표시 |
+| `/clear` | 현재 대화 비우기 |
+| `/pine` | 현재 전략을 Pine Script로 내보내기 |
+| `/journal` | 매매일지 CSV 분석 |
+| `/shadow` | 섀도 계좌 학습 / 조회 |
+| `/export` | 현재 세션 내보내기(md / json) |
+| `/debug` | 디버그 패널 전환(토큰 사용량 / 지연) |
+| `/comps` | 유사기업 분석(피어 멀티플 → 내재 범위) |
+| `/dcf` | 현금흐름할인 밸류에이션 + 민감도 그리드 |
+| `/attrib` | Brinson-Fachler 성과기여 분석(자산배분 vs 종목선택) |
+| `/memo` | 투자 메모 — 논지, 차별적 관점, 시나리오, 철회 기준 |
+| `/earnings` | 실적 리뷰 — 매출에서 EPS까지 서프라이즈 브리지 |
+| `/screen` | 체계적 아이디어 스크리닝 — 가설, 퍼널, 생존 큐 |
+| `/playbook` | 예약 리서치 템플릿(목록 / 실행 / 예약) |
+| `/connector` | 트레이딩 커넥터 프로필(상태 / 시작 / 중지) |
+| `/halt` | 킬 스위치 — 모든 실거래 즉시 중단 |
+| `/resume` | 킬 스위치 해제(실거래 재개) |
+| `/data` | 데이터 라우팅 모드 |
+| `/quit` | 종료(q, exit, :q 도 가능) |
 
 </details>
 
@@ -938,6 +951,9 @@ vibe-trading serve --port 8899
 | `POST` | `/scheduled-runs` | 예약 리서치 작업 생성 (interval-ms 또는 cron) |
 | `GET` | `/scheduled-runs` | 예약된 작업 목록 |
 | `DELETE` | `/scheduled-runs/{job_id}` | 예약 작업 취소 |
+| `GET` | `/scheduled-runs/playbooks` | 리서치 템플릿 목록 |
+| `GET` | `/scheduled-runs/playbooks/{slug}` | 템플릿 1개와 선언된 변수 표시 |
+| `POST` | `/scheduled-runs/playbooks/{slug}` | 템플릿으로 작업 예약 |
 | `POST` | `/sessions/{id}/cancel` | 진행 중인 실행 중지(실패가 아니라 취소로 기록) |
 | `POST` | `/sessions/{id}/title/auto` | 첫 대화로 세션 제목 생성(수동 이름 변경은 덮어쓰지 않음) |
 | `GET` | `/correlation/regime` | 상관 엣지 밀도 레짐 타임라인 |
@@ -986,6 +1002,24 @@ curl -X DELETE http://localhost:8899/scheduled-runs/<job_id>
 ```
 
 각 실행은 새 agent session에서 `prompt`를 실행하며(선택적 backtest 파라미터는 `config`에 넣습니다), 작업은 `~/.vibe-trading/`에 저장되어 재시작 후에도 유지됩니다. 이 플래그가 없으면 `/scheduled-runs` endpoint는 작업을 기록하지만 실행되지는 않습니다. `API_AUTH_KEY`가 설정된 경우 각 호출에 `-H "Authorization: Bearer <key>"`를 추가하세요.
+
+스케줄러에는 **바로 예약할 수 있는 리서치 템플릿 5개**가 들어 있습니다 — `premarket-brief`, `earnings-season-tracker`, `portfolio-checkup`, `a-share-money-flow`, `institutional-holdings-diff`. 각 템플릿은 도구 이름을 지목하지 않고 필요한 데이터를 자연어로 선언하므로 도구 표면이 늘어나도 그대로 동작하며, 빠진 입력은 기억으로 채우지 말고 **밝히도록** 요구합니다. CLI, REST, TUI의 `/playbook` 어디서든 쓸 수 있습니다:
+
+```bash
+vibe-trading playbook list                     # 템플릿 5개
+vibe-trading playbook show premarket-brief     # 본문, 선언된 변수, 권장 주기
+vibe-trading playbook create premarket-brief \
+  --var home_market="US equities" --var watchlist="AAPL, MSFT, NVDA" \
+  --timezone America/New_York
+
+curl http://localhost:8899/scheduled-runs/playbooks
+curl http://localhost:8899/scheduled-runs/playbooks/premarket-brief
+curl -X POST http://localhost:8899/scheduled-runs/playbooks/premarket-brief \
+  -H "Content-Type: application/json" \
+  -d '{"variables":{"home_market":"US equities","watchlist":"AAPL, MSFT, NVDA"}}'
+```
+
+`{}` 를 POST하면 템플릿 자체의 권장 주기와 기본 변수로 예약됩니다. 렌더링된 본문이 그대로 작업 prompt가 되며, 선언되지 않은 변수는 조용히 무시되지 않고 거부됩니다.
 
 ---
 
@@ -1067,7 +1101,7 @@ ClawHub에서 보기: [clawhub.ai/skills/vibe-trading](https://clawhub.ai/skills
 <details>
 <summary><b>OpenSpace — 자가 진화 스킬</b></summary>
 
-88개 finance skills는 모두 [open-space.cloud](https://open-space.cloud)에 게시되어 있으며 OpenSpace의 self-evolution engine을 통해 자율적으로 발전합니다.
+89개 finance skills는 모두 [open-space.cloud](https://open-space.cloud)에 게시되어 있으며 OpenSpace의 self-evolution engine을 통해 자율적으로 발전합니다.
 
 OpenSpace와 함께 사용하려면 두 MCP server를 agent config에 추가하세요:
 
@@ -1089,7 +1123,7 @@ OpenSpace와 함께 사용하려면 두 MCP server를 agent config에 추가하�
 }
 ```
 
-OpenSpace는 88개 skills를 모두 자동 발견하여 auto-fix, auto-improve, community sharing을 활성화합니다. OpenSpace-connected agent에서 `search_skills("finance backtest")`로 Vibe-Trading skills를 검색하세요.
+OpenSpace는 89개 skills를 모두 자동 발견하여 auto-fix, auto-improve, community sharing을 활성화합니다. OpenSpace-connected agent에서 `search_skills("finance backtest")`로 Vibe-Trading skills를 검색하세요.
 
 </details>
 
@@ -1153,7 +1187,7 @@ Vibe-Trading/
 │   │   ├── agent/                  # ReAct agent core
 │   │   │   ├── loop.py             #   5-layer compression + read/write tool batching
 │   │   │   ├── context.py          #   system prompt + auto-recall from persistent memory
-│   │   │   ├── skills.py           #   skill loader (88 bundled + user-created via CRUD)
+│   │   │   ├── skills.py           #   skill loader (89 bundled + user-created via CRUD)
 │   │   │   ├── tools.py            #   tool base class + registry
 │   │   │   ├── memory.py           #   lightweight workspace state per run
 │   │   │   ├── frontmatter.py      #   shared YAML frontmatter parser
@@ -1180,7 +1214,7 @@ Vibe-Trading/
 │   │   ├── api/                    # FastAPI 라우트 모듈
 │   │   │   └── alpha_routes.py     #   /alpha/list, /alpha/{id}, /alpha/bench, SSE stream
 │   │   │
-│   │   ├── skills/                 # 88 finance skills in 9 categories (SKILL.md each)
+│   │   ├── skills/                 # 89 finance skills in 9 categories (SKILL.md each)
 │   │   ├── swarm/                  # Swarm DAG execution engine
 │   │   │   └── presets/            #   30 swarm preset YAML definitions
 │   │   ├── session/                # Multi-turn chat + FTS5 session search

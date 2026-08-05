@@ -267,6 +267,7 @@ Vibe-Trading 是一个开源研究工作台，用于把金融问题转化为可�
 | **回测策略想法** | 策略代码、指标、benchmark 上下文、验证 artifacts 和 run cards。 |
 | **复盘自己的交易** | 券商日志解析、行为诊断、规则提取和 Shadow Account 对比。 |
 | **读取文档与图表** | 用可插拔 OCR 解析 PDF / DOCX / XLSX / PPTX / 图片（`read_document`），并用视觉模型语义化读取图表截图（`analyze_image`）。 |
+| **读取机构持仓与基金底仓** | SEC 13F 持仓（含季度环比变动）、跨市场 ETF 成分穿透、事件合约隐含概率、arXiv / OpenAlex 因子提取 —— 全部只读，基于免费公开数据源。 |
 | **改进重复研究** | 持久记忆和可编辑 skills 将有用流程变成可复用工作流。 |
 | **运行分析师团队** | 面向投资、量化、加密、宏观和风控工作流的多智能体研究评审。 |
 | **把研究接入 IM 通道** | 通过 WebSocket、Telegram、Slack、Discord、Matrix、WhatsApp、Signal、QQ/NapCat、微信/企业微信、飞书/Lark、钉钉、Teams、email、Mochat，在 CLI、REST 和 Web UI 中管理同一套 session runtime。 |
@@ -392,7 +393,7 @@ LONGBRIDGE_ACCESS_TOKEN=...
 
 与 Agent 对话时可以直接说：**“用长桥获取 QQQ.US 的历史行情。”** 显式指定数据源与 `source: "auto"` 不同；`auto` 仍按正常的同市场 fallback 链选择数据源。
 
-除 OHLCV 外，**18 个只读数据工具**深入基本面与资金面——资金流、龙虎榜、北向、两融、大宗交易、股东户数、解禁、板块、研报、新闻、SEC 文件、财务报表、期权链、机构持仓、全市场筛选、代码搜索、宏观——全部经 MCP 暴露。显式 `local:` 源永不静默 fallback 到网络源。
+除 OHLCV 外，**22 个只读数据工具**深入基本面与资金面——资金流、龙虎榜、北向、两融、大宗交易、股东户数、解禁、板块、研报、新闻、SEC 文件、财务报表、期权链、个股档案、全市场筛选、代码搜索、宏观、问财、机构持仓（13F）、ETF 穿透、预测市场、论文检索——全部经 MCP 暴露。显式 `local:` 源永不静默 fallback 到网络源。
 
 <!-- QVERIS-START -->
 ### 💎 可选付费数据 — QVeris
@@ -413,7 +414,7 @@ LONGBRIDGE_ACCESS_TOKEN=...
 <details>
 <summary><b>Finance Skill Library</b> <sub>9 个类别中的 89 个 skills</sub></summary>
 
-- 📊 88 个专业金融 skills，分布在 9 个类别中
+- 📊 89 个专业金融 skills，分布在 9 个类别中
 - 🌐 覆盖传统市场、加密与 DeFi
 - 🔬 从数据源到量化研究的完整能力链路
 
@@ -421,7 +422,7 @@ LONGBRIDGE_ACCESS_TOKEN=...
 |------|--------|------|
 | Data Source | 10 | `data-routing`, `tushare`, `yfinance`, `okx-market`, `akshare`, `mootdx`, `ccxt`, `eastmoney`, `sec-edgar`, `qveris` |
 | Strategy | 19 | `strategy-generate`, `cross-market-strategy`, `technical-basic`, `candlestick`, `ichimoku`, `elliott-wave`, `smc`, `multi-factor`, `ml-strategy` |
-| Analysis | 22 | `factor-research`, `correlation-regime`, `macro-analysis`, `global-macro`, `valuation-model`, `earnings-forecast`, `credit-analysis`, `dividend-analysis` |
+| Analysis | 23 | `factor-research`, `correlation-regime`, `macro-analysis`, `global-macro`, `valuation-model`, `investor-lenses`, `credit-analysis`, `dividend-analysis` |
 | Asset Class | 9 | `options-strategy`, `options-advanced`, `convertible-bond`, `etf-analysis`, `asset-allocation`, `sector-rotation` |
 | Crypto | 7 | `perp-funding-basis`, `liquidation-heatmap`, `stablecoin-flow`, `defi-yield`, `onchain-analysis` |
 | Flow | 8 | `hk-connect-flow`, `us-etf-flow`, `edgar-sec-filings`, `financial-statement`, `adr-hshare` |
@@ -476,7 +477,7 @@ LONGBRIDGE_ACCESS_TOKEN=...
 <details>
 <summary><b>Broker Connectors</b> <sub>12 家券商——读取 + 模拟盘，支持的券商可受约束实盘</sub></summary>
 
-连接器优先（connector-first）的配置档。每个连接器都支持读取 + 模拟盘下单；实盘下单受用户定义的 mandate 约束（标的白名单、下单规模 / 敞口上限、每日交易次数上限、即时 kill switch），且从不托管资金——由券商执行。下单类工具不经 MCP 暴露（仅 agent + CLI）。研究 / 回测路径在结构上被隔离，无法触达任何实盘端点。
+连接器优先（connector-first）的配置档。多数连接器支持读取 + 模拟盘下单 —— IBKR 只读，Robinhood 只有实盘（没有模拟盘），Trading 212 连模拟盘下单也一律拒绝；实盘下单受用户定义的 mandate 约束（标的白名单、下单规模 / 敞口上限、每日交易次数上限、即时 kill switch），且从不托管资金——由券商执行。下单类工具不经 MCP 暴露（仅 agent + CLI）。研究 / 回测路径在结构上被隔离，无法触达任何实盘端点。
 
 | Broker | 市场 | 能力 |
 |--------|------|------|
@@ -752,7 +753,9 @@ vibe-trading               # interactive TUI
 vibe-trading run -p "..."  # single run
 vibe-trading serve         # API server
 vibe-trading alpha list    # 浏览 462 个预置 alpha；支持 show / bench / compare / export-manifest 子命令
+vibe-trading playbook list # 五个定时研究模板；支持 show / create 子命令
 vibe-trading channels status --local  # 检查 IM 通道配置和依赖安装提示
+vibe-trading provider doctor  # 打印脱敏后的 provider/proxy/依赖诊断
 ```
 
 <details>
@@ -760,23 +763,33 @@ vibe-trading channels status --local  # 检查 IM 通道配置和依赖安装提
 
 | 命令 | 说明 |
 |------|------|
-| `/help` | 显示所有命令 |
-| `/skills` | 列出全部 88 个 finance skills |
-| `/swarm` | 列出 30 个 swarm team presets |
-| `/swarm run <preset> [vars_json]` | 运行一个 swarm team，并实时流式展示 |
-| `/swarm list` | Swarm 运行历史 |
-| `/swarm show <run_id>` | Swarm 运行详情 |
-| `/swarm cancel <run_id>` | 取消运行中的 swarm |
-| `/list` | 最近 runs |
-| `/show <run_id>` | Run 详情 + 指标 |
-| `/code <run_id>` | 生成的策略代码 |
-| `/pine <run_id>` | 导出指标（TradingView + TDX + MT5） |
-| `/trace <run_id>` | 完整执行回放 |
-| `/continue <run_id> <prompt>` | 用新指令继续一个 run |
-| `/sessions` | 列出 chat sessions |
-| `/settings` | 显示运行时配置 |
-| `/clear` | 清屏 |
-| `/quit` | 退出 |
+| `/help` | 显示快捷键与命令列表 |
+| `/model` | 切换 LLM provider 与模型 |
+| `/memory` | 查看 / 管理持久记忆 |
+| `/history` | 浏览并恢复历史会话 |
+| `/goal` | 启动 / 查看金融研究 goal |
+| `/search` | 跨全部会话全文检索 |
+| `/swarm` | 多 agent 预设（投委会 / 量化 / 风控） |
+| `/skill` | 列出 / 加载 / 卸载 skills |
+| `/show` | 按 id 查看历史 run |
+| `/clear` | 清空当前对话 |
+| `/pine` | 将当前策略导出为 Pine Script |
+| `/journal` | 分析交易流水 CSV |
+| `/shadow` | 训练 / 查看影子账户 |
+| `/export` | 导出当前会话（md / json） |
+| `/debug` | 切换调试面板（token 用量 / 延迟） |
+| `/comps` | 可比公司分析（同业倍数 → 隐含区间） |
+| `/dcf` | 现金流折现估值 + 敏感性网格 |
+| `/attrib` | Brinson-Fachler 归因（配置 vs 选股） |
+| `/memo` | 投资备忘录 —— 论点、与共识不同的看法、情景、证伪条件 |
+| `/earnings` | 财报复盘 —— 从营收到 EPS 的意外拆解 |
+| `/screen` | 系统性选股 —— 假设、漏斗、存活队列 |
+| `/playbook` | 定时研究模板（列出 / 运行 / 排程） |
+| `/connector` | 交易连接器 profile（状态 / 启动 / 停止） |
+| `/halt` | kill switch —— 立即停止全部实盘活动 |
+| `/resume` | 解除 kill switch（重新允许实盘） |
+| `/data` | 数据路由模式 |
+| `/quit` | 退出（也可用 q、exit、:q） |
 
 </details>
 
@@ -962,6 +975,9 @@ vibe-trading serve --port 8899
 | `POST` | `/scheduled-runs` | 创建定时研究任务（间隔毫秒或 cron） |
 | `GET` | `/scheduled-runs` | 列出定时任务 |
 | `DELETE` | `/scheduled-runs/{job_id}` | 取消定时任务 |
+| `GET` | `/scheduled-runs/playbooks` | 列出研究模板 |
+| `GET` | `/scheduled-runs/playbooks/{slug}` | 查看单个模板及其变量 |
+| `POST` | `/scheduled-runs/playbooks/{slug}` | 从模板创建定时任务 |
 | `POST` | `/sessions/{id}/cancel` | 停止该会话进行中的运行（记为已取消，而非失败） |
 | `POST` | `/sessions/{id}/title/auto` | 由首轮对话生成会话标题（不会覆盖手动重命名） |
 | `GET` | `/correlation/regime` | 相关性边密度 regime 时间线 |
@@ -1010,6 +1026,24 @@ curl -X DELETE http://localhost:8899/scheduled-runs/<job_id>
 ```
 
 每次触发都会在一个全新的 agent session 中运行该 `prompt`（可选回测参数放在 `config` 里），任务持久化到 `~/.vibe-trading/`，重启后依然保留。不设这个开关时，`/scheduled-runs` 端点仍会记录任务，但不会真正触发。配置了 `API_AUTH_KEY` 时，每次请求需加 `-H "Authorization: Bearer <key>"`。
+
+调度器自带**五个开箱即用的研究模板** —— `premarket-brief`、`earnings-season-tracker`、`portfolio-checkup`、`a-share-money-flow`、`institutional-holdings-diff`。每个模板用自然语言声明它需要什么数据，而不是点名某个工具，因此工具面扩展时模板依然有效；模板也被要求**指出缺失的输入**，而不是凭记忆补上。CLI、REST、TUI 里的 `/playbook` 三个入口都能用：
+
+```bash
+vibe-trading playbook list                     # 列出五个模板
+vibe-trading playbook show premarket-brief     # 正文、声明的变量、建议节奏
+vibe-trading playbook create premarket-brief \
+  --var home_market="US equities" --var watchlist="AAPL, MSFT, NVDA" \
+  --timezone America/New_York
+
+curl http://localhost:8899/scheduled-runs/playbooks
+curl http://localhost:8899/scheduled-runs/playbooks/premarket-brief
+curl -X POST http://localhost:8899/scheduled-runs/playbooks/premarket-brief \
+  -H "Content-Type: application/json" \
+  -d '{"variables":{"home_market":"US equities","watchlist":"AAPL, MSFT, NVDA"}}'
+```
+
+POST `{}` 即按模板自身的建议节奏和默认变量排程。渲染后的正文原样成为任务 prompt；传入未声明的变量会被拒绝，而不是被悄悄忽略。
 
 ---
 
@@ -1091,7 +1125,7 @@ npx clawhub@latest install vibe-trading --force
 <details>
 <summary><b>OpenSpace — 自进化 skills</b></summary>
 
-全部 88 个 finance skills 都发布在 [open-space.cloud](https://open-space.cloud)，并通过 OpenSpace 的自进化引擎自主演进。
+全部 89 个 finance skills 都发布在 [open-space.cloud](https://open-space.cloud)，并通过 OpenSpace 的自进化引擎自主演进。
 
 要配合 OpenSpace 使用，请将两个 MCP servers 都加入你的 agent config：
 
@@ -1113,7 +1147,7 @@ npx clawhub@latest install vibe-trading --force
 }
 ```
 
-OpenSpace 会自动发现全部 88 个 skills，启用 auto-fix、auto-improve 和社区分享。在任意已连接 OpenSpace 的智能体中，可通过 `search_skills("finance backtest")` 搜索 Vibe-Trading skills。
+OpenSpace 会自动发现全部 89 个 skills，启用 auto-fix、auto-improve 和社区分享。在任意已连接 OpenSpace 的智能体中，可通过 `search_skills("finance backtest")` 搜索 Vibe-Trading skills。
 
 </details>
 
@@ -1177,7 +1211,7 @@ Vibe-Trading/
 │   │   ├── agent/                  # ReAct agent 内核
 │   │   │   ├── loop.py             #   5 层上下文压缩 + 读/写工具批处理
 │   │   │   ├── context.py          #   system prompt + 持久记忆自动召回
-│   │   │   ├── skills.py           #   skill loader（88 个内置 + 通过 CRUD 创建的用户 skill）
+│   │   │   ├── skills.py           #   skill loader（89 个内置 + 通过 CRUD 创建的用户 skill）
 │   │   │   ├── tools.py            #   tool 基类 + 注册表
 │   │   │   ├── memory.py           #   每个 run 的轻量 workspace 状态
 │   │   │   ├── frontmatter.py      #   共享的 YAML frontmatter 解析器
@@ -1204,7 +1238,7 @@ Vibe-Trading/
 │   │   ├── api/                    # FastAPI 路由模块
 │   │   │   └── alpha_routes.py     #   /alpha/list、/alpha/{id}、/alpha/bench、SSE 流
 │   │   │
-│   │   ├── skills/                 # 9 个类别共 88 个 finance skills（每个一份 SKILL.md）
+│   │   ├── skills/                 # 9 个类别共 89 个 finance skills（每个一份 SKILL.md）
 │   │   ├── swarm/                  # Swarm DAG 执行引擎
 │   │   │   └── presets/            #   30 个 swarm preset YAML 定义
 │   │   ├── session/                # 多轮对话 + FTS5 session 搜索
