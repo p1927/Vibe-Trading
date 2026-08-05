@@ -30,7 +30,6 @@ candidate, which the import system consults *after* file loaders, so
 
 from __future__ import annotations
 
-import os
 import re
 import time
 import uuid
@@ -40,6 +39,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import yaml
 
+from src.config.accessor import get_env_config
 from src.scheduled_research.models import (
     JobStatus,
     ScheduledResearchJob,
@@ -342,7 +342,7 @@ def playbook_dirs(directory: Optional[Path] = None) -> List[Path]:
     if directory is not None:
         return [Path(directory).expanduser()]
     dirs: List[Path] = []
-    override = os.getenv(_PLAYBOOK_DIR_ENV, "").strip()
+    override = get_env_config().paths.vibe_trading_playbook_dir.strip()
     if override:
         dirs.append(Path(override).expanduser())
     dirs.append(_BUNDLED_DIR)

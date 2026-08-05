@@ -66,13 +66,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from typing import Any, NamedTuple
 from xml.etree import ElementTree
 
 from backtest.loaders._http import resolve_min_interval, throttled_get
 from src.agent.tools import BaseTool
+from src.config.accessor import get_env_config
 
 logger = logging.getLogger(__name__)
 
@@ -1222,7 +1222,7 @@ def _openalex_get(path: str, params: dict[str, Any]) -> Any:
         requests.RequestException: Propagated from the HTTP layer.
     """
     merged = dict(params)
-    if mailto := os.getenv(_OPENALEX_MAILTO_ENV, "").strip():
+    if mailto := get_env_config().data.vibe_trading_openalex_mailto.strip():
         merged["mailto"] = mailto
     response = throttled_get(
         f"{_OPENALEX_URL}{path}",

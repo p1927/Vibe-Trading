@@ -102,7 +102,6 @@ from __future__ import annotations
 import io
 import json
 import logging
-import os
 import re
 import threading
 import time
@@ -119,6 +118,7 @@ from backtest.loaders.sec_edgar_client import get_submissions
 # place to change them. Both are stable module-level helpers.
 from backtest.loaders.sec_edgar_client import _min_interval, _pad_cik, _user_agent
 from src.agent.tools import BaseTool
+from src.config.accessor import get_env_config
 from src.config.limits import TOOL_RESULT_LIMIT
 from src.tools._result_paging import fit_records
 
@@ -294,26 +294,27 @@ def _fts(params: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _env_float(name: str, default: float) -> float:
-    """Read a positive float env override, falling back to ``default``."""
-    raw = os.getenv(name, "")
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return default
+def _positive(value: float, default: float) -> float:
+    """Return *value* when it is positive, else *default*.
+
+    The config layer already drops unparseable overrides; this only guards
+    against a syntactically valid but nonsensical zero or negative bound.
+    """
     return value if value > 0 else default
 
 
 def _max_xml_bytes() -> int:
     """Return the per-document byte ceiling for an information table."""
-    return int(_env_float(_ENV_MAX_XML_MB, _DEFAULT_MAX_XML_MB) * 1024 * 1024)
+    configured = get_env_config().data.vibe_trading_sec_13f_max_xml_mb
+    return int(_positive(configured, _DEFAULT_MAX_XML_MB) * 1024 * 1024)
 
 
 class _Budget:
     """Monotonic wall-clock guard so a wide scan stops instead of grinding on."""
 
     def __init__(self) -> None:
-        self.deadline = time.monotonic() + _env_float(_ENV_BUDGET_S, _DEFAULT_BUDGET_S)
+        budget = get_env_config().data.vibe_trading_sec_13f_budget_s
+        self.deadline = time.monotonic() + _positive(budget, _DEFAULT_BUDGET_S)
         self.exhausted = False
 
     def ok(self) -> bool:
@@ -436,13 +437,11 @@ def _ftd_urls() -> List[str]:
         requests.RequestException: If the landing page cannot be fetched.
         RuntimeError: If the page lists no archives.
     """
-    pinned = os.getenv(_ENV_FTD_URL, "").strip()
+    data_config = get_env_config().data
+    pinned = data_config.vibe_trading_sec_ftd_url.strip()
     if pinned:
         return [pinned]
-    try:
-        wanted = max(1, min(int(os.getenv(_ENV_FTD_FILES, "")), _MAX_FTD_FILES))
-    except (TypeError, ValueError):
-        wanted = _DEFAULT_FTD_FILES
+    wanted = max(1, min(data_config.vibe_trading_sec_ftd_files, _MAX_FTD_FILES))
     html = _sec_get(_FTD_INDEX_URL).text
     hrefs = re.findall(r'href="(/[^"]*cnsfails\d{6}[ab]\.zip)"', html)
     if not hrefs:

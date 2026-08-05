@@ -16,13 +16,14 @@ Every ``/comps``-style command funnels through :func:`run_playbook`:
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+
+from src.config.accessor import get_env_config
 
 from .playbooks import GAP_POLICY, NOT_ADVICE, PLAYBOOKS_BY_SLUG, Playbook
 
@@ -31,15 +32,12 @@ from .playbooks import GAP_POLICY, NOT_ADVICE, PLAYBOOKS_BY_SLUG, Playbook
 #
 # A malformed override must not be fatal: this module is imported by
 # ``cli.main._dispatch_slash``, whose import guard only catches ``ImportError``,
-# so a ``ValueError`` raised here would escape the dispatcher and take down the
-# whole REPL. Fall back to the default instead.
+# so an exception raised here would escape the dispatcher and take down the
+# whole REPL. The config layer drops an unparseable value and hands back the
+# declared default, so this cannot raise.
 def _arg_max_chars() -> int:
     """Resolve the argument length cap, ignoring a malformed override."""
-    raw = os.getenv("VIBE_TRADING_SLASH_ARG_MAX", "")
-    try:
-        return max(32, int(raw))
-    except ValueError:
-        return 600
+    return max(32, get_env_config().agent_tuning.vibe_trading_slash_arg_max)
 
 
 _ARG_MAX_CHARS = _arg_max_chars()

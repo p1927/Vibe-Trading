@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
+from src.config.accessor import reset_env_config
 from src.tools import research_papers_tool as rpt
 from src.tools.research_papers_tool import ResearchPapersTool
 
@@ -680,7 +681,11 @@ def test_openalex_mailto_is_env_driven_and_absent_by_default(monkeypatch):
         ResearchPapersTool().execute(mode="search", source="openalex", query="x")
     assert "mailto" not in mock_get.call_args.kwargs["params"]
 
+    # The env value is read through the cached EnvConfig singleton, which the
+    # first call above populated. Changing os.environ mid-test is only visible
+    # after the same reset settings_routes.py performs when it rewrites .env.
     monkeypatch.setenv(rpt._OPENALEX_MAILTO_ENV, "team@example.com")
+    reset_env_config()
     with patch.object(
         rpt, "throttled_get", return_value=_response(payload={"results": [], "meta": {}})
     ) as mock_get:
