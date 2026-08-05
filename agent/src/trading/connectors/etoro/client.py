@@ -203,6 +203,10 @@ def trade_history_root(cfg: EtoroConfig) -> str:
     return "/api/v1/trading/info/trade/demo" if cfg.is_paper else "/api/v1/trading/info/trade"
 
 
+def aggregate_portfolio_path(cfg: EtoroConfig) -> str:
+    return f"{info_root(cfg)}/aggregate-portfolio"
+
+
 def positions_root(cfg: EtoroConfig) -> str:
     return "/api/v2/trading/demo" if cfg.is_paper else "/api/v2/trading"
 

@@ -10,6 +10,7 @@ from src.trading.connectors.etoro.client import (
     EtoroConfig,
     EtoroConfigError,
     PAPER_GUARD,
+    aggregate_portfolio_path,
     build_config,
     info_root,
     load_config,
@@ -129,7 +130,9 @@ def get_account_snapshot(config: EtoroConfig | None = None) -> dict[str, Any]:
     portfolio = client.request("GET", f"{info_root(cfg)}/portfolio", allow_retry=True)
     account: dict[str, Any] = {"portfolio": portfolio}
     try:
-        account["pnl"] = client.request("GET", f"{info_root(cfg)}/pnl", allow_retry=True)
+        aggregated = client.request("GET", aggregate_portfolio_path(cfg), allow_retry=True)
+        account["aggregated_portfolio"] = aggregated
+        account["pnl"] = _pnl_from_aggregate_portfolio(aggregated)
     except EtoroAPIError as exc:
         account["pnl_error"] = str(exc)
     return {
@@ -282,6 +285,27 @@ def _position_row(item: dict[str, Any]) -> dict[str, Any]:
         "pnl": item.get("profit") or item.get("pnl"),
         "is_buy": item.get("isBuy"),
         "raw": item,
+    }
+
+
+def _pnl_from_aggregate_portfolio(payload: Any) -> dict[str, Any]:
+    """Normalize account-level PnL from ``GET …/aggregate-portfolio``."""
+    if not isinstance(payload, dict):
+        return {"source": "aggregate-portfolio", "raw": payload}
+    totals = payload.get("accountTotals")
+    if not isinstance(totals, dict):
+        return {"source": "aggregate-portfolio", "raw": payload}
+    return {
+        "source": "aggregate-portfolio",
+        "account_current_pnl": totals.get("accountCurrentPnl"),
+        "account_total_value": totals.get("accountTotalValue"),
+        "account_balance": totals.get("accountBalance"),
+        "account_available_cash": totals.get("accountAvailableCash"),
+        "account_frozen_cash": totals.get("accountFrozenCash"),
+        "account_total_used_margin": totals.get("accountTotalUsedMargin"),
+        "account_currency": payload.get("accountCurrency"),
+        "timestamp": payload.get("timestamp"),
+        "account_totals": totals,
     }
 
 

@@ -15,6 +15,7 @@ from src.trading.connectors.etoro.client import (
     EtoroClient,
     EtoroConfig,
     build_config,
+    aggregate_portfolio_path,
     copy_root,
     execution_root,
     execution_v1_root,
@@ -88,6 +89,8 @@ def test_demo_and_real_paths_separated() -> None:
     assert execution_v1_root(paper).endswith("/demo")
     assert "/demo" not in execution_v1_root(live)
     assert info_root(paper).endswith("/demo")
+    assert aggregate_portfolio_path(paper).endswith("/demo/aggregate-portfolio")
+    assert aggregate_portfolio_path(live) == "/api/v1/trading/info/aggregate-portfolio"
     assert copy_root(paper).endswith("/demo")
     assert positions_root(paper).endswith("/demo")
     assert paper.api_key == live.api_key
@@ -131,6 +134,39 @@ def test_credentials_redacted_in_public_config() -> None:
     payload = public_config(cfg)
     assert "secret-key" not in json.dumps(payload)
     assert payload["api_key_configured"] is True
+
+
+def test_get_account_snapshot_uses_aggregate_portfolio_for_pnl(monkeypatch) -> None:
+    cfg = EtoroConfig(profile="live", api_key="k", user_key="u")
+    captured_urls: list[str] = []
+
+    def _transport(method: str, url: str, **kwargs: Any) -> _FakeResponse:
+        captured_urls.append(url)
+        if "/portfolio" in url and "aggregate" not in url:
+            return _FakeResponse(200, {"clientPortfolio": {"credit": 1.25, "positions": []}})
+        if "/aggregate-portfolio" in url:
+            return _FakeResponse(
+                200,
+                {
+                    "accountCurrency": "USD",
+                    "accountTotals": {
+                        "accountCurrentPnl": -26.94,
+                        "accountTotalValue": 615.48,
+                        "accountBalance": 1.25,
+                    },
+                },
+            )
+        raise AssertionError(f"unexpected {method} {url}")
+
+    set_client_factory(lambda c: EtoroClient(cfg, transport=_transport))
+    result = etoro_sdk.get_account_snapshot(cfg)
+    assert result["status"] == "ok"
+    pnl = result["account"]["pnl"]
+    assert pnl["source"] == "aggregate-portfolio"
+    assert pnl["account_current_pnl"] == -26.94
+    assert "pnl_error" not in result["account"]
+    assert any("/aggregate-portfolio" in url for url in captured_urls)
+    assert not any(url.endswith("/pnl") for url in captured_urls)
 
 
 def test_place_order_uses_demo_execution_path(monkeypatch) -> None:
