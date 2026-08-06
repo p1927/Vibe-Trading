@@ -36,6 +36,10 @@ try:
 except ImportError:
     OpenAIOmit = None  # type: ignore
 
+try:
+    import httpx
+except ImportError:
+    httpx = None  # type: ignore
 
 _AMBIENT_OPENAI_HEADER_ENV_VARS = (
     "OPENAI_CUSTOM_HEADERS",
@@ -1096,4 +1100,7 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
                 headers["User-Agent"] = custom_ua
         _validate_explicit_headers(headers, source=f"{caps.name} provider configuration")
         kwargs["default_headers"] = headers
+    if get_env_config().llm.vibe_trading_disable_http_proxy and httpx is not None:
+        kwargs["http_client"] = httpx.Client(proxy=None)
+        kwargs["http_socket_options"] = ()
     return ChatOpenAIWithReasoning(**kwargs)

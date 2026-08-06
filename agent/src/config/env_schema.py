@@ -140,6 +140,9 @@ class LLMConfig(_EnvBase):
         default="https://chatgpt.com/backend-api/codex/responses",
     )
     openai_model: str = Field(alias="OPENAI_MODEL", default="")
+    vibe_trading_disable_http_proxy: EnvBool = Field(
+        alias="VIBE_TRADING_DISABLE_HTTP_PROXY", default=False,
+    )
 
 
 # ---------------------------------------------------------------------------
