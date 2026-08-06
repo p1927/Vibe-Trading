@@ -993,3 +993,61 @@ def test_screening_run_reaches_a_final_answer_through_the_agent_loop(
         "000543.SZ 买入价 8.20 CNY（100 股成本 820 CNY；source: tencent）"
     )
     assert validation.valid is True, validation.issues
+
+
+def test_price_table_with_a_year_less_date_matches_its_evidence(tmp_path: Path) -> None:
+    """A table dated ``08-01`` must find the evidence stamped ``2026-08-01`` (#983).
+
+    The date filter was ``timestamp.startswith(date_value)``, which can only
+    succeed when the answer repeats the year. A report writing the trading day
+    the ordinary way matched nothing, so every cell in the row came back as
+    having no supporting evidence — 79 such rejections in the trace attached to
+    #983, every value sitting inside the observed range.
+    """
+    ledger = _screened_ledger(tmp_path)
+
+    for date_cell in ("08-01", "8/1", "8月1日", "2026-08-01"):
+        draft = (
+            "000543.SZ 行情（source: tencent; currency: CNY）\n\n"
+            "| 日期 | 开盘 | 最高 | 最低 | 收盘 |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            f"| {date_cell} | 7.90 | 8.50 | 7.90 | 8.20 |\n"
+        )
+        result = ledger.validate_final_answer(draft)
+        assert result.valid is True, (date_cell, result.issues)
+
+
+def test_year_less_date_still_rejects_a_wrong_quote(tmp_path: Path) -> None:
+    """Matching the day must not stop the value from being checked (#983).
+
+    Resolving the date is what lets the comparison happen at all; it must not
+    become a way to pass without one.
+    """
+    ledger = _screened_ledger(tmp_path)
+
+    draft = (
+        "000543.SZ 行情（source: tencent; currency: CNY）\n\n"
+        "| 日期 | 开盘 | 最高 | 最低 | 收盘 |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| 08-01 | 7.90 | 8.50 | 7.90 | 42.00 |\n"
+    )
+    result = ledger.validate_final_answer(draft)
+
+    assert result.valid is False
+    assert "numeric_claim_conflict" in {issue["code"] for issue in result.issues}
+
+
+def test_a_date_that_names_a_different_day_is_still_unavailable(tmp_path: Path) -> None:
+    """Loosening the year must not collapse distinct trading days together."""
+    ledger = _screened_ledger(tmp_path)
+
+    draft = (
+        "000543.SZ 行情（source: tencent; currency: CNY）\n\n"
+        "| 日期 | 开盘 | 最高 | 最低 | 收盘 |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| 07-15 | 7.90 | 8.50 | 7.90 | 8.20 |\n"
+    )
+    result = ledger.validate_final_answer(draft)
+
+    assert result.valid is False
+    assert "numeric_claim_unavailable" in {issue["code"] for issue in result.issues}

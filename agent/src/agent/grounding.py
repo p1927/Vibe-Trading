@@ -309,6 +309,53 @@ def _is_number(value: Any) -> bool:
     )
 
 
+# "." is deliberately not a separator: a decimal price such as 8.5 would parse
+# as month 8 day 5 and match a real trading day.
+_YEARLESS_CLAIM_DATE_RE = re.compile(
+    r"^(0?[1-9]|1[0-2])\s*[-/月]\s*(0?[1-9]|[12]\d|3[01])\s*[日号]?$"
+)
+_ISO_TIMESTAMP_RE = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})")
+
+
+def _timestamp_matches_claim_date(timestamp: str, date_value: str) -> bool:
+    """Match an evidence timestamp against the date cell of a claim.
+
+    The comparison used to be ``timestamp.startswith(date_value)``, which can
+    only succeed when the answer repeats the year. A table whose date column
+    reads ``08-05`` — the ordinary way a report writes a trading day — matched
+    nothing, so every cell in the row was reported as having no supporting
+    evidence while that evidence sat right there (#983: 79 such rejections in
+    one run, every value inside the observed range).
+
+    A year-less date is matched on month and day. That is deliberately looser:
+    where the evidence spans more than one year, such a claim matches the same
+    calendar day in either. Matching the wrong year is a smaller failure than
+    matching nothing, but it is a real one, so the caller still compares the
+    value against every record that matched rather than trusting the date.
+
+    Args:
+        timestamp: Evidence timestamp, normally ISO ``YYYY-MM-DD``.
+        date_value: Date cell as written in the answer.
+
+    Returns:
+        True when the timestamp denotes the day the claim names.
+    """
+    stamp = (timestamp or "").strip()
+    claim = (date_value or "").strip()
+    if not stamp or not claim:
+        return False
+    if stamp.startswith(claim):
+        return True
+    yearless = _YEARLESS_CLAIM_DATE_RE.match(claim)
+    iso = _ISO_TIMESTAMP_RE.match(stamp)
+    if not yearless or not iso:
+        return False
+    return (int(iso.group(2)), int(iso.group(3))) == (
+        int(yearless.group(1)),
+        int(yearless.group(2)),
+    )
+
+
 def _price_field_for_path(path: str) -> str | None:
     """Map a generic evidence JSON path to a canonical price field.
 
@@ -1637,7 +1684,8 @@ class GroundingLedger:
             candidates = [
                 record
                 for record in candidates
-                if record.timestamp and record.timestamp.startswith(date_value)
+                if record.timestamp
+                and _timestamp_matches_claim_date(record.timestamp, date_value)
             ]
         if not candidates:
             return {
