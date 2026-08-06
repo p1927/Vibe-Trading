@@ -68,9 +68,12 @@ agents:
       vol / share count from `get_stock_profile` and `get_market_data`. Every model
       input must trace to one of those calls; if a line item is missing, report the
       model as not runnable rather than substituting an assumed value.
-      **There is no rating feed and no market-implied PD service here.** Agency
-      ratings and rating histories are only usable if you retrieved them via
-      `read_url` and cite the source. Your "proprietary rating" is your own
+      **There is no agency rating feed here.** Agency ratings and rating
+      histories are only usable if you retrieved them via `read_url` and cite
+      the source. A market-implied PD, by contrast, is not missing: it is
+      precisely what the `merton_model` call above produces from equity value,
+      equity vol and debt face. Report it as a model output alongside the inputs
+      that produced it, never as a vendor figure. Your "proprietary rating" is your own
       judgement mapped from the computed metrics — present it as that, never as
       an agency-comparable rating.
       `factor_analysis` computes IC/IR and layered NAV from CSVs you write; it does

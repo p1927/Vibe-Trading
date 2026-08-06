@@ -94,7 +94,14 @@ agents:
       (confidence and horizon are arguments — state which you used),
       `max_drawdown_analysis(equity)` for the drawdown profile, and
       `fit_gpd_tail(returns)` for the tail beyond the empirical sample.
-      You have no options tool, so do not report option-implied vol or short cost.
+      Option-implied vol is retrievable, not assumable: pull the chain with
+      `get_options_chain`, read ATM implied vol off the strike ladder for the
+      nearest expiration beyond your horizon, and compare it with the realised
+      vol you computed from the bars. A wide IV-over-HV premium is a bear point
+      in its own right. The chain is Yahoo-backed and **US-listed only** — if
+      {target} is not US-listed, say so and omit the IV section rather than
+      substituting a guess. Borrow / short-lending cost has no data source in
+      this system: do not report a borrow fee.
 
       ## Required outputs
       1. **Bear risk bullets** — 3–5 one-line top bear points, each with severity (high/medium)
@@ -106,7 +113,7 @@ agents:
       7. **What would disprove the bear case** — Signals that would invalidate the bear thesis (i.e., bull-side rebuttal points)
 
       Use factor_analysis for risk-factor views; use load_skill for risk frameworks.
-    tools: [bash, read_file, write_file, load_skill, get_market_data, factor_analysis]
+    tools: [bash, read_file, write_file, load_skill, get_market_data, factor_analysis, get_options_chain]
     skills: [technical-basic, fundamental-filter, yfinance, risk-analysis, volatility]
     max_iterations: 50
     timeout_seconds: 1800
@@ -152,8 +159,14 @@ agents:
         scenarios; report the seed and path count so the run is reproducible
       Name the sample window for each figure. If you could not retrieve bars, say
       the risk metrics are unavailable and give a qualitative review — an
-      unsourced VaR or stop price is worse than none. You have no options tool:
-      recommend a hedge structure if you wish, but do not price it.
+      unsourced VaR or stop price is worse than none. Price the hedge you
+      recommend — do not leave it as a shape. `options_payoff` takes the signed
+      legs and returns entry debit/credit, analytic breakevens and bounded or
+      unbounded max loss, which is what sizing a protective put or a collar
+      actually requires; `options_pricing` values a single leg. Source the
+      implied vol from `get_options_chain` when the name is US-listed, and when
+      it is not, state the vol assumption you used and that it is an assumption.
+      A hedge whose cost you did not compute is not a recommendation.
 
       ### Compliance & concentration
       - Single-name cap (often 5–10% of NAV)
@@ -170,7 +183,7 @@ agents:
       7. **Risk conditions** — If approval is conditional, state prerequisites (e.g., wait for earnings)
 
       Stay independent; do not cheerlead either side; optimize portfolio-level risk.
-    tools: [bash, read_file, write_file, load_skill, get_market_data]
+    tools: [bash, read_file, write_file, load_skill, get_market_data, get_options_chain, options_pricing, options_payoff]
     skills: [risk-analysis, volatility, correlation-analysis]
     max_iterations: 50
     timeout_seconds: 1800

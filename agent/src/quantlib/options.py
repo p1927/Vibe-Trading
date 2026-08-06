@@ -51,6 +51,17 @@ _CALL = "call"
 _PUT = "put"
 
 
+#: Spellings folded to ``"call"``. Beyond case and padding these are the forms
+#: real configs and real chain feeds actually carry: the single letter used in
+#: option symbols and most vendor chains, the plural a chain endpoint returns,
+#: and the two Chinese terms -- ``认购``/``认沽`` being the official SSE/SZSE
+#: wording for exchange-traded options, which an A-share config will use.
+_CALL_ALIASES: frozenset[str] = frozenset({"call", "calls", "c", "看涨", "认购"})
+
+#: Spellings folded to ``"put"``. See :data:`_CALL_ALIASES`.
+_PUT_ALIASES: frozenset[str] = frozenset({"put", "puts", "p", "看跌", "认沽"})
+
+
 def normalise_option_type(option_type: str) -> str:
     """Fold an option-type string to ``"call"`` or ``"put"``.
 
@@ -59,19 +70,42 @@ def normalise_option_type(option_type: str) -> str:
     later compares it with ``== "call"`` will price a leg typed ``"Call"`` as a
     call here and settle it as a put there.
 
+    WHY THIS ACCEPTS ALIASES BUT STILL REFUSES THE UNKNOWN
+    -----------------------------------------------------
+    There are two different failure modes and they need opposite treatment.
+
+    A config saying ``"C"``, ``"calls"`` or ``"认购"`` is *unambiguous* -- there
+    is exactly one thing it can mean, and refusing it breaks a working setup for
+    no safety gain. Those are folded (:data:`_CALL_ALIASES`, :data:`_PUT_ALIASES`).
+
+    A config saying ``"cal"`` or ``"kall"`` is a typo, and the only safe answer
+    is to stop. The behaviour this replaced defaulted an unrecognised type to
+    put, so a mistyped call leg opened priced as a call and settled as a put --
+    ten in-the-money contracts settling at zero. Guessing at a typo is how that
+    happened, so an unknown string still raises.
+
     Args:
-        option_type: Caller-supplied option type, any case, may be padded.
+        option_type: Caller-supplied option type. Case, surrounding whitespace
+            and the aliases above are all accepted.
 
     Returns:
         Either ``"call"`` or ``"put"``.
 
     Raises:
-        ValueError: If the string is neither.
+        ValueError: If the string matches no known spelling. The message lists
+            what is accepted, so the fix does not need a source read.
     """
     folded = str(option_type).strip().lower()
-    if folded not in (_CALL, _PUT):
-        raise ValueError(f"option_type must be 'call' or 'put', got {option_type!r}")
-    return folded
+    if folded in _CALL_ALIASES:
+        return _CALL
+    if folded in _PUT_ALIASES:
+        return _PUT
+    raise ValueError(
+        f"unrecognised option_type {option_type!r}. Accepted (any case): "
+        f"{sorted(_CALL_ALIASES)} for a call, {sorted(_PUT_ALIASES)} for a put. "
+        "An unrecognised type is not defaulted, because defaulting one is how a "
+        "call leg gets settled as a put."
+    )
 
 
 def _intrinsic(S: float, K: float, option_type: str) -> float:

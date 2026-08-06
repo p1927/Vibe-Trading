@@ -69,19 +69,35 @@ agents:
          - Hit rate of direction-consistent abnormal returns post-event
          - Key factors driving persistence or dissipation of abnormal returns
 
-         **How to actually produce CAR/CAAR.** No tool computes an event study.
-         `factor_analysis` computes IC/IR and layered NAV from a factor CSV and a
-         return CSV you write — it cannot do this. Build it yourself in `bash`:
+         **How to actually produce CAR/CAAR.** `src.quantlib.eventstudy.event_study`
+         implements this — estimation-window market model, abnormal returns, CAR,
+         CAAR, and the three test statistics. Do not hand-roll the arithmetic and
+         do not settle for subtracting the benchmark.
          1. Establish each comparable event's DATE from a retrieved source —
             `get_stock_news` or `read_url`. An event date you cannot cite is not
             usable; drop that comparable rather than guessing when it happened.
-         2. Pull the security's and the benchmark's daily bars around each event
-            date with `get_market_data`.
-         3. Abnormal return = security return − benchmark return (market-adjusted
-            model). State that this is the market-adjusted model, not a
-            risk-adjusted one — there is no estimation-window factor model here.
-         4. Cumulate over each window for CAR; average across events for CAAR.
-         5. With fewer than ~5 comparable events, report the individual CARs and
+         2. Pull the securities' and the benchmark's daily bars with
+            `get_market_data`, convert to simple returns, and assemble a
+            date × symbol frame plus a benchmark return series.
+         3. In `bash`:
+            `from src.quantlib.eventstudy import event_study` then
+            `event_study(returns, market_returns, events, event_window=(-1, 20))`
+            where `events` is a list of `(symbol, event_date)` pairs. The default
+            `model="market"` fits alpha and beta on a 120-row estimation window
+            ending 10 rows before the window opens, so the result is
+            RISK-adjusted, not merely market-adjusted. Report which model you used.
+         4. Read `caar_total` for the headline and `caar` for the T+1 / T+5 / T+20 /
+            T+60 path — run the study once per horizon by widening `event_window`.
+         5. **Report `bmp_p_value`, not just the mean.** A CAAR without a test
+            statistic is an anecdote. When `bmp_p_value` and `patell_p_value`
+            disagree, quote BMP and say why: events raise volatility, and Patell
+            assumes they do not. Also report `len(result.events)` and
+            `result.dropped` — a study over 12 events of which 7 were dropped is
+            a different study and the reader must be told.
+         6. If `result.shared_event_dates` is non-empty the events overlap in
+            calendar time, the independence the p-values assume is violated, and
+            you must say so rather than quoting them as if it were not.
+         7. With fewer than ~5 measurable events, report the individual CARs and
             say the sample is too small for a meaningful CAAR. Do not present a
             mean of two observations as an "abnormal return distribution".
          If you cannot complete steps 1–2, write "historical benchmarking not
@@ -100,9 +116,11 @@ agents:
       Use load_skill("sentiment-analysis") for market sentiment and expectation quantification tools.
       Use load_skill("valuation-model") for valuation analysis frameworks and tools.
       `factor_analysis` computes IC/IR and layered NAV from a factor CSV and a return CSV
-      you write yourself — it does not fetch data and cannot run an event study.
+      you write yourself — it does not fetch data and does not run event studies.
       Event dates come from `get_stock_news` / `read_url`, bars from `get_market_data`,
-      and the CAR arithmetic from your own `bash` code.
+      and the event study itself from `src.quantlib.eventstudy.event_study` — which
+      owns the estimation-window model, the CAR arithmetic and the significance
+      tests, so none of the three is yours to reimplement.
     tools: [bash, read_file, write_file, load_skill, factor_analysis, get_market_data, get_stock_news, read_url]
     skills: [corporate-events, sentiment-analysis, valuation-model]
     max_iterations: 50

@@ -110,11 +110,23 @@ agents:
       `fixed_slippage` the flat-bps baseline, and `delayed_execution` shows the
       cost of acting a bar late. Name the model and the coefficient you used and
       label the output an estimate.
-      **There is no order-book depth or quote feed here** — depth, bid-ask spread
-      and queue position cannot be measured. Score depth from a stated proxy
-      (turnover, ADV) and say it is a proxy, or leave it out. Granger causality
-      between legs comes from `src.quantlib.timeseries.granger_test`.
-    tools: [bash, read_file, write_file, load_skill, get_market_data]
+      **Order-book depth: measurable for crypto, not for equities.** For a crypto
+      leg, `orderbook_depth` returns the live L2 ladder — bid/ask spread in bps,
+      depth imbalance, and the impact cost of a stated notional walked through
+      the real ladder in both directions. Use it instead of a proxy, and read
+      three fields before you quote anything from it: `fully_filled` (False means
+      the book could not absorb your size — report the shortfall, never the
+      partial average as if it were the fill), `timestamp` with
+      `timestamp_source` (a book is a snapshot that expires in seconds, and
+      `local_fetch_time` means the venue did not stamp it), and the `units` block
+      (quantities are base asset, notionals are quote asset — for `ETH-BTC` the
+      quote is BTC, not a dollar).
+      For an EQUITY leg there is still no depth or quote feed: score depth from a
+      stated proxy (turnover, ADV), say it is a proxy, or leave it out. Never
+      present a crypto depth measurement and an equity depth proxy in the same
+      column without marking which is which.
+      Granger causality between legs comes from `src.quantlib.timeseries.granger_test`.
+    tools: [bash, read_file, write_file, load_skill, get_market_data, orderbook_depth]
     skills: [market-microstructure, execution-model]
     max_iterations: 50
     timeout_seconds: 1800
