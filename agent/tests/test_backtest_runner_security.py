@@ -111,6 +111,41 @@ _FORBIDDEN_IN_METHOD_BODY = [
     ("urllib_urlopen", ["        import urllib.request as u", "        return u.urlopen('http://x')"]),
     ("open_write", ["        open('evil.txt', 'w').write('x')", "        return []"]),
     ("open_abs_read", ["        return open('/etc/passwd').read()"]),
+    # The red line: no research or backtest path may reach a connector's
+    # place_order. The subprocess is handed the agent root on PYTHONPATH, so
+    # the separation has to be enforced by the scanner, not by hoping the
+    # module is unimportable.
+    (
+        "import_trading_service",
+        ["        import src.trading.service", "        return []"],
+    ),
+    (
+        "from_trading_service_import_place_order",
+        ["        from src.trading.service import place_order", "        return []"],
+    ),
+    (
+        "from_trading_import_service",
+        ["        from src.trading import service", "        return []"],
+    ),
+    (
+        "import_broker_connector",
+        ["        import src.trading.connectors.okx.sdk", "        return []"],
+    ),
+    (
+        "import_live_order_gate",
+        ["        from src.live.sdk_order_gate import check", "        return []"],
+    ),
+    (
+        "trading_attribute_chain",
+        ["        import src", "        return src.trading.service.place_order(1)"],
+    ),
+    (
+        "getattr_indirection_onto_trading",
+        [
+            "        import src",
+            "        return getattr(src.trading.service, 'place_order')(1)",
+        ],
+    ),
 ]
 
 
@@ -131,6 +166,40 @@ def test_signal_engine_rejects_forbidden_op_in_method_body(tmp_path, case_id, bo
 
     with pytest.raises(ValueError, match="not allowed inside generated strategy code"):
         _load_module_from_file(signal_file, _module_name())
+
+
+@pytest.mark.parametrize(
+    "import_line",
+    [
+        "        from src.quantlib.fixedincome import bond_price",
+        "        import src.quantlib.credit",
+        "        from src.factors.registry import get_factor",
+    ],
+    ids=["quantlib_from", "quantlib_import", "factors_registry"],
+)
+def test_signal_engine_still_allows_project_math_imports(tmp_path, import_line) -> None:
+    """Blocking the broker subtree must not cost strategies the math layer.
+
+    ``src.trading`` and ``src.quantlib`` share a root package, so a root-level
+    block would close the red-line gap by taking away the finance-math layer
+    strategies are explicitly meant to import. The prefix match keeps them
+    apart; this pins that it stays that way.
+    """
+    signal_file = tmp_path / "signal_engine.py"
+    signal_file.write_text(
+        "\n".join(
+            [
+                '"""Generated signal engine."""',
+                "class SignalEngine:",
+                "    def generate(self, *args, **kwargs):",
+                import_line,
+                "        return []",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    _load_module_from_file(signal_file, _module_name())
 
 
 def test_signal_engine_rejects_forbidden_op_in_transitively_called_helper(tmp_path) -> None:

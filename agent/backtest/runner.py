@@ -299,6 +299,43 @@ _FORBIDDEN_IMPORT_MODULES = frozenset(
         "ctypes",
     }
 )
+# Project-internal subtrees that reach a broker. The red line is that no
+# research or backtest path can arrive at a connector's ``place_order``, and
+# until now that separation rested on the subprocess never being handed
+# credentials rather than on the scanner refusing the import. It refuses now.
+#
+# These are matched on the dotted PREFIX rather than the root package, because
+# the root is ``src`` — which also holds ``src.quantlib``, the finance-math
+# layer strategies are explicitly meant to import (see the credit-analysis
+# skill). Blocking the root would take that away to close this.
+_FORBIDDEN_IMPORT_PREFIXES = (
+    "src.trading",
+    "src.live",
+    "agent.src.trading",
+    "agent.src.live",
+    "trading.connectors",
+    "live.sdk_order_gate",
+)
+
+
+def _is_forbidden_module_path(name: str) -> bool:
+    """Return True when a dotted module path names a forbidden module or subtree.
+
+    Args:
+        name: Dotted module path, e.g. ``socket`` or ``src.trading.service``.
+
+    Returns:
+        True when the root package is forbidden outright, or the path falls
+        inside a forbidden subtree.
+    """
+    if not name:
+        return False
+    if name.split(".")[0] in _FORBIDDEN_IMPORT_MODULES:
+        return True
+    return any(
+        name == prefix or name.startswith(prefix + ".")
+        for prefix in _FORBIDDEN_IMPORT_PREFIXES
+    )
 # ``os`` itself is allowed (os.path etc.), but these attributes shell out, spawn,
 # or read the process environment — none has a place in a signal engine.
 _FORBIDDEN_OS_ATTRS = frozenset(
@@ -343,6 +380,30 @@ def _attribute_root_name(node: ast.Attribute) -> str | None:
     while isinstance(current, ast.Attribute):
         current = current.value
     return current.id if isinstance(current, ast.Name) else None
+
+
+def _attribute_dotted_path(node: ast.Attribute) -> str | None:
+    """Rebuild the dotted path of an attribute chain (``a.b.c`` -> ``a.b.c``).
+
+    The root name alone cannot decide a forbidden-subtree check: ``src`` is
+    shared by the blocked ``src.trading`` and the permitted ``src.quantlib``.
+
+    Args:
+        node: Attribute node at the end of the chain.
+
+    Returns:
+        The dotted path, or None when the chain is not rooted in a plain name
+        (e.g. it starts from a call or subscript).
+    """
+    parts: list[str] = []
+    current: ast.AST = node
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if not isinstance(current, ast.Name):
+        return None
+    parts.append(current.id)
+    return ".".join(reversed(parts))
 
 
 def _reject_forbidden_open(node: ast.Call) -> None:
@@ -394,6 +455,9 @@ def _reject_forbidden_getattr(node: ast.Call) -> None:
         root: str | None = target.id
     elif isinstance(target, ast.Attribute):
         root = _attribute_root_name(target)
+        dotted = _attribute_dotted_path(target)
+        if dotted and _is_forbidden_module_path(dotted):
+            raise ValueError(f"{func.id}() indirection onto {dotted!r} {_SCRUB_MSG}")
     else:
         root = None
     if root == "os" or root in _FORBIDDEN_IMPORT_MODULES:
@@ -404,12 +468,18 @@ def _reject_forbidden_node(node: ast.AST) -> None:
     """Raise ``ValueError`` if a single AST node performs a forbidden operation."""
     if isinstance(node, ast.Import):
         for alias in node.names:
-            if alias.name.split(".")[0] in _FORBIDDEN_IMPORT_MODULES:
+            if _is_forbidden_module_path(alias.name):
                 raise ValueError(f"Import of {alias.name!r} {_SCRUB_MSG}")
     elif isinstance(node, ast.ImportFrom):
-        root = (node.module or "").split(".")[0]
-        if root in _FORBIDDEN_IMPORT_MODULES:
+        module = node.module or ""
+        root = module.split(".")[0]
+        if _is_forbidden_module_path(module):
             raise ValueError(f"Import from {node.module!r} {_SCRUB_MSG}")
+        # "from src.trading import service" names the subtree in the alias,
+        # not the module, so the prefix check above cannot see it.
+        for alias in node.names:
+            if _is_forbidden_module_path(f"{module}.{alias.name}" if module else alias.name):
+                raise ValueError(f"Import of {module}.{alias.name!r} {_SCRUB_MSG}")
         if root == "os":
             for alias in node.names:
                 if _is_forbidden_os_attr(alias.name):
@@ -418,6 +488,9 @@ def _reject_forbidden_node(node: ast.AST) -> None:
         root = _attribute_root_name(node)
         if root in _FORBIDDEN_IMPORT_MODULES:
             raise ValueError(f"Use of {root}.{node.attr} {_SCRUB_MSG}")
+        dotted = _attribute_dotted_path(node)
+        if dotted and _is_forbidden_module_path(dotted):
+            raise ValueError(f"Use of {dotted} {_SCRUB_MSG}")
         if root == "os" and _is_forbidden_os_attr(node.attr):
             raise ValueError(f"Use of os.{node.attr} {_SCRUB_MSG}")
     elif isinstance(node, ast.Name):
