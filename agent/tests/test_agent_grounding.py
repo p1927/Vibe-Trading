@@ -879,6 +879,53 @@ def test_price_validation_still_rejects_a_quote_outside_observed_range(
     assert [issue["code"] for issue in result.issues] == ["numeric_claim_conflict"]
 
 
+def test_price_validation_ignores_score_indicator_and_window_digits(
+    tmp_path: Path,
+) -> None:
+    """Confidence scores, indicator readings, and lookback windows are not prices (#1001).
+
+    A well-formed verdict line carries a conviction score, the moving-average
+    windows it cites, and an oscillator reading. Compared against an OHLC range
+    every one of them contradicts it, which rejected drafts that were correct.
+    """
+    ledger = _screened_ledger(tmp_path)
+
+    for draft in (
+        # The reported shape: a labelled score on a 1-10 scale.
+        "000543.SZ VERDICT: FLAT CONFIDENCE: 6 REASON: 收盘价 8.20 CNY（source: tencent）",
+        "000543.SZ CONFIDENCE: 6/10，收盘价 8.20 CNY（source: tencent）",
+        # The hyphenated English compound the quantity mask used to stall on.
+        "000543.SZ 现价 8.20 CNY 距 52-week high 有距离（source: tencent）",
+        "000543.SZ 收盘价 8.20 CNY 低于其 20/50/200-day 均线（source: tencent）",
+        # An indicator reading sharing a clause with a genuine quote.
+        "000543.SZ 现价 8.20 CNY 而 RSI 46.7（source: tencent）",
+    ):
+        result = ledger.validate_final_answer(draft)
+        assert result.valid is True, (draft, result.issues)
+
+
+def test_masked_window_does_not_shield_a_wrong_quote_in_the_same_clause(
+    tmp_path: Path,
+) -> None:
+    """The new masks are span-local: a bad quote beside one is still caught (#1001).
+
+    This is the lower side of the guard. Masking ``52-week`` must remove only
+    the window length; a contradicted price in the same clause has to survive
+    the mask and reject the draft, or the fix would have bought precision by
+    silencing the check it exists to run.
+    """
+    ledger = _screened_ledger(tmp_path)
+
+    for draft in (
+        "000543.SZ 52-week high 之下，收盘价 42.00 CNY（source: tencent）",
+        "000543.SZ CONFIDENCE: 6 REASON: 收盘价 42.00 CNY（source: tencent）",
+        "000543.SZ RSI 46.7，收盘价 42.00 CNY（source: tencent）",
+    ):
+        result = ledger.validate_final_answer(draft)
+        assert result.valid is False, draft
+        assert [issue["code"] for issue in result.issues] == ["numeric_claim_conflict"], draft
+
+
 def test_screening_run_reaches_a_final_answer_through_the_agent_loop(
     tmp_path: Path,
 ) -> None:

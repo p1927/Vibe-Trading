@@ -184,12 +184,49 @@ _AGGREGATE_AMOUNT_RE = re.compile(
     r"\s*(?:为|是|约)?\s*[:：]?\s*[-+]?\d[\d,]*(?:\.\d+)?",
     re.IGNORECASE,
 )
-# Quantities, horizons, and lot sizes are unit-bearing: "100 股", "1–4 周",
-# "3 个月". None of them are prices.
+# Quantities, horizons, lot sizes, and lookback windows are unit-bearing:
+# "100 股", "1–4 周", "3 个月", "52-week", "20/50/200-day". None are prices.
+# The hyphenated English compound needs its own branch: the range alternation
+# consumes "-4" in "1-4 周" but stalls on "-week", which left 52 behind to be
+# compared against an OHLC range (#1001). The slash enumeration shares a single
+# trailing unit, so "20/50/200-day" has to be masked as one span or its first
+# two window lengths survive. ASCII units carry a trailing word boundary so
+# "120 more" is not read as a quantity; the CJK branch cannot, because 周 and
+# 内 are both word characters and "1–4 周内" must still mask.
 _QUANTITY_WITH_UNIT_RE = re.compile(
-    r"\d[\d,]*(?:\.\d+)?(?:\s*[-–—~至]\s*\d[\d,]*(?:\.\d+)?)?\s*"
-    r"(?:股|手|张|份|口|笔|倍|个月|周|天|日|年|次|"
-    r"shares?|contracts?|lots?|units?|weeks?|months?|days?|years?)",
+    r"\d[\d,]*(?:\.\d+)?"
+    r"(?:\s*/\s*\d[\d,]*(?:\.\d+)?)*"
+    r"(?:\s*[-–—~至]\s*\d[\d,]*(?:\.\d+)?)?"
+    r"\s*[-–—]?\s*"
+    r"(?:"
+    r"(?:股|手|张|份|口|笔|倍|个月|周|天|日|年|次)"
+    r"|(?:shares?|contracts?|lots?|units?|sessions?|bars?|periods?|"
+    r"wks?|weeks?|months?|days?|years?|yrs?)\b"
+    r")",
+    re.IGNORECASE,
+)
+# A conviction reading is on a labelled scale, not a price scale: the 6 in
+# "CONFIDENCE: 6" is bounded by the label that introduces it. Only the value
+# bound to the label is masked, so a genuine quote elsewhere in the same
+# clause is still checked. The optional denominator covers "6/10" (#1001).
+_LABELLED_SCORE_RE = re.compile(
+    r"(?:confidence|conviction|score|rating|probability|odds|weighting|"
+    r"置信度|信心|评分|得分|概率|胜率)"
+    r"\s*(?:is|of|=|为|是)?\s*[:：]?\s*"
+    r"[-+]?\d[\d,]*(?:\.\d+)?(?:\s*/\s*\d[\d,]*(?:\.\d+)?)?",
+    re.IGNORECASE,
+)
+# A named indicator reads on its own scale — "RSI of 46.7" is bounded at 100,
+# not quoted in the instrument's currency. The name must be adjacent to the
+# value, so a bare number elsewhere in the clause stays checked. Only
+# unambiguous indicator names are listed: generic words such as "momentum" or
+# "volatility" sit too close to price prose to mask safely.
+_INDICATOR_VALUE_RE = re.compile(
+    r"\b(?:rsi|macd|atr|adx|cci|obv|kdj|boll|dif|dea|vix|iv|"
+    r"sharpe|sortino|beta)\b"
+    r"(?:\s*\([^)]{0,20}\))?"
+    r"\s*(?:is|at|of|reads?|=|为|是)?\s*[:：]?\s*"
+    r"[-+]?\d[\d,]*(?:\.\d+)?",
     re.IGNORECASE,
 )
 # Full-width brackets and enumeration commas delimit prose clauses. ASCII
@@ -1658,9 +1695,12 @@ class GroundingLedger:
         """Extract the numbers in a claim that could plausibly be prices.
 
         Digits that belong to a canonical symbol, a calendar date, an aggregate
-        amount, a unit-bearing quantity, or a percentage are masked first. Left
-        unmasked they are compared against observed OHLC ranges and reject a
-        correct draft: ``000543.SZ`` alone contributes 543.
+        amount, a labelled score, a named indicator reading, a unit-bearing
+        quantity, or a percentage are masked first. Left unmasked they are
+        compared against observed OHLC ranges and reject a correct draft:
+        ``000543.SZ`` alone contributes 543, and a well-formed verdict line
+        contributes its confidence score and every moving-average window it
+        names (#1001).
 
         Args:
             text: One claim segment or table cell.
@@ -1672,6 +1712,8 @@ class GroundingLedger:
         masked = _LOCALIZED_DATE_RE.sub(" ", masked)
         masked = _DATE_RE.sub(" ", masked)
         masked = _AGGREGATE_AMOUNT_RE.sub(" ", masked)
+        masked = _LABELLED_SCORE_RE.sub(" ", masked)
+        masked = _INDICATOR_VALUE_RE.sub(" ", masked)
         without_dates = _QUANTITY_WITH_UNIT_RE.sub(" ", masked)
         values: list[float] = []
         for match in _NUMBER_RE.finditer(without_dates):
