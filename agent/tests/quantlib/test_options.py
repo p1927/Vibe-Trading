@@ -18,7 +18,12 @@ import math
 
 import pytest
 
-from src.quantlib.options import bs_greeks, bs_price, implied_volatility
+from src.quantlib.options import (
+    bs_greeks,
+    bs_price,
+    implied_volatility,
+    normalise_option_type,
+)
 
 # Hull, Example 15.6: a six-month European option on a non-dividend stock.
 _HULL_15_6 = {"S": 42.0, "K": 40.0, "T": 0.5, "r": 0.10, "sigma": 0.20}
@@ -332,7 +337,10 @@ class TestEdgeCases:
         expected = bs_price(100.0, 100.0, 1.0, 0.05, 0.2, alias.strip().lower())
         assert bs_price(100.0, 100.0, 1.0, 0.05, 0.2, alias) == expected
 
-    @pytest.mark.parametrize("bad", ["c", "straddle", ""])
+    # "c" used to appear here as an unknown type. It is now an accepted alias
+    # (see _CALL_ALIASES), so the cases below are genuine typos and non-types --
+    # the values for which guessing is unsafe.
+    @pytest.mark.parametrize("bad", ["cal", "straddle", "", "1", "long"])
     def test_unknown_option_type_raises(self, bad: str) -> None:
         with pytest.raises(ValueError, match="option_type"):
             bs_price(100.0, 100.0, 1.0, 0.05, 0.2, bad)
@@ -387,5 +395,64 @@ class TestEngineFoldsOptionTypeTheSameWay:
     def test_unknown_type_is_rejected_at_construction(self) -> None:
         from backtest.engines.options_portfolio import OptionPosition
 
+        # A genuine typo, not "c" -- that is an accepted alias now.
         with pytest.raises(ValueError, match="option_type"):
-            OptionPosition("c", 100.0, "2026-01-01", 1, 5.0, "2025-10-01", "X")
+            OptionPosition("cal", 100.0, "2026-01-01", 1, 5.0, "2025-10-01", "X")
+
+    def test_an_aliased_type_is_accepted_at_construction(self) -> None:
+        from backtest.engines.options_portfolio import OptionPosition
+
+        # The engine folds through the same rule, so a config typed "C" builds
+        # a position that prices AND settles as a call.
+        pos = OptionPosition("C", 100.0, "2026-01-01", 1, 5.0, "2025-10-01", "X")
+        assert pos.option_type == "call"
+
+
+# --- option-type aliases: compatibility without reintroducing the defaulting bug ---
+
+
+@pytest.mark.parametrize(
+    "raw", ["call", "Call", "CALL", " call ", "calls", "C", "c", "看涨", "认购"]
+)
+def test_unambiguous_call_spellings_are_accepted(raw):
+    assert normalise_option_type(raw) == "call"
+
+
+@pytest.mark.parametrize(
+    "raw", ["put", "Put", "PUT", " put ", "puts", "P", "p", "看跌", "认沽"]
+)
+def test_unambiguous_put_spellings_are_accepted(raw):
+    assert normalise_option_type(raw) == "put"
+
+
+@pytest.mark.parametrize("raw", ["cal", "kall", "pu", "", "   ", "option", "1", "long"])
+def test_a_typo_still_raises_rather_than_being_guessed_at(raw):
+    # This is the half of the contract that must NOT be relaxed. Defaulting an
+    # unrecognised type to put is what settled ten in-the-money call contracts
+    # at zero.
+    with pytest.raises(ValueError, match="unrecognised option_type"):
+        normalise_option_type(raw)
+
+
+def test_the_error_message_lists_what_is_accepted():
+    with pytest.raises(ValueError) as excinfo:
+        normalise_option_type("cal")
+    message = str(excinfo.value)
+    assert "calls" in message and "puts" in message
+
+
+def test_aliases_price_identically_to_the_canonical_spelling():
+    canonical = bs_price(100, 100, 1.0, 0.05, 0.2, "call")
+    for alias in ("C", "CALLS", " 认购 "):
+        assert bs_price(100, 100, 1.0, 0.05, 0.2, alias) == pytest.approx(canonical)
+
+
+def test_an_aliased_leg_prices_and_settles_as_the_same_side():
+    # The original defect in one assertion: whatever the leg was typed as, the
+    # side used to price it must be the side used to settle it.
+    for alias, expected in (("C", "call"), ("认沽", "put"), ("Puts", "put")):
+        folded = normalise_option_type(alias)
+        assert folded == expected
+        deep_itm = bs_price(200, 100, 0.01, 0.0, 0.2, alias) if folded == "call" else \
+            bs_price(50, 100, 0.01, 0.0, 0.2, alias)
+        assert deep_itm > 45.0

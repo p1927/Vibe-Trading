@@ -32,10 +32,12 @@ from __future__ import annotations
 
 import datetime as _dt
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 
 import numpy as np
+import pandas as pd
 from scipy.optimize import brentq, newton
 
 from src.entities.cashflow import CashFlow, CashFlowSeries
@@ -75,6 +77,14 @@ __all__ = [
     "preferred_return_amount",
     "waterfall_split",
     "european_waterfall",
+    "PMEPlusResult",
+    "ks_pme",
+    "pme_plus",
+    "direct_alpha",
+    "AmericanWaterfallResult",
+    "american_waterfall",
+    "ClawbackResult",
+    "gp_clawback",
 ]
 
 #: Kinds treated as capital going into the fund. A parameter everywhere it is
@@ -1295,4 +1305,1027 @@ def european_waterfall(
         preferred,
         carry_rate=carry_rate,
         catch_up_rate=catch_up_rate,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public market equivalent (PME)
+# ---------------------------------------------------------------------------
+#
+# All three functions below answer the same question -- "did this fund beat a
+# public index?" -- from the same two inputs (a CashFlowSeries and a public
+# index level series), but they are not interchangeable and answer it in
+# different units:
+#
+#   ks_pme        a multiple. >1 means the fund beat the index; the number
+#                 itself is not a rate and cannot be annualized.
+#   pme_plus      an IRR, but one that is only meaningful *relative to the
+#                 fund's own realised IRR* -- it is the rate an index-tracking
+#                 portfolio would have posted had it been forced to end at the
+#                 fund's actual NAV. Comparing it to another fund's PME+ IRR
+#                 is not valid; comparing it to *this fund's own* xirr() is.
+#   direct_alpha  an annualized excess return, directly interpretable on its
+#                 own: positive means the fund beat the index by that many
+#                 points a year, negative means it lagged. This is the only
+#                 one of the three that is a standalone number.
+#
+# All three require the public index to have a level on every date they touch
+# and refuse to forward-fill a gap, because a cash flow landing inside a
+# missing stretch would otherwise be discounted against a silently wrong
+# price. Terminal NAV is handled the same way fund_multiples() already
+# handles it -- via residual_value(), i.e. only the single latest valuation
+# mark counts, per the existing VALUATION_POLICIES convention. direct_alpha is
+# the one exception: it hands every flow to xirr() unchanged and lets the
+# caller's own valuations= policy decide, exactly like npv()/xirr() already
+# do, so it is the most flexible of the three but also the one that needs the
+# index to cover every mark in the series, not only the terminal one.
+
+
+def _index_levels_by_date(index_levels: pd.Series) -> dict[_dt.date, float]:
+    """Build a date -> level lookup table from a public index series.
+
+    Args:
+        index_levels: Public-market index levels, a ``pandas.Series`` whose
+            index is date-like (``DatetimeIndex``, or labels accepted by
+            :func:`~src.entities.models.normalize_date`) and whose values are
+            the index's level on each date (a price or a total-return index
+            value, not a return).
+
+    Returns:
+        Mapping from ``datetime.date`` to the index level on that date.
+
+    Raises:
+        TypeError: If ``index_levels`` is not a ``pandas.Series``.
+        ValueError: If it is empty, a level is not finite and positive, or two
+            entries normalize to the same date (an ambiguous lookup, refused
+            rather than guessed at by taking the first or last).
+    """
+    if not isinstance(index_levels, pd.Series):
+        raise TypeError(
+            "index_levels must be a pandas Series of index levels indexed by "
+            f"date, got {type(index_levels).__name__}"
+        )
+    if index_levels.empty:
+        raise ValueError(
+            "index_levels is empty; a public market equivalent needs a "
+            "benchmark to compare against"
+        )
+    lookup: dict[_dt.date, float] = {}
+    for raw_date, raw_level in index_levels.items():
+        day = normalize_date(raw_date, field_name="index_levels date")
+        if day in lookup:
+            raise ValueError(
+                f"index_levels has more than one entry for {day}; resolve the "
+                "duplicate before calling, rather than have this function "
+                "guess which one is authoritative"
+            )
+        level = float(raw_level)
+        if not math.isfinite(level) or level <= 0.0:
+            raise ValueError(
+                f"index level on {day} is {raw_level!r}; index levels must be "
+                "finite and positive to serve as a growth-factor denominator"
+            )
+        lookup[day] = level
+    return lookup
+
+
+def _index_level_at(
+    lookup: Mapping[_dt.date, float], day: _dt.date, *, flow_description: str
+) -> float:
+    """Look up one date in an index lookup table, or fail loudly.
+
+    Args:
+        lookup: Table built by :func:`_index_levels_by_date`.
+        day: Date to look up.
+        flow_description: Human-readable description of what needed this
+            date, quoted in the error message.
+
+    Returns:
+        The index level on ``day``.
+
+    Raises:
+        ValueError: If ``day`` has no entry. Forward-filling across the gap
+            is deliberately not attempted: a flow that lands inside a missing
+            stretch would then be discounted against a price that was never
+            actually observed on that date.
+    """
+    try:
+        return lookup[day]
+    except KeyError as exc:
+        raise ValueError(
+            f"index_levels has no entry for {day} (needed for {flow_description}); "
+            "forward-filling across the gap is not done automatically, because "
+            "it would price a flow that lands inside a missing stretch against "
+            "a level that was never actually observed on that date. Supply an "
+            "index level for every cash-flow date this calculation touches."
+        ) from exc
+
+
+def _terminal_mark(series: CashFlowSeries) -> CashFlow | None:
+    """The most recent valuation record in a series, if any.
+
+    Selects the same record :func:`residual_value` would report the amount
+    of, but also returns the record itself so its date is available -- which
+    :func:`residual_value` has no reason to expose, but the PME functions
+    need in order to look up an index level for it.
+
+    Args:
+        series: The cash flows.
+
+    Returns:
+        The latest ``CashFlow`` with ``is_valuation`` True, date-ordered same
+        as the series; ``None`` if the series carries no valuation record.
+    """
+    marks = [flow for flow in series if flow.is_valuation]
+    return marks[-1] if marks else None
+
+
+def _default_as_of(series: CashFlowSeries) -> _dt.date:
+    """Default measurement date for a PME calculation.
+
+    Uses the terminal valuation mark's own date when the series carries one,
+    because that mark is already "as of" some date, and growing it further
+    with the index would assume the market kept the index's pace past the
+    point somebody actually priced the fund. Falls back to the latest flow
+    date when there is no mark at all -- the same rule
+    :func:`preferred_return_amount` already uses for its own ``as_of=None``.
+
+    Args:
+        series: The cash flows.
+
+    Returns:
+        The date to measure at when the caller does not name one explicitly.
+
+    Raises:
+        ValueError: If the series is empty.
+    """
+    if series.is_empty:
+        raise ValueError("as_of is required for an empty series")
+    mark = _terminal_mark(series)
+    return mark.date if mark is not None else max(series.dates())
+
+
+def ks_pme(
+    series: CashFlowSeries,
+    index_levels: pd.Series,
+    *,
+    as_of: _dt.date | _dt.datetime | str | None = None,
+    contribution_kinds: Iterable[str] = CONTRIBUTION_KINDS,
+    distribution_kinds: Iterable[str] = DISTRIBUTION_KINDS,
+) -> float:
+    """Kaplan-Schoar public market equivalent.
+
+    Every contribution and distribution is grown to a single common date
+    (``as_of``) using the *public index's* realised growth between the flow's
+    own date and ``as_of`` -- i.e. each flow is asking "what would this dollar
+    be worth today if it had instead been invested in the index on this
+    date". Terminal NAV, via :func:`residual_value` (only the latest mark
+    counts, matching how :func:`fund_multiples` already treats it), is added
+    to the distributions side unchanged in kind but likewise grown from its
+    own mark date to ``as_of``::
+
+        KS-PME = (FV(distributions) + FV(NAV)) / FV(contributions)
+
+    A result above 1 means the fund returned more than the index would have
+    over the same capital deployment schedule; below 1 means it returned
+    less. KS-PME is a multiple, not a rate -- it says nothing about *how
+    fast* the outperformance happened, which is what :func:`direct_alpha`
+    is for.
+
+    Args:
+        series: The fund's cash flows.
+        index_levels: Public index levels. Must have an entry for every
+            contribution date, every distribution date, the terminal
+            valuation's date (if any), and ``as_of`` itself.
+        as_of: Common date to grow every flow to. ``None`` uses
+            :func:`_default_as_of` (the terminal mark's date, or the latest
+            flow date).
+        contribution_kinds: Kind labels counted as capital in.
+        distribution_kinds: Kind labels counted as capital out.
+
+    Returns:
+        The KS-PME multiple.
+
+    Raises:
+        TypeError: If ``series`` is not a ``CashFlowSeries``, or
+            ``index_levels`` is not a ``pandas.Series``.
+        ValueError: If ``index_levels`` is empty or has a non-positive level,
+            if it lacks an entry for a date this calculation needs, if no
+            contributions were found (or their future value is zero -- KS-PME
+            has nothing to divide by), or if a contribution/distribution's
+            sign contradicts the holder-perspective convention.
+    """
+    _require_series(series)
+    lookup = _index_levels_by_date(index_levels)
+    measurement = (
+        normalize_date(as_of, field_name="as_of")
+        if as_of is not None
+        else _default_as_of(series)
+    )
+    index_as_of = _index_level_at(lookup, measurement, flow_description="as_of")
+
+    contributions = tuple(series.filter(kind=contribution_kinds))
+    fv_contributions = 0.0
+    for flow in contributions:
+        if flow.amount > 0.0:
+            raise ValueError(
+                f"contribution on {flow.date} has a positive amount "
+                f"{flow.amount!r}; under the holder-perspective sign "
+                "convention capital going into a fund is negative"
+            )
+        index_then = _index_level_at(
+            lookup, flow.date, flow_description=f"contribution on {flow.date}"
+        )
+        fv_contributions += (-flow.amount) * (index_as_of / index_then)
+    if fv_contributions <= 0.0:
+        raise ValueError(
+            "no contributions were found (or their future value at as_of is "
+            "zero); KS-PME is undefined with nothing paid in"
+        )
+
+    distributions = tuple(series.filter(kind=distribution_kinds))
+    fv_distributions = 0.0
+    for flow in distributions:
+        if flow.amount < 0.0:
+            raise ValueError(
+                f"distribution on {flow.date} has a negative amount "
+                f"{flow.amount!r}; under the holder-perspective sign "
+                "convention capital coming out of a fund is positive"
+            )
+        index_then = _index_level_at(
+            lookup, flow.date, flow_description=f"distribution on {flow.date}"
+        )
+        fv_distributions += flow.amount * (index_as_of / index_then)
+
+    nav_amount = residual_value(series)
+    fv_nav = 0.0
+    if nav_amount > 0.0:
+        terminal_mark = _terminal_mark(series)
+        assert terminal_mark is not None  # residual_value > 0 implies a mark exists
+        index_then = _index_level_at(
+            lookup, terminal_mark.date, flow_description="terminal valuation"
+        )
+        fv_nav = nav_amount * (index_as_of / index_then)
+
+    return (fv_distributions + fv_nav) / fv_contributions
+
+
+@dataclass(frozen=True)
+class PMEPlusResult:
+    """Outcome of a Kaplan-Schoar PME+ (Rouvinez) benchmark.
+
+    Attributes:
+        scaling_factor: The multiplier applied to every actual distribution
+            so that an index-tracking portfolio -- built from the fund's
+            actual, unscaled contributions and these scaled distributions --
+            ends at exactly the fund's actual terminal NAV. Below 1 means the
+            fund's real distributions were larger than an index-tracking
+            portfolio would have needed to reach the same ending NAV (the
+            fund outran the index); above 1 means the opposite.
+        irr: The money-weighted return of the fund's actual contributions,
+            the *scaled* distributions, and the actual terminal NAV. This
+            rate is only meaningful next to the fund's own realised
+            :func:`xirr` -- a lower PME+ IRR than the fund's own IRR means
+            the fund beat the index; a higher one means it lagged. It is not
+            comparable across two different funds.
+    """
+
+    scaling_factor: float
+    irr: float
+
+
+def pme_plus(
+    series: CashFlowSeries,
+    index_levels: pd.Series,
+    *,
+    as_of: _dt.date | _dt.datetime | str | None = None,
+    days_per_year: float = DEFAULT_DAYS_PER_YEAR,
+    guess: float = 0.1,
+    rate_bounds: tuple[float, float] = DEFAULT_RATE_BOUNDS,
+    grid_points: int = DEFAULT_GRID_POINTS,
+    residual_tolerance: float = _DEFAULT_RESIDUAL_TOLERANCE,
+    contribution_kinds: Iterable[str] = CONTRIBUTION_KINDS,
+    distribution_kinds: Iterable[str] = DISTRIBUTION_KINDS,
+) -> PMEPlusResult:
+    """Kaplan-Schoar "PME+" (Rouvinez) -- a comparable IRR, not a multiple.
+
+    KS-PME reports a multiple, which cannot be annualized and cannot be
+    compared to the fund's own IRR. PME+ instead solves for a single scaling
+    factor ``lambda`` applied to every actual distribution such that an
+    index-replicating portfolio -- fed the fund's real, unscaled
+    contributions and the scaled distributions -- ends up with exactly the
+    fund's real terminal NAV::
+
+        FV(contributions) = lambda * FV(distributions) + FV(NAV)
+        lambda = (FV(contributions) - FV(NAV)) / FV(distributions)
+
+    where every FV(...) grows a flow from its own date to ``as_of`` using the
+    public index, the same growth :func:`ks_pme` uses (and NAV is read via
+    :func:`residual_value`, so only the latest mark counts). The scaled
+    distributions, unchanged contributions and unchanged terminal NAV are
+    then handed to :func:`xirr` to solve a rate directly comparable to the
+    fund's own realised IRR -- see :class:`PMEPlusResult`.
+
+    Only flows matching ``contribution_kinds`` or ``distribution_kinds``
+    participate, plus the terminal valuation mark; a flow of some other kind
+    (an out-of-band fee, say) is invisible to this calculation exactly as it
+    already is to :func:`dpi`/:func:`tvpi` unless the caller widens the kind
+    set.
+
+    Args:
+        series: The fund's cash flows.
+        index_levels: Public index levels. Must have an entry for every
+            contribution date, every distribution date, the terminal
+            valuation's date (if any), and ``as_of`` itself.
+        as_of: Common date to grow every flow to. ``None`` uses
+            :func:`_default_as_of`.
+        days_per_year: Day basis passed to the final :func:`xirr` call.
+        guess: Newton fallback starting rate passed to :func:`xirr`.
+        rate_bounds: Rate window passed to :func:`xirr`.
+        grid_points: Grid resolution passed to :func:`xirr`.
+        residual_tolerance: Root tolerance passed to :func:`xirr`.
+        contribution_kinds: Kind labels counted as capital in.
+        distribution_kinds: Kind labels counted as capital out.
+
+    Returns:
+        A :class:`PMEPlusResult` with the scaling factor and the comparable
+        IRR.
+
+    Raises:
+        TypeError: If ``series`` is not a ``CashFlowSeries``, or
+            ``index_levels`` is not a ``pandas.Series``.
+        ValueError: If ``index_levels`` lacks a needed date, if there are no
+            contributions or their future value is zero, if there are no
+            distributions or their future value is zero (the scaling factor
+            would divide by zero), if a sign contradicts the
+            holder-perspective convention, or if the resulting scaled series
+            has no usable IRR (see :func:`xirr`).
+    """
+    _require_series(series)
+    lookup = _index_levels_by_date(index_levels)
+    measurement = (
+        normalize_date(as_of, field_name="as_of")
+        if as_of is not None
+        else _default_as_of(series)
+    )
+    index_as_of = _index_level_at(lookup, measurement, flow_description="as_of")
+
+    contributions = tuple(series.filter(kind=contribution_kinds))
+    if not contributions:
+        raise ValueError(
+            "no contributions were found; PME+ is undefined with nothing "
+            "paid in"
+        )
+    fv_contributions = 0.0
+    for flow in contributions:
+        if flow.amount > 0.0:
+            raise ValueError(
+                f"contribution on {flow.date} has a positive amount "
+                f"{flow.amount!r}; under the holder-perspective sign "
+                "convention capital going into a fund is negative"
+            )
+        index_then = _index_level_at(
+            lookup, flow.date, flow_description=f"contribution on {flow.date}"
+        )
+        fv_contributions += (-flow.amount) * (index_as_of / index_then)
+    if fv_contributions <= 0.0:
+        raise ValueError(
+            "contributions have zero future value at as_of; PME+ is "
+            "undefined with nothing paid in"
+        )
+
+    distributions = tuple(series.filter(kind=distribution_kinds))
+    if not distributions:
+        raise ValueError(
+            "no distributions were found; PME+ solves a scaling factor for "
+            "the distributions, and there is nothing to scale"
+        )
+    fv_distributions = 0.0
+    for flow in distributions:
+        if flow.amount < 0.0:
+            raise ValueError(
+                f"distribution on {flow.date} has a negative amount "
+                f"{flow.amount!r}; under the holder-perspective sign "
+                "convention capital coming out of a fund is positive"
+            )
+        index_then = _index_level_at(
+            lookup, flow.date, flow_description=f"distribution on {flow.date}"
+        )
+        fv_distributions += flow.amount * (index_as_of / index_then)
+    if fv_distributions <= 0.0:
+        raise ValueError(
+            "distributions have zero future value at as_of; PME+ cannot "
+            "solve a scaling factor by dividing by zero"
+        )
+
+    nav_amount = residual_value(series)
+    terminal_mark = _terminal_mark(series)
+    fv_nav = 0.0
+    if nav_amount > 0.0:
+        assert terminal_mark is not None
+        index_then = _index_level_at(
+            lookup, terminal_mark.date, flow_description="terminal valuation"
+        )
+        fv_nav = nav_amount * (index_as_of / index_then)
+
+    scaling_factor = (fv_contributions - fv_nav) / fv_distributions
+
+    scaled_flows: list[CashFlow] = [
+        CashFlow(
+            date=flow.date,
+            amount=flow.amount,
+            kind=flow.kind,
+            currency=flow.currency,
+            metadata=flow.metadata,
+        )
+        for flow in contributions
+    ]
+    scaled_flows.extend(
+        CashFlow(
+            date=flow.date,
+            amount=flow.amount * scaling_factor,
+            kind=flow.kind,
+            currency=flow.currency,
+            metadata=flow.metadata,
+        )
+        for flow in distributions
+    )
+    if terminal_mark is not None:
+        scaled_flows.append(terminal_mark)
+    scaled_series = CashFlowSeries(
+        tuple(scaled_flows), currency=series.currency, pre_translated=series.pre_translated
+    )
+    irr = xirr(
+        scaled_series,
+        days_per_year=days_per_year,
+        guess=guess,
+        rate_bounds=rate_bounds,
+        grid_points=grid_points,
+        residual_tolerance=residual_tolerance,
+    )
+    return PMEPlusResult(scaling_factor=scaling_factor, irr=irr)
+
+
+def direct_alpha(
+    series: CashFlowSeries,
+    index_levels: pd.Series,
+    *,
+    valuations: str = DEFAULT_VALUATION_POLICY,
+    days_per_year: float = DEFAULT_DAYS_PER_YEAR,
+    guess: float = 0.1,
+    rate_bounds: tuple[float, float] = DEFAULT_RATE_BOUNDS,
+    grid_points: int = DEFAULT_GRID_POINTS,
+    residual_tolerance: float = _DEFAULT_RESIDUAL_TOLERANCE,
+) -> float:
+    """Direct Alpha -- an annualized excess return over a public index.
+
+    Every flow, of every kind (contribution, distribution or valuation
+    mark), is deflated by the public index level on its own date and left at
+    its own date::
+
+        CF'_i = CF_i / I(t_i)
+
+    and :func:`xirr` is then run on the deflated series unchanged, valuation
+    policy and all. Direct Alpha is the rate that solves this.
+
+    Why this is "alpha" and not just a rescaled IRR: write the index level as
+    ``I(t) = I(t0) * (1+g)**years`` for a constant realised index CAGR ``g``
+    between two flow dates. Substituting into the NPV equation the deflated
+    series satisfies shows the deflator and the discount rate combine
+    multiplicatively -- solving ``sum CF_i / I(t_i) / (1+alpha)**t_i == 0`` is
+    algebraically the same as solving ``sum CF_i / (1+alpha)**t_i / (1+g)**t_i
+    == 0``, i.e. ``sum CF_i / ((1+alpha)(1+g))**t_i == 0``. The rate that
+    zeroes *that* equation is, by definition, the fund's own plain
+    :func:`xirr`, call it ``rho``. So ``(1+alpha)(1+g) = (1+rho)``, i.e.
+    ``alpha = (1+rho)/(1+g) - 1`` -- the geometric excess of the fund's own
+    realised IRR over the index's realised CAGR. Using actual index *levels*
+    rather than one flat CAGR is what lets this hold even when the index's
+    growth rate varies over the fund's life, and it is also why, unlike
+    :func:`ks_pme` and :func:`pme_plus`, this function takes no ``as_of`` --
+    the reference date cancels out of the equation algebraically, so the
+    result cannot depend on one.
+
+    Positive means the fund beat the index by that many annualized points;
+    negative means it lagged. Unlike PME+'s IRR, this number needs no
+    companion fund IRR to be interpreted -- it already is the excess.
+
+    Args:
+        series: The fund's cash flows.
+        index_levels: Public index levels. Must have an entry for every flow
+            in ``series``, including every intermediate valuation mark --
+            not only the one ``valuations`` ultimately keeps, because the
+            deflation happens before the policy is applied.
+        valuations: One of :data:`VALUATION_POLICIES`, passed through to the
+            final :func:`xirr` call unchanged.
+        days_per_year: Day basis passed to :func:`xirr`.
+        guess: Newton fallback starting rate passed to :func:`xirr`.
+        rate_bounds: Rate window passed to :func:`xirr`.
+        grid_points: Grid resolution passed to :func:`xirr`.
+        residual_tolerance: Root tolerance passed to :func:`xirr`.
+
+    Returns:
+        The annualized excess return as a decimal (``0.05`` is 5 points of
+        annual alpha over the index).
+
+    Raises:
+        TypeError: If ``series`` is not a ``CashFlowSeries``, or
+            ``index_levels`` is not a ``pandas.Series``.
+        ValueError: If ``index_levels`` lacks an entry for any flow's date,
+            or if the deflated series has no usable IRR -- see :func:`xirr`
+            for the full list (no sign change, too few flows, an unknown
+            policy, and so on).
+    """
+    _require_series(series)
+    lookup = _index_levels_by_date(index_levels)
+    scaled_flows = []
+    for flow in series:
+        index_then = _index_level_at(
+            lookup, flow.date, flow_description=f"{flow.kind} on {flow.date}"
+        )
+        scaled_flows.append(
+            CashFlow(
+                date=flow.date,
+                amount=flow.amount / index_then,
+                kind=flow.kind,
+                currency=flow.currency,
+                metadata=flow.metadata,
+            )
+        )
+    scaled_series = CashFlowSeries(
+        tuple(scaled_flows), currency=series.currency, pre_translated=series.pre_translated
+    )
+    return xirr(
+        scaled_series,
+        valuations=valuations,
+        days_per_year=days_per_year,
+        guess=guess,
+        rate_bounds=rate_bounds,
+        grid_points=grid_points,
+        residual_tolerance=residual_tolerance,
+    )
+
+
+# ---------------------------------------------------------------------------
+# American (deal-by-deal) waterfall + GP clawback
+# ---------------------------------------------------------------------------
+#
+# european_waterfall() above is whole-of-fund: every dollar of contributed
+# capital and the whole preferred return must be paid back before the GP sees
+# any carry. That structurally protects LPs from the failure mode below,
+# which is exactly why a European fund essentially never triggers a
+# clawback -- see gp_clawback()'s docstring for the one-line reason it is
+# still not literally impossible.
+#
+# An American (deal-by-deal) waterfall pays carry per investment as it exits,
+# without waiting for the rest of the fund. That is what makes "distribute
+# early, lose money later" representable: the GP can collect carry on a
+# profitable exit in year 2 while a different investment in the same fund
+# loses money in year 5, and there is no mechanism inside the deal-by-deal
+# structure itself that hands that carry back. A clawback provision is the
+# LPA's fix -- a true-up at fund termination that compares carry actually
+# received against what a whole-of-fund calculation says the GP earned once
+# every deal is counted, and requires the GP to return the difference.
+
+
+def _validate_deals(deals: Mapping[str, CashFlowSeries]) -> Mapping[str, CashFlowSeries]:
+    """Check a deal-by-deal input before any arithmetic touches it.
+
+    Args:
+        deals: Deal-id -> that deal's own cash flows.
+
+    Returns:
+        The same mapping, unchanged.
+
+    Raises:
+        TypeError: If ``deals`` is not a mapping, or a value is not a
+            ``CashFlowSeries``.
+        ValueError: If ``deals`` is empty, or the deals span more than one
+            currency.
+    """
+    if not isinstance(deals, Mapping):
+        raise TypeError(
+            f"deals must be a mapping of deal_id -> CashFlowSeries, got "
+            f"{type(deals).__name__}"
+        )
+    if not deals:
+        raise ValueError(
+            "deals is empty; a deal-by-deal waterfall needs at least one deal"
+        )
+    currencies: set[str] = set()
+    for deal_id, series in deals.items():
+        _require_series(series, name=f"deals[{deal_id!r}]")
+        if series.currency is not None:
+            currencies.add(series.currency)
+    if len(currencies) > 1:
+        raise ValueError(
+            f"deals span multiple currencies ({', '.join(sorted(currencies))}); "
+            "convert them to one reporting currency before pooling -- the same "
+            "discipline CashFlowSeries itself enforces within a single series"
+        )
+    return deals
+
+
+def _pool_deals(deals: Mapping[str, CashFlowSeries]) -> CashFlowSeries:
+    """Combine every deal's flows into one whole-of-fund series.
+
+    Args:
+        deals: Deal-id -> that deal's cash flows. Assumed already validated
+            by :func:`_validate_deals` (non-empty, one currency).
+
+    Returns:
+        A single ``CashFlowSeries`` holding every flow from every deal.
+    """
+    all_flows: list[CashFlow] = []
+    for series in deals.values():
+        all_flows.extend(series)
+    currency = next(iter(deals.values())).currency
+    return CashFlowSeries(tuple(all_flows), currency=currency)
+
+
+@dataclass(frozen=True)
+class AmericanWaterfallResult:
+    """Deal-by-deal waterfall outcome, aggregated across every investment.
+
+    Attributes:
+        deals: Each deal's own :class:`WaterfallResult`, keyed by the same
+            deal id the caller supplied to :func:`american_waterfall`.
+        lp_total: Sum of every deal's ``lp_total``.
+        gp_total: Sum of every deal's ``gp_total`` -- the GP's total carry
+            actually paid out across every deal, i.e. carry *received*.
+        distributable: Sum of every deal's ``distributable`` amount.
+    """
+
+    deals: Mapping[str, WaterfallResult]
+    lp_total: float
+    gp_total: float
+    distributable: float
+
+    def __post_init__(self) -> None:
+        """Check that the per-deal results sum to the reported totals.
+
+        Raises:
+            ValueError: If ``deals`` is empty, or a reported total does not
+                match the sum of the per-deal results.
+        """
+        if not self.deals:
+            raise ValueError(
+                "an American waterfall result must hold at least one deal"
+            )
+        checks = (
+            ("lp_total", sum(r.lp_total for r in self.deals.values()), self.lp_total),
+            ("gp_total", sum(r.gp_total for r in self.deals.values()), self.gp_total),
+            (
+                "distributable",
+                sum(r.distributable for r in self.deals.values()),
+                self.distributable,
+            ),
+        )
+        for label, computed, expected in checks:
+            if not math.isclose(
+                computed, expected, rel_tol=_ALLOCATION_TOLERANCE, abs_tol=_ALLOCATION_TOLERANCE
+            ):
+                raise ValueError(
+                    f"American waterfall result does not reconcile on {label}: "
+                    f"deals give {computed!r}, expected {expected!r}"
+                )
+
+
+def american_waterfall(
+    deals: Mapping[str, CashFlowSeries],
+    *,
+    preferred_rate: float,
+    carry_rate: float,
+    catch_up_rate: float = 1.0,
+    as_of: Mapping[str, _dt.date | _dt.datetime | str] | None = None,
+    compounding: str = DEFAULT_PREFERRED_COMPOUNDING,
+    days_per_year: float = DEFAULT_DAYS_PER_YEAR,
+    include_residual: bool = False,
+    contribution_kinds: Iterable[str] = CONTRIBUTION_KINDS,
+    distribution_kinds: Iterable[str] = DISTRIBUTION_KINDS,
+) -> AmericanWaterfallResult:
+    """Run a deal-by-deal (American) waterfall.
+
+    Each deal is its own miniature fund: its own contributed capital, its own
+    preferred return accrued from its own contribution dates, and its own
+    return-of-capital / preferred / catch-up / carry-split tiers, computed by
+    calling :func:`european_waterfall` once per deal with that deal's own
+    series. Nothing about the tier mechanics is reimplemented here -- a
+    single-deal call to this function reproduces :func:`european_waterfall`
+    on that same series exactly. What makes the result "American" is that
+    carry crystallizes independently on each deal, at that deal's own exit,
+    with no visibility into how the fund's other deals are doing -- which is
+    also exactly the property that makes a clawback representable at all; see
+    :func:`gp_clawback`.
+
+    The GP catch-up tier is unchanged from :func:`waterfall_split`: it lets
+    the GP catch up *to* its target carry percentage on that deal's own
+    profit, not an extra bonus on top of it.
+
+    Args:
+        deals: Deal-id -> that deal's own cash flows. Every deal must share
+            one currency.
+        preferred_rate: Annual hurdle rate as a decimal, applied identically
+            to every deal.
+        carry_rate: GP share of profit above the hurdle, in ``[0, 1)``,
+            applied identically to every deal.
+        catch_up_rate: GP share of each catch-up dollar; ``0.0`` for no
+            catch-up.
+        as_of: Per-deal override for the preferred-return measurement date,
+            as a mapping from deal id to a date. A deal absent from the
+            mapping (or ``as_of=None`` entirely) uses that deal's own latest
+            flow date -- the natural exit-date accrual for a deal that has
+            actually closed.
+        compounding: One of :data:`PREFERRED_COMPOUNDING`, applied to every
+            deal.
+        days_per_year: Day basis for the preferred accrual.
+        include_residual: Passed through to each deal's
+            :func:`european_waterfall` call; see that function.
+        contribution_kinds: Kind labels counted as capital in.
+        distribution_kinds: Kind labels counted as capital out.
+
+    Returns:
+        An :class:`AmericanWaterfallResult` aggregating every deal.
+
+    Raises:
+        TypeError: If ``deals`` is not a mapping, or a value is not a
+            ``CashFlowSeries``.
+        ValueError: If ``deals`` is empty, spans more than one currency, or
+            any deal raises the errors :func:`european_waterfall` already
+            documents (bad rate, contribution after ``as_of``, sign-
+            convention violation, and so on).
+    """
+    deals = _validate_deals(deals)
+    per_deal: dict[str, WaterfallResult] = {}
+    for deal_id, series in deals.items():
+        deal_as_of = as_of.get(deal_id) if isinstance(as_of, Mapping) else None
+        per_deal[deal_id] = european_waterfall(
+            series,
+            preferred_rate=preferred_rate,
+            carry_rate=carry_rate,
+            catch_up_rate=catch_up_rate,
+            as_of=deal_as_of,
+            compounding=compounding,
+            days_per_year=days_per_year,
+            include_residual=include_residual,
+            contribution_kinds=contribution_kinds,
+            distribution_kinds=distribution_kinds,
+        )
+    return AmericanWaterfallResult(
+        deals=MappingProxyType(dict(per_deal)),
+        lp_total=sum(result.lp_total for result in per_deal.values()),
+        gp_total=sum(result.gp_total for result in per_deal.values()),
+        distributable=sum(result.distributable for result in per_deal.values()),
+    )
+
+
+def _pooled_entitlement(
+    deals: Mapping[str, CashFlowSeries],
+    *,
+    preferred_rate: float,
+    carry_rate: float,
+    catch_up_rate: float,
+    as_of: _dt.date | _dt.datetime | str | None,
+    compounding: str,
+    days_per_year: float,
+    include_residual: bool,
+    contribution_kinds: Iterable[str],
+    distribution_kinds: Iterable[str],
+) -> WaterfallResult:
+    """The whole-of-fund (European) split every deal's cash would have earned.
+
+    This is the entitlement side of a clawback test: pool every deal's
+    contributions and distributions, accrue one preferred return over the
+    pooled contribution schedule, and run one :func:`waterfall_split`.
+
+    Residual value is summed *per deal* -- via :func:`residual_value` called
+    once on each deal's own series -- rather than read off the pooled series
+    directly. :func:`residual_value` keeps only the single latest valuation
+    mark in a series, which is correct for one fund's own evolving NAV but
+    wrong for a pool of several deals' independent marks: reading it off the
+    pooled series would keep whichever deal happens to carry the latest-dated
+    mark and silently drop every other still-open deal's NAV.
+
+    Args:
+        deals: Deal-id -> that deal's cash flows. Assumed already validated.
+        preferred_rate: Annual hurdle rate as a decimal.
+        carry_rate: GP share of profit above the hurdle.
+        catch_up_rate: GP share of each catch-up dollar.
+        as_of: Measurement date for the pooled preferred accrual. ``None``
+            uses the latest date anywhere across every deal.
+        compounding: One of :data:`PREFERRED_COMPOUNDING`.
+        days_per_year: Day basis for the preferred accrual.
+        include_residual: Whether to add each still-open deal's own residual
+            value to the pooled distributable amount.
+        contribution_kinds: Kind labels counted as capital in.
+        distribution_kinds: Kind labels counted as capital out.
+
+    Returns:
+        The pooled :class:`WaterfallResult`.
+    """
+    pooled = _pool_deals(deals)
+    contributed = paid_in_capital(pooled, contribution_kinds=contribution_kinds)
+    distributed = distributed_capital(pooled, distribution_kinds=distribution_kinds)
+    residual = (
+        sum(residual_value(series) for series in deals.values())
+        if include_residual
+        else 0.0
+    )
+    preferred = preferred_return_amount(
+        pooled,
+        rate=preferred_rate,
+        as_of=as_of,
+        compounding=compounding,
+        days_per_year=days_per_year,
+        contribution_kinds=contribution_kinds,
+    )
+    return waterfall_split(
+        distributed + residual,
+        contributed,
+        preferred,
+        carry_rate=carry_rate,
+        catch_up_rate=catch_up_rate,
+    )
+
+
+@dataclass(frozen=True)
+class ClawbackResult:
+    """Outcome of a GP clawback test at fund termination.
+
+    Attributes:
+        carry_received: Carry the GP actually collected -- the sum of every
+            deal's own realised carry under the deal-by-deal structure
+            (:func:`american_waterfall`'s ``gp_total``, with
+            ``include_residual=False`` always, because unrealised NAV is not
+            carry anyone has been paid).
+        carry_entitled: Carry the GP is entitled to once every deal's cash
+            flows are pooled and run through one whole-of-fund waterfall --
+            the number a European structure would actually have paid; see
+            :func:`_pooled_entitlement`.
+        clawback_amount: ``max(0, carry_received - carry_entitled)``, scaled
+            down for tax already paid when ``tax_adjusted`` is True.
+        tax_adjusted: Whether ``clawback_amount`` reflects a net-of-tax cap.
+        gp_tax_rate: The rate used when ``tax_adjusted`` is True, else
+            ``None``.
+    """
+
+    carry_received: float
+    carry_entitled: float
+    clawback_amount: float
+    tax_adjusted: bool
+    gp_tax_rate: float | None
+
+    def __post_init__(self) -> None:
+        """Check the reported figures are internally consistent.
+
+        Raises:
+            ValueError: If any dollar figure is negative, or if
+                ``tax_adjusted`` and ``gp_tax_rate`` disagree about whether a
+                tax adjustment was applied.
+        """
+        for label, value in (
+            ("carry_received", self.carry_received),
+            ("carry_entitled", self.carry_entitled),
+            ("clawback_amount", self.clawback_amount),
+        ):
+            if value < -_ALLOCATION_TOLERANCE:
+                raise ValueError(f"{label} cannot be negative, got {value!r}")
+        if self.tax_adjusted and self.gp_tax_rate is None:
+            raise ValueError("tax_adjusted is True but gp_tax_rate is None")
+        if not self.tax_adjusted and self.gp_tax_rate is not None:
+            raise ValueError(
+                f"gp_tax_rate={self.gp_tax_rate!r} is set but tax_adjusted is False"
+            )
+
+
+def gp_clawback(
+    deals: Mapping[str, CashFlowSeries],
+    *,
+    preferred_rate: float,
+    carry_rate: float,
+    catch_up_rate: float = 1.0,
+    termination_date: _dt.date | _dt.datetime | str | None = None,
+    compounding: str = DEFAULT_PREFERRED_COMPOUNDING,
+    days_per_year: float = DEFAULT_DAYS_PER_YEAR,
+    include_unrealized_in_entitlement: bool = False,
+    contribution_kinds: Iterable[str] = CONTRIBUTION_KINDS,
+    distribution_kinds: Iterable[str] = DISTRIBUTION_KINDS,
+    gp_tax_rate: float | None = None,
+) -> ClawbackResult:
+    """Test whether a deal-by-deal GP owes money back at fund termination.
+
+    Compares carry actually received (summed deal by deal, each deal's carry
+    crystallized at that deal's own exit -- see :func:`american_waterfall`)
+    against carry the GP is entitled to once every deal is pooled into one
+    whole-of-fund waterfall (see :func:`_pooled_entitlement`). The GP owes
+    back the positive difference, if any.
+
+    This is a genuinely different number from zero specifically *because*
+    the two sides are computed two different ways: "received" is a sum of
+    independent per-deal waterfalls, each blind to how the fund's other
+    deals perform, while "entitled" is one waterfall over the pooled total.
+    A European (whole-of-fund) structure never has this gap in the first
+    place, because there carry is only ever paid once, off the same pooled
+    totals used here as "entitled" -- so "received" and "entitled" are the
+    same computation by construction and a clawback is structurally
+    (near-)impossible. Running :func:`european_waterfall` once on the pooled
+    series and comparing its ``gp_total`` to itself demonstrates this
+    directly; see the test suite.
+
+    Tax treatment of the clawback amount is deliberately not defaulted to a
+    net-of-tax figure, even though many LPAs contractually cap the GP's
+    payback obligation at what remains after the tax already paid on the
+    excess carry. Computing that net figure needs the GP's actual effective
+    tax rate on the carry, which this module has no way to know -- assuming
+    one (a US corporate rate, a "typical" GP rate, anything) would be exactly
+    the kind of invented number this codebase's evidence-first standard
+    forbids. The default is therefore the gross, pre-tax clawback; passing
+    ``gp_tax_rate`` opts into the net-of-tax figure the LPA actually specifies
+    for this fund.
+
+    Args:
+        deals: Deal-id -> that deal's own cash flows. Every deal must share
+            one currency.
+        preferred_rate: Annual hurdle rate as a decimal, applied identically
+            to every deal and to the pooled entitlement calculation.
+        carry_rate: GP share of profit above the hurdle, in ``[0, 1)``.
+        catch_up_rate: GP share of each catch-up dollar; ``0.0`` for no
+            catch-up.
+        termination_date: Measurement date for the pooled entitlement's
+            preferred accrual. ``None`` uses the latest date anywhere across
+            every deal -- the natural "fund winds up now" default. This does
+            not affect the "received" side, which always uses each deal's own
+            historical exit date, because carry already paid is a fact, not a
+            modelling choice.
+        compounding: One of :data:`PREFERRED_COMPOUNDING`.
+        days_per_year: Day basis for the preferred accrual.
+        include_unrealized_in_entitlement: Whether the pooled entitlement
+            calculation adds each still-open deal's current NAV to the
+            distributable amount -- an "if the fund wound up today" stress
+            test. The "received" side never includes unrealised NAV, because
+            unpaid carry cannot have been received.
+        contribution_kinds: Kind labels counted as capital in.
+        distribution_kinds: Kind labels counted as capital out.
+        gp_tax_rate: If given, scales ``clawback_amount`` down to the
+            net-of-tax figure by multiplying the gross clawback by
+            ``(1 - gp_tax_rate)``. Must be in ``[0, 1)``. ``None`` (the
+            default) reports the gross, pre-tax clawback -- see above for why
+            that is the default rather than an assumed tax rate.
+
+    Returns:
+        A :class:`ClawbackResult`.
+
+    Raises:
+        TypeError: If ``deals`` is not a mapping, or a value is not a
+            ``CashFlowSeries``.
+        ValueError: If ``deals`` is empty or spans more than one currency, if
+            ``gp_tax_rate`` is outside ``[0, 1)``, or if a deal raises any
+            error :func:`european_waterfall` already documents.
+    """
+    deals = _validate_deals(deals)
+
+    received = american_waterfall(
+        deals,
+        preferred_rate=preferred_rate,
+        carry_rate=carry_rate,
+        catch_up_rate=catch_up_rate,
+        as_of=None,
+        compounding=compounding,
+        days_per_year=days_per_year,
+        include_residual=False,
+        contribution_kinds=contribution_kinds,
+        distribution_kinds=distribution_kinds,
+    )
+    carry_received = received.gp_total
+
+    entitled = _pooled_entitlement(
+        deals,
+        preferred_rate=preferred_rate,
+        carry_rate=carry_rate,
+        catch_up_rate=catch_up_rate,
+        as_of=termination_date,
+        compounding=compounding,
+        days_per_year=days_per_year,
+        include_residual=include_unrealized_in_entitlement,
+        contribution_kinds=contribution_kinds,
+        distribution_kinds=distribution_kinds,
+    )
+    carry_entitled = entitled.gp_total
+
+    gross_clawback = max(0.0, carry_received - carry_entitled)
+    if gp_tax_rate is None:
+        return ClawbackResult(
+            carry_received=carry_received,
+            carry_entitled=carry_entitled,
+            clawback_amount=gross_clawback,
+            tax_adjusted=False,
+            gp_tax_rate=None,
+        )
+    if not 0.0 <= gp_tax_rate < 1.0:
+        raise ValueError(f"gp_tax_rate must be in [0, 1), got {gp_tax_rate!r}")
+    return ClawbackResult(
+        carry_received=carry_received,
+        carry_entitled=carry_entitled,
+        clawback_amount=gross_clawback * (1.0 - gp_tax_rate),
+        tax_adjusted=True,
+        gp_tax_rate=gp_tax_rate,
     )

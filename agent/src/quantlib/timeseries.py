@@ -46,6 +46,7 @@ __all__ = [
     "compute_half_life",
     "granger_test",
     "fit_garch",
+    "fit_markov_regime",
     "heteroscedasticity_test",
     "autocorrelation_test",
     "vif_test",
@@ -378,6 +379,137 @@ def fit_garch(returns: pd.Series, horizon: int = 5) -> dict:
         "current_vol": current_vol,
         "forecast_vol": forecast_vol,
         "horizon": horizon,
+        "aic": float(result.aic),
+        "bic": float(result.bic),
+    }
+
+
+def fit_markov_regime(
+    returns: pd.Series,
+    n_regimes: int = 2,
+    switching_variance: bool = True,
+) -> dict:
+    """Fit a Markov regime-switching model and label the current regime.
+
+    A GARCH model says how volatile tomorrow is. This says *which state the
+    market is in* and how likely it is to stay there, which is the question a
+    regime section of a risk report is actually asking. The states are latent:
+    they are inferred from the return series, never labelled by hand.
+
+    Two implementation choices matter and neither is cosmetic.
+
+    **Regimes are relabelled by volatility, ascending.** The EM fit returns
+    states in an arbitrary order, so the same data can come back as "regime 0 is
+    calm" on one run and "regime 0 is turbulent" on the next. That is the
+    classic label-switching problem, and left alone it makes every downstream
+    number non-reproducible. Here regime 0 is always the calmest and the last is
+    always the most turbulent, with the transition matrix and the smoothed
+    probabilities permuted to match.
+
+    **The transition matrix is returned row-stochastic**: ``transition[i][j]`` is
+    ``P(regime j tomorrow | regime i today)`` and every row sums to 1.
+    ``statsmodels`` returns the transpose of this, and reading it the wrong way
+    round silently swaps the two regimes' persistence.
+
+    Args:
+        returns: Return series as *fractions* (0.01 = 1%). Scaled to percent
+            internally for optimiser stability and converted back on the way
+            out, so every reported mean and volatility is a fraction again.
+        n_regimes: Number of latent states, at least 2. Three is occasionally
+            defensible (calm / normal / crisis); beyond that the states stop
+            being interpretable and the fit stops being stable.
+        switching_variance: Let volatility differ across regimes. Leaving this
+            False fits regimes that differ only in mean return, which for asset
+            returns is nearly always the wrong model -- regimes in markets are a
+            volatility phenomenon first.
+
+    Returns:
+        Dict with keys ``n_regimes`` (int), ``regime_means`` and ``regime_vols``
+        (numpy arrays, ascending volatility, daily fractions),
+        ``transition_matrix`` (2-D numpy array, row-stochastic),
+        ``expected_durations`` (numpy array, ``1 / (1 - p_ii)`` in periods),
+        ``smoothed_probabilities`` (DataFrame on the input index, one column per
+        regime), ``current_regime`` (int) and ``current_regime_probability``
+        (float) for the last observation, ``converged`` (bool), and ``llf``,
+        ``aic``, ``bic`` (float).
+
+    Raises:
+        ImportError: If ``statsmodels`` is not installed.
+        ValueError: If ``n_regimes`` is below 2, or fewer than 50 finite
+            observations survive -- an EM fit on a shorter series produces
+            regimes that are numerically fine and substantively meaningless.
+    """
+    markov = _require(
+        "statsmodels.tsa.regime_switching.markov_regression",
+        "statsmodels",
+        "fit_markov_regime",
+    )
+    if n_regimes < 2:
+        raise ValueError(f"n_regimes must be at least 2, got {n_regimes}")
+
+    series = pd.Series(returns, dtype=float).dropna()
+    if series.size < 50:
+        raise ValueError(
+            f"fit_markov_regime needs at least 50 finite observations, got {series.size}"
+        )
+
+    # Passed as a Series, not an array: statsmodels only names the fitted
+    # parameters (``const[k]``, ``sigma2[k]``) when the input is pandas, and
+    # positional unpacking of that vector would silently break if the package
+    # ever reorders it.
+    model = markov.MarkovRegression(
+        series * 100,
+        k_regimes=n_regimes,
+        trend="c",
+        switching_variance=switching_variance,
+    )
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        result = model.fit()
+
+    means = np.array(
+        [float(result.params[f"const[{k}]"]) / 100 for k in range(n_regimes)]
+    )
+    if switching_variance:
+        variances = np.array([float(result.params[f"sigma2[{k}]"]) for k in range(n_regimes)])
+    else:
+        variances = np.full(n_regimes, float(result.params["sigma2"]))
+    vols = np.sqrt(np.maximum(variances, 0.0)) / 100
+
+    # Canonical order: calmest regime first. Everything below is permuted to it.
+    order = np.argsort(vols, kind="stable")
+
+    # statsmodels gives P(to i | from j); transpose to the conventional
+    # P(from i | to j) reading, then permute rows and columns together.
+    raw_transition = np.asarray(result.regime_transition, dtype=float)
+    if raw_transition.ndim == 3:
+        raw_transition = raw_transition[:, :, 0]
+    transition = raw_transition.T[np.ix_(order, order)]
+
+    diagonal = np.clip(np.diag(transition), None, 1.0 - 1e-12)
+    expected_durations = 1.0 / (1.0 - diagonal)
+
+    smoothed = np.asarray(result.smoothed_marginal_probabilities, dtype=float)
+    if smoothed.ndim == 1:
+        smoothed = smoothed.reshape(-1, 1)
+    smoothed = smoothed[:, order]
+    smoothed_frame = pd.DataFrame(
+        smoothed, index=series.index, columns=[f"regime_{k}" for k in range(n_regimes)]
+    )
+
+    last_row = smoothed[-1]
+    current_regime = int(np.argmax(last_row))
+
+    return {
+        "n_regimes": n_regimes,
+        "regime_means": means[order],
+        "regime_vols": vols[order],
+        "transition_matrix": transition,
+        "expected_durations": expected_durations,
+        "smoothed_probabilities": smoothed_frame,
+        "current_regime": current_regime,
+        "current_regime_probability": float(last_row[current_regime]),
+        "converged": bool(result.mle_retvals.get("converged", False)),
+        "llf": float(result.llf),
         "aic": float(result.aic),
         "bic": float(result.bic),
     }

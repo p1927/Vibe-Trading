@@ -14,6 +14,8 @@ from src.entities.cashflow import (
     normalize_kind,
 )
 from src.entities.ingest import CashFlowIngestError, load_cashflows
+from src.entities.cashflow import FxRate, FxRateTable, MissingExchangeRateError, translate_cashflows
+from src.entities.ingest import EntityPanel, PanelIngestError, PanelObservation, load_panel
 from src.entities.models import (
     Bond,
     Entity,
@@ -671,3 +673,382 @@ def test_series_is_not_a_dataframe_and_exposes_no_bar_fields():
     series = CashFlowSeries(flows=(_flow(1, 100.0, kind="nav"),))
     assert not hasattr(series, "close")
     assert not hasattr(series[0], "close")
+
+
+# ---------------------------------------------------------------------------
+# FX translation
+# ---------------------------------------------------------------------------
+
+
+def test_translate_cashflows_hand_calculated_multi_currency():
+    """Two flows, different currency and date, checked against a hand calc."""
+    flow_eur = CashFlow(
+        date=date(2024, 1, 10), amount=1000.0, kind="distribution", currency="EUR"
+    )
+    flow_jpy = CashFlow(
+        date=date(2024, 2, 15), amount=-2000.0, kind="capital_call", currency="JPY"
+    )
+    table = FxRateTable.from_rates(
+        [
+            FxRate(base_currency="EUR", quote_currency="USD", date=date(2024, 1, 10), rate=1.10),
+            FxRate(base_currency="JPY", quote_currency="USD", date=date(2024, 2, 15), rate=0.0067),
+        ],
+        quote_currency="USD",
+    )
+    series = translate_cashflows([flow_eur, flow_jpy], table)
+    assert series.currency == "USD"
+    assert series.pre_translated is True
+    # Hand calc: 1000 EUR * 1.10 = 1100.0 USD; -2000 JPY * 0.0067 = -13.4 USD
+    amounts = {f.metadata["fx_original_currency"]: f.amount for f in series}
+    assert amounts["EUR"] == pytest.approx(1100.0, abs=1e-9)
+    assert amounts["JPY"] == pytest.approx(-13.4, abs=1e-9)
+    assert series.total() == pytest.approx(1100.0 - 13.4, abs=1e-9)
+
+
+def test_translate_cashflows_uses_each_flows_own_settlement_date_rate_not_period_end():
+    """A period-end rate would silently give 200.0 instead of the correct 100.0."""
+    table = FxRateTable.from_rates(
+        [
+            FxRate(base_currency="EUR", quote_currency="USD", date=date(2024, 1, 1), rate=1.0),
+            FxRate(base_currency="EUR", quote_currency="USD", date=date(2024, 1, 10), rate=2.0),
+        ],
+        quote_currency="USD",
+    )
+    early_flow = CashFlow(date=date(2024, 1, 1), amount=100.0, kind="coupon", currency="EUR")
+    series = translate_cashflows([early_flow], table)
+    assert series[0].amount == pytest.approx(100.0, abs=1e-9)
+    assert series[0].amount != pytest.approx(200.0, abs=1e-9)
+    assert series[0].metadata["fx_rate_date"] == date(2024, 1, 1)
+
+
+def test_fx_rate_table_rejects_entry_quoted_against_the_wrong_currency():
+    """A reversed-direction quote (base/quote swapped) cannot enter a table
+    declared for the other currency -- caught at construction, not silently
+    used in the wrong direction.
+    """
+    reversed_quote = FxRate(
+        base_currency="USD", quote_currency="EUR", date=date(2024, 1, 10), rate=0.91
+    )
+    with pytest.raises(ValueError, match="does not quote against"):
+        FxRateTable(quote_currency="USD", rates={("EUR", date(2024, 1, 10)): reversed_quote})
+
+
+def test_translate_cashflows_reversed_rate_produces_a_grossly_wrong_number():
+    """A confused caller who uses the reciprocal (150) instead of the correct
+    quote-per-base rate (1/150) does not get a subtly-off number -- they get
+    one nobody could mistake for correct.
+    """
+    flow = CashFlow(date=date(2024, 1, 1), amount=1_000_000.0, kind="distribution", currency="JPY")
+
+    correct_rate = 1 / 150  # 1 JPY = 1/150 USD
+    correct_table = FxRateTable.from_rates(
+        [FxRate(base_currency="JPY", quote_currency="USD", date=date(2024, 1, 1), rate=correct_rate)],
+        quote_currency="USD",
+    )
+    correct_amount = translate_cashflows([flow], correct_table)[0].amount
+    assert correct_amount == pytest.approx(1_000_000.0 / 150, abs=1e-6)
+
+    reversed_table = FxRateTable.from_rates(
+        [FxRate(base_currency="JPY", quote_currency="USD", date=date(2024, 1, 1), rate=150.0)],
+        quote_currency="USD",
+    )
+    reversed_amount = translate_cashflows([flow], reversed_table)[0].amount
+    assert reversed_amount == pytest.approx(1_000_000.0 * 150, abs=1e-6)
+    assert reversed_amount / correct_amount > 20_000  # off by 22,500x
+
+
+def test_translate_cashflows_missing_rate_raises_explicit_error():
+    flow = CashFlow(date=date(2024, 1, 10), amount=1000.0, kind="distribution", currency="EUR")
+    table = FxRateTable(quote_currency="USD")
+    with pytest.raises(MissingExchangeRateError, match="no EUR/USD rate"):
+        translate_cashflows([flow], table)
+
+
+def test_translate_cashflows_allow_stale_rates_flags_the_reused_quote():
+    table = FxRateTable.from_rates(
+        [FxRate(base_currency="EUR", quote_currency="USD", date=date(2024, 1, 1), rate=1.1)],
+        quote_currency="USD",
+    )
+    flow = CashFlow(date=date(2024, 1, 20), amount=100.0, kind="coupon", currency="EUR")
+    with pytest.raises(MissingExchangeRateError):
+        translate_cashflows([flow], table)  # off by default
+
+    series = translate_cashflows([flow], table, allow_stale_rates=True)
+    result = series[0]
+    assert result.amount == pytest.approx(110.0, abs=1e-9)
+    assert result.metadata["fx_rate_is_stale"] is True
+    assert result.metadata["fx_rate_date"] == date(2024, 1, 1)
+
+
+def test_translate_cashflows_max_staleness_days_bounds_the_stale_search():
+    table = FxRateTable.from_rates(
+        [FxRate(base_currency="EUR", quote_currency="USD", date=date(2024, 1, 1), rate=1.1)],
+        quote_currency="USD",
+    )
+    flow = CashFlow(date=date(2024, 1, 20), amount=100.0, kind="coupon", currency="EUR")
+    with pytest.raises(MissingExchangeRateError, match="within 5 days"):
+        translate_cashflows([flow], table, allow_stale_rates=True, max_staleness_days=5)
+
+    series = translate_cashflows([flow], table, allow_stale_rates=True, max_staleness_days=30)
+    assert series[0].metadata["fx_rate_is_stale"] is True
+
+
+def test_fx_rate_rejects_non_positive_rate():
+    with pytest.raises(ValueError, match="strictly positive"):
+        FxRate(base_currency="EUR", quote_currency="USD", date=date(2024, 1, 1), rate=0.0)
+    with pytest.raises(ValueError, match="strictly positive"):
+        FxRate(base_currency="EUR", quote_currency="USD", date=date(2024, 1, 1), rate=-1.5)
+
+
+def test_fx_rate_table_from_mapping_builds_a_table():
+    table = FxRateTable.from_mapping(
+        {("EUR", date(2024, 1, 1)): 1.1, ("JPY", date(2024, 1, 1)): 0.0067},
+        quote_currency="USD",
+    )
+    rate, is_stale = table.get_rate("eur", date(2024, 1, 1))
+    assert rate.rate == pytest.approx(1.1)
+    assert is_stale is False
+
+
+def test_translate_cashflows_preserves_original_amount_currency_rate_and_date():
+    flow = CashFlow(
+        date=date(2024, 1, 10),
+        amount=1000.0,
+        kind="distribution",
+        currency="EUR",
+        metadata={"note": "Q1 distribution"},
+    )
+    table = FxRateTable.from_rates(
+        [FxRate(base_currency="EUR", quote_currency="USD", date=date(2024, 1, 10), rate=1.1)],
+        quote_currency="USD",
+    )
+    translated = translate_cashflows([flow], table)[0]
+    assert translated.metadata["fx_original_amount"] == 1000.0
+    assert translated.metadata["fx_original_currency"] == "EUR"
+    assert translated.metadata["fx_rate"] == pytest.approx(1.1)
+    assert translated.metadata["fx_rate_date"] == date(2024, 1, 10)
+    assert translated.metadata["fx_rate_is_stale"] is False
+    assert translated.metadata["note"] == "Q1 distribution"  # original metadata kept too
+
+
+def test_translate_cashflows_same_currency_flow_passes_through_unchanged():
+    flow = CashFlow(date=date(2024, 1, 10), amount=250.0, kind="coupon", currency="USD")
+    table = FxRateTable(quote_currency="USD")
+    translated = translate_cashflows([flow], table)[0]
+    assert translated.amount == pytest.approx(250.0)
+    assert translated.metadata["fx_rate"] == 1.0
+    assert translated.metadata["fx_rate_is_stale"] is False
+
+
+# ---------------------------------------------------------------------------
+# Panel ingestion (load_panel)
+# ---------------------------------------------------------------------------
+
+
+def test_load_panel_long_layout_reads_a_fixture_csv(tmp_path):
+    path = _write_csv(
+        tmp_path,
+        "panel.csv",
+        "entity,date,metric,value,currency,unit\n"
+        "FUNDA,2024-01-01,nav,100.5,USD,USD\n"
+        "FUNDA,2024-02-01,nav,101.2,USD,USD\n"
+        "FUNDB,2024-01-01,nav,50.0,EUR,EUR\n",
+    )
+    panel = load_panel(path)
+    assert len(panel) == 3
+    assert panel.entities() == ("FUNDA", "FUNDB")
+    assert panel.metrics() == ("nav",)
+    observations = list(panel)
+    assert observations[0].entity_id == "FUNDA"
+    assert observations[0].date == date(2024, 1, 1)
+    assert observations[0].value == pytest.approx(100.5)
+    assert observations[0].currency == "USD"
+    assert observations[0].unit == "USD"
+
+
+def test_load_panel_infers_wide_dates_rows_layout_and_skips_holes(tmp_path):
+    path = _write_csv(
+        tmp_path,
+        "wide.csv",
+        "date,FUNDA,FUNDB\n2024-01-01,100.5,50.0\n2024-02-01,101.2,\n",
+    )
+    panel = load_panel(path, metric="nav", currency="USD", unit="USD")
+    assert len(panel) == 3  # the blank FUNDB@2024-02-01 cell produced no observation
+    assert panel.entities() == ("FUNDA", "FUNDB")
+    values = {(o.entity_id, o.date): o.value for o in panel}
+    assert values[("FUNDA", date(2024, 1, 1))] == pytest.approx(100.5)
+    assert ("FUNDB", date(2024, 2, 1)) not in values
+
+
+def test_load_panel_infers_wide_entities_rows_layout(tmp_path):
+    path = _write_csv(
+        tmp_path,
+        "wide.csv",
+        "entity,2024-01-01,2024-02-01\nFUNDA,100.5,101.2\nFUNDB,50.0,\n",
+    )
+    panel = load_panel(path, metric="nav", currency="USD", unit="USD")
+    assert len(panel) == 3
+    values = {(o.entity_id, o.date): o.value for o in panel}
+    assert values[("FUNDA", date(2024, 2, 1))] == pytest.approx(101.2)
+    assert ("FUNDB", date(2024, 2, 1)) not in values
+
+
+def test_load_panel_missing_value_column_raises_not_none(tmp_path):
+    path = _write_csv(
+        tmp_path, "panel.csv", "entity,date,metric,currency,unit\nFUNDA,2024-01-01,nav,USD,USD\n"
+    )
+    with pytest.raises(PanelIngestError, match="value"):
+        load_panel(path)
+
+
+def test_load_panel_missing_currency_is_an_error_not_a_default(tmp_path):
+    path = _write_csv(
+        tmp_path, "panel.csv", "entity,date,metric,value,unit\nFUNDA,2024-01-01,nav,100,USD\n"
+    )
+    with pytest.raises(PanelIngestError, match="currency"):
+        load_panel(path)
+
+
+def test_load_panel_missing_unit_is_an_error_not_a_default(tmp_path):
+    path = _write_csv(
+        tmp_path, "panel.csv", "entity,date,metric,value,currency\nFUNDA,2024-01-01,nav,100,USD\n"
+    )
+    with pytest.raises(PanelIngestError, match="unit"):
+        load_panel(path)
+
+
+def test_load_panel_ambiguous_header_raises_and_explicit_layout_resolves_it(tmp_path):
+    """A header that matches no recognised shape must not be silently guessed."""
+    path = _write_csv(tmp_path, "panel.csv", "foo,bar,baz\nFUNDA,2024-01-01,100\n")
+    with pytest.raises(PanelIngestError, match="could not infer a panel layout"):
+        load_panel(path)
+
+    panel = load_panel(
+        path,
+        layout="long",
+        columns={"entity": "foo", "date": "bar", "value": "baz"},
+        metric="nav",
+        currency="USD",
+        unit="USD",
+    )
+    assert len(panel) == 1
+    obs = list(panel)[0]
+    assert obs.entity_id == "FUNDA"
+    assert obs.value == pytest.approx(100.0)
+
+
+def test_load_panel_empty_file_raises_not_none(tmp_path):
+    path = _write_csv(tmp_path, "empty.csv", "")
+    with pytest.raises(PanelIngestError, match="no header row"):
+        load_panel(path)
+
+
+def test_load_panel_header_only_long_file_yields_an_empty_panel(tmp_path):
+    path = _write_csv(tmp_path, "panel.csv", "entity,date,metric,value,currency,unit\n")
+    panel = load_panel(path)
+    assert panel.is_empty
+
+
+def test_load_panel_wide_layout_requires_metric_currency_and_unit(tmp_path):
+    path = _write_csv(tmp_path, "wide.csv", "date,FUNDA,FUNDB\n2024-01-01,100.5,50.0\n")
+    with pytest.raises(PanelIngestError, match="metric"):
+        load_panel(path, currency="USD", unit="USD")
+    with pytest.raises(PanelIngestError, match="currency"):
+        load_panel(path, metric="nav", unit="USD")
+    with pytest.raises(PanelIngestError, match="unit"):
+        load_panel(path, metric="nav", currency="USD")
+
+
+def test_load_panel_wide_entities_rows_bad_date_header_raises(tmp_path):
+    path = _write_csv(
+        tmp_path, "wide.csv", "entity,2024-01-01,not-a-date\nFUNDA,100.5,101.2\n"
+    )
+    with pytest.raises(PanelIngestError, match="not a usable date"):
+        load_panel(path, layout="wide_entities_rows", metric="nav", currency="USD", unit="USD")
+
+
+def test_load_panel_explicit_column_mapping(tmp_path):
+    path = _write_csv(
+        tmp_path,
+        "panel.csv",
+        "Fund,AsOf,Field,Net,CCY,UOM\nFUNDA,2024-01-01,nav,100.5,USD,USD\n",
+    )
+    panel = load_panel(
+        path,
+        layout="long",
+        columns={
+            "entity": "Fund",
+            "date": "AsOf",
+            "metric": "Field",
+            "value": "Net",
+            "currency": "CCY",
+            "unit": "UOM",
+        },
+    )
+    assert len(panel) == 1
+    assert list(panel)[0].value == pytest.approx(100.5)
+
+
+def test_load_panel_metric_is_normalized(tmp_path):
+    path = _write_csv(
+        tmp_path,
+        "panel.csv",
+        "entity,date,metric,value,currency,unit\nFUNDA,2024-01-01,NAV,100,USD,USD\n",
+    )
+    panel = load_panel(path)
+    assert list(panel)[0].metric == "nav"
+
+
+def test_entity_panel_is_immutable_and_ordered(tmp_path):
+    path = _write_csv(
+        tmp_path,
+        "panel.csv",
+        "entity,date,metric,value,currency,unit\n"
+        "FUNDB,2024-02-01,nav,1,USD,USD\n"
+        "FUNDA,2024-01-01,nav,2,USD,USD\n",
+    )
+    panel = load_panel(path)
+    entities_in_order = [o.entity_id for o in panel]
+    assert entities_in_order == ["FUNDA", "FUNDB"]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        panel.observations = ()
+
+
+def test_load_panel_rejects_an_invalid_decimal_separator(tmp_path):
+    path = _write_csv(
+        tmp_path,
+        "panel.csv",
+        "entity,date,metric,value,currency,unit\nFUNDA,2024-01-01,nav,100,USD,USD\n",
+    )
+    with pytest.raises(ValueError, match="decimal_separator must be"):
+        load_panel(path, decimal_separator=";")
+
+
+def test_load_panel_rejects_an_invalid_layout_value(tmp_path):
+    path = _write_csv(
+        tmp_path,
+        "panel.csv",
+        "entity,date,metric,value,currency,unit\nFUNDA,2024-01-01,nav,100,USD,USD\n",
+    )
+    with pytest.raises(PanelIngestError, match="layout must be one of"):
+        load_panel(path, layout="sideways")
+
+
+def test_panel_observation_is_not_a_bar_and_exposes_no_ohlc_fields():
+    obs = PanelObservation(
+        entity_id="FUNDA", date=date(2024, 1, 1), metric="nav", value=100.0,
+        currency="USD", unit="USD",
+    )
+    assert not hasattr(obs, "close")
+    assert not hasattr(obs, "open")
+
+
+def test_panel_path_does_not_touch_the_bar_price_panel_gate():
+    """Same architectural guarantee as CashFlowSeries: the panel ingest path
+    must never widen what a bar engine will accept as a price column.
+    """
+    from backtest.runner import _PRICE_PANEL_COLUMNS, _VALID_INTERVALS
+
+    assert _PRICE_PANEL_COLUMNS == ("open", "high", "low", "close", "volume", "vwap", "amount")
+    assert "nav" not in _PRICE_PANEL_COLUMNS
+    assert _VALID_INTERVALS == {"1m", "5m", "15m", "30m", "1H", "4H", "1D"}

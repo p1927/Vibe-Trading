@@ -21,6 +21,7 @@ from src.quantlib.timeseries import (
     compute_half_life,
     find_hedge_ratio,
     fit_garch,
+    fit_markov_regime,
     granger_test,
     heteroscedasticity_test,
     vif_test,
@@ -659,6 +660,129 @@ def test_importing_the_module_does_not_require_the_optional_backends():
 
     module = importlib.import_module("src.quantlib.timeseries")
 
-    assert len(module.__all__) == 11
+    assert len(module.__all__) == 12
     assert "statsmodels" not in module.__dict__
     assert "arch" not in module.__dict__
+
+
+# --- Markov regime switching ---
+
+
+def _two_regime_series(seed=3, calm_len=200, turbulent_len=50, cycles=3,
+                       calm_vol=0.005, turbulent_vol=0.03, start_calm=True):
+    """Build a series alternating between a calm and a turbulent regime."""
+    rng = np.random.default_rng(seed)
+    segments = []
+    truth = []
+    for cycle in range(cycles * 2):
+        calm = (cycle % 2 == 0) == start_calm
+        length = calm_len if calm else turbulent_len
+        vol = calm_vol if calm else turbulent_vol
+        segments.append(rng.normal(0.0, vol, length))
+        truth += [0 if calm else 1] * length
+    return pd.Series(np.concatenate(segments)), np.array(truth)
+
+
+def test_markov_regime_recovers_known_volatilities():
+    series, _ = _two_regime_series(seed=3)
+    result = fit_markov_regime(series)
+
+    assert result["converged"]
+    assert result["regime_vols"][0] == pytest.approx(0.005, rel=0.15)
+    assert result["regime_vols"][1] == pytest.approx(0.030, rel=0.15)
+
+
+def test_markov_regimes_are_ordered_calmest_first_regardless_of_fit_order():
+    # Label switching is the classic reproducibility trap: the EM fit returns
+    # states in an arbitrary order. Starting the series in the turbulent regime
+    # instead of the calm one must not change which index means "calm".
+    calm_first, _ = _two_regime_series(seed=11, start_calm=True)
+    turbulent_first, _ = _two_regime_series(seed=11, start_calm=False)
+
+    a = fit_markov_regime(calm_first)
+    b = fit_markov_regime(turbulent_first)
+
+    for result in (a, b):
+        vols = result["regime_vols"]
+        assert np.all(np.diff(vols) >= 0), f"regimes not ascending in vol: {vols}"
+        assert vols[0] < vols[1]
+
+
+def test_markov_transition_matrix_is_row_stochastic():
+    series, _ = _two_regime_series(seed=5)
+    transition = fit_markov_regime(series)["transition_matrix"]
+
+    assert transition.shape == (2, 2)
+    assert transition.sum(axis=1) == pytest.approx(np.ones(2))
+    assert np.all(transition >= 0.0)
+
+
+def test_markov_transition_rows_read_from_today_to_tomorrow():
+    # The calm regime here lasts 200 periods and the turbulent one 50, so the
+    # calm row's diagonal must be the larger of the two. Reading the matrix
+    # transposed would swap these and silently mislabel which state is sticky.
+    series, _ = _two_regime_series(seed=7, calm_len=200, turbulent_len=50)
+    result = fit_markov_regime(series)
+    transition = result["transition_matrix"]
+
+    assert transition[0][0] > transition[1][1]
+    assert result["expected_durations"][0] > result["expected_durations"][1]
+
+
+def test_markov_expected_durations_track_the_true_segment_lengths():
+    series, _ = _two_regime_series(seed=13, calm_len=180, turbulent_len=60)
+    durations = fit_markov_regime(series)["expected_durations"]
+
+    assert durations[0] == pytest.approx(180, rel=0.5)
+    assert durations[1] == pytest.approx(60, rel=0.5)
+
+
+def test_markov_identifies_the_regime_the_series_ends_in():
+    # Ends in a turbulent segment.
+    series, truth = _two_regime_series(seed=17, start_calm=True)
+    result = fit_markov_regime(series)
+
+    assert result["current_regime"] == int(truth[-1])
+    assert result["current_regime_probability"] > 0.8
+
+
+def test_markov_smoothed_probabilities_are_a_distribution_on_the_input_index():
+    series, _ = _two_regime_series(seed=19)
+    result = fit_markov_regime(series)
+    smoothed = result["smoothed_probabilities"]
+
+    assert list(smoothed.index) == list(series.index)
+    assert list(smoothed.columns) == ["regime_0", "regime_1"]
+    assert smoothed.sum(axis=1).to_numpy() == pytest.approx(np.ones(len(series)), abs=1e-8)
+
+
+def test_markov_smoothed_probabilities_track_the_true_state():
+    series, truth = _two_regime_series(seed=23)
+    smoothed = fit_markov_regime(series)["smoothed_probabilities"]
+    inferred = smoothed.to_numpy().argmax(axis=1)
+
+    # Not every boundary period is classifiable, but the bulk must be.
+    assert (inferred == truth).mean() > 0.9
+
+
+def test_markov_rejects_a_single_regime():
+    series, _ = _two_regime_series(seed=29)
+    with pytest.raises(ValueError, match="at least 2"):
+        fit_markov_regime(series, n_regimes=1)
+
+
+def test_markov_rejects_a_series_too_short_to_mean_anything():
+    with pytest.raises(ValueError, match="at least 50"):
+        fit_markov_regime(pd.Series(np.random.default_rng(31).normal(0, 0.01, 40)))
+
+
+def test_markov_raises_an_actionable_error_when_statsmodels_is_absent():
+    try:
+        import statsmodels  # noqa: F401
+    except ImportError:
+        pass
+    else:
+        pytest.skip("'statsmodels' is installed, so the missing-dependency path cannot be exercised")
+
+    with pytest.raises(ImportError, match="pip install"):
+        fit_markov_regime(pd.Series(np.random.default_rng(37).normal(0, 0.01, 100)))

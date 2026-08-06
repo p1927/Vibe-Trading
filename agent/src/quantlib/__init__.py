@@ -18,6 +18,11 @@ Submodules:
   credit       Altman Z, Merton/KMV, spread analytics
   timeseries   Stationarity, cointegration, GARCH, bootstrap
   risk         VaR/CVaR, drawdown, Monte Carlo, EVT tail fitting
+  var_backtest Kupiec/Christoffersen coverage tests and the Basel traffic light
+  multipletesting  Deflated Sharpe, CSCV/PBO and BH-FDR search corrections
+  crossvalidation  Purged + embargoed splits for overlapping financial labels
+  eventstudy   Abnormal returns around dated events (CAR/CAAR, Patell, BMP)
+  factormodel  Cross-sectional style exposures, factor returns, style drift
   attribution  Brinson-Fachler allocation/selection/interaction
   impact       Market-impact and slippage models
   fundmath     Private-markets fund maths on the irregular cash-flow spine
