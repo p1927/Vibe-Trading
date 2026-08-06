@@ -170,6 +170,19 @@ _NUMBER_RE = re.compile(
     r"(?![A-Za-z0-9_])"
 )
 _DATE_RE = re.compile(r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b")
+# A year-less "8/5" is how a trading day is written in running prose, and it
+# contributed 8 and 5 as candidate prices (#983). The month and day ranges are
+# bounded, and both sides are fenced off from a longer slash run, so the window
+# enumeration "20/50/200-day" cannot be mistaken for a date.
+_SHORT_DATE_RE = re.compile(
+    r"(?<![\d/])(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])(?![\d/])"
+)
+# A percentage range masks only its upper bound through the "%" tail check
+# below, because the sign touches the second number: "1–2%" left 1 behind
+# (#983). Mask the span as a whole.
+_PERCENT_RANGE_RE = re.compile(
+    r"\d[\d,]*(?:\.\d+)?\s*[-–—~至]\s*\d[\d,]*(?:\.\d+)?\s*[%％]"
+)
 # Localized calendar text carries digits that the ISO pattern above leaves
 # behind: "8 月 3 日" otherwise contributes 8 and 3 as candidate prices.
 _LOCALIZED_DATE_RE = re.compile(
@@ -1711,6 +1724,8 @@ class GroundingLedger:
         masked = _CANONICAL_SYMBOL_RE.sub(" ", text)
         masked = _LOCALIZED_DATE_RE.sub(" ", masked)
         masked = _DATE_RE.sub(" ", masked)
+        masked = _SHORT_DATE_RE.sub(" ", masked)
+        masked = _PERCENT_RANGE_RE.sub(" ", masked)
         masked = _AGGREGATE_AMOUNT_RE.sub(" ", masked)
         masked = _LABELLED_SCORE_RE.sub(" ", masked)
         masked = _INDICATOR_VALUE_RE.sub(" ", masked)

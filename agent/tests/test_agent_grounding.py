@@ -904,6 +904,41 @@ def test_price_validation_ignores_score_indicator_and_window_digits(
         assert result.valid is True, (draft, result.issues)
 
 
+def test_price_validation_ignores_short_dates_and_percent_ranges(
+    tmp_path: Path,
+) -> None:
+    """A year-less date and a percentage range are not prices (#983).
+
+    Taken from the trace attached to #983: "8/5 收盘 5.97" contributed 8 and 5,
+    and "1–2%" contributed its lower bound, because the percent tail check only
+    masks the number the sign touches.
+    """
+    ledger = _screened_ledger(tmp_path)
+
+    for draft in (
+        "000543.SZ 8/5 收盘价 8.20 CNY（source: tencent）",
+        "000543.SZ 现价 8.20 CNY，距阻力位仅 1–2%（source: tencent）",
+        "000543.SZ 现价 8.20 CNY，距阻力位仅 1-2%（source: tencent）",
+    ):
+        result = ledger.validate_final_answer(draft)
+        assert result.valid is True, (draft, result.issues)
+
+
+def test_short_date_mask_does_not_swallow_a_plain_ratio(tmp_path: Path) -> None:
+    """The month/day mask is bounded, so an ordinary ratio still reads (#983).
+
+    "P/E 15" and the window enumeration "20/50/200-day" both contain slashes.
+    Neither may be consumed as a date, or the mask would hide real figures.
+    """
+    ledger = _screened_ledger(tmp_path)
+
+    result = ledger.validate_final_answer("000543.SZ 收盘价 42.00 CNY，P/E 15（source: tencent）")
+
+    assert result.valid is False
+    assert [issue["code"] for issue in result.issues] == ["numeric_claim_conflict"]
+    assert [issue["value"] for issue in result.issues] == [42.0]
+
+
 def test_masked_window_does_not_shield_a_wrong_quote_in_the_same_clause(
     tmp_path: Path,
 ) -> None:
