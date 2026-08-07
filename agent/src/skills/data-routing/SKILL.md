@@ -57,9 +57,9 @@ is required only where listed (no key listed = free / no auth).
 | Lockup expiry (限售解禁) | `get_lockup_expiry` | A-share | — |
 | Sector / board taxonomy (板块) | `get_sector_info` | A-share | — |
 | Sell-side research reports | `get_research_reports` | A-share | — |
-| Stock news | `get_stock_news` | A-share, US, HK | — |
+| Stock news | `get_stock_news` | A-share, US, HK, Canada | — |
 | SEC filings (EDGAR) | `get_sec_filings` | US | — |
-| Financial statements | `get_financial_statements` | A-share, US, HK | — |
+| Financial statements | `get_financial_statements` | A-share, US, HK, Canada | — |
 | Options chain | `get_options_chain` | US | — |
 | Stock profile / fundamentals | `get_stock_profile` | US | — |
 | Market screen | `screen_market` | A-share | — |
@@ -69,10 +69,12 @@ is required only where listed (no key listed = free / no auth).
 
 Notes:
 - `get_financial_statements` reads US statements from SEC EDGAR companyfacts
-  (ticker -> CIK -> XBRL concepts) and A-share/HK statements from the Eastmoney
-  datacenter report API (per-market F10 report names).
+  (ticker -> CIK -> XBRL concepts), A-share/HK statements from the Eastmoney
+  datacenter report API (per-market F10 report names), and Canada (.TO/.V)
+  statements from Yahoo Finance quoteSummary history modules.
 - `get_stock_news` routes A-share (SH/SZ/BJ) to an Eastmoney news client and
-  US (.US) / HK (.HK) to a Yahoo search client; a failure on one upstream is
+  US (.US) / HK (.HK) / Canada (.TO/.V) to a Yahoo search client; a failure on
+  one upstream is
   returned as an error envelope, never raised, so a single bad symbol never
   aborts a batch.
 

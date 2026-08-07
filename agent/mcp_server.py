@@ -1685,13 +1685,13 @@ def get_research_reports(code: str, limit: int = 20) -> str:
 def get_stock_news(code: str | None = None, scope: str = "stock", limit: int = 20) -> str:
     """Fetch recent financial news headlines, read-only and no auth.
 
-    Markets: China A-share (SH/SZ/BJ) headlines from Eastmoney; US (.US) and
-    Hong Kong (.HK) related-instrument matches from Yahoo Finance. Use scope
-    "stock" with a ``code`` for one security's headlines, or scope "global"
-    (no code) for broad China-market finance news.
+    Markets: China A-share (SH/SZ/BJ) headlines from Eastmoney; US (.US), Hong
+    Kong (.HK) and Canada (.TO/.V) related-instrument matches from Yahoo
+    Finance. Use scope "stock" with a ``code`` for one security's headlines, or
+    scope "global" (no code) for broad China-market finance news.
 
     Args:
-        code: Symbol whose news to fetch (e.g. "600519.SH", "AAPL.US").
+        code: Symbol whose news to fetch (e.g. "600519.SH", "AAPL.US", "SGML.V").
             Required when scope="stock"; ignored when scope="global".
         scope: "stock" (default) or "global".
         limit: Maximum number of headlines to return.
@@ -1736,12 +1736,14 @@ def get_sec_filings(
 def get_financial_statements(code: str, statement: str = "indicators", period: str = "annual") -> str:
     """Fetch a stock's financial statements or key per-period indicators.
 
-    Markets: A-share (.SH/.SZ/.BJ, via Sina), US (.US) and Hong Kong (.HK, via
-    Eastmoney). Reports come back newest-first as flat per-period rows. Use this
-    to read fundamentals before building a valuation or screen.
+    Markets: A-share (.SH/.SZ/.BJ, via Sina), US (.US), Hong Kong (.HK, via
+    Eastmoney) and Canada (.TO/.V, via Yahoo). Reports come back newest-first
+    as flat per-period rows. Use this to read fundamentals before building a
+    valuation or screen.
 
     Args:
-        code: Single symbol with a market suffix (e.g. "600519.SH", "AAPL.US").
+        code: Single symbol with a market suffix (e.g. "600519.SH", "AAPL.US",
+            "SGML.V").
         statement: "balance", "income", "cashflow", or "indicators".
         period: "annual" or "quarter".
     """

@@ -230,7 +230,8 @@ class BlockTradesTool(BaseTool):
                     "ok": False,
                     "error": (
                         f"{symbol!r} is not a resolvable A-share symbol "
-                        "(use .SH/.SZ/.BJ)"
+                        "(use .SH/.SZ/.BJ); Canada (.TO/.V) is not a "
+                        "block-trade market on Eastmoney"
                     ),
                 },
                 ensure_ascii=False,

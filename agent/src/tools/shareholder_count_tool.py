@@ -89,6 +89,12 @@ class ShareholderCountTool(BaseTool):
 
         suffix = code.rpartition(".")[2]
         if suffix not in _A_SHARE_SUFFIXES:
+            if suffix in ("TO", "V"):
+                return _error(
+                    f"shareholder count covers China A-shares only; Canada "
+                    f"(.TO/.V) is not published by the Eastmoney provider "
+                    f"(got '{code}')"
+                )
             return _error(
                 f"shareholder count is China A-share only (.SH/.SZ/.BJ); got '{code}'"
             )

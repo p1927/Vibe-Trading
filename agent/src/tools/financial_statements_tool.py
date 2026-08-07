@@ -12,10 +12,15 @@ key per-period indicators from a market-appropriate public source:
 * **Hong Kong** (``.HK``) — Eastmoney's HK F10 financial-report datasets,
   filtered on the bare ``SECURITY_CODE``; ``indicators`` reads the
   main-indicator dataset.
+* **Canada** (``.TO`` / ``.V``) — Yahoo Finance quoteSummary history modules
+  (``incomeStatementHistory`` / ``balanceSheetHistory`` /
+  ``cashflowStatementHistory``) via :mod:`backtest.loaders.yahoo_client`;
+  values are native CAD.
 
 Eastmoney requests go through :func:`backtest.loaders.eastmoney_client.get_json`
 (``host_key="eastmoney"``); SEC requests go through the shared EDGAR client
-(``host_key="sec"``).
+(``host_key="sec"``); Canada requests go through the throttled Yahoo
+:func:`backtest.loaders.yahoo_client.get_quote_summary` (``host_key="yahoo"``).
 
 The tool is read-only and self-contained: ``execute`` returns a JSON-string
 envelope and never raises for a recoverable per-request failure — a bad symbol
@@ -26,9 +31,10 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
-from backtest.loaders import sec_frames
+from backtest.loaders import sec_frames, yahoo_client
 from backtest.loaders.eastmoney_client import get_json, resolve_secid
 from backtest.loaders.sec_edgar_client import cik_for, get_company_facts
 from src.agent.tools import BaseTool
@@ -100,6 +106,249 @@ _SEC_CONCEPTS: dict[str, tuple[str, ...]] = {
         "WeightedAverageNumberOfDilutedSharesOutstanding",
     ),
 }
+
+# --- Yahoo (Canada .TO/.V) financial history ------------------------------
+
+# Yahoo quoteSummary history module names by (statement, period). Each returns
+# a list of per-period rows; every field is {"raw": number, "fmt": "..."}.
+_YAHOO_HISTORY_MODULES: dict[str, dict[str, str]] = {
+    "balance": {
+        "annual": "balanceSheetHistory",
+        "quarter": "balanceSheetHistoryQuarterly",
+    },
+    "income": {
+        "annual": "incomeStatementHistory",
+        "quarter": "incomeStatementHistoryQuarterly",
+    },
+    "cashflow": {
+        "annual": "cashflowStatementHistory",
+        "quarter": "cashflowStatementHistoryQuarterly",
+    },
+}
+
+# Curated field reads per statement: output key -> candidate Yahoo field names.
+_YAHOO_ROW_FIELDS: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "balance": (
+        ("assets", ("totalAssets",)),
+        ("current_assets", ("totalCurrentAssets",)),
+        ("cash", ("cashAndCashEquivalents", "cash")),
+        ("liabilities", ("totalLiabilitiesNetMinorityInterest", "totalLiabilities")),
+        ("current_liabilities", ("totalCurrentLiabilities",)),
+        ("long_term_debt", ("longTermDebt", "longTermDebtCurrentAndNoncurrent")),
+        ("stockholders_equity", ("stockholdersEquity", "totalStockholderEquity")),
+    ),
+    "income": (
+        ("revenue", ("totalRevenue",)),
+        ("gross_profit", ("grossProfit",)),
+        ("operating_income", ("operatingIncome",)),
+        ("ebitda", ("ebitda",)),
+        ("net_income", ("netIncome",)),
+        ("eps_diluted", ("dilutedEPS",)),
+        ("eps_basic", ("basicEPS",)),
+    ),
+    "cashflow": (
+        ("operating_cash_flow", ("totalCashFromOperatingActivities", "operatingCashflow")),
+        ("investing_cash_flow", ("totalCashflowsFromInvestingActivities", "investingCashflow")),
+        ("financing_cash_flow", ("totalCashFromFinancingActivities", "financingCashflow")),
+        ("capex", ("capitalExpenditures",)),
+        ("free_cash_flow", ("freeCashFlow",)),
+    ),
+    "indicators": (
+        ("revenue", ("totalRevenue",)),
+        ("gross_profit", ("grossProfit",)),
+        ("operating_income", ("operatingIncome",)),
+        ("net_income", ("netIncome",)),
+        ("eps_diluted", ("dilutedEPS",)),
+        ("assets", ("totalAssets",)),
+        ("liabilities", ("totalLiabilitiesNetMinorityInterest", "totalLiabilities")),
+        ("stockholders_equity", ("stockholdersEquity", "totalStockholderEquity")),
+        ("operating_cash_flow", ("totalCashFromOperatingActivities", "operatingCashflow")),
+        ("free_cash_flow", ("freeCashFlow",)),
+    ),
+}
+
+
+def _yahoo_raw(row: dict[str, Any], *keys: str) -> float | None:
+    """Return the first present field's ``raw`` numeric value, else ``None``."""
+    for key in keys:
+        value = row.get(key)
+        if isinstance(value, dict) and value.get("raw") is not None:
+            try:
+                return float(value["raw"])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _yahoo_end_date(row: dict[str, Any]) -> str:
+    """Extract a row's report date (``endDate.fmt``) or the ISO date of raw epoch."""
+    end = row.get("endDate")
+    if isinstance(end, dict):
+        fmt = end.get("fmt")
+        if fmt:
+            return str(fmt)
+        raw = end.get("raw")
+        if raw is not None:
+            try:
+                return datetime.fromtimestamp(
+                    float(raw), tz=timezone.utc
+                ).strftime("%Y-%m-%d")
+            except (TypeError, ValueError, OSError):
+                pass
+    return ""
+
+
+def _yahoo_history_rows(summary: dict[str, Any], module: str) -> list[dict[str, Any]]:
+    """Return the per-period rows under a quoteSummary history module."""
+    payload = summary.get(module)
+    if not isinstance(payload, dict):
+        return []
+    rows = payload.get(module)
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+
+def _merge_yahoo_histories(
+    summary: dict[str, Any], period: str
+) -> list[dict[str, Any]]:
+    """Merge the three history modules into one row per report date (indicators)."""
+    merged: dict[str, dict[str, Any]] = {}
+    for statement in ("income", "balance", "cashflow"):
+        module = _YAHOO_HISTORY_MODULES[statement][period]
+        for row in _yahoo_history_rows(summary, module):
+            date = _yahoo_end_date(row)
+            if not date:
+                continue
+            merged.setdefault(date, {"endDate": row.get("endDate")}).update(row)
+    return list(merged.values())
+
+
+# QuoteSummary snapshot modules used as a fallback when a statement's history
+# module is empty (balance/cashflow history is frequently empty for Canadian
+# issuers). Fields: output key -> (source module, Yahoo field).
+_YAHOO_SNAPSHOT_MODULES = ("financialData", "defaultKeyStatistics")
+
+_YAHOO_SNAPSHOT_FIELDS: dict[str, tuple[tuple[str, str, str], ...]] = {
+    "balance": (
+        ("cash", "financialData", "totalCash"),
+        ("total_debt", "financialData", "totalDebt"),
+        ("current_ratio", "financialData", "currentRatio"),
+        ("quick_ratio", "financialData", "quickRatio"),
+        ("debt_to_equity", "financialData", "debtToEquity"),
+        ("book_value", "defaultKeyStatistics", "bookValue"),
+    ),
+    "income": (
+        ("revenue", "financialData", "totalRevenue"),
+        ("gross_profit", "financialData", "grossProfits"),
+        ("ebitda", "financialData", "ebitda"),
+        ("net_income", "defaultKeyStatistics", "netIncomeToCommon"),
+        ("eps_diluted", "defaultKeyStatistics", "trailingEps"),
+    ),
+    "cashflow": (
+        ("operating_cash_flow", "financialData", "operatingCashflow"),
+        ("free_cash_flow", "financialData", "freeCashflow"),
+        ("ebitda", "financialData", "ebitda"),
+        ("cash", "financialData", "totalCash"),
+    ),
+    "indicators": (
+        ("revenue", "financialData", "totalRevenue"),
+        ("gross_profit", "financialData", "grossProfits"),
+        ("ebitda", "financialData", "ebitda"),
+        ("net_income", "defaultKeyStatistics", "netIncomeToCommon"),
+        ("eps_diluted", "defaultKeyStatistics", "trailingEps"),
+        ("cash", "financialData", "totalCash"),
+        ("total_debt", "financialData", "totalDebt"),
+        ("book_value", "defaultKeyStatistics", "bookValue"),
+        ("operating_cash_flow", "financialData", "operatingCashflow"),
+        ("free_cash_flow", "financialData", "freeCashflow"),
+        ("return_on_equity", "financialData", "returnOnEquity"),
+        ("return_on_assets", "financialData", "returnOnAssets"),
+    ),
+}
+
+
+def _yahoo_snapshot_row(
+    summary: dict[str, Any], statement: str
+) -> dict[str, Any]:
+    """Build a single ``report_date: "latest"`` row from quoteSummary snapshots."""
+    fields = _YAHOO_SNAPSHOT_FIELDS.get(statement)
+    if not fields:
+        return {}
+    record: dict[str, Any] = {
+        "report_date": "latest",
+        "currency": "CAD",
+        "snapshot": True,
+    }
+    for key, module, field in fields:
+        mod = summary.get(module)
+        if isinstance(mod, dict):
+            value = mod.get(field)
+            if isinstance(value, dict) and value.get("raw") is not None:
+                try:
+                    record[key] = round(float(value["raw"]), 4)
+                except (TypeError, ValueError):
+                    pass
+    return record
+
+
+def _fetch_yahoo_statement(
+    code: str, *, statement: str, period: str
+) -> dict[str, Any]:
+    """Fetch a Canadian (.TO/.V) statement from Yahoo quoteSummary.
+
+    Per-period rows come from the statement's history module when Yahoo
+    provides one (income history is reliably populated; balance/cashflow
+    history is frequently empty for Canadian issuers). When the history
+    yields no rows, a single ``report_date: "latest"`` snapshot row is built
+    from ``financialData`` / ``defaultKeyStatistics`` so the envelope is never
+    empty.
+
+    Returns:
+        ``{"periods": [...]}`` on success or ``{"error": ...}`` on failure.
+        Each period is a flat dict keyed by the ``_YAHOO_*_FIELDS`` output
+        names plus ``report_date`` and ``currency`` (CAD).
+    """
+    if statement == "indicators":
+        modules = list(
+            {
+                _YAHOO_HISTORY_MODULES[s][period]
+                for s in ("balance", "income", "cashflow")
+            }
+        )
+    else:
+        modules = [_YAHOO_HISTORY_MODULES[statement][period]]
+    if statement in ("balance", "cashflow"):
+        modules.extend(_YAHOO_SNAPSHOT_MODULES)
+    try:
+        summary = yahoo_client.get_quote_summary(code, modules)
+    except Exception as exc:  # noqa: BLE001 - surface as envelope
+        return {"error": f"yahoo quoteSummary failed for {code}: {exc}"}
+    if not summary:
+        return {"error": f"yahoo returned no quoteSummary result for '{code}'"}
+
+    field_map = _YAHOO_ROW_FIELDS.get(statement, _YAHOO_ROW_FIELDS["indicators"])
+    if statement == "indicators":
+        rows = _merge_yahoo_histories(summary, period)
+    else:
+        rows = _yahoo_history_rows(summary, _YAHOO_HISTORY_MODULES[statement][period])
+
+    periods: list[dict[str, Any]] = []
+    for row in rows:
+        record = {"report_date": _yahoo_end_date(row), "currency": "CAD"}
+        for key, candidates in field_map:
+            value = _yahoo_raw(row, *candidates)
+            if value is not None:
+                record[key] = round(value, 4)
+        if record.get("report_date"):
+            periods.append(record)
+
+    if not periods:
+        snapshot = _yahoo_snapshot_row(summary, statement)
+        if snapshot:
+            periods.append(snapshot)
+
+    periods.sort(key=lambda r: str(r.get("report_date") or ""), reverse=True)
+    return {"periods": _cap_periods(periods)}
+
 
 # --- Shared limits / validation ------------------------------------------
 
@@ -583,6 +832,8 @@ def _classify_market(code: str) -> str | None:
         return "us"
     if suffix == "HK":
         return "hk"
+    if suffix in ("TO", "V"):
+        return "ca"
     return None
 
 
@@ -593,11 +844,12 @@ class FinancialStatementsTool(BaseTool):
     description = (
         "Fetch a single stock's financial statements: balance sheet, income "
         "statement, cash-flow statement, or key per-period indicators (margins, "
-        "ROE, EPS, etc.). Markets: A-share (.SH/.SZ/.BJ), US (.US) and "
-        "Hong Kong (.HK). US uses SEC EDGAR companyfacts; A-share and HK use "
-        "Eastmoney. Reports come back newest-first as flat per-period rows. Use "
+        "ROE, EPS, etc.). Markets: A-share (.SH/.SZ/.BJ), US (.US), Hong "
+        "Kong (.HK) and Canada (.TO/.V). US uses SEC EDGAR companyfacts; "
+        "A-share and HK use Eastmoney; Canada uses Yahoo Finance (CAD). "
+        "Reports come back newest-first as flat per-period rows. Use "
         'this to read fundamentals before building a valuation or screen. Example: '
-        '{"code": "600519.SH", "statement": "income", "period": "annual"}.'
+        '{"code": "SGML.V", "statement": "income", "period": "annual"}.'
     )
     parameters = {
         "type": "object",
@@ -606,7 +858,7 @@ class FinancialStatementsTool(BaseTool):
                 "type": "string",
                 "description": (
                     "Single symbol with a market suffix, e.g. '600519.SH', "
-                    "'000001.SZ', 'AAPL.US', or '00700.HK'."
+                    "'000001.SZ', 'AAPL.US', '00700.HK', or 'SGML.V'."
                 ),
             },
             "statement": {
@@ -673,12 +925,18 @@ class FinancialStatementsTool(BaseTool):
         market = _classify_market(code)
         if market is None:
             return _error(
-                "code must carry a supported suffix: .SH/.SZ/.BJ, .US, or .HK"
+                "code must carry a supported suffix: "
+                ".SH/.SZ/.BJ, .US, .HK, or .TO/.V"
             )
 
         if market == "us":
             result = _fetch_sec_statement(code, statement=statement, period=period)
             source = "sec_edgar"
+        elif market == "ca":
+            result = _fetch_yahoo_statement(
+                code, statement=statement, period=period
+            )
+            source = "yahoo"
         else:
             result = _fetch_eastmoney_statement(
                 code, statement=statement, period=period

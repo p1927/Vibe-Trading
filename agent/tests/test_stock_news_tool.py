@@ -85,6 +85,8 @@ class TestHelpers:
     def test_suffix_of(self) -> None:
         assert _suffix_of("600519.SH") == "SH"
         assert _suffix_of("AAPL.US") == "US"
+        assert _suffix_of("TD.TO") == "TO"
+        assert _suffix_of("SGML.V") == "V"
         assert _suffix_of("NOSUFFIX") == ""
 
     def test_bare_query(self) -> None:
@@ -203,6 +205,19 @@ class TestExecuteSuccess:
         srch.assert_called_once_with("00700", 20)
         assert out["ok"] is True
         assert out["market"] == "hk"
+        assert out["source"] == "yahoo"
+        assert out["data"]["articles"][0]["title"] == "Apple unveils new products"
+
+    def test_ca_stock_via_yahoo_returns_articles(self) -> None:
+        tool = StockNewsTool()
+        with patch.object(
+            yahoo_client, "search_news", return_value=_yahoo_news()[:1]
+        ) as srch:
+            out = json.loads(tool.execute(code="SGML.V"))
+
+        srch.assert_called_once_with("SGML", 20)
+        assert out["ok"] is True
+        assert out["market"] == "ca"
         assert out["source"] == "yahoo"
         assert out["data"]["articles"][0]["title"] == "Apple unveils new products"
 

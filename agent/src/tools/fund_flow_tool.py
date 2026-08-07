@@ -97,6 +97,12 @@ def _fetch_symbol_flow(symbol: str, *, period: str, days: int) -> dict[str, Any]
         A per-symbol result dict carrying either ``rows`` on success or an
         ``error`` string on failure. Never raises for a single symbol.
     """
+    suffix = symbol.rpartition(".")[2].strip().upper()
+    if suffix in ("TO", "V"):
+        return {
+            "symbol": symbol,
+            "error": "Eastmoney capital flow does not cover Canada (.TO/.V)",
+        }
     secid = resolve_secid(symbol)
     if secid is None:
         if period == "daily":
