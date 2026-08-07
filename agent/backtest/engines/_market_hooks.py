@@ -32,6 +32,9 @@ _MARKET_PATTERNS = [
     (re.compile(r"^[A-Z0-9&.\-]+\.(NS|BO)$", re.I), "india_equity"),
     # Korea equities: KOSPI (005930.KS) / KOSDAQ (247540.KQ), 6-digit codes.
     (re.compile(r"^\d{6}\.(KS|KQ)$", re.I), "kr_equity"),
+    # Canada equities: TSX (TD.TO) / TSX Venture (SHOP.V). Yahoo carries these
+    # suffixes verbatim; Canadian symbols settle in CAD.
+    (re.compile(r"^[A-Z0-9&.\-]+\.(TO|V)$", re.I), "ca_equity"),
     (re.compile(r"^[A-Z]+-USDT$", re.I), "crypto"),
     (re.compile(r"^[A-Z]+/USDT$", re.I), "crypto"),
     # yfinance's native crypto spelling (BTC-USD, ETH-USD). Distinct from
@@ -67,6 +70,7 @@ _MARKET_CURRENCY = {
     "hk_equity": "HKD",
     "india_equity": "INR",
     "kr_equity": "KRW",
+    "ca_equity": "CAD",
     # Every crypto pattern in _MARKET_PATTERNS is USDT-quoted, and USDT is
     # carried at its USD peg. This is the one approximation in the table: a
     # depeg would make a crypto+US book wrong by the depeg amount, which is
@@ -186,8 +190,11 @@ def _detect_submarket(codes: List[str]) -> str:
         ``"hk"`` if any code ends with ``.HK``, else ``"us"``.
     """
     for code in codes:
-        if code.upper().endswith(".HK"):
+        upper = code.upper()
+        if upper.endswith(".HK"):
             return "hk"
+        if upper.endswith((".TO", ".V")):
+            return "ca"
     return "us"
 
 # ── Crypto: OKX tiered maintenance margin table (simplified) ──

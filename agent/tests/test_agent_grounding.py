@@ -432,6 +432,92 @@ def test_locked_symbol_rejects_silent_exchange_suffix_rewrite(
     assert json.loads(messages[-1]["content"])["error_code"] == "identity_mismatch"
 
 
+def test_canadian_explicit_symbol_seeds_locked_identity(tmp_path: Path) -> None:
+    """A user-supplied TD.TO is a canonical symbol the market consumer may use."""
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message="请分析 TD.TO 的当前价格",
+    )
+
+    authorization = ledger.authorize_tool_call(
+        "get_market_data",
+        {"codes": ["TD.TO"]},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        call_id="prices",
+    )
+
+    assert ledger.authorized_symbols == {"TD.TO"}
+    assert authorization.allowed is True
+
+
+def test_canadian_resolver_lock_authorizes_exact_venue(tmp_path: Path) -> None:
+    """A resolver lock on DCBO.TO lets get_market_data consume that exact venue."""
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message="分析 DCBO.TO",
+    )
+    ledger.ingest_tool_result(
+        tool_name="search_symbol",
+        arguments={"query": "DCBO"},
+        result=_resolver_payload("DCBO.TO", query="DCBO"),
+        call_id="resolver-ca",
+        success=True,
+    )
+
+    authorization = ledger.authorize_tool_call(
+        "get_market_data",
+        {"codes": ["DCBO.TO"]},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        batch_identity_status=ledger.identity_status,
+        call_id="prices",
+    )
+
+    assert ledger.identity_status == "locked"
+    assert authorization.allowed is True
+
+
+def test_canadian_dual_listing_venue_is_not_silently_rewritten(
+    tmp_path: Path,
+) -> None:
+    """A locked DCBO.TO identity rejects a consumer switching to DCBO.US."""
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message="分析 DCBO.TO",
+    )
+    ledger.ingest_tool_result(
+        tool_name="search_symbol",
+        arguments={"query": "DCBO"},
+        result=_resolver_payload("DCBO.TO", query="DCBO"),
+        call_id="resolver-ca",
+        success=True,
+    )
+
+    authorization = ledger.authorize_tool_call(
+        "get_market_data",
+        {"codes": ["DCBO.US"]},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        batch_identity_status=ledger.identity_status,
+        call_id="prices",
+    )
+
+    assert authorization.allowed is False
+    assert authorization.error_code == "identity_mismatch"
+
+
+def test_canadian_symbols_are_canonical_and_venue_currency_aware() -> None:
+    """_scan_symbols / _infer_venue / _infer_currency understand .TO/.V."""
+    from src.agent.grounding import _infer_currency, _infer_venue, _scan_symbols
+
+    scanned = _scan_symbols("compare TD.TO vs SHOP.V")
+    assert "TD.TO" in scanned
+    assert "SHOP.V" in scanned
+
+    assert _infer_venue("TD.TO") == "toronto"
+    assert _infer_venue("SHOP.V") == "tsxv"
+    assert _infer_currency("TD.TO") == "CAD"
+    assert _infer_currency("SHOP.V") == "CAD"
+
+
 def test_listed_identity_blocks_private_company_workflow(
     tmp_path: Path,
 ) -> None:

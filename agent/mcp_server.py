@@ -1410,7 +1410,7 @@ def get_market_data(
     """Fetch OHLCV market data for stocks, crypto, or mixed symbols.
 
     Supported sources:
-    - "yfinance": HK/US equities (free, e.g. AAPL.US, 700.HK)
+    - "yfinance": HK/US/Canada equities (free, e.g. AAPL.US, 700.HK, TD.TO, SHOP.V)
     - "okx": cryptocurrency (free, e.g. BTC-USDT, ETH-USDT)
     - "tushare": China A-shares (requires TUSHARE_TOKEN, e.g. 000001.SZ)
     - "baostock": China A-shares via TCP protocol, bypasses HTTP CDN blocks (e.g. 000001.SZ, 601595.SH)

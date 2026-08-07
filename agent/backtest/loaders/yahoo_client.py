@@ -16,6 +16,9 @@ Symbol convention (Vibe-Trading -> Yahoo):
   * HK ``00700.HK`` -> ``0700.HK`` (Yahoo drops the leading zero to 4 digits)
   * India ``RELIANCE.NS`` / ``500325.BO`` -> unchanged (Yahoo carries the
     ``.NS``/``.BO`` suffix verbatim)
+  * Canada ``TD.TO`` / ``SHOP.V`` -> unchanged (Yahoo carries the
+    ``.TO``/``.V`` suffix verbatim; the ca.yahoo.com portal uses the same
+    query API)
   * Anything else is passed through unchanged (e.g. ``BTC-USD``, ``^GSPC``).
 
 This module is provider-specific glue only; it returns plain Python

@@ -68,6 +68,12 @@ class TestDetectMarket:
             # Korea equity (KRX)
             ("005930.KS", "kr_equity"),  # KOSPI
             ("247540.KQ", "kr_equity"),  # KOSDAQ
+            # Canada equity (TSX / TSX Venture)
+            ("TD.TO", "ca_equity"),
+            ("SHOP.TO", "ca_equity"),
+            ("ENB.TO", "ca_equity"),
+            ("ACDC.V", "ca_equity"),
+            ("NEXE.V", "ca_equity"),
             # Crypto
             ("BTC-USDT", "crypto"),
             ("ETH-USDT", "crypto"),
@@ -172,6 +178,8 @@ class TestDetectSource:
             ("500325.BO", "yahoo"),
             ("005930.KS", "pykrx"),
             ("247540.KQ", "pykrx"),
+            ("TD.TO", "yahoo"),
+            ("SHOP.V", "yahoo"),
             ("BTC-USDT", "okx"),
             ("IF2406.CFFEX", "tushare"),
             ("EUR/USD", "akshare"),

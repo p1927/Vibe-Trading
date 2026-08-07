@@ -41,6 +41,8 @@ def infer_market(code: str) -> str:
         return "a_share"
     if code_upper.endswith((".KS", ".KQ")):
         return "kr_equity"
+    if code_upper.endswith((".TO", ".V")):
+        return "ca_equity"
     if code_upper.endswith(".US"):
         return "us_equity"
     if code_upper.isdigit():

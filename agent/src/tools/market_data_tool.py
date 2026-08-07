@@ -61,7 +61,7 @@ class MarketDataTool(BaseTool):
                     "Data source. 'auto' detects from symbol format with fallback. "
                     "Use 'longbridge' explicitly for US/HK OHLCV through the "
                     "Longbridge OpenAPI (requires Longbridge credentials). "
-                    "Free, no key: yfinance/yahoo (US/HK equities), okx/ccxt "
+                    "Free, no key: yfinance/yahoo (US/HK/Canada equities; Canada via .TO/.V), okx/ccxt "
                     "(crypto), baostock/tencent/eastmoney/sina/akshare/mootdx "
                     "(China A-shares), stooq (global EOD), pykrx (Korea KRX daily "
                     "bars for <CODE>.KS / <CODE>.KQ; needs the optional pykrx "

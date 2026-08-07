@@ -330,6 +330,9 @@ def _from_yahoo_symbol(raw_symbol: str, quote: Dict[str, Any]) -> tuple[str, str
     if upper.endswith(".HK"):
         base = raw_symbol[: -len(".HK")].lstrip("0") or "0"
         return f"{base.zfill(5)}.HK", "hk"
+    # Canada: TSX (.TO) / TSX Venture (.V) — Yahoo carries these verbatim.
+    if upper.endswith((".TO", ".V")):
+        return raw_symbol, "ca"
     quote_type = str(quote.get("quoteType") or "").strip().upper()
     if quote_type == "EQUITY" and "." not in raw_symbol and "-" not in raw_symbol:
         return f"{upper}.US", "us"

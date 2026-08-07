@@ -14,6 +14,8 @@ Market rules:
 
 India (NSE/BSE) is handled by the dedicated ``backtest.engines.india_equity``
 ``IndiaEquityEngine`` (T+1 delivery, circuit bands, STT/stamp/GST stack).
+Canada (TSX ``.TO`` / TSX Venture ``.V``) runs on US-style rules — fractional
+shares, zero commission, US slippage — via ``market="ca"``.
 """
 
 from __future__ import annotations

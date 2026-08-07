@@ -78,6 +78,8 @@ _SYMBOL_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b[A-Z]{1,5}\.US\b"),
     re.compile(r"\b\d{3,5}\.HK\b"),
     re.compile(r"\b\d{6}\.(?:SZ|SH|BJ)\b"),
+    # Canada: TSX (.TO) / TSX Venture (.V) — served by Yahoo, same loader family.
+    re.compile(r"\b[A-Z]{1,6}\.(?:TO|V)\b"),
     re.compile(r"\b[A-Z]{2,6}-USDT\b"),
 )
 

@@ -21,7 +21,7 @@ per-source skill.
 |--------|---------|----------------|---------|-------|
 | tushare | A-shares, funds, futures, macro | Yes (`TUSHARE_TOKEN`) | China network | tushare |
 | akshare | A-shares, US, HK, futures, macro, forex | No | Unrestricted | akshare |
-| yfinance | US stocks, HK stocks, ETFs | No | Needs Yahoo access | yfinance |
+| yfinance | US stocks, HK stocks, Canada (TSX/TSX-V) stocks, ETFs | No | Needs Yahoo access | yfinance |
 | okx | Crypto (OKX exchange) | No | Needs okx.com access | okx-market |
 | ccxt | Crypto (100+ exchanges) | No | Needs exchange access | ccxt |
 | baostock | A-shares (free daily/min) | No | China network | data-routing |
@@ -33,7 +33,7 @@ per-source skill.
 | eastmoney | A-shares, HK, US equities | No (IP-throttled) | Unrestricted | data-routing |
 | sina | US equities (daily OHLCV) | No (IP-throttled) | Unrestricted | data-routing |
 | stooq | US equities (daily OHLCV) | No | Unrestricted | data-routing |
-| yahoo | US, HK equities | No (IP-throttled) | Needs Yahoo access | data-routing |
+| yahoo | US, HK, Canada (TSX/TSX-V) equities | No (IP-throttled) | Needs Yahoo access | data-routing |
 | finnhub | US equities | Yes (`FINNHUB_API_KEY`) | Unrestricted | data-routing |
 | alphavantage | US equities | Yes (`ALPHAVANTAGE_API_KEY`) | Unrestricted | data-routing |
 | tiingo | US equities | Yes (`TIINGO_API_KEY`) | Unrestricted | data-routing |
@@ -47,7 +47,7 @@ is required only where listed (no key listed = free / no auth).
 
 | Data need | Tool | Market | Env key |
 |-----------|------|--------|---------|
-| OHLCV price bars | `get_market_data` | A-share / US / HK / crypto / futures / forex | per-source (see Source Overview) |
+| OHLCV price bars | `get_market_data` | A-share / US / HK / Canada / crypto / futures / forex | per-source (see Source Overview) |
 | Fund flow (资金流向) | `get_fund_flow` | A-share, HK, US | — |
 | Dragon-tiger (龙虎榜) | `get_dragon_tiger` | A-share | — |
 | Northbound flow (北向资金) | `get_northbound_flow` | A-share | — |

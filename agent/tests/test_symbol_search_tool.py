@@ -76,6 +76,32 @@ def _yahoo_quotes() -> list:
     ]
 
 
+class TestFromYahooSymbol:
+    """Yahoo symbol -> project convention, incl. Canadian suffixes."""
+
+    def test_canadian_suffixes_map_to_ca(self):
+        assert ss._from_yahoo_symbol("DCBO.TO", {"quoteType": "EQUITY"}) == (
+            "DCBO.TO",
+            "ca",
+        )
+        assert ss._from_yahoo_symbol("ACDC.V", {"quoteType": "EQUITY"}) == (
+            "ACDC.V",
+            "ca",
+        )
+
+    def test_us_equity_still_maps_to_us(self):
+        assert ss._from_yahoo_symbol("AAPL", {"quoteType": "EQUITY"}) == (
+            "AAPL.US",
+            "us",
+        )
+
+    def test_hk_still_maps_to_hk(self):
+        assert ss._from_yahoo_symbol("0700.HK", {"quoteType": "EQUITY"}) == (
+            "00700.HK",
+            "hk",
+        )
+
+
 class TestSymbolSearchSuccess:
     """Happy-path fan-out, normalization, merge, and CIK enrichment."""
 

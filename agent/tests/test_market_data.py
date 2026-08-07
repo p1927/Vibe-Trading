@@ -44,6 +44,10 @@ from src.market_data import (
         ("M&M.NS", "yahoo"),  # ampersand in ticker
         ("BAJAJ-AUTO.NS", "yahoo"),  # hyphen in ticker
         ("500325.BO", "yahoo"),  # India BSE (numeric scrip code)
+        ("TD.TO", "yahoo"),  # Canada TSX
+        ("SHOP.TO", "yahoo"),
+        ("ACDC.V", "yahoo"),  # Canada TSX Venture
+        ("NEXE.V", "yahoo"),
         ("BTC-USDT", "okx"),
         ("ETH/USDT", "ccxt"),
         ("EUR/USD", "mt5"),  # forex pair → mt5 chain head (registry fallback)
@@ -71,6 +75,8 @@ def test_yahoo_loader_accepts_futures_and_forex_suffixes() -> None:
     assert _is_supported("GC=F") is True
     assert _is_supported("EURUSD=X") is True
     assert _is_supported("AAPL.US") is True  # unchanged
+    assert _is_supported("TD.TO") is True  # Canada TSX
+    assert _is_supported("SHOP.V") is True  # Canada TSX Venture
     assert _is_supported("600519.SH") is False  # A-share still not yahoo
 
 

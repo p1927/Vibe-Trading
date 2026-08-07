@@ -112,6 +112,13 @@ def test_extract_does_not_match_substrings_inside_words() -> None:
     assert grounding.extract_symbols_from_user_vars(user_vars) == []
 
 
+def test_extract_canadian_tsx_symbols() -> None:
+    # .TO (TSX) and .V (TSX Venture) are detected as explicit suffixed symbols;
+    # their bare roots (TD, SHOP) must not leak into bogus .US promotions.
+    user_vars = {"goal": "analyze TD.TO and SHOP.V positioning"}
+    assert grounding.extract_symbols_from_user_vars(user_vars) == ["TD.TO", "SHOP.V"]
+
+
 # --------------------------------------------------------------------------- #
 # fetch_grounding_data — monkeypatched loader
 # --------------------------------------------------------------------------- #

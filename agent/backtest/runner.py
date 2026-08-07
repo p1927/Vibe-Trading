@@ -798,6 +798,7 @@ _MARKET_TO_SOURCE = {
     "hk_equity": "yfinance",
     "india_equity": "yahoo",
     "kr_equity": "pykrx",
+    "ca_equity": "yahoo",
     "crypto": "okx",
     "futures": "tushare",
     "fund": "tushare",
@@ -1291,6 +1292,12 @@ def _create_market_engine(source: str, config: dict, codes: List[str]):
     if "kr_equity" in markets:
         from backtest.engines.korea_equity import KoreaEquityEngine
         return KoreaEquityEngine(config)
+
+    # Canada equity routing — TSX (.TO) / TSX Venture (.V) via Yahoo; uses the
+    # same GlobalEquityEngine family as US/HK with US-style execution rules.
+    if "ca_equity" in markets:
+        from backtest.engines.global_equity import GlobalEquityEngine
+        return GlobalEquityEngine(config, market="ca")
 
     # Original routing (Wave 1)
     if source in ("okx", "ccxt"):
