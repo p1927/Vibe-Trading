@@ -501,6 +501,53 @@ def _reject_forbidden_node(node: ast.AST) -> None:
         _reject_forbidden_getattr(node)
 
 
+def _module_level_forbidden_aliases(tree: ast.Module) -> dict[str, str]:
+    """Map module-level names that are bound to a forbidden module.
+
+    Module-level imports are deliberately not rejected outright (see the
+    ``_FORBIDDEN_IMPORT_MODULES`` comment): the shipped skill examples carry an
+    unused ``import requests`` beside a helper the runner never reaches, and a
+    file-wide import block would reject strategies generated from them. The
+    compensating check is on the *use* along the executed path — but that check
+    matches dotted chains rooted in the module's own name, so a binding that
+    renames it slipped past both::
+
+        from socket import socket as S              ->  S()
+        import socket as sk                         ->  sk.socket()
+        from src.trading.service import place_order ->  place_order(1)
+
+    This recovers the binding so the use site can be judged by what the name
+    actually refers to, which closes the aliasing half of the VT-001 residual
+    without touching the harmless unused import.
+
+    Args:
+        tree: Parsed signal engine module.
+
+    Returns:
+        Bound name -> the dotted path it refers to, for forbidden targets only.
+    """
+    aliases: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            # A plain ``import socket`` needs no entry: its use is a dotted
+            # chain rooted in ``socket``, which the attribute check already
+            # rejects. Only a rename hides that root.
+            for alias in node.names:
+                if alias.asname and _is_forbidden_module_path(alias.name):
+                    aliases[alias.asname] = alias.name
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            for alias in node.names:
+                target = f"{module}.{alias.name}" if module else alias.name
+                if (
+                    _is_forbidden_module_path(module)
+                    or _is_forbidden_module_path(target)
+                    or (module.split(".")[0] == "os" and _is_forbidden_os_attr(alias.name))
+                ):
+                    aliases[alias.asname or alias.name] = target
+    return aliases
+
+
 def _scan_runtime_reachable(tree: ast.Module) -> None:
     """Reject forbidden ops in ``SignalEngine`` methods + their transitive callees.
 
@@ -526,6 +573,7 @@ def _scan_runtime_reachable(tree: ast.Module) -> None:
     worklist: list[ast.AST] = [
         m for m in engine_cls.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
     ]
+    aliases = _module_level_forbidden_aliases(tree)
     visited: set[int] = set()
     while worklist:
         fn = worklist.pop()
@@ -534,6 +582,11 @@ def _scan_runtime_reachable(tree: ast.Module) -> None:
         visited.add(id(fn))
         for node in ast.walk(fn):
             _reject_forbidden_node(node)
+            if isinstance(node, ast.Name) and node.id in aliases:
+                raise ValueError(
+                    f"Use of {node.id!r}, bound at module level to "
+                    f"{aliases[node.id]!r}, {_SCRUB_MSG}"
+                )
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                 target = module_funcs.get(node.func.id)
                 if target is not None:

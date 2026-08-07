@@ -202,6 +202,103 @@ def test_signal_engine_still_allows_project_math_imports(tmp_path, import_line) 
     _load_module_from_file(signal_file, _module_name())
 
 
+# Module-level imports are deliberately left unrejected so an unused
+# ``import requests`` beside an unreachable helper does not fail the shipped
+# skill examples; the compensating check is on the *use* along the executed
+# path. That check matches dotted chains rooted in the module's own name, so
+# every binding below renamed the root and reached the payload anyway — the
+# aliasing half of the VT-001 residual.
+_MODULE_LEVEL_ALIAS_BYPASSES = [
+    ("from_socket_alias", "from socket import socket as S", "        return S()"),
+    ("from_subprocess_alias", "from subprocess import run as R", "        return R(['ls'])"),
+    ("from_os_system", "from os import system", "        return system('id')"),
+    ("from_ctypes", "from ctypes import CDLL", "        return CDLL('x')"),
+    ("import_socket_alias", "import socket as sk", "        return sk.socket()"),
+    ("import_subprocess_alias", "import subprocess as sp", "        return sp.run(['ls'])"),
+    (
+        "from_trading_place_order",
+        "from src.trading.service import place_order",
+        "        return place_order(1)",
+    ),
+    (
+        "from_live_order_gate",
+        "from src.live.sdk_order_gate import check",
+        "        return check()",
+    ),
+    (
+        "from_trading_submodule_alias",
+        "from src.trading import service as sv",
+        "        return sv.place_order(1)",
+    ),
+    (
+        "import_trading_alias",
+        "import src.trading.service as t",
+        "        return t.place_order(1)",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "case_id,import_line,call_line",
+    _MODULE_LEVEL_ALIAS_BYPASSES,
+    ids=[c[0] for c in _MODULE_LEVEL_ALIAS_BYPASSES],
+)
+def test_signal_engine_rejects_module_level_alias_of_forbidden_module(
+    tmp_path, case_id, import_line, call_line,
+) -> None:
+    signal_file = tmp_path / "signal_engine.py"
+    signal_file.write_text(
+        "\n".join(
+            [
+                '"""Generated signal engine."""',
+                import_line,
+                "class SignalEngine:",
+                "    def generate(self, *args, **kwargs):",
+                call_line,
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="not allowed inside generated strategy code"):
+        _load_module_from_file(signal_file, _module_name())
+
+
+@pytest.mark.parametrize(
+    "import_line,body_line",
+    [
+        # The reason module-level imports are not rejected outright: the shipped
+        # skill examples carry these beside helpers the runner never reaches.
+        ("import requests", "        return []"),
+        ("from requests import get", "        return []"),
+        # Ordinary strategy imports, used on the executed path.
+        ("import pandas as pd", "        return pd.DataFrame()"),
+        ("from src.quantlib.options import bs_price", "        return bs_price(1, 1, 1, 1, 1)"),
+        ("from os import path", "        return path.join('a', 'b')"),
+    ],
+    ids=["unused_requests", "unused_from_requests", "pandas_alias", "quantlib", "os_path"],
+)
+def test_signal_engine_alias_check_leaves_legitimate_imports_alone(
+    tmp_path, import_line, body_line,
+) -> None:
+    """The alias check must cost neither the unused import nor the math layer."""
+    signal_file = tmp_path / "signal_engine.py"
+    signal_file.write_text(
+        "\n".join(
+            [
+                '"""Generated signal engine."""',
+                import_line,
+                "class SignalEngine:",
+                "    def generate(self, *args, **kwargs):",
+                body_line,
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    _load_module_from_file(signal_file, _module_name())
+
+
 def test_signal_engine_rejects_forbidden_op_in_transitively_called_helper(tmp_path) -> None:
     # Payload hidden in a module-level helper that generate() calls — the
     # reachability walk must follow the call and reject it.
