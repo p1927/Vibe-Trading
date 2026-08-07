@@ -220,3 +220,73 @@ class TestTechnicalIndicatorToolIntegration:
         assert result["indicators"]["bollinger"] is None
         # But SMA 20 should be null, SMA 50/200 null — only EMA 20 needs 20 bars, null too
         assert result["indicators"]["sma_20"] is None
+
+    def test_execute_records_list(self, monkeypatch):
+        """fetch_market_data returns a records list (new loader contract)."""
+        records = [
+            {
+                "date": (
+                    pd.Timestamp("2024-01-01") + pd.Timedelta(days=i)
+                ).strftime("%Y-%m-%d"),
+                "close": float(100 + i),
+                "open": float(99 + i),
+            }
+            for i in range(250)
+        ]
+        monkeypatch.setattr(
+            "src.tools.technical_indicator_tool.fetch_market_data",
+            lambda **kw: {"AAPL": records},
+        )
+        tool = TechnicalIndicatorTool()
+        result = json.loads(tool.execute(symbol="AAPL"))
+        assert result["ok"] is True
+        assert result["latest_close"] == 349.0
+        assert result["latest_date"] == (
+            pd.Timestamp("2024-01-01") + pd.Timedelta(days=249)
+        ).strftime("%Y-%m-%d")
+        assert result["indicators"]["rsi_14"] is not None
+        assert result["indicators"]["sma_200"] is not None
+
+    def test_execute_truncation_envelope(self, monkeypatch):
+        """fetch_market_data returns the cap_rows truncation envelope dict."""
+        records = [
+            {
+                "date": (
+                    pd.Timestamp("2024-01-01") + pd.Timedelta(days=i)
+                ).strftime("%Y-%m-%d"),
+                "close": float(100 + i),
+            }
+            for i in range(250)
+        ]
+        monkeypatch.setattr(
+            "src.tools.technical_indicator_tool.fetch_market_data",
+            lambda **kw: {
+                "AAPL": {
+                    "rows": 400,
+                    "returned": len(records),
+                    "truncated": True,
+                    "policy": "every-2nd-row",
+                    "hint": "narrow the date range",
+                    "data": records,
+                }
+            },
+        )
+        tool = TechnicalIndicatorTool()
+        result = json.loads(tool.execute(symbol="AAPL"))
+        assert result["ok"] is True
+        assert result["latest_close"] == 349.0
+        assert result["latest_date"] == (
+            pd.Timestamp("2024-01-01") + pd.Timedelta(days=249)
+        ).strftime("%Y-%m-%d")
+        assert result["indicators"]["sma_200"] is not None
+
+    def test_execute_empty_records_list(self, monkeypatch):
+        """fetch_market_data returns an empty records list → error."""
+        monkeypatch.setattr(
+            "src.tools.technical_indicator_tool.fetch_market_data",
+            lambda **kw: {"AAPL": []},
+        )
+        tool = TechnicalIndicatorTool()
+        result = json.loads(tool.execute(symbol="AAPL"))
+        assert result["ok"] is False
+        assert "No data" in result["error"]

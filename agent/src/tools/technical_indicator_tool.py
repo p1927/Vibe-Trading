@@ -99,6 +99,34 @@ def _compute_bollinger(
     }
 
 
+def _records_to_frame(data: Any) -> pd.DataFrame | None:
+    """Coerce a ``fetch_market_data`` per-symbol payload into a DataFrame.
+
+    ``fetch_market_data`` returns per-symbol either a list of row dicts
+    (``orient="records"``) or — when the row count exceeds ``max_rows`` — a
+    ``cap_rows`` truncation envelope ``{"data": [...], "truncated": True}``.
+    Legacy loaders returned DataFrames directly. All three shapes are
+    accepted here so the tool never assumes one contract.
+    """
+    if data is None:
+        return None
+    if isinstance(data, pd.DataFrame):
+        return data
+    if isinstance(data, dict) and isinstance(data.get("data"), list):
+        # cap_rows truncation envelope: {"data": [row dicts], "truncated": True}.
+        data = data["data"]
+    if isinstance(data, list):
+        return pd.DataFrame(data) if data else None
+    if isinstance(data, dict):
+        if data and all(
+            not hasattr(value, "__len__") or isinstance(value, (str, bytes))
+            for value in data.values()
+        ):
+            return pd.DataFrame([data])  # a single record dict
+        return pd.DataFrame(data)  # dict of column arrays
+    return None
+
+
 class TechnicalIndicatorTool(BaseTool):
     """Compute common technical indicators for a symbol.
 
@@ -172,19 +200,15 @@ class TechnicalIndicatorTool(BaseTool):
             logger.debug("fetch_market_data failed for %s: %s", symbol, exc)
             return json.dumps({"ok": False, "error": f"Failed to fetch data: {exc}"})
 
-        df = data.get(symbol)
+        df = _records_to_frame(data.get(symbol))
         if df is None or df.empty:
             return json.dumps({"ok": False, "error": f"No data returned for {symbol}"})
 
-        close = df.get("close") if isinstance(df, pd.DataFrame) else None
-        if close is None:
-            # Some loaders return a dict-like structure; try common key names.
-            if hasattr(df, "to_dict"):
-                d = df.to_dict() if callable(df.to_dict) else dict(df)
-                for key in ("close", "Close", "CLOSE", "adj_close"):
-                    if key in d:
-                        close = pd.Series(d[key])
-                        break
+        close = None
+        for key in ("close", "Close", "CLOSE", "adj_close"):
+            if key in df.columns:
+                close = df[key]
+                break
         if close is None:
             return json.dumps({"ok": False, "error": "No close price column in data"})
 
@@ -202,7 +226,18 @@ class TechnicalIndicatorTool(BaseTool):
         indicators[f"ema_{_EMA_PERIOD}"] = _compute_ema(close, _EMA_PERIOD)
 
         latest_close = float(close.iloc[-1]) if len(close) > 0 else None
-        latest_date = str(close.index[-1])[:10] if hasattr(close, "index") and len(close) > 0 else None
+        date_col = next(
+            (
+                k
+                for k in ("date", "Date", "datetime", "timestamp", "trade_date")
+                if k in df.columns
+            ),
+            None,
+        )
+        if date_col is not None and len(df) > 0:
+            latest_date = str(df[date_col].iloc[-1])[:10]
+        else:
+            latest_date = str(close.index[-1])[:10] if len(close) > 0 else None
 
         return json.dumps(
             {
