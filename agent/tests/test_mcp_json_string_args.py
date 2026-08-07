@@ -192,3 +192,89 @@ def test_non_json_string_still_fails_cleanly(mcp_server) -> None:
     # If this fastmcp version returns an error envelope instead of raising,
     # it must still be a failure, not a coerced success.
     assert getattr(result, "isError", False) or '"status": "error"' in _text(result)
+
+
+# ---------------------------------------------------------------------------
+# Mirrored tools (issue #987, second half)
+#
+# prediction_market / research_papers / etf_holdings / get_institutional_holdings
+# are registered with the tool class' own JSON Schema and have no Python
+# signature, so fastmcp never validates their arguments and the BeforeValidator
+# above cannot be attached. A JSON-string argument therefore reached the tool as
+# a str instead of being rejected. _mirrored_call_params decodes off the
+# declared type instead, which covers these and any mirrored tool added later.
+# ---------------------------------------------------------------------------
+
+_ARRAY = {"type": "array", "items": {"type": "string"}}
+_OBJECT = {"type": "object"}
+_STRING = {"type": "string"}
+_OPTIONAL_ARRAY = {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}]}
+
+_MIRRORED_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ids": _ARRAY,
+        "categories": _ARRAY,
+        "paper_ids": _ARRAY,
+        "filters": _OBJECT,
+        "sections": _OPTIONAL_ARRAY,
+        "mode": _STRING,
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "param,sent,expected",
+    [
+        ("ids", '["12345", "67890"]', ["12345", "67890"]),
+        ("categories", '["q-fin.PM"]', ["q-fin.PM"]),
+        ("paper_ids", '["2401.00001"]', ["2401.00001"]),
+        ("sections", '["profile"]', ["profile"]),
+        ("filters", '{"market": "us"}', {"market": "us"}),
+        # Already-correct containers pass through untouched.
+        ("ids", ["12345"], ["12345"]),
+        # A declared string is never JSON-decoded, even when it looks like one.
+        ("mode", '["not", "a", "list"]', '["not", "a", "list"]'),
+        # A non-JSON string on a container parameter is left for the tool to
+        # reject, rather than being mangled here.
+        ("ids", "not-json", "not-json"),
+    ],
+    ids=[
+        "ids", "categories", "paper_ids", "sections", "filters",
+        "real_list_untouched", "string_param_untouched", "non_json_passthrough",
+    ],
+)
+def test_mirrored_call_params_decodes_json_container_strings(
+    mcp_server, param, sent, expected,
+) -> None:
+    out = mcp_server._mirrored_call_params(_MIRRORED_SCHEMA, {param: sent})
+    assert out == {param: expected}
+
+
+def test_mirrored_call_params_still_drops_nulls_and_undeclared(mcp_server) -> None:
+    """The decode must not cost the filtering the function already did."""
+    out = mcp_server._mirrored_call_params(
+        _MIRRORED_SCHEMA, {"ids": '["1"]', "mode": None, "not_declared": '["x"]'},
+    )
+    assert out == {"ids": ["1"]}
+
+
+def test_live_mirrored_tools_declare_the_array_params_this_covers(mcp_server) -> None:
+    """Pin that the three parameters #993 missed are really array-typed.
+
+    If a tool renames or retypes them the coercion silently stops applying, so
+    this reads the live schema rather than trusting the list above.
+    """
+    tools = asyncio.run(mcp_server.mcp.list_tools())
+    by_name = {t.name: t for t in tools}
+    for tool_name, params in (
+        ("prediction_market", ("ids",)),
+        ("research_papers", ("categories", "paper_ids")),
+    ):
+        assert tool_name in by_name, f"{tool_name} is not on the MCP surface"
+        properties = by_name[tool_name].parameters.get("properties") or {}
+        for param in params:
+            assert param in properties, f"{tool_name}.{param} is gone"
+            assert mcp_server._declares_json_container(properties[param]), (
+                f"{tool_name}.{param} is no longer a JSON container"
+            )

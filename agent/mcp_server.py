@@ -1961,7 +1961,40 @@ def _mirrored_call_params(schema: dict[str, Any], kwargs: dict[str, Any]) -> dic
         The filtered keyword arguments to forward to the registry.
     """
     declared = schema.get("properties") or {}
-    return {k: v for k, v in kwargs.items() if v is not None and k in declared}
+    params: dict[str, Any] = {}
+    for key, value in kwargs.items():
+        if value is None or key not in declared:
+            continue
+        # A mirrored tool has no Python signature for fastmcp to validate
+        # against, so the JSON-string arguments the BeforeValidator decodes on
+        # the annotated wrappers arrive here untouched and would reach the tool
+        # as a str where it expects a list. Decode off the DECLARED type, which
+        # covers every mirrored tool and every future one, rather than the
+        # three array parameters that happen to exist today
+        # (prediction_market.ids, research_papers.categories/paper_ids).
+        if _declares_json_container(declared[key]):
+            value = _coerce_json_string(value)
+        params[key] = value
+    return params
+
+
+def _declares_json_container(prop_schema: Any) -> bool:
+    """Return whether a property's schema admits a JSON array or object.
+
+    Args:
+        prop_schema: One entry from a JSON Schema ``properties`` map.
+
+    Returns:
+        True when the declared type is ``array``/``object``, including when it
+        appears inside an ``anyOf`` union.
+    """
+    if not isinstance(prop_schema, dict):
+        return False
+    types = {prop_schema.get("type")}
+    for variant in prop_schema.get("anyOf") or ():
+        if isinstance(variant, dict):
+            types.add(variant.get("type"))
+    return bool(types & {"array", "object"})
 
 
 def _register_mirrored_tool(tool_cls: Any) -> bool:
