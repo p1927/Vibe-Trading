@@ -285,6 +285,12 @@ _PROSPECTIVE_LEVEL_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+# A markdown ordered-list marker ("1. **持仓**: …", "10. 事件") is not a price:
+# the standalone integer + period at line start was parsed as a price claim and
+# rejected the BLDP.TO draft on its second attempt (#1.0 vs OHLC). Span-local:
+# the period must not be followed by a digit, so "3.50" and "1.5" stay checked.
+_ORDERED_LIST_MARKER_RE = re.compile(r"(?m)^\s*\d+\.(?!\d)")
+
 # Full-width brackets and enumeration commas delimit prose clauses. ASCII
 # parentheses are deliberately not separators: an explicit derivation such as
 # "(8.5 - 7.9) / 2" must stay in one segment for the formula check.
@@ -1894,6 +1900,7 @@ class GroundingLedger:
         masked = _LABELLED_SCORE_RE.sub(" ", masked)
         masked = _INDICATOR_VALUE_RE.sub(" ", masked)
         masked = _PROSPECTIVE_LEVEL_RE.sub(" ", masked)
+        masked = _ORDERED_LIST_MARKER_RE.sub(" ", masked)
         without_dates = _QUANTITY_WITH_UNIT_RE.sub(" ", masked)
         values: list[float] = []
         for match in _NUMBER_RE.finditer(without_dates):

@@ -1332,6 +1332,24 @@ def test_wan_quantities_are_not_read_as_price_claims(segment: str) -> None:
     assert GroundingLedger._numbers_without_dates_or_percent(segment) == []
 
 
+# A markdown ordered-list item number ("1. 持仓", "10. 事件") is not a price.
+# The standalone integer + period at line start was parsed as a price claim of
+# 1.0 and rejected the BLDP.TO draft on its second attempt (Aug 2026).
+_ORDERED_LIST_MARKERS = [
+    "1. **持仓**",
+    "1. 持仓",
+    "2. GTC 单",
+    "10. 事件",
+    "   1. 持仓",
+]
+
+
+@pytest.mark.parametrize("segment", _ORDERED_LIST_MARKERS, ids=range(len(_ORDERED_LIST_MARKERS)))
+def test_ordered_list_markers_are_not_read_as_price_claims(segment: str) -> None:
+    """An ordered-list item number asserts nothing about observed data."""
+    assert GroundingLedger._numbers_without_dates_or_percent(segment) == []
+
+
 # The other side of the same guard. Every entry here is an assertion about what
 # the instrument did, and each must survive the mask above — otherwise the
 # relaxation is a way to state a price without being checked.
@@ -1352,6 +1370,12 @@ _ASSERTIONS_THAT_MUST_STAY_CHECKED = [
     # A 万 quantity must not hide a nearby observed quote (span-local):
     # the volume is masked, the close beside it stays checked.
     ("收盘 0.49，量 119 万", [0.49]),
+    # An ordered-list marker must not shield the real price beside it:
+    # "1." and the 500-share quantity mask, the C$3.72 quote stays checked.
+    ("1. 持仓: 500 股 @ C$3.72", [3.72]),
+    # A decimal at line start is not a list marker ("3.50" has a digit after
+    # the period).
+    ("3.50 支撑位", [3.5]),
 ]
 
 
