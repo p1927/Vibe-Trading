@@ -139,6 +139,11 @@ def test_a_dataclass_result_serializes_field_by_field(tool):
 
 
 def test_a_series_envelope_reaches_the_function_with_its_index(tool):
+    # compute_half_life lazy-imports statsmodels; without the 'stats' extra the
+    # envelope would be judged on an ImportError, not on decoding. The series
+    # envelope stays covered on a base install via the dataframe test below,
+    # whose `holdings` argument is also a `__series__` envelope.
+    pytest.importorskip("statsmodels", reason="the optional 'statsmodels' package is not installed")
     result = call(
         tool, action="call", module="timeseries", function="compute_half_life",
         kwargs={"spread": {"__series__": {

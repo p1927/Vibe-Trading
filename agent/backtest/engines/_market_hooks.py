@@ -34,6 +34,9 @@ _MARKET_PATTERNS = [
     (re.compile(r"^\d{6}\.(KS|KQ)$", re.I), "kr_equity"),
     (re.compile(r"^[A-Z]+-USDT$", re.I), "crypto"),
     (re.compile(r"^[A-Z]+/USDT$", re.I), "crypto"),
+    # yfinance's native crypto spelling (BTC-USD, ETH-USD). Distinct from
+    # USDT pairs only in the quote currency; both belong to CryptoEngine.
+    (re.compile(r"^[A-Z]+-USD$", re.I), "crypto"),
     # China futures: product+delivery.exchange (e.g. IF2406.CFFEX, rb2410.SHFE)
     (re.compile(r"^[A-Za-z]{1,2}\d{3,4}\.(ZCE|DCE|SHFE|INE|CFFEX|GFEX)$", re.I), "futures"),
     # Global futures: product+month-code (e.g. ESZ4, CLF25, GCM2025)
@@ -45,6 +48,12 @@ _MARKET_PATTERNS = [
     # Forex pairs: XXX/YYY or XXXXXX.FX
     (re.compile(r"^[A-Z]{3}/[A-Z]{3}$"), "forex"),
     (re.compile(r"^[A-Z]{6}\.FX$"), "forex"),
+    # Bare US tickers (AAPL, MSFT, SPY, T, ...). Must stay LAST so every
+    # suffixed equity / futures / crypto / forex form above wins first.
+    # ``{1,5}`` covers every standard US ticker length while 6-char bare
+    # forex (EURUSD) and longer crypto codes (BTCUSDT) fall through to the
+    # a_share default.
+    (re.compile(r"^[A-Z]{1,5}$", re.I), "us_equity"),
 ]
 
 _CHINA_EXCHANGES = {"CFFEX", "SHFE", "DCE", "ZCE", "INE", "GFEX"}
@@ -126,8 +135,9 @@ def _detect_market(code: str) -> str:
         code: Ticker / symbol string.
 
     Returns:
-        Market type (a_share/us_equity/hk_equity/crypto/futures/forex);
-        unknown defaults to ``a_share``.
+        Market type (a_share/us_equity/hk_equity/crypto/futures/forex).
+        Bare 1-5 letter alphabetic tickers resolve to ``us_equity``;
+        any other unknown format defaults to ``a_share``.
     """
     for pattern, market in _MARKET_PATTERNS:
         if pattern.match(code):

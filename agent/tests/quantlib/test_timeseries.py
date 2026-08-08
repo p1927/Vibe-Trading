@@ -8,6 +8,8 @@ hand-picked seed, so a lucky draw cannot make them pass.
 
 from __future__ import annotations
 
+import importlib.util
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -28,6 +30,15 @@ from src.quantlib.timeseries import (
 )
 
 pytestmark = pytest.mark.unit
+
+# The functions under test lazy-import statsmodels and raise an actionable
+# ImportError on a base install (that path has its own test below), so every
+# test that calls one must skip -- not fail -- when the 'stats' extra is
+# absent. CI installs the extra, so there these tests actually run.
+requires_statsmodels = pytest.mark.skipif(
+    importlib.util.find_spec("statsmodels") is None,
+    reason="the optional 'statsmodels' package is not installed",
+)
 
 NULL_CASE_SEEDS = [0, 1, 2, 3, 4, 5, 6, 7]
 
@@ -69,6 +80,7 @@ def random_walk(n: int, seed: int) -> np.ndarray:
 # ─── ADF ───
 
 
+@requires_statsmodels
 def test_adf_rejects_unit_root_on_stationary_series():
     result = adf_test(pd.Series(ar1(phi=0.5, n=1500, seed=0)))
 
@@ -77,6 +89,7 @@ def test_adf_rejects_unit_root_on_stationary_series():
     assert result["adf_statistic"] < result["critical_values"]["1%"]
 
 
+@requires_statsmodels
 @pytest.mark.parametrize("seed", NULL_CASE_SEEDS)
 def test_adf_fails_to_reject_on_random_walk(seed):
     result = adf_test(pd.Series(random_walk(1500, seed)))
@@ -85,6 +98,7 @@ def test_adf_fails_to_reject_on_random_walk(seed):
     assert result["p_value"] > 0.05
 
 
+@requires_statsmodels
 def test_adf_significance_level_is_configurable():
     walk = pd.Series(random_walk(1500, seed=7))  # p ≈ 0.0625, straddles the two levels
 
@@ -92,6 +106,7 @@ def test_adf_significance_level_is_configurable():
     assert adf_test(walk, significance=0.10)["is_stationary"] is True
 
 
+@requires_statsmodels
 def test_adf_return_shape():
     result = adf_test(pd.Series(ar1(0.5, 500, seed=1)))
 
@@ -100,6 +115,7 @@ def test_adf_return_shape():
     assert isinstance(result["lags_used"], int)
 
 
+@requires_statsmodels
 def test_adf_rejects_too_short_a_series():
     with pytest.raises(ValueError, match="at least 2"):
         adf_test(pd.Series([1.0]))
@@ -108,6 +124,7 @@ def test_adf_rejects_too_short_a_series():
 # ─── Cointegration ───
 
 
+@requires_statsmodels
 def test_cointegration_found_on_constructed_pair():
     # y and x are both I(1) random walks, but y - 2.5x is a stationary AR(1),
     # so the pair is cointegrated by construction.
@@ -120,6 +137,7 @@ def test_cointegration_found_on_constructed_pair():
     assert result["p_value"] < 0.01
 
 
+@requires_statsmodels
 @pytest.mark.parametrize("seed", NULL_CASE_SEEDS)
 def test_cointegration_not_found_on_independent_walks(seed):
     rng = np.random.default_rng(seed)
@@ -132,6 +150,7 @@ def test_cointegration_not_found_on_independent_walks(seed):
     assert result["p_value"] > 0.05
 
 
+@requires_statsmodels
 def test_cointegration_return_shape():
     x = random_walk(400, seed=12)
     result = cointegration_test(pd.Series(2.0 * x + ar1(0.5, 400, 13)), pd.Series(x))
@@ -140,11 +159,13 @@ def test_cointegration_return_shape():
     assert set(result["critical_values"]) == {"1%", "5%", "10%"}
 
 
+@requires_statsmodels
 def test_cointegration_rejects_mismatched_lengths():
     with pytest.raises(ValueError, match="equal-length"):
         cointegration_test(pd.Series(np.arange(10.0)), pd.Series(np.arange(11.0)))
 
 
+@requires_statsmodels
 def test_cointegration_refuses_to_join_two_different_indices_positionally():
     # Two same-length legs on disjoint indices used to be zipped positionally,
     # which reports a spurious cointegration on data that never overlapped. The
@@ -159,6 +180,7 @@ def test_cointegration_refuses_to_join_two_different_indices_positionally():
         find_hedge_ratio(a, b)
 
 
+@requires_statsmodels
 def test_cointegration_still_accepts_a_shared_non_default_index():
     dates = pd.date_range("2020-01-01", periods=400, freq="D")
     x = random_walk(400, seed=16)
@@ -176,6 +198,7 @@ def test_cointegration_still_accepts_a_shared_non_default_index():
 # ─── Hedge ratio and half-life ───
 
 
+@requires_statsmodels
 def test_find_hedge_ratio_recovers_known_beta():
     true_beta, true_alpha = 2.5, 1.0
     x = random_walk(3000, seed=20)
@@ -191,6 +214,7 @@ def test_find_hedge_ratio_recovers_known_beta():
     assert result["half_life"] > 0
 
 
+@requires_statsmodels
 def test_find_hedge_ratio_matches_the_closed_form_ols():
     # Independent reference, not a statsmodels round-trip: the simple-regression
     # slope is cov(x, y) / var(x) and the intercept is ybar - beta * xbar.
@@ -205,6 +229,7 @@ def test_find_hedge_ratio_matches_the_closed_form_ols():
     assert result["spread_std"] == pytest.approx((y - beta * x).std(ddof=1), rel=1e-12)
 
 
+@requires_statsmodels
 def test_find_hedge_ratio_return_shape():
     x = random_walk(500, seed=22)
     result = find_hedge_ratio(pd.Series(1.5 * x + ar1(0.5, 500, 23)), pd.Series(x))
@@ -213,6 +238,7 @@ def test_find_hedge_ratio_return_shape():
     assert all(isinstance(v, float) for v in result.values())
 
 
+@requires_statsmodels
 def test_compute_half_life_recovers_ou_process():
     # For an AR(1) with coefficient phi the continuous-time half-life is
     # -ln(2)/ln(phi); the delta-regression estimator targets -ln(2)/(phi-1),
@@ -225,6 +251,7 @@ def test_compute_half_life_recovers_ou_process():
     assert estimated == pytest.approx(expected, rel=0.15)
 
 
+@requires_statsmodels
 def test_compute_half_life_is_infinite_for_a_random_walk():
     # A random walk never reverts; the estimated reversion coefficient hovers
     # around zero, and a non-negative one means "no reversion", not "instant".
@@ -233,6 +260,7 @@ def test_compute_half_life_is_infinite_for_a_random_walk():
     assert all(v > 100 for v in values), values
 
 
+@requires_statsmodels
 def test_compute_half_life_aligns_around_interior_nans():
     # Dropping levels and deltas independently would mis-pair rows after a gap.
     series = pd.Series(ar1(phi=0.9, n=800, seed=31))
@@ -241,11 +269,13 @@ def test_compute_half_life_aligns_around_interior_nans():
     assert compute_half_life(series) == pytest.approx(-np.log(2) / np.log(0.9), rel=0.35)
 
 
+@requires_statsmodels
 def test_compute_half_life_rejects_too_short_a_series():
     with pytest.raises(ValueError, match="at least 3"):
         compute_half_life(pd.Series([1.0, 2.0]))
 
 
+@requires_statsmodels
 def test_degenerate_flat_regressors_raise_instead_of_leaking_an_index_error():
     # `sm.add_constant` defaults to has_constant='skip', so a already-constant
     # column leaves the design one column wide and the slope lookup used to blow
@@ -260,6 +290,7 @@ def test_degenerate_flat_regressors_raise_instead_of_leaking_an_index_error():
 # ─── Granger ───
 
 
+@requires_statsmodels
 def test_granger_detects_a_lagged_driver():
     rng = np.random.default_rng(40)
     n = 600
@@ -273,6 +304,7 @@ def test_granger_detects_a_lagged_driver():
     assert result[1] < 0.01
 
 
+@requires_statsmodels
 def test_granger_finds_nothing_between_independent_noise():
     rng = np.random.default_rng(41)
     frame = pd.DataFrame({"y": rng.standard_normal(600), "x": rng.standard_normal(600)})
@@ -282,6 +314,7 @@ def test_granger_finds_nothing_between_independent_noise():
     assert all(p > 0.05 for p in result.values()), result
 
 
+@requires_statsmodels
 def test_granger_stays_silent_on_stdout(capsys):
     # statsmodels >= 0.14 prints its whole test table unconditionally.
     rng = np.random.default_rng(42)
@@ -292,6 +325,7 @@ def test_granger_stays_silent_on_stdout(capsys):
     assert capsys.readouterr().out == ""
 
 
+@requires_statsmodels
 def test_granger_rejects_a_missing_column():
     frame = pd.DataFrame({"y": [1.0, 2.0, 3.0]})
     with pytest.raises(KeyError, match="not in data"):
@@ -347,6 +381,7 @@ def test_heteroscedasticity_advice_never_contradicts_the_verdict():
     assert saw_bp_only, "no BP-only rejection in 200 seeds; the regression is not being exercised"
 
 
+@requires_statsmodels
 def test_autocorrelation_detected_in_ar1_residuals():
     result = autocorrelation_test(pd.Series(ar1(phi=0.8, n=1000, seed=60)), lags=10)
 
@@ -356,6 +391,7 @@ def test_autocorrelation_detected_in_ar1_residuals():
     assert len(result["ljung_box_p"]) == 10
 
 
+@requires_statsmodels
 def test_autocorrelation_absent_in_white_noise():
     # `has_autocorrelation` is any-of-`lags`, so on white noise it fires on a
     # minority of seeds by construction (see the calibration test below).
@@ -371,6 +407,7 @@ def test_autocorrelation_absent_in_white_noise():
     assert flagged <= 12, f"{flagged}/40 white-noise paths flagged; expected roughly 5"
 
 
+@requires_statsmodels
 def test_ljung_box_any_lag_rule_inflates_the_false_positive_rate():
     # Characterisation, not aspiration: the promoted `any(p < significance)`
     # rule runs `lags` hypothesis tests at once, so its family-wise error rate
@@ -386,12 +423,14 @@ def test_ljung_box_any_lag_rule_inflates_the_false_positive_rate():
     assert lag10_flags > lag1_flags, (lag1_flags, lag10_flags)
 
 
+@requires_statsmodels
 def test_autocorrelation_flags_alternating_series_as_negative():
     alternating = pd.Series(np.tile([1.0, -1.0], 200) + np.random.default_rng(62).standard_normal(400) * 0.1)
 
     assert autocorrelation_test(alternating, lags=5)["dw_interpretation"] == "negative autocorrelation"
 
 
+@requires_statsmodels
 def test_vif_flags_a_collinear_column():
     rng = np.random.default_rng(70)
     a = rng.standard_normal(500)
@@ -407,6 +446,7 @@ def test_vif_flags_a_collinear_column():
     assert by_feature["c"] == "normal"
 
 
+@requires_statsmodels
 def test_vif_thresholds_are_configurable():
     rng = np.random.default_rng(71)
     frame = pd.DataFrame({"a": rng.standard_normal(300), "b": rng.standard_normal(300)})
@@ -418,6 +458,7 @@ def test_vif_thresholds_are_configurable():
     assert set(vif_test(frame)["concern"]) == {"normal"}
 
 
+@requires_statsmodels
 def test_vif_thresholds_are_strict_inequalities():
     # A VIF landing exactly on the threshold is NOT flagged. Pinned because the
     # docstring previously said "at or above", which is the opposite rule.
@@ -430,6 +471,7 @@ def test_vif_thresholds_are_strict_inequalities():
     assert vif_test(frame, severe_threshold=exact / 2, watch_threshold=exact / 4)["concern"].iloc[0] == "severe"
 
 
+@requires_statsmodels
 def test_vif_rejects_an_empty_frame():
     with pytest.raises(ValueError, match="at least one column"):
         vif_test(pd.DataFrame())
@@ -683,6 +725,7 @@ def _two_regime_series(seed=3, calm_len=200, turbulent_len=50, cycles=3,
     return pd.Series(np.concatenate(segments)), np.array(truth)
 
 
+@requires_statsmodels
 def test_markov_regime_recovers_known_volatilities():
     series, _ = _two_regime_series(seed=3)
     result = fit_markov_regime(series)
@@ -692,6 +735,7 @@ def test_markov_regime_recovers_known_volatilities():
     assert result["regime_vols"][1] == pytest.approx(0.030, rel=0.15)
 
 
+@requires_statsmodels
 def test_markov_regimes_are_ordered_calmest_first_regardless_of_fit_order():
     # Label switching is the classic reproducibility trap: the EM fit returns
     # states in an arbitrary order. Starting the series in the turbulent regime
@@ -708,6 +752,7 @@ def test_markov_regimes_are_ordered_calmest_first_regardless_of_fit_order():
         assert vols[0] < vols[1]
 
 
+@requires_statsmodels
 def test_markov_transition_matrix_is_row_stochastic():
     series, _ = _two_regime_series(seed=5)
     transition = fit_markov_regime(series)["transition_matrix"]
@@ -717,6 +762,7 @@ def test_markov_transition_matrix_is_row_stochastic():
     assert np.all(transition >= 0.0)
 
 
+@requires_statsmodels
 def test_markov_transition_rows_read_from_today_to_tomorrow():
     # The calm regime here lasts 200 periods and the turbulent one 50, so the
     # calm row's diagonal must be the larger of the two. Reading the matrix
@@ -729,6 +775,7 @@ def test_markov_transition_rows_read_from_today_to_tomorrow():
     assert result["expected_durations"][0] > result["expected_durations"][1]
 
 
+@requires_statsmodels
 def test_markov_expected_durations_track_the_true_segment_lengths():
     series, _ = _two_regime_series(seed=13, calm_len=180, turbulent_len=60)
     durations = fit_markov_regime(series)["expected_durations"]
@@ -737,6 +784,7 @@ def test_markov_expected_durations_track_the_true_segment_lengths():
     assert durations[1] == pytest.approx(60, rel=0.5)
 
 
+@requires_statsmodels
 def test_markov_identifies_the_regime_the_series_ends_in():
     # Ends in a turbulent segment.
     series, truth = _two_regime_series(seed=17, start_calm=True)
@@ -746,6 +794,7 @@ def test_markov_identifies_the_regime_the_series_ends_in():
     assert result["current_regime_probability"] > 0.8
 
 
+@requires_statsmodels
 def test_markov_smoothed_probabilities_are_a_distribution_on_the_input_index():
     series, _ = _two_regime_series(seed=19)
     result = fit_markov_regime(series)
@@ -756,6 +805,7 @@ def test_markov_smoothed_probabilities_are_a_distribution_on_the_input_index():
     assert smoothed.sum(axis=1).to_numpy() == pytest.approx(np.ones(len(series)), abs=1e-8)
 
 
+@requires_statsmodels
 def test_markov_smoothed_probabilities_track_the_true_state():
     series, truth = _two_regime_series(seed=23)
     smoothed = fit_markov_regime(series)["smoothed_probabilities"]
@@ -765,12 +815,14 @@ def test_markov_smoothed_probabilities_track_the_true_state():
     assert (inferred == truth).mean() > 0.9
 
 
+@requires_statsmodels
 def test_markov_rejects_a_single_regime():
     series, _ = _two_regime_series(seed=29)
     with pytest.raises(ValueError, match="at least 2"):
         fit_markov_regime(series, n_regimes=1)
 
 
+@requires_statsmodels
 def test_markov_rejects_a_series_too_short_to_mean_anything():
     with pytest.raises(ValueError, match="at least 50"):
         fit_markov_regime(pd.Series(np.random.default_rng(31).normal(0, 0.01, 40)))
