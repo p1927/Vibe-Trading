@@ -206,13 +206,18 @@ _AGGREGATE_AMOUNT_RE = re.compile(
 # two window lengths survive. ASCII units carry a trailing word boundary so
 # "120 more" is not read as a quantity; the CJK branch cannot, because 周 and
 # 内 are both word characters and "1–4 周内" must still mask.
+#
+# Bare 万/萬 is a ten-thousand multiplier and, in the trading-plan domain, is a
+# quantity (volume/market-cap/money), never a per-share price: "量 5–10 万" and
+# "119 万" must not be read as OHLC claims. Span-local: the unit must follow
+# the number, so "收盘 0.49，量 119 万" still masks only the volume.
 _QUANTITY_WITH_UNIT_RE = re.compile(
     r"\d[\d,]*(?:\.\d+)?"
     r"(?:\s*/\s*\d[\d,]*(?:\.\d+)?)*"
     r"(?:\s*[-–—~至]\s*\d[\d,]*(?:\.\d+)?)?"
     r"\s*[-–—]?\s*"
     r"(?:"
-    r"(?:股|手|张|份|口|笔|倍|个月|周|天|日|年|次)"
+    r"(?:股|手|张|份|口|笔|倍|个月|周|天|日|年|次|万|萬)"
     r"|(?:shares?|contracts?|lots?|units?|sessions?|bars?|periods?|"
     r"wks?|weeks?|months?|days?|years?|yrs?)\b"
     r")",

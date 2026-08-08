@@ -1313,6 +1313,25 @@ def test_plan_levels_are_not_read_as_observed_price_claims(segment: str) -> None
     assert GroundingLedger._numbers_without_dates_or_percent(segment) == []
 
 
+# Bare 万/萬 (ten-thousands) is a quantity, never a per-share price: volume
+# figures written without the 股 unit ("量 5–10 万", "119 万") were parsed as
+# OHLC claims and rejected the FLT.TO draft on the first attempt (Aug 2026).
+_VOLUME_QUANTITIES_IN_WAN = [
+    "量 5–10 万",
+    "量 5-10 万",
+    "119 万",
+    "量 119 萬",
+    "量 150 万股",
+    "量 5–10 万股",
+]
+
+
+@pytest.mark.parametrize("segment", _VOLUME_QUANTITIES_IN_WAN, ids=range(len(_VOLUME_QUANTITIES_IN_WAN)))
+def test_wan_quantities_are_not_read_as_price_claims(segment: str) -> None:
+    """A volume in ten-thousands is not an observed price claim."""
+    assert GroundingLedger._numbers_without_dates_or_percent(segment) == []
+
+
 # The other side of the same guard. Every entry here is an assertion about what
 # the instrument did, and each must survive the mask above — otherwise the
 # relaxation is a way to state a price without being checked.
@@ -1330,6 +1349,9 @@ _ASSERTIONS_THAT_MUST_STAY_CHECKED = [
     # currency prefix and no marker/operator must stay checked.
     ("现价 $5.97", [5.97]),
     ("开盘 $6.80 最高 $7.18 最低 $6.68", [6.80, 7.18, 6.68]),
+    # A 万 quantity must not hide a nearby observed quote (span-local):
+    # the volume is masked, the close beside it stays checked.
+    ("收盘 0.49，量 119 万", [0.49]),
 ]
 
 
