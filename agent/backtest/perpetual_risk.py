@@ -395,7 +395,14 @@ class CrossMarginRiskModel:
             risk.unrealized_pnl for risk in risks
         )
         maintenance = sum(risk.maintenance_margin for risk in risks)
-        is_liquidated = margin_balance <= maintenance
+        # An empty cross account has no maintenance requirement.  Zero is a
+        # valid, flat account; only a negative residual balance is insolvent.
+        # Accounts with positions keep the usual inclusive maintenance test.
+        is_liquidated = (
+            bool(risks) and margin_balance <= maintenance
+        ) or (
+            not risks and margin_balance < 0
+        )
         liquidation_targets = (
             tuple(position.symbol for position in account.positions)
             if is_liquidated
