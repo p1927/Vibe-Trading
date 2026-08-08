@@ -263,15 +263,15 @@ _INDICATOR_VALUE_RE = re.compile(
 _PROSPECTIVE_LEVEL_RE = re.compile(
     r"(?:"
     # (a) comparison operator immediately before the number
-    r"(?:>=|<=|≥|≤|>|<|大于|小于|不低于|不高于|高于|低于)\s*[-+]?\d[\d,]*(?:\.\d+)?"
+    r"(?:>=|<=|≥|≤|>|<|大于|小于|不低于|不高于|高于|低于)\s*\$?\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r"|"
     # (b) a level marker introducing the number
     r"(?:目标位|目标区|目标价|止损位?|止盈位?|触发价|触发位|触发点|上看|下看|"
     r"target\s+(?:price|level|zone)|trigger|stop[-\s]?loss|take[-\s]?profit)"
-    r"\s*(?:为|是|至|到|on|at|of|=)?\s*[:：]?\s*[-+]?\d[\d,]*(?:\.\d+)?"
+    r"\s*(?:为|是|至|到|on|at|of|=)?\s*[:：]?\s*\$?\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r"|"
     # (c) the number followed by a level marker
-    r"[-+]?\d[\d,]*(?:\.\d+)?\s*(?:一线|附近)?\s*(?:成为?|作为|是)?\s*"
+    r"\$?[-+]?\d[\d,]*(?:\.\d+)?\s*(?:一线|附近)?\s*(?:成为?|作为|是)?\s*"
     r"(?:目标区|目标位|止损位|止盈位)"
     r"|"
     # (d) a conditional opener before the number, digits fencing the reach

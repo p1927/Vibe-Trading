@@ -1295,6 +1295,15 @@ _PLAN_LEVELS_FROM_983 = [
     "目标位 6.80，止损 5.20",
     "若收盘 5.36 则减仓",
     "target price 6.80 with stop-loss 5.20",
+    # A `$` currency prefix must not break the mask (false-positive fix,
+    # observed in the Aug 2026 RXRX/BFLY runs: <$2.86 and 目标价 $3.50 were
+    # rejected as conflicts because the `$` sat between the operator/marker
+    # and the digit).
+    "硬触发: 收盘 <$2.86 且量 >2000 万股",
+    "收盘 < $2.86 且量 > 2000 万股",
+    "目标价 $3.50",
+    "目标价 $3.50 两档挂单",
+    "触发价 $4.00",
 ]
 
 
@@ -1317,6 +1326,10 @@ _ASSERTIONS_THAT_MUST_STAY_CHECKED = [
     # A conditional opener must not reach back over a quote already made.
     ("收盘 6.03，若跌破 5.36 减仓", [6.03]),
     ("开盘 6.80 最高 7.18 最低 6.68", [6.80, 7.18, 6.68]),
+    # A `$` alone is NOT prospective: an observed quote written with a
+    # currency prefix and no marker/operator must stay checked.
+    ("现价 $5.97", [5.97]),
+    ("开盘 $6.80 最高 $7.18 最低 $6.68", [6.80, 7.18, 6.68]),
 ]
 
 
