@@ -17,7 +17,7 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException, status
 from pydantic import BaseModel, Field
 
-from src.config.accessor import reset_env_config
+from src.config.accessor import get_env_value, reset_env_config
 
 # Agent root (agent/) — resolved from this file's location (agent/src/api/).
 _AGENT_DIR = Path(__file__).resolve().parent.parent.parent
@@ -162,7 +162,7 @@ def _desktop_secure_credential_names() -> set[str]:
 
 
 def _desktop_secure_credentials_enabled() -> bool:
-    return os.environ.get("VIBE_TRADING_DESKTOP_SECURE_CREDENTIALS") == "1"
+    return get_env_value("VIBE_TRADING_DESKTOP_SECURE_CREDENTIALS") == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +221,7 @@ def _read_settings_env_values() -> Dict[str, str]:
 
     if _desktop_secure_credentials_enabled():
         for name in _desktop_secure_credential_names():
-            runtime_value = os.environ.get(name, "")
+            runtime_value = get_env_value(name)
             if runtime_value:
                 values[name] = runtime_value
             else:

@@ -15,7 +15,11 @@ permissions:
 
 jobs:
   package:
-    runs-on: windows-2025
+    # The checksum-pinned legacy GTK runtime extractor crashes on the Server
+    # 2025 image even though the resulting runtime works on current Windows.
+    # Keep packaging reproducible on the clean Server 2022 image until the
+    # native PDF dependency is replaced with a newer archive format.
+    runs-on: windows-2022
     timeout-minutes: 90
 
     steps:

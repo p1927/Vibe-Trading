@@ -106,6 +106,16 @@ tooling. Those packages are not copied into the packaged application, but the
 review workflow still treats the lockfile as trusted build input. This should
 be re-audited whenever Electron Builder publishes a repaired dependency tree.
 
+## CI build-host note
+
+The packaging job is pinned to GitHub's clean `windows-2022` image. The
+checksum-pinned GTK runtime installer used solely to extract WeasyPrint's
+native DLL subset exits with an access violation on the Server 2025 runner,
+although the extracted runtime and packaged application work on current
+Windows 10/11 hosts. Moving that native dependency to a newer, directly
+extractable upstream archive is a follow-up; silently dropping PDF support or
+accepting an unverified binary is not.
+
 ## Local validation record
 
 Windows host validation on 2026-08-08 against the current upstream
