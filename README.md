@@ -1019,7 +1019,10 @@ vibe-trading serve --port 8899
 | `GET` | `/correlation/regime` | Correlation edge-density regime timeline |
 | `GET` | `/agents.json` · `POST` `/v1/query` | OpenBB Workspace bridge — registered only with the optional `openbb` extra; `/v1/query` requires auth |
 
-Interactive docs: `http://localhost:8899/docs`
+Interactive docs are available at `http://localhost:8899/docs` in keyless
+loopback development mode. When `API_AUTH_KEY` is configured, `/docs` and
+`/redoc` are disabled; authenticated tooling can fetch `/openapi.json` with an
+`Authorization: Bearer <key>` header.
 
 ### Security defaults
 
