@@ -1304,6 +1304,17 @@ _PLAN_LEVELS_FROM_983 = [
     "目标价 $3.50",
     "目标价 $3.50 两档挂单",
     "触发价 $4.00",
+    # The CAD `C$` prefix must not break the mask either (DCBO.TO run: a
+    # "收盘 < C$26.00" hard stop was read as a price claim).
+    "收盘 < C$26.00 全清",
+    "收盘低于 C$26.00",
+    "目标价 C$26.00",
+    # TA readings on their own scale are masked (布林/SMA/RSI in the DCBO.TO
+    # draft: "布林 30.98/26.64/22.29", "SMA200 35.78" were read as claims).
+    "布林 30.98/26.64/22.29(收盘站上上轨)",
+    "布林带 30.98/26.64/22.29",
+    "SMA200 35.78(价格在其下)",
+    "RSI 46.7",
 ]
 
 
@@ -1376,6 +1387,11 @@ _ASSERTIONS_THAT_MUST_STAY_CHECKED = [
     # A decimal at line start is not a list marker ("3.50" has a digit after
     # the period).
     ("3.50 支撑位", [3.5]),
+    # A real low (低) is NOT an indicator/level mask: it stays checked and, in
+    # a multi-symbol session, needs its canonical symbol named explicitly.
+    ("低 19.87(2026-04-13)", [19.87]),
+    # `C$`/`$` alone (no operator/marker) is not prospective: stays checked.
+    ("C$26.00 收盘", [26.0]),
 ]
 
 

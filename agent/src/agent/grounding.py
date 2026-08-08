@@ -240,11 +240,11 @@ _LABELLED_SCORE_RE = re.compile(
 # unambiguous indicator names are listed: generic words such as "momentum" or
 # "volatility" sit too close to price prose to mask safely.
 _INDICATOR_VALUE_RE = re.compile(
-    r"\b(?:rsi|macd|atr|adx|cci|obv|kdj|boll|dif|dea|vix|iv|"
-    r"sharpe|sortino|beta)\b"
+    r"(?:\b(?:rsi|macd|atr|adx|cci|obv|kdj|boll|dif|dea|vix|iv|"
+    r"sharpe|sortino|beta|sma|ema|wma)\d{0,4}\b|布林(?:带|线)?)"
     r"(?:\s*\([^)]{0,20}\))?"
     r"\s*(?:is|at|of|reads?|=|为|是)?\s*[:：]?\s*"
-    r"[-+]?\d[\d,]*(?:\.\d+)?",
+    r"[-+]?\d[\d,]*(?:\.\d+)?(?:\s*/\s*[-+]?\d[\d,]*(?:\.\d+)?)*",
     re.IGNORECASE,
 )
 # A trading plan quotes levels it does not claim to have observed. In the
@@ -268,15 +268,15 @@ _INDICATOR_VALUE_RE = re.compile(
 _PROSPECTIVE_LEVEL_RE = re.compile(
     r"(?:"
     # (a) comparison operator immediately before the number
-    r"(?:>=|<=|≥|≤|>|<|大于|小于|不低于|不高于|高于|低于)\s*\$?\s*[-+]?\d[\d,]*(?:\.\d+)?"
+    r"(?:>=|<=|≥|≤|>|<|大于|小于|不低于|不高于|高于|低于)\s*(?:C\$|\$)?\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r"|"
     # (b) a level marker introducing the number
     r"(?:目标位|目标区|目标价|止损位?|止盈位?|触发价|触发位|触发点|上看|下看|"
     r"target\s+(?:price|level|zone)|trigger|stop[-\s]?loss|take[-\s]?profit)"
-    r"\s*(?:为|是|至|到|on|at|of|=)?\s*[:：]?\s*\$?\s*[-+]?\d[\d,]*(?:\.\d+)?"
+    r"\s*(?:为|是|至|到|on|at|of|=)?\s*[:：]?\s*(?:C\$|\$)?\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r"|"
     # (c) the number followed by a level marker
-    r"\$?[-+]?\d[\d,]*(?:\.\d+)?\s*(?:一线|附近)?\s*(?:成为?|作为|是)?\s*"
+    r"(?:C\$|\$)?[-+]?\d[\d,]*(?:\.\d+)?\s*(?:一线|附近)?\s*(?:成为?|作为|是)?\s*"
     r"(?:目标区|目标位|止损位|止盈位)"
     r"|"
     # (d) a conditional opener before the number, digits fencing the reach
