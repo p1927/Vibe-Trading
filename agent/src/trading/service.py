@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from src.trading.profiles import list_profiles, profile_by_id
@@ -383,6 +384,7 @@ def _route_sdk_write(
     execute: Any,
     overrides: dict[str, Any],
     unsupported_capability: str,
+    structural_reason: str | None = None,
 ) -> dict[str, Any]:
     if profile.transport != "broker_sdk":
         return _unsupported(profile, unsupported_capability)
@@ -406,8 +408,105 @@ def _route_sdk_write(
             execute_fn=lambda: execute(config),
             audit_request=audit_request,
             session_id=str(overrides.get("session_id") or ""),
+            structural_reason=structural_reason,
         ),
     )
+
+
+def _etoro_error(message: str) -> dict[str, Any]:
+    """Return a connector-shaped fail-closed error before any broker write."""
+    return {"status": "error", "error": message}
+
+
+def _close_etoro_position(
+    module: Any,
+    config: Any,
+    *,
+    position_id: str | int,
+    instrument_id: int | None,
+    units_to_close: float | None,
+    request_id: str | None,
+) -> dict[str, Any]:
+    """Resolve and validate an eToro position before a full or partial close."""
+    try:
+        snapshot = module.get_positions(config)
+    except Exception as exc:  # noqa: BLE001
+        return _etoro_error(f"could not verify position before close: {exc}")
+    if not isinstance(snapshot, dict) or snapshot.get("status") != "ok":
+        detail = snapshot.get("error") if isinstance(snapshot, dict) else None
+        return _etoro_error(f"could not verify position before close: {detail or 'invalid positions response'}")
+    rows = snapshot.get("positions")
+    if not isinstance(rows, list):
+        return _etoro_error("could not verify position before close: positions are missing")
+    requested_position_id = str(position_id).strip()
+    position = next(
+        (
+            row
+            for row in rows
+            if isinstance(row, dict) and str(row.get("position_id", "")).strip() == requested_position_id
+        ),
+        None,
+    )
+    if position is None:
+        return _etoro_error(f"position {requested_position_id!r} was not found")
+
+    try:
+        resolved_instrument_id = int(position.get("instrument_id"))
+    except (TypeError, ValueError, OverflowError):
+        return _etoro_error("position instrument_id is missing or invalid (fail-closed)")
+    if resolved_instrument_id <= 0:
+        return _etoro_error("position instrument_id is missing or invalid (fail-closed)")
+    if instrument_id is not None:
+        try:
+            supplied_instrument_id = int(instrument_id)
+        except (TypeError, ValueError, OverflowError):
+            return _etoro_error("supplied instrument_id is invalid")
+        if supplied_instrument_id != resolved_instrument_id:
+            return _etoro_error("supplied instrument_id does not match the open position (fail-closed)")
+
+    clean_units: float | None = None
+    if units_to_close is not None:
+        try:
+            clean_units = float(units_to_close)
+            open_units = abs(float(position.get("units")))
+        except (TypeError, ValueError, OverflowError):
+            return _etoro_error("position units or units_to_close are invalid")
+        if not math.isfinite(clean_units) or clean_units <= 0:
+            return _etoro_error("units_to_close must be a finite positive number")
+        if not math.isfinite(open_units) or open_units <= 0:
+            return _etoro_error("open position units are unavailable (fail-closed)")
+        tolerance = max(1e-12, open_units * 1e-12)
+        if clean_units > open_units + tolerance:
+            return _etoro_error(f"units_to_close ({clean_units}) exceeds open position units ({open_units})")
+
+    return module.close_position(
+        config,
+        position_id=position_id,
+        instrument_id=resolved_instrument_id,
+        units_to_close=clean_units,
+        request_id=request_id,
+    )
+
+
+def _etoro_account_currency(snapshot: Any) -> str | None:
+    """Extract the account currency from a normalized eToro account snapshot."""
+    if not isinstance(snapshot, dict) or snapshot.get("status") != "ok":
+        return None
+    account = snapshot.get("account")
+    if not isinstance(account, dict):
+        return None
+    pnl = account.get("pnl")
+    aggregated = account.get("aggregated_portfolio")
+    candidates = [
+        pnl.get("account_currency") if isinstance(pnl, dict) else None,
+        aggregated.get("accountCurrency") if isinstance(aggregated, dict) else None,
+        account.get("accountCurrency"),
+    ]
+    for value in candidates:
+        token = str(value or "").strip().upper()
+        if token:
+            return token
+    return None
 
 
 def close_position(
@@ -433,14 +532,14 @@ def close_position(
         "units_to_close": units_to_close,
         "request_id": request_id,
     }
-    full_close = units_to_close is None
     return _route_sdk_write(
         profile,
         remote_tool="close_position",
-        risk_reducing=full_close,
+        risk_reducing=True,
         intent=None,
         audit_request=audit,
-        execute=lambda cfg: module.close_position(
+        execute=lambda cfg: _close_etoro_position(
+            module,
             cfg,
             position_id=position_id,
             instrument_id=instrument_id,
@@ -471,12 +570,17 @@ def cancel_close_order(
     return _route_sdk_write(
         profile,
         remote_tool="cancel_close_order",
-        risk_reducing=True,
+        risk_reducing=False,
         intent=None,
         audit_request=audit,
         execute=lambda cfg: module.cancel_close_order(cfg, order_id, request_id=request_id),
         overrides={**overrides, "session_id": session_id},
         unsupported_capability="orders.cancel_close",
+        structural_reason=(
+            "live eToro close-order cancellation is disabled because cancelling "
+            "a pending reduction can increase exposure and the reinstated risk "
+            "cannot be quantified from the current API response (fail-closed)"
+        ),
     )
 
 
@@ -487,6 +591,8 @@ def edit_position_stops(
     stop_loss: float | None = None,
     take_profit: float | None = None,
     trailing_stop_loss: bool | None = None,
+    clear_stop_loss: bool = False,
+    clear_take_profit: bool = False,
     request_id: str | None = None,
     session_id: str = "",
     **overrides: Any,
@@ -503,23 +609,15 @@ def edit_position_stops(
         "stop_loss": stop_loss,
         "take_profit": take_profit,
         "trailing_stop_loss": trailing_stop_loss,
+        "clear_stop_loss": clear_stop_loss,
+        "clear_take_profit": clear_take_profit,
         "request_id": request_id,
     }
-    from src.live.enforcement import OrderIntent
-
-    intent = OrderIntent(
-        symbol=str(position_id),
-        side="sell",
-        notional_usd=0.0,
-        quantity=None,
-        instrument_type=_order_classification(profile.connector, str(position_id))[0],
-        asset_class=_order_classification(profile.connector, str(position_id))[1],
-    )
     return _route_sdk_write(
         profile,
         remote_tool="edit_position_stops",
         risk_reducing=False,
-        intent=intent,
+        intent=None,
         audit_request=audit,
         execute=lambda cfg: module.edit_position_stops(
             cfg,
@@ -527,16 +625,24 @@ def edit_position_stops(
             stop_loss=stop_loss,
             take_profit=take_profit,
             trailing_stop_loss=trailing_stop_loss,
+            clear_stop_loss=clear_stop_loss,
+            clear_take_profit=clear_take_profit,
             request_id=request_id,
         ),
         overrides={**overrides, "session_id": session_id},
         unsupported_capability="positions.edit",
+        structural_reason=(
+            "live eToro stop edits are disabled because loosening a stop can "
+            "transfer additional account funds into position margin and the "
+            "incremental USD funding cannot be quantified before execution "
+            "(fail-closed)"
+        ),
     )
 
 
 def etoro_copy_precheck(
     parent_cid: int,
-    amount_usd: float,
+    amount: float,
     profile_id: str | None = None,
     *,
     request_id: str | None = None,
@@ -549,15 +655,21 @@ def etoro_copy_precheck(
     config = module.build_config(profile.config, overrides)
     return _with_profile(
         profile,
-        module.copy_precheck(config, parent_cid=parent_cid, amount_usd=amount_usd, request_id=request_id),
+        module.copy_precheck(
+            config,
+            parent_cid=parent_cid,
+            amount=amount,
+            request_id=request_id,
+        ),
     )
 
 
 def etoro_copy_start(
     parent_cid: int,
-    amount_usd: float,
+    amount: float,
     profile_id: str | None = None,
     *,
+    reference_id: str,
     request_id: str | None = None,
     session_id: str = "",
     **overrides: Any,
@@ -568,17 +680,48 @@ def etoro_copy_start(
     overrides = dict(overrides)
     overrides.pop("session_id", None)
     module = _sdk_module(profile.connector)
-    audit = {"parent_cid": parent_cid, "amount_usd": amount_usd, "request_id": request_id}
+    try:
+        amount_value = float(amount)
+    except (TypeError, ValueError, OverflowError):
+        return _with_profile(
+            profile,
+            _etoro_error("amount must be a finite non-zero number"),
+        )
+    if not math.isfinite(amount_value) or amount_value == 0:
+        return _with_profile(
+            profile,
+            _etoro_error("amount must be a finite non-zero number"),
+        )
+    account_currency: str | None = None
+    structural_reason: str | None = None
+    if profile.environment == "live" and amount_value > 0:
+        config = module.build_config(profile.config, overrides)
+        try:
+            account_currency = _etoro_account_currency(module.get_account_snapshot(config))
+        except Exception as exc:  # noqa: BLE001
+            structural_reason = f"could not verify eToro account currency before copy allocation: {exc}"
+        if structural_reason is None and account_currency != "USD":
+            structural_reason = (
+                "live eToro copy increases are supported only for verified USD "
+                f"accounts; received {account_currency or 'unknown'} (fail-closed)"
+            )
+    audit = {
+        "parent_cid": parent_cid,
+        "amount": amount_value,
+        "account_currency": account_currency,
+        "reference_id": reference_id,
+        "request_id": request_id,
+    }
     from src.live.enforcement import OrderIntent
 
-    risk_reducing = float(amount_usd) < 0
+    risk_reducing = amount_value < 0
     intent = None
-    if not risk_reducing:
+    if not risk_reducing and structural_reason is None:
         instrument_type, asset_class = _order_classification(profile.connector, str(parent_cid))
         intent = OrderIntent(
             symbol=f"COPY:{parent_cid}",
             side="buy",
-            notional_usd=abs(float(amount_usd)),
+            notional_usd=abs(amount_value),
             quantity=None,
             instrument_type=instrument_type,
             asset_class=asset_class,
@@ -592,11 +735,13 @@ def etoro_copy_start(
         execute=lambda cfg: module.copy_start_or_adjust(
             cfg,
             parent_cid=parent_cid,
-            amount_usd=amount_usd,
+            amount=amount_value,
+            reference_id=reference_id,
             request_id=request_id,
         ),
         overrides={**overrides, "session_id": session_id},
         unsupported_capability="copy.start",
+        structural_reason=structural_reason,
     )
 
 

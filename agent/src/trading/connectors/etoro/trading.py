@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import math
 import uuid
-from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from src.trading.connectors.etoro.client import (
@@ -147,16 +147,33 @@ def close_position(
     if not pos_id:
         return _order_error(cfg, "position_id is required")
 
-    body: dict[str, Any] = {}
-    if instrument_id is not None:
-        body["InstrumentID"] = int(instrument_id)
+    if instrument_id is None:
+        return _order_error(
+            cfg,
+            "instrument_id is required by the eToro close-position contract",
+            position_id=pos_id,
+        )
+    try:
+        clean_instrument_id = int(instrument_id)
+    except (TypeError, ValueError, OverflowError):
+        return _order_error(cfg, "instrument_id must be a positive integer", position_id=pos_id)
+    if clean_instrument_id <= 0:
+        return _order_error(cfg, "instrument_id must be a positive integer", position_id=pos_id)
+
+    body: dict[str, Any] = {"InstrumentId": clean_instrument_id}
     if units_to_close is not None:
-        body["UnitsToDeduct"] = float(units_to_close)
+        try:
+            clean_units = float(units_to_close)
+        except (TypeError, ValueError, OverflowError):
+            return _order_error(cfg, "units_to_close must be a finite positive number", position_id=pos_id)
+        if not math.isfinite(clean_units) or clean_units <= 0:
+            return _order_error(cfg, "units_to_close must be a finite positive number", position_id=pos_id)
+        body["UnitsToDeduct"] = clean_units
 
     req_id = (request_id or str(uuid.uuid4())).strip()
     path = f"{execution_v1_root(cfg)}/market-close-orders/positions/{pos_id}"
     try:
-        payload = make_client(cfg).request("POST", path, json_body=body or None, request_id=req_id)
+        payload = make_client(cfg).request("POST", path, json_body=body, request_id=req_id)
     except EtoroAPIError as exc:
         return _order_error(cfg, str(exc), position_id=pos_id, request_id=req_id)
 
@@ -201,6 +218,8 @@ def edit_position_stops(
     stop_loss: float | None = None,
     take_profit: float | None = None,
     trailing_stop_loss: bool | None = None,
+    clear_stop_loss: bool = False,
+    clear_take_profit: bool = False,
     request_id: str | None = None,
 ) -> dict[str, Any]:
     from src.trading.connectors.etoro.client import load_config
@@ -209,16 +228,45 @@ def edit_position_stops(
     pos_id = str(position_id).strip()
     if not pos_id:
         return _order_error(cfg, "position_id is required")
-    if stop_loss is None and take_profit is None and trailing_stop_loss is None:
-        return _order_error(cfg, "at least one of stop_loss, take_profit, trailing_stop_loss is required")
+    if (
+        stop_loss is None
+        and take_profit is None
+        and trailing_stop_loss is None
+        and not clear_stop_loss
+        and not clear_take_profit
+    ):
+        return _order_error(
+            cfg,
+            "at least one stop-loss/take-profit update is required",
+        )
+    if stop_loss is not None and clear_stop_loss:
+        return _order_error(cfg, "stop_loss and clear_stop_loss are mutually exclusive")
+    if take_profit is not None and clear_take_profit:
+        return _order_error(cfg, "take_profit and clear_take_profit are mutually exclusive")
 
     body: dict[str, Any] = {}
     if stop_loss is not None:
-        body["stopLossRate"] = float(stop_loss)
+        try:
+            value = float(stop_loss)
+        except (TypeError, ValueError, OverflowError):
+            return _order_error(cfg, "stop_loss must be a finite positive rate")
+        if not math.isfinite(value) or value <= 0:
+            return _order_error(cfg, "stop_loss must be a finite positive rate")
+        body["stopLossRate"] = value
     if take_profit is not None:
-        body["takeProfitRate"] = float(take_profit)
+        try:
+            value = float(take_profit)
+        except (TypeError, ValueError, OverflowError):
+            return _order_error(cfg, "take_profit must be a finite positive rate")
+        if not math.isfinite(value) or value <= 0:
+            return _order_error(cfg, "take_profit must be a finite positive rate")
+        body["takeProfitRate"] = value
     if trailing_stop_loss is not None:
-        body["isTslEnabled"] = bool(trailing_stop_loss)
+        body["stopLossType"] = "trailing" if trailing_stop_loss else "fixed"
+    if clear_stop_loss:
+        body["clearStopLoss"] = True
+    if clear_take_profit:
+        body["clearTakeProfit"] = True
 
     req_id = (request_id or str(uuid.uuid4())).strip()
     path = f"{positions_root(cfg)}/positions/{pos_id}"

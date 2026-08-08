@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 
 import pytest
 
@@ -15,14 +15,17 @@ pytestmark = pytest.mark.unit
 
 
 class _FakeEtoroModule:
-    def __init__(self):
+    def __init__(self, *, account_currency: str = "USD"):
         self.calls: list[str] = []
+        self.close_kwargs: dict = {}
+        self.account_currency = account_currency
 
     def build_config(self, profile_config, overrides):
         return None
 
     def close_position(self, config, **kwargs):
         self.calls.append("close")
+        self.close_kwargs = dict(kwargs)
         return {"status": "ok", "position_id": kwargs.get("position_id")}
 
     def cancel_close_order(self, config, order_id="", *, request_id=None, **kwargs):
@@ -46,10 +49,23 @@ class _FakeEtoroModule:
         return {"status": "ok", "order_id": order_id}
 
     def get_positions(self, config):
-        return {"status": "ok", "positions": []}
+        return {
+            "status": "ok",
+            "positions": [
+                {
+                    "position_id": 99,
+                    "instrument_id": 100000,
+                    "symbol": "AAPL",
+                    "units": 10.0,
+                }
+            ],
+        }
 
     def get_account_snapshot(self, config):
-        return {"status": "ok", "account": {}}
+        return {
+            "status": "ok",
+            "account": {"pnl": {"account_currency": self.account_currency}},
+        }
 
 
 def _mandate():
@@ -129,6 +145,58 @@ def test_risk_increasing_edit_requires_mandate_when_halted(monkeypatch) -> None:
     assert result["status"] == "blocked"
 
 
+def test_risk_increasing_action_executes_and_counts_inside_daily_lock(
+    monkeypatch,
+) -> None:
+    module = _FakeEtoroModule()
+    state = {"inside": False, "executed": False, "incremented": False}
+    _patch_gate(monkeypatch, mandate=_mandate())
+    monkeypatch.setattr(gate, "check_mandate", lambda *args, **kwargs: None)
+
+    @contextmanager
+    def _lock(_broker):
+        state["inside"] = True
+        try:
+            yield
+        finally:
+            state["inside"] = False
+
+    def _execute():
+        assert state["inside"] is True
+        state["executed"] = True
+        return {"status": "ok"}
+
+    def _increment(_broker):
+        assert state["inside"] is True
+        assert state["executed"] is True
+        state["incremented"] = True
+        return 1
+
+    monkeypatch.setattr(gate, "daily_order_lock", _lock)
+    monkeypatch.setattr(gate, "increment_daily_count", _increment)
+    intent = OrderIntent(
+        symbol="AAPL",
+        side="buy",
+        notional_usd=100.0,
+        quantity=None,
+        instrument_type=InstrumentType.EQUITY,
+        asset_class=AssetClass.US_EQUITY,
+    )
+
+    result = gate.execute_live_action(
+        broker="etoro",
+        connector_module=module,
+        config=None,
+        remote_tool="copy_start_or_adjust",
+        risk_reducing=False,
+        intent=intent,
+        execute_fn=_execute,
+    )
+
+    assert result["status"] == "ok"
+    assert state == {"inside": False, "executed": True, "incremented": True}
+
+
 def test_copy_close_allowed_when_halted(monkeypatch) -> None:
     module = _FakeEtoroModule()
     _patch_gate(monkeypatch, mandate=_mandate(), halted=True)
@@ -152,6 +220,41 @@ def test_service_close_position_paper_bypasses_gate(monkeypatch) -> None:
     result = service.close_position("99", "etoro-paper-trade")
     assert result["status"] == "ok"
     assert module.calls == ["close"]
+    assert module.close_kwargs["instrument_id"] == 100000
+
+
+def test_service_partial_close_is_validated_and_risk_reducing_when_halted(
+    monkeypatch,
+) -> None:
+    module = _FakeEtoroModule()
+    monkeypatch.setattr(service, "_sdk_module", lambda connector: module)
+    _patch_gate(monkeypatch, mandate=_mandate(), halted=True)
+
+    result = service.close_position(
+        "99",
+        "etoro-live-trade",
+        units_to_close=4.0,
+    )
+
+    assert result["status"] == "ok"
+    assert module.calls == ["close"]
+    assert module.close_kwargs["instrument_id"] == 100000
+    assert module.close_kwargs["units_to_close"] == 4.0
+
+
+def test_service_partial_close_refuses_units_above_open_position(monkeypatch) -> None:
+    module = _FakeEtoroModule()
+    monkeypatch.setattr(service, "_sdk_module", lambda connector: module)
+
+    result = service.close_position(
+        "99",
+        "etoro-paper-trade",
+        units_to_close=11.0,
+    )
+
+    assert result["status"] == "error"
+    assert "exceeds open position units" in result["error"]
+    assert module.calls == []
 
 
 def test_service_cancel_close_order_paper_bypasses_gate(monkeypatch) -> None:
@@ -162,6 +265,18 @@ def test_service_cancel_close_order_paper_bypasses_gate(monkeypatch) -> None:
     assert module.calls == ["cancel_close"]
 
 
+def test_service_cancel_close_order_live_fails_closed(monkeypatch) -> None:
+    module = _FakeEtoroModule()
+    monkeypatch.setattr(service, "_sdk_module", lambda connector: module)
+    _patch_gate(monkeypatch, mandate=_mandate())
+
+    result = service.cancel_close_order("55", "etoro-live-trade")
+
+    assert result["status"] == "blocked"
+    assert "reinstated risk" in result["reason"]
+    assert module.calls == []
+
+
 def test_service_edit_position_stops_paper_bypasses_gate(monkeypatch) -> None:
     module = _FakeEtoroModule()
     monkeypatch.setattr(service, "_sdk_module", lambda connector: module)
@@ -170,12 +285,52 @@ def test_service_edit_position_stops_paper_bypasses_gate(monkeypatch) -> None:
     assert module.calls == ["edit"]
 
 
+def test_service_edit_position_stops_live_fails_closed(monkeypatch) -> None:
+    module = _FakeEtoroModule()
+    monkeypatch.setattr(service, "_sdk_module", lambda connector: module)
+    _patch_gate(monkeypatch, mandate=_mandate())
+
+    result = service.edit_position_stops(
+        "99",
+        "etoro-live-trade",
+        stop_loss=90.0,
+    )
+
+    assert result["status"] == "blocked"
+    assert "incremental USD funding" in result["reason"]
+    assert module.calls == []
+
+
 def test_service_etoro_copy_start_paper_bypasses_gate(monkeypatch) -> None:
     module = _FakeEtoroModule()
     monkeypatch.setattr(service, "_sdk_module", lambda connector: module)
-    result = service.etoro_copy_start(123, 100.0, "etoro-paper-trade")
+    result = service.etoro_copy_start(
+        123,
+        100.0,
+        "etoro-paper-trade",
+        reference_id="ref-1",
+    )
     assert result["status"] == "ok"
     assert module.calls == ["copy_start"]
+
+
+def test_service_etoro_copy_increase_non_usd_live_account_fails_closed(
+    monkeypatch,
+) -> None:
+    module = _FakeEtoroModule(account_currency="EUR")
+    monkeypatch.setattr(service, "_sdk_module", lambda connector: module)
+    _patch_gate(monkeypatch, mandate=_mandate())
+
+    result = service.etoro_copy_start(
+        123,
+        100.0,
+        "etoro-live-trade",
+        reference_id="ref-1",
+    )
+
+    assert result["status"] == "blocked"
+    assert "verified USD accounts" in result["reason"]
+    assert module.calls == []
 
 
 def test_service_cancel_order_paper_bypasses_gate(monkeypatch) -> None:

@@ -260,7 +260,11 @@ def test_resolve_btc_uses_internal_symbol_full(monkeypatch) -> None:
                     {
                         "items": [
                             {"instrumentId": 100134, "internalSymbolFull": "BTCA"},
-                            {"instrumentId": 100000, "internalSymbolFull": "BTC", "internalInstrumentDisplayName": "Bitcoin"},
+                            {
+                                "instrumentId": 100000,
+                                "internalSymbolFull": "BTC",
+                                "internalInstrumentDisplayName": "Bitcoin",
+                            },
                         ],
                     },
                 )
@@ -387,6 +391,7 @@ def test_close_position_uses_market_close_path(monkeypatch) -> None:
     def _transport(method: str, url: str, **kwargs: Any) -> _FakeResponse:
         captured["method"] = method
         captured["url"] = url
+        captured["json"] = kwargs.get("json")
         return _FakeResponse(200, {"orderID": 55})
 
     set_client_factory(lambda c: EtoroClient(cfg, transport=_transport))
@@ -395,6 +400,40 @@ def test_close_position_uses_market_close_path(monkeypatch) -> None:
     assert captured["method"] == "POST"
     assert "/market-close-orders/positions/10" in captured["url"]
     assert "/execution/demo/" in captured["url"]
+    assert captured["json"] == {"InstrumentId": 100000}
+
+
+def test_partial_close_uses_required_wire_contract(monkeypatch) -> None:
+    cfg = EtoroConfig(profile="paper", api_key="k", user_key="u")
+    captured: dict[str, Any] = {}
+
+    def _transport(method: str, url: str, **kwargs: Any) -> _FakeResponse:
+        captured["json"] = kwargs.get("json")
+        return _FakeResponse(200, {"orderForClose": {"orderID": 56}})
+
+    set_client_factory(lambda c: EtoroClient(cfg, transport=_transport))
+
+    result = etoro_sdk.close_position(
+        cfg,
+        position_id=10,
+        instrument_id=100000,
+        units_to_close=2.5,
+    )
+
+    assert result["status"] == "ok"
+    assert captured["json"] == {
+        "InstrumentId": 100000,
+        "UnitsToDeduct": 2.5,
+    }
+
+
+def test_close_position_refuses_missing_instrument_id() -> None:
+    cfg = EtoroConfig(profile="paper", api_key="k", user_key="u")
+
+    result = etoro_sdk.close_position(cfg, position_id=10)
+
+    assert result["status"] == "error"
+    assert "instrument_id is required" in result["error"]
 
 
 def test_cancel_close_order_uses_delete_path(monkeypatch) -> None:
@@ -424,12 +463,44 @@ def test_edit_position_stops_patches_position(monkeypatch) -> None:
         return _FakeResponse(200, {})
 
     set_client_factory(lambda c: EtoroClient(cfg, transport=_transport))
-    result = etoro_sdk.edit_position_stops(cfg, position_id=5, stop_loss=90.0, take_profit=110.0)
+    result = etoro_sdk.edit_position_stops(
+        cfg,
+        position_id=5,
+        stop_loss=90.0,
+        take_profit=110.0,
+        trailing_stop_loss=True,
+    )
     assert result["status"] == "ok"
     assert captured["method"] == "PATCH"
     assert "/positions/5" in captured["url"]
     assert captured["json"]["stopLossRate"] == 90.0
     assert captured["json"]["takeProfitRate"] == 110.0
+    assert captured["json"]["stopLossType"] == "trailing"
+    assert "isTslEnabled" not in captured["json"]
+
+
+def test_edit_position_stops_supports_clear_contract(monkeypatch) -> None:
+    cfg = EtoroConfig(profile="paper", api_key="k", user_key="u")
+    captured: dict[str, Any] = {}
+
+    def _transport(method: str, url: str, **kwargs: Any) -> _FakeResponse:
+        captured["json"] = kwargs.get("json")
+        return _FakeResponse(202, {"operationId": "op-1"})
+
+    set_client_factory(lambda c: EtoroClient(cfg, transport=_transport))
+
+    result = etoro_sdk.edit_position_stops(
+        cfg,
+        position_id=5,
+        clear_stop_loss=True,
+        clear_take_profit=True,
+    )
+
+    assert result["status"] == "ok"
+    assert captured["json"] == {
+        "clearStopLoss": True,
+        "clearTakeProfit": True,
+    }
 
 
 def test_copy_precheck_posts_eligibility(monkeypatch) -> None:
@@ -443,7 +514,7 @@ def test_copy_precheck_posts_eligibility(monkeypatch) -> None:
         return _FakeResponse(200, {"eligible": True})
 
     set_client_factory(lambda c: EtoroClient(cfg, transport=_transport))
-    result = etoro_sdk.copy_precheck(cfg, parent_cid=123, amount_usd=100.0)
+    result = etoro_sdk.copy_precheck(cfg, parent_cid=123, amount=100.0)
     assert result["status"] == "ok"
     assert captured["method"] == "POST"
     assert captured["url"].endswith("/eligibility")
@@ -457,14 +528,36 @@ def test_copy_start_posts_copy_root(monkeypatch) -> None:
     def _transport(method: str, url: str, **kwargs: Any) -> _FakeResponse:
         captured["url"] = url
         captured["json"] = kwargs.get("json")
-        return _FakeResponse(200, {"referenceID": "ref-1"})
+        return _FakeResponse(200, {"token": "ack-token"})
 
     set_client_factory(lambda c: EtoroClient(cfg, transport=_transport))
-    result = etoro_sdk.copy_start_or_adjust(cfg, parent_cid=123, amount_usd=200.0)
+    result = etoro_sdk.copy_start_or_adjust(
+        cfg,
+        parent_cid=123,
+        amount=200.0,
+        reference_id="ref-1",
+    )
     assert result["status"] == "ok"
     assert result["reference_id"] == "ref-1"
+    assert result["token"] == "ack-token"
     assert copy_root(cfg) in captured["url"]
     assert captured["json"]["amount"] == 200.0
+    assert captured["json"]["referenceID"] == "ref-1"
+
+
+@pytest.mark.parametrize("reference_id", ["contains/slash", "x" * 36, ""])
+def test_copy_start_rejects_invalid_reference_id(reference_id: str) -> None:
+    cfg = EtoroConfig(profile="paper", api_key="k", user_key="u")
+
+    result = etoro_sdk.copy_start_or_adjust(
+        cfg,
+        parent_cid=123,
+        amount=200.0,
+        reference_id=reference_id,
+    )
+
+    assert result["status"] == "error"
+    assert "reference_id" in result["error"]
 
 
 def test_copy_poll_gets_reference(monkeypatch) -> None:
@@ -489,11 +582,12 @@ def test_copy_close_posts_close(monkeypatch) -> None:
     def _transport(method: str, url: str, **kwargs: Any) -> _FakeResponse:
         captured["url"] = url
         captured["json"] = kwargs.get("json")
-        return _FakeResponse(200, {"referenceID": "ref-close"})
+        return _FakeResponse(200, {"token": "close-token"})
 
     set_client_factory(lambda c: EtoroClient(cfg, transport=_transport))
     result = etoro_sdk.copy_close(cfg, mirror_id=99, unregister_type="Close")
     assert result["status"] == "ok"
+    assert result["token"] == "close-token"
     assert captured["url"].endswith("/close")
     assert captured["json"]["mirrorID"] == 99
 

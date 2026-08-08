@@ -450,8 +450,14 @@ class TradingPlaceOrderTool(BaseTool):
             **TRADING_COMMON_PARAMETERS,
             "symbol": {"type": "string", "description": "Symbol, e.g. AAPL, BTC-USDT, 700.HK, HK.00700."},
             "side": {"type": "string", "enum": ["buy", "sell"]},
-            "quantity": {"type": "number", "description": "Order size in units/shares/contracts. Exactly one of quantity/notional."},
-            "notional": {"type": "number", "description": "Order size as an account-currency amount. Exactly one of quantity/notional."},
+            "quantity": {
+                "type": "number",
+                "description": "Order size in units/shares/contracts. Exactly one of quantity/notional.",
+            },
+            "notional": {
+                "type": "number",
+                "description": "Order size as an account-currency amount. Exactly one of quantity/notional.",
+            },
             "order_type": {"type": "string", "enum": ["market", "limit"], "default": "market"},
             "limit_price": {"type": "number", "description": "Required for limit orders."},
             "time_in_force": {"type": "string", "enum": ["day", "gtc"], "default": "day"},
@@ -595,7 +601,10 @@ class EtoroClosePositionTool(BaseTool):
         "properties": {
             **ETORO_TOOL_PARAMETERS,
             "position_id": {"type": "string", "description": "eToro position id."},
-            "instrument_id": {"type": "integer", "description": "Optional instrument id."},
+            "instrument_id": {
+                "type": "integer",
+                "description": "Optional instrument id; always resolved and verified against the open position.",
+            },
             "units_to_close": {"type": "number", "description": "Units to close; omit to close entire position."},
             "request_id": {"type": "string", "description": "Optional idempotency request id (UUID)."},
         },
@@ -627,7 +636,10 @@ class EtoroClosePositionTool(BaseTool):
 
 class EtoroCancelCloseOrderTool(BaseTool):
     name = "etoro_cancel_close_order"
-    description = "Cancel a pending eToro market close order by order id."
+    description = (
+        "Cancel a pending eToro market close order by order id (paper only; "
+        "live is fail-closed because this reinstates exposure)."
+    )
     parameters = {
         "type": "object",
         "properties": {
@@ -660,7 +672,10 @@ class EtoroCancelCloseOrderTool(BaseTool):
 
 class EtoroEditPositionStopsTool(BaseTool):
     name = "etoro_edit_position_stops"
-    description = "Modify stop-loss, take-profit, or trailing stop on an open eToro position."
+    description = (
+        "Modify or clear stop-loss/take-profit on an open eToro position "
+        "(paper only; live edits are fail-closed until incremental funding can be quantified)."
+    )
     parameters = {
         "type": "object",
         "properties": {
@@ -668,7 +683,12 @@ class EtoroEditPositionStopsTool(BaseTool):
             "position_id": {"type": "string", "description": "eToro position id."},
             "stop_loss": {"type": "number", "description": "New stop-loss rate."},
             "take_profit": {"type": "number", "description": "New take-profit rate."},
-            "trailing_stop_loss": {"type": "boolean", "description": "Enable trailing stop-loss."},
+            "trailing_stop_loss": {
+                "type": "boolean",
+                "description": "true selects trailing; false selects fixed stop-loss type.",
+            },
+            "clear_stop_loss": {"type": "boolean", "description": "Remove the stop-loss."},
+            "clear_take_profit": {"type": "boolean", "description": "Remove the take-profit."},
             "request_id": {"type": "string", "description": "Optional idempotency request id (UUID)."},
         },
         "required": ["position_id"],
@@ -692,6 +712,8 @@ class EtoroEditPositionStopsTool(BaseTool):
                     stop_loss=stop_loss,
                     take_profit=take_profit,
                     trailing_stop_loss=bool(trailing) if trailing is not None else None,
+                    clear_stop_loss=bool(kwargs.get("clear_stop_loss", False)),
+                    clear_take_profit=bool(kwargs.get("clear_take_profit", False)),
                     request_id=_connection(kwargs.get("request_id")),
                     **overrides,
                 )
@@ -702,16 +724,16 @@ class EtoroEditPositionStopsTool(BaseTool):
 
 class EtoroCopyPrecheckTool(BaseTool):
     name = "etoro_copy_precheck"
-    description = "Dry-run whether the account can copy an investor with a given USD amount."
+    description = "Dry-run whether the account can copy an investor with an account-currency amount."
     parameters = {
         "type": "object",
         "properties": {
             **ETORO_TOOL_PARAMETERS,
             "parent_cid": {"type": "integer", "description": "Investor parent CID."},
-            "amount_usd": {"type": "number", "description": "USD amount to copy or adjust."},
+            "amount": {"type": "number", "description": "Positive amount in the account currency."},
             "request_id": {"type": "string", "description": "Optional request id (UUID)."},
         },
-        "required": ["parent_cid", "amount_usd"],
+        "required": ["parent_cid", "amount"],
     }
     repeatable = True
     is_readonly = True
@@ -719,7 +741,7 @@ class EtoroCopyPrecheckTool(BaseTool):
     def execute(self, **kwargs: Any) -> str:
         try:
             overrides = _etoro_overrides(kwargs)
-            amount = _finite_float(kwargs["amount_usd"], "amount_usd")
+            amount = _finite_float(kwargs["amount"], "amount")
             parent_cid = _int_or_none(kwargs["parent_cid"], "parent_cid")
         except InvalidTradingArgument as exc:
             return _json_result({"status": "error", "error": str(exc)})
@@ -745,10 +767,17 @@ class EtoroCopyStartTool(BaseTool):
         "properties": {
             **ETORO_TOOL_PARAMETERS,
             "parent_cid": {"type": "integer", "description": "Investor parent CID."},
-            "amount_usd": {"type": "number", "description": "USD amount to add (negative to reduce)."},
+            "amount": {
+                "type": "number",
+                "description": "Account-currency amount to add (negative to reduce). Live increases require a verified USD account.",
+            },
+            "reference_id": {
+                "type": "string",
+                "description": "Required caller reference: 1-35 URL-safe characters, used for polling.",
+            },
             "request_id": {"type": "string", "description": "Optional request id (UUID)."},
         },
-        "required": ["parent_cid", "amount_usd"],
+        "required": ["parent_cid", "amount", "reference_id"],
     }
     repeatable = False
     is_readonly = False
@@ -756,7 +785,7 @@ class EtoroCopyStartTool(BaseTool):
     def execute(self, **kwargs: Any) -> str:
         try:
             overrides = _etoro_overrides(kwargs)
-            amount = _finite_float(kwargs["amount_usd"], "amount_usd")
+            amount = _finite_float(kwargs["amount"], "amount")
             parent_cid = _int_or_none(kwargs["parent_cid"], "parent_cid")
         except InvalidTradingArgument as exc:
             return _json_result({"status": "error", "error": str(exc)})
@@ -766,6 +795,7 @@ class EtoroCopyStartTool(BaseTool):
                     parent_cid,
                     amount,
                     _connection(kwargs.get("connection")),
+                    reference_id=str(kwargs["reference_id"]),
                     request_id=_connection(kwargs.get("request_id")),
                     **overrides,
                 )

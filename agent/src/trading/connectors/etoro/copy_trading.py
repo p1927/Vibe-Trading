@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import math
+import re
 import time
 import uuid
 from typing import Any
 
 from src.trading.connectors.etoro.client import EtoroAPIError, EtoroConfig, copy_root, make_client
+
+
+_REFERENCE_ID_RE = re.compile(r"^[A-Za-z0-9._~-]{1,35}$")
 
 
 def _base(cfg: EtoroConfig) -> dict[str, Any]:
@@ -25,16 +30,20 @@ def copy_precheck(
     config: EtoroConfig | None = None,
     *,
     parent_cid: int,
-    amount_usd: float,
+    amount: float,
     request_id: str | None = None,
 ) -> dict[str, Any]:
     from src.trading.connectors.etoro.client import load_config
 
     cfg = config or load_config()
-    if amount_usd <= 0:
-        return _error(cfg, "amount_usd must be positive")
+    try:
+        clean_amount = float(amount)
+    except (TypeError, ValueError, OverflowError):
+        return _error(cfg, "amount must be a finite positive number in account currency")
+    if not math.isfinite(clean_amount) or clean_amount <= 0:
+        return _error(cfg, "amount must be a finite positive number in account currency")
 
-    body = {"parentCID": int(parent_cid), "amount": float(amount_usd)}
+    body = {"parentCID": int(parent_cid), "amount": clean_amount}
     req_id = (request_id or str(uuid.uuid4())).strip()
     path = f"{copy_root(cfg)}/eligibility"
     try:
@@ -49,16 +58,31 @@ def copy_start_or_adjust(
     config: EtoroConfig | None = None,
     *,
     parent_cid: int,
-    amount_usd: float,
+    amount: float,
+    reference_id: str,
     request_id: str | None = None,
 ) -> dict[str, Any]:
     from src.trading.connectors.etoro.client import load_config
 
     cfg = config or load_config()
-    if amount_usd == 0:
-        return _error(cfg, "amount_usd must be non-zero")
+    try:
+        clean_amount = float(amount)
+    except (TypeError, ValueError, OverflowError):
+        return _error(cfg, "amount must be a finite non-zero number in account currency")
+    if not math.isfinite(clean_amount) or clean_amount == 0:
+        return _error(cfg, "amount must be a finite non-zero number in account currency")
+    ref = str(reference_id or "").strip()
+    if not _REFERENCE_ID_RE.fullmatch(ref):
+        return _error(
+            cfg,
+            "reference_id must be 1-35 URL-safe characters (letters, digits, '.', '_', '~', '-')",
+        )
 
-    body = {"parentCID": int(parent_cid), "amount": float(amount_usd)}
+    body = {
+        "parentCID": int(parent_cid),
+        "amount": clean_amount,
+        "referenceID": ref,
+    }
     req_id = (request_id or str(uuid.uuid4())).strip()
     path = copy_root(cfg)
     try:
@@ -66,14 +90,14 @@ def copy_start_or_adjust(
     except EtoroAPIError as exc:
         return _error(cfg, str(exc), request_id=req_id)
 
-    reference_id = _extract_reference_id(payload)
     return {
         "status": "ok",
         **_base(cfg),
         "parent_cid": int(parent_cid),
-        "amount_usd": float(amount_usd),
+        "amount": clean_amount,
         "request_id": req_id,
-        "reference_id": reference_id,
+        "reference_id": ref,
+        "token": _extract_token(payload),
         "raw": payload,
     }
 
@@ -123,14 +147,13 @@ def copy_close(
     except EtoroAPIError as exc:
         return _error(cfg, str(exc), mirror_id=mirror_id, request_id=req_id)
 
-    reference_id = _extract_reference_id(payload)
     return {
         "status": "ok",
         **_base(cfg),
         "mirror_id": int(mirror_id),
         "unregister_type": action,
         "request_id": req_id,
-        "reference_id": reference_id,
+        "token": _extract_token(payload),
         "raw": payload,
     }
 
@@ -162,16 +185,16 @@ def copy_poll_until_complete(
     return last
 
 
-def _extract_reference_id(payload: Any) -> str | None:
+def _extract_token(payload: Any) -> str | None:
     if not isinstance(payload, dict):
         return None
-    for key in ("referenceID", "referenceId", "reference_id"):
+    for key in ("token", "Token"):
         value = payload.get(key)
         if value is not None:
             return str(value)
     data = payload.get("data")
     if isinstance(data, dict):
-        for key in ("referenceID", "referenceId", "reference_id"):
+        for key in ("token", "Token"):
             value = data.get(key)
             if value is not None:
                 return str(value)

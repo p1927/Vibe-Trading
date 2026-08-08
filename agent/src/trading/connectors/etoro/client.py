@@ -290,7 +290,12 @@ class EtoroClient:
         raise EtoroAPIError("request failed without response")
 
 
-_default_client_factory: Callable[[EtoroConfig], EtoroClient] = lambda cfg: EtoroClient(cfg)
+def _build_default_client(cfg: EtoroConfig) -> EtoroClient:
+    """Build the production HTTP client for one eToro configuration."""
+    return EtoroClient(cfg)
+
+
+_default_client_factory: Callable[[EtoroConfig], EtoroClient] = _build_default_client
 
 
 def make_client(cfg: EtoroConfig) -> EtoroClient:
@@ -303,7 +308,7 @@ def set_client_factory(
 ) -> None:
     """Override or reset the connector client factory (used by unit tests)."""
     global _default_client_factory
-    _default_client_factory = factory or (lambda cfg: EtoroClient(cfg))
+    _default_client_factory = factory or _build_default_client
 
 
 def _response_error_body(response: requests.Response) -> str:
