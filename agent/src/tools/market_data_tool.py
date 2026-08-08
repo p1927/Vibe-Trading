@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from src.agent.tools import BaseTool
 from src.market_data import DEFAULT_MAX_ROWS, fetch_market_data_json
+
+logger = logging.getLogger(__name__)
 
 
 class MarketDataTool(BaseTool):
@@ -88,6 +91,15 @@ class MarketDataTool(BaseTool):
     repeatable = True
 
     def execute(self, **kwargs: Any) -> str:
+        logger.info(
+            "get_market_data call: codes=%s start=%s end=%s source=%s interval=%s max_rows=%s",
+            kwargs["codes"],
+            kwargs["start_date"],
+            kwargs["end_date"],
+            kwargs.get("source", "auto"),
+            kwargs.get("interval", "1D"),
+            kwargs.get("max_rows", DEFAULT_MAX_ROWS),
+        )
         return fetch_market_data_json(
             codes=kwargs["codes"],
             start_date=kwargs["start_date"],

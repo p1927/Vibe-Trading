@@ -210,6 +210,14 @@ def fetch_market_data(
                     "fallback_used": bool(used_source and used_source != src),
                     "currency_conversion": "none",
                 }
+        if data_map:
+            logger.info(
+                "market-data resolved symbols=%s via source=%r (detected=%r fallback=%s)",
+                sorted(data_map),
+                used_source or src,
+                src,
+                bool(used_source and used_source != src),
+            )
 
     unresolved = [
         code

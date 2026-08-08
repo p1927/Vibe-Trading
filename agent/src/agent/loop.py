@@ -1272,6 +1272,20 @@ class AgentLoop:
                     batch_identity_status=batch_identity_status,
                 )
                 if not authorization.allowed:
+                    logger.warning(
+                        "grounding gate BLOCKED %s (iter=%s call_id=%s): error_code=%s "
+                        "requested=%s batch_status=%s locked_status=%s locked_symbols=%s "
+                        "reason=%s",
+                        tc.name,
+                        iteration,
+                        tc.id,
+                        authorization.error_code,
+                        sorted(authorization.symbols),
+                        batch_identity_status,
+                        self._grounding.identity_status,
+                        sorted(self._grounding.authorized_symbols),
+                        authorization.message,
+                    )
                     execution_plan.append(
                         (
                             tc,
