@@ -155,8 +155,9 @@ therefore security-significant.
   credentials required by the backend.
 - Forceful tree termination can interrupt in-progress local work after the
   graceful shutdown timeout.
-- This source-only change does not provide a signing identity, installer
-  reputation, update authenticity, or an official HKUDS release channel.
+- The review installer is deliberately unsigned and unpublished. This change
+  does not provide a signing identity, installer reputation, update
+  authenticity, or an official HKUDS release channel.
 
 ## Non-goals
 

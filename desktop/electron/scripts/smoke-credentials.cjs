@@ -96,7 +96,7 @@ async function run() {
     assert.equal(store.environment().OPENAI_API_KEY, undefined);
     await assert.rejects(
       store.set("UNSUPPORTED_SECRET", "not-allowed"),
-      /Unsupported credential key/u,
+      /This credential key is not supported\./u,
     );
 
     console.log(

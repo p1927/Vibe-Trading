@@ -28,7 +28,7 @@ let desktopMessages = getDesktopMessages(desktopLocale);
 const apiAuthKey = randomBytes(32).toString("base64url");
 const productName = "Vibe-Trading Desktop (Unofficial Community Build)";
 const testUserData = process.env.VIBE_TRADING_DESKTOP_TEST_USER_DATA;
-const credentialStore = new SecureCredentialStore();
+let credentialStore: SecureCredentialStore | undefined;
 
 if (testUserData) app.setPath("userData", path.resolve(testUserData));
 app.setName(productName);
@@ -53,6 +53,7 @@ async function ready(): Promise<void> {
   desktopMessages = getDesktopMessages(desktopLocale);
   nativeTheme.themeSource = "dark";
   app.setAppLogsPath();
+  credentialStore = new SecureCredentialStore({ messages: desktopMessages });
   await credentialStore.initialize();
   createWindow();
   registerIpc();
@@ -131,15 +132,16 @@ function registerIpc(): void {
   });
   ipcMain.handle("desktop:get-credential-status", (event) => {
     assertMainWindowSender(event.sender);
-    return credentialStore.status();
+    return requireCredentialStore().status();
   });
   ipcMain.handle("desktop:set-credential", async (event, name: unknown, value: unknown) => {
     assertMainWindowSender(event.sender);
     if (typeof name !== "string" || (typeof value !== "string" && value !== null)) {
-      throw new Error("Invalid credential request");
+      throw new Error(desktopMessages.credentialRequestInvalid);
     }
-    await credentialStore.set(name, value);
-    return credentialStore.status();
+    const store = requireCredentialStore();
+    await store.set(name, value);
+    return store.status();
   });
 }
 
@@ -172,7 +174,7 @@ async function bootInternal(): Promise<void> {
     logDirectory: app.getPath("logs"),
     apiAuthKey,
     messages: desktopMessages,
-    credentialEnvironment: credentialStore.environment(),
+    credentialEnvironment: requireCredentialStore().environment(),
     onStatus: (message) => mainWindow?.webContents.send("desktop:status", message),
     onUnexpectedExit: (message) => {
       if (!quitting) void reportBootError(message);
@@ -181,8 +183,8 @@ async function bootInternal(): Promise<void> {
 
   try {
     const url = await backend.start();
-    writeParentDeathSmokeRecord(url);
     await mainWindow.loadURL(url);
+    writeParentDeathSmokeRecord(url);
   } catch (error) {
     await backend.stop();
     await reportBootError(errorText(error));
@@ -237,6 +239,11 @@ function createMenu(): void {
 
 function assertMainWindowSender(sender: Electron.WebContents): void {
   if (sender !== mainWindow?.webContents) throw new Error("Desktop request rejected");
+}
+
+function requireCredentialStore(): SecureCredentialStore {
+  if (!credentialStore) throw new Error(desktopMessages.credentialStoreUnavailable);
+  return credentialStore;
 }
 
 async function shutdownAndQuit(): Promise<void> {

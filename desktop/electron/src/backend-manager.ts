@@ -113,7 +113,9 @@ export class BackendManager {
 
     const watchdogPath = path.join(__dirname, "backend-watchdog.js");
     const watchdog = spawn(process.execPath, [watchdogPath], {
-      cwd: __dirname,
+      // In a packaged app __dirname is inside app.asar. Electron's fs layer can
+      // read that path, but Windows cannot use an ASAR path as a process cwd.
+      cwd: this.options.resourcesPath,
       windowsHide: true,
       env: childEnvironment,
       stdio: ["ignore", "pipe", "pipe", "ipc"],

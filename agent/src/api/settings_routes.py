@@ -326,6 +326,8 @@ async def _list_provider_models(
         models=models or fallback,
         source="provider" if discovered else "default",
     )
+
+
 # ---------------------------------------------------------------------------
 # Response builders
 # ---------------------------------------------------------------------------

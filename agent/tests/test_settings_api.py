@@ -256,6 +256,7 @@ def test_update_deepseek_settings_uses_exact_reported_payload(
     assert "DEEPSEEK_API_KEY=sk-deepseek-test" in env_text
     assert "DEEPSEEK_BASE_URL=https://api.deepseek.com/v1" in env_text
 
+
 def test_desktop_secure_mode_never_persists_injected_llm_key(
     client: TestClient,
     tmp_path: Path,
@@ -278,6 +279,7 @@ def test_desktop_secure_mode_never_persists_injected_llm_key(
     env_text = (tmp_path / ".env").read_text(encoding="utf-8")
     assert "dpapi-decrypted-key" not in env_text
     assert "DEEPSEEK_API_KEY=" in env_text
+
 
 @pytest.mark.parametrize(
     ("provider", "api_key_env", "base_url_env", "base_url"),

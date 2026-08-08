@@ -2,6 +2,7 @@ import { app, safeStorage } from "electron";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { DesktopMessages } from "./locales";
 
 type CredentialFile = {
   version: 1;
@@ -50,11 +51,24 @@ export type CredentialStatus = {
 export type SecureCredentialStoreOptions = {
   userDataDirectory?: string;
   homeDirectory?: string;
+  messages?: Pick<
+    DesktopMessages,
+    | "credentialEncryptionUnavailable"
+    | "credentialFileUnsupported"
+    | "credentialKeyUnsupported"
+  >;
+};
+
+const defaultMessages: NonNullable<SecureCredentialStoreOptions["messages"]> = {
+  credentialEncryptionUnavailable: "Credential encryption is unavailable for this Windows user session.",
+  credentialFileUnsupported: "The desktop credential file format is not supported.",
+  credentialKeyUnsupported: "This credential key is not supported.",
 };
 
 export class SecureCredentialStore {
   private readonly filePath: string;
   private readonly homeDirectory: string;
+  private readonly messages: NonNullable<SecureCredentialStoreOptions["messages"]>;
   private values: Record<string, string> = {};
   private migrated: string[] = [];
 
@@ -64,11 +78,12 @@ export class SecureCredentialStore {
       "credentials.v1.json",
     );
     this.homeDirectory = options.homeDirectory ?? os.homedir();
+    this.messages = options.messages ?? defaultMessages;
   }
 
   async initialize(): Promise<void> {
     if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error("Windows credential encryption is unavailable for this user session.");
+      throw new Error(this.messages.credentialEncryptionUnavailable);
     }
     await this.load();
     await this.migrateDotenv(path.join(this.homeDirectory, ".vibe-trading", ".env"));
@@ -117,7 +132,7 @@ export class SecureCredentialStore {
 
   private assertAllowed(name: string): void {
     if (!ENV_CREDENTIALS.has(name)) {
-      throw new Error("Unsupported credential key");
+      throw new Error(this.messages.credentialKeyUnsupported);
     }
   }
 
@@ -125,7 +140,7 @@ export class SecureCredentialStore {
     try {
       const parsed = JSON.parse(await fs.readFile(this.filePath, "utf8")) as CredentialFile;
       if (parsed.version !== 1 || !parsed.values || typeof parsed.values !== "object") {
-        throw new Error("Unsupported desktop credential file");
+        throw new Error(this.messages.credentialFileUnsupported);
       }
       this.values = Object.fromEntries(
         Object.entries(parsed.values).filter(

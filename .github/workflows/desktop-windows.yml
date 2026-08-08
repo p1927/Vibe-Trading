@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   package:
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 90
 
     steps:
@@ -28,7 +28,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24"
+          node-version: "22"
           cache: npm
           cache-dependency-path: |
             frontend/package-lock.json
@@ -62,6 +62,15 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npm run installer:win:review
+
+      - name: Verify packaged startup and parent-death cleanup
+        working-directory: desktop/electron
+        shell: powershell
+        run: |
+          $env:VIBE_TRADING_DESKTOP_ELECTRON_EXECUTABLE = (
+            Resolve-Path 'release\win-unpacked\Vibe-Trading Desktop (Unofficial Community Build).exe'
+          ).Path
+          node scripts/smoke-parent-death.mjs
 
       - name: Verify installer and record checksum
         working-directory: desktop/electron

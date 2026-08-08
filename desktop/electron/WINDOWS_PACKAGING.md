@@ -108,7 +108,8 @@ be re-audited whenever Electron Builder publishes a repaired dependency tree.
 
 ## Local validation record
 
-Windows host validation on 2026-07-31:
+Windows host validation on 2026-08-08 against the current upstream
+`vibe-trading-ai` 0.1.13 source:
 
 - [x] all 183 installed third-party Python distributions exactly match the
   committed Windows lock; the checked-out `vibe-trading-ai` package is the only
@@ -121,16 +122,20 @@ Windows host validation on 2026-07-31:
   absent;
 - [x] authenticated random-port startup and graceful shutdown succeed with no
   residual embedded Python process;
+- [x] the exact packaged application loads the current production frontend and
+  embedded backend, then removes the Python child and loopback listener when
+  only the Electron main PID is force-terminated;
 - [x] safeStorage migration, plaintext removal, allowlisting, replacement, and
   clearing succeed against an isolated temporary Windows profile;
 - [ ] the exact current branch's packaged application loads the frontend and
   backend on a clean Windows VM and closes its owned process tree cleanly;
 - [x] the generated installer is reported as `NotSigned` by Windows
   Authenticode inspection;
-- [x] the unsigned review installer is 323.2 MiB and its generated
-  `SHA256SUMS.txt` matches an independent SHA-256 calculation.
+- [x] the unsigned review installer is 324.3 MiB and its generated
+  `SHA256SUMS.txt` matches an independent SHA-256 calculation
+  (`173f353fcb8517e9caaf3c715222d619c010bc615823df5e2ee414ace297783b`).
 
-The assembled backend is 801.1 MiB before installer compression. An earlier
+The assembled backend is 804.9 MiB before installer compression. An earlier
 prototype passed the isolated-profile startup/shutdown check, but that result
 predates the current-main rebuild and is deliberately not credited above. A
 clean Windows VM re-run remains a release/review gate; this host record is not
