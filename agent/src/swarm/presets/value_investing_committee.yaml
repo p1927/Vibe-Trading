@@ -148,8 +148,13 @@ agents:
       - Honestly report information gaps: if the four masters lack information on some dimension, state "under missing X, conclusion confidence is Y".
       - Use report_audit (extract → verdict) as a quality gate on key numbers in the final report.
 
+      Use load_skill("report-generate") for the report format and writing standards.
+      You have no data tool: every figure must already appear in {upstream_context}.
+      Carry forward any dimension an upstream lens reported as missing rather than
+      resolving it yourself.
+
       Output the full Markdown report and save it with write_file.
-    tools: [bash, read_file, write_file, report_audit]
+    tools: [bash, read_file, write_file, load_skill, report_audit]
     skills: [report-generate]
     max_iterations: 50
     timeout_seconds: 1800
