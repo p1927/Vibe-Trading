@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const electronRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const signaturePowerShell = resolveSignaturePowerShell();
 const certificate = (process.env.WIN_CSC_LINK ?? process.env.CSC_LINK)?.trim();
 const password = process.env.WIN_CSC_KEY_PASSWORD ?? process.env.CSC_KEY_PASSWORD;
 
@@ -91,7 +92,7 @@ function run(command, args, options = {}) {
 
 function verifySignature(artifact) {
   const signatureCheck = spawnSync(
-    "powershell.exe",
+    signaturePowerShell,
     [
       "-NoProfile",
       "-NonInteractive",
@@ -117,6 +118,32 @@ function verifySignature(artifact) {
     throw new Error(signatureCheck.stderr.trim() || signatureCheck.stdout.trim());
   }
   return `${path.basename(artifact)} — ${signatureCheck.stdout.trim()}`;
+}
+
+function resolveSignaturePowerShell() {
+  const candidates = [
+    process.env.ProgramFiles
+      ? path.join(process.env.ProgramFiles, "PowerShell", "7", "pwsh.exe")
+      : undefined,
+    "pwsh.exe",
+    "powershell.exe",
+  ].filter(Boolean);
+  const failures = [];
+  for (const candidate of new Set(candidates)) {
+    const probe = spawnSync(
+      candidate,
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Get-Command Get-AuthenticodeSignature -ErrorAction Stop | Out-Null",
+      ],
+      { encoding: "utf8", windowsHide: true },
+    );
+    if (!probe.error && probe.status === 0) return candidate;
+    failures.push(`${candidate}: ${probe.error?.message ?? probe.stderr.trim()}`);
+  }
+  throw new Error(`No PowerShell host can load Get-AuthenticodeSignature.\n${failures.join("\n")}`);
 }
 
 async function sha256(file) {
