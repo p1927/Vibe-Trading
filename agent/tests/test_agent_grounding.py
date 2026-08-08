@@ -1315,6 +1315,12 @@ _PLAN_LEVELS_FROM_983 = [
     "布林带 30.98/26.64/22.29",
     "SMA200 35.78(价格在其下)",
     "RSI 46.7",
+    # A day-range shares the month prefix: the "–14" tail of "8/10–14" was
+    # parsed as a price of 14.0 and rejected the GRID.TO / DCBO.TO drafts.
+    "8/10–14 每日收盘判定项",
+    "8/10-14",
+    "8/10至14",
+    "2026-08-10–14",
 ]
 
 
@@ -1392,6 +1398,8 @@ _ASSERTIONS_THAT_MUST_STAY_CHECKED = [
     ("低 19.87(2026-04-13)", [19.87]),
     # `C$`/`$` alone (no operator/marker) is not prospective: stays checked.
     ("C$26.00 收盘", [26.0]),
+    # A single short date masks, but the price beside it stays checked.
+    ("8/10 收 5.00", [5.0]),
 ]
 
 

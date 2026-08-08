@@ -169,13 +169,22 @@ _NUMBER_RE = re.compile(
     r"(?<![A-Za-z0-9_])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
     r"(?![A-Za-z0-9_])"
 )
-_DATE_RE = re.compile(r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b")
+_DATE_RE = re.compile(
+    r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}"
+    r"(?:\s*[-–—~至到]\s*(?:0?[1-9]|[12]\d|3[01]))?\b"
+)
 # A year-less "8/5" is how a trading day is written in running prose, and it
 # contributed 8 and 5 as candidate prices (#983). The month and day ranges are
 # bounded, and both sides are fenced off from a longer slash run, so the window
 # enumeration "20/50/200-day" cannot be mistaken for a date.
+#
+# A day-range shares the month prefix: "8/10–14" (or "2026-08-10–14") means the
+# 10th through 14th, and the tail day was parsed as a price (14.0) that rejected
+# the GRID.TO / DCBO.TO drafts. The range tail is optional so a bare "8/10"
+# still masks exactly as before.
 _SHORT_DATE_RE = re.compile(
-    r"(?<![\d/])(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])(?![\d/])"
+    r"(?<![\d/])(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])"
+    r"(?:\s*[-–—~至到]\s*(?:0?[1-9]|[12]\d|3[01]))?(?![\d/])"
 )
 # A percentage range masks only its upper bound through the "%" tail check
 # below, because the sign touches the second number: "1–2%" left 1 behind
