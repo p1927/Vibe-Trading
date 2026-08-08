@@ -193,6 +193,8 @@ class DataConfig(_EnvBase):
     longbridge_app_key: str = Field(alias="LONGBRIDGE_APP_KEY", default="")
     longbridge_app_secret: str = Field(alias="LONGBRIDGE_APP_SECRET", default="")
     longbridge_access_token: str = Field(alias="LONGBRIDGE_ACCESS_TOKEN", default="")
+    etoro_api_key: str = Field(alias="ETORO_API_KEY", default="")
+    etoro_user_key: str = Field(alias="ETORO_USER_KEY", default="")
 
 
 # ---------------------------------------------------------------------------
