@@ -531,7 +531,11 @@ def calc_metrics(
         sharpe = 0.0
 
     # Drawdown
-    peak = equity_curve.cummax()
+    # The account starts at ``initial_cash`` before the first recorded bar, so
+    # that value is the initial high-water mark.  Using only observed equity
+    # understates a first-bar loss and makes drawdown nonsensical after equity
+    # crosses zero.
+    peak = equity_curve.cummax().clip(lower=float(initial_cash))
     dd = (equity_curve - peak) / peak.replace(0, 1)
     max_dd = float(dd.min())
 
