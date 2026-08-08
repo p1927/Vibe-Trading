@@ -409,12 +409,53 @@ def _price_field_for_path(path: str) -> str | None:
     return _GENERIC_PRICE_FIELD_ALIASES.get(leaf)
 
 
+# Trading-plan file stems encode the ticker with ``.``, ``_``, or ``-``
+# standing in for the dot: ``als.to-trading-plan...``, ``tf_to-trading-plan...``
+# (base has no hyphen), ``btcx-b-to-trading-plan...`` (base is itself
+# hyphenated) and ``gldc_v-Weekly...``. The stem's leading token is the
+# ticker and it is always terminated by the ``-Weekly`` / ``-trading-plan``
+# descriptor, so English prose ending in ``-to`` (``ready-to-go``,
+# ``go_to school``) can never be misread as a ticker.
+_TRADING_PLAN_TICKER_RE = re.compile(
+    r"(?<![A-Za-z0-9])([A-Z0-9][A-Z0-9.\-]*?)[._-](TO|V)"
+    r"(?=[\-_ ]Weekly|[\-_ ]trading[\-_ ]plan)",
+    re.IGNORECASE,
+)
+
+
+def _is_path_like(text: str) -> bool:
+    """Return whether *text* looks like it contains a file path."""
+    return "/" in text or "\\" in text
+
+
+def _trading_plan_tickers(text: str) -> set[str]:
+    """Expand trading-plan file stems to canonical symbols.
+
+    ``als.to-trading-plan...``, ``tf_to-trading-plan...``,
+    ``btcx-b-to-trading-plan...`` and ``gldc_v-Weekly...`` all yield the
+    canonical ticker (``ALS.TO``, ``TF.TO``, ``BTCX-B.TO``, ``GLDC.V``).
+    Guarded to path-like text and the ``-Weekly``/``-trading-plan`` descriptor
+    so English prose ending in ``-to`` is never read as a ticker.
+    """
+    blob = text or ""
+    if not _is_path_like(blob):
+        return set()
+    found: set[str] = set()
+    for match in _TRADING_PLAN_TICKER_RE.finditer(blob):
+        base = match.group(1).upper()
+        suffix = match.group(2).upper()
+        found.add(f"{base}.{suffix}")
+    return found
+
+
 def _scan_symbols(text: str) -> set[str]:
     """Return the canonical symbols written anywhere in a blob of text."""
-    return {
+    found = {
         _normalize_symbol(match.group(0))
         for match in _CANONICAL_SYMBOL_RE.finditer(text or "")
     }
+    found.update(_trading_plan_tickers(text))
+    return found
 
 
 def _infer_venue(symbol: str) -> str | None:
@@ -937,8 +978,7 @@ class GroundingLedger:
 
     def _seed_symbols(self, text: str, *, source: str) -> None:
         """Lock exact symbols explicitly supplied by a user."""
-        for match in _CANONICAL_SYMBOL_RE.finditer(text or ""):
-            symbol = _normalize_symbol(match.group(0))
+        for symbol in sorted(_scan_symbols(text)):
             key = f"explicit:{symbol}"
             existing = self._identities.get(key)
             version = existing.version + 1 if existing else 1
@@ -1028,6 +1068,35 @@ class GroundingLedger:
 
         chosen = self._choose_candidate(query, candidates)
         if chosen is None:
+            # A loose/bare search that came back ambiguous must not demote an
+            # already-locked identity. When the candidate list contains the
+            # symbol of an existing lock (bare "GLDC" returning GLDC.V among
+            # other global GLDC-* instruments while GLDC.V is already locked),
+            # the shortlist is answered by that lock: record it as superseded
+            # so the aggregate stays "locked" and already-authorized market
+            # tools are not blocked for the rest of the run.
+            locked_matches = sorted(
+                {
+                    record.symbol
+                    for record in self._identities.values()
+                    if record.status == "locked"
+                    and record.symbol
+                    and any(
+                        _normalize_symbol(candidate.get("symbol")) == record.symbol
+                        for candidate in candidates
+                    )
+                }
+            )
+            if len(locked_matches) == 1:
+                self._supersede_shortlists(locked_matches[0])
+                self._identities[key] = IdentityRecord(
+                    query=query,
+                    status="superseded",
+                    source_tool_call_id=call_id,
+                    candidates=candidates,
+                    version=version,
+                )
+                return
             self._identities[key] = IdentityRecord(
                 query=query,
                 status="ambiguous",

@@ -518,6 +518,143 @@ def test_canadian_symbols_are_canonical_and_venue_currency_aware() -> None:
     assert _infer_currency("SHOP.V") == "CAD"
 
 
+def test_underscore_ticker_in_plan_path_seeds_locked_identity(
+    tmp_path: Path,
+) -> None:
+    """A plan-file path like gldc_v-Weekly-...md must lock GLDC.V."""
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message=(
+            "Please update C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\08\\"
+            "gldc_v-Weekly-2026-08-03.md"
+        ),
+    )
+
+    assert ledger.authorized_symbols == {"GLDC.V"}
+    authorization = ledger.authorize_tool_call(
+        "get_market_data",
+        {"codes": ["GLDC.V"]},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        call_id="prices",
+    )
+    assert authorization.allowed is True
+
+
+def test_trading_plan_ticker_scan_and_prose_guard() -> None:
+    """Trading-plan stems scan to canonical symbols; prose is not misread."""
+    from src.agent.grounding import _scan_symbols
+
+    # Underscore separator.
+    assert _scan_symbols(
+        "C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\07\\"
+        "tf_to-trading-plan-2026-07-16-to-24.md"
+    ) == {"TF.TO"}
+    assert "GLDC.V" in _scan_symbols(
+        "C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\08\\"
+        "gldc_v-Weekly-2026-08-03.md"
+    )
+    assert "SGML.V" in _scan_symbols(
+        "C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\08\\"
+        "SGML_V-Weekly-2026-08-03.md"
+    )
+    # Hyphen separator, including a base that is itself hyphenated (BTCX-B).
+    assert _scan_symbols(
+        "C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\07\\"
+        "btcx-b-to-trading-plan-2026-07-13-to-17.md"
+    ) == {"BTCX-B.TO"}
+    assert _scan_symbols(
+        "C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\07\\"
+        "aapl-to-trading-plan-2026-07-06-to-10.md"
+    ) == {"AAPL.TO"}
+    assert "HIVE.TO" in _scan_symbols(
+        "C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\06\\"
+        "hive-to-trading-plan-2026-july-to-august.md"
+    )
+    # Dot separator (also handled by the canonical regex) stays consistent.
+    assert "BTCX-B.TO" in _scan_symbols(
+        "C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\07\\"
+        "btcx-b.to-trading-plan-2026-07-20-to-24.md"
+    )
+    # English prose ending in -to/-v must not become phantom tickers, even
+    # when the message carries a path elsewhere (no -Weekly/-trading-plan
+    # descriptor follows the suffix).
+    assert (
+        _scan_symbols("go_to school ready_to-go back_to basics C:\\x\\note.md")
+        == set()
+    )
+
+
+def test_locked_symbol_survives_a_later_bare_ambiguous_search(
+    tmp_path: Path,
+) -> None:
+    """Bare 'GLDC' ambiguity must not demote an already-locked GLDC.V."""
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message="请分析 GLDC.V 的当前价格",
+    )
+    candidates = [
+        {"symbol": "GLDCO2.SW", "name": "UBSETF Carbon Compens Gold ETF", "source": "yahoo"},
+        {"symbol": "GLDCX", "name": "Gabelli Gold Fund Class C", "source": "yahoo"},
+        {"symbol": "GLDC.V", "name": "CASSIAR GOLD CORP", "source": "yahoo"},
+        {"symbol": "GLDC.BA", "name": "SPDR GOLD TRUST GDR", "source": "yahoo"},
+    ]
+    ledger.ingest_tool_result(
+        tool_name="search_symbol",
+        arguments={"query": "GLDC"},
+        result=_resolver_payload(candidates=candidates, query="GLDC"),
+        call_id="bare-search",
+        success=True,
+    )
+
+    assert ledger.identity_status == "locked"
+    assert ledger.authorized_symbols == {"GLDC.V"}
+    authorization = ledger.authorize_tool_call(
+        "get_market_data",
+        {"codes": ["GLDC.V"]},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        batch_identity_status=ledger.identity_status,
+        call_id="prices",
+    )
+    assert authorization.allowed is True
+
+
+def test_plan_path_symbol_survives_bare_search_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """End-to-end: a gldc_v plan path locks GLDC.V; bare GLDC can't demote it."""
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message=(
+            "Please update C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\08\\"
+            "gldc_v-Weekly-2026-08-03.md"
+        ),
+    )
+    assert ledger.authorized_symbols == {"GLDC.V"}
+    candidates = [
+        {"symbol": "GLDCO2.SW", "name": "UBSETF Carbon Compens Gold ETF", "source": "yahoo"},
+        {"symbol": "GLDCX", "name": "Gabelli Gold Fund Class C", "source": "yahoo"},
+        {"symbol": "GLDC.V", "name": "CASSIAR GOLD CORP", "source": "yahoo"},
+        {"symbol": "GLDC.BA", "name": "SPDR GOLD TRUST GDR", "source": "yahoo"},
+    ]
+    ledger.ingest_tool_result(
+        tool_name="search_symbol",
+        arguments={"query": "GLDC"},
+        result=_resolver_payload(candidates=candidates, query="GLDC"),
+        call_id="bare-search",
+        success=True,
+    )
+
+    assert ledger.identity_status == "locked"
+    authorization = ledger.authorize_tool_call(
+        "get_market_data",
+        {"codes": ["GLDC.V"]},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        batch_identity_status=ledger.identity_status,
+        call_id="prices",
+    )
+    assert authorization.allowed is True
+
+
 def test_listed_identity_blocks_private_company_workflow(
     tmp_path: Path,
 ) -> None:
