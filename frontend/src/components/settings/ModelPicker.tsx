@@ -104,7 +104,7 @@ export function ModelPicker({
           id={listId}
           role="listbox"
           aria-label={optionsAriaLabel}
-          className="absolute z-50 mt-1.5 w-max min-w-full max-w-[min(32rem,90vw)] overflow-y-auto overflow-x-hidden rounded-md border bg-card p-1.5 shadow-lg ring-1 ring-black/5"
+          className="absolute z-50 mt-1.5 max-h-64 w-max min-w-full max-w-[min(32rem,90vw)] overflow-y-auto overflow-x-hidden rounded-md border bg-card p-1.5 shadow-lg ring-1 ring-black/5"
         >
           {uniqueOptions.map((model, index) => {
             const selected = model === value;

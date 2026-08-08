@@ -79,5 +79,11 @@ describe("ModelPicker", () => {
     expect(option.textContent).toContain(long);
     expect(option).not.toHaveClass("truncate");
     expect(option.querySelector("span")).not.toHaveClass("truncate");
+    expect(screen.getByRole("listbox", { name: "Available models" })).toHaveClass(
+      "max-h-64",
+      "max-w-[min(32rem,90vw)]",
+      "overflow-y-auto",
+      "overflow-x-hidden",
+    );
   });
 });
