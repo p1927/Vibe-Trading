@@ -216,6 +216,33 @@ def test_is_error_result_other_status_values():
     assert _is_error_result('{"status": "warning"}') is False
 
 
+def test_is_error_result_ok_false_envelope_no_status_key():
+    """A failure reported only via ``ok: false`` (no top-level ``status``,
+    e.g. get_stock_news's real failure shape) must count as an error. This
+    is the exact envelope that let a failed tool call be silently credited
+    as a completed data tool call before this fix."""
+    assert (
+        _is_error_result('{"ok": false, "error": "eastmoney news fetch failed"}')
+        is True
+    )
+
+
+def test_is_error_result_success_false_envelope_no_status_key():
+    assert _is_error_result('{"success": false, "error": "boom"}') is True
+
+
+def test_is_error_result_ok_true_is_not_an_error():
+    assert _is_error_result('{"ok": true, "data": []}') is False
+
+
+def test_is_error_result_nested_ok_false_no_false_positive():
+    """A nested ``ok: false`` (e.g. inside ``data``) must NOT count. Only
+    the envelope's own ``ok``/``success`` matters, mirroring the existing
+    nested-``status`` guarantee."""
+    nested = '{"status": "ok", "data": {"ok": false, "detail": "x"}}'
+    assert _is_error_result(nested) is False
+
+
 class _ResultTool(BaseTool):
     """Return one canned result or raise to exercise ToolRegistry normalization."""
 
@@ -260,6 +287,12 @@ class _ScriptedLLM:
         ('{"status": "ok", "data": [1]}', False, "ok", "completed"),
         ('{"status": "error", "trace": "...', False, "error", "incomplete"),
         ("", True, "error", "incomplete"),
+        (
+            '{"ok": false, "error": "eastmoney news fetch failed"}',
+            False,
+            "error",
+            "incomplete",
+        ),
     ],
 )
 def test_tool_result_event_status_and_evidence_credit_agree(
