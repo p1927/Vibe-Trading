@@ -133,7 +133,7 @@ _GENERIC_PRICE_FIELD_ALIASES = {
 _CANONICAL_SYMBOL_RE = re.compile(
     r"(?<![A-Za-z0-9_])(?:"
     r"\d{3,6}\.(?:SH|SZ|BJ|SS|HK|KS|KQ)|"
-    r"[A-Z][A-Z0-9&.-]{0,19}\.(?:US|NS|BO|FX)|"
+    r"[A-Z][A-Z0-9&.-]{0,19}\.(?:US|NS|BO|FX|TO|V)|"
     r"[A-Z0-9]{2,15}(?:-|/)(?:USDT|USDC|USD|BTC|ETH)|"
     r"[A-Z0-9]{2,15}=[FX]"
     r")(?![A-Za-z0-9_])",
@@ -432,6 +432,8 @@ def _infer_venue(symbol: str) -> str | None:
         ".NS": "nse",
         ".BO": "bse",
         ".FX": "forex",
+        ".TO": "toronto",
+        ".V": "tsx_venture",
     }
     for suffix, venue in suffixes.items():
         if upper.endswith(suffix):
@@ -457,6 +459,8 @@ def _infer_currency(symbol: str) -> str | None:
         ".KQ": "KRW",
         ".NS": "INR",
         ".BO": "INR",
+        ".TO": "CAD",
+        ".V": "CAD",
     }
     for suffix, currency in suffixes.items():
         if upper.endswith(suffix):
