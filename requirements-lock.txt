@@ -152,9 +152,9 @@ akracer==0.0.14 \
     --hash=sha256:629eaccd0e1d18366804b797eb2692ed47bed0028f55b5a5af3cc277d521df04 \
     --hash=sha256:e084c14bf6d9a02d5da375e3af1cba3d46f103aa1cf3a2010593b3e95bf1c29a
     # via akshare
-akshare==1.18.81 \
-    --hash=sha256:8ee306d3f147b15975f69b5194c1e4ee7c9302de0f6a2a10622dc2a3c7cc8c24 \
-    --hash=sha256:a4de966cc4428d95d2c925df0389109cd26cb2fc1916f65d28c50390448b84f9
+akshare==1.18.82 \
+    --hash=sha256:456f92529a6aecdf6ee77882a18b5b0392092a75cd33a3c00cbeab0bb6691488 \
+    --hash=sha256:bb5df05b060e3a6aebbeb711d89167fc58f55ccd94317054b419ccaab1891317
     # via -r agent/requirements.txt
 annotated-doc==0.0.5 \
     --hash=sha256:117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101 \
