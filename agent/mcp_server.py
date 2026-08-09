@@ -6,7 +6,7 @@ Zero API key required for HK/US/crypto research markets (yfinance, OKX,
 AKShare are free). Trading connector tools are profile-scoped and require the
 selected connector's own local app or OAuth setup.
 
-Surfaces 64 MCP tools: skills, research goals, backtest/factor/options/pattern
+Surfaces 64 tools: skills, research goals, backtest/factor/options/pattern
 analysis, market data, fundamentals & capital-flow & news & discovery
 (get_fund_flow / get_dragon_tiger / get_northbound_flow / get_margin_trading /
 get_block_trades / get_shareholder_count / get_lockup_expiry / get_sector_info /
