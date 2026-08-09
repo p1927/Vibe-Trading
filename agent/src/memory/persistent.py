@@ -386,8 +386,21 @@ class PersistentMemory:
                     if all_entries is None:
                         all_entries = self._scan_entries()
                     entry_map = {e.id: e for e in all_entries}
-                    fts_results = [entry_map[m.entry_id] for m in matches if m.entry_id in entry_map]
-                    if fts_results:
+                    fts_pairs = [
+                        (m, entry_map[m.entry_id]) for m in matches if m.entry_id in entry_map
+                    ]
+                    if fts_pairs:
+                        if _is_decay_enabled():
+                            # FTS5's rank is more negative for stronger matches;
+                            # negate it onto the same scale the token-scan
+                            # fallback below uses and apply the same importance
+                            # weighting, so decay isn't silently inert whenever
+                            # FTS produces a result.
+                            fts_pairs.sort(
+                                key=lambda pair: -pair[0].rank * (0.5 + 0.5 * pair[1].importance),
+                                reverse=True,
+                            )
+                        fts_results = [entry for _, entry in fts_pairs]
                         return fts_results[:max_results]
             except Exception:
                 logger.debug("FTS5 search failed, falling back to scan", exc_info=True)
