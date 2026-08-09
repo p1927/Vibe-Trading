@@ -2,7 +2,7 @@
 
 No request ever leaves the process: the success/shape paths mock the shared
 client (:mod:`backtest.loaders.eastmoney_client`), and the end-to-end path mocks
-the frozen HTTP boundary (``throttled_get``) so the real client routing and
+the frozen HTTP boundary (``throttled_get_json``) so the real client routing and
 this tool's parsing both run while nothing hits the network.
 """
 
@@ -15,18 +15,6 @@ from unittest.mock import patch
 from backtest.loaders import eastmoney_client
 from src.tools import lockup_expiry_tool
 from src.tools.lockup_expiry_tool import LockupExpiryTool
-
-
-class _FakeResponse:
-    """Minimal requests.Response stand-in for the mocked HTTP boundary."""
-
-    def __init__(self, body: str, status_code: int = 200):
-        self.text = body
-        self.status_code = status_code
-
-    def raise_for_status(self) -> None:
-        if self.status_code >= 400:
-            raise RuntimeError(f"{self.status_code} Server Error")
 
 
 def _payload(rows: list[dict]) -> dict:
@@ -165,9 +153,7 @@ class TestEndToEndHttpMocked:
     def test_single_code_through_real_client(self) -> None:
         rows = [_row("600519", "2024-06-01")]
         with patch.object(
-            eastmoney_client,
-            "throttled_get",
-            return_value=_FakeResponse(json.dumps(_payload(rows))),
+            eastmoney_client, "throttled_get_json", return_value=_payload(rows)
         ) as http:
             out = json.loads(LockupExpiryTool().execute(code="600519"))
 

@@ -169,22 +169,13 @@ _NUMBER_RE = re.compile(
     r"(?<![A-Za-z0-9_])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
     r"(?![A-Za-z0-9_])"
 )
-_DATE_RE = re.compile(
-    r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}"
-    r"(?:\s*[-–—~至到]\s*(?:0?[1-9]|[12]\d|3[01]))?\b"
-)
+_DATE_RE = re.compile(r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b")
 # A year-less "8/5" is how a trading day is written in running prose, and it
 # contributed 8 and 5 as candidate prices (#983). The month and day ranges are
 # bounded, and both sides are fenced off from a longer slash run, so the window
 # enumeration "20/50/200-day" cannot be mistaken for a date.
-#
-# A day-range shares the month prefix: "8/10–14" (or "2026-08-10–14") means the
-# 10th through 14th, and the tail day was parsed as a price (14.0) that rejected
-# the GRID.TO / DCBO.TO drafts. The range tail is optional so a bare "8/10"
-# still masks exactly as before.
 _SHORT_DATE_RE = re.compile(
-    r"(?<![\d/])(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])"
-    r"(?:\s*[-–—~至到]\s*(?:0?[1-9]|[12]\d|3[01]))?(?![\d/])"
+    r"(?<![\d/])(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])(?![\d/])"
 )
 # A percentage range masks only its upper bound through the "%" tail check
 # below, because the sign touches the second number: "1–2%" left 1 behind
@@ -215,18 +206,13 @@ _AGGREGATE_AMOUNT_RE = re.compile(
 # two window lengths survive. ASCII units carry a trailing word boundary so
 # "120 more" is not read as a quantity; the CJK branch cannot, because 周 and
 # 内 are both word characters and "1–4 周内" must still mask.
-#
-# Bare 万/萬 is a ten-thousand multiplier and, in the trading-plan domain, is a
-# quantity (volume/market-cap/money), never a per-share price: "量 5–10 万" and
-# "119 万" must not be read as OHLC claims. Span-local: the unit must follow
-# the number, so "收盘 0.49，量 119 万" still masks only the volume.
 _QUANTITY_WITH_UNIT_RE = re.compile(
     r"\d[\d,]*(?:\.\d+)?"
     r"(?:\s*/\s*\d[\d,]*(?:\.\d+)?)*"
     r"(?:\s*[-–—~至]\s*\d[\d,]*(?:\.\d+)?)?"
     r"\s*[-–—]?\s*"
     r"(?:"
-    r"(?:股|手|张|份|口|笔|倍|个月|周|天|日|年|次|万|萬)"
+    r"(?:股|手|张|份|口|笔|倍|个月|周|天|日|年|次)"
     r"|(?:shares?|contracts?|lots?|units?|sessions?|bars?|periods?|"
     r"wks?|weeks?|months?|days?|years?|yrs?)\b"
     r")",
@@ -249,11 +235,11 @@ _LABELLED_SCORE_RE = re.compile(
 # unambiguous indicator names are listed: generic words such as "momentum" or
 # "volatility" sit too close to price prose to mask safely.
 _INDICATOR_VALUE_RE = re.compile(
-    r"(?:\b(?:rsi|macd|atr|adx|cci|obv|kdj|boll|dif|dea|vix|iv|"
-    r"sharpe|sortino|beta|sma|ema|wma)\d{0,4}\b|布林(?:带|线)?)"
+    r"\b(?:rsi|macd|atr|adx|cci|obv|kdj|boll|dif|dea|vix|iv|"
+    r"sharpe|sortino|beta)\b"
     r"(?:\s*\([^)]{0,20}\))?"
     r"\s*(?:is|at|of|reads?|=|为|是)?\s*[:：]?\s*"
-    r"[-+]?\d[\d,]*(?:\.\d+)?(?:\s*/\s*[-+]?\d[\d,]*(?:\.\d+)?)*",
+    r"[-+]?\d[\d,]*(?:\.\d+)?",
     re.IGNORECASE,
 )
 # A trading plan quotes levels it does not claim to have observed. In the
@@ -277,15 +263,15 @@ _INDICATOR_VALUE_RE = re.compile(
 _PROSPECTIVE_LEVEL_RE = re.compile(
     r"(?:"
     # (a) comparison operator immediately before the number
-    r"(?:>=|<=|≥|≤|>|<|大于|小于|不低于|不高于|高于|低于)\s*(?:C\$|\$)?\s*[-+]?\d[\d,]*(?:\.\d+)?"
+    r"(?:>=|<=|≥|≤|>|<|大于|小于|不低于|不高于|高于|低于)\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r"|"
     # (b) a level marker introducing the number
     r"(?:目标位|目标区|目标价|止损位?|止盈位?|触发价|触发位|触发点|上看|下看|"
     r"target\s+(?:price|level|zone)|trigger|stop[-\s]?loss|take[-\s]?profit)"
-    r"\s*(?:为|是|至|到|on|at|of|=)?\s*[:：]?\s*(?:C\$|\$)?\s*[-+]?\d[\d,]*(?:\.\d+)?"
+    r"\s*(?:为|是|至|到|on|at|of|=)?\s*[:：]?\s*[-+]?\d[\d,]*(?:\.\d+)?"
     r"|"
     # (c) the number followed by a level marker
-    r"(?:C\$|\$)?[-+]?\d[\d,]*(?:\.\d+)?\s*(?:一线|附近)?\s*(?:成为?|作为|是)?\s*"
+    r"[-+]?\d[\d,]*(?:\.\d+)?\s*(?:一线|附近)?\s*(?:成为?|作为|是)?\s*"
     r"(?:目标区|目标位|止损位|止盈位)"
     r"|"
     # (d) a conditional opener before the number, digits fencing the reach
@@ -294,12 +280,6 @@ _PROSPECTIVE_LEVEL_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
-# A markdown ordered-list marker ("1. **持仓**: …", "10. 事件") is not a price:
-# the standalone integer + period at line start was parsed as a price claim and
-# rejected the BLDP.TO draft on its second attempt (#1.0 vs OHLC). Span-local:
-# the period must not be followed by a digit, so "3.50" and "1.5" stay checked.
-_ORDERED_LIST_MARKER_RE = re.compile(r"(?m)^\s*\d+\.(?!\d)")
-
 # Full-width brackets and enumeration commas delimit prose clauses. ASCII
 # parentheses are deliberately not separators: an explicit derivation such as
 # "(8.5 - 7.9) / 2" must stay in one segment for the formula check.
@@ -429,53 +409,12 @@ def _price_field_for_path(path: str) -> str | None:
     return _GENERIC_PRICE_FIELD_ALIASES.get(leaf)
 
 
-# Trading-plan file stems encode the ticker with ``.``, ``_``, or ``-``
-# standing in for the dot: ``als.to-trading-plan...``, ``tf_to-trading-plan...``
-# (base has no hyphen), ``btcx-b-to-trading-plan...`` (base is itself
-# hyphenated) and ``gldc_v-Weekly...``. The stem's leading token is the
-# ticker and it is always terminated by the ``-Weekly`` / ``-trading-plan``
-# descriptor, so English prose ending in ``-to`` (``ready-to-go``,
-# ``go_to school``) can never be misread as a ticker.
-_TRADING_PLAN_TICKER_RE = re.compile(
-    r"(?<![A-Za-z0-9])([A-Z0-9][A-Z0-9.\-]*?)[._-](TO|V)"
-    r"(?=[\-_ ]Weekly|[\-_ ]trading[\-_ ]plan)",
-    re.IGNORECASE,
-)
-
-
-def _is_path_like(text: str) -> bool:
-    """Return whether *text* looks like it contains a file path."""
-    return "/" in text or "\\" in text
-
-
-def _trading_plan_tickers(text: str) -> set[str]:
-    """Expand trading-plan file stems to canonical symbols.
-
-    ``als.to-trading-plan...``, ``tf_to-trading-plan...``,
-    ``btcx-b-to-trading-plan...`` and ``gldc_v-Weekly...`` all yield the
-    canonical ticker (``ALS.TO``, ``TF.TO``, ``BTCX-B.TO``, ``GLDC.V``).
-    Guarded to path-like text and the ``-Weekly``/``-trading-plan`` descriptor
-    so English prose ending in ``-to`` is never read as a ticker.
-    """
-    blob = text or ""
-    if not _is_path_like(blob):
-        return set()
-    found: set[str] = set()
-    for match in _TRADING_PLAN_TICKER_RE.finditer(blob):
-        base = match.group(1).upper()
-        suffix = match.group(2).upper()
-        found.add(f"{base}.{suffix}")
-    return found
-
-
 def _scan_symbols(text: str) -> set[str]:
     """Return the canonical symbols written anywhere in a blob of text."""
-    found = {
+    return {
         _normalize_symbol(match.group(0))
         for match in _CANONICAL_SYMBOL_RE.finditer(text or "")
     }
-    found.update(_trading_plan_tickers(text))
-    return found
 
 
 def _infer_venue(symbol: str) -> str | None:
@@ -494,7 +433,7 @@ def _infer_venue(symbol: str) -> str | None:
         ".BO": "bse",
         ".FX": "forex",
         ".TO": "toronto",
-        ".V": "tsxv",
+        ".V": "tsx_venture",
     }
     for suffix, venue in suffixes.items():
         if upper.endswith(suffix):
@@ -998,7 +937,8 @@ class GroundingLedger:
 
     def _seed_symbols(self, text: str, *, source: str) -> None:
         """Lock exact symbols explicitly supplied by a user."""
-        for symbol in sorted(_scan_symbols(text)):
+        for match in _CANONICAL_SYMBOL_RE.finditer(text or ""):
+            symbol = _normalize_symbol(match.group(0))
             key = f"explicit:{symbol}"
             existing = self._identities.get(key)
             version = existing.version + 1 if existing else 1
@@ -1088,35 +1028,6 @@ class GroundingLedger:
 
         chosen = self._choose_candidate(query, candidates)
         if chosen is None:
-            # A loose/bare search that came back ambiguous must not demote an
-            # already-locked identity. When the candidate list contains the
-            # symbol of an existing lock (bare "GLDC" returning GLDC.V among
-            # other global GLDC-* instruments while GLDC.V is already locked),
-            # the shortlist is answered by that lock: record it as superseded
-            # so the aggregate stays "locked" and already-authorized market
-            # tools are not blocked for the rest of the run.
-            locked_matches = sorted(
-                {
-                    record.symbol
-                    for record in self._identities.values()
-                    if record.status == "locked"
-                    and record.symbol
-                    and any(
-                        _normalize_symbol(candidate.get("symbol")) == record.symbol
-                        for candidate in candidates
-                    )
-                }
-            )
-            if len(locked_matches) == 1:
-                self._supersede_shortlists(locked_matches[0])
-                self._identities[key] = IdentityRecord(
-                    query=query,
-                    status="superseded",
-                    source_tool_call_id=call_id,
-                    candidates=candidates,
-                    version=version,
-                )
-                return
             self._identities[key] = IdentityRecord(
                 query=query,
                 status="ambiguous",
@@ -1909,7 +1820,6 @@ class GroundingLedger:
         masked = _LABELLED_SCORE_RE.sub(" ", masked)
         masked = _INDICATOR_VALUE_RE.sub(" ", masked)
         masked = _PROSPECTIVE_LEVEL_RE.sub(" ", masked)
-        masked = _ORDERED_LIST_MARKER_RE.sub(" ", masked)
         without_dates = _QUANTITY_WITH_UNIT_RE.sub(" ", masked)
         values: list[float] = []
         for match in _NUMBER_RE.finditer(without_dates):

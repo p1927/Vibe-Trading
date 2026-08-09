@@ -108,12 +108,6 @@ class ResearchReportsTool(BaseTool):
 
         suffix = code.rpartition(".")[2]
         if suffix not in _A_SHARE_SUFFIXES:
-            if suffix in ("TO", "V"):
-                return _error(
-                    f"research reports cover China A-shares only; Canada "
-                    f"(.TO/.V) is not published by the Eastmoney/THS providers "
-                    f"(got '{code}')"
-                )
             return _error(
                 f"research reports are China A-share only (.SH/.SZ/.BJ); got '{code}'"
             )

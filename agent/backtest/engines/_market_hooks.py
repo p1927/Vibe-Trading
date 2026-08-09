@@ -32,8 +32,8 @@ _MARKET_PATTERNS = [
     (re.compile(r"^[A-Z0-9&.\-]+\.(NS|BO)$", re.I), "india_equity"),
     # Korea equities: KOSPI (005930.KS) / KOSDAQ (247540.KQ), 6-digit codes.
     (re.compile(r"^\d{6}\.(KS|KQ)$", re.I), "kr_equity"),
-    # Canada equities: TSX (TD.TO) / TSX Venture (SHOP.V). Yahoo carries these
-    # suffixes verbatim; Canadian symbols settle in CAD.
+    # Canada equities: Toronto Stock Exchange (TD.TO) and TSX Venture
+    # (PNG.V). Yahoo carries both suffixes verbatim.
     (re.compile(r"^[A-Z0-9&.\-]+\.(TO|V)$", re.I), "ca_equity"),
     (re.compile(r"^[A-Z]+-USDT$", re.I), "crypto"),
     (re.compile(r"^[A-Z]+/USDT$", re.I), "crypto"),
@@ -139,7 +139,8 @@ def _detect_market(code: str) -> str:
         code: Ticker / symbol string.
 
     Returns:
-        Market type (a_share/us_equity/hk_equity/crypto/futures/forex).
+        Market type (a_share/us_equity/hk_equity/india_equity/kr_equity/
+        ca_equity/crypto/futures/forex).
         Bare 1-5 letter alphabetic tickers resolve to ``us_equity``;
         any other unknown format defaults to ``a_share``.
     """
@@ -181,13 +182,13 @@ def _is_china_futures(code: str) -> bool:
 
 
 def _detect_submarket(codes: List[str]) -> str:
-    """Detect US vs HK from symbol suffixes.
+    """Detect US, HK, or Canada from symbol suffixes.
 
     Args:
         codes: Instrument codes.
 
     Returns:
-        ``"hk"`` if any code ends with ``.HK``, else ``"us"``.
+        ``"hk"`` for ``.HK``, ``"ca"`` for ``.TO``/``.V``, else ``"us"``.
     """
     for code in codes:
         upper = code.upper()

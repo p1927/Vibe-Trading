@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from src.agent.tools import BaseTool
 from src.market_data import DEFAULT_MAX_ROWS, fetch_market_data_json
-
-logger = logging.getLogger(__name__)
 
 
 class MarketDataTool(BaseTool):
@@ -26,7 +23,10 @@ class MarketDataTool(BaseTool):
             "codes": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": 'Symbols such as ["AAPL.US"], ["700.HK"], ["BTC-USDT"].',
+                "description": (
+                    'Symbols such as ["AAPL.US"], ["700.HK"], ["TD.TO"], '
+                    '["PNG.V"], or ["BTC-USDT"].'
+                ),
             },
             "start_date": {
                 "type": "string",
@@ -64,7 +64,8 @@ class MarketDataTool(BaseTool):
                     "Data source. 'auto' detects from symbol format with fallback. "
                     "Use 'longbridge' explicitly for US/HK OHLCV through the "
                     "Longbridge OpenAPI (requires Longbridge credentials). "
-                    "Free, no key: yfinance/yahoo (US/HK/Canada equities; Canada via .TO/.V), okx/ccxt "
+                    "Free, no key: yfinance/yahoo (US/HK/Canada equities; "
+                    "Canada uses .TO/.V), okx/ccxt "
                     "(crypto), baostock/tencent/eastmoney/sina/akshare/mootdx "
                     "(China A-shares), stooq (global EOD), pykrx (Korea KRX daily "
                     "bars for <CODE>.KS / <CODE>.KQ; needs the optional pykrx "
@@ -91,15 +92,6 @@ class MarketDataTool(BaseTool):
     repeatable = True
 
     def execute(self, **kwargs: Any) -> str:
-        logger.info(
-            "get_market_data call: codes=%s start=%s end=%s source=%s interval=%s max_rows=%s",
-            kwargs["codes"],
-            kwargs["start_date"],
-            kwargs["end_date"],
-            kwargs.get("source", "auto"),
-            kwargs.get("interval", "1D"),
-            kwargs.get("max_rows", DEFAULT_MAX_ROWS),
-        )
         return fetch_market_data_json(
             codes=kwargs["codes"],
             start_date=kwargs["start_date"],

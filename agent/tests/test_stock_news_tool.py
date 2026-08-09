@@ -1,9 +1,9 @@
 """Tests for the stock-news tool.
 
 No request leaves the process: the Eastmoney HTTP boundary
-(:func:`backtest.loaders.eastmoney_client.get_json` via ``throttled_get``) and
-the Yahoo :func:`backtest.loaders.yahoo_client.search_news` helper are mocked so
-the real client + tool parsing run fully offline.
+(:func:`backtest.loaders.eastmoney_client.throttled_get_json`) and the Yahoo
+:func:`backtest.loaders.yahoo_client.search_news` helper are mocked so the real
+client + tool parsing run fully offline.
 """
 
 from __future__ import annotations
@@ -69,24 +69,10 @@ def _yahoo_news() -> list[dict[str, Any]]:
     ]
 
 
-class _FakeResponse:
-    """Minimal requests.Response stand-in for the mocked HTTP boundary."""
-
-    def __init__(self, body: str, status_code: int = 200):
-        self.text = body
-        self.status_code = status_code
-
-    def raise_for_status(self) -> None:
-        if self.status_code >= 400:
-            raise RuntimeError(f"{self.status_code} Server Error")
-
-
 class TestHelpers:
     def test_suffix_of(self) -> None:
         assert _suffix_of("600519.SH") == "SH"
         assert _suffix_of("AAPL.US") == "US"
-        assert _suffix_of("TD.TO") == "TO"
-        assert _suffix_of("SGML.V") == "V"
         assert _suffix_of("NOSUFFIX") == ""
 
     def test_bare_query(self) -> None:
@@ -138,9 +124,7 @@ class TestExecuteSuccess:
     def test_a_share_stock_news(self) -> None:
         tool = StockNewsTool()
         with patch.object(
-            eastmoney_client,
-            "throttled_get",
-            return_value=_FakeResponse(json.dumps(_em_news_payload())),
+            eastmoney_client, "throttled_get_json", return_value=_em_news_payload()
         ) as http:
             out = json.loads(tool.execute(code="600519.SH", scope="stock", limit=10))
 
@@ -161,9 +145,7 @@ class TestExecuteSuccess:
     def test_global_scope_needs_no_code(self) -> None:
         tool = StockNewsTool()
         with patch.object(
-            eastmoney_client,
-            "throttled_get",
-            return_value=_FakeResponse(json.dumps(_em_news_payload())),
+            eastmoney_client, "throttled_get_json", return_value=_em_news_payload()
         ):
             out = json.loads(tool.execute(scope="global"))
 
@@ -208,19 +190,6 @@ class TestExecuteSuccess:
         assert out["source"] == "yahoo"
         assert out["data"]["articles"][0]["title"] == "Apple unveils new products"
 
-    def test_ca_stock_via_yahoo_returns_articles(self) -> None:
-        tool = StockNewsTool()
-        with patch.object(
-            yahoo_client, "search_news", return_value=_yahoo_news()[:1]
-        ) as srch:
-            out = json.loads(tool.execute(code="SGML.V"))
-
-        srch.assert_called_once_with("SGML", 20)
-        assert out["ok"] is True
-        assert out["market"] == "ca"
-        assert out["source"] == "yahoo"
-        assert out["data"]["articles"][0]["title"] == "Apple unveils new products"
-
     def test_yahoo_empty_news_returns_empty_articles(self) -> None:
         with patch.object(yahoo_client, "search_news", return_value=[]):
             out = json.loads(StockNewsTool().execute(code="AAPL.US"))
@@ -256,7 +225,7 @@ class TestExecuteError:
         tool = StockNewsTool()
         with patch.object(
             eastmoney_client,
-            "throttled_get",
+            "throttled_get_json",
             side_effect=RuntimeError("eastmoney banned"),
         ):
             out = json.loads(tool.execute(code="600519.SH"))

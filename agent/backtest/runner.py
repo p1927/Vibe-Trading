@@ -1294,18 +1294,12 @@ def _create_market_engine(source: str, config: dict, codes: List[str]):
         from backtest.engines.korea_equity import KoreaEquityEngine
         return KoreaEquityEngine(config)
 
-    # Canada equity routing — TSX (.TO) / TSX Venture (.V) via Yahoo; uses the
-    # same GlobalEquityEngine family as US/HK with US-style execution rules.
-    if "ca_equity" in markets:
-        from backtest.engines.global_equity import GlobalEquityEngine
-        return GlobalEquityEngine(config, market="ca")
-
     # Original routing (Wave 1)
     if source in ("okx", "ccxt"):
         from backtest.engines.crypto import CryptoEngine
         return CryptoEngine(config)
     elif source in ("tushare", "akshare"):
-        if markets & {"us_equity", "hk_equity"}:
+        if markets & {"us_equity", "hk_equity", "ca_equity"}:
             from backtest.engines.global_equity import GlobalEquityEngine
             market = _detect_submarket(codes)
             return GlobalEquityEngine(config, market=market)
@@ -1327,7 +1321,7 @@ def _create_market_engine(source: str, config: dict, codes: List[str]):
         # Sources without a dedicated branch (local, stooq, ...): follow the
         # instrument market rather than the loader name, so e.g. a local
         # AAPL.US dataset gets US-equity execution rules instead of crypto.
-        if markets & {"us_equity", "hk_equity"}:
+        if markets & {"us_equity", "hk_equity", "ca_equity"}:
             from backtest.engines.global_equity import GlobalEquityEngine
             market = _detect_submarket(codes)
             return GlobalEquityEngine(config, market=market)

@@ -1416,7 +1416,8 @@ def get_market_data(
     """Fetch OHLCV market data for stocks, crypto, or mixed symbols.
 
     Supported sources:
-    - "yfinance": HK/US/Canada equities (free, e.g. AAPL.US, 700.HK, TD.TO, SHOP.V)
+    - "yfinance" / "yahoo": HK/US/Canada equities (free, e.g. AAPL.US,
+      700.HK, TD.TO, PNG.V)
     - "okx": cryptocurrency (free, e.g. BTC-USDT, ETH-USDT)
     - "tushare": China A-shares (requires TUSHARE_TOKEN, e.g. 000001.SZ)
     - "baostock": China A-shares via TCP protocol, bypasses HTTP CDN blocks (e.g. 000001.SZ, 601595.SH)
@@ -1427,10 +1428,11 @@ def get_market_data(
     - "auto": auto-detect based on symbol format (with fallback)
 
     Args:
-        codes: List of symbols (e.g. ["AAPL.US", "BTC-USDT", "000001.SZ"]).
+        codes: List of symbols (e.g. ["AAPL.US", "TD.TO", "BTC-USDT", "000001.SZ"]).
         start_date: Start date (YYYY-MM-DD).
         end_date: End date (YYYY-MM-DD).
-        source: Data source ("auto", "yfinance", "okx", "tushare", "baostock", "tencent", "akshare", "ccxt").
+        source: Data source. Prefer ``auto``; ``yahoo``/``yfinance`` serve
+            Canada, US, and HK equities.
         interval: Bar size (1m/5m/15m/30m/1H/4H/1D, default "1D").
         max_rows: Per-symbol row cap (default 250) so the response stays
             within the MCP token budget. A symbol exceeding it returns an
@@ -1691,13 +1693,13 @@ def get_research_reports(code: str, limit: int = 20) -> str:
 def get_stock_news(code: str | None = None, scope: str = "stock", limit: int = 20) -> str:
     """Fetch recent financial news headlines, read-only and no auth.
 
-    Markets: China A-share (SH/SZ/BJ) headlines from Eastmoney; US (.US), Hong
-    Kong (.HK) and Canada (.TO/.V) related-instrument matches from Yahoo
-    Finance. Use scope "stock" with a ``code`` for one security's headlines, or
-    scope "global" (no code) for broad China-market finance news.
+    Markets: China A-share (SH/SZ/BJ) headlines from Eastmoney; US (.US) and
+    Hong Kong (.HK) related-instrument matches from Yahoo Finance. Use scope
+    "stock" with a ``code`` for one security's headlines, or scope "global"
+    (no code) for broad China-market finance news.
 
     Args:
-        code: Symbol whose news to fetch (e.g. "600519.SH", "AAPL.US", "SGML.V").
+        code: Symbol whose news to fetch (e.g. "600519.SH", "AAPL.US").
             Required when scope="stock"; ignored when scope="global".
         scope: "stock" (default) or "global".
         limit: Maximum number of headlines to return.
@@ -1742,14 +1744,12 @@ def get_sec_filings(
 def get_financial_statements(code: str, statement: str = "indicators", period: str = "annual") -> str:
     """Fetch a stock's financial statements or key per-period indicators.
 
-    Markets: A-share (.SH/.SZ/.BJ, via Sina), US (.US), Hong Kong (.HK, via
-    Eastmoney) and Canada (.TO/.V, via Yahoo). Reports come back newest-first
-    as flat per-period rows. Use this to read fundamentals before building a
-    valuation or screen.
+    Markets: A-share (.SH/.SZ/.BJ, via Sina), US (.US) and Hong Kong (.HK, via
+    Eastmoney). Reports come back newest-first as flat per-period rows. Use this
+    to read fundamentals before building a valuation or screen.
 
     Args:
-        code: Single symbol with a market suffix (e.g. "600519.SH", "AAPL.US",
-            "SGML.V").
+        code: Single symbol with a market suffix (e.g. "600519.SH", "AAPL.US").
         statement: "balance", "income", "cashflow", or "indicators".
         period: "annual" or "quarter".
     """
@@ -1826,10 +1826,10 @@ def search_symbol(query: str, limit: int = 10) -> str:
     """Resolve a company name or ticker fragment to candidate trading symbols.
 
     Returns candidates with their market in the project's symbol convention
-    (A-shares 600519.SH, Hong Kong 00700.HK, U.S. AAPL.US, plus crypto/index/FX
-    from Yahoo). Searches Eastmoney and Yahoo and, for U.S. equities, attaches
-    the SEC CIK. Use this to turn an ambiguous name into a concrete symbol
-    before calling get_market_data or get_sec_filings.
+    (A-shares 600519.SH, Hong Kong 00700.HK, U.S. AAPL.US, Canada TD.TO/PNG.V,
+    plus crypto/index/FX from Yahoo). Searches Eastmoney and Yahoo and, for U.S.
+    equities, attaches the SEC CIK. Use this to turn an ambiguous name into a
+    concrete symbol before calling get_market_data or get_sec_filings.
 
     Args:
         query: Free-text company name or ticker fragment (Chinese or English).

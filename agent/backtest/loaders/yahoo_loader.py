@@ -4,7 +4,7 @@ Wraps the shared :mod:`backtest.loaders.yahoo_client` (the public v8 chart
 endpoint) rather than the ``yfinance`` package, so it pulls in no new
 dependency and shares the process-wide throttle/session that keeps Yahoo from
 IP-rate-limiting us. Covers US equities (``AAPL.US``), HK equities
-(``00700.HK``) and Canada equities (``TD.TO``, ``SHOP.V``); the client maps
+(``00700.HK``), and Canadian equities (``TD.TO`` / ``PNG.V``); the client maps
 each project symbol to Yahoo's ticker form.
 
 The chart endpoint returns each bar's ``trade_date`` as an epoch-second
@@ -50,7 +50,9 @@ def _is_supported(code: str) -> bool:
     no conversion) (#718).
     """
     upper = code.strip().upper()
-    return upper.endswith((".US", ".HK", ".NS", ".BO", ".KS", ".KQ", ".TO", ".V", "=F", "=X"))
+    return upper.endswith(
+        (".US", ".HK", ".NS", ".BO", ".KS", ".KQ", ".TO", ".V", "=F", "=X")
+    )
 
 
 def _to_yahoo_interval(interval: str) -> str:
@@ -170,10 +172,12 @@ def _rows_to_frame(
 
 @register
 class DataLoader:
-    """Yahoo Finance US/HK equity OHLCV loader (free, direct HTTP, no auth)."""
+    """Yahoo Finance global-equity OHLCV loader (free, direct HTTP, no auth)."""
 
     name = "yahoo"
-    markets = {"us_equity", "hk_equity", "india_equity", "kr_equity", "ca_equity"}
+    markets = {
+        "us_equity", "hk_equity", "india_equity", "kr_equity", "ca_equity",
+    }
     requires_auth = False
 
     def is_available(self) -> bool:
@@ -196,7 +200,8 @@ class DataLoader:
         """Fetch OHLCV history keyed by the original project symbols.
 
         Args:
-            codes: Project symbols such as ``AAPL.US`` and ``00700.HK``.
+            codes: Project symbols such as ``AAPL.US``, ``00700.HK``, and
+                ``TD.TO``.
             start_date: Inclusive start date (``YYYY-MM-DD``).
             end_date: Inclusive end date (``YYYY-MM-DD``).
             interval: Backtest interval such as ``1D`` or ``1H``.

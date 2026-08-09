@@ -2,13 +2,12 @@
 
 These never touch the network: the cross-market path mocks the shared client
 (:mod:`backtest.loaders.eastmoney_client`), and the end-to-end path mocks the
-HTTP boundary (``throttled_get``) so the real client parsing runs while no
+HTTP boundary (``throttled_get_json``) so the real client parsing runs while no
 request leaves the process.
 """
 
 from __future__ import annotations
 
-import json
 from typing import List
 from unittest.mock import patch
 
@@ -17,18 +16,6 @@ import pytest
 
 from backtest.loaders import eastmoney_client
 from backtest.loaders.eastmoney_loader import DataLoader, _to_compact_date
-
-
-class _FakeResponse:
-    """Minimal requests.Response stand-in for the mocked HTTP boundary."""
-
-    def __init__(self, body: str, status_code: int = 200):
-        self.text = body
-        self.status_code = status_code
-
-    def raise_for_status(self) -> None:
-        if self.status_code >= 400:
-            raise RuntimeError(f"{self.status_code} Server Error")
 
 
 def _client_rows() -> List[dict]:
@@ -189,9 +176,7 @@ class TestFetchEndToEndHttpMocked:
         }
         loader = DataLoader()
         with patch.object(
-            eastmoney_client,
-            "throttled_get",
-            return_value=_FakeResponse(json.dumps(payload)),
+            eastmoney_client, "throttled_get_json", return_value=payload
         ) as http:
             out = loader.fetch(["600519.SH"], "2024-01-01", "2024-01-31")
 

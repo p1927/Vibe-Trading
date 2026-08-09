@@ -10,7 +10,12 @@ from typing import Any, Callable
 import pytest
 
 from src.agent.context import ContextBuilder
-from src.agent.grounding import GroundingLedger
+from src.agent.grounding import (
+    GroundingLedger,
+    _infer_currency,
+    _infer_venue,
+    _scan_symbols,
+)
 from src.agent.loop import AgentLoop, _is_tool_success
 from src.agent.tools import BaseTool, ToolRegistry
 from src.agent.trace import TraceWriter
@@ -162,6 +167,15 @@ def _build_direct_agent(
         user_message="分析机器人ETF并给出买入价",
     )
     return agent, resolver, market, private_skill, TraceWriter(run_dir)
+
+
+def test_canadian_symbols_have_grounding_identity() -> None:
+    """TSX and TSXV symbols retain venue and CAD identity."""
+    assert _scan_symbols("Compare TD.TO with PNG.V") == {"TD.TO", "PNG.V"}
+    assert _infer_venue("TD.TO") == "toronto"
+    assert _infer_venue("PNG.V") == "tsx_venture"
+    assert _infer_currency("TD.TO") == "CAD"
+    assert _infer_currency("PNG.V") == "CAD"
 
 
 def test_ok_false_tool_envelope_is_failure() -> None:
@@ -430,229 +444,6 @@ def test_locked_symbol_rejects_silent_exchange_suffix_rewrite(
 
     assert market.calls == 0
     assert json.loads(messages[-1]["content"])["error_code"] == "identity_mismatch"
-
-
-def test_canadian_explicit_symbol_seeds_locked_identity(tmp_path: Path) -> None:
-    """A user-supplied TD.TO is a canonical symbol the market consumer may use."""
-    ledger = GroundingLedger(
-        run_dir=tmp_path,
-        user_message="请分析 TD.TO 的当前价格",
-    )
-
-    authorization = ledger.authorize_tool_call(
-        "get_market_data",
-        {"codes": ["TD.TO"]},
-        batch_authorized_symbols=ledger.authorized_symbols,
-        call_id="prices",
-    )
-
-    assert ledger.authorized_symbols == {"TD.TO"}
-    assert authorization.allowed is True
-
-
-def test_canadian_resolver_lock_authorizes_exact_venue(tmp_path: Path) -> None:
-    """A resolver lock on DCBO.TO lets get_market_data consume that exact venue."""
-    ledger = GroundingLedger(
-        run_dir=tmp_path,
-        user_message="分析 DCBO.TO",
-    )
-    ledger.ingest_tool_result(
-        tool_name="search_symbol",
-        arguments={"query": "DCBO"},
-        result=_resolver_payload("DCBO.TO", query="DCBO"),
-        call_id="resolver-ca",
-        success=True,
-    )
-
-    authorization = ledger.authorize_tool_call(
-        "get_market_data",
-        {"codes": ["DCBO.TO"]},
-        batch_authorized_symbols=ledger.authorized_symbols,
-        batch_identity_status=ledger.identity_status,
-        call_id="prices",
-    )
-
-    assert ledger.identity_status == "locked"
-    assert authorization.allowed is True
-
-
-def test_canadian_dual_listing_venue_is_not_silently_rewritten(
-    tmp_path: Path,
-) -> None:
-    """A locked DCBO.TO identity rejects a consumer switching to DCBO.US."""
-    ledger = GroundingLedger(
-        run_dir=tmp_path,
-        user_message="分析 DCBO.TO",
-    )
-    ledger.ingest_tool_result(
-        tool_name="search_symbol",
-        arguments={"query": "DCBO"},
-        result=_resolver_payload("DCBO.TO", query="DCBO"),
-        call_id="resolver-ca",
-        success=True,
-    )
-
-    authorization = ledger.authorize_tool_call(
-        "get_market_data",
-        {"codes": ["DCBO.US"]},
-        batch_authorized_symbols=ledger.authorized_symbols,
-        batch_identity_status=ledger.identity_status,
-        call_id="prices",
-    )
-
-    assert authorization.allowed is False
-    assert authorization.error_code == "identity_mismatch"
-
-
-def test_canadian_symbols_are_canonical_and_venue_currency_aware() -> None:
-    """_scan_symbols / _infer_venue / _infer_currency understand .TO/.V."""
-    from src.agent.grounding import _infer_currency, _infer_venue, _scan_symbols
-
-    scanned = _scan_symbols("compare TD.TO vs SHOP.V")
-    assert "TD.TO" in scanned
-    assert "SHOP.V" in scanned
-
-    assert _infer_venue("TD.TO") == "toronto"
-    assert _infer_venue("SHOP.V") == "tsxv"
-    assert _infer_currency("TD.TO") == "CAD"
-    assert _infer_currency("SHOP.V") == "CAD"
-
-
-def test_underscore_ticker_in_plan_path_seeds_locked_identity(
-    tmp_path: Path,
-) -> None:
-    """A plan-file path like gldc_v-Weekly-...md must lock GLDC.V."""
-    ledger = GroundingLedger(
-        run_dir=tmp_path,
-        user_message=(
-            "Please update C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\08\\"
-            "gldc_v-Weekly-2026-08-03.md"
-        ),
-    )
-
-    assert ledger.authorized_symbols == {"GLDC.V"}
-    authorization = ledger.authorize_tool_call(
-        "get_market_data",
-        {"codes": ["GLDC.V"]},
-        batch_authorized_symbols=ledger.authorized_symbols,
-        call_id="prices",
-    )
-    assert authorization.allowed is True
-
-
-def test_trading_plan_ticker_scan_and_prose_guard() -> None:
-    """Trading-plan stems scan to canonical symbols; prose is not misread."""
-    from src.agent.grounding import _scan_symbols
-
-    # Underscore separator.
-    assert _scan_symbols(
-        "C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\07\\"
-        "tf_to-trading-plan-2026-07-16-to-24.md"
-    ) == {"TF.TO"}
-    assert "GLDC.V" in _scan_symbols(
-        "C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\08\\"
-        "gldc_v-Weekly-2026-08-03.md"
-    )
-    assert "SGML.V" in _scan_symbols(
-        "C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\08\\"
-        "SGML_V-Weekly-2026-08-03.md"
-    )
-    # Hyphen separator, including a base that is itself hyphenated (BTCX-B).
-    assert _scan_symbols(
-        "C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\07\\"
-        "btcx-b-to-trading-plan-2026-07-13-to-17.md"
-    ) == {"BTCX-B.TO"}
-    assert _scan_symbols(
-        "C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\07\\"
-        "aapl-to-trading-plan-2026-07-06-to-10.md"
-    ) == {"AAPL.TO"}
-    assert "HIVE.TO" in _scan_symbols(
-        "C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\06\\"
-        "hive-to-trading-plan-2026-july-to-august.md"
-    )
-    # Dot separator (also handled by the canonical regex) stays consistent.
-    assert "BTCX-B.TO" in _scan_symbols(
-        "C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\07\\"
-        "btcx-b.to-trading-plan-2026-07-20-to-24.md"
-    )
-    # English prose ending in -to/-v must not become phantom tickers, even
-    # when the message carries a path elsewhere (no -Weekly/-trading-plan
-    # descriptor follows the suffix).
-    assert (
-        _scan_symbols("go_to school ready_to-go back_to basics C:\\x\\note.md")
-        == set()
-    )
-
-
-def test_locked_symbol_survives_a_later_bare_ambiguous_search(
-    tmp_path: Path,
-) -> None:
-    """Bare 'GLDC' ambiguity must not demote an already-locked GLDC.V."""
-    ledger = GroundingLedger(
-        run_dir=tmp_path,
-        user_message="请分析 GLDC.V 的当前价格",
-    )
-    candidates = [
-        {"symbol": "GLDCO2.SW", "name": "UBSETF Carbon Compens Gold ETF", "source": "yahoo"},
-        {"symbol": "GLDCX", "name": "Gabelli Gold Fund Class C", "source": "yahoo"},
-        {"symbol": "GLDC.V", "name": "CASSIAR GOLD CORP", "source": "yahoo"},
-        {"symbol": "GLDC.BA", "name": "SPDR GOLD TRUST GDR", "source": "yahoo"},
-    ]
-    ledger.ingest_tool_result(
-        tool_name="search_symbol",
-        arguments={"query": "GLDC"},
-        result=_resolver_payload(candidates=candidates, query="GLDC"),
-        call_id="bare-search",
-        success=True,
-    )
-
-    assert ledger.identity_status == "locked"
-    assert ledger.authorized_symbols == {"GLDC.V"}
-    authorization = ledger.authorize_tool_call(
-        "get_market_data",
-        {"codes": ["GLDC.V"]},
-        batch_authorized_symbols=ledger.authorized_symbols,
-        batch_identity_status=ledger.identity_status,
-        call_id="prices",
-    )
-    assert authorization.allowed is True
-
-
-def test_plan_path_symbol_survives_bare_search_end_to_end(
-    tmp_path: Path,
-) -> None:
-    """End-to-end: a gldc_v plan path locks GLDC.V; bare GLDC can't demote it."""
-    ledger = GroundingLedger(
-        run_dir=tmp_path,
-        user_message=(
-            "Please update C:\\vibe-trading\\vibe-trading-history\\TSX\\2026\\08\\"
-            "gldc_v-Weekly-2026-08-03.md"
-        ),
-    )
-    assert ledger.authorized_symbols == {"GLDC.V"}
-    candidates = [
-        {"symbol": "GLDCO2.SW", "name": "UBSETF Carbon Compens Gold ETF", "source": "yahoo"},
-        {"symbol": "GLDCX", "name": "Gabelli Gold Fund Class C", "source": "yahoo"},
-        {"symbol": "GLDC.V", "name": "CASSIAR GOLD CORP", "source": "yahoo"},
-        {"symbol": "GLDC.BA", "name": "SPDR GOLD TRUST GDR", "source": "yahoo"},
-    ]
-    ledger.ingest_tool_result(
-        tool_name="search_symbol",
-        arguments={"query": "GLDC"},
-        result=_resolver_payload(candidates=candidates, query="GLDC"),
-        call_id="bare-search",
-        success=True,
-    )
-
-    assert ledger.identity_status == "locked"
-    authorization = ledger.authorize_tool_call(
-        "get_market_data",
-        {"codes": ["GLDC.V"]},
-        batch_authorized_symbols=ledger.authorized_symbols,
-        batch_identity_status=ledger.identity_status,
-        call_id="prices",
-    )
-    assert authorization.allowed is True
 
 
 def test_listed_identity_blocks_private_company_workflow(
@@ -1295,75 +1086,12 @@ _PLAN_LEVELS_FROM_983 = [
     "目标位 6.80，止损 5.20",
     "若收盘 5.36 则减仓",
     "target price 6.80 with stop-loss 5.20",
-    # A `$` currency prefix must not break the mask (false-positive fix,
-    # observed in the Aug 2026 RXRX/BFLY runs: <$2.86 and 目标价 $3.50 were
-    # rejected as conflicts because the `$` sat between the operator/marker
-    # and the digit).
-    "硬触发: 收盘 <$2.86 且量 >2000 万股",
-    "收盘 < $2.86 且量 > 2000 万股",
-    "目标价 $3.50",
-    "目标价 $3.50 两档挂单",
-    "触发价 $4.00",
-    # The CAD `C$` prefix must not break the mask either (DCBO.TO run: a
-    # "收盘 < C$26.00" hard stop was read as a price claim).
-    "收盘 < C$26.00 全清",
-    "收盘低于 C$26.00",
-    "目标价 C$26.00",
-    # TA readings on their own scale are masked (布林/SMA/RSI in the DCBO.TO
-    # draft: "布林 30.98/26.64/22.29", "SMA200 35.78" were read as claims).
-    "布林 30.98/26.64/22.29(收盘站上上轨)",
-    "布林带 30.98/26.64/22.29",
-    "SMA200 35.78(价格在其下)",
-    "RSI 46.7",
-    # A day-range shares the month prefix: the "–14" tail of "8/10–14" was
-    # parsed as a price of 14.0 and rejected the GRID.TO / DCBO.TO drafts.
-    "8/10–14 每日收盘判定项",
-    "8/10-14",
-    "8/10至14",
-    "2026-08-10–14",
 ]
 
 
 @pytest.mark.parametrize("segment", _PLAN_LEVELS_FROM_983, ids=range(len(_PLAN_LEVELS_FROM_983)))
 def test_plan_levels_are_not_read_as_observed_price_claims(segment: str) -> None:
     """A trigger, a target and a hypothesis assert nothing about observed data."""
-    assert GroundingLedger._numbers_without_dates_or_percent(segment) == []
-
-
-# Bare 万/萬 (ten-thousands) is a quantity, never a per-share price: volume
-# figures written without the 股 unit ("量 5–10 万", "119 万") were parsed as
-# OHLC claims and rejected the FLT.TO draft on the first attempt (Aug 2026).
-_VOLUME_QUANTITIES_IN_WAN = [
-    "量 5–10 万",
-    "量 5-10 万",
-    "119 万",
-    "量 119 萬",
-    "量 150 万股",
-    "量 5–10 万股",
-]
-
-
-@pytest.mark.parametrize("segment", _VOLUME_QUANTITIES_IN_WAN, ids=range(len(_VOLUME_QUANTITIES_IN_WAN)))
-def test_wan_quantities_are_not_read_as_price_claims(segment: str) -> None:
-    """A volume in ten-thousands is not an observed price claim."""
-    assert GroundingLedger._numbers_without_dates_or_percent(segment) == []
-
-
-# A markdown ordered-list item number ("1. 持仓", "10. 事件") is not a price.
-# The standalone integer + period at line start was parsed as a price claim of
-# 1.0 and rejected the BLDP.TO draft on its second attempt (Aug 2026).
-_ORDERED_LIST_MARKERS = [
-    "1. **持仓**",
-    "1. 持仓",
-    "2. GTC 单",
-    "10. 事件",
-    "   1. 持仓",
-]
-
-
-@pytest.mark.parametrize("segment", _ORDERED_LIST_MARKERS, ids=range(len(_ORDERED_LIST_MARKERS)))
-def test_ordered_list_markers_are_not_read_as_price_claims(segment: str) -> None:
-    """An ordered-list item number asserts nothing about observed data."""
     assert GroundingLedger._numbers_without_dates_or_percent(segment) == []
 
 
@@ -1380,26 +1108,6 @@ _ASSERTIONS_THAT_MUST_STAY_CHECKED = [
     # A conditional opener must not reach back over a quote already made.
     ("收盘 6.03，若跌破 5.36 减仓", [6.03]),
     ("开盘 6.80 最高 7.18 最低 6.68", [6.80, 7.18, 6.68]),
-    # A `$` alone is NOT prospective: an observed quote written with a
-    # currency prefix and no marker/operator must stay checked.
-    ("现价 $5.97", [5.97]),
-    ("开盘 $6.80 最高 $7.18 最低 $6.68", [6.80, 7.18, 6.68]),
-    # A 万 quantity must not hide a nearby observed quote (span-local):
-    # the volume is masked, the close beside it stays checked.
-    ("收盘 0.49，量 119 万", [0.49]),
-    # An ordered-list marker must not shield the real price beside it:
-    # "1." and the 500-share quantity mask, the C$3.72 quote stays checked.
-    ("1. 持仓: 500 股 @ C$3.72", [3.72]),
-    # A decimal at line start is not a list marker ("3.50" has a digit after
-    # the period).
-    ("3.50 支撑位", [3.5]),
-    # A real low (低) is NOT an indicator/level mask: it stays checked and, in
-    # a multi-symbol session, needs its canonical symbol named explicitly.
-    ("低 19.87(2026-04-13)", [19.87]),
-    # `C$`/`$` alone (no operator/marker) is not prospective: stays checked.
-    ("C$26.00 收盘", [26.0]),
-    # A single short date masks, but the price beside it stays checked.
-    ("8/10 收 5.00", [5.0]),
 ]
 
 

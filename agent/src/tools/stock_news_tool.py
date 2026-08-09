@@ -7,8 +7,8 @@ Two public, no-auth news surfaces are wrapped behind one BaseTool contract:
   surface it rate-limits by source IP, so the request routes through the frozen,
   IP-throttled :mod:`backtest.loaders.eastmoney_client` rather than touching the
   host directly.
-* US / HK / Canada headlines come from Yahoo Finance's public v1 search-news
-  surface via the frozen, IP-throttled :mod:`backtest.loaders.yahoo_client`.
+* US / HK headlines come from Yahoo Finance's public v1 search-news surface via
+  the frozen, IP-throttled :mod:`backtest.loaders.yahoo_client`.
 
 The tool never re-implements provider plumbing and never issues an un-throttled
 request: every outbound call goes through a frozen client.
@@ -41,9 +41,8 @@ _EM_NEWS_URL = "https://search-api-web.eastmoney.com/search/jsonp"
 
 # A-share / China-market suffixes that route to the Eastmoney news surface.
 _EM_SUFFIXES = ("SH", "SZ", "BJ")
-# Suffixes that route to Yahoo's search-news surface. Yahoo carries US, HK and
-# Canada (TSX `.TO` / TSX Venture `.V`) tickers verbatim.
-_YAHOO_SUFFIXES = ("US", "HK", "TO", "V")
+# Suffixes that route to Yahoo's search-news surface.
+_YAHOO_SUFFIXES = ("US", "HK")
 
 # Default broad-market query used when ``scope='global'`` carries no code.
 _GLOBAL_QUERY = "财经"
@@ -225,7 +224,7 @@ def _yahoo_article(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _fetch_yahoo_news(query: str, limit: int) -> list[dict[str, Any]]:
-    """Fetch US/HK/Canada news articles for a query via Yahoo search.
+    """Fetch US/HK news articles for a query via Yahoo search.
 
     Args:
         query: Free-text search term (bare ticker or keyword).
@@ -250,9 +249,8 @@ class StockNewsTool(BaseTool):
     description = (
         "Fetch recent financial news headlines, read-only and no auth. Markets: "
         "China A-share (SH/SZ/BJ) returns Eastmoney news ARTICLES "
-        "(title/url/source/published/snippet) under 'articles'. US (.US), Hong "
-        "Kong (.HK) and Canada (.TO/.V) return Yahoo Finance news articles "
-        "with the same fields. Use "
+        "(title/url/source/published/snippet) under 'articles'. US (.US) and Hong "
+        "Kong (.HK) return Yahoo Finance news articles with the same fields. Use "
         "scope 'stock' with a 'code', or scope 'global' (no code) for broad "
         "China-market finance articles. "
         'Example: {"code": "600519.SH", "scope": "stock", "limit": 10}.'
@@ -264,10 +262,9 @@ class StockNewsTool(BaseTool):
                 "type": "string",
                 "description": (
                     "Symbol whose news to fetch, e.g. '600519.SH', 'AAPL.US', "
-                    "'00700.HK', 'TD.TO', 'SGML.V'. Required when "
-                    "scope='stock'; ignored when scope='global'. The exchange "
-                    "suffix selects the upstream: SH/SZ/BJ -> Eastmoney, "
-                    "US/HK/TO/V -> Yahoo Finance."
+                    "'00700.HK'. Required when scope='stock'; ignored when "
+                    "scope='global'. The exchange suffix selects the upstream: "
+                    "SH/SZ/BJ -> Eastmoney, US/HK -> Yahoo Finance."
                 ),
             },
             "scope": {
@@ -376,9 +373,8 @@ class StockNewsTool(BaseTool):
         )
 
     def _stock_via_yahoo(self, code: str, query: str, limit: int) -> str:
-        """Fetch US/HK/Canada news articles from Yahoo for one code."""
-        suffix = _suffix_of(code)
-        market = "hk" if suffix == "HK" else "ca" if suffix in ("TO", "V") else "us"
+        """Fetch US/HK news articles from Yahoo for one code."""
+        market = "hk" if _suffix_of(code) == "HK" else "us"
         try:
             articles = _fetch_yahoo_news(query, limit)
         except Exception as exc:  # noqa: BLE001 - surface any fetch failure as envelope

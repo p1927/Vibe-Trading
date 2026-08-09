@@ -70,10 +70,8 @@ class TestDetectMarket:
             ("247540.KQ", "kr_equity"),  # KOSDAQ
             # Canada equity (TSX / TSX Venture)
             ("TD.TO", "ca_equity"),
-            ("SHOP.TO", "ca_equity"),
-            ("ENB.TO", "ca_equity"),
-            ("ACDC.V", "ca_equity"),
-            ("NEXE.V", "ca_equity"),
+            ("BBD-B.TO", "ca_equity"),
+            ("PNG.V", "ca_equity"),
             # Crypto
             ("BTC-USDT", "crypto"),
             ("ETH-USDT", "crypto"),
@@ -98,6 +96,7 @@ class TestDetectMarket:
         assert _detect_market("aapl.us") == "us_equity"
         assert _detect_market("aapl") == "us_equity"
         assert _detect_market("btc-usdt") == "crypto"
+        assert _detect_market("td.to") == "ca_equity"
 
     def test_unknown_defaults_to_a_share(self) -> None:
         assert _detect_market("UNKNOWN") == "a_share"
@@ -131,6 +130,12 @@ class TestBareUsTickerRouting:
         assert _detect_source("AAPL") == "yfinance"
         assert code_currency("AAPL") == "USD"
         assert code_currency("AAPL.US") == "USD"
+
+    def test_canadian_tickers_route_to_canada_and_cad(self) -> None:
+        assert _detect_source("TD.TO") == "yahoo"
+        assert _detect_source("PNG.V") == "yahoo"
+        assert code_currency("TD.TO") == "CAD"
+        assert code_currency("PNG.V") == "CAD"
 
     def test_catch_all_is_lowest_priority(self) -> None:
         assert _detect_market("600519.SH") == "a_share"
@@ -179,7 +184,7 @@ class TestDetectSource:
             ("005930.KS", "pykrx"),
             ("247540.KQ", "pykrx"),
             ("TD.TO", "yahoo"),
-            ("SHOP.V", "yahoo"),
+            ("PNG.V", "yahoo"),
             ("BTC-USDT", "okx"),
             ("IF2406.CFFEX", "tushare"),
             ("EUR/USD", "akshare"),
@@ -196,12 +201,13 @@ class TestDetectSource:
 
 class TestGroupCodes:
     def test_mixed_codes(self) -> None:
-        codes = ["000001.SZ", "AAPL.US", "BTC-USDT", "0700.HK"]
+        codes = ["000001.SZ", "AAPL.US", "BTC-USDT", "0700.HK", "TD.TO"]
         groups = _group_codes_by_market(codes)
         assert groups["a_share"] == ["000001.SZ"]
         assert groups["us_equity"] == ["AAPL.US"]
         assert groups["crypto"] == ["BTC-USDT"]
         assert groups["hk_equity"] == ["0700.HK"]
+        assert groups["ca_equity"] == ["TD.TO"]
 
     def test_same_market(self) -> None:
         codes = ["000001.SZ", "600519.SH"]

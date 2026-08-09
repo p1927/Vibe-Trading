@@ -26,8 +26,7 @@ _SOURCE_PATTERNS = [
     # India: NSE (RELIANCE.NS) / BSE (500325.BO). Tickers may carry '&' and '-'
     # (e.g. M&M.NS, BAJAJ-AUTO.NS). Served by Yahoo's public chart endpoint.
     (re.compile(r"^[A-Z0-9&.\-]+\.(NS|BO)$", re.I), "yahoo"),
-    # Canada: TSX (TD.TO) / TSX Venture (SHOP.V). Yahoo carries these suffixes
-    # verbatim — ca.yahoo.com is the same query API as the .com site.
+    # Canada: Toronto Stock Exchange (TD.TO) / TSX Venture (PNG.V).
     (re.compile(r"^[A-Z0-9&.\-]+\.(TO|V)$", re.I), "yahoo"),
     # Yahoo futures (GC=F, CL=F) and forex (EURUSD=X) suffix conventions —
     # served verbatim by Yahoo's public chart endpoint (#718). Without these,
@@ -210,14 +209,6 @@ def fetch_market_data(
                     "fallback_used": bool(used_source and used_source != src),
                     "currency_conversion": "none",
                 }
-        if data_map:
-            logger.info(
-                "market-data resolved symbols=%s via source=%r (detected=%r fallback=%s)",
-                sorted(data_map),
-                used_source or src,
-                src,
-                bool(used_source and used_source != src),
-            )
 
     unresolved = [
         code

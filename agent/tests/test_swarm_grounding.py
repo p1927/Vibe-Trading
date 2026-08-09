@@ -32,11 +32,19 @@ def test_extract_us_hk_a_share_and_crypto_symbols() -> None:
         "crypto": "Hedge with BTC-USDT",
         "shenzhen": "000001.SZ for liquidity",
         "beijing": "Listed on 430090.BJ recently",
+        "canada": "Compare TD.TO with TSX Venture name PNG.V",
     }
     found = grounding.extract_symbols_from_user_vars(user_vars)
     assert set(found) == {
         "NVDA.US", "700.HK", "600519.SH", "BTC-USDT", "000001.SZ", "430090.BJ",
+        "TD.TO", "PNG.V",
     }
+
+
+def test_extract_canadian_class_symbol() -> None:
+    assert grounding.extract_symbols_from_user_vars(
+        {"target": "Review BBD-B.TO in CAD"}
+    ) == ["BBD-B.TO"]
 
 
 def test_extract_preserves_first_occurrence_order() -> None:
@@ -110,13 +118,6 @@ def test_extract_does_not_match_substrings_inside_words() -> None:
         "noisy": "regulator FOO.USDA approved BLAH.USAID rules",
     }
     assert grounding.extract_symbols_from_user_vars(user_vars) == []
-
-
-def test_extract_canadian_tsx_symbols() -> None:
-    # .TO (TSX) and .V (TSX Venture) are detected as explicit suffixed symbols;
-    # their bare roots (TD, SHOP) must not leak into bogus .US promotions.
-    user_vars = {"goal": "analyze TD.TO and SHOP.V positioning"}
-    assert grounding.extract_symbols_from_user_vars(user_vars) == ["TD.TO", "SHOP.V"]
 
 
 # --------------------------------------------------------------------------- #

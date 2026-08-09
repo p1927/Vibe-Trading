@@ -72,34 +72,20 @@ def _yahoo_quotes() -> list:
             "exchange": "CCC",
             "quoteType": "CRYPTOCURRENCY",
         },
+        {
+            "symbol": "TD.TO",
+            "shortname": "Toronto-Dominion Bank",
+            "exchange": "TOR",
+            "quoteType": "EQUITY",
+        },
+        {
+            "symbol": "PNG.V",
+            "shortname": "Kraken Robotics Inc.",
+            "exchange": "VAN",
+            "quoteType": "EQUITY",
+        },
         {"symbol": "", "shortname": "no symbol"},  # dropped
     ]
-
-
-class TestFromYahooSymbol:
-    """Yahoo symbol -> project convention, incl. Canadian suffixes."""
-
-    def test_canadian_suffixes_map_to_ca(self):
-        assert ss._from_yahoo_symbol("DCBO.TO", {"quoteType": "EQUITY"}) == (
-            "DCBO.TO",
-            "ca",
-        )
-        assert ss._from_yahoo_symbol("ACDC.V", {"quoteType": "EQUITY"}) == (
-            "ACDC.V",
-            "ca",
-        )
-
-    def test_us_equity_still_maps_to_us(self):
-        assert ss._from_yahoo_symbol("AAPL", {"quoteType": "EQUITY"}) == (
-            "AAPL.US",
-            "us",
-        )
-
-    def test_hk_still_maps_to_hk(self):
-        assert ss._from_yahoo_symbol("0700.HK", {"quoteType": "EQUITY"}) == (
-            "00700.HK",
-            "hk",
-        )
 
 
 class TestSymbolSearchSuccess:
@@ -127,6 +113,9 @@ class TestSymbolSearchSuccess:
         assert data["sources"]["sec_edgar"] == "ok"
 
         by_symbol = {c["symbol"]: c for c in data["candidates"]}
+
+        assert by_symbol["TD.TO"]["market"] == "ca"
+        assert by_symbol["PNG.V"]["market"] == "ca"
 
         # A-share secid -> 600519.SH, market cn.
         assert by_symbol["600519.SH"]["market"] == "cn"

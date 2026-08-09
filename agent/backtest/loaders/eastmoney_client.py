@@ -25,7 +25,7 @@ import logging
 import re
 from typing import Any
 
-from backtest.loaders._http import resolve_min_interval, throttled_get
+from backtest.loaders._http import resolve_min_interval, throttled_get_json
 
 logger = logging.getLogger(__name__)
 
@@ -79,36 +79,27 @@ def _min_interval() -> float:
 
 
 def get_json(url: str, *, params: dict[str, Any]) -> Any:
-    """Issue a throttled Eastmoney GET and decode the body as JSON or JSONP.
-
-    Eastmoney's search/suggest endpoint returns a JSONP envelope
-    (``callback({...})``) instead of plain JSON — parsing it with
-    ``response.json()`` raises ``JSONDecodeError: Expecting value``. This
-    decode path goes through :func:`_strip_jsonp`, which prefers raw JSON and
-    only unwraps a real JSONP wrapper, so one path serves both the search
-    (JSONP) and kline (plain JSON) endpoints.
+    """Issue a throttled Eastmoney GET and decode the body as JSON.
 
     Args:
         url: Fully-qualified Eastmoney endpoint URL.
         params: Query parameters for the request.
 
     Returns:
-        The decoded payload (typically a ``dict``), or ``None`` when the body
-        is neither valid JSON nor a recognizable JSONP envelope.
+        The decoded JSON payload (typically a ``dict``).
 
     Raises:
         requests.RequestException: Network failure, propagated for the caller's
             retry policy.
         requests.HTTPError: Non-2xx response status.
+        ValueError: Body is not valid JSON.
     """
-    response = throttled_get(
+    return throttled_get_json(
         url,
         host_key=_HOST_KEY,
         min_interval=_min_interval(),
         params=params,
     )
-    response.raise_for_status()
-    return _strip_jsonp(response.text)
 
 
 def _resolve_a_share_secid(code: str, suffix: str) -> str | None:
