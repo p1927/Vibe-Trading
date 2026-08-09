@@ -236,7 +236,7 @@
       <img src="assets/feature-cross-market-data-backtesting.png" height="130" alt="Cross-market data and backtesting"/><br>
       <h3>📊 Cross-Market Data & Backtesting</h3>
       <div align="left">
-        • A / HK / US / India / Korea equities, crypto, futures, and forex<br>
+        • A / HK / US / Canada / India / Korea equities, crypto, futures, and forex<br>
         • Data fallback and composite backtests<br>
         • PIT data, validation, and run cards
       </div>
@@ -327,7 +327,7 @@ Most runs follow the same evidence path: route the request, load the right marke
 | Layer | What happens |
 |-------|--------------|
 | **Plan** | Selects the relevant finance skills, tools, data sources, and swarm preset when useful. |
-| **Ground** | Pulls A-shares, HK/US equities, crypto, futures, forex, documents, or web context through the available loaders. |
+| **Ground** | Pulls A-shares, HK/US/Canada equities, crypto, futures, forex, documents, or web context through the available loaders. |
 | **Execute** | Generates testable strategy code, runs tools, and uses the matching backtest engine or analysis workflow. |
 | **Validate** | Adds metrics, benchmark comparison, Monte Carlo, Bootstrap, Walk-Forward, run cards, and warnings where applicable. |
 | **Deliver** | Returns reports, artifacts, tool traces, and exports for TradingView, TDX, MetaTrader 5, MCP clients, or later sessions. |
@@ -344,8 +344,9 @@ One `get_market_data` call, **23 free market-data sources** (plus the optional *
 | `eastmoney` | A / US / HK | none | OHLCV + deep fundamentals & flow tools (throttled) |
 | `baostock` · `akshare` | A (+ US/HK/futures/macro/fx) | none | free fallbacks |
 | `tushare` | A / HK / futures / fund / macro | token | richest A-share |
-| `yahoo` · `sina` · `stooq` | US (/HK) | none | direct chart/quotes/options · K-line to 1984 · EOD CSV |
-| `yfinance` | US / HK | none | wrapper |
+| `yahoo` | US / HK / Canada | none | direct chart/quotes/options; TSX `.TO` / TSXV `.V` |
+| `sina` · `stooq` | US | none | K-line to 1984 · EOD CSV |
+| `yfinance` | US / HK / Canada | none | wrapper; TSX `.TO` / TSXV `.V` pass through |
 | `longbridge` | US / HK | App Key + App Secret + Access Token | optional historical OHLCV source; install the optional SDK |
 | `finnhub` · `alphavantage` · `tiingo` · `fmp` | US | key | optional providers |
 | `qveris` | global multi-asset | key · credits | **premium marketplace** — 63+ providers via one key (explicit-only, never in auto fallback) |
@@ -556,7 +557,7 @@ Run `vibe-trading alpha list` to browse, `vibe-trading alpha show <id>` for form
 | Engine | Market | Notes |
 |--------|--------|-------|
 | **ChinaA** | A-share | T+1, price limits, pre-ST filter |
-| **GlobalEquity** | US / HK | T+0 |
+| **GlobalEquity** | US / HK / Canada | same-session trading; market-specific lots, ticks, and costs |
 | **IndiaEquity** | India (NSE/BSE) | T+1, circuit bands, config-driven STT / stamp / SEBI / GST cost stack |
 | **KoreaEquity** | Korea (KRX: KOSPI/KOSDAQ) | long-only, ±30% band judged at execution time on the unified tick grid, 2026 0.20% transaction tax |
 | **Crypto** | crypto spot / USD-M perps | funding settlements, execution/mark split |
@@ -641,9 +642,9 @@ vibe-trading-mcp               # start MCP server (stdio)
 - **Docker** for Path A
 - OpenAI Codex can also be used with ChatGPT OAuth: set `LANGCHAIN_PROVIDER=openai-codex`, then run `vibe-trading provider login openai-codex`. This does not use `OPENAI_API_KEY`.
 
-> **Supported LLM providers:** OpenRouter, Requesty, OpenAI, Anthropic (native Messages API), DeepSeek, Gemini, Groq, DashScope/Qwen, Zhipu, Moonshot/Kimi, MiniMax, SiliconFlow (CN + Global), Xiaomi MIMO, iFlytek Spark, Z.ai, NVIDIA NIM, Ollama (local). When no `*_BASE_URL` is set, each provider falls back to its canonical endpoint, so just a key is enough. See `.env.example` for config.
+> **Supported LLM providers:** OpenRouter, Requesty, OpenAI, Anthropic (native Messages API), DeepSeek, Gemini, Groq, DashScope/Qwen, Zhipu, Moonshot/Kimi, MiniMax, SiliconFlow (CN + Global), Xiaomi MIMO, iFlytek Spark, Z.ai, NVIDIA NIM, ModelScope, Ollama (local). When no `*_BASE_URL` is set, each provider falls back to its canonical endpoint, so just a key is enough. See `.env.example` for config.
 
-> **Tip:** All markets work without any API keys thanks to automatic fallback. yfinance (HK/US), OKX (crypto), mootdx (A-shares, TCP-direct, no IP throttle), and AKShare (A-shares, US, HK, futures, forex) are all free. Tushare token is optional — mootdx is the preferred no-token A-share fallback, with AKShare as a broader backup.
+> **Tip:** All markets work without any API keys thanks to automatic fallback. yfinance/Yahoo (HK/US/Canada), OKX (crypto), mootdx (A-shares, TCP-direct, no IP throttle), and AKShare (A-shares, US, HK, futures, forex) are all free. Tushare token is optional — mootdx is the preferred no-token A-share fallback, with AKShare as a broader backup.
 
 ### Path A: Docker (zero setup)
 
@@ -745,7 +746,7 @@ Copy `agent/.env.example` to `agent/.env` and uncomment the provider block you w
 
 <sub>* Ollama does not require an API key. OpenAI Codex uses ChatGPT OAuth and stores tokens via `oauth-cli-kit`, not in `agent/.env`.</sub>
 
-**Free data (no key needed):** A-shares via AKShare, HK/US equities via yfinance, crypto via OKX, 100+ crypto exchanges via CCXT. The system automatically selects the best available source for each market.
+**Free data (no key needed):** A-shares via AKShare, HK/US/Canada equities via Yahoo/yfinance, crypto via OKX, 100+ crypto exchanges via CCXT. The system automatically selects the best available source for each market.
 
 ### 🎯 Recommended Models
 

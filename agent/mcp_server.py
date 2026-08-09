@@ -1551,7 +1551,8 @@ def get_market_data(
     """Fetch OHLCV market data for stocks, crypto, or mixed symbols.
 
     Supported sources:
-    - "yfinance": HK/US equities (free, e.g. AAPL.US, 700.HK)
+    - "yfinance" / "yahoo": HK/US/Canada equities (free, e.g. AAPL.US,
+      700.HK, TD.TO, PNG.V)
     - "okx": cryptocurrency (free, e.g. BTC-USDT, ETH-USDT)
     - "tushare": China A-shares (requires TUSHARE_TOKEN, e.g. 000001.SZ)
     - "baostock": China A-shares via TCP protocol, bypasses HTTP CDN blocks (e.g. 000001.SZ, 601595.SH)
@@ -1562,10 +1563,11 @@ def get_market_data(
     - "auto": auto-detect based on symbol format (with fallback)
 
     Args:
-        codes: List of symbols (e.g. ["AAPL.US", "BTC-USDT", "000001.SZ"]).
+        codes: List of symbols (e.g. ["AAPL.US", "TD.TO", "BTC-USDT", "000001.SZ"]).
         start_date: Start date (YYYY-MM-DD).
         end_date: End date (YYYY-MM-DD).
-        source: Data source ("auto", "yfinance", "okx", "tushare", "baostock", "tencent", "akshare", "ccxt").
+        source: Data source. Prefer ``auto``; ``yahoo``/``yfinance`` serve
+            Canada, US, and HK equities.
         interval: Bar size (1m/5m/15m/30m/1H/4H/1D, default "1D").
         max_rows: Per-symbol row cap (default 250) so the response stays
             within the MCP token budget. A symbol exceeding it returns an
@@ -1959,10 +1961,10 @@ def search_symbol(query: str, limit: int = 10) -> str:
     """Resolve a company name or ticker fragment to candidate trading symbols.
 
     Returns candidates with their market in the project's symbol convention
-    (A-shares 600519.SH, Hong Kong 00700.HK, U.S. AAPL.US, plus crypto/index/FX
-    from Yahoo). Searches Eastmoney and Yahoo and, for U.S. equities, attaches
-    the SEC CIK. Use this to turn an ambiguous name into a concrete symbol
-    before calling get_market_data or get_sec_filings.
+    (A-shares 600519.SH, Hong Kong 00700.HK, U.S. AAPL.US, Canada TD.TO/PNG.V,
+    plus crypto/index/FX from Yahoo). Searches Eastmoney and Yahoo and, for U.S.
+    equities, attaches the SEC CIK. Use this to turn an ambiguous name into a
+    concrete symbol before calling get_market_data or get_sec_filings.
 
     Args:
         query: Free-text company name or ticker fragment (Chinese or English).

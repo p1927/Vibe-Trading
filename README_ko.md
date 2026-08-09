@@ -237,7 +237,7 @@
       <img src="assets/feature-cross-market-data-backtesting.png" height="130" alt="크로스마켓 데이터와 백테스팅"/><br>
       <h3>📊 크로스마켓 데이터 & 백테스팅</h3>
       <div align="left">
-        • A/HK/US/인도/한국 주식, 크립토, 선물, 외환<br>
+        • A/HK/US/캐나다/인도/한국 주식, 크립토, 선물, 외환<br>
         • 데이터 fallback과 composite backtest<br>
         • PIT 데이터, 검증, run card
       </div>
@@ -328,7 +328,7 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 | 계층 | 수행 내용 |
 |------|-----------|
 | **Plan** | 유용한 경우 관련 finance skills, tools, data sources, swarm preset을 선택합니다. |
-| **Ground** | 사용 가능한 loader로 A주, HK/US 주식, 크립토, 선물, 외환, 문서, 웹 컨텍스트를 가져옵니다. |
+| **Ground** | 사용 가능한 loader로 A주, HK/US/캐나다 주식, 크립토, 선물, 외환, 문서, 웹 컨텍스트를 가져옵니다. |
 | **Execute** | 테스트 가능한 전략 코드를 생성하고, 도구를 실행하며, 적절한 backtest engine 또는 analysis workflow를 사용합니다. |
 | **Validate** | 지표, benchmark comparison, Monte Carlo, Bootstrap, Walk-Forward, run cards, 관련 warning을 추가합니다. |
 | **Deliver** | TradingView, TDX, MetaTrader 5, MCP client, 이후 세션을 위한 리포트, artifacts, tool traces, exports를 반환합니다. |
@@ -345,8 +345,9 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 | `eastmoney` | A / US / HK | none | OHLCV + deep fundamentals & flow tools (throttled) |
 | `baostock` · `akshare` | A (+ US/HK/futures/macro/fx) | none | free fallbacks |
 | `tushare` | A / HK / futures / fund / macro | token | richest A-share |
-| `yahoo` · `sina` · `stooq` | US (/HK) | none | direct chart/quotes/options · K-line to 1984 · EOD CSV |
-| `yfinance` | US / HK | none | wrapper |
+| `yahoo` | US / HK / 캐나다 | none | direct chart/quotes/options; TSX `.TO` / TSXV `.V` |
+| `sina` · `stooq` | US | none | K-line to 1984 · EOD CSV |
+| `yfinance` | US / HK / 캐나다 | none | wrapper; TSX `.TO` / TSXV `.V` 그대로 사용 |
 | `longbridge` | US / HK | App Key + App Secret + Access Token | optional historical OHLCV source; install the optional SDK |
 | `finnhub` · `alphavantage` · `tiingo` · `fmp` | US | key | optional providers |
 | `qveris` | 글로벌 멀티에셋 | key · credits | **프리미엄 마켓플레이스** — key 하나로 63+ providers (명시 지정 전용, auto 폴백 제외) |
@@ -553,7 +554,7 @@ Paper-vs-live는 **구조적 브로커별 런타임 가드**(account-id 형식, 
 | Engine | Market | Notes |
 |--------|--------|-------|
 | **ChinaA** | A-share | T+1, price limits, pre-ST filter |
-| **GlobalEquity** | US / HK | T+0 |
+| **GlobalEquity** | US / HK / 캐나다 | 동일 세션 거래, 시장별 주문 단위·호가·비용 |
 | **IndiaEquity** | India (NSE/BSE) | T+1, circuit bands, config-driven STT / stamp / SEBI / GST cost stack |
 | **KoreaEquity** | 한국 (KRX: KOSPI/KOSDAQ) | 롱 온리, 통합 호가 단위에서 ±30% 가격제한폭을 체결 시점에 판정, 2026년 0.20% 증권거래세 |
 | **Crypto** | crypto spot / USD-M perps | funding settlements, execution/mark split |
@@ -638,9 +639,9 @@ vibe-trading-mcp               # start MCP server (stdio)
 - 경로 A용 **Docker**
 - OpenAI Codex도 ChatGPT OAuth로 사용할 수 있습니다. `LANGCHAIN_PROVIDER=openai-codex`를 설정한 뒤 `vibe-trading provider login openai-codex`를 실행하세요. 이 방식은 `OPENAI_API_KEY`를 사용하지 않습니다.
 
-> **지원 LLM provider:** OpenRouter, Requesty, OpenAI, Anthropic (native Messages API), DeepSeek, Gemini, Groq, DashScope/Qwen, Zhipu, Moonshot/Kimi, MiniMax, SiliconFlow (CN + Global), Xiaomi MIMO, iFlytek Spark, Z.ai, NVIDIA NIM, Ollama(local). `*_BASE_URL`이 설정되지 않으면 각 provider는 canonical endpoint로 폴백하므로 key만 있으면 충분합니다. 설정은 `.env.example`을 참고하세요.
+> **지원 LLM provider:** OpenRouter, Requesty, OpenAI, Anthropic (native Messages API), DeepSeek, Gemini, Groq, DashScope/Qwen, Zhipu, Moonshot/Kimi, MiniMax, SiliconFlow (CN + Global), Xiaomi MIMO, iFlytek Spark, Z.ai, NVIDIA NIM, ModelScope, Ollama(local). `*_BASE_URL`이 설정되지 않으면 각 provider는 canonical endpoint로 폴백하므로 key만 있으면 충분합니다. 설정은 `.env.example`을 참고하세요.
 
-> **팁:** 자동 fallback 덕분에 모든 시장은 API key 없이도 작동합니다. yfinance(HK/US), OKX(crypto), mootdx(A주, TCP 직결, IP 제한 없음), AKShare(A주, US, HK, futures, forex)는 모두 무료입니다. Tushare token은 선택 사항이며, mootdx가 권장 no-token A주 fallback이고 AKShare는 더 넓은 커버리지의 백업입니다.
+> **팁:** 자동 fallback 덕분에 모든 시장은 API key 없이도 작동합니다. yfinance/Yahoo(HK/US/캐나다), OKX(crypto), mootdx(A주, TCP 직결, IP 제한 없음), AKShare(A주, US, HK, futures, forex)는 모두 무료입니다. Tushare token은 선택 사항이며, mootdx가 권장 no-token A주 fallback이고 AKShare는 더 넓은 커버리지의 백업입니다.
 
 ### 경로 A: Docker (설정 불필요)
 

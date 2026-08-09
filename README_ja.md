@@ -237,7 +237,7 @@
       <img src="assets/feature-cross-market-data-backtesting.png" height="130" alt="Cross-market data and backtesting"/><br>
       <h3>📊 クロスマーケットデータ & バックテスト</h3>
       <div align="left">
-        • A/HK/US/インド/韓国株式、暗号資産、先物、FX<br>
+        • A/HK/US/カナダ/インド/韓国株式、暗号資産、先物、FX<br>
         • データフォールバックと複合バックテスト<br>
         • PIT データ、検証、run cards
       </div>
@@ -328,7 +328,7 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 | レイヤー | 何が起きるか |
 |-------|--------------|
 | **Plan** | 必要な finance skills、tools、data sources、必要に応じて swarm preset を選びます。 |
-| **Ground** | A 株、HK/US 株式、暗号資産、先物、FX、documents、Web context を利用可能な loaders から取得します。 |
+| **Ground** | A 株、HK/US/カナダ株式、暗号資産、先物、FX、documents、Web context を利用可能な loaders から取得します。 |
 | **Execute** | テスト可能な strategy code を生成し、tools を実行し、対応する backtest engine または analysis workflow を使います。 |
 | **Validate** | metrics、benchmark comparison、Monte Carlo、Bootstrap、Walk-Forward、run cards、必要な warnings を追加します。 |
 | **Deliver** | TradingView、TDX、MetaTrader 5、MCP clients、後続セッション向けの reports、artifacts、tool traces、exports を返します。 |
@@ -345,8 +345,9 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 | `eastmoney` | A / US / HK | none | OHLCV + deep fundamentals & flow tools (throttled) |
 | `baostock` · `akshare` | A (+ US/HK/futures/macro/fx) | none | free fallbacks |
 | `tushare` | A / HK / futures / fund / macro | token | richest A-share |
-| `yahoo` · `sina` · `stooq` | US (/HK) | none | direct chart/quotes/options · K-line to 1984 · EOD CSV |
-| `yfinance` | US / HK | none | wrapper |
+| `yahoo` | US / HK / カナダ | none | direct chart/quotes/options；TSX `.TO` / TSXV `.V` |
+| `sina` · `stooq` | US | none | K-line to 1984 · EOD CSV |
+| `yfinance` | US / HK / カナダ | none | wrapper；TSX `.TO` / TSXV `.V` はそのまま使用 |
 | `longbridge` | US / HK | App Key + App Secret + Access Token | optional historical OHLCV source; install the optional SDK |
 | `finnhub` · `alphavantage` · `tiingo` · `fmp` | US | key | optional providers |
 | `qveris` | グローバル・マルチアセット | key · credits | **プレミアムマーケットプレイス** — 1つの key で 63+ providers（明示指定のみ、auto フォールバック対象外） |
@@ -553,7 +554,7 @@ Paper-vs-live is a **structural per-broker runtime guard** (account-id format, h
 | Engine | Market | Notes |
 |--------|--------|-------|
 | **ChinaA** | A-share | T+1, price limits, pre-ST filter |
-| **GlobalEquity** | US / HK | T+0 |
+| **GlobalEquity** | US / HK / カナダ | 同一セッション売買、市場別のロット・呼値・コスト |
 | **IndiaEquity** | India (NSE/BSE) | T+1, circuit bands, config-driven STT / stamp / SEBI / GST cost stack |
 | **KoreaEquity** | 韓国（KRX：KOSPI/KOSDAQ） | ロングオンリー、統一呼値グリッド上で ±30% 制限値幅を約定時点に判定、2026 年 0.20% の証券取引税 |
 | **Crypto** | crypto spot / USD-M perps | funding settlements, execution/mark split |
@@ -638,9 +639,9 @@ vibe-trading-mcp               # start MCP server (stdio)
 - Path A では **Docker**
 - OpenAI Codex は ChatGPT OAuth でも利用できます。`LANGCHAIN_PROVIDER=openai-codex` を設定し、`vibe-trading provider login openai-codex` を実行してください。`OPENAI_API_KEY` は使いません。
 
-> **Supported LLM providers:** OpenRouter、Requesty、OpenAI、Anthropic（ネイティブ Messages API）、DeepSeek、Gemini、Groq、DashScope/Qwen、Zhipu、Moonshot/Kimi、MiniMax、SiliconFlow（CN + Global）、Xiaomi MIMO、iFlytek Spark、Z.ai、NVIDIA NIM、Ollama（local）。`*_BASE_URL` が未設定の場合、各プロバイダーは canonical なエンドポイントにフォールバックするため、key だけで十分です。設定は `.env.example` を参照してください。
+> **Supported LLM providers:** OpenRouter、Requesty、OpenAI、Anthropic（ネイティブ Messages API）、DeepSeek、Gemini、Groq、DashScope/Qwen、Zhipu、Moonshot/Kimi、MiniMax、SiliconFlow（CN + Global）、Xiaomi MIMO、iFlytek Spark、Z.ai、NVIDIA NIM、ModelScope、Ollama（local）。`*_BASE_URL` が未設定の場合、各プロバイダーは canonical なエンドポイントにフォールバックするため、key だけで十分です。設定は `.env.example` を参照してください。
 
-> **Tip:** 自動フォールバックにより、すべての市場は API key なしで利用できます。yfinance（HK/US）、OKX（crypto）、mootdx（A 株、TCP 直結で IP 制限なし）、AKShare（A-shares、US、HK、futures、forex）はすべて無料です。Tushare token は任意で、A 株は mootdx が推奨の no-token fallback、AKShare がより広いカバレッジのバックアップになります。
+> **Tip:** 自動フォールバックにより、すべての市場は API key なしで利用できます。yfinance/Yahoo（HK/US/カナダ）、OKX（crypto）、mootdx（A 株、TCP 直結で IP 制限なし）、AKShare（A-shares、US、HK、futures、forex）はすべて無料です。Tushare token は任意で、A 株は mootdx が推奨の no-token fallback、AKShare がより広いカバレッジのバックアップになります。
 
 ### Path A: Docker（設定ゼロ）
 

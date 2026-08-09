@@ -236,7 +236,7 @@
       <img src="assets/feature-cross-market-data-backtesting.png" height="130" alt="Cross-market data and backtesting"/><br>
       <h3>📊 跨市场数据与回测</h3>
       <div align="left">
-        • A 股、港股、美股、印度、韩国、加密、期货与外汇<br>
+        • A 股、港股、美股、加拿大、印度、韩国、加密、期货与外汇<br>
         • 数据 fallback 与组合回测<br>
         • PIT 数据、验证与 run cards
       </div>
@@ -327,7 +327,7 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 | 层 | 发生什么 |
 |----|----------|
 | **Plan** | 选择相关金融 skills、tools、数据源，以及在有帮助时选择 swarm preset。 |
-| **Ground** | 通过可用 loader 拉取 A 股、港股/美股、加密、期货、外汇、文档或网页上下文。 |
+| **Ground** | 通过可用 loader 拉取 A 股、港股/美股/加拿大股票、加密、期货、外汇、文档或网页上下文。 |
 | **Execute** | 生成可测试的策略代码，运行工具，并使用匹配的回测引擎或分析工作流。 |
 | **Validate** | 在适用时加入指标、benchmark comparison、Monte Carlo、Bootstrap、Walk-Forward、run cards 和 warnings。 |
 | **Deliver** | 返回报告、artifacts、tool traces，以及面向 TradingView、TDX、MetaTrader 5、MCP clients 或后续 sessions 的导出。 |
@@ -344,8 +344,9 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 | `eastmoney` | A / US / HK | none | OHLCV + deep fundamentals & flow tools (throttled) |
 | `baostock` · `akshare` | A (+ US/HK/futures/macro/fx) | none | free fallbacks |
 | `tushare` | A / HK / futures / fund / macro | token | richest A-share |
-| `yahoo` · `sina` · `stooq` | US (/HK) | none | direct chart/quotes/options · K-line to 1984 · EOD CSV |
-| `yfinance` | US / HK | none | wrapper |
+| `yahoo` | 美股 / 港股 / 加拿大 | none | direct chart/quotes/options；TSX `.TO` / TSXV `.V` |
+| `sina` · `stooq` | 美股 | none | K-line to 1984 · EOD CSV |
+| `yfinance` | 美股 / 港股 / 加拿大 | none | wrapper；TSX `.TO` / TSXV `.V` 原样传递 |
 | `longbridge` | 美股 / 港股 | App Key + App Secret + Access Token | 可选历史 OHLCV 数据源；需安装可选 SDK |
 | `finnhub` · `alphavantage` · `tiingo` · `fmp` | US | key | optional providers |
 | `qveris` | 全球多资产 | key · credits | **付费市场** — 一把 key 通 63+ 家（仅显式选用，绝不进 auto 链） |
@@ -550,7 +551,7 @@ LONGBRIDGE_ACCESS_TOKEN=...
 | 引擎 | 市场 | 说明 |
 |------|------|------|
 | **ChinaA** | A 股 | T+1、涨跌停、pre-ST 筛选 |
-| **GlobalEquity** | 美股 / 港股 | T+0 |
+| **GlobalEquity** | 美股 / 港股 / 加拿大 | 支持日内往返；按市场应用手数、最小价位和成本 |
 | **IndiaEquity** | 印度（NSE/BSE） | T+1、熔断带、config 驱动的 STT / 印花税 / SEBI / GST 成本栈 |
 | **KoreaEquity** | 韩国（KRX：KOSPI/KOSDAQ） | 只做多，统一最小价位网格上于成交时刻判定 ±30% 涨跌停，2026 年 0.20% 证券交易税 |
 | **Crypto** | 加密现货 / USD-M 永续 | 资金费结算、成交价/标记价分离 |
@@ -635,9 +636,9 @@ vibe-trading-mcp               # start MCP server (stdio)
 - 路径 A 需要 **Docker**
 - OpenAI Codex 也可通过 ChatGPT OAuth 使用：设置 `LANGCHAIN_PROVIDER=openai-codex`，然后运行 `vibe-trading provider login openai-codex`。它不使用 `OPENAI_API_KEY`。
 
-> **支持的 LLM providers：** OpenRouter、Requesty、OpenAI、Anthropic（原生 Messages API）、DeepSeek、Gemini、Groq、DashScope/Qwen、Zhipu、Moonshot/Kimi、MiniMax、SiliconFlow（CN + Global）、Xiaomi MIMO、iFlytek 星火、Z.ai、NVIDIA NIM、Ollama（本地）。未设置 `*_BASE_URL` 时，每个 provider 会回退到其规范端点，因此只需一个 key 即可。配置见 `.env.example`。
+> **支持的 LLM providers：** OpenRouter、Requesty、OpenAI、Anthropic（原生 Messages API）、DeepSeek、Gemini、Groq、DashScope/Qwen、Zhipu、Moonshot/Kimi、MiniMax、SiliconFlow（CN + Global）、Xiaomi MIMO、iFlytek 星火、Z.ai、NVIDIA NIM、ModelScope、Ollama（本地）。未设置 `*_BASE_URL` 时，每个 provider 会回退到其规范端点，因此只需一个 key 即可。配置见 `.env.example`。
 
-> **提示：** 由于自动 fallback，所有市场都可以在没有任何 API key 的情况下工作。yfinance（港/美股）、OKX（加密）、mootdx（A 股，TCP 直连不封 IP）和 AKShare（A 股、美股、港股、期货、外汇）都是免费的。Tushare token 是可选项 —— mootdx 是首选的免 token A 股 fallback，AKShare 作为覆盖更广的兜底。
+> **提示：** 由于自动 fallback，所有市场都可以在没有任何 API key 的情况下工作。yfinance/Yahoo（港股/美股/加拿大）、OKX（加密）、mootdx（A 股，TCP 直连不封 IP）和 AKShare（A 股、美股、港股、期货、外汇）都是免费的。Tushare token 是可选项 —— mootdx 是首选的免 token A 股 fallback，AKShare 作为覆盖更广的兜底。
 
 ### Path A: Docker（零配置）
 

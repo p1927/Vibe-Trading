@@ -10,7 +10,12 @@ from typing import Any, Callable
 import pytest
 
 from src.agent.context import ContextBuilder
-from src.agent.grounding import GroundingLedger
+from src.agent.grounding import (
+    GroundingLedger,
+    _infer_currency,
+    _infer_venue,
+    _scan_symbols,
+)
 from src.agent.loop import AgentLoop, _is_tool_success
 from src.agent.tools import BaseTool, ToolRegistry
 from src.agent.trace import TraceWriter
@@ -162,6 +167,15 @@ def _build_direct_agent(
         user_message="分析机器人ETF并给出买入价",
     )
     return agent, resolver, market, private_skill, TraceWriter(run_dir)
+
+
+def test_canadian_symbols_have_grounding_identity() -> None:
+    """TSX and TSXV symbols retain venue and CAD identity."""
+    assert _scan_symbols("Compare TD.TO with PNG.V") == {"TD.TO", "PNG.V"}
+    assert _infer_venue("TD.TO") == "toronto"
+    assert _infer_venue("PNG.V") == "tsx_venture"
+    assert _infer_currency("TD.TO") == "CAD"
+    assert _infer_currency("PNG.V") == "CAD"
 
 
 def test_ok_false_tool_envelope_is_failure() -> None:

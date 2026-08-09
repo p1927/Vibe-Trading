@@ -237,7 +237,7 @@
       <img src="assets/feature-cross-market-data-backtesting.png" height="130" alt="بيانات واختبارات رجعية عبر الأسواق"/><br>
       <h3>📊 بيانات واختبارات رجعية عبر الأسواق</h3>
       <div align="left">
-        • أسهم A/HK/US والهند وكوريا، وكريبتو، وعقود آجلة، وفوركس<br>
+        • أسهم A/HK/US وكندا والهند وكوريا، وكريبتو، وعقود آجلة، وفوركس<br>
         • fallback للبيانات واختبارات مركبة<br>
         • بيانات PIT، وتحقيق، وبطاقات تشغيل
       </div>
@@ -328,7 +328,7 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 | الطبقة | ما يحدث |
 |-------|--------------|
 | **Plan** | يختار المهارات المالية والأدوات ومصادر البيانات وإعداد السرب الملائمة عند الحاجة. |
-| **Ground** | يجلب أسهم A، وأسهم HK/US، والكريبتو، والعقود الآجلة، والفوركس، والمستندات، أو سياق الويب عبر المحملات المتاحة. |
+| **Ground** | يجلب أسهم A، وأسهم HK/US/كندا، والكريبتو، والعقود الآجلة، والفوركس، والمستندات، أو سياق الويب عبر المحملات المتاحة. |
 | **Execute** | يولد كود استراتيجية قابل للاختبار، ويشغل الأدوات، ويستخدم محرك الاختبار الرجعي أو سير التحليل المناسب. |
 | **Validate** | يضيف المقاييس، والمقارنة المعيارية، وMonte Carlo، وBootstrap، وWalk-Forward، وبطاقات التشغيل، والتحذيرات عند اللزوم. |
 | **Deliver** | يعيد التقارير والمخرجات وآثار الأدوات والتصديرات إلى TradingView وTDX وMetaTrader 5 وعملاء MCP أو جلسات لاحقة. |
@@ -345,8 +345,9 @@ vibe-trading run -p "Analyze my trading behavior, extract my shadow strategy, an
 | `eastmoney` | A / US / HK | none | OHLCV + deep fundamentals & flow tools (throttled) |
 | `baostock` · `akshare` | A (+ US/HK/futures/macro/fx) | none | free fallbacks |
 | `tushare` | A / HK / futures / fund / macro | token | richest A-share |
-| `yahoo` · `sina` · `stooq` | US (/HK) | none | direct chart/quotes/options · K-line to 1984 · EOD CSV |
-| `yfinance` | US / HK | none | wrapper |
+| `yahoo` | US / HK / كندا | none | direct chart/quotes/options؛ TSX `.TO` / TSXV `.V` |
+| `sina` · `stooq` | US | none | K-line to 1984 · EOD CSV |
+| `yfinance` | US / HK / كندا | none | wrapper؛ تمر لواحق TSX `.TO` / TSXV `.V` كما هي |
 | `longbridge` | US / HK | App Key + App Secret + Access Token | مصدر OHLCV تاريخي اختياري؛ ثبّت الـ SDK الاختياري |
 | `finnhub` · `alphavantage` · `tiingo` · `fmp` | US | key | optional providers |
 | `qveris` | أصول عالمية متعددة | key · credits | **سوق مدفوع** — 63+ مزوداً بمفتاح واحد (اختيار صريح فقط، خارج التراجع التلقائي) |
@@ -553,7 +554,7 @@ LONGBRIDGE_ACCESS_TOKEN=...
 | المحرّك | السوق | ملاحظات |
 |--------|-------|---------|
 | **ChinaA** | أسهم A | T+1، وحدود السعر، ومرشّح ما قبل ST |
-| **GlobalEquity** | US / HK | T+0 |
+| **GlobalEquity** | US / HK / كندا | تداول في الجلسة نفسها؛ أحجام وخطوات سعرية وتكاليف حسب السوق |
 | **IndiaEquity** | الهند (NSE/BSE) | T+1، ونطاقات القاطع (circuit)، وحزمة تكاليف STT / الدمغة / SEBI / GST قابلة للتهيئة |
 | **KoreaEquity** | كوريا (KRX: KOSPI/KOSDAQ) | شراء فقط، ونطاق ±30% يُحكم عليه لحظة التنفيذ على شبكة الخطوة السعرية الموحّدة، وضريبة تداول 0.20% لعام 2026 |
 | **Crypto** | crypto فوري / عقود USD-M الدائمة | تسويات التمويل، وفصل سعر التنفيذ عن سعر العلامة |
@@ -638,9 +639,9 @@ vibe-trading-mcp               # start MCP server (stdio)
 - **Docker** للمسار A
 - يمكن استخدام OpenAI Codex أيضاً عبر ChatGPT OAuth: اضبط `LANGCHAIN_PROVIDER=openai-codex`، ثم شغل `vibe-trading provider login openai-codex`. هذا لا يستخدم `OPENAI_API_KEY`.
 
-> **مزودو LLM المدعومون:** OpenRouter, Requesty, OpenAI, Anthropic (Messages API الأصلي), DeepSeek, Gemini, Groq, DashScope/Qwen, Zhipu, Moonshot/Kimi, MiniMax, SiliconFlow (CN + Global), Xiaomi MIMO, iFlytek Spark, Z.ai, NVIDIA NIM, Ollama (local). عند عدم ضبط أي `*_BASE_URL`، يتراجع كل مزوّد إلى نقطة نهايته القانونية، فيكفي مفتاح واحد. راجع `.env.example` للإعداد.
+> **مزودو LLM المدعومون:** OpenRouter, Requesty, OpenAI, Anthropic (Messages API الأصلي), DeepSeek, Gemini, Groq, DashScope/Qwen, Zhipu, Moonshot/Kimi, MiniMax, SiliconFlow (CN + Global), Xiaomi MIMO, iFlytek Spark, Z.ai, NVIDIA NIM, ModelScope, Ollama (local). عند عدم ضبط أي `*_BASE_URL`، يتراجع كل مزوّد إلى نقطة نهايته القانونية، فيكفي مفتاح واحد. راجع `.env.example` للإعداد.
 
-> **نصيحة:** تعمل كل الأسواق دون مفاتيح API بفضل fallback التلقائي. yfinance (HK/US)، وOKX (crypto)، وmootdx (أسهم A، اتصال TCP مباشر بدون قيود IP)، وAKShare (A-shares, US, HK, futures, forex) كلها مجانية. رمز Tushare اختياري — mootdx هو الـ fallback الموصى به لأسهم A بدون رمز، بينما يوفر AKShare احتياطياً أوسع تغطية.
+> **نصيحة:** تعمل كل الأسواق دون مفاتيح API بفضل fallback التلقائي. yfinance/Yahoo (HK/US/كندا)، وOKX (crypto)، وmootdx (أسهم A، اتصال TCP مباشر بدون قيود IP)، وAKShare (A-shares, US, HK, futures, forex) كلها مجانية. رمز Tushare اختياري — mootdx هو الـ fallback الموصى به لأسهم A بدون رمز، بينما يوفر AKShare احتياطياً أوسع تغطية.
 
 ### المسار A: Docker (دون إعداد)
 
