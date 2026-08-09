@@ -175,7 +175,14 @@ def _pip_upgrade(latest: str) -> int:
     """Upgrade the wheel install in place via pip, then verify. Returns exit code."""
     console.print(f"Upgrading {PACKAGE_NAME} {CURRENT_VERSION} -> {latest} ...")
     proc = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--upgrade", PACKAGE_NAME],
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            f"{PACKAGE_NAME}=={latest}",
+        ],
         text=True,
     )
     if proc.returncode != 0:
@@ -205,7 +212,7 @@ def _verify_upgrade(expected: str) -> int:
 
     installed = proc.stdout.strip()
     try:
-        confirmed = installed and Version(installed) >= Version(expected)
+        confirmed = bool(installed) and Version(installed) == Version(expected)
     except InvalidVersion:
         confirmed = False
     if not confirmed:

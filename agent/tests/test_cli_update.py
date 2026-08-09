@@ -202,7 +202,7 @@ def test_downgrade_protection_no_pip(monkeypatch) -> None:
 
 
 def test_newer_wheel_upgrades(monkeypatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """Newer version + wheel install: exactly one pip upgrade call, exit 0."""
+    """The version checked on PyPI is the exact version passed to pip."""
     calls, fake_run = _fake_subprocess(pip_rc=0, verify_stdout="99.0.0")
     monkeypatch.setattr(update_mod.subprocess, "run", fake_run)
     _monkeypatch_upgrade_env(monkeypatch, latest="99.0.0")
@@ -212,7 +212,8 @@ def test_newer_wheel_upgrades(monkeypatch, capsys: pytest.CaptureFixture[str]) -
     pip_cmd = calls[0]
     assert pip_cmd[:3] == [update_mod.sys.executable, "-m", "pip"]
     assert "install" in pip_cmd and "--upgrade" in pip_cmd
-    assert update_mod.PACKAGE_NAME in pip_cmd
+    assert f"{update_mod.PACKAGE_NAME}==99.0.0" in pip_cmd
+    assert update_mod.PACKAGE_NAME not in pip_cmd
     assert "Updated to 99.0.0" in capsys.readouterr().out
 
 
@@ -236,6 +237,19 @@ def test_verification_mismatch(monkeypatch, capsys: pytest.CaptureFixture[str]) 
     assert update_mod.cmd_update() == update_mod.EXIT_FAILED
     assert len(calls) == 2
     assert "verification mismatch" in capsys.readouterr().out
+
+
+def test_verification_rejects_a_different_newer_version(
+    monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Verification must close over the checked release, not accept any newer one."""
+    calls, fake_run = _fake_subprocess(pip_rc=0, verify_stdout="100.0.0")
+    monkeypatch.setattr(update_mod.subprocess, "run", fake_run)
+    _monkeypatch_upgrade_env(monkeypatch, latest="99.0.0")
+
+    assert update_mod.cmd_update() == update_mod.EXIT_FAILED
+    assert len(calls) == 2
+    assert "expected 99.0.0" in capsys.readouterr().out
 
 
 def test_editable_install_prints_hint_no_pip(monkeypatch, capsys: pytest.CaptureFixture[str]) -> None:
