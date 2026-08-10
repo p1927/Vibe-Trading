@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from backtest.loaders import eastmoney_client, sec_edgar_client, yahoo_client
@@ -34,6 +35,22 @@ logger = logging.getLogger(__name__)
 # ready-made ``QuoteID`` secid. Requests route through the frozen, throttled
 # Eastmoney client; this is just the documented endpoint URL + query shape.
 _EASTMONEY_SUGGEST_URL = "https://searchapi.eastmoney.com/api/suggest/get"
+
+# Canadian equity suffixes (TSX ``.TO`` / TSX Venture ``.V``). Eastmoney has NO
+# Canada coverage: querying it with a Canadian ticker returns a non-JSON body
+# (``Expecting value: line 1 column 1 (char 0)``) instead of a clean empty
+# result. We fail fast — skip the endpoint entirely — for these queries, and
+# drop US OTC aliases (e.g. ``BYAGF.US`` for ``BYN.V``) so the grounding
+# ledger never sees one company under two venues (identity_conflict).
+#
+# The pattern matches a LEADING Canadian ticker, optionally followed by free
+# text — the model commonly searches "BTO.TO B2Gold" or "SGML.V Sigma Lithium
+# Vancouver", not just a bare "BTO.TO". ``.TO``/``.V`` are exclusively
+# Canadian suffixes, so a leading one is unambiguous and Eastmoney can never
+# serve it. Bare names with no suffix (e.g. "BTO", "B2Gold BTO") carry no
+# venue signal and may be legit non-Canadian lookups (A-share/HK/US), so they
+# are deliberately left to the normal fan-out.
+_CANADIAN_SYMBOL_RE = re.compile(r"^[A-Z0-9&.\-]+\.(?:TO|V)\b", re.IGNORECASE)
 
 # Eastmoney market-number -> our symbol suffix. Anything else is left unmapped
 # (those candidates are skipped rather than emitted with a wrong suffix).
@@ -134,6 +151,18 @@ class SymbolSearchTool(BaseTool):
         yh_hits, sources["yahoo"] = _search_yahoo(query)
         candidates.extend(yh_hits)
 
+        # Canada fail-fast: a Canadian ticker must resolve to the Canadian venue
+        # only. Yahoo also returns the US OTC alias of the same company (e.g.
+        # ``BYN.V`` -> ``BYAGF.US``), which would make the grounding ledger see
+        # two venues for one entity and reject every downstream call with
+        # ``identity_conflict``. Keep only ``.TO``/``.V`` candidates here.
+        if _is_canadian_symbol(query):
+            candidates = [
+                c
+                for c in candidates
+                if _is_canadian_symbol(str(c.get("symbol") or ""))
+            ]
+
         merged = _merge_candidates(candidates)
         merged, sources["sec_edgar"] = _enrich_us_cik(merged)
         if sources["sec_edgar"] == _NO_US:
@@ -165,8 +194,28 @@ def _clamp_limit(value: Any) -> int:
     return max(1, min(n, _MAX_LIMIT))
 
 
+def _is_canadian_symbol(text: str) -> bool:
+    """Whether *text* is a Canadian ticker (TSX ``.TO`` / TSXV ``.V``).
+
+    Used for fail-fast routing: Canadian symbols are served by Yahoo only, so
+    Eastmoney is skipped and US OTC aliases are filtered from the result set.
+
+    Args:
+        text: A symbol or free-text query to test.
+
+    Returns:
+        ``True`` when the text starts with a Canadian-suffixed ticker
+        (``BTO.TO``, ``BTO.TO B2Gold``, ``SGML.V Sigma Lithium``, ...).
+    """
+    return bool(_CANADIAN_SYMBOL_RE.match((text or "").strip()))
+
+
 def _search_eastmoney(query: str) -> tuple[List[Dict[str, Any]], str]:
     """Query Eastmoney's suggest endpoint and normalize the candidates.
+
+    Fails fast for Canadian (``.TO``/``.V``) queries: Eastmoney has no Canada
+    coverage and its suggest endpoint returns a non-JSON body for those,
+    so the endpoint is skipped instead of raising a parse error.
 
     Args:
         query: Free-text name or ticker fragment.
@@ -175,13 +224,26 @@ def _search_eastmoney(query: str) -> tuple[List[Dict[str, Any]], str]:
         ``(candidates, status)`` where ``status`` is ``"ok"`` on success or a
         short error string when the source failed (candidates is then empty).
     """
+    if _is_canadian_symbol(query):
+        logger.info(
+            "eastmoney skipped for Canadian symbol %r (no Canada coverage)",
+            query,
+        )
+        return [], "unsupported: eastmoney has no Canada coverage"
     try:
         payload = eastmoney_client.get_json(
             _EASTMONEY_SUGGEST_URL,
             params={"input": query, "type": "14", "count": str(_PER_SOURCE_CAP)},
         )
     except Exception as exc:  # noqa: BLE001 - one source failing is non-fatal
-        logger.warning("eastmoney suggest failed for %r: %s", query, exc)
+        # Deliberately debug-level, not warning: Eastmoney has no coverage for
+        # many queries the fan-out legitimately tries (Canadian names, crypto,
+        # futures) and returns a non-JSON body for them. That is expected and
+        # benign — the status string below still flows to the tool result so
+        # nothing is hidden, it just no longer spams the terminal. Failures on
+        # queries Eastmoney SHOULD cover (A-share/HK) are still visible by
+        # checking the tool result's sources map or with debug logging on.
+        logger.debug("eastmoney suggest failed for %r: %s", query, exc)
         return [], f"eastmoney search failed: {exc}"
 
     rows = _eastmoney_data_rows(payload)

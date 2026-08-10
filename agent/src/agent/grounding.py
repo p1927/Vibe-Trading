@@ -21,6 +21,7 @@ its state machine and final-answer checks remain deterministic and testable.
 from __future__ import annotations
 
 import ast
+import csv
 import hashlib
 import json
 import math
@@ -62,6 +63,23 @@ _PRICE_FIELDS = {"open", "high", "low", "close", "adj_close", "price"}
 _TIMESTAMP_FIELDS = ("trade_date", "date", "datetime", "timestamp", "time", "index")
 _MAX_GENERIC_EVIDENCE = 2_000
 _MAX_TRACKED_SYMBOLS = 5_000
+
+# CSV columns (case-insensitive) accepted from OHLC files the run wrote via
+# bash+yfinance, and their canonical price-field names. Everything else in the
+# file (Volume, Adj Close, etc.) is deliberately ignored so the contradiction
+# check does not gain values it would be willing to accept.
+_CSV_PRICE_COLUMNS = {
+    "open": "open",
+    "high": "high",
+    "low": "low",
+    "close": "close",
+    "price": "price",
+}
+_CSV_DATE_COLUMNS = {"date", "datetime", "trade_date", "timestamp", "index"}
+# Filename -> symbol mapping for run-dir CSVs. The bash workaround writes each
+# series with a filesystem-safe stem: ``BYN_V.csv`` for ``BYN.V``, ``PDI_TO.csv``
+# for ``PDI.TO``, ``GC_F.csv`` for ``GC=F``.
+_CSV_FILENAME_SUFFIX_MAP = (("_V", ".V"), ("_TO", ".TO"), ("_F", "=F"))
 
 # Only ``get_market_data`` returns bars whose columns are already the canonical
 # OHLC field names. Every other market-sensitive tool nests its quote somewhere,
@@ -404,6 +422,30 @@ def _normalize_symbol(value: Any) -> str:
     return f"{base}.{suffix}"
 
 
+def _symbol_from_csv_filename(stem: str) -> str | None:
+    """Map a run-dir CSV stem back to a canonical project symbol.
+
+    The bash workaround writes filesystem-safe stems: ``BYN_V.csv`` -> ``BYN.V``,
+    ``PDI_TO.csv`` -> ``PDI.TO``, ``GC_F.csv`` -> ``GC=F``. A stem without a
+    recognized suffix (e.g. a bare US name ``AAPL``) maps to None because the
+    project convention requires an explicit venue suffix.
+
+    Args:
+        stem: CSV filename without the ``.csv`` extension.
+
+    Returns:
+        The canonical symbol, or ``None`` when the stem has no recognizable
+        venue suffix.
+    """
+    upper = (stem or "").strip().upper()
+    if not upper:
+        return None
+    for raw, canonical in _CSV_FILENAME_SUFFIX_MAP:
+        if upper.endswith(raw) and len(upper) > len(raw):
+            return upper[: -len(raw)] + canonical
+    return None
+
+
 def _query_key(value: Any) -> str:
     """Normalize resolver queries into stable state-machine keys."""
     return " ".join(str(value or "").casefold().split())
@@ -429,6 +471,25 @@ def _is_number(value: Any) -> bool:
         and not isinstance(value, bool)
         and math.isfinite(float(value))
     )
+
+
+def _coerce_csv_number(value: Any) -> int | float | None:
+    """Coerce a CSV cell to a finite number, or return None.
+
+    CSV readers return every cell as text (``"0.375"``), so a bare
+    ``_is_number`` check would discard them all. Values that do not parse as a
+    finite number (blank cells, ``-``, ``N/A``) return ``None``.
+    """
+    if _is_number(value):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = float(value.strip().replace(",", ""))
+        except (TypeError, ValueError):
+            return None
+        if math.isfinite(parsed):
+            return parsed
+    return None
 
 
 # "." is deliberately not a separator: a decimal price such as 8.5 would parse
@@ -677,6 +738,7 @@ class GroundingLedger:
         self._evidence: list[EvidenceRecord] = []
         self._tool_failures: list[dict[str, Any]] = []
         self._validations: list[dict[str, Any]] = []
+        self._ingested_csvs: set[str] = set()
         self._identity_required = bool(_ACTIONABLE_MARKET_RE.search(user_message))
         self._buffer_output = self._identity_required
         # Every instrument this run is entitled to write about: the ones the
@@ -919,6 +981,7 @@ class GroundingLedger:
             A deterministic validation result. A record containing only the
             answer hash and structured issues is appended to the artifact.
         """
+        self._ingest_run_dir_ohlc_csvs()
         issues: list[dict[str, Any]] = []
         issues.extend(self._validate_identity(content))
         issues.extend(self._validate_unsourced_symbols(content))
@@ -1499,6 +1562,84 @@ class GroundingLedger:
                     visit(item, f"{path}[{index}]")
 
         visit(payload, "")
+
+    def _ingest_run_dir_ohlc_csvs(self) -> None:
+        """Register OHLC rows from CSVs the run wrote via the bash workaround.
+
+        The bash+yfinance escape hatch writes per-symbol OHLC CSVs into the run
+        directory (e.g. ``data/raw/BYN_V.csv``) instead of returning them through
+        ``get_market_data``. Those prices were genuinely observed tool output,
+        but they never entered the ledger, so the final-answer gate rejected
+        every one of them as ``numeric_claim_unavailable``. Scan the run dir for
+        such CSVs and register their open/high/low/close/price rows as observed
+        evidence, keyed to the symbol derived from the filename.
+
+        Only files whose filename maps to a symbol already tracked in this run
+        are accepted, so a stray CSV cannot mint new identity. Rows are bounded
+        by ``_MAX_GENERIC_EVIDENCE`` and each file is ingested at most once.
+        """
+        if not self.run_dir.is_dir():
+            return
+        entitled = self._session_symbols | self.authorized_symbols
+        if not entitled:
+            return
+        room = _MAX_GENERIC_EVIDENCE
+        for path in sorted(self.run_dir.rglob("*.csv")):
+            if room <= 0:
+                return
+            try:
+                identity_key = f"{path.resolve()}:{path.stat().st_mtime_ns}"
+            except (OSError, ValueError):
+                continue
+            if identity_key in self._ingested_csvs:
+                continue
+            self._ingested_csvs.add(identity_key)
+            symbol = _symbol_from_csv_filename(path.stem)
+            if not symbol or symbol not in entitled:
+                continue
+            try:
+                with path.open("r", encoding="utf-8", errors="replace", newline="") as handle:
+                    rows = list(csv.DictReader(handle))
+            except (OSError, UnicodeDecodeError, csv.Error):
+                continue
+            for row in rows:
+                if room <= 0:
+                    return
+                if not isinstance(row, dict):
+                    continue
+                timestamp = next(
+                    (
+                        str(row[key]).strip()
+                        for key in row
+                        if str(key).strip().casefold() in _CSV_DATE_COLUMNS
+                        and row[key] not in (None, "")
+                    ),
+                    None,
+                )
+                for key, value in row.items():
+                    field_name = _CSV_PRICE_COLUMNS.get(
+                        str(key).strip().casefold().replace(" ", "_")
+                    )
+                    if field_name is None:
+                        continue
+                    numeric = _coerce_csv_number(value)
+                    if numeric is None:
+                        continue
+                    self._evidence.append(
+                        EvidenceRecord(
+                            call_id=f"csv:{path.name}",
+                            tool="bash",
+                            symbol=symbol,
+                            source="yfinance",
+                            timestamp=timestamp,
+                            field=field_name,
+                            value=numeric,
+                            status="observed",
+                            currency=_infer_currency(symbol),
+                            venue=_infer_venue(symbol),
+                        )
+                    )
+                    room -= 1
 
     def _validate_identity(self, content: str) -> list[dict[str, Any]]:
         """Validate aggregate state and listed/private contradictions."""
