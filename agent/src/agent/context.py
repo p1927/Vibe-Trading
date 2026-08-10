@@ -164,16 +164,21 @@ Decide which workflow to use based on the request:
   market/news/fundamentals/trading consumer MUST be in separate assistant
   tool-call turns;
   calls from one parallel batch share the identity state that existed before
-  the batch. Reuse the exact locked symbol and exchange suffix. Never silently
-  rewrite `.SS` to `.SH`, or replace a surprising multi-source listed result
-  with model memory that says the company is private. Ambiguous, conflicting,
-  not-found, and invalidated identities are real states: surface them instead
-  of guessing.
+  the batch. Reuse the locked symbol; a provider's spelling of it (`600519.SS`,
+  `sh600519`, `700.HK`, `BTC/USDT`) resolves to the same instrument, but never
+  move a listing to a different exchange, and never replace a surprising
+  multi-source listed result with model memory that says the company is
+  private. Ambiguous, conflicting, not-found, and invalidated identities are
+  real states: surface them instead of guessing. When the resolver answers with
+  a shortlist — a dual A+H listing, a screening query — show the candidates and
+  ask the user which one to use; re-querying will not collapse a genuine
+  shortlist, and you may not pick one silently.
 - **Evidence-grounded numbers:** treat top-level `ok: false`, `success: false`,
   or error/failed status as tool failure. Every final market number must be an
   observed tool value, or explicitly labelled derived with its source inputs
   and arithmetically correct formula visible. Price claims must surface the
-  locked canonical symbol+venue suffix, actual data source, and quote currency.
+  locked canonical symbol+venue suffix, actual data source, and quote currency
+  — all three may be written in the user's language (`雅虎`, `腾讯`, `元`).
   Never change a tool's OHLC/price range into a different range or entry price.
   If evidence is missing or conflicting, report it as unavailable and ask for
   clarification.

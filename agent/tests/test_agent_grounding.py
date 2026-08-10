@@ -217,7 +217,7 @@ def test_resolver_and_consumer_in_same_batch_cannot_race(
 
     assert resolver.calls == 1
     assert market.calls == 0
-    assert agent._grounding.authorized_symbols == {"562500.SS"}
+    assert agent._grounding.authorized_symbols == {"562500.SH"}
     blocked = [json.loads(message["content"]) for message in messages]
     assert any(item.get("error_code") == "identity_required" for item in blocked)
 
@@ -294,31 +294,91 @@ def test_market_sensitive_skill_waits_for_prior_identity_batch(
     assert skill.calls == 1
 
 
-def test_bare_us_ticker_is_allowed_only_for_explicit_transport_contract(
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("get_sec_filings", {"ticker": "AAPL"}),
+        ("get_market_data", {"codes": ["AAPL"]}),
+        ("get_fundamentals", {"symbols": ["AAPL"]}),
+        ("technical_indicators", {"symbol": "AAPL"}),
+        ("portfolio_risk_xray", {"symbols": ["AAPL"]}),
+        ("trading_history", {"symbol": "AAPL"}),
+    ],
+)
+def test_bare_ticker_is_allowed_whenever_it_names_one_locked_identity(
     tmp_path: Path,
+    tool_name: str,
+    arguments: dict[str, Any],
 ) -> None:
-    """SEC's bare ticker consumes AAPL.US without permitting venue aliases."""
+    """A bare ticker is safe by uniqueness, not by a hand-maintained tool list.
+
+    Every spelling here is the first example in that tool's own parameter
+    schema. The list this replaced named nine tools, so the other five were
+    rejected for using their documented contract.
+    """
     ledger = GroundingLedger(
         run_dir=tmp_path,
         user_message="请分析 AAPL.US 的价格",
     )
 
-    sec = ledger.authorize_tool_call(
-        "get_sec_filings",
-        {"ticker": "AAPL"},
+    authorization = ledger.authorize_tool_call(
+        tool_name,
+        arguments,
         batch_authorized_symbols=ledger.authorized_symbols,
-        call_id="sec",
+        call_id="consumer",
     )
-    market_alias = ledger.authorize_tool_call(
+
+    assert authorization.allowed is True
+
+
+def test_bare_ticker_stays_blocked_when_it_names_more_than_one_identity(
+    tmp_path: Path,
+) -> None:
+    """Uniqueness is the whole guarantee, so a shared base must not resolve."""
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message="对比 600519.SH 与 600519.SZ 的价格",
+    )
+
+    authorization = ledger.authorize_tool_call(
         "get_market_data",
-        {"codes": ["AAPL"]},
+        {"codes": ["600519"]},
         batch_authorized_symbols=ledger.authorized_symbols,
         call_id="prices",
     )
 
-    assert sec.allowed is True
-    assert market_alias.allowed is False
-    assert market_alias.error_code == "identity_mismatch"
+    assert ledger.authorized_symbols == {"600519.SH", "600519.SZ"}
+    assert authorization.allowed is False
+    assert authorization.error_code == "identity_mismatch"
+
+
+@pytest.mark.parametrize(
+    ("locked", "requested"),
+    [
+        ("600519.SH", "600519.SS"),
+        ("600519.SH", "sh600519"),
+        ("00700.HK", "700.HK"),
+        ("00700.HK", "0700.HK"),
+        ("BTC-USDT", "BTC/USDT"),
+    ],
+)
+def test_provider_spellings_of_one_instrument_are_one_identity(
+    tmp_path: Path,
+    locked: str,
+    requested: str,
+) -> None:
+    """A suffix convention, an exchange prefix, or a separator is not a venue."""
+    ledger = GroundingLedger(run_dir=tmp_path, user_message=f"{locked} 现价多少")
+
+    authorization = ledger.authorize_tool_call(
+        "get_market_data",
+        {"codes": [requested]},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        call_id="prices",
+    )
+
+    assert ledger.authorized_symbols == {locked}
+    assert authorization.allowed is True
 
 
 def test_stale_history_identity_does_not_unlock_new_subject(tmp_path: Path) -> None:
@@ -387,10 +447,14 @@ def test_single_clean_not_found_source_is_not_enough_for_private_routing(
     assert json.loads(messages[-1]["content"])["error_code"] == "identity_required"
 
 
-def test_explicit_symbol_and_resolver_suffix_alias_become_conflicting(
+def test_explicit_symbol_and_resolver_suffix_alias_are_one_identity(
     tmp_path: Path,
 ) -> None:
-    """A later .SH resolver result cannot silently replace explicit .SS identity."""
+    """``.SS`` and ``.SH`` name the same Shanghai listing, not a contradiction.
+
+    Reading them as rivals is what made every Shanghai query unusable: the two
+    sources publish one listing under both spellings, so no tie-break existed.
+    """
     ledger = GroundingLedger(
         run_dir=tmp_path,
         user_message="请分析 562500.SS 并给出买入价",
@@ -411,15 +475,44 @@ def test_explicit_symbol_and_resolver_suffix_alias_become_conflicting(
         call_id="prices",
     )
 
+    assert ledger.identity_status == "locked"
+    assert ledger.authorized_symbols == {"562500.SH"}
+    assert authorization.allowed is True
+
+
+def test_resolver_answering_a_different_venue_is_still_conflicting(
+    tmp_path: Path,
+) -> None:
+    """Folding a suffix alias must not fold a genuinely different exchange."""
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message="请分析 600519.SH 并给出买入价",
+    )
+    ledger.ingest_tool_result(
+        tool_name="search_symbol",
+        arguments={"query": "600519.SH"},
+        result=_resolver_payload("600519.SZ", query="600519.SH"),
+        call_id="resolver-venue",
+        success=True,
+    )
+
+    authorization = ledger.authorize_tool_call(
+        "get_market_data",
+        {"codes": ["600519.SZ"]},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        batch_identity_status=ledger.identity_status,
+        call_id="prices",
+    )
+
     assert ledger.identity_status == "conflicting"
     assert authorization.allowed is False
     assert authorization.error_code == "identity_conflict"
 
 
-def test_locked_symbol_rejects_silent_exchange_suffix_rewrite(
+def test_locked_symbol_rejects_silent_exchange_rewrite(
     tmp_path: Path,
 ) -> None:
-    """The consumer may not silently turn the resolver's .SS into .SH."""
+    """The consumer may not move the locked listing to another exchange."""
     agent, _, market, _, trace = _build_direct_agent(tmp_path, _resolver_payload())
     messages: list[dict[str, Any]] = []
     react_trace: list[dict[str, Any]] = []
@@ -433,7 +526,7 @@ def test_locked_symbol_rejects_silent_exchange_suffix_rewrite(
         1,
     )
     agent._process_tool_calls(
-        [_tool_call("wrong-suffix", "get_market_data", codes=["562500.SH"])],
+        [_tool_call("wrong-venue", "get_market_data", codes=["562500.SZ"])],
         ContextBuilder,
         messages,
         trace,
@@ -1144,3 +1237,393 @@ def test_plan_level_alone_reaches_a_valid_answer(tmp_path: Path) -> None:
     )
 
     assert result.valid is True, result.issues
+
+
+def _shanghai_shortlist() -> str:
+    """One Shanghai listing as the two sources actually publish it."""
+    return _resolver_payload(
+        candidates=[
+            {
+                "symbol": "600519.SH",
+                "name": "贵州茅台",
+                "market": "cn",
+                "type": "沪A",
+                "source": "eastmoney",
+            },
+            {
+                "symbol": "600519.SS",
+                "name": "Kweichow Moutai Co Ltd",
+                "market": "cn",
+                "type": "EQUITY",
+                "source": "yahoo",
+            },
+        ],
+        query="600519",
+    )
+
+
+def test_shanghai_ticker_resolves_to_one_locked_identity(tmp_path: Path) -> None:
+    """Eastmoney's .SH and Yahoo's .SS describe one listing, so one lock."""
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="600519 现价多少")
+    ledger.ingest_tool_result(
+        tool_name="search_symbol",
+        arguments={"query": "600519"},
+        result=_shanghai_shortlist(),
+        call_id="resolve",
+        success=True,
+    )
+
+    assert ledger.identity_status == "locked"
+    assert ledger.authorized_symbols == {"600519.SH"}
+
+
+def test_shanghai_lock_depends_on_symbol_canonicalization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation guard: drop canonicalization and Shanghai dead-ends again."""
+    monkeypatch.setattr(
+        "src.agent.grounding._normalize_symbol",
+        lambda value: str(value or "").strip().upper(),
+    )
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="600519 现价多少")
+    ledger.ingest_tool_result(
+        tool_name="search_symbol",
+        arguments={"query": "600519"},
+        result=_shanghai_shortlist(),
+        call_id="resolve",
+        success=True,
+    )
+
+    assert ledger.identity_status == "ambiguous"
+    assert ledger.authorized_symbols == set()
+
+
+def test_zero_candidates_with_a_skipped_source_are_not_found(tmp_path: Path) -> None:
+    """A source that cannot serve the query shape does not block the answer.
+
+    The counterpart — a source that actually failed — is covered by
+    ``test_single_clean_not_found_source_is_not_enough_for_private_routing``,
+    which must keep reporting ``invalidated``.
+    """
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="这家公司现在股价多少")
+    ledger.ingest_tool_result(
+        tool_name="search_symbol",
+        arguments={"query": "某某不存在公司"},
+        result=json.dumps(
+            {
+                "ok": True,
+                "source": "symbol_search",
+                "data": {
+                    "query": "某某不存在公司",
+                    "count": 0,
+                    "candidates": [],
+                    "sources": {
+                        "eastmoney": "ok",
+                        "yahoo": "skipped: non-ASCII query is not supported",
+                    },
+                },
+            },
+            ensure_ascii=False,
+        ),
+        call_id="resolve",
+        success=True,
+    )
+
+    assert ledger.identity_status == "not_found"
+    assert ledger.validate_final_answer("没有查到这家公司，无法给出结论。").valid is True
+
+
+def test_a_failed_side_query_does_not_retract_a_locked_identity(
+    tmp_path: Path,
+) -> None:
+    """One flaky resolver call must not end the run's ability to answer."""
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="茅台现价多少")
+    ledger.ingest_tool_result(
+        tool_name="search_symbol",
+        arguments={"query": "茅台"},
+        result=json.dumps({"ok": False, "error": "timeout"}),
+        call_id="flaky",
+        success=False,
+    )
+    assert ledger.identity_status == "invalidated"
+
+    ledger.ingest_tool_result(
+        tool_name="search_symbol",
+        arguments={"query": "贵州茅台"},
+        result=_resolver_payload("600519.SH", query="贵州茅台"),
+        call_id="retry",
+        success=True,
+    )
+
+    assert ledger.identity_status == "locked"
+    assert ledger.authorize_tool_call(
+        "get_market_data",
+        {"codes": ["600519.SH"]},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        batch_identity_status=ledger.identity_status,
+        call_id="prices",
+    ).allowed is True
+
+
+def test_a_conflict_outranks_a_lock_from_another_query(tmp_path: Path) -> None:
+    """A contradiction is a fact about the data, so a lock cannot mask it."""
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message="对比 600519.SH 和 AAPL.US 的现价",
+    )
+    ledger.ingest_tool_result(
+        tool_name="search_symbol",
+        arguments={"query": "600519.SH"},
+        result=_resolver_payload("600519.SZ", query="600519.SH"),
+        call_id="venue-swap",
+        success=True,
+    )
+
+    assert ledger.identity_status == "conflicting"
+
+
+def _cny_ledger(tmp_path: Path) -> GroundingLedger:
+    """A ledger holding one Shanghai quote sourced from yahoo, priced in CNY."""
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="562500.SH 现价多少")
+    ledger.ingest_tool_result(
+        tool_name="get_market_data",
+        arguments={"codes": ["562500.SH"]},
+        result=_market_payload(),
+        call_id="prices",
+        success=True,
+    )
+    return ledger
+
+
+def test_a_chinese_answer_may_name_its_source_and_currency_in_chinese(
+    tmp_path: Path,
+) -> None:
+    """The answer follows the user's language; the gate must read that language."""
+    result = _cny_ledger(tmp_path).validate_final_answer(
+        "562500.SH 最新收盘价 1.171 元，数据来源：雅虎财经。"
+    )
+
+    assert result.valid is True, result.issues
+
+
+def test_another_currencys_yuan_does_not_satisfy_a_cny_requirement(
+    tmp_path: Path,
+) -> None:
+    """A bare 元 counts for CNY only when no other currency's character owns it."""
+    result = _cny_ledger(tmp_path).validate_final_answer(
+        "562500.SH 最新收盘价 1.171 港元，数据来源：雅虎财经。"
+    )
+
+    assert result.valid is False
+    assert "currency_not_surfaced" in {issue["code"] for issue in result.issues}
+
+
+def test_an_unnamed_source_is_still_reported(tmp_path: Path) -> None:
+    """Accepting a localized provider name is not accepting no provider name."""
+    result = _cny_ledger(tmp_path).validate_final_answer("562500.SH 最新收盘价 1.171 元。")
+
+    assert result.valid is False
+    assert "data_source_not_surfaced" in {issue["code"] for issue in result.issues}
+
+
+def _comparison_ledger(tmp_path: Path) -> GroundingLedger:
+    """A ledger holding quotes for two instruments, as a comparison run does."""
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message="对比 562500.SH 与 AAPL.US 现价",
+    )
+    ledger.ingest_tool_result(
+        tool_name="get_market_data",
+        arguments={"codes": ["562500.SH"]},
+        result=_market_payload(),
+        call_id="cn-prices",
+        success=True,
+    )
+    ledger.ingest_tool_result(
+        tool_name="get_market_data",
+        arguments={"codes": ["AAPL.US"]},
+        result=_market_payload("AAPL.US"),
+        call_id="us-prices",
+        success=True,
+    )
+    return ledger
+
+
+def test_a_comparison_naming_its_subject_by_name_is_valid(tmp_path: Path) -> None:
+    """Prose that identifies its subject in words must not be refused."""
+    result = _comparison_ledger(tmp_path).validate_final_answer(
+        "## 562500.SH vs AAPL.US（来源 yahoo）\n"
+        "562500.SH 收盘价 1.171 元。\n"
+        "苹果的收盘价是 1.171 美元，两者收在同一水平。"
+    )
+
+    assert result.valid is True, result.issues
+
+
+def test_a_comparison_with_an_invented_quote_is_still_rejected(
+    tmp_path: Path,
+) -> None:
+    """Checking against the union of observed quotes is not checking nothing."""
+    result = _comparison_ledger(tmp_path).validate_final_answer(
+        "## 562500.SH vs AAPL.US（来源 yahoo）\n"
+        "562500.SH 收盘价 1.171 元。\n"
+        "苹果的收盘价是 999.99 美元。"
+    )
+
+    assert result.valid is False
+    assert {"numeric_claim_conflict", "numeric_claim_unavailable"} & {
+        issue["code"] for issue in result.issues
+    }
+
+
+@pytest.mark.parametrize(
+    ("question", "answer"),
+    [
+        (
+            "什么是市盈率估值法？请解释一下原理",
+            "市盈率是市值与净利润的比值，用于横向比较同行业公司的相对贵贱。",
+        ),
+        (
+            "explain how to trade using RSI",
+            "RSI above 70 is conventionally read as overbought, below 30 as oversold.",
+        ),
+    ],
+)
+def test_a_conceptual_question_reaches_its_answer(
+    tmp_path: Path,
+    question: str,
+    answer: str,
+) -> None:
+    """A run that never named an instrument has no identity to get wrong.
+
+    The trigger phrase is matched against the user message, so these questions
+    demanded a locked identity that no correct answer could ever supply.
+    """
+    ledger = GroundingLedger(run_dir=tmp_path, user_message=question)
+
+    assert ledger.validate_final_answer(answer).valid is True
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "贵州茅台现价约 1300 元，建议买入。",
+        "600519.SH 收盘价 1300.00 元（source: tencent），建议买入。",
+    ],
+)
+def test_an_unevidenced_price_is_still_rejected_without_any_tool_call(
+    tmp_path: Path,
+    answer: str,
+) -> None:
+    """Relaxing the identity check must not license a remembered quote."""
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="茅台适合买入吗")
+
+    result = ledger.validate_final_answer(answer)
+
+    assert result.valid is False
+    assert {"numeric_claim_unavailable", "unsourced_symbol_figures"} & {
+        issue["code"] for issue in result.issues
+    }
+
+
+def test_a_shortlist_answers_the_user_but_still_cannot_fetch_a_quote(
+    tmp_path: Path,
+) -> None:
+    """#955 closed half of this: the skill loaded, the answer stayed blocked."""
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="推荐几只低估值的高股息A股")
+    ledger.ingest_tool_result(
+        tool_name="search_symbol",
+        arguments={"query": "高股息"},
+        result=_resolver_payload(
+            candidates=[
+                {"symbol": "601398.SH", "name": "工商银行", "source": "eastmoney"},
+                {"symbol": "600028.SH", "name": "中国石化", "source": "eastmoney"},
+            ],
+            query="高股息",
+        ),
+        call_id="screen",
+        success=True,
+    )
+
+    assert ledger.identity_status == "ambiguous"
+    assert ledger.validate_final_answer(
+        "候选清单命中多个标的，请确认你要看哪一只，我再去取行情。"
+    ).valid is True
+    assert ledger.authorize_tool_call(
+        "get_market_data",
+        {"codes": ["601398.SH"]},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        batch_identity_status=ledger.identity_status,
+        call_id="prices",
+    ).allowed is False
+
+
+def _large_cap_ledger(tmp_path: Path) -> GroundingLedger:
+    """A ledger holding a quote large enough to be written with separators."""
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="600519.SH 收盘价多少")
+    ledger.ingest_tool_result(
+        tool_name="get_market_data",
+        arguments={"codes": ["600519.SH"]},
+        result=json.dumps(
+            {
+                "600519.SH": [
+                    {
+                        "trade_date": "2026-08-07",
+                        "open": 1308.66,
+                        "high": 1315.28,
+                        "low": 1301.00,
+                        "close": 1309.22,
+                        "volume": 24976.0,
+                    }
+                ],
+                "_provenance": {
+                    "600519.SH": {
+                        "source": "tencent",
+                        "requested_source": "auto",
+                        "currency_conversion": "none",
+                    }
+                },
+            }
+        ),
+        call_id="prices",
+        success=True,
+    )
+    return ledger
+
+
+def test_a_grouped_price_is_not_split_into_a_bogus_claim(tmp_path: Path) -> None:
+    """"¥1,309.22" must stay one number when the clause is split.
+
+    The comma is both a clause separator and a thousands separator, and the
+    split ran first, leaving a clause ending in "¥1". That 1 was compared
+    against the observed 1300.01–1363.35 range and rejected — which is every
+    price above 999 written the ordinary way.
+    """
+    result = _large_cap_ledger(tmp_path).validate_final_answer(
+        "贵州茅台 600519.SH 最近一个交易日的收盘价为 ¥1,309.22，数据来源：腾讯行情。"
+    )
+
+    assert result.valid is True, result.issues
+
+
+def test_a_grouped_price_that_contradicts_evidence_is_still_rejected(
+    tmp_path: Path,
+) -> None:
+    """Keeping the group together is not the same as skipping the check."""
+    result = _large_cap_ledger(tmp_path).validate_final_answer(
+        "贵州茅台 600519.SH 最近一个交易日的收盘价为 ¥1,888.88，数据来源：腾讯行情。"
+    )
+
+    assert result.valid is False
+    assert "numeric_claim_conflict" in {issue["code"] for issue in result.issues}
+
+
+def test_a_clause_comma_still_separates_clauses(tmp_path: Path) -> None:
+    """Only a real thousands group is protected, not every comma."""
+    result = _large_cap_ledger(tmp_path).validate_final_answer(
+        "600519.SH 数据来源：腾讯行情, 收盘价 ¥1,888.88 元。"
+    )
+
+    assert result.valid is False
+    assert "numeric_claim_conflict" in {issue["code"] for issue in result.issues}

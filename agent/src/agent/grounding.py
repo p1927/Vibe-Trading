@@ -42,17 +42,6 @@ _PRIVATE_COMPANY_SKILL_NAMES = {
     "private_company_analysis",
     "private_company_research",
 }
-_BARE_US_TICKER_TOOLS = {
-    "cancel_equity_order",
-    "get_equity_quotes",
-    "get_options_chain",
-    "get_sec_filings",
-    "get_stock_profile",
-    "place_equity_order",
-    "trading_cancel_order",
-    "trading_place_order",
-    "trading_quote",
-}
 _SYMBOL_ARGUMENT_KEYS = {
     "code",
     "codes",
@@ -284,6 +273,27 @@ _PROSPECTIVE_LEVEL_RE = re.compile(
 # parentheses are deliberately not separators: an explicit derivation such as
 # "(8.5 - 7.9) / 2" must stay in one segment for the formula check.
 _CLAUSE_SEPARATOR_RE = re.compile(r"[,，;；。、\n（）【】]")
+# The ASCII comma both separates clauses and groups thousands, and the clause
+# split ran first: "收盘价 ¥1,309.22" became a clause ending in "¥1", whose 1 was
+# compared against the observed 1300.01–1363.35 range and rejected as a
+# conflict. That is every price above 999 written the ordinary way, and it is
+# self-contradictory — ``_NUMBER_RE`` and the float conversion below it both
+# already understand grouped numbers. Only a real group is removed: a comma
+# needs a digit before it and exactly three digits after.
+_THOUSANDS_SEPARATOR_RE = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
+
+
+def _split_clauses(text: str) -> list[str]:
+    """Split prose into clauses without breaking a grouped number apart.
+
+    Args:
+        text: One line of candidate answer text.
+
+    Returns:
+        The clause segments, with thousands separators removed so a grouped
+        price survives as one number.
+    """
+    return _CLAUSE_SEPARATOR_RE.split(_THOUSANDS_SEPARATOR_RE.sub("", text))
 _TABLE_SEPARATOR_RE = re.compile(r"^:?-{3,}:?$")
 
 _TABLE_FIELD_ALIASES = {
@@ -307,6 +317,45 @@ _TABLE_FIELD_ALIASES = {
     "收盘价": "close",
 }
 _DATE_HEADERS = {"date", "datetime", "trade date", "timestamp", "日期", "交易日", "时间"}
+
+# A loader's id is ASCII, but the answer follows the user's language, so a
+# Chinese report names the same provider in Chinese. Demanding the ASCII id
+# verbatim rejected correct prose: an answer reading "数据来源：腾讯财经" was
+# reported as ``data_source_not_surfaced`` against evidence sourced from
+# ``tencent``, and no rewrite short of writing the English word could pass.
+_SOURCE_ALIASES = {
+    "akshare": ("akshare", "ak share"),
+    "baostock": ("baostock",),
+    "binance": ("binance", "币安"),
+    "ccxt": ("ccxt",),
+    "eastmoney": ("eastmoney", "东方财富", "东财"),
+    "futu": ("futu", "富途"),
+    "mootdx": ("mootdx", "通达信"),
+    "okx": ("okx", "欧易"),
+    "pykrx": ("pykrx", "krx"),
+    "sina": ("sina", "新浪"),
+    "stooq": ("stooq",),
+    "tencent": ("tencent", "腾讯"),
+    "tushare": ("tushare",),
+    "yahoo": ("yahoo", "雅虎"),
+    "yfinance": ("yfinance", "yahoo", "雅虎"),
+}
+# "元" is how a Chinese answer writes a CNY quote, but it is also the tail of
+# 港元/美元/日元, so accepting it unguarded would let an answer about a Hong Kong
+# listing satisfy a CNY requirement. It counts only when no other currency's
+# character owns it.
+_BARE_YUAN_RE = re.compile(r"(?<![港美日欧韩台新加澳])元")
+_CURRENCY_ALIASES = {
+    "USD": ("usd", "us$", "美元", "美金"),
+    # ¥ is how a model actually writes a CNY quote. It is the yen sign too, but
+    # ``_infer_currency`` maps no venue to JPY, so nothing in this system can
+    # mean yen by it; adding a JPY venue means revisiting this entry.
+    "CNY": ("cny", "cnh", "rmb", "人民币", "¥", "￥"),
+    "HKD": ("hkd", "hk$", "港元", "港币"),
+    "KRW": ("krw", "韩元", "韩圜"),
+    "INR": ("inr", "印度卢比", "卢比"),
+    "CAD": ("cad", "加元", "加拿大元"),
+}
 _SYMBOL_HEADERS = {"symbol", "ticker", "code", "标的", "代码", "证券代码"}
 
 
@@ -315,9 +364,44 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# Provider spellings that denote one instrument. Shanghai is quoted as ``.SH``
+# by Eastmoney and ``.SS`` by Yahoo, A-share tools also accept an exchange
+# prefix (``sh600519``), Hong Kong codes are zero-padded to five digits, and
+# ccxt writes a crypto pair with a slash. Every one of these is a spelling, not
+# an identity: ``_infer_venue`` and ``_infer_currency`` below already map ``.SS``
+# and ``.SH`` to the same venue and the same currency. Treating them as
+# different identities made ``search_symbol("600519")`` return two candidates
+# for one listing, which no tie-break could resolve, so every Shanghai listing
+# resolved ``ambiguous`` and no market tool could run for the rest of the run.
+_EXCHANGE_PREFIXED_RE = re.compile(r"^(SH|SZ|BJ)(\d{6})$")
+
+
 def _normalize_symbol(value: Any) -> str:
-    """Normalize a symbol for exact identity comparison."""
-    return str(value or "").strip().upper()
+    """Normalize a symbol onto one canonical identity for exact comparison.
+
+    Args:
+        value: Any provider- or model-supplied symbol spelling.
+
+    Returns:
+        The canonical spelling — uppercased, with Shanghai's ``.SS`` alias
+        folded onto ``.SH``, an exchange prefix rewritten as a suffix, a Hong
+        Kong code zero-padded, and a crypto pair hyphenated. Text that is not a
+        symbol is returned uppercased and otherwise untouched.
+    """
+    symbol = str(value or "").strip().upper().replace("/", "-")
+    if not symbol:
+        return ""
+    prefixed = _EXCHANGE_PREFIXED_RE.match(symbol)
+    if prefixed:
+        return f"{prefixed.group(2)}.{prefixed.group(1)}"
+    base, dot, suffix = symbol.rpartition(".")
+    if not dot:
+        return symbol
+    if suffix == "SS":
+        suffix = "SH"
+    if suffix == "HK" and base.isdigit():
+        base = base.zfill(5)
+    return f"{base}.{suffix}"
 
 
 def _query_key(value: Any) -> str:
@@ -423,7 +507,6 @@ def _infer_venue(symbol: str) -> str | None:
     suffixes = {
         ".US": "us",
         ".SH": "shanghai",
-        ".SS": "shanghai",
         ".SZ": "shenzhen",
         ".BJ": "beijing",
         ".HK": "hong_kong",
@@ -451,7 +534,6 @@ def _infer_currency(symbol: str) -> str | None:
     suffixes = {
         ".US": "USD",
         ".SH": "CNY",
-        ".SS": "CNY",
         ".SZ": "CNY",
         ".BJ": "CNY",
         ".HK": "HKD",
@@ -494,21 +576,6 @@ def _infer_instrument_type(symbol: str, candidate_type: Any = None) -> str:
     if "-" in upper or "/" in upper:
         return "crypto"
     return "listed_security"
-
-
-def _is_exchange_alias_conflict(left: str, right: str) -> bool:
-    """Return whether two symbols silently switch Shanghai suffix conventions."""
-    left_symbol = _normalize_symbol(left)
-    right_symbol = _normalize_symbol(right)
-    if left_symbol == right_symbol:
-        return False
-    left_base, _, left_suffix = left_symbol.rpartition(".")
-    right_base, _, right_suffix = right_symbol.rpartition(".")
-    return (
-        bool(left_base)
-        and left_base == right_base
-        and {left_suffix, right_suffix} == {"SH", "SS"}
-    )
 
 
 @dataclass(frozen=True)
@@ -566,7 +633,10 @@ class ToolAuthorization:
                 "identity": dict(identity),
                 "required_action": (
                     "Call search_symbol in a separate assistant tool turn, wait for "
-                    "its result, then reuse the exact locked symbol and venue."
+                    "its result, then reuse the exact locked symbol and venue. If the "
+                    "resolver answers with a shortlist rather than one instrument, "
+                    "show the candidates and ask the user which one to use — narrowing "
+                    "the query again will not turn a genuine dual listing into one."
                 ),
             },
             ensure_ascii=False,
@@ -631,17 +701,30 @@ class GroundingLedger:
 
     @property
     def identity_status(self) -> str:
-        """Return the aggregate first-class identity state."""
+        """Return the aggregate first-class identity state.
+
+        ``conflicting`` is the only state that outranks a successful lock: two
+        sources contradicting each other about one query is a fact about the
+        data, not a gap in it. Every other blocking state means "not known
+        yet", and a side query that failed, went unanswered, or returned a
+        shortlist must not retract an identity the run did lock — one flaky
+        resolver call otherwise poisons every remaining answer in the session,
+        with no path back. Per-symbol safety does not depend on this aggregate:
+        a consumer still has to match a locked symbol in
+        :meth:`_match_authorized_symbol` before it may run.
+        """
         records = list(self._identities.values())
         if not records:
             return "unresolved" if self._identity_required else "not_required"
         statuses = {record.status for record in records}
-        for blocking in ("conflicting", "ambiguous", "invalidated", "unresolved"):
-            if blocking in statuses:
-                return blocking
+        if "conflicting" in statuses:
+            return "conflicting"
         if "locked" in statuses:
             return "locked"
-        if statuses == {"not_found"}:
+        for blocking in ("ambiguous", "invalidated", "unresolved"):
+            if blocking in statuses:
+                return blocking
+        if "not_found" in statuses:
             return "not_found"
         return "unresolved"
 
@@ -738,7 +821,7 @@ class GroundingLedger:
         mismatched = tuple(
             symbol
             for symbol in symbols
-            if self._match_authorized_symbol(tool_name, symbol, authorized) is None
+            if self._match_authorized_symbol(symbol, authorized) is None
         )
         if mismatched:
             return ToolAuthorization(
@@ -754,19 +837,24 @@ class GroundingLedger:
 
     @staticmethod
     def _match_authorized_symbol(
-        tool_name: str,
         requested_symbol: str,
         authorized_symbols: Iterable[str],
     ) -> str | None:
         """Map a consumer argument to one unique locked canonical symbol.
 
-        Most repository tools accept the canonical symbol verbatim. A small
-        explicit set of U.S.-only APIs and broker transports require a bare
-        ticker; for those tools only, ``AAPL`` may consume ``AAPL.US``. Venue
-        aliases such as ``.SS`` and ``.SH`` are never treated as equivalent.
+        Both sides are canonicalized first, so a provider alias (``600519.SS``),
+        an exchange prefix (``sh600519``), an unpadded Hong Kong code
+        (``700.HK``) or a slashed pair (``BTC/USDT``) addresses the instrument
+        it names rather than being read as a silent venue rewrite.
+
+        A bare code carries no venue, so it is accepted only when exactly one
+        locked identity has it as its base. That uniqueness — not a list of
+        which tools are allowed to use one — is what makes a bare ticker safe.
+        The list this replaced named nine tools while eleven documented
+        argument spellings across the registry were bare or prefixed, so the
+        tools' own schema examples were being rejected.
 
         Args:
-            tool_name: Requested consumer tool.
             requested_symbol: Model-supplied symbol argument.
             authorized_symbols: Symbols locked before the tool batch.
 
@@ -777,12 +865,12 @@ class GroundingLedger:
         authorized = {_normalize_symbol(item) for item in authorized_symbols}
         if requested in authorized:
             return requested
-        if tool_name not in _BARE_US_TICKER_TOOLS or "." in requested:
+        if "." in requested:
             return None
         matches = [
             symbol
             for symbol in authorized
-            if symbol.endswith(".US") and symbol.rsplit(".", 1)[0] == requested
+            if "." in symbol and symbol.rsplit(".", 1)[0] == requested
         ]
         return matches[0] if len(matches) == 1 else None
 
@@ -1011,14 +1099,26 @@ class GroundingLedger:
         candidates = [dict(item) for item in raw_candidates if isinstance(item, dict)] if isinstance(raw_candidates, list) else []
         sources = data.get("sources") if isinstance(data.get("sources"), dict) else {}
         if not candidates:
+            # "This entity does not exist" may only be concluded when every
+            # source that could answer did answer. Counting two clean sources
+            # instead was unreachable for a Chinese query — Yahoo cannot serve
+            # one at all — so an entity that simply is not listed came back as
+            # ``invalidated``, which blocks the run rather than answering it.
+            # A source that skipped an unsupported query shape is not an outage.
             clean_sources = [
                 str(name)
                 for name, value in sources.items()
                 if str(value).casefold() == "ok"
             ]
+            failed_sources = [
+                str(name)
+                for name, value in sources.items()
+                if str(value).casefold() != "ok"
+                and not str(value).casefold().startswith("skipped")
+            ]
             self._identities[key] = IdentityRecord(
                 query=query,
-                status="not_found" if len(clean_sources) >= 2 else "invalidated",
+                status="not_found" if clean_sources and not failed_sources else "invalidated",
                 source_tool_call_id=call_id,
                 source=clean_sources,
                 candidates=[],
@@ -1048,19 +1148,16 @@ class GroundingLedger:
             )
             return
 
-        alias_conflicts = [
-            record
-            for record in self._identities.values()
-            if record.status == "locked"
-            and record.symbol
-            and _is_exchange_alias_conflict(record.symbol, symbol)
-        ]
-        if alias_conflicts:
+        # A query that already spells a canonical symbol is asserting one, so a
+        # resolver answering with a different instrument contradicts it rather
+        # than refining it. This generalizes the ``.SS``/``.SH`` alias check it
+        # replaces: that one fired on one exchange's two spellings and stayed
+        # silent on an actual cross-exchange swap, which is the case that
+        # matters.
+        asserted = _scan_symbols(query)
+        if asserted and symbol not in asserted:
             conflicting = list(candidates)
-            conflicting.extend(
-                {"symbol": record.symbol, "source": record.source}
-                for record in alias_conflicts
-            )
+            conflicting.extend({"symbol": item, "source": ["query"]} for item in sorted(asserted))
             self._identities[key] = IdentityRecord(
                 query=query,
                 status="conflicting",
@@ -1129,7 +1226,17 @@ class GroundingLedger:
         query: str,
         candidates: list[dict[str, Any]],
     ) -> dict[str, Any] | None:
-        """Choose only a unique or strongly corroborated resolver candidate."""
+        """Choose only a unique or strongly corroborated resolver candidate.
+
+        Candidates are collapsed onto their canonical symbol first. Two rows
+        that differ only by a provider's suffix convention describe one listing,
+        and counting them as rival candidates is what left every Shanghai query
+        with two "exact" matches and therefore no choice at all.
+        """
+        by_symbol: dict[str, dict[str, Any]] = {}
+        for candidate in candidates:
+            by_symbol.setdefault(_normalize_symbol(candidate.get("symbol")), candidate)
+        candidates = list(by_symbol.values())
         if len(candidates) == 1:
             return candidates[0]
         normalized_query = re.sub(r"[^a-z0-9\u3400-\u9fff]", "", query.casefold())
@@ -1229,12 +1336,12 @@ class GroundingLedger:
         exercised against nothing. Failed calls are deliberately excluded, so a
         blocked or erroring call never launders an invented ticker.
 
-        Bare symbol arguments are tracked separately as roots. Nine tools take a
-        bare US ticker by contract (``_BARE_US_TICKER_TOOLS``), so a run that
-        legitimately fetched ``AAPL`` never writes ``AAPL.US`` into any argument
-        or result. Without the root, the canonical spelling the rest of this
-        module demands — see ``canonical_symbol_not_surfaced`` — would be the one
-        spelling this gate rejects.
+        Bare symbol arguments are tracked separately as roots. Many tools take a
+        bare ticker by contract, so a run that legitimately fetched ``AAPL``
+        never writes ``AAPL.US`` into any argument or result. Without the root,
+        the canonical spelling the rest of this module demands — see
+        ``canonical_symbol_not_surfaced`` — would be the one spelling this gate
+        rejects.
 
         Args:
             arguments: Exact normalized tool arguments.
@@ -1357,11 +1464,9 @@ class GroundingLedger:
         symbols = self._extract_symbol_arguments(arguments)
         symbol = symbols[0] if len(symbols) == 1 else None
         if symbol:
-            symbol = self._match_authorized_symbol(
-                tool_name,
-                symbol,
-                self.authorized_symbols,
-            ) or symbol
+            symbol = (
+                self._match_authorized_symbol(symbol, self.authorized_symbols) or symbol
+            )
         source = str(payload.get("source") or tool_name)
         remaining = _MAX_GENERIC_EVIDENCE
 
@@ -1399,12 +1504,27 @@ class GroundingLedger:
         """Validate aggregate state and listed/private contradictions."""
         issues: list[dict[str, Any]] = []
         status = self.identity_status
-        if self._identity_required and status in {
-            "unresolved",
-            "ambiguous",
-            "conflicting",
-            "invalidated",
-        }:
+        # Two conditions, both load-bearing.
+        #
+        # ``self._identities`` — a run that never named an instrument has no
+        # identity to get wrong. The trigger phrase is matched against the user
+        # message, so "什么是市盈率估值法？" set identity_required and then failed
+        # every draft it could ever produce, including the honest answer. This
+        # relaxation invents no licence to guess: a figure still has to survive
+        # ``_validate_price_claims``, and a figure attached to a symbol no tool
+        # handled still has to survive ``_validate_unsourced_symbols``.
+        #
+        # ``ambiguous`` is deliberately absent. A shortlist is an answer, which
+        # is why ``_RESOLUTION_INCOMPLETE_STATUSES`` already lets workflow
+        # selection proceed on it (#955) — but the final answer stayed blocked,
+        # so a screening run loaded its skill and was then refused a conclusion.
+        # Consumers remain blocked on ambiguous in ``authorize_tool_call``, so
+        # such a run still cannot fetch a quote to misattribute.
+        if (
+            self._identity_required
+            and self._identities
+            and status in {"unresolved", "conflicting", "invalidated"}
+        ):
             issues.append(
                 {
                     "code": "identity_not_locked",
@@ -1450,7 +1570,7 @@ class GroundingLedger:
         issues: list[dict[str, Any]] = []
         reported: set[str] = set()
         for line in content.splitlines():
-            for segment in _CLAUSE_SEPARATOR_RE.split(line):
+            for segment in _split_clauses(line):
                 unknown = sorted(
                     symbol
                     for symbol in _scan_symbols(segment) - self._session_symbols - reported
@@ -1485,6 +1605,10 @@ class GroundingLedger:
         """
         issues, table_lines = self._validate_price_tables(content)
         records = self._comparable_price_records()
+        # A report names its subject once and then writes prose about it. Both
+        # narrower scopes are tried first; this is the last resort, and it only
+        # resolves when the whole answer names exactly one evidence symbol.
+        document_symbol = self._symbol_for_claim(content, records)
         has_price_claim = any(
             self._numbers_without_dates_or_percent(line)
             for index, line in enumerate(content.splitlines())
@@ -1494,14 +1618,18 @@ class GroundingLedger:
             if index in table_lines or "|" in line:
                 continue
             line_symbol = self._symbol_for_claim(line, records)
-            for segment in _CLAUSE_SEPARATOR_RE.split(line):
+            for segment in _split_clauses(line):
                 if not _PRICE_CONTEXT_RE.search(segment):
                     continue
                 values = self._numbers_without_dates_or_percent(segment)
                 if not values:
                     continue
                 has_price_claim = True
-                symbol = self._symbol_for_claim(segment, records) or line_symbol
+                symbol = (
+                    self._symbol_for_claim(segment, records)
+                    or line_symbol
+                    or document_symbol
+                )
                 if self._is_explicit_derivation(segment, records, symbol):
                     continue
                 for value in values:
@@ -1543,7 +1671,14 @@ class GroundingLedger:
         issues: list[dict[str, Any]] = []
         folded = content.casefold()
         symbols = sorted({record.symbol for record in records if record.symbol})
-        mentioned = [symbol for symbol in symbols if symbol.casefold() in folded]
+        # ``_scan_symbols`` canonicalizes, so an answer that writes Shanghai as
+        # ``600519.SS`` still surfaces the ``600519.SH`` identity it names.
+        written = _scan_symbols(content)
+        mentioned = [
+            symbol
+            for symbol in symbols
+            if symbol in written or symbol.casefold() in folded
+        ]
         if not mentioned:
             issues.append(
                 {
@@ -1568,7 +1703,16 @@ class GroundingLedger:
                 if record.source and record.source.casefold() not in {"auto", "unknown"}
             }
         )
-        missing_sources = [source for source in sources if source.casefold() not in folded]
+        missing_sources = [
+            source
+            for source in sources
+            if not any(
+                alias in folded
+                for alias in _SOURCE_ALIASES.get(
+                    source.casefold(), (source.casefold(),)
+                )
+            )
+        ]
         if missing_sources:
             issues.append(
                 {
@@ -1607,16 +1751,12 @@ class GroundingLedger:
     @staticmethod
     def _currency_is_surfaced(currency: str, content: str) -> bool:
         """Return whether a quote currency or an unambiguous alias is visible."""
-        aliases = {
-            "USD": ("usd", "us$", "美元"),
-            "CNY": ("cny", "rmb", "人民币"),
-            "HKD": ("hkd", "hk$", "港元"),
-            "KRW": ("krw", "韩元"),
-            "INR": ("inr", "印度卢比"),
-        }
         folded = content.casefold()
-        tokens = aliases.get(currency.upper(), (currency.casefold(),))
-        return any(token.casefold() in folded for token in tokens)
+        code = currency.upper()
+        tokens = _CURRENCY_ALIASES.get(code, (currency.casefold(),))
+        if any(token.casefold() in folded for token in tokens):
+            return True
+        return code == "CNY" and bool(_BARE_YUAN_RE.search(content))
 
     def _validate_price_tables(
         self,
@@ -1709,17 +1849,14 @@ class GroundingLedger:
         symbols = sorted({record.symbol for record in candidates if record.symbol})
         if not symbol and len(symbols) == 1:
             symbol = symbols[0]
-        elif not symbol and len(symbols) > 1:
-            return {
-                "code": "numeric_claim_ambiguous_symbol",
-                "claim": claim,
-                "value": value,
-                "symbols": symbols,
-                "message": (
-                    f"Price claim {value:g} is ambiguous across multiple evidence symbols; "
-                    "name the canonical symbol explicitly."
-                ),
-            }
+        # An unattributed claim used to be rejected outright once the run held
+        # evidence for more than one symbol. That is every comparison report:
+        # "Apple's closing price was 313.33 USD. Microsoft closed higher." names
+        # its subject by company name, and the clause was refused although the
+        # value was exactly the observed close sitting in evidence. Such a claim
+        # is now checked against the union of the observed quotes instead, so a
+        # number the run never observed is still caught below — it simply has to
+        # match nothing at all rather than nothing under one chosen symbol.
         if field_name:
             candidates = [record for record in candidates if record.field == field_name]
         if date_value:

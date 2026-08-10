@@ -269,9 +269,18 @@ def _search_yahoo(query: str) -> tuple[List[Dict[str, Any]], str]:
         query: Free-text name or ticker fragment.
 
     Returns:
-        ``(candidates, status)`` where ``status`` is ``"ok"`` on success or a
-        short error string when the source failed (candidates is then empty).
+        ``(candidates, status)`` where ``status`` is ``"ok"`` on success, a
+        ``"skipped: ..."`` marker when the source cannot serve this query shape,
+        or a short error string when the source failed (candidates is then
+        empty).
     """
+    if not query.isascii():
+        # Yahoo's search endpoint answers any non-ASCII query with HTTP 400
+        # (verified against both query1 and query2 hosts), so calling it spends
+        # a request to manufacture a source failure. That failure is not
+        # cosmetic: a caller deciding whether an entity exists counts clean
+        # sources, and an unsupported query shape must not read as an outage.
+        return [], "skipped: non-ASCII query is not supported by this source"
     try:
         quotes = yahoo_client.search(query)
     except Exception as exc:  # noqa: BLE001 - one source failing is non-fatal
@@ -335,6 +344,15 @@ def _from_yahoo_symbol(raw_symbol: str, quote: Dict[str, Any]) -> tuple[str, str
         return f"{base.zfill(5)}.HK", "hk"
     if upper.endswith((".TO", ".V")):
         return upper, "ca"
+    # Yahoo quotes Shanghai as ``.SS`` where this project (and Eastmoney) use
+    # ``.SH``. Emitting both spellings published one listing as two rival
+    # candidates, which the identity gate could not choose between, so every
+    # Shanghai query dead-ended as ambiguous. Folding here also lets the two
+    # sources merge and corroborate each other via ``also_from``.
+    if upper.endswith(".SS"):
+        return f"{upper[: -len('.SS')]}.SH", "cn"
+    if upper.endswith((".SH", ".SZ", ".BJ")):
+        return upper, "cn"
     quote_type = str(quote.get("quoteType") or "").strip().upper()
     if quote_type == "EQUITY" and "." not in raw_symbol and "-" not in raw_symbol:
         return f"{upper}.US", "us"

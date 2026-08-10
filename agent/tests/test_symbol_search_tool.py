@@ -225,3 +225,67 @@ class TestSymbolSearchErrors:
         # The US candidate still appears, just without a CIK.
         aapl = next(c for c in payload["data"]["candidates"] if c["symbol"] == "AAPL.US")
         assert "cik" not in aapl
+
+
+class TestShanghaiAliasAndUnsupportedQueries:
+    """The two resolver defects that made Shanghai and Chinese queries unusable."""
+
+    def test_yahoo_shanghai_suffix_folds_onto_the_project_convention(self):
+        """Yahoo's ``.SS`` and Eastmoney's ``.SH`` must merge into one candidate.
+
+        Emitted separately they became two rival candidates for one listing,
+        which no downstream tie-break could resolve, so every Shanghai query
+        dead-ended before any market tool could run.
+        """
+        with patch.object(
+            ss.eastmoney_client, "get_json", return_value=_eastmoney_payload()
+        ), patch.object(
+            ss.yahoo_client,
+            "search",
+            return_value=[
+                {
+                    "symbol": "600519.SS",
+                    "shortname": "Kweichow Moutai Co Ltd",
+                    "exchange": "SHH",
+                    "quoteType": "EQUITY",
+                }
+            ],
+        ):
+            data = json.loads(ss.SymbolSearchTool().execute(query="600519"))["data"]
+
+        by_symbol = {c["symbol"]: c for c in data["candidates"]}
+        assert "600519.SS" not in by_symbol
+        assert by_symbol["600519.SH"]["market"] == "cn"
+        assert "yahoo" in by_symbol["600519.SH"].get("also_from", [])
+
+    def test_non_ascii_query_skips_yahoo_without_calling_it(self):
+        """A source that cannot serve a query shape is skipped, not failed.
+
+        Yahoo answers any non-ASCII query with HTTP 400. Recording that as a
+        source failure made "this entity is not listed" indistinguishable from
+        "a source is down" for every Chinese query.
+        """
+        with patch.object(
+            ss.eastmoney_client, "get_json", return_value=_eastmoney_payload()
+        ), patch.object(ss.yahoo_client, "search") as search, patch.object(
+            ss.sec_edgar_client, "cik_for", return_value="0000320193"
+        ):
+            data = json.loads(ss.SymbolSearchTool().execute(query="贵州茅台"))["data"]
+
+        search.assert_not_called()
+        assert data["sources"]["yahoo"].startswith("skipped:")
+        assert data["sources"]["eastmoney"] == "ok"
+
+    def test_ascii_query_still_reaches_yahoo(self):
+        """The skip is keyed on the query shape, not switched on permanently."""
+        with patch.object(
+            ss.eastmoney_client, "get_json", return_value=_eastmoney_payload()
+        ), patch.object(
+            ss.yahoo_client, "search", return_value=_yahoo_quotes()
+        ) as search, patch.object(
+            ss.sec_edgar_client, "cik_for", return_value="0000320193"
+        ):
+            data = json.loads(ss.SymbolSearchTool().execute(query="apple"))["data"]
+
+        search.assert_called_once()
+        assert data["sources"]["yahoo"] == "ok"
