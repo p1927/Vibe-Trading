@@ -95,22 +95,34 @@ def test_alpha_bench_forwards_selection(monkeypatch) -> None:
     ]
 
 
-def test_skill_inventory_matches_static_mcp_registration() -> None:
+def test_skill_inventory_matches_the_whole_mcp_surface() -> None:
+    """The published manifest must list every tool the server serves.
+
+    This previously compared the manifest against ``registered - mirrored``,
+    which made a mirrored tool's absence from SKILL.md the expected state. The
+    manifest is what a ClawHub reader uses to decide what installing gets them,
+    so excluding a served tool under-reports the product: the four
+    institutional-research tools were live over MCP and absent from the
+    manifest, and the contract said that was correct. Mirroring is a
+    schema-sourcing detail, not a reason to hide a tool from its own manifest.
+    """
     # Given the runtime MCP registration and the bundled SKILL inventory.
     registered = {tool.name for tool in asyncio.run(mcp_server.mcp.list_tools())}
-    mirrored = {tool_cls.name for tool_cls in mcp_server._mirrored_tool_classes()}
-    static = registered - mirrored
     skill_text = (Path(mcp_server.__file__).parent / "SKILL.md").read_text(encoding="utf-8")
 
     # When the SKILL header and table are read.
     header = re.search(r"^## Available MCP Tools \((\d+)\)$", skill_text, re.MULTILINE)
 
-    # Then they describe exactly the non-mirrored MCP surface.
+    # Then they describe exactly the MCP surface, mirrored tools included.
     assert header is not None
     tool_section = skill_text[header.end() :].split("\n## ", maxsplit=1)[0]
     listed = set(re.findall(r"^\| `([a-z_]+)` \|", tool_section, re.MULTILINE))
-    assert int(header.group(1)) == len(static)
-    assert listed == static
+    assert listed == registered, (
+        f"manifest/surface mismatch — missing from SKILL.md: "
+        f"{sorted(registered - listed)}; listed but not served: "
+        f"{sorted(listed - registered)}"
+    )
+    assert int(header.group(1)) == len(registered)
 
 
 def test_alpha_bench_requires_a_bounded_selection(monkeypatch) -> None:

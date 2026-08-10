@@ -6,7 +6,7 @@ Zero API key required for HK/US/crypto research markets (yfinance, OKX,
 AKShare are free). Trading connector tools are profile-scoped and require the
 selected connector's own local app or OAuth setup.
 
-Surfaces 64 tools: skills, research goals, backtest/factor/options/pattern
+Surfaces 70 tools: skills, research goals, backtest/factor/options/pattern
 analysis, market data, fundamentals & capital-flow & news & discovery
 (get_fund_flow / get_dragon_tiger / get_northbound_flow / get_margin_trading /
 get_block_trades / get_shareholder_count / get_lockup_expiry / get_sector_info /
@@ -15,7 +15,9 @@ get_financial_statements / get_options_chain / get_stock_profile /
 screen_market / search_symbol / get_macro_series / iwencai_search /
 qveris_search / qveris_inspect / qveris_execute),
 institutional-research and alternative data (get_institutional_holdings /
-etf_holdings / prediction_market / research_papers), read-only
+etf_holdings / prediction_market / research_papers), read-only finance math and
+market analytics (quantlib_call / cashflow_performance / orderbook_depth /
+sentiment / technical_indicators / get_fundamentals), read-only
 trading-connector reads, swarm orchestration, trade-journal and shadow-account
 analysis. Every exposed tool is read-only or research-only; no order-placing or
 order-cancelling tool is ever surfaced via MCP. The QVeris tools additionally
@@ -2155,6 +2157,16 @@ _MIRRORED_TOOL_SOURCES = (
     ("src.tools.etf_holdings_tool", "EtfHoldingsTool"),
     ("src.tools.prediction_market_tool", "PredictionMarketTool"),
     ("src.tools.research_papers_tool", "ResearchPapersTool"),
+    # Read-only compute and market-data tools that had reached the agent but
+    # not MCP. Mirroring is the right path for all of them: each already owns a
+    # multi-mode ``parameters`` schema, so re-declaring Python signatures here
+    # would create the second definition this block exists to avoid.
+    ("src.tools.quantlib_tool", "QuantlibCallTool"),
+    ("src.tools.cashflow_analytics_tool", "CashFlowPerformanceTool"),
+    ("src.tools.orderbook_depth_tool", "OrderBookDepthTool"),
+    ("src.tools.sentiment_tool", "SentimentTool"),
+    ("src.tools.technical_indicator_tool", "TechnicalIndicatorTool"),
+    ("src.tools.get_fundamentals_tool", "GetFundamentalsTool"),
 )
 
 
