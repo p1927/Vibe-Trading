@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -294,6 +295,35 @@ def build_worker_prompt(
     return "\n\n".join(prompt_parts)
 
 
+def agent_artifact_dir(run_dir: Path, agent_id: str) -> Path:
+    """Return the canonical artifacts directory for one agent within a run.
+
+    The single source of truth for this path — shared with the retry loop
+    in ``runtime.py`` so the two can never compute it differently and drift
+    apart.
+    """
+    return run_dir / "artifacts" / agent_id
+
+
+def clear_agent_artifacts(artifact_dir: Path) -> None:
+    """Remove *artifact_dir* and everything in it, before a retry attempt.
+
+    A retry re-invokes :func:`run_worker` against the same ``artifact_dir``.
+    Without this, a failed attempt's ``report.md`` (or any other file a tool
+    wrote) would still be sitting there when the retried attempt reads the
+    directory back via ``_resolve_summary``/``_report_written``/
+    ``_collect_artifacts``, silently substituting stale content for the new
+    attempt's real result.
+
+    Raises on failure rather than swallowing it: proceeding with a retry
+    while known-stale artifacts remain would recreate the exact bug this
+    exists to prevent. ``run_worker`` recreates the directory itself
+    (``mkdir(parents=True, exist_ok=True)``) on its next invocation.
+    """
+    if artifact_dir.exists():
+        shutil.rmtree(artifact_dir)
+
+
 def run_worker(
     agent_spec: SwarmAgentSpec,
     task: SwarmTask,
@@ -386,7 +416,7 @@ def run_worker(
     ]
 
     # 6. ReAct loop
-    artifact_dir = run_dir / "artifacts" / agent_id
+    artifact_dir = agent_artifact_dir(run_dir, agent_id)
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
     t0 = time.monotonic()
