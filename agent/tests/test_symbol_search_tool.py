@@ -268,6 +268,59 @@ class TestSymbolSearchSuccess:
         symbols = {c["symbol"] for c in payload["data"]["candidates"]}
         assert symbols == {"PDI.TO"}
 
+    def test_canadian_ticker_with_name_text_skips_eastmoney(self):
+        """A "TICKER.TO <name>" query (e.g. "BTO.TO B2Gold") still fails fast.
+
+        The model commonly searches the suffixed ticker plus a name hint; the
+        leading .TO/.V suffix is unambiguous Canada, so Eastmoney (no Canada
+        coverage) must not be contacted.
+        """
+        with patch.object(
+            ss.eastmoney_client, "get_json"
+        ) as mock_em, patch.object(
+            ss.yahoo_client, "search", return_value=_yahoo_quotes()
+        ):
+            out = ss.SymbolSearchTool().execute(query="BTO.TO B2Gold")
+
+        mock_em.assert_not_called()
+        payload = json.loads(out)
+        assert payload["ok"] is True
+        assert payload["data"]["sources"]["eastmoney"] == (
+            "unsupported: eastmoney has no Canada coverage"
+        )
+
+    def test_canadian_v_ticker_with_name_text_skips_eastmoney(self):
+        """"SGML.V Sigma Lithium Vancouver" fails fast on the leading .V suffix."""
+        with patch.object(
+            ss.eastmoney_client, "get_json"
+        ) as mock_em, patch.object(
+            ss.yahoo_client, "search", return_value=_yahoo_quotes()
+        ):
+            out = ss.SymbolSearchTool().execute(query="SGML.V Sigma Lithium Vancouver")
+
+        mock_em.assert_not_called()
+        payload = json.loads(out)
+        assert payload["data"]["sources"]["eastmoney"] == (
+            "unsupported: eastmoney has no Canada coverage"
+        )
+
+    def test_bare_name_without_suffix_still_hits_eastmoney(self):
+        """A bare name (no .TO/.V) is NOT fail-fast — venue is ambiguous.
+
+        This preserves the documented design: bare names like "B2Gold BTO" or
+        "BTO" may be legit non-Canadian lookups, so Eastmoney fan-out stays.
+        """
+        with patch.object(
+            ss.eastmoney_client, "get_json", return_value=_eastmoney_payload()
+        ) as mock_em, patch.object(
+            ss.yahoo_client, "search", return_value=_yahoo_quotes()
+        ):
+            out = ss.SymbolSearchTool().execute(query="B2Gold BTO")
+
+        mock_em.assert_called_once()
+        payload = json.loads(out)
+        assert payload["data"]["sources"]["eastmoney"] == "ok"
+
 
 class TestSymbolSearchErrors:
     """Error envelopes and per-source resilience."""

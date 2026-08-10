@@ -42,7 +42,15 @@ _EASTMONEY_SUGGEST_URL = "https://searchapi.eastmoney.com/api/suggest/get"
 # result. We fail fast — skip the endpoint entirely — for these queries, and
 # drop US OTC aliases (e.g. ``BYAGF.US`` for ``BYN.V``) so the grounding
 # ledger never sees one company under two venues (identity_conflict).
-_CANADIAN_SYMBOL_RE = re.compile(r"^[A-Z0-9&.\-]+\.(?:TO|V)$", re.IGNORECASE)
+#
+# The pattern matches a LEADING Canadian ticker, optionally followed by free
+# text — the model commonly searches "BTO.TO B2Gold" or "SGML.V Sigma Lithium
+# Vancouver", not just a bare "BTO.TO". ``.TO``/``.V`` are exclusively
+# Canadian suffixes, so a leading one is unambiguous and Eastmoney can never
+# serve it. Bare names with no suffix (e.g. "BTO", "B2Gold BTO") carry no
+# venue signal and may be legit non-Canadian lookups (A-share/HK/US), so they
+# are deliberately left to the normal fan-out.
+_CANADIAN_SYMBOL_RE = re.compile(r"^[A-Z0-9&.\-]+\.(?:TO|V)\b", re.IGNORECASE)
 
 # Eastmoney market-number -> our symbol suffix. Anything else is left unmapped
 # (those candidates are skipped rather than emitted with a wrong suffix).
@@ -196,7 +204,8 @@ def _is_canadian_symbol(text: str) -> bool:
         text: A symbol or free-text query to test.
 
     Returns:
-        ``True`` when the text is exactly a Canadian-suffixed ticker.
+        ``True`` when the text starts with a Canadian-suffixed ticker
+        (``BTO.TO``, ``BTO.TO B2Gold``, ``SGML.V Sigma Lithium``, ...).
     """
     return bool(_CANADIAN_SYMBOL_RE.match((text or "").strip()))
 
@@ -227,7 +236,14 @@ def _search_eastmoney(query: str) -> tuple[List[Dict[str, Any]], str]:
             params={"input": query, "type": "14", "count": str(_PER_SOURCE_CAP)},
         )
     except Exception as exc:  # noqa: BLE001 - one source failing is non-fatal
-        logger.warning("eastmoney suggest failed for %r: %s", query, exc)
+        # Deliberately debug-level, not warning: Eastmoney has no coverage for
+        # many queries the fan-out legitimately tries (Canadian names, crypto,
+        # futures) and returns a non-JSON body for them. That is expected and
+        # benign — the status string below still flows to the tool result so
+        # nothing is hidden, it just no longer spams the terminal. Failures on
+        # queries Eastmoney SHOULD cover (A-share/HK) are still visible by
+        # checking the tool result's sources map or with debug logging on.
+        logger.debug("eastmoney suggest failed for %r: %s", query, exc)
         return [], f"eastmoney search failed: {exc}"
 
     rows = _eastmoney_data_rows(payload)
