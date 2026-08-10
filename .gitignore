@@ -36,6 +36,7 @@ agent/uploads/
 /sessions/
 /runs/
 /shadow_runs/
+/shadow_accounts/
 /swarm/runs/
 /live/
 /uploads/
