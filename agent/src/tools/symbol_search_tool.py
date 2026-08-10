@@ -82,6 +82,15 @@ _PER_SOURCE_CAP = 25
 # the ``sec_edgar`` source entry entirely.
 _NO_US = "__no_us__"
 
+# A source that cannot serve a given query shape reports this prefix instead of
+# an error string. The distinction is load-bearing, not cosmetic: the grounding
+# ledger concludes "this entity does not exist" only when every source that
+# could answer did answer, so a source recorded as failed turns a legitimate
+# "not listed" into a blocking ``invalidated`` identity. Both skip reasons below
+# share this one prefix — two spellings for one concept is exactly how that
+# cross-module contract breaks silently.
+_SKIPPED = "skipped: "
+
 
 class SymbolSearchTool(BaseTool):
     """Resolve a company name or ticker fragment to candidate symbols."""
@@ -229,7 +238,7 @@ def _search_eastmoney(query: str) -> tuple[List[Dict[str, Any]], str]:
             "eastmoney skipped for Canadian symbol %r (no Canada coverage)",
             query,
         )
-        return [], "unsupported: eastmoney has no Canada coverage"
+        return [], f"{_SKIPPED}eastmoney has no Canada coverage"
     try:
         payload = eastmoney_client.get_json(
             _EASTMONEY_SUGGEST_URL,
@@ -342,7 +351,7 @@ def _search_yahoo(query: str) -> tuple[List[Dict[str, Any]], str]:
         # a request to manufacture a source failure. That failure is not
         # cosmetic: a caller deciding whether an entity exists counts clean
         # sources, and an unsupported query shape must not read as an outage.
-        return [], "skipped: non-ASCII query is not supported by this source"
+        return [], f"{_SKIPPED}non-ASCII query is not supported by this source"
     try:
         quotes = yahoo_client.search(query)
     except Exception as exc:  # noqa: BLE001 - one source failing is non-fatal

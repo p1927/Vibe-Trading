@@ -189,7 +189,7 @@ class TestSymbolSearchSuccess:
         payload = json.loads(out)
         assert payload["ok"] is True
         assert payload["data"]["sources"]["eastmoney"] == (
-            "unsupported: eastmoney has no Canada coverage"
+            "skipped: eastmoney has no Canada coverage"
         )
 
     def test_canadian_query_drops_us_otc_aliases(self):
@@ -286,7 +286,7 @@ class TestSymbolSearchSuccess:
         payload = json.loads(out)
         assert payload["ok"] is True
         assert payload["data"]["sources"]["eastmoney"] == (
-            "unsupported: eastmoney has no Canada coverage"
+            "skipped: eastmoney has no Canada coverage"
         )
 
     def test_canadian_v_ticker_with_name_text_skips_eastmoney(self):
@@ -301,7 +301,7 @@ class TestSymbolSearchSuccess:
         mock_em.assert_not_called()
         payload = json.loads(out)
         assert payload["data"]["sources"]["eastmoney"] == (
-            "unsupported: eastmoney has no Canada coverage"
+            "skipped: eastmoney has no Canada coverage"
         )
 
     def test_bare_name_without_suffix_still_hits_eastmoney(self):

@@ -1707,3 +1707,65 @@ def test_a_clause_comma_still_separates_clauses(tmp_path: Path) -> None:
 
     assert result.valid is False
     assert "numeric_claim_conflict" in {issue["code"] for issue in result.issues}
+
+
+@pytest.mark.parametrize("query", ["贵州茅台", "ZZZZ.V"])
+def test_every_resolver_skip_marker_is_understood_as_a_non_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    query: str,
+) -> None:
+    """Lock the cross-module contract for "this source cannot serve this query".
+
+    The resolver skips Yahoo for a non-ASCII query and Eastmoney for a Canadian
+    one. This ledger recognizes a non-failure only by the status prefix, so a
+    second spelling on the tool side silently turns "not listed" into a blocking
+    ``invalidated`` identity — which is exactly what an "unsupported: ..." status
+    did before the two were unified.
+    """
+    from src.tools import symbol_search_tool as resolver
+
+    monkeypatch.setattr(resolver.eastmoney_client, "get_json", lambda *a, **k: {})
+    monkeypatch.setattr(resolver.yahoo_client, "search", lambda *a, **k: [])
+
+    result = resolver.SymbolSearchTool().execute(query=query)
+    statuses = json.loads(result)["data"]["sources"]
+    assert any(value.startswith("skipped:") for value in statuses.values()), statuses
+
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="这家公司现在股价多少")
+    ledger.ingest_tool_result(
+        tool_name="search_symbol",
+        arguments={"query": query},
+        result=result,
+        call_id="resolve",
+        success=True,
+    )
+
+    assert ledger.identity_status == "not_found"
+    assert ledger.validate_final_answer("没有查到这家公司，无法给出结论。").valid is True
+
+
+@pytest.mark.parametrize(
+    ("symbol", "written"),
+    [("562500.SH", "¥1.171"), ("PDI.TO", "C$1.171")],
+)
+def test_a_currency_symbol_counts_as_naming_the_currency(
+    tmp_path: Path,
+    symbol: str,
+    written: str,
+) -> None:
+    """A model writes a quote as ¥ or C$, not as the ISO code."""
+    ledger = GroundingLedger(run_dir=tmp_path, user_message=f"{symbol} 现价多少")
+    ledger.ingest_tool_result(
+        tool_name="get_market_data",
+        arguments={"codes": [symbol]},
+        result=_market_payload(symbol),
+        call_id="prices",
+        success=True,
+    )
+
+    result = ledger.validate_final_answer(
+        f"{symbol} 最新收盘价 {written}，数据来源：雅虎财经。"
+    )
+
+    assert result.valid is True, result.issues

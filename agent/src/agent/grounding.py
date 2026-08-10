@@ -372,7 +372,7 @@ _CURRENCY_ALIASES = {
     "HKD": ("hkd", "hk$", "港元", "港币"),
     "KRW": ("krw", "韩元", "韩圜"),
     "INR": ("inr", "印度卢比", "卢比"),
-    "CAD": ("cad", "加元", "加拿大元"),
+    "CAD": ("cad", "c$", "加元", "加拿大元"),
 }
 _SYMBOL_HEADERS = {"symbol", "ticker", "code", "标的", "代码", "证券代码"}
 
