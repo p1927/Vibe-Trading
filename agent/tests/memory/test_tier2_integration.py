@@ -195,6 +195,52 @@ class TestFtsAddThenSearchFinds:
 
 
 # ---------------------------------------------------------------------------
+# 4a. Fallback token-scan must find the same short-token content the FTS5
+# path does — find_relevant() must not silently miss entries just because
+# VT_MEMORY_FTS_INDEX happens to be off.
+# ---------------------------------------------------------------------------
+
+
+class TestFallbackMatchesFtsForShortTokens:
+    """A 2-character query (e.g. a ticker symbol or country code) must be
+    retrievable through the token-scan fallback exactly as it is through the
+    FTS5 index, regardless of which VT_MEMORY_FTS_INDEX setting is active."""
+
+    def test_fallback_finds_short_token_entry(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VT_MEMORY_FTS_INDEX", "false")
+        reset_env_config()
+
+        mem = PersistentMemory(tmp_path)
+        mem.add(
+            "GE earnings note",
+            "GE reported strong earnings this quarter, beating estimates.",
+            "project",
+        )
+
+        results = mem.find_relevant("GE")
+        assert len(results) == 1
+        assert results[0].title == "GE earnings note"
+
+    def test_fallback_and_fts_agree_on_short_token_query(self, tmp_path, monkeypatch, fts_db):
+        mem = PersistentMemory(tmp_path)
+        mem.add(
+            "GE earnings note",
+            "GE reported strong earnings this quarter, beating estimates.",
+            "project",
+        )
+
+        monkeypatch.setenv("VT_MEMORY_FTS_INDEX", "false")
+        reset_env_config()
+        fallback_titles = {e.title for e in mem.find_relevant("GE")}
+
+        monkeypatch.setenv("VT_MEMORY_FTS_INDEX", "true")
+        reset_env_config()
+        fts_titles = {e.title for e in mem.find_relevant("GE")}
+
+        assert fallback_titles == fts_titles == {"GE earnings note"}
+
+
+# ---------------------------------------------------------------------------
 # 4b. FTS: importance decay must still influence ranking (VT_MEMORY=full
 # enables fts_index_enabled and decay_enabled together)
 # ---------------------------------------------------------------------------

@@ -115,7 +115,11 @@ _NON_LATIN_SCRIPT_RANGES = (
     "Ѐ-ӿ"  # Cyrillic
 )
 
-_TOKEN_RE = re.compile(rf"[a-zA-Z0-9]{{3,}}|[{_NON_LATIN_SCRIPT_RANGES}]")
+# Matches search_index.py's FTS5 query sanitizer minimum (2+ ASCII chars) so
+# the token-scan fallback in find_relevant() finds the same content the FTS5
+# path does — short tokens like ticker symbols ("GE") or country codes ("US")
+# must be retrievable regardless of whether VT_MEMORY_FTS_INDEX is enabled.
+_TOKEN_RE = re.compile(rf"[a-zA-Z0-9]{{2,}}|[{_NON_LATIN_SCRIPT_RANGES}]")
 _SLUG_DISALLOWED_RE = re.compile(rf"[^a-z0-9_\-{_NON_LATIN_SCRIPT_RANGES}]")
 
 
@@ -143,7 +147,7 @@ class MemoryEntry:
 
 
 def _tokenize(text: str) -> set[str]:
-    """Split text into searchable tokens (ASCII >=3 chars + non-Latin chars)."""
+    """Split text into searchable tokens (ASCII >=2 chars + non-Latin chars)."""
     return set(_TOKEN_RE.findall(text.lower()))
 
 
