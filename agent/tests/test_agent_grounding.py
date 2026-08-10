@@ -598,6 +598,86 @@ def test_final_numeric_gate_rejects_known_trace_contradiction(tmp_path: Path) ->
     assert good.valid is True
 
 
+def test_run_dir_ohlc_csv_is_observed_evidence(tmp_path: Path) -> None:
+    """A bash-written OHLC CSV grounds the prices the answer quotes.
+
+    The bash+yfinance workaround writes per-symbol CSVs into the run directory
+    (e.g. ``data/raw/BYN_V.csv``) instead of returning bars through
+    ``get_market_data``. Those prices are real observed output, so the final
+    answer may cite them; a price outside the file must still be rejected.
+    """
+    raw = tmp_path / "data" / "raw"
+    raw.mkdir(parents=True)
+    (raw / "BYN_V.csv").write_text(
+        "Date,Open,High,Low,Close,Adj Close,Volume\n"
+        "2026-08-06,0.35,0.37,0.34,0.36,0.36,500000\n"
+        "2026-08-07,0.36,0.38,0.355,0.375,0.375,600000\n",
+        encoding="utf-8",
+    )
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message="请分析 BYN.V 并推荐买入价",
+    )
+
+    inside = ledger.validate_final_answer(
+        "BYN.V（yfinance，CAD）在 2026-08-07 的已观测收盘价为 0.375。"
+    )
+    fabricated = ledger.validate_final_answer(
+        "BYN.V（yfinance，CAD）在 2026-08-07 的已观测收盘价为 0.88。"
+    )
+
+    assert inside.valid is True, inside.issues
+    assert fabricated.valid is False
+    assert any(issue["code"] == "numeric_claim_conflict" for issue in fabricated.issues)
+
+
+def test_run_dir_ohlc_csv_tsx_filename_maps_symbol(tmp_path: Path) -> None:
+    """PDI_TO.csv maps to PDI.TO and grounds its CAD price."""
+    raw = tmp_path / "data" / "raw"
+    raw.mkdir(parents=True)
+    (raw / "PDI_TO.csv").write_text(
+        "Date,Open,High,Low,Close\n"
+        "2026-08-07,10.0,10.5,9.9,10.2\n",
+        encoding="utf-8",
+    )
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message="请分析 PDI.TO 并推荐买入价",
+    )
+
+    good = ledger.validate_final_answer(
+        "PDI.TO（yfinance，CAD）在 2026-08-07 的已观测收盘价为 10.2。"
+    )
+
+    assert good.valid is True, good.issues
+
+
+def test_run_dir_ohlc_csv_stray_symbol_is_ignored(tmp_path: Path) -> None:
+    """A CSV for a symbol the run never handled does not mint identity."""
+    raw = tmp_path / "data" / "raw"
+    raw.mkdir(parents=True)
+    (raw / "ZZZ_US.csv").write_text(
+        "Date,Open,High,Low,Close\n"
+        "2026-08-07,100.0,100.0,100.0,100.0\n",
+        encoding="utf-8",
+    )
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message="请分析 BYN.V 并推荐买入价",
+    )
+
+    result = ledger.validate_final_answer(
+        "ZZZ.US（yfinance，USD）在 2026-08-07 的已观测收盘价为 100.0。"
+    )
+
+    # The symbol is not entitled, so the price cannot be grounded.
+    assert result.valid is False
+    assert any(
+        issue["code"] in {"numeric_claim_unavailable", "canonical_symbol_not_surfaced"}
+        for issue in result.issues
+    )
+
+
 def test_numeric_gate_validates_derived_formula_and_provenance(tmp_path: Path) -> None:
     """A derived entry level must calculate correctly from observed evidence."""
     ledger = GroundingLedger(
