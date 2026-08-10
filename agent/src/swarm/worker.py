@@ -200,31 +200,20 @@ def build_worker_prompt(
     Returns:
         Complete system prompt string for the worker LLM.
     """
-    upstream_block = ""
-    if upstream_summaries:
-        sections = []
-        for key, summary in upstream_summaries.items():
-            sections.append(f"### {key}\n{summary}")
-        upstream_block = (
-            "## Upstream Context (from previous agents)\n\n"
-            + "\n\n".join(sections)
-        )
-
-    prompt_parts = [
-        f"## Role\n\n{agent_spec.role}",
-        agent_spec.system_prompt.replace("{upstream_context}", upstream_block),
-    ]
+    # Static, agent-invariant blocks first: for a given agent_spec these are
+    # byte-identical on every call (skill_descriptions/tools come from the
+    # agent's own YAML spec, not the current task), so they form one stable
+    # prompt-cache-eligible prefix across a swarm's repeated calls to the
+    # same agent. Anything that varies per call (upstream context, grounding
+    # data, the current date) is appended after, in the same relative order
+    # as before -- a cache hit only needs a stable *prefix*, so moving the
+    # variable tail doesn't need to preserve position, only what precedes it.
+    prompt_parts = [f"## Role\n\n{agent_spec.role}"]
 
     if skill_descriptions and skill_descriptions != "(no matching skills)":
         prompt_parts.append(
             f"## Available Skills (use load_skill to access full documentation)\n\n{skill_descriptions}"
         )
-
-    if grounding_block:
-        # Placed before Execution Rules so it's in scope when the worker
-        # plans its first tool call. The block already contains an explicit
-        # instruction to prefer these prices over training data.
-        prompt_parts.append(grounding_block)
 
     if "get_market_data" in (agent_spec.tools or []):
         prompt_parts.append(
@@ -266,6 +255,26 @@ def build_worker_prompt(
         "do NOT introduce one from training data — say the upstream omitted "
         "it and proceed without."
     )
+
+    # From here on, content varies per call (upstream context substitution,
+    # grounding data, the date), so none of it extends the cacheable prefix
+    # above -- relative order matches the original layout exactly.
+    upstream_block = ""
+    if upstream_summaries:
+        sections = []
+        for key, summary in upstream_summaries.items():
+            sections.append(f"### {key}\n{summary}")
+        upstream_block = (
+            "## Upstream Context (from previous agents)\n\n"
+            + "\n\n".join(sections)
+        )
+    prompt_parts.append(agent_spec.system_prompt.replace("{upstream_context}", upstream_block))
+
+    if grounding_block:
+        # Placed before Execution Rules so it's in scope when the worker
+        # plans its first tool call. The block already contains an explicit
+        # instruction to prefer these prices over training data.
+        prompt_parts.append(grounding_block)
 
     prompt_parts.append(
         "## Execution Rules\n\n"
