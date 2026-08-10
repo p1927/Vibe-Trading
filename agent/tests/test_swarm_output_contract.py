@@ -79,6 +79,72 @@ def test_raw_tool_envelope_is_rejected():
     assert _classify_deliverable(txt, is_data_agent=False, report_written=False, data_tool_calls=1)
 
 
+def test_raw_ok_data_envelope_is_rejected():
+    """Real success shape from get_fundamentals_tool.py, no top-level status key."""
+    txt = (
+        '{"ok": true, "source": "yfinance", "freq": "annual", "pit": false, '
+        '"symbols": ["AAPL.US"], "fields": ["revenue"], "data": {"revenue": [1, 2, 3]}}'
+    )
+    assert _classify_deliverable(
+        txt, is_data_agent=True, report_written=False, data_tool_calls=1
+    )
+
+
+def test_raw_ok_non_data_payload_envelope_is_rejected():
+    """Real success shape from research_papers_tool.py: uses "papers" as the
+    payload key, not "data". Proves the fix does not depend on the payload
+    key name, only on the repository's real ok/success discriminator."""
+    txt = (
+        '{"ok": true, "mode": "read", "source": "arxiv", '
+        '"disclaimer": "not investment advice", "requested": 1, "returned": 1, '
+        '"missing_ids": [], "papers": [{"id": "1234.5678", "title": "Example"}], '
+        '"next_actions": ["read_more"]}'
+    )
+    assert _classify_deliverable(
+        txt, is_data_agent=True, report_written=False, data_tool_calls=1
+    )
+
+
+def test_raw_success_envelope_is_rejected():
+    """SYNTHETIC: no current Vibe-Trading tool emits a top-level "success" key
+    (confirmed by repository survey). This branch exists only for consistency
+    with the sibling _is_tool_success / _is_error_result classifiers, which
+    already check both ok and success defensively."""
+    txt = '{"success": true, "data": {"x": 1}}'
+    assert _classify_deliverable(
+        txt, is_data_agent=True, report_written=False, data_tool_calls=1
+    )
+
+
+def test_prose_mentioning_ok_or_success_as_words_is_not_rejected():
+    """Control: legitimate prose that happens to contain the words ok/success
+    must not be misclassified, the check requires the text to start with
+    "{" before any key inspection happens."""
+    txt = "The fundamentals look ok and the outlook is a success story overall."
+    assert (
+        _classify_deliverable(
+            txt, is_data_agent=False, report_written=False, data_tool_calls=0
+        )
+        is None
+    )
+
+
+def test_json_with_late_ok_key_is_a_known_heuristic_limitation():
+    """Documents a known, accepted limitation: the character-window heuristic
+    only looks at the first 40/300 chars, matching the repository's own
+    existing convention for the status/content branch. Every real ok/success
+    tool in this repository puts ok/success first (verified across all 29
+    producers), so this is not expected to occur in practice."""
+    padding = "x" * 60
+    txt = '{"' + padding + '": 1, "ok": true, "data": {}}'
+    assert (
+        _classify_deliverable(
+            txt, is_data_agent=True, report_written=False, data_tool_calls=1
+        )
+        is None
+    )
+
+
 def test_data_agent_without_evidence_is_rejected():
     assert _classify_deliverable(REAL_REPORT, is_data_agent=True, report_written=False, data_tool_calls=0)
 
