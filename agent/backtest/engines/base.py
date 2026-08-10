@@ -764,6 +764,17 @@ class BaseEngine(ABC):
             turnover_series=realized_turnover,
         )
         m.update(benchmark_metadata)
+        if "benchmark_return" in benchmark_metadata:
+            # calc_metrics()'s own excess_return is derived from bench_ret
+            # compounded as (1 + bench_ret).prod() - 1, the same pattern #872
+            # found unsafe once a benchmark price series contains a
+            # non-positive-prior-price bar. benchmark_return above is already
+            # corrected to the #872-safe price relative; excess_return has to
+            # be re-derived from that same corrected value or the two fields
+            # go inconsistent with each other in the same metrics dict.
+            m["excess_return"] = (
+                m["total_return"] - benchmark_metadata["benchmark_return"]
+            )
         m["by_symbol"] = by_symbol_stats(self.trades)
         m["by_exit_reason"] = by_exit_reason_stats(self.trades)
 
