@@ -866,6 +866,9 @@ def _is_error_result(result: str) -> bool:
     """Did a tool call return a top-level error envelope?
 
     Parses the result as JSON and checks for a top-level ``status == "error"``.
+    Also treats ``ok`` / ``success`` explicitly set to ``False`` as an error,
+    since some tools (e.g. ``get_stock_news``) report failure only through
+    those fields, with no ``status`` key at all.
     A nested ``status`` (e.g. inside ``data``) is intentionally ignored — only
     the envelope matters for the deliverable contract.
 
@@ -883,7 +886,11 @@ def _is_error_result(result: str) -> bool:
         # never raise from a classifier on the worker hot path.
         head = text[:160].lower()
         return '"status": "error"' in head or '"status":"error"' in head
-    return isinstance(parsed, dict) and parsed.get("status") == "error"
+    if not isinstance(parsed, dict):
+        return False
+    if parsed.get("status") == "error":
+        return True
+    return parsed.get("ok") is False or parsed.get("success") is False
 
 
 def _classify_deliverable(
