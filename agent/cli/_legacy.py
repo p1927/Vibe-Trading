@@ -2881,6 +2881,21 @@ def cmd_provider_login(provider: str) -> int:
         account = getattr(token, "account_id", None) or "ChatGPT"
         console.print(f"[green]Authenticated with OpenAI Codex[/green]  [dim]{account}[/dim]")
         return EXIT_SUCCESS
+    except EOFError:
+        # ``docker exec`` does not allocate stdin/TTY unless explicitly asked
+        # to do so. oauth-cli-kit prompts for the browser callback URL after
+        # printing the authorization link, so an unattended stdin otherwise
+        # fails with the opaque ``EOF when reading a line`` error.
+        console.print(
+            "[red]Authentication error:[/red] OpenAI Codex OAuth needs an "
+            "interactive terminal to paste the callback URL."
+        )
+        console.print(
+            "[yellow]Docker:[/yellow] run `docker compose exec vibe-trading "
+            "vibe-trading provider login openai-codex` or add `-it` to "
+            "`docker exec`."
+        )
+        return EXIT_RUN_FAILED
     except Exception as exc:
         console.print(f"[red]Authentication error:[/red] {exc}")
         return EXIT_RUN_FAILED
