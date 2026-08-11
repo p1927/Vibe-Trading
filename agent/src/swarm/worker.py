@@ -309,9 +309,48 @@ def agent_artifact_dir(run_dir: Path, agent_id: str) -> Path:
 
     The single source of truth for this path — shared with the retry loop
     in ``runtime.py`` so the two can never compute it differently and drift
-    apart.
+    apart.  The guard belongs here rather than only in
+    ``clear_agent_artifacts`` because this path is also used by ``run_worker``
+    for ``mkdir``; validating the shared constructor protects both directory
+    creation and recursive cleanup from the same path escape.
+
+    Args:
+        run_dir: Root directory for the swarm run.
+        agent_id: Single safe path segment identifying the agent.
+
+    Raises:
+        ValueError: If ``agent_id`` is not a single safe path segment or the
+            resolved artifact directory is not exactly one level below the
+            resolved ``run_dir/artifacts`` directory.
     """
-    return run_dir / "artifacts" / agent_id
+    artifact_root = run_dir / "artifacts"
+    if (
+        not isinstance(agent_id, str)
+        or not agent_id
+        or agent_id in {".", ".."}
+        or "/" in agent_id
+        or "\\" in agent_id
+    ):
+        raise ValueError(
+            f"Invalid swarm agent id {agent_id!r}: expected one safe path segment"
+        )
+
+    artifact_dir = artifact_root / agent_id
+    resolved_root = artifact_root.resolve()
+    resolved_dir = artifact_dir.resolve()
+    try:
+        relative = resolved_dir.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid swarm agent id {agent_id!r}: artifact path escapes "
+            "the run artifacts directory"
+        ) from exc
+    if len(relative.parts) != 1:
+        raise ValueError(
+            f"Invalid swarm agent id {agent_id!r}: artifact path must be "
+            "one level below the run artifacts directory"
+        )
+    return artifact_dir
 
 
 def clear_agent_artifacts(artifact_dir: Path) -> None:

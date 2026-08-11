@@ -24,6 +24,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from src.swarm.models import SwarmAgentSpec, SwarmTask, WorkerResult
 from src.swarm.runtime import SwarmRuntime
 from src.swarm.store import SwarmStore
@@ -67,6 +69,28 @@ def test_agent_artifact_dir_matches_run_worker_construction(tmp_path: Path) -> N
     to, or the retry loop would clear the wrong directory entirely."""
     run_dir = tmp_path / "run-x"
     assert agent_artifact_dir(run_dir, "analyst") == run_dir / "artifacts" / "analyst"
+
+
+@pytest.mark.parametrize(
+    "agent_id", ["..", "/abs/path", "", ".", "a/b", r"a\\b"]
+)
+def test_agent_artifact_dir_rejects_path_shaped_ids(
+    tmp_path: Path, agent_id: str
+) -> None:
+    with pytest.raises(ValueError, match="agent id"):
+        agent_artifact_dir(tmp_path / "run-x", agent_id)
+
+
+def test_agent_artifact_dir_rejects_canonical_symlink_escape(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-x"
+    artifact_root = run_dir / "artifacts"
+    artifact_root.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (artifact_root / "analyst").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="agent id"):
+        agent_artifact_dir(run_dir, "analyst")
 
 
 def test_clear_agent_artifacts_removes_nested_files_and_dirs(tmp_path: Path) -> None:
