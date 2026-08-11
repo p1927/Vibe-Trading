@@ -1769,3 +1769,64 @@ def test_a_currency_symbol_counts_as_naming_the_currency(
     )
 
     assert result.valid is True, result.issues
+
+
+def test_price_validation_ignores_markdown_ordered_list_markers(
+    tmp_path: Path,
+) -> None:
+    """Line-leading ordered-list numbers are prose, not prices (#BUGS-1).
+
+    A verdict written as a numbered Markdown list ("1. **原料药价格持续低迷**")
+    must not let the marker "1." be parsed as a float and rejected against the
+    observed OHLC range as a numeric_claim_conflict.
+    """
+    ledger = _screened_ledger(tmp_path)
+    symbol = "000543.SZ"  # populated by _screened_ledger
+
+    for draft in (
+        f"1. **原料药价格持续低迷**，{symbol} 现价 8.20 CNY（source: tencent）",
+        f"1. 原料药价格持续低迷\n2. 板块持续走强\n3. 建议关注 {symbol} 收盘价 8.20 CNY（source: tencent）",
+        f"  1. 第一项描述\n  2. 第二项描述，{symbol} 收盘价 8.20 CNY（source: tencent）",
+        f"结论如下：\n1) 原料药承压，{symbol} 8.20 CNY 可建仓（source: tencent）",
+    ):
+        result = ledger.validate_final_answer(draft)
+        assert result.valid is True, (draft, result.issues)
+
+
+def test_markdown_list_marker_mask_does_not_weaken_contradiction_check(
+    tmp_path: Path,
+) -> None:
+    """Masking list markers must not shield a genuinely out-of-range quote (#BUGS-1).
+
+    A wrong quote sitting in a numbered list item is still caught, so the mask is
+    span-local: it removes only the marker, not a contradicted price that follows.
+    """
+    ledger = _screened_ledger(tmp_path)
+    symbol = "000543.SZ"
+
+    result = ledger.validate_final_answer(
+        f"1. 原料药价格持续低迷，{symbol} 收盘价 42.00 CNY（source: tencent）"
+    )
+
+    codes = [issue["code"] for issue in result.issues]
+    assert "numeric_claim_conflict" in codes
+    assert [issue["value"] for issue in result.issues if issue["code"] == "numeric_claim_conflict"] == [42.0]
+
+
+def test_in_text_decimal_survives_list_marker_mask(
+    tmp_path: Path,
+) -> None:
+    """An ordinary decimal like 1.5 (digit after the dot) is never a list marker (#BUGS-1).
+
+    The mask only matches a digit run at line start followed by "." or ")" and
+    whitespace, so a genuine in-text decimal must remain a candidate price.
+    """
+    ledger = _screened_ledger(tmp_path)
+    symbol = "000543.SZ"
+
+    for draft in (
+        f"{symbol} 目标价 1.5 CNY，收盘价 8.20 CNY（source: tencent）",
+        f"{symbol} 变动 0.03 CNY，收盘价 8.20 CNY（source: tencent）",
+    ):
+        result = ledger.validate_final_answer(draft)
+        assert result.valid is True, (draft, result.issues)
