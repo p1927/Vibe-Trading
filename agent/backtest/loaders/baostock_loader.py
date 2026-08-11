@@ -35,11 +35,10 @@ class DataLoader:
 
     name = "baostock"
     markets = {"a_share"}
-    # BaoStock natively reports volume in single shares, unlike the other
-    # A-share sources which report board lots (HKUDS/Vibe-Trading#1062).
-    # Empirically verified 2026-08-11: 600519.SH 2026-07-31 = 5,512,752
-    # shares vs tencent/eastmoney 55,128 lots (ratio exactly 100.0).
-    volume_units = {"a_share": "shares"}
+    # BaoStock natively reports volume in single shares; fetch() normalizes
+    # to board lots — the A-share canonical unit shared by tencent/eastmoney/
+    # akshare/mootdx/tushare (HKUDS/Vibe-Trading#1062).
+    volume_units = {"a_share": "lots"}
     requires_auth = False
 
     def is_available(self) -> bool:
@@ -159,6 +158,12 @@ class DataLoader:
         df["date"] = pd.to_datetime(df["date"])
         for col in ["open", "high", "low", "close", "volume", "amount"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        # BaoStock reports volume in single shares; normalize to board lots
+        # (1 lot = 100 shares) to match every other A-share source
+        # (HKUDS/Vibe-Trading#1062). Fractional lots are valid — odd-lot
+        # trades exist — so no rounding is applied.
+        df["volume"] = df["volume"] / 100.0
 
         df = df.rename(columns={"date": "trade_date"})
         df = df.set_index("trade_date").sort_index()
