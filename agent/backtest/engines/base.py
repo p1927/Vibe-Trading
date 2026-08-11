@@ -772,8 +772,11 @@ class BaseEngine(ABC):
             # corrected to the #872-safe price relative; excess_return has to
             # be re-derived from that same corrected value or the two fields
             # go inconsistent with each other in the same metrics dict.
-            m["excess_return"] = (
-                m["total_return"] - benchmark_metadata["benchmark_return"]
+            m["benchmark_return"] = round(
+                benchmark_metadata["benchmark_return"], 6
+            )
+            m["excess_return"] = round(
+                m["total_return"] - benchmark_metadata["benchmark_return"], 6
             )
         m["by_symbol"] = by_symbol_stats(self.trades)
         m["by_exit_reason"] = by_exit_reason_stats(self.trades)
