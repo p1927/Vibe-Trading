@@ -1,11 +1,11 @@
 """Pin the volume-unit declarations of equity loaders (HKUDS/Vibe-Trading#1062).
 
-A-share sources natively report board lots (1 lot = 100 shares) while
-baostock reports single shares; the tencent/eastmoney loaders are
-market-dependent (A-share lots vs HK shares). These pins lock the audit
-matrix from issue #1062 so a declaration cannot drift silently — the
-cross-source 100x discrepancy that motivated the fix was exactly such a
-silent drift.
+Every A-share source declares board lots (1 lot = 100 shares) — baostock's
+native single-share volume is normalized at its loader boundary; the
+tencent/eastmoney loaders are market-dependent (A-share lots vs HK shares).
+These pins lock the audit matrix from issue #1062 so a declaration cannot
+drift silently — the cross-source 100x discrepancy that motivated the fix
+was exactly such a silent drift.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from backtest.loaders.yfinance_loader import DataLoader as YfinanceLoader
         (TencentLoader, "hk_equity", "shares"),
         (EastmoneyLoader, "a_share", "lots"),
         (EastmoneyLoader, "hk_equity", "shares"),
-        (BaostockLoader, "a_share", "shares"),
+        (BaostockLoader, "a_share", "lots"),
         (MootdxLoader, "a_share", "lots"),
         (AkshareLoader, "a_share", "lots"),
         (TushareLoader, "a_share", "lots"),
