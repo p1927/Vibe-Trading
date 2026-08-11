@@ -996,16 +996,6 @@ def _ensure_dotenv() -> None:
     )
 
 
-def _normalize_ollama_base_url(base_url: str) -> str:
-    """Append ``/v1`` when missing so ChatOpenAI hits Ollama's OpenAI-compatible API."""
-    url = base_url.strip().rstrip("/")
-    if not url:
-        return url
-    if url.endswith("/v1"):
-        return url
-    return f"{url}/v1"
-
-
 def _sync_provider_env() -> None:
     """Map provider-specific env vars to OPENAI_* for ChatOpenAI.
 
@@ -1029,9 +1019,6 @@ def _sync_provider_env() -> None:
     creds = get_llm_credentials(provider, get_env_config().llm.langchain_model_name)
     api_key = creds["api_key"]
     base_url = creds["base_url"]
-
-    if provider == "ollama" and base_url:
-        base_url = _normalize_ollama_base_url(base_url)
 
     # SDK-side env setup, not Vibe-Trading config reads
     if api_key:
