@@ -114,6 +114,13 @@ def fetch_market_data(
     the market's :data:`backtest.loaders.registry.FALLBACK_CHAINS` (e.g. crypto
     OKX → Binance → CCXT → Yahoo). At most ``max_fallback_attempts`` retries
     are attempted before the symbol is recorded as ``_unresolved``.
+
+    With ``include_provenance=True`` each symbol carries ``_provenance``
+    metadata including ``volume_unit`` — the unit of the ``volume`` column as
+    declared by the serving loader for that market (``"lots"`` = board lots of
+    100 shares, ``"shares"`` = single shares, ``None`` = undeclared). Volume
+    units are source- and market-dependent (HKUDS/Vibe-Trading#1062), so
+    consumers must read this field instead of assuming a unit.
     """
     from backtest.engines._market_hooks import _detect_market
     from backtest.loaders.base import NoAvailableSourceError
@@ -167,6 +174,7 @@ def fetch_market_data(
 
         data_map: dict[str, Any] = {}
         used_source: str | None = None
+        provider_cls: type | None = None
         for attempt_src in attempts:
             try:
                 loader_cls = loader_resolver(attempt_src)
@@ -180,6 +188,7 @@ def fetch_market_data(
                 loader = loader_cls()
                 data_map = loader.fetch(src_codes, start_date, end_date, interval=interval)
                 used_source = attempt_src
+                provider_cls = loader_cls
                 if data_map:
                     break
             except Exception as exc:  # noqa: BLE001 — contained per-symbol fallback
@@ -202,12 +211,14 @@ def fetch_market_data(
                     row[key] = _json_safe(value)
             results[symbol] = cap_rows(records, max_rows)
             if include_provenance:
+                volume_units = getattr(provider_cls, "volume_units", None) or {}
                 provenance[symbol] = {
                     "source": used_source or src,
                     "requested_source": source,
                     "detected_source": src,
                     "fallback_used": bool(used_source and used_source != src),
                     "currency_conversion": "none",
+                    "volume_unit": volume_units.get(market),
                 }
 
     unresolved = [

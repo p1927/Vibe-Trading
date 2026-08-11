@@ -1576,6 +1576,12 @@ def get_market_data(
             even-stride downsample (every step-th bar, last bar pinned)
             plus truncation metadata. Set max_rows=0 for all rows
             (unbounded, legacy behavior).
+
+    Volume units: the ``volume`` column unit is source- and market-dependent
+    (A-share sources report board lots of 100 shares; HK/US sources report
+    single shares). Each symbol's ``_provenance.volume_unit`` states the unit
+    of the returned rows ("lots" / "shares"; null = source undeclared) — read
+    it before interpreting or comparing volume values across symbols/sources.
     """
     return fetch_market_data_json(
         codes=codes,
