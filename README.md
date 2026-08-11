@@ -743,6 +743,17 @@ docker compose up --build
 
 Open `http://localhost:8899`. Backend + frontend in one container.
 
+> [!NOTE]
+> **OpenAI Codex OAuth with Docker:** the browser login needs a terminal so you
+> can paste the callback URL. Run it through Compose, which allocates an
+> interactive terminal automatically:
+>
+> ```bash
+> docker compose exec vibe-trading vibe-trading provider login openai-codex
+> ```
+>
+> If you use `docker exec` directly, pass `-it` before the container name.
+
 Docker publishes the backend on `127.0.0.1:8899` by default and runs the app as a non-root container user. If you intentionally expose the API beyond your own machine, set a strong `API_AUTH_KEY` and send `Authorization: Bearer <key>` from clients.
 
 > [!NOTE]
