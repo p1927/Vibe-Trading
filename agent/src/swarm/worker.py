@@ -915,8 +915,10 @@ def _classify_deliverable(
         return "unparsed tool-call markup (provider did not parse tool calls)"
     if any(m in low for m in _FABRICATION_MARKERS):
         return "explicitly fabricated / mock data"
-    if text.startswith("{") and '"status"' in text[:40] and (
-        '"content"' in text[:300] or '"ok"' in text[:40]
+    if text.startswith("{") and (
+        ('"status"' in text[:40] and ('"content"' in text[:300] or '"ok"' in text[:40]))
+        or '"ok"' in text[:40]
+        or '"success"' in text[:40]
     ):
         return "raw tool-result envelope, not analysis"
     if low.startswith(_PLAN_PREFIXES):
