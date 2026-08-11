@@ -35,6 +35,11 @@ class DataLoader:
 
     name = "baostock"
     markets = {"a_share"}
+    # BaoStock natively reports volume in single shares, unlike the other
+    # A-share sources which report board lots (HKUDS/Vibe-Trading#1062).
+    # Empirically verified 2026-08-11: 600519.SH 2026-07-31 = 5,512,752
+    # shares vs tencent/eastmoney 55,128 lots (ratio exactly 100.0).
+    volume_units = {"a_share": "shares"}
     requires_auth = False
 
     def is_available(self) -> bool:
