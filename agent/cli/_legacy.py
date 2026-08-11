@@ -4003,9 +4003,25 @@ def cmd_connector_check(
         table.add_row("Connector", profile.connector)
         table.add_row("Environment", profile.environment)
         table.add_row("Transport", profile.transport)
-        table.add_row("Configured", "yes" if report.get("configured") else "[red]no[/red]")
-        table.add_row("OAuth token", "present" if report.get("oauth_token_present") else "[yellow]missing[/yellow]")
-        table.add_row("Capabilities", ", ".join(report.get("capabilities", [])))
+        if profile.transport == "broker_sdk":
+            if "configured" in report:
+                table.add_row("Configured", "yes" if report.get("configured") else "[red]no[/red]")
+            if report.get("connection_state"):
+                table.add_row("Connection", str(report["connection_state"]))
+            sdk = report.get("sdk")
+            if isinstance(sdk, dict) and "installed" in sdk:
+                package = str(sdk.get("package") or "SDK")
+                state = "installed" if sdk.get("installed") else "[yellow]missing[/yellow]"
+                table.add_row(package, state)
+            if "tap" in report:
+                table.add_row("TAP", "enabled" if report.get("tap") else "disabled")
+            capabilities = report.get("capabilities")
+            if capabilities:
+                table.add_row("Capabilities", ", ".join(capabilities))
+        else:
+            table.add_row("Configured", "yes" if report.get("configured") else "[red]no[/red]")
+            table.add_row("OAuth token", "present" if report.get("oauth_token_present") else "[yellow]missing[/yellow]")
+            table.add_row("Capabilities", ", ".join(report.get("capabilities", [])))
         console.print(table)
 
     if report.get("status") not in {"ok"}:
@@ -4073,14 +4089,20 @@ def _normalize_mcp_value(value: Any) -> Any:
     return value
 
 
-def _flatten_account_fields(data: dict[str, Any], prefix: str = "") -> list[tuple[str, str]]:
+def _flatten_account_fields(
+    data: dict[str, Any],
+    prefix: str = "",
+    *,
+    skip_zero: bool = True,
+) -> list[tuple[str, str]]:
     """Flatten a remote-MCP account payload into (tag, value) rows.
 
     Nested one level (e.g. ``buying_power.buying_power``) rather than
     recursing arbitrarily deep, since broker account payloads are shallow.
-    Skips ``None`` and zero-valued numeric-looking fields, matching the
-    guidance the broker's own response typically includes (zero means no
-    holdings in that asset class — noise to omit, not a real 0.00 balance).
+    Skips ``None``. By default it also skips zero-valued numeric-looking fields,
+    matching remote-MCP guidance where zero means an absent asset-class balance.
+    Direct SDK account summaries can disable that behavior because a zero or
+    false risk/status field is meaningful account state.
     """
     rows: list[tuple[str, str]] = []
     for key, value in data.items():
@@ -4089,16 +4111,52 @@ def _flatten_account_fields(data: dict[str, Any], prefix: str = "") -> list[tupl
         label = f"{prefix}{key}"
         normalized = _normalize_mcp_value(value)
         if isinstance(normalized, dict):
-            rows.extend(_flatten_account_fields(normalized, prefix=f"{label}."))
+            rows.extend(
+                _flatten_account_fields(
+                    normalized,
+                    prefix=f"{label}.",
+                    skip_zero=skip_zero,
+                )
+            )
             continue
         text = str(normalized)
-        try:
-            if float(text) == 0.0:
-                continue
-        except (TypeError, ValueError):
-            pass
+        if skip_zero:
+            try:
+                if float(text) == 0.0:
+                    continue
+            except (TypeError, ValueError):
+                pass
         rows.append((label, text))
     return rows
+
+
+def _print_connector_account_mapping(
+    result: dict[str, Any],
+    account_data: dict[str, Any],
+) -> int:
+    """Render the flat/nested ``account`` mapping used by direct SDK brokers."""
+    account_label = (
+        account_data.get("account_number")
+        or result.get("account_number")
+        or result.get("profile_id")
+        or result.get("profile")
+        or "unknown"
+    )
+    table = Table(
+        title=f"Account Summary · {result.get('profile_id') or result.get('profile') or account_label}",
+        box=box.SIMPLE_HEAVY,
+        show_lines=False,
+    )
+    table.add_column("Field")
+    table.add_column("Value", justify="right")
+    currency = account_data.get("currency")
+    if currency is not None:
+        table.add_row("currency", str(currency))
+    for tag, value in _flatten_account_fields(account_data, skip_zero=False):
+        table.add_row(tag, value)
+    console.print(f"Account: [cyan]{rich_escape(str(account_label))}[/cyan]")
+    console.print(table)
+    return EXIT_SUCCESS
 
 
 def _print_connector_account(result: dict[str, Any]) -> int:
@@ -4110,6 +4168,9 @@ def _print_connector_account(result: dict[str, Any]) -> int:
         label = accounts if accounts != "(none)" else result.get("profile_id", result.get("profile", "unknown"))
         console.print(f"Accounts: [cyan]{rich_escape(str(label))}[/cyan]")
         return _print_connector_balances(result)
+    account_data = _normalize_mcp_value(result.get("account"))
+    if not rows and isinstance(account_data, dict) and account_data:
+        return _print_connector_account_mapping(result, account_data)
     if not rows:
         # Not the broker_sdk flat shape — try the remote-MCP nested shape.
         # Robinhood's tool result double-wraps: result["data"] unwraps to
