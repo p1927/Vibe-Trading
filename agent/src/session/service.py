@@ -245,11 +245,8 @@ class SessionService:
         self._search_index.index_message(session_id, role, content)
         self.event_bus.emit(session_id, "message.received", {"message_id": message.message_id, "role": role, "content": content})
 
-        try:
-            message = Message(session_id=session_id, role=role, content=content)
-            self.store.append_message(message)
-            self._search_index.index_message(session_id, role, content)
-            self.event_bus.emit(session_id, "message.received", {"message_id": message.message_id, "role": role, "content": content})
+        if role != "user":
+            return {"message_id": message.message_id}
 
         attempt = Attempt(session_id=session_id, parent_attempt_id=session.last_attempt_id, prompt=content)
         self.store.create_attempt(attempt)
@@ -421,10 +418,7 @@ class SessionService:
         include_shell_tools: bool = False,
         research_context: str = "",
     ) -> None:
-        """Execute an Attempt in the background."""
-        attempt.mark_running()
-        self.store.update_attempt(attempt)
-        self.event_bus.emit(session.session_id, "attempt.started", {"attempt_id": attempt.attempt_id})
+        """Execute an Attempt in the background.
 
         The whole body runs under try/finally: this coroutine owns the
         in-flight claim taken in :meth:`send_message`, and a failure anywhere —
