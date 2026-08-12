@@ -19,6 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from rich.console import Console
 
 from cli._version import __version__ as APP_VERSION
+from src.config.bootstrap import bootstrap_environment
+from src.preflight import _require_prediction_ml_runtime
 from src.ui_services import build_run_analysis, load_run_context  # noqa: F401
 
 # UTF-8 on Windows
@@ -53,7 +55,6 @@ from src.api.security import (  # noqa: F401, E402
     _mint_sse_ticket,
     _origin_matches_request_host,
     _parse_cors_origins,
-    _parse_extra_cors_origins,
     _parse_extra_loopback_hosts,
     _redact_query_secrets,
     _reject_cross_site_browser_request,

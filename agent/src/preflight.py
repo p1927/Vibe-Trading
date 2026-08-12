@@ -330,6 +330,18 @@ def _check_prediction_ml() -> CheckResult:
         )
 
 
+def _require_prediction_ml_runtime(console: Optional[Console] = None) -> Optional[int]:
+    """Hard-gate server startup on the Prediction ML check. None = proceed, else exit code."""
+    result = _check_prediction_ml()
+    if result.status == "ready":
+        return None
+    out = console or Console()
+    out.print(f"[red]FAIL[/red] Prediction ML: {result.message}")
+    if result.impact:
+        out.print(f"  {result.impact}")
+    return 1
+
+
 # -- Status icons and colors --------------------------------------------------
 
 _STATUS_DISPLAY = {

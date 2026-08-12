@@ -21,6 +21,66 @@ class SessionStatus(str, Enum):
     ARCHIVED = "archived"
 
 
+class AuthMethod(str, Enum):
+    """How a request's Principal was authenticated."""
+
+    SHARED_KEY = "shared_key"
+    LOOPBACK_TRUST = "loopback_trust"
+    FEDERATED_IDENTITY = "federated_identity"
+
+
+#: Auth methods that identify a specific human, as opposed to "anyone holding
+#: the shared key" or "anything on localhost". Only these may be attributed.
+ATTRIBUTABLE_AUTH_METHODS = frozenset({AuthMethod.FEDERATED_IDENTITY})
+
+
+@dataclass(frozen=True)
+class Principal:
+    """An authenticated identity attached to a session or action.
+
+    ``attributable`` is derived from ``auth_method``, never accepted as a
+    constructor argument or trusted from a stored dict -- a caller-settable
+    flag, or one loaded verbatim from an old/edited record, could claim an
+    attribution the authentication layer never earned.
+    """
+
+    subject: str
+    auth_method: AuthMethod
+    tenant: Optional[str] = None
+    display_name: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not self.subject or not self.subject.strip():
+            raise ValueError("Principal requires a non-empty subject")
+
+    @property
+    def attributable(self) -> bool:
+        """Whether this principal names a specific, accountable human."""
+        return self.auth_method in ATTRIBUTABLE_AUTH_METHODS
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a dict, carrying ``attributable`` explicitly so a
+        consumer need not know the auth-method table to learn if it's real."""
+        return {
+            "subject": self.subject,
+            "auth_method": self.auth_method.value,
+            "tenant": self.tenant,
+            "display_name": self.display_name,
+            "attributable": self.attributable,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Principal":
+        """Deserialize from a dict. Any stored ``attributable`` is ignored and
+        recomputed -- a tampered or stale flag must not be trusted."""
+        return cls(
+            subject=data["subject"],
+            auth_method=AuthMethod(data["auth_method"]),
+            tenant=data.get("tenant"),
+            display_name=data.get("display_name"),
+        )
+
+
 class AttemptStatus(str, Enum):
     """Statuses for a single execution attempt."""
 

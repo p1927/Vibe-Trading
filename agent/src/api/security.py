@@ -19,11 +19,17 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.api._compat import host_attr as _host_attr
 from src.config.accessor import get_env_config
+from src.session.models import AuthMethod, Principal
 
 
 # ============================================================================
 # Constants
 # ============================================================================
+
+#: Sentinel subjects for auth methods that authorise a request without naming
+#: a person. Never a real user identifier -- see Principal.attributable.
+SHARED_KEY_SUBJECT = "system:shared-api-key"
+LOOPBACK_SUBJECT = "system:loopback"
 
 _DEFAULT_CORS_ORIGINS: tuple[str, ...] = (
     "http://localhost:3000",
@@ -376,13 +382,16 @@ def _validate_api_auth(
     cred: Optional[HTTPAuthorizationCredentials],
     query_api_key: Optional[str] = None,
     allow_query: bool = False,
-) -> None:
+) -> Principal:
     """Validate configured auth, preserving loopback-only dev mode.
 
     Key-first precedence: when an API key is configured every peer -- including
     loopback -- must present a valid credential (GHSA-7wgj). Only when no key is
     configured does the loopback dev-trust apply. Mirrors
     :func:`require_settings_write_auth`.
+
+    Returns the Principal the request authenticated as, so callers can record
+    who (or what) authorised an action without re-deriving it.
     """
     if request.method.upper() not in _SAFE_BROWSER_METHODS:
         _reject_cross_site_browser_request(request)
@@ -392,10 +401,10 @@ def _validate_api_auth(
         token = _auth_credential_from_header_or_query(cred, query_api_key, allow_query=allow_query)
         if not token or not hmac.compare_digest(token, api_key):
             raise HTTPException(status_code=401, detail="Invalid or missing API key")
-        return
+        return Principal(subject=SHARED_KEY_SUBJECT, auth_method=AuthMethod.SHARED_KEY)
 
     if _is_local_client(request):
-        return
+        return Principal(subject=LOOPBACK_SUBJECT, auth_method=AuthMethod.LOOPBACK_TRUST)
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="API_AUTH_KEY is required for non-local API access",
@@ -469,9 +478,9 @@ def _shell_tools_enabled_for_request(request: Request) -> bool:
 async def require_auth(
     request: Request,
     cred: Optional[HTTPAuthorizationCredentials] = Security(_security),
-) -> None:
-    """Validate Bearer token for sensitive API endpoints."""
-    _validate_api_auth(request=request, cred=cred)
+) -> Principal:
+    """Validate Bearer token for sensitive API endpoints; return the caller's Principal."""
+    return _validate_api_auth(request=request, cred=cred)
 
 
 async def require_event_stream_auth(
