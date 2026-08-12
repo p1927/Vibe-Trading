@@ -1,12 +1,13 @@
 import i18n from '@/i18n';
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { GitCompare, ArrowRight } from "lucide-react";
+import { GitCompare, ArrowLeftRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type RunListItem, type RunData, type EquityPoint } from "@/lib/api";
 import { echarts, CHART_GROUP, connectCharts } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
-import { useDarkMode } from "@/hooks/useDarkMode";
+import { useThemeDark } from "@/lib/theme-store";
 import { SkeletonChart, SkeletonMetrics } from "@/components/common/Skeleton";
 
 interface MetricDef {
@@ -232,6 +233,7 @@ function EquityChartOverlay({ leftCurve, rightCurve, leftLabel, rightLabel, reba
 }
 
 export function Compare() {
+  const { t } = useTranslation();
   const [runs, setRuns] = useState<RunListItem[]>([]);
   const [leftId, setLeftId] = useState("");
   const [rightId, setRightId] = useState("");
@@ -241,6 +243,7 @@ export function Compare() {
   const [rightCurve, setRightCurve] = useState<EquityPoint[]>([]);
   const [leftLoading, setLeftLoading] = useState(false);
   const [rightLoading, setRightLoading] = useState(false);
+  const [rebase, setRebase] = useState(true);
   const leftRequestGeneration = useRef(0);
   const rightRequestGeneration = useRef(0);
 
@@ -322,16 +325,16 @@ export function Compare() {
   const hasData = Boolean(leftData || rightData);
 
   return (
-    <div className="p-8 max-w-4xl space-y-6">
-      <h1 className="text-xl font-bold flex items-center gap-2">
-        <GitCompare className="h-5 w-5" /> Strategy Comparison
+    <div className="mx-auto max-w-5xl p-8 space-y-6">
+      <h1 className="flex items-center gap-2 text-2xl font-semibold">
+        <GitCompare className="h-5 w-5" aria-hidden="true" /> {t("compare.title")}
       </h1>
 
       {/* Selectors */}
       <div className="flex gap-4 items-end rounded-xl border border-border/60 bg-card p-4 shadow-sm">
         <div className="flex-1">
           <label className="text-xs text-muted-foreground block mb-1">{i18n.t("compare.baseline")}</label>
-          <select value={leftId} onChange={(e) => setLeftId(e.target.value)} className="w-full px-3 py-2 rounded-lg border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" title={leftRun?.prompt || leftId}>
+          <select value={leftId} onChange={(e) => setLeftId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border/60 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" title={leftRun?.prompt || leftId}>
             <option value="">{i18n.t("compare.select")}</option>
             {runs.map((r) => <option key={r.run_id} value={r.run_id}>{runLabel(r)} ({r.status})</option>)}
           </select>
@@ -347,7 +350,7 @@ export function Compare() {
         </button>
         <div className="flex-1">
           <label className="text-xs text-muted-foreground block mb-1">{i18n.t("compare.compare")}</label>
-          <select value={rightId} onChange={(e) => setRightId(e.target.value)} className="w-full px-3 py-2 rounded-lg border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" title={rightRun?.prompt || rightId}>
+          <select value={rightId} onChange={(e) => setRightId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border/60 bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" title={rightRun?.prompt || rightId}>
             <option value="">{i18n.t("compare.select")}</option>
             {runs.map((r) => <option key={r.run_id} value={r.run_id}>{runLabel(r)} ({r.status})</option>)}
           </select>
@@ -357,11 +360,11 @@ export function Compare() {
       {/* Loading state — show skeletons while a selected run's data is in flight */}
       {loading && !hasData && (
         <div className="space-y-6">
-          <div className="border rounded-xl p-4">
-            <h2 className="text-sm font-medium text-muted-foreground mb-2">{i18n.t("compare.equityDrawdown")}</h2>
+          <div className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
+            <h2 className="text-sm font-semibold text-muted-foreground mb-2">{i18n.t("compare.equityDrawdown")}</h2>
             <SkeletonChart height={320} />
           </div>
-          <div className="border rounded-xl overflow-hidden">
+          <div className="overflow-hidden rounded-xl border border-border/60 bg-card shadow-sm">
             <SkeletonMetrics />
           </div>
         </div>
@@ -369,13 +372,36 @@ export function Compare() {
 
       {/* Equity curve overlay */}
       {(leftCurve.length > 0 || rightCurve.length > 0) && (
-        <div className="border rounded-xl p-4">
-          <h2 className="text-sm font-medium text-muted-foreground mb-2">{i18n.t("compare.equityDrawdown")}</h2>
+        <div className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-muted-foreground">{i18n.t("compare.equityOverlay")}</h2>
+            <div className="flex gap-1 text-xs" role="group">
+              {[
+                { id: true, label: i18n.t("compare.rebasedMode") },
+                { id: false, label: i18n.t("compare.rawMode") },
+              ].map((mode) => (
+                <button
+                  key={String(mode.id)}
+                  type="button"
+                  onClick={() => setRebase(mode.id)}
+                  className={cn(
+                    "rounded-full border px-2.5 py-1 transition-colors",
+                    rebase === mode.id
+                      ? "border-primary/30 bg-primary/10 font-medium text-primary"
+                      : "border-border/60 text-muted-foreground hover:bg-muted/60",
+                  )}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <EquityChartOverlay
             leftCurve={leftCurve}
             rightCurve={rightCurve}
-            leftLabel={leftRun ? truncatePrompt(leftRun.prompt, 20) || "Baseline" : "Baseline"}
-            rightLabel={rightRun ? truncatePrompt(rightRun.prompt, 20) || "Compare" : "Compare"}
+            leftLabel={leftRun ? truncatePrompt(leftRun.prompt, 20) || t("compare.baseline") : t("compare.baseline")}
+            rightLabel={rightRun ? truncatePrompt(rightRun.prompt, 20) || t("compare.compare") : t("compare.compare")}
+            rebase={rebase}
           />
         </div>
       )}
@@ -385,11 +411,11 @@ export function Compare() {
         <div className="overflow-x-auto rounded-xl border border-border/60 bg-card shadow-sm">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b bg-muted/40">
-                <th className="text-left px-4 py-2.5 text-muted-foreground font-medium">{i18n.t("compare.metric")}</th>
-                <th className="text-right px-4 py-2.5 text-muted-foreground font-medium">{i18n.t("compare.baselineCol")}</th>
-                <th className="text-right px-4 py-2.5 text-muted-foreground font-medium">{i18n.t("compare.compareCol")}</th>
-                <th className="text-right px-4 py-2.5 text-muted-foreground font-medium">{i18n.t("compare.delta")}</th>
+              <tr className="border-b bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground [&_th]:font-medium">
+                <th className="text-left px-4 py-2.5 font-medium">{i18n.t("compare.metric")}</th>
+                <th className="text-right px-4 py-2.5 font-medium">{i18n.t("compare.baselineCol")}</th>
+                <th className="text-right px-4 py-2.5 font-medium">{i18n.t("compare.compareCol")}</th>
+                <th className="text-right px-4 py-2.5 font-medium">{i18n.t("compare.delta")}</th>
               </tr>
             </thead>
             <tbody>

@@ -36,7 +36,9 @@ _INTERVAL_MAP = {
     "1D": "1d",
     "1H": "1h",
     "4H": "1h",
+    "4h": "1h",  # yfinance has no 4h; match project ``4H`` → ``1h``
     "1W": "1wk",
+    "1w": "1wk",
     "1M": "1mo",
     # Minute tokens stay lowercase; do not fold ``1M`` (month) via ``.lower()``.
     "1m": "1m",
@@ -68,7 +70,9 @@ def _to_yfinance_symbol(code: str) -> str:
         return upper[:-5] + "-USD"
     if upper.endswith("-USDC"):
         return upper[:-5] + "-USD"
-    # India NSE/BSE (RELIANCE.NS, 500325.BO): yfinance carries the suffix as-is.
+    # India NSE/BSE (RELIANCE.NS, 500325.BO), Korea KRX (005930.KS,
+    # 247540.KQ), and Canada TSX/TSXV (TD.TO, PNG.V): yfinance carries these
+    # suffixes as-is.
     return upper
 
 
@@ -234,14 +238,6 @@ class DataLoader:
     # (HKUDS/Vibe-Trading#1062; HK verified 2026-08-11, 00700.HK ratio 1.00
     # vs tencent/eastmoney). Crypto base-asset units stay undeclared.
     volume_units = {"us_equity": "shares", "hk_equity": "shares"}
-    requires_auth = False
-
-    def is_available(self) -> bool:
-        """Always available (free public data, no auth)."""
-        return True
-
-    name = "yfinance"
-    markets = {"us_equity", "hk_equity", "india_equity", "crypto"}
     requires_auth = False
 
     def is_available(self) -> bool:

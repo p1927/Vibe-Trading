@@ -1,11 +1,10 @@
 import { useTranslation } from 'react-i18next';
-import { memo, useEffect, useState, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { lazy, memo, Suspense, useCallback, useEffect, useState } from "react";
+import { Link } from "react-router";
 import { BarChart3, Code2, FileText, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { AgentAvatar } from "./AgentAvatar";
 import { MetricsCard } from "./MetricsCard";
-import { MiniEquityChart } from "@/components/charts/MiniEquityChart";
 import { PineScriptViewer } from "./PineScriptViewer";
 import type { AgentMessage } from "@/types/agent";
 
@@ -26,6 +25,7 @@ interface Props {
 export const RunCompleteCard = memo(function RunCompleteCard({ msg }: Props) {
   const { t } = useTranslation();
   const [curve, setCurve] = useState(msg.equityCurve);
+  const [curveLoading, setCurveLoading] = useState(!msg.equityCurve && Boolean(msg.runId));
   const [pineCode, setPineCode] = useState<string | null>(null);
   const [pineLoading, setPineLoading] = useState(false);
   const [showPine, setShowPine] = useState(false);
@@ -99,41 +99,6 @@ export const RunCompleteCard = memo(function RunCompleteCard({ msg }: Props) {
             <MiniEquityChart data={curve} height={80} />
           </Suspense>
         ) : null}
-        <div className="flex items-center gap-3 flex-wrap">
-          {msg.runId && (
-            <Link
-              to={`/runs/${msg.runId}`}
-              className="text-sm text-primary hover:underline inline-flex items-center gap-1.5 font-medium"
-            >
-              <BarChart3 className="h-3.5 w-3.5" />
-              {t("runComplete.fullReport")}
-            </Link>
-          )}
-          {pineExists && (
-            <button
-              onClick={handlePineClick}
-              disabled={pineLoading}
-              className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline inline-flex items-center gap-1.5 font-medium disabled:opacity-50"
-            >
-              {pineLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Code2 className="h-3.5 w-3.5" />}
-              Pine Script
-            </button>
-          )}
-          {msg.shadowId && (
-            <a
-              href={`/shadow-reports/${encodeURIComponent(msg.shadowId)}?format=html`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-sm text-teal-600 dark:text-teal-400 hover:underline inline-flex items-center gap-1.5 font-medium"
-            >
-              <FileText className="h-3.5 w-3.5" />
-              Shadow Report
-            </a>
-          )}
-        </div>
-        {showPine && pineCode && (
-          <PineScriptViewer code={pineCode} onClose={() => setShowPine(false)} />
-        )}
         <div className="flex items-center gap-3 flex-wrap">
           {msg.runId && (
             <Link

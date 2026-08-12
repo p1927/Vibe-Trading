@@ -69,10 +69,6 @@ interface AgentState {
    *  so the sidebar spinner persists when the user navigates away. */
   streamingSessionId: string | null;
 
-  /** The session currently streaming on the backend. Survives switchSession
-   *  so the sidebar spinner persists when the user navigates away. */
-  streamingSessionId: string | null;
-
   toolCalls: ToolCallEntry[];
   activity: AgentActivity | null;
   swarmRuns: Record<string, SwarmRunStatus>;
@@ -80,9 +76,7 @@ interface AgentState {
   sseStatus: "disconnected" | "connected" | "reconnecting";
   sseRetryAttempt: number;
 
-  addMessage: (msg: Omit<AgentMessage, "id"> & { id?: string }) => void;
-  /** Replace a local optimistic id (numeric) with the persisted server message_id. */
-  updateMessageId: (oldId: string, newId: string) => void;
+  addMessage: (msg: Omit<StoredAgentMessage, "id"> & { id?: string }) => void;
   appendDelta: (delta: string) => void;
   setStatus: (s: AgentState["status"]) => void;
   setSessionId: (id: string | null) => void;
@@ -90,6 +84,16 @@ interface AgentState {
 
   addToolCall: (entry: ToolCallEntry) => void;
   updateToolCall: (id: string, update: Partial<ToolCallEntry>) => void;
+  updateRunningToolCall: (
+    callId: string | undefined,
+    tool: string,
+    update: Partial<ToolCallEntry>,
+  ) => void;
+  updateOldestRunningToolCall: (tool: string, update: Partial<ToolCallEntry>) => void;
+  startActivity: (attemptId: string, startedAt?: number) => void;
+  setActivityAttemptId: (attemptId: string) => void;
+  setActivityState: (state: ActivityState, at?: number) => void;
+  clearActivity: () => void;
   upsertSwarmStatus: (status: SwarmRunStatus) => void;
   updateSwarmStatus: (runId: string, updater: (status: SwarmRunStatus) => SwarmRunStatus) => void;
 
@@ -117,6 +121,7 @@ export const useAgentStore = create<AgentState>((set) => ({
   sessionId: null,
   status: "idle",
   streamingText: "",
+  reasoningTail: "",
   streamingSessionId: null,
   toolCalls: [],
   activity: null,
@@ -127,11 +132,6 @@ export const useAgentStore = create<AgentState>((set) => ({
 
   addMessage: (msg) =>
     set((s) => ({ messages: [...s.messages, { ...msg, id: msg.id || nextId() } as AgentMessage] })),
-
-  updateMessageId: (oldId, newId) =>
-    set((s) => ({
-      messages: s.messages.map((m) => (m.id === oldId ? { ...m, id: newId } : m)),
-    })),
 
   appendDelta: (delta) =>
     set((s) => ({ streamingText: s.streamingText + delta })),
@@ -235,15 +235,29 @@ export const useAgentStore = create<AgentState>((set) => ({
     set((s) => ({
       activity: s.activity ? { ...s.activity, attemptId } : null,
     })),
+  setActivityState: (state, at = Date.now()) =>
+    set((s) => {
+      if (!s.activity) return {};
+      const terminal = ["stopped", "timeout", "failed", "done"].includes(state);
+      return {
+        activity: {
+          ...s.activity,
+          state,
+          endedAt: terminal ? at : undefined,
+        },
+      };
+    }),
+  clearActivity: () => set({ activity: null }),
   upsertSwarmStatus: (swarmStatus) =>
     set((s) => {
       const idx = s.messages.findIndex((m) => m.type === "swarm_status" && m.swarmRunId === swarmStatus.runId);
       if (idx >= 0) {
-        const messages = [...s.messages];
-        messages[idx] = { ...messages[idx], swarmStatus, timestamp: Date.now() };
-        return { messages };
+        return {
+          swarmRuns: { ...s.swarmRuns, [swarmStatus.runId]: swarmStatus },
+        };
       }
       return {
+        swarmRuns: { ...s.swarmRuns, [swarmStatus.runId]: swarmStatus },
         messages: [
           ...s.messages,
           {
@@ -251,7 +265,6 @@ export const useAgentStore = create<AgentState>((set) => ({
             type: "swarm_status",
             content: "",
             swarmRunId: swarmStatus.runId,
-            swarmStatus,
             timestamp: Date.now(),
           },
         ],
@@ -259,12 +272,11 @@ export const useAgentStore = create<AgentState>((set) => ({
     }),
   updateSwarmStatus: (runId, updater) =>
     set((s) => {
-      const idx = s.messages.findIndex((m) => m.type === "swarm_status" && m.swarmRunId === runId && m.swarmStatus);
-      if (idx < 0) return {};
-      const messages = [...s.messages];
-      const current = messages[idx].swarmStatus!;
-      messages[idx] = { ...messages[idx], swarmStatus: updater(current), timestamp: Date.now() };
-      return { messages };
+      const current = s.swarmRuns[runId];
+      if (!current) return {};
+      return {
+        swarmRuns: { ...s.swarmRuns, [runId]: updater(current) },
+      };
     }),
 
   cacheSession: (sid, msgs) =>
@@ -315,8 +327,8 @@ export const useAgentStore = create<AgentState>((set) => ({
   reset: () => {
     _id = 0;
     set({
-      messages: [], status: "idle", streamingText: "",
-      sessionId: null, toolCalls: [], sessionLoading: false,
+      messages: [], status: "idle", streamingText: "", reasoningTail: "",
+      sessionId: null, toolCalls: [], activity: null, swarmRuns: {}, sessionLoading: false,
       streamingSessionId: null,
     });
   },

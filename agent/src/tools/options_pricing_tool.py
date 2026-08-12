@@ -40,36 +40,6 @@ def _validate_inputs(
     return None
 
 
-def _validate_inputs(
-    spot: float, strike: float, expiry_days: float, sigma: float, r: float, option_type: str
-) -> str | None:
-    """Reject genuinely invalid inputs at the boundary (P06).
-
-    T == 0 is a *valid* expiry (handled downstream as intrinsic value), so
-    it is intentionally NOT rejected here — only invalid inputs are.
-    """
-    if option_type not in ("call", "put"):
-        return f"option_type must be 'call' or 'put', got {option_type!r}"
-    for _name, _val in (
-        ("spot", spot),
-        ("strike", strike),
-        ("expiry_days", expiry_days),
-        ("volatility", sigma),
-        ("risk_free_rate", r),
-    ):
-        if not math.isfinite(_val):
-            return f"{_name} must be a finite number, got {_val}"
-    if spot <= 0:
-        return f"spot must be positive, got {spot}"
-    if strike <= 0:
-        return f"strike must be positive, got {strike}"
-    if sigma <= 0:
-        return f"volatility must be positive, got {sigma}"
-    if expiry_days < 0:
-        return f"expiry_days must be non-negative, got {expiry_days}"
-    return None
-
-
 def _bs_price_and_greeks(
     spot: float,
     strike: float,
@@ -96,38 +66,8 @@ def _bs_price_and_greeks(
         Dict containing price, delta, gamma, theta, vega and rho, each rounded
         to six decimal places.
     """
-    if T <= 0 or sigma <= 0:
-        if option_type == "call":
-            price = max(spot - strike, 0.0)
-            delta = 1.0 if spot > strike else 0.0
-        else:
-            price = max(strike - spot, 0.0)
-            delta = -1.0 if spot < strike else 0.0
-        return {"price": price, "delta": delta, "gamma": 0.0, "theta": 0.0, "vega": 0.0}
-
-    sqrt_T = np.sqrt(T)
-    d1 = (np.log(spot / strike) + (r + sigma**2 / 2) * T) / (sigma * sqrt_T)
-    d2 = d1 - sigma * sqrt_T
-    nd1_pdf = float(norm.pdf(d1))
-
-    if option_type == "call":
-        price = float(spot * norm.cdf(d1) - strike * np.exp(-r * T) * norm.cdf(d2))
-        delta = float(norm.cdf(d1))
-    else:
-        price = float(strike * np.exp(-r * T) * norm.cdf(-d2) - spot * norm.cdf(-d1))
-        delta = float(norm.cdf(d1) - 1.0)
-
-    gamma = float(nd1_pdf / (spot * sigma * sqrt_T))
-
-    theta_common = -(spot * nd1_pdf * sigma) / (2 * sqrt_T)
-    if option_type == "call":
-        theta = theta_common - r * strike * np.exp(-r * T) * norm.cdf(d2)
-    else:
-        theta = theta_common + r * strike * np.exp(-r * T) * norm.cdf(-d2)
-    theta = float(theta / 365.0)
-
-    vega = float(spot * nd1_pdf * sqrt_T / 100.0)
-
+    price = bs_price(spot, strike, T, r, sigma, option_type)
+    greeks = bs_greeks(spot, strike, T, r, sigma, option_type)
     return {
         "price": round(price, 6),
         **{name: round(value, 6) for name, value in greeks.items()},
@@ -186,13 +126,6 @@ class OptionsPricingTool(BaseTool):
             # raises it from float(), and it must not escape this envelope.
             return json.dumps(
                 {"status": "error", "tool": "options_pricing", "error": f"invalid or missing input argument: {exc}"},
-                ensure_ascii=False,
-            )
-
-        err = _validate_inputs(spot, strike, expiry_days, sigma, r, option_type)
-        if err is not None:
-            return json.dumps(
-                {"status": "error", "tool": "options_pricing", "error": err},
                 ensure_ascii=False,
             )
 

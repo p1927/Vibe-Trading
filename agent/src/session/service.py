@@ -8,6 +8,8 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
@@ -79,6 +81,9 @@ class SessionService:
         # concurrency gate, so in-flight sessions are tracked separately and
         # reserved synchronously in send_message.
         self._active_loops: Dict[str, "AgentLoop"] = {}
+        self._active_tasks: Dict[str, "asyncio.Task"] = {}
+        self._inflight: set[str] = set()
+        self._inflight_lock = threading.Lock()
         self._search_index = get_shared_index()
 
     def _reserve_session(self, session_id: str) -> None:
@@ -240,33 +245,46 @@ class SessionService:
         if not session:
             raise ValueError(f"Session {session_id} not found")
 
-        message = Message(session_id=session_id, role=role, content=content)
-        self.store.append_message(message)
-        self._search_index.index_message(session_id, role, content)
-        self.event_bus.emit(session_id, "message.received", {"message_id": message.message_id, "role": role, "content": content})
+        # Claim the session before persisting anything. Reserving after the
+        # user message is appended lets two concurrent sends both store a
+        # message and create an attempt.
+        if role == "user":
+            self._reserve_session(session_id)
+        handed_off = False
 
-        if role != "user":
-            return {"message_id": message.message_id}
+        try:
+            message = Message(session_id=session_id, role=role, content=content)
+            self.store.append_message(message)
+            self._search_index.index_message(session_id, role, content)
+            self.event_bus.emit(session_id, "message.received", {"message_id": message.message_id, "role": role, "content": content})
 
-        attempt = Attempt(session_id=session_id, parent_attempt_id=session.last_attempt_id, prompt=content)
-        self.store.create_attempt(attempt)
-        session.config["include_shell_tools"] = include_shell_tools
-        session.last_attempt_id = attempt.attempt_id
-        self._maybe_mark_autonomous_user_turn(session, content)
-        self._maybe_refresh_agent_intent(self, session, content, message.message_id)
-        session.updated_at = datetime.now().isoformat()
-        self.store.update_session(session)
-        self.event_bus.emit(session_id, "attempt.created", {"attempt_id": attempt.attempt_id, "prompt": content})
+            if role != "user":
+                return {"message_id": message.message_id}
 
-        asyncio.create_task(
-            self._run_attempt_with_prefetch(
-                session,
-                attempt,
-                content,
-                include_shell_tools=include_shell_tools,
+            attempt = Attempt(session_id=session_id, parent_attempt_id=session.last_attempt_id, prompt=content)
+            self.store.create_attempt(attempt)
+            session.config["include_shell_tools"] = include_shell_tools
+            session.last_attempt_id = attempt.attempt_id
+            self._maybe_mark_autonomous_user_turn(session, content)
+            self._maybe_refresh_agent_intent(self, session, content, message.message_id)
+            session.updated_at = datetime.now().isoformat()
+            self.store.update_session(session)
+            self.event_bus.emit(session_id, "attempt.created", {"attempt_id": attempt.attempt_id, "prompt": content})
+
+            task = asyncio.create_task(
+                self._run_attempt_with_prefetch(
+                    session,
+                    attempt,
+                    content,
+                    include_shell_tools=include_shell_tools,
+                )
             )
-        )
-        return {"message_id": message.message_id, "attempt_id": attempt.attempt_id}
+            self._active_tasks[session_id] = task
+            handed_off = True
+            return {"message_id": message.message_id, "attempt_id": attempt.attempt_id}
+        finally:
+            if role == "user" and not handed_off:
+                self._release_session(session_id)
 
     async def _run_attempt_with_prefetch(
         self,
@@ -408,6 +426,10 @@ class SessionService:
         if task is not None and not task.done():
             task.cancel()
             return True
+        task = self._active_tasks.get(session_id)
+        if task is not None and not task.done():
+            task.cancel()
+            return True
         return False
 
     async def _run_attempt(
@@ -537,6 +559,8 @@ class SessionService:
             self.store.update_attempt(attempt)
             self.event_bus.emit(session.session_id, "attempt.failed", {"attempt_id": attempt.attempt_id, "error": str(exc)})
         finally:
+            self._active_tasks.pop(session.session_id, None)
+            self._release_session(session.session_id)
             await self._finalize_autonomous_agent_turn(session)
 
     async def _finalize_autonomous_agent_turn(self, session: Session) -> None:
@@ -605,6 +629,7 @@ class SessionService:
         session_id = attempt.session_id
         attempt_id = attempt.attempt_id
         loop = asyncio.get_running_loop()
+        tool_trail: list[Dict[str, Any]] = []
 
         safe_overrides = sanitize_session_overrides(session_config) if session_config else session_config
         agent_config = load_runtime_agent_config(overrides=safe_overrides)
