@@ -9,6 +9,16 @@ import { MiniEquityChart } from "@/components/charts/MiniEquityChart";
 import { PineScriptViewer } from "./PineScriptViewer";
 import type { AgentMessage } from "@/types/agent";
 
+const MiniEquityChart = lazy(() =>
+  import("@/components/charts/MiniEquityChart").then((module) => ({
+    default: module.MiniEquityChart,
+  })),
+);
+
+function MiniEquityChartSkeleton() {
+  return <div className="h-20 rounded-lg bg-muted/40 animate-pulse" />;
+}
+
 interface Props {
   msg: AgentMessage;
 }
@@ -23,11 +33,21 @@ export const RunCompleteCard = memo(function RunCompleteCard({ msg }: Props) {
   const [pineExists, setPineExists] = useState(false);
 
   useEffect(() => {
-    if (!curve && msg.runId) {
-      api.getRun(msg.runId).then(r => {
-        if (r.equity_curve) setCurve(r.equity_curve.map(e => ({ time: e.time, equity: e.equity })));
-      }).catch(() => {});
-    }
+    if (curve || !msg.runId) return;
+
+    let cancelled = false;
+    setCurveLoading(true);
+    api.getRun(msg.runId).then(r => {
+      if (!cancelled && r.equity_curve) {
+        setCurve(r.equity_curve.map(e => ({ time: e.time, equity: e.equity })));
+      }
+    }).catch(() => {}).finally(() => {
+      if (!cancelled) setCurveLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [msg.runId, curve]);
 
   // Check if Pine Script exists for this run (skip for shadow-only cards with no runId)
@@ -72,8 +92,47 @@ export const RunCompleteCard = memo(function RunCompleteCard({ msg }: Props) {
         {msg.metrics && Object.keys(msg.metrics).length > 0 && (
           <MetricsCard metrics={msg.metrics} compact />
         )}
-        {curve && curve.length > 1 && (
-          <MiniEquityChart data={curve} height={80} />
+        {curveLoading ? (
+          <MiniEquityChartSkeleton />
+        ) : curve && curve.length > 1 ? (
+          <Suspense fallback={<MiniEquityChartSkeleton />}>
+            <MiniEquityChart data={curve} height={80} />
+          </Suspense>
+        ) : null}
+        <div className="flex items-center gap-3 flex-wrap">
+          {msg.runId && (
+            <Link
+              to={`/runs/${msg.runId}`}
+              className="text-sm text-primary hover:underline inline-flex items-center gap-1.5 font-medium"
+            >
+              <BarChart3 className="h-3.5 w-3.5" />
+              {t("runComplete.fullReport")}
+            </Link>
+          )}
+          {pineExists && (
+            <button
+              onClick={handlePineClick}
+              disabled={pineLoading}
+              className="text-sm text-emerald-600 dark:text-emerald-400 hover:underline inline-flex items-center gap-1.5 font-medium disabled:opacity-50"
+            >
+              {pineLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Code2 className="h-3.5 w-3.5" />}
+              Pine Script
+            </button>
+          )}
+          {msg.shadowId && (
+            <a
+              href={`/shadow-reports/${encodeURIComponent(msg.shadowId)}?format=html`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sm text-teal-600 dark:text-teal-400 hover:underline inline-flex items-center gap-1.5 font-medium"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              Shadow Report
+            </a>
+          )}
+        </div>
+        {showPine && pineCode && (
+          <PineScriptViewer code={pineCode} onClose={() => setShowPine(false)} />
         )}
         <div className="flex items-center gap-3 flex-wrap">
           {msg.runId && (

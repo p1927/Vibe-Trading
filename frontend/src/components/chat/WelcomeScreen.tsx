@@ -10,7 +10,6 @@ interface Example {
 interface Category {
   labelKey: string;
   icon: React.ReactNode;
-  color: string;
   examples: Example[];
 }
 
@@ -18,7 +17,6 @@ const CATEGORIES: Category[] = [
   {
     labelKey: "welcome.categories.multiMarketBacktest",
     icon: <TrendingUp className="h-4 w-4" />,
-    color: "text-red-400 border-red-500/30 hover:border-red-500/60 hover:bg-red-500/5",
     examples: [
       {
         titleKey: "welcome.examples.crossMarketPortfolio",
@@ -40,7 +38,6 @@ const CATEGORIES: Category[] = [
   {
     labelKey: "welcome.categories.researchAnalysis",
     icon: <Sparkles className="h-4 w-4" />,
-    color: "text-amber-400 border-amber-500/30 hover:border-amber-500/60 hover:bg-amber-500/5",
     examples: [
       {
         titleKey: "welcome.examples.multiFactorAlpha",
@@ -84,7 +81,6 @@ const CATEGORIES: Category[] = [
   {
     labelKey: "welcome.categories.swarmTeams",
     icon: <Users className="h-4 w-4" />,
-    color: "text-violet-400 border-violet-500/30 hover:border-violet-500/60 hover:bg-violet-500/5",
     examples: [
       {
         titleKey: "welcome.examples.investmentCommittee",
@@ -101,7 +97,6 @@ const CATEGORIES: Category[] = [
   {
     labelKey: "welcome.categories.docWebResearch",
     icon: <Globe className="h-4 w-4" />,
-    color: "text-blue-400 border-blue-500/30 hover:border-blue-500/60 hover:bg-blue-500/5",
     examples: [
       {
         titleKey: "welcome.examples.earningsReport",
@@ -218,7 +213,6 @@ export function WelcomeScreen({ onExample }: Props) {
             {t('welcome.describePrompt')}
           </p>
         </div>
-      </div>
 
       {/* Capability chips */}
       <div className="flex flex-wrap justify-center gap-2 max-w-lg">
@@ -259,7 +253,7 @@ export function WelcomeScreen({ onExample }: Props) {
                 ))}
               </div>
             </div>
-          ))}
+          </div>
         </div>
       </div>
     </div>

@@ -12,6 +12,10 @@ v2 enhancements over v1:
 
 Signal interface: OptionsSignalEngine.generate(data_map) returns a list of trade instructions.
 Artifacts: equity.csv, metrics.csv, trades.csv, greeks.csv.
+
+Black-Scholes price and Greeks come from ``src.quantlib.options``. What stays
+here is the engine's own volatility surface -- historical vol, the smile, and
+the per-leg vol every pricing site must agree on.
 """
 
 import json
@@ -21,7 +25,6 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
-from scipy.stats import norm
 
 
 # --- Black-Scholes pricing ---
@@ -163,19 +166,24 @@ class OptionPosition:
     """A single option leg position.
 
     Attributes:
-        option_type: "call" or "put".
+        option_type: "call" or "put", folded to lower case on construction so
+            that settlement here and pricing in ``src.quantlib.options`` cannot
+            disagree about a leg typed ``"Call"``.
         strike: Strike price.
         expiry: Expiry date.
         qty: Quantity (positive = long, negative = short).
         entry_price: Theoretical option price at entry.
         entry_date: Entry date string.
         underlying_code: Underlying instrument code.
+
+    Raises:
+        ValueError: If ``option_type`` is neither call nor put.
     """
 
     def __init__(self, option_type: str, strike: float, expiry: str,
                  qty: int, entry_price: float, entry_date: str,
                  underlying_code: str):
-        self.option_type = option_type
+        self.option_type = normalise_option_type(option_type)
         self.strike = strike
         self.expiry = pd.Timestamp(expiry)
         self.qty = qty
@@ -385,7 +393,10 @@ def run_options_backtest(
             iv_val = ivs.get(underlying, 0.3)
 
             for leg in legs:
-                leg_type = leg.get("type", "call")
+                # Fold before it is priced, matched and recorded: config comes
+                # from the user, and a raw "Call" would price as a call and
+                # settle as a put.
+                leg_type = normalise_option_type(leg.get("type", "call"))
                 strike = leg.get("strike", spot)
                 expiry = leg.get("expiry", "")
                 qty = leg.get("qty", 1)
@@ -493,20 +504,24 @@ def run_options_backtest(
         total_gamma = 0.0
         total_theta = 0.0
         total_vega = 0.0
+        total_rho = 0.0
 
         for pos in positions:
             spot = spot_prices.get(pos.underlying_code, 0.0)
             iv_val = ivs.get(pos.underlying_code, 0.3)
             T = pos.time_to_expiry(ts)
 
-            mark_price = bs_price(spot, pos.strike, T, risk_free_rate, iv_val, pos.option_type)
+            mark_iv = leg_iv(spot, pos.strike, iv_val, iv_skew, iv_curvature)
+
+            mark_price = bs_price(spot, pos.strike, T, risk_free_rate, mark_iv, pos.option_type)
             portfolio_value += mark_price * pos.qty * contract_multiplier
 
-            greeks = bs_greeks(spot, pos.strike, T, risk_free_rate, iv_val, pos.option_type)
+            greeks = bs_greeks(spot, pos.strike, T, risk_free_rate, mark_iv, pos.option_type)
             total_delta += greeks["delta"] * pos.qty * contract_multiplier
             total_gamma += greeks["gamma"] * pos.qty * contract_multiplier
             total_theta += greeks["theta"] * pos.qty * contract_multiplier
             total_vega += greeks["vega"] * pos.qty * contract_multiplier
+            total_rho += greeks["rho"] * pos.qty * contract_multiplier
 
         equity_records.append({
             "timestamp": date_str,
@@ -521,6 +536,7 @@ def run_options_backtest(
             "gamma": round(total_gamma, 6),
             "theta": round(total_theta, 6),
             "vega": round(total_vega, 6),
+            "rho": round(total_rho, 6),
             "num_positions": len(positions),
         })
 
@@ -579,7 +595,9 @@ def _find_matching_position(
     Args:
         positions: Current open positions.
         underlying: Underlying instrument code.
-        option_type: Option type.
+        option_type: Option type, already folded by ``normalise_option_type``;
+            ``OptionPosition`` folds its own, so both sides compare in lower
+            case.
         strike: Strike price.
         expiry: Expiry date string.
 

@@ -6,10 +6,38 @@ import json
 import math
 from typing import Any
 
-import numpy as np
-from scipy.stats import norm
-
 from src.agent.tools import BaseTool
+from src.quantlib.options import bs_greeks, bs_price
+
+
+def _validate_inputs(
+    spot: float, strike: float, expiry_days: float, sigma: float, r: float, option_type: str
+) -> str | None:
+    """Reject genuinely invalid inputs at the boundary (P06).
+
+    T == 0 is a *valid* expiry (handled downstream as intrinsic value), so
+    it is intentionally NOT rejected here — only invalid inputs are.
+    """
+    if option_type not in ("call", "put"):
+        return f"option_type must be 'call' or 'put', got {option_type!r}"
+    for _name, _val in (
+        ("spot", spot),
+        ("strike", strike),
+        ("expiry_days", expiry_days),
+        ("volatility", sigma),
+        ("risk_free_rate", r),
+    ):
+        if not math.isfinite(_val):
+            return f"{_name} must be a finite number, got {_val}"
+    if spot <= 0:
+        return f"spot must be positive, got {spot}"
+    if strike <= 0:
+        return f"strike must be positive, got {strike}"
+    if sigma <= 0:
+        return f"volatility must be positive, got {sigma}"
+    if expiry_days < 0:
+        return f"expiry_days must be non-negative, got {expiry_days}"
+    return None
 
 
 def _validate_inputs(
@@ -52,6 +80,10 @@ def _bs_price_and_greeks(
 ) -> dict:
     """Compute Black-Scholes price and Greeks.
 
+    Thin adapter over :mod:`src.quantlib.options`, which owns the one
+    implementation of this formula in the repo. This function's only jobs are
+    to merge price and Greeks into a single dict and to round for display.
+
     Args:
         spot: Current underlying price.
         strike: Strike price.
@@ -61,7 +93,8 @@ def _bs_price_and_greeks(
         option_type: "call" or "put".
 
     Returns:
-        Dict containing price, delta, gamma, theta, vega.
+        Dict containing price, delta, gamma, theta, vega and rho, each rounded
+        to six decimal places.
     """
     if T <= 0 or sigma <= 0:
         if option_type == "call":
@@ -97,10 +130,7 @@ def _bs_price_and_greeks(
 
     return {
         "price": round(price, 6),
-        "delta": round(delta, 6),
-        "gamma": round(gamma, 6),
-        "theta": round(theta, 6),
-        "vega": round(vega, 6),
+        **{name: round(value, 6) for name, value in greeks.items()},
     }
 
 
@@ -130,14 +160,41 @@ class OptionsPricingTool(BaseTool):
                      Optional risk_free_rate.
 
         Returns:
-            JSON string containing price, delta, gamma, theta, vega.
+            JSON string containing price, delta, gamma, theta, vega, or an error
+            envelope when an argument is missing or cannot be read as a number.
+            ``risk_free_rate`` is optional and defaults to its schema value 0.05,
+            so an explicit JSON ``null`` is treated as omission.
         """
-        spot = float(kwargs["spot"])
-        strike = float(kwargs["strike"])
-        expiry_days = float(kwargs["expiry_days"])
-        r = float(kwargs.get("risk_free_rate", 0.05))
-        sigma = float(kwargs["volatility"])
-        option_type = kwargs["option_type"]
+        try:
+            if "spot" not in kwargs or kwargs["spot"] is None:
+                raise ValueError("spot is required")
+            if "strike" not in kwargs or kwargs["strike"] is None:
+                raise ValueError("strike is required")
+            if "expiry_days" not in kwargs or kwargs["expiry_days"] is None:
+                raise ValueError("expiry_days is required")
+            if "volatility" not in kwargs or kwargs["volatility"] is None:
+                raise ValueError("volatility is required")
+            spot = float(kwargs["spot"])
+            strike = float(kwargs["strike"])
+            expiry_days = float(kwargs["expiry_days"])
+            r_val = kwargs.get("risk_free_rate")
+            r = float(r_val if r_val is not None and r_val != "" else 0.05)
+            sigma = float(kwargs["volatility"])
+            option_type = str(kwargs.get("option_type") or "")
+        except (TypeError, ValueError, KeyError, OverflowError) as exc:
+            # OverflowError: a JSON integer larger than a float (e.g. 10**10000)
+            # raises it from float(), and it must not escape this envelope.
+            return json.dumps(
+                {"status": "error", "tool": "options_pricing", "error": f"invalid or missing input argument: {exc}"},
+                ensure_ascii=False,
+            )
+
+        err = _validate_inputs(spot, strike, expiry_days, sigma, r, option_type)
+        if err is not None:
+            return json.dumps(
+                {"status": "error", "tool": "options_pricing", "error": err},
+                ensure_ascii=False,
+            )
 
         err = _validate_inputs(spot, strike, expiry_days, sigma, r, option_type)
         if err is not None:

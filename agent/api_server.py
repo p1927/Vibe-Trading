@@ -285,6 +285,120 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.middleware("http")(_reject_untrusted_loopback_host)
+app.middleware("http")(_spa_html_deep_link_fallback)
+app.middleware("http")(_apply_security_headers)
+
+
+# Route registration + re-exports
+
+# --- Runs ---
+from src.api.runs_routes import register_runs_routes  # noqa: E402
+register_runs_routes(app)
+
+from src.api.runs_routes import (  # noqa: F401, E402
+    _load_json_file,
+    _load_csv_to_dict,
+    _build_response_from_run_dir,
+)
+
+# --- Sessions ---
+from src.api.sessions_routes import register_sessions_routes  # noqa: E402
+register_sessions_routes(app)
+
+from src.api.sessions_routes import (  # noqa: F401, E402
+    _goal_store,
+    _live_action_frame_from_tool_result,
+    _mandate_proposal_frame_from_tool_result,
+)
+
+# --- System ---
+from src.api.system_routes import register_system_routes  # noqa: E402
+register_system_routes(app)
+
+from src.api.system_routes import _terminate_current_process  # noqa: F401, E402
+
+# --- Settings ---
+from src.api.settings_routes import register_settings_routes  # noqa: E402
+register_settings_routes(app)
+
+from src.api.settings_routes import (  # noqa: F401, E402
+    _baostock_supported,
+    _baostock_installed,
+    _load_llm_providers,
+)
+
+# --- Uploads ---
+from src.api.uploads_routes import register_uploads_routes  # noqa: E402
+register_uploads_routes(app)
+
+from src.api.uploads_routes import (  # noqa: F401, E402
+    MAX_UPLOAD_SIZE,
+    _BLOCKED_UPLOAD_EXT,
+    _BLOCKED_UPLOAD_NAMES,
+    _SHADOW_ID_RE,
+    _UPLOAD_CHUNK_SIZE,
+)
+
+# --- Channels ---
+from src.api.channels_routes import register_channels_routes  # noqa: E402
+register_channels_routes(app)
+from src.api.qveris_routes import qveris_router  # noqa: E402  # QVERIS-INTEGRATION
+app.include_router(qveris_router)  # QVERIS-INTEGRATION
+
+from src.api.channels_routes import (  # noqa: F401, E402
+    ChannelPairingCommandRequest,
+)
+
+# --- Swarm ---
+from src.api.swarm_routes import register_swarm_routes  # noqa: E402
+register_swarm_routes(app)
+
+from src.api.swarm_routes import _get_swarm_runtime  # noqa: F401, E402
+
+# --- Live trading ---
+from src.api.live_routes import register_live_routes  # noqa: E402
+register_live_routes(app)
+
+from src.api.live_routes import (  # noqa: F401, E402
+    CommitMandateRequest,
+    LiveHaltRequest,
+    LiveAuthorizeRequest,
+    LiveRunnerControlRequest,
+    BrokerAuthState,
+    MandateLimits,
+    ActiveMandateState,
+    RunnerLivenessState,
+    LiveBrokerStatus,
+    LiveStatusResponse,
+    LiveRunnerUnavailable,
+    _runner_tasks,
+    _runner_factory,
+    _emit_live_event,
+    _fetch_broker_ceilings,
+    _known_live_brokers,
+    _oauth_token_present,
+    _active_mandate_state,
+    _runner_liveness_state,
+    _live_broker_adapter,
+    _build_live_runner,
+    _drive_runner,
+    _connector_verify_cache,
+    _check_connector_status,
+)
+
+# --- Alpha Zoo ---
+from src.api.alpha_routes import register_alpha_routes  # noqa: E402
+register_alpha_routes(app)
+
+# --- Auth helpers (SSE tickets) ---
+from src.api.auth_routes import register_auth_routes  # noqa: E402
+register_auth_routes(app)
+
+# --- OpenBB Workspace agent bridge (GET /agents.json, POST /v1/query) ---
+# No-op unless the optional `openbb` extra is installed; self-reports either way.
+from src.openbb_bridge import try_register_openbb_routes  # noqa: E402  # OPENBB-WORKSPACE-INTEGRATION
+try_register_openbb_routes(app)
 
 # Middleware functions are defined in src.api.security / src.api.helpers, so
 # the @app.middleware("http") decorator cannot be used here — register them

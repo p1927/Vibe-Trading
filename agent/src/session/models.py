@@ -44,6 +44,10 @@ class Session:
         updated_at: Last update time in ISO format.
         last_attempt_id: ID of the most recent Attempt.
         config: Session-level configuration such as model overrides or strategy parameters.
+        owner: Principal the session belongs to, or None for a session created
+            before principals existed or by a path that has no request context.
+            None means "unknown owner", which is different from an
+            unattributable one -- do not collapse the two.
     """
 
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
@@ -53,6 +57,7 @@ class Session:
     updated_at: str = field(default_factory=_utc_now_iso)
     last_attempt_id: Optional[str] = None
     config: Dict[str, Any] = field(default_factory=dict)
+    owner: Optional[Principal] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize the session to a dictionary.
@@ -62,6 +67,7 @@ class Session:
         """
         data = asdict(self)
         data["status"] = self.status.value
+        data["owner"] = self.owner.to_dict() if self.owner else None
         return data
 
     @classmethod
@@ -77,6 +83,11 @@ class Session:
         data = dict(data)
         if "status" in data:
             data["status"] = SessionStatus(data["status"])
+        owner = data.get("owner")
+        if isinstance(owner, dict):
+            data["owner"] = Principal.from_dict(owner)
+        elif owner is None:
+            data.pop("owner", None)
         return cls(**data)
 
 
@@ -92,6 +103,7 @@ class Message:
         created_at: Creation time in ISO format.
         linked_attempt_id: Related Attempt ID, if any.
         metadata: Additional metadata.
+        tool_trail: Compact completed tool-call records for history hydration.
     """
 
     message_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
@@ -101,6 +113,7 @@ class Message:
     created_at: str = field(default_factory=_utc_now_iso)
     linked_attempt_id: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    tool_trail: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize the message to a dictionary.

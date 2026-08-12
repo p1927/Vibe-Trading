@@ -3,12 +3,12 @@ name: vibe-trading
 version: 0.1.12
 description: Professional finance research toolkit — backtesting (8 engines + benchmark comparison panel), factor analysis, Alpha Zoo (462 pre-built alphas across qlib158/alpha101/gtja191/academic/fundamental), options pricing, 88 finance skills, 30 multi-agent swarm teams, Trade Journal analyzer, and Shadow Account (extract → backtest → render) across 23 market-data sources (tushare, yfinance, okx, binance, akshare, baostock, tencent, mootdx, ccxt, futu, mt5, local, eastmoney, sina, stooq, yahoo, india_broker, qveris, longbridge, plus optional-key finnhub/alphavantage/tiingo/fmp).
 dependencies:
-  python: ">=3.11"
+  python: ">=3.11,<3.14"
   pip:
     - vibe-trading-ai
 env:
   - name: TUSHARE_TOKEN
-    description: "Tushare API token for China A-share data (optional — HK/US/crypto work without any key)"
+    description: "Tushare API token for China A-share data (optional — HK/US/Canada/crypto work without any key)"
     required: false
   - name: OPENAI_API_KEY
     description: "OpenAI-compatible API key — only needed for run_swarm (multi-agent teams). All other tools work without it."
@@ -141,7 +141,10 @@ Use `load_skill(name)` to access full methodology docs with code templates.
 | `update_research_goal_status` | Update goal lifecycle status | None |
 | `backtest` | Run vectorized backtest engine | None* |
 | `factor_analysis` | IC/IR analysis + layered backtest | None* |
+| `alpha_zoo` | Browse bundled alpha metadata and registry health | None |
+| `alpha_bench` | Benchmark one alpha or a complete zoo | None* |
 | `analyze_options` | Black-Scholes price + Greeks | None |
+| `analyze_options_payoff` | Multi-leg expiry payoff + spot/IV scenarios | None |
 | `pattern_recognition` | Detect chart patterns (H&S, double top, etc.) | None |
 | `get_market_data` | Fetch OHLCV data (auto-detect + ordered fallback across 23 sources) | None* |
 | `get_fund_flow` | Capital fund-flow (main/retail net inflow) | None* |
@@ -352,3 +355,6 @@ Without `ALLOW_SESSION_MCP_SERVERS=1`, any `mcpServers` key in `session.config` 
 
 **Options analysis:**
 > Use analyze_options: spot=100, strike=105, 90 days, vol=25%, rate=3%
+
+**Multi-leg options payoff:**
+> Use analyze_options_payoff for a 95/105 bull call spread at spot 100 with 30 days remaining: long one 95 call at premium 8, short one 105 call at premium 3, multiplier 100, commission rate 0.001.

@@ -73,9 +73,23 @@ class TraceWriter:
         self.dir_path.mkdir(parents=True, exist_ok=True)
         self.path = self.dir_path / "trace.jsonl"
         self._file = open(self.path, "a", encoding="utf-8")
+        try:
+            if created:
+                # Make the new trace.jsonl directory entry itself durable.
+                self._fsync_dir(self.dir_path)
+        except Exception:
+            self._file.close()
+            raise
 
     def write(self, entry: Dict[str, Any]) -> None:
-        """Write a trace record.
+        """Write a trace record, flushed and fsynced for crash safety.
+
+        ``flush`` alone only moves bytes into the OS page cache; a host
+        crash or container kill would lose the last records. Trace volume
+        is low (one entry per LLM/tool event), so one fsync per record is
+        an acceptable cost for post-mortem visibility. If fsync fails
+        (e.g. unsupported filesystem), a warning is logged once and writes
+        continue flush-only.
 
         Args:
             entry: Trace entry; a ``ts`` field is added automatically.
@@ -84,6 +98,77 @@ class TraceWriter:
             entry["ts"] = time.time()
         self._file.write(json.dumps(entry, ensure_ascii=False) + "\n")
         self._file.flush()
+        try:
+            os.fsync(self._file.fileno())
+        except OSError as exc:
+            self._warn_fsync_failure(exc, self.path)
+
+    def write_text_entry(
+        self,
+        entry: Dict[str, Any],
+        *,
+        field: str,
+        value: str,
+        offload_kind: str,
+        threshold: int | None = None,
+    ) -> None:
+        """Write an entry with one potentially large text field.
+
+        Args:
+            entry: Base trace entry. Mutated before writing.
+            field: Text field name, e.g. ``"content"`` or ``"prompt"``.
+            value: Full text value to preserve.
+            offload_kind: Stable label used in the sidecar filename hash input.
+            threshold: Optional inline threshold override.
+        """
+        self._attach_text_field(
+            entry,
+            field=field,
+            value=value,
+            offload_kind=offload_kind,
+            threshold=threshold or TRACE_TEXT_OFFLOAD_THRESHOLD,
+            offload_dir_name="trace-blobs",
+        )
+        self.write(entry)
+
+    def write_tool_result(
+        self,
+        call_id: str,
+        result: str,
+        tool_name: str,
+        status: str,
+        elapsed_ms: int,
+        iteration: int,
+    ) -> None:
+        """Write a tool_result entry, offloading large results to disk.
+
+        Args:
+            call_id: Provider tool call ID.
+            result: Raw tool result string after any caller-side redaction.
+            tool_name: Tool name.
+            status: ``"ok"`` or ``"error"``.
+            elapsed_ms: Execution time in milliseconds.
+            iteration: Current iteration number.
+        """
+        entry: Dict[str, Any] = {
+            "type": "tool_result",
+            "iter": iteration,
+            "tool": tool_name,
+            "call_id": call_id,
+            "status": status,
+            "elapsed_ms": elapsed_ms,
+            "preview": result[:OFFLOAD_PREVIEW_CHARS],
+        }
+        self._attach_text_field(
+            entry,
+            field="result",
+            value=result,
+            offload_kind=f"tool-result-{tool_name}-{call_id}",
+            threshold=TOOL_RESULT_OFFLOAD_THRESHOLD,
+            offload_dir_name="tool-results",
+            preview_field="result_preview",
+        )
+        self.write(entry)
 
     def write_text_entry(
         self,

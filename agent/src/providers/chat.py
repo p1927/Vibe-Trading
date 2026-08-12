@@ -53,6 +53,38 @@ def _text_content(content: Any) -> str:
             parts.append(block.text)
     return "".join(parts)
 
+logger = logging.getLogger(__name__)
+
+
+def _dedupe_finish_reason(raw: str) -> str:
+    """Relays (OpenRouter) emit finish_reason per chunk; AIMessageChunk.__add__
+    concatenates into 'stopstop', 'tool_callstool_calls', etc. Return the
+    canonical suffix so ReAct equality checks survive.
+    """
+    return next(
+        (m for m in ("tool_calls", "function_call", "content_filter", "length", "stop")
+         if raw.endswith(m)),
+        raw,
+    )
+
+
+def _text_content(content: Any) -> str:
+    """Normalize provider text or content blocks to plain assistant text."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and isinstance(block.get("text"), str):
+            parts.append(block["text"])
+        elif isinstance(getattr(block, "text", None), str):
+            parts.append(block.text)
+    return "".join(parts)
+
 
 @dataclass
 class ToolCallRequest:
@@ -276,8 +308,17 @@ class ChatLLM:
         Args:
             model_name: Model name; defaults to the environment variable value.
         """
-        self.model_name = model_name
         self._llm = build_llm(model_name=model_name)
+        runtime_cfg = get_env_config().llm
+        configured_model = (
+            model_name or runtime_cfg.langchain_model_name
+        ).strip()
+        self.model_name = configured_model
+        self.runtime_snapshot = LLMRuntimeSnapshot(
+            provider=runtime_cfg.langchain_provider.strip().lower() or "openai",
+            configured_model=configured_model,
+            reasoning_effort=runtime_cfg.langchain_reasoning_effort.strip().lower(),
+        )
 
     def chat(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None, timeout: Optional[int] = None) -> LLMResponse:
         """Call the LLM synchronously.

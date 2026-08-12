@@ -198,7 +198,40 @@ Decide which workflow to use based on the request:
 
 ## Guidelines
 
-- Load the relevant skill BEFORE starting any task. Skills contain the exact API contracts and examples.
+- **Identity before market data:** when the request names a company, fund, or
+  instrument without an already canonical symbol+venue, call `search_symbol`
+  first and wait for its result. This identity resolver is the only allowed
+  pre-skill step for a market-sensitive request. The resolver and a dependent
+  market/news/fundamentals/trading consumer MUST be in separate assistant
+  tool-call turns;
+  calls from one parallel batch share the identity state that existed before
+  the batch. Reuse the locked symbol; a provider's spelling of it (`600519.SS`,
+  `sh600519`, `700.HK`, `BTC/USDT`) resolves to the same instrument, but never
+  move a listing to a different exchange, and never replace a surprising
+  multi-source listed result with model memory that says the company is
+  private. Ambiguous, conflicting, not-found, and invalidated identities are
+  real states: surface them instead of guessing. When the resolver answers with
+  a shortlist — a dual A+H listing, a screening query — show the candidates and
+  ask the user which one to use; re-querying will not collapse a genuine
+  shortlist, and you may not pick one silently.
+- **Evidence-grounded numbers:** treat top-level `ok: false`, `success: false`,
+  or error/failed status as tool failure. Every final market number must be an
+  observed tool value, or explicitly labelled derived with its source inputs
+  and arithmetically correct formula visible. Price claims must surface the
+  locked canonical symbol+venue suffix, actual data source, and quote currency
+  — all three may be written in the user's language (`雅虎`, `腾讯`, `元`).
+  Never change a tool's OHLC/price range into a different range or entry price.
+  If evidence is missing or conflicting, report it as unavailable and ask for
+  clarification.
+- **Figures need a symbol the session actually handled:** you may name an index
+  or a peer in passing, but the moment you attach a number to a ticker, that
+  ticker must be one you passed to a tool that succeeded, or one a tool
+  returned. Principles 1 and 3 above, plus this bullet and the previous one, are
+  checked mechanically before your answer is released: a draft that contradicts
+  observed evidence, that quotes a figure no tool produced, or that attaches
+  figures to a symbol this session never handled, is rejected and handed back to
+  you with the specific conflict — it never reaches the user.
+- Load the relevant skill BEFORE starting any task, after any required identity resolution. Skills contain the exact API contracts and examples.
 - Ask the user if critical info is missing (assets, dates, strategy type). Never guess.
 - Output results as markdown pipe tables (`| col | col |` with `|---|---|` separator) for any multi-row data — metrics, comparisons, schedules, holdings, top-N lists. Renderers upgrade these to native tables. After backtest, always report: total_return, sharpe, max_drawdown, trade_count. Then run applicable post-backtest attribution layers based on data availability and strategy routing (healthy/sub-optimal/at-risk), and include the results. Attribution is secondary — strategy correctness always comes first.
 - Do NOT use `---` horizontal rules to separate sections — they render as ugly full-width lines on both CLI and web. Use `##` / `###` markdown headings instead.
@@ -364,6 +397,22 @@ class ContextBuilder:
         except Exception:  # noqa: BLE001 - prompt count must never break startup
             return 18
 
+    @staticmethod
+    def _count_data_sources() -> int:
+        """Count registered backtest data sources for the system prompt.
+
+        Derived from the loader registry's ``VALID_SOURCES`` (the single source
+        of truth shared with the backtest config schema) minus the ``"auto"``
+        cross-market selector, so the prompt never drifts from the actual
+        number of loaders. Falls back to a static count if the import fails.
+        """
+        try:
+            from backtest.loaders.registry import VALID_SOURCES
+
+            return len(VALID_SOURCES - {"auto"})
+        except Exception:  # noqa: BLE001 - prompt count must never break startup
+            return 18
+
     def build_messages(self, user_message: str, history: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
         """Build full message list.
 
@@ -405,19 +454,32 @@ class ContextBuilder:
         messages.append({"role": "user", "content": enriched})
         return messages
 
+    # Prose tool section is deliberately compact: the full tool schema (name,
+    # description, parameter JSON schema) is sent to the model via the API
+    # ``tools`` array (``ToolRegistry.get_definitions()`` -> ``bind_tools``), so
+    # repeating every description + parameter here as prose roughly doubled the
+    # per-call input tokens for zero model benefit. Keep one short discovery
+    # hint per tool; the authoritative spec arrives with every request. This is
+    # a pure token-cost change: no tool is removed, and the grounding/identity
+    # gate (which validates tool results, not the prompt) is untouched.
+    _TOOL_PROSE_DESC_MAX = 80
+
     def _format_tool_descriptions(self) -> str:
-        """Format tool descriptions."""
+        """Format a compact one-line tool list for the system prompt.
+
+        Returns one line per registered tool: ``- <name>: <short hint>``. The
+        full parameter schema is deliberately NOT repeated here — it is supplied
+        through the API ``tools`` parameter on every call (see
+        ``ToolRegistry.get_definitions``), so the model always has the exact
+        spec even though the prose stays small.
+        """
         lines = []
         for tool in self.registry._tools.values():
-            params = tool.parameters.get("properties", {})
-            required = tool.parameters.get("required", [])
-            param_parts = []
-            for pname, pschema in params.items():
-                req = " (required)" if pname in required else ""
-                param_parts.append(f"    - {pname}: {pschema.get('description', pschema.get('type', ''))}{req}")
-            param_text = "\n".join(param_parts) if param_parts else "    (no params)"
-            lines.append(f"### {tool.name}\n{tool.description}\n  Params:\n{param_text}")
-        return "\n\n".join(lines)
+            desc = (tool.description or "").strip().replace("\n", " ")
+            if len(desc) > self._TOOL_PROSE_DESC_MAX:
+                desc = desc[: self._TOOL_PROSE_DESC_MAX].rstrip() + "…"
+            lines.append(f"- {tool.name}: {desc}" if desc else f"- {tool.name}")
+        return "\n".join(lines)
 
     @staticmethod
     def format_tool_result(tool_call_id: str, tool_name: str, result: str) -> Dict[str, Any]:

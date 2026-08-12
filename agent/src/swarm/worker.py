@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -199,6 +200,65 @@ def build_worker_prompt(
     Returns:
         Complete system prompt string for the worker LLM.
     """
+    # Static, agent-invariant blocks first: for a given agent_spec these are
+    # byte-identical on every call (skill_descriptions/tools come from the
+    # agent's own YAML spec, not the current task), so they form one stable
+    # prompt-cache-eligible prefix across a swarm's repeated calls to the
+    # same agent. Anything that varies per call (upstream context, grounding
+    # data, the current date) is appended after, in the same relative order
+    # as before -- a cache hit only needs a stable *prefix*, so moving the
+    # variable tail doesn't need to preserve position, only what precedes it.
+    prompt_parts = [f"## Role\n\n{agent_spec.role}"]
+
+    if skill_descriptions and skill_descriptions != "(no matching skills)":
+        prompt_parts.append(
+            f"## Available Skills (use load_skill to access full documentation)\n\n{skill_descriptions}"
+        )
+
+    if "get_market_data" in (agent_spec.tools or []):
+        prompt_parts.append(
+            "## Market Data Tool Policy\n\n"
+            "For OHLCV price bars, recent closes, volume, technical indicators, "
+            "or return calculations, call `get_market_data` before writing raw "
+            "provider scripts. It uses the repository loader layer, normalizes "
+            "symbols, drops malformed OHLC rows, and returns strict JSON. Use "
+            "raw yfinance scripts only for fields outside OHLCV coverage, such "
+            "as fundamentals, holders, options, or corporate metadata."
+        )
+
+    # Universal anti-fabrication rule. The grounding_block carries a similar
+    # instruction but only renders when user_vars supplies explicit symbols.
+    # Free-form prompts ("look at A-share short-term sentiment") otherwise
+    # leave the worker with no guardrail and it cheerfully cites training-data
+    # prices and sector weights. This block applies the rule unconditionally
+    # — including to aggregator / synthesis agents that have no data tools
+    # and previously had no instruction against inventing numbers.
+    prompt_parts.append(
+        "## Data Citation Discipline (HARD RULE)\n\n"
+        "Every specific number you cite in your output — prices, percentages, "
+        "volumes, fund flows, market-cap rankings, sector weights, ETF codes, "
+        "ticker recommendations — MUST be traceable to one of:\n"
+        "  (a) a tool call result obtained in THIS run,\n"
+        "  (b) the Ground Truth block above (if present),\n"
+        "  (c) the Upstream Context above (if present and the upstream agent "
+        "itself sourced it from (a) or (b)).\n\n"
+        "You may NOT cite numbers from memory or training data. Markets have "
+        "moved since your cutoff; any specific price/percentage you recall is "
+        "wrong by default.\n\n"
+        "If you cannot back a number with (a), (b), or (c), you have two "
+        "choices:\n"
+        "  - call a data tool to fetch it (preferred), or\n"
+        "  - omit the number and qualify the statement (e.g. \"directional "
+        "only — not verified against live data\").\n\n"
+        "This rule applies equally to synthesis / aggregator / editor roles "
+        "that lack data tools. If upstream did not provide a specific number, "
+        "do NOT introduce one from training data — say the upstream omitted "
+        "it and proceed without."
+    )
+
+    # From here on, content varies per call (upstream context substitution,
+    # grounding data, the date), so none of it extends the cacheable prefix
+    # above -- relative order matches the original layout exactly.
     upstream_block = ""
     if upstream_summaries:
         sections = []
@@ -208,16 +268,13 @@ def build_worker_prompt(
             "## Upstream Context (from previous agents)\n\n"
             + "\n\n".join(sections)
         )
+    prompt_parts.append(agent_spec.system_prompt.replace("{upstream_context}", upstream_block))
 
-    prompt_parts = [
-        f"## Role\n\n{agent_spec.role}",
-        agent_spec.system_prompt.replace("{upstream_context}", upstream_block),
-    ]
-
-    if skill_descriptions and skill_descriptions != "(no matching skills)":
-        prompt_parts.append(
-            f"## Available Skills (use load_skill to access full documentation)\n\n{skill_descriptions}"
-        )
+    if grounding_block:
+        # Placed before Execution Rules so it's in scope when the worker
+        # plans its first tool call. The block already contains an explicit
+        # instruction to prefer these prices over training data.
+        prompt_parts.append(grounding_block)
 
     if grounding_block:
         # Placed before Execution Rules so it's in scope when the worker
@@ -291,6 +348,74 @@ def build_worker_prompt(
     )
 
     return "\n\n".join(prompt_parts)
+
+
+def agent_artifact_dir(run_dir: Path, agent_id: str) -> Path:
+    """Return the canonical artifacts directory for one agent within a run.
+
+    The single source of truth for this path — shared with the retry loop
+    in ``runtime.py`` so the two can never compute it differently and drift
+    apart.  The guard belongs here rather than only in
+    ``clear_agent_artifacts`` because this path is also used by ``run_worker``
+    for ``mkdir``; validating the shared constructor protects both directory
+    creation and recursive cleanup from the same path escape.
+
+    Args:
+        run_dir: Root directory for the swarm run.
+        agent_id: Single safe path segment identifying the agent.
+
+    Raises:
+        ValueError: If ``agent_id`` is not a single safe path segment or the
+            resolved artifact directory is not exactly one level below the
+            resolved ``run_dir/artifacts`` directory.
+    """
+    artifact_root = run_dir / "artifacts"
+    if (
+        not isinstance(agent_id, str)
+        or not agent_id
+        or agent_id in {".", ".."}
+        or "/" in agent_id
+        or "\\" in agent_id
+    ):
+        raise ValueError(
+            f"Invalid swarm agent id {agent_id!r}: expected one safe path segment"
+        )
+
+    artifact_dir = artifact_root / agent_id
+    resolved_root = artifact_root.resolve()
+    resolved_dir = artifact_dir.resolve()
+    try:
+        relative = resolved_dir.relative_to(resolved_root)
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid swarm agent id {agent_id!r}: artifact path escapes "
+            "the run artifacts directory"
+        ) from exc
+    if len(relative.parts) != 1:
+        raise ValueError(
+            f"Invalid swarm agent id {agent_id!r}: artifact path must be "
+            "one level below the run artifacts directory"
+        )
+    return artifact_dir
+
+
+def clear_agent_artifacts(artifact_dir: Path) -> None:
+    """Remove *artifact_dir* and everything in it, before a retry attempt.
+
+    A retry re-invokes :func:`run_worker` against the same ``artifact_dir``.
+    Without this, a failed attempt's ``report.md`` (or any other file a tool
+    wrote) would still be sitting there when the retried attempt reads the
+    directory back via ``_resolve_summary``/``_report_written``/
+    ``_collect_artifacts``, silently substituting stale content for the new
+    attempt's real result.
+
+    Raises on failure rather than swallowing it: proceeding with a retry
+    while known-stale artifacts remain would recreate the exact bug this
+    exists to prevent. ``run_worker`` recreates the directory itself
+    (``mkdir(parents=True, exist_ok=True)``) on its next invocation.
+    """
+    if artifact_dir.exists():
+        shutil.rmtree(artifact_dir)
 
 
 def run_worker(
@@ -709,7 +834,9 @@ def run_worker(
                 },
             )
             messages.append(
-                ContextBuilder.format_tool_result(tc.id, tc.name, result[:10_000])
+                ContextBuilder.format_tool_result(
+                    tc.id, tc.name, result[:TOOL_RESULT_LIMIT]
+                )
             )
 
     # Content filter ratio tracking

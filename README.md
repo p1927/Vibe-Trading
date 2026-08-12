@@ -653,12 +653,16 @@ python -m venv .venv
 
 # Activate
 source .venv/bin/activate          # Linux / macOS
+# .venv\Scripts\activate.bat       # Windows CMD
 # .venv\Scripts\Activate.ps1       # Windows PowerShell
 
 pip install -e .
 cp agent/.env.example agent/.env   # Edit — set your LLM provider API key
 vibe-trading                       # Launch interactive TUI
 ```
+
+> [!NOTE]
+> **On Windows:** `cp` is a PowerShell alias for `Copy-Item`, so the snippets above work as-is in PowerShell. CMD has no `cp` — use `copy agent\.env.example agent\.env` instead (this applies to the Docker snippet above too). If PowerShell refuses to run `Activate.ps1`, run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned` first; it applies to that shell session only.
 
 <details>
 <summary><b>Start web UI (optional)</b></summary>
@@ -668,7 +672,7 @@ vibe-trading                       # Launch interactive TUI
 vibe-trading serve --port 8899
 
 # Terminal 2: Frontend dev server
-cd frontend && npm install && npm run dev
+cd frontend && npm install && npm run dev  # requires Node >= 22.22
 ```
 
 Open `http://localhost:5899`. The frontend proxies API calls to `localhost:8899`.
@@ -976,7 +980,72 @@ vibe-trading serve --port 8899
 | `GET` | `/scheduled-runs` | List scheduled jobs |
 | `DELETE` | `/scheduled-runs/{job_id}` | Cancel a scheduled job |
 
-Interactive docs: `http://localhost:8899/docs`
+Interactive docs are available at `http://localhost:8899/docs` in keyless
+loopback development mode. When `API_AUTH_KEY` is configured, `/docs` and
+`/redoc` are disabled; authenticated tooling can fetch `/openapi.json` with an
+`Authorization: Bearer <key>` header.
+
+### Security defaults
+
+For localhost development, `vibe-trading serve` keeps the browser workflow simple. For any non-local client, sensitive API endpoints require `API_AUTH_KEY`; use `Authorization: Bearer <key>` for JSON/upload requests. Browser EventSource streams are handled by the Web UI after you enter the same key once in Settings.
+
+Shell-capable process tools (`bash` / `background_run` / `cancel_background`) are enabled only for the interactive local CLI. Every other surface — the HTTP/SSE API and the MCP server on **all** transports (stdio included) — keeps them off unless you explicitly opt in with `VIBE_TRADING_ENABLE_SHELL_TOOLS=1` (or pass `--enable-shell-tools` to `vibe-trading-mcp`). Transport type never implicitly grants shell access. `cancel_background` stops only the tracked task ID returned by `background_run`; broad Python process-name termination is refused because it could terminate Vibe-Trading itself. Document and journal readers are limited to upload/import roots by default; place files under `~/.vibe-trading/uploads`, `~/.vibe-trading/runs`, `./uploads`, `./data` (or the legacy `agent/uploads` / `agent/runs`), or add a dedicated directory through `VIBE_TRADING_ALLOWED_FILE_ROOTS`. Sessions, runs, swarm runs, uploads, and the `sessions.db` index live under `~/.vibe-trading` (relocatable via the `VIBE_TRADING_HOME` shell environment variable); pre-existing history is moved there automatically on first run.
+
+Generated backtest code runs as a local Python subprocess and can make network requests through the configured market-data loaders. Its environment is intentionally narrow: the runner keeps OS/Python basics, proxy/certificate settings, `VIBE_TRADING_ALLOWED_RUN_ROOTS`, and read-only market-data keys such as `TUSHARE_TOKEN`, `FMP_API_KEY`, `FRED_API_KEY`, and `VIBE_TRADING_IWENCAI_KEY`. It does not pass LLM provider keys, API auth tokens, shell-tool switches, broker trading secrets, or live/advisory toggles to generated strategy code by default.
+
+### Web UI Settings
+
+The Web UI Settings page lets local users update the LLM provider/model, base URL, generation parameters, reasoning effort, and optional market data credentials such as the Tushare token. Settings are persisted to `agent/.env`; provider defaults are loaded from `agent/src/providers/llm_providers.json`.
+
+Settings reads are side-effect free: `GET /settings/llm` and `GET /settings/data-sources` never create `agent/.env`, and they only return project-relative paths. Settings reads and writes can expose credential state or update credentials/runtime environment, so they require `API_AUTH_KEY` when configured. If `API_AUTH_KEY` is unset for dev mode, settings access is accepted only from loopback clients.
+
+The same Settings page includes an **IM Channels** panel for local operators. It polls `/channels/status`, shows configured/enabled/available/loaded/running states, surfaces adapter recovery hints, and can start or stop the configured channel runtime without going back to the terminal.
+
+### Scheduled research
+
+Run a research prompt or backtest on a repeating schedule — from the **Scheduled** page in the web UI or over REST. The background executor is **off by default** — start the server with `VIBE_TRADING_ENABLE_SCHEDULER=1` to enable it:
+
+```bash
+VIBE_TRADING_ENABLE_SCHEDULER=1 vibe-trading serve --port 8899
+```
+
+Then create jobs over REST. `schedule` is either a bare integer (interval in **milliseconds**) or a 5-field cron expression (`min hour dom mon dow`; each field takes `*`, `*/n`, numbers, comma lists, or low-high ranges like `1-5`). Cron runs on the wall clock of the job's optional `timezone` (an IANA key), so the cadence holds across DST transitions — a spring-forward gap time is skipped, and a fall-back ambiguous time runs once, at its first occurrence. Jobs without a `timezone` keep plain UTC semantics:
+
+```bash
+# every 6 hours (cron)
+curl -X POST http://localhost:8899/scheduled-runs \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"Scan CSI300 for momentum breakouts and backtest the top 5","schedule":"0 */6 * * *"}'
+
+# weekdays at 23:30 Auckland wall time — DST-proof
+curl -X POST http://localhost:8899/scheduled-runs \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"Pre-open scan of NZX names","schedule":"30 23 * * 1-5","timezone":"Pacific/Auckland"}'
+
+# list / cancel
+curl http://localhost:8899/scheduled-runs
+curl -X DELETE http://localhost:8899/scheduled-runs/<job_id>
+```
+
+Each fire runs the `prompt` through a fresh agent session (optional backtest parameters go in `config`), and jobs persist under `~/.vibe-trading/` so they survive restarts. Without the flag, the `/scheduled-runs` endpoints still record jobs but nothing fires. Add `-H "Authorization: Bearer <key>"` to each call when `API_AUTH_KEY` is set.
+
+**Five ready-to-schedule templates** ship with the scheduler — `premarket-brief`, `earnings-season-tracker`, `portfolio-checkup`, `a-share-money-flow`, `institutional-holdings-diff`. Each states the data a run needs in plain language instead of naming tools, so a template keeps working as the tool surface grows, and each is required to name a missing input rather than fill it from memory. Reach them from the CLI, over REST, or with `/playbook` in the TUI:
+
+```bash
+vibe-trading playbook list                     # the five templates
+vibe-trading playbook show premarket-brief     # body, declared variables, suggested cadence
+vibe-trading playbook create premarket-brief \
+  --var home_market="US equities" --var watchlist="AAPL, MSFT, NVDA" \
+  --timezone America/New_York
+
+curl http://localhost:8899/scheduled-runs/playbooks
+curl http://localhost:8899/scheduled-runs/playbooks/premarket-brief
+curl -X POST http://localhost:8899/scheduled-runs/playbooks/premarket-brief \
+  -H "Content-Type: application/json" \
+  -d '{"variables":{"home_market":"US equities","watchlist":"AAPL, MSFT, NVDA"}}'
+```
+
+Posting `{}` schedules a template on its own suggested cadence with its declared defaults. The rendered body becomes the job prompt verbatim, and an undeclared variable is rejected rather than silently ignored.
 
 ### Security defaults
 

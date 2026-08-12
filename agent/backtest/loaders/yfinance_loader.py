@@ -50,7 +50,8 @@ def _to_yfinance_symbol(code: str) -> str:
     """Convert project symbols into yfinance symbols.
 
     Args:
-        code: Project symbol, for example ``AAPL.US`` or ``700.HK``.
+        code: Project symbol, for example ``AAPL.US``, ``700.HK``, or
+            ``TD.TO``.
 
     Returns:
         yfinance-compatible symbol.
@@ -200,7 +201,12 @@ def _normalize_frame(frame: pd.DataFrame, requested_interval: str) -> pd.DataFra
     normalized = normalized.dropna(subset=["open", "high", "low", "close"])
     normalized = validate_ohlc(normalized)
 
-    if requested_interval == "4H" and not normalized.empty:
+    # ``requested_interval`` reaches here with whatever case the caller used
+    # (``_INTERVAL_MAP`` accepts both ``4H`` and ``4h``). A case-sensitive
+    # check here let lowercase ``4h`` fetch hourly data via
+    # ``_to_yfinance_interval`` but skip this resample, silently returning
+    # native 1h bars mislabeled as 4H.
+    if str(requested_interval).strip().upper() == "4H" and not normalized.empty:
         normalized = normalized.resample("4h").agg(
             {
                 "open": "first",
@@ -218,7 +224,21 @@ def _normalize_frame(frame: pd.DataFrame, requested_interval: str) -> pd.DataFra
 
 @register
 class DataLoader:
-    """Fetch HK/US equity bars from Yahoo Finance via yfinance."""
+    """Fetch global-equity and crypto bars from Yahoo Finance via yfinance."""
+
+    name = "yfinance"
+    markets = {
+        "us_equity", "hk_equity", "india_equity", "kr_equity", "ca_equity", "crypto",
+    }
+    # yfinance volume is single shares for US/HK equities
+    # (HKUDS/Vibe-Trading#1062; HK verified 2026-08-11, 00700.HK ratio 1.00
+    # vs tencent/eastmoney). Crypto base-asset units stay undeclared.
+    volume_units = {"us_equity": "shares", "hk_equity": "shares"}
+    requires_auth = False
+
+    def is_available(self) -> bool:
+        """Always available (free public data, no auth)."""
+        return True
 
     name = "yfinance"
     markets = {"us_equity", "hk_equity", "india_equity", "crypto"}
@@ -247,7 +267,8 @@ class DataLoader:
         """Fetch OHLCV history keyed by the original project symbols.
 
         Args:
-            codes: Project symbols such as ``AAPL.US`` and ``700.HK``.
+            codes: Project symbols such as ``AAPL.US``, ``700.HK``, and
+                ``TD.TO``.
             start_date: Start date in ``YYYY-MM-DD`` format.
             end_date: End date in ``YYYY-MM-DD`` format.
             fields: Ignored for yfinance; included for interface compatibility.

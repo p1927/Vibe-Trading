@@ -5,6 +5,7 @@ import { Activity, BarChart3, Bot, Check, ChevronDown, Database, FileText, Langu
 import { cn } from "@/lib/utils";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { api, type SessionItem } from "@/lib/api";
+import { safeGet, safeSet } from "@/lib/storage";
 import { useAgentStore } from "@/stores/agent";
 import { usePredictionRunCoordinator } from "@/hooks/usePredictionRunCoordinator";
 import { ConnectionBanner } from "@/components/layout/ConnectionBanner";
@@ -37,7 +38,7 @@ export function Layout() {
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const sseStatus = useAgentStore(s => s.sseStatus);
   const sseRetryAttempt = useAgentStore(s => s.sseRetryAttempt);
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("qa-sidebar") === "collapsed");
+  const [collapsed, setCollapsed] = useState(() => safeGet("qa-sidebar") === "collapsed");
 
   const activeSessionId = searchParams.get("session");
   const streamingSessionId = useAgentStore(s => s.streamingSessionId);
@@ -46,8 +47,17 @@ export function Layout() {
   usePredictionRunCoordinator("NIFTY");
 
   useEffect(() => {
-    localStorage.setItem("qa-sidebar", collapsed ? "collapsed" : "expanded");
+    safeSet("qa-sidebar", collapsed ? "collapsed" : "expanded");
   }, [collapsed]);
+
+  useEffect(() => {
+    const syncSidebarPreference = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== "qa-sidebar") return;
+      setCollapsed(safeGet("qa-sidebar") === "collapsed");
+    };
+    window.addEventListener("storage", syncSidebarPreference);
+    return () => window.removeEventListener("storage", syncSidebarPreference);
+  }, []);
 
   const loadSessions = () => {
     api.listSessions()
@@ -60,6 +70,14 @@ export function Layout() {
   // the active session changes (covers new session creation from Agent).
   const isChatPage = pathname.startsWith("/agent") || pathname.startsWith("/autonomous");
   useEffect(() => { loadSessions(); }, [isChatPage, activeSessionId]);
+
+  // Re-list after out-of-band title changes (e.g. LLM auto-titling on the
+  // first completed exchange).
+  useEffect(() => {
+    const refresh = () => loadSessions();
+    window.addEventListener("vibe:sessions-refresh", refresh);
+    return () => window.removeEventListener("vibe:sessions-refresh", refresh);
+  }, []);
 
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<string | null>(null);
@@ -90,10 +108,16 @@ export function Layout() {
         collapsed ? "w-12" : "w-64"
       )}>
         {/* Brand */}
-        <div className={cn("border-b", collapsed ? "p-2 flex justify-center" : "p-4")}>
-          <Link to="/" className={cn("flex items-center font-bold text-base tracking-tight", collapsed ? "justify-center" : "gap-2")}>
-            <BarChart3 className="h-5 w-5 text-primary shrink-0" />
-            {!collapsed && "Vibe-Trading"}
+        <div className={cn("border-b border-border/60", collapsed ? "p-2 flex justify-center" : "p-4 max-md:p-2 max-md:flex max-md:justify-center")}>
+          <Link
+            to="/"
+            aria-label="Vibe-Trading"
+            className={cn("flex items-center", collapsed ? "justify-center" : "gap-2 max-md:justify-center")}
+          >
+            <BrandMark className="h-6 w-6 shrink-0" />
+            {!collapsed && (
+              <span className="text-[15px] font-semibold tracking-tight max-md:hidden">Vibe-Trading</span>
+            )}
           </Link>
         </div>
 
@@ -128,7 +152,7 @@ export function Layout() {
 
         {/* Sessions — hidden when collapsed */}
         {!collapsed && (
-          <div className="flex-1 overflow-auto border-t mt-2 flex flex-col">
+          <div className="flex-1 overflow-auto border-t border-border/60 mt-2 flex flex-col max-md:hidden">
             <div className="flex items-center justify-between px-4 py-2">
               <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                 <MessageSquare className="h-3.5 w-3.5" />
@@ -139,7 +163,7 @@ export function Layout() {
                 className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 title={t('layout.newChat')}
               >
-                <Plus className="h-3.5 w-3.5" />
+                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
               </Link>
             </div>
 
@@ -198,7 +222,7 @@ export function Layout() {
                         <button onClick={() => setDeleteTarget(null)} className="p-1 text-muted-foreground hover:bg-muted rounded text-[10px]">{t('layout.cancel')}</button>
                       </div>
                     ) : !isRenaming ? (
-                      <div className="absolute right-1 opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
+                      <div className="absolute right-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 flex items-center gap-0.5 transition-opacity">
                         <button
                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); setRenameTarget(s.session_id); setRenameValue(s.title || ""); }}
                           className="p-1 text-muted-foreground hover:text-foreground rounded"
@@ -226,7 +250,7 @@ export function Layout() {
         {collapsed && <div className="flex-1" />}
 
         {/* Footer */}
-        <div className={cn("border-t", collapsed ? "p-1 flex flex-col items-center gap-1" : "p-3 space-y-2")}>
+        <div className={cn("mt-auto border-t border-border/60", collapsed ? "p-1 flex flex-col items-center gap-1" : "p-3 space-y-2 max-md:p-1 max-md:flex max-md:flex-col max-md:items-center max-md:gap-1 max-md:space-y-0")}>
           {collapsed ? (
             <>
               <button onClick={toggle} className="p-1.5 text-muted-foreground hover:text-foreground rounded transition-colors" title={dark ? t('layout.light') : t('layout.dark')}>
@@ -238,15 +262,15 @@ export function Layout() {
             </>
           ) : (
             <>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between max-md:flex-col">
                 <button
                   onClick={toggle}
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  className="flex items-center gap-1.5 p-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   {dark ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
                   {dark ? t('layout.light') : t('layout.dark')}
                 </button>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 max-md:hidden">
                   <button
                     onClick={() => setCollapsed(true)}
                     className="p-1 text-muted-foreground hover:text-foreground rounded transition-colors"
@@ -266,7 +290,7 @@ export function Layout() {
       </aside>
 
       {/* Main */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="relative flex-1 flex flex-col overflow-hidden">
         <ConnectionBanner status={sseStatus} retryAttempt={sseRetryAttempt} />
         <PredictionRunningBanner pathname={pathname} />
         <main className="flex-1 overflow-auto">

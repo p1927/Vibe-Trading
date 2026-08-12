@@ -51,8 +51,10 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from copy import deepcopy
+from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 # Ensure agent/ is on sys.path
 AGENT_DIR = Path(__file__).resolve().parent
@@ -1250,7 +1252,7 @@ def _cap_rows(records: list, max_rows: int) -> list | dict[str, object]:
 
 @mcp.tool
 def get_market_data(
-    codes: list[str],
+    codes: _lenient_str_list,
     start_date: str,
     end_date: str,
     source: str = "auto",
@@ -1260,7 +1262,8 @@ def get_market_data(
     """Fetch OHLCV market data for stocks, crypto, or mixed symbols.
 
     Supported sources:
-    - "yfinance": HK/US equities (free, e.g. AAPL.US, 700.HK)
+    - "yfinance" / "yahoo": HK/US/Canada equities (free, e.g. AAPL.US,
+      700.HK, TD.TO, PNG.V)
     - "okx": cryptocurrency (free, e.g. BTC-USDT, ETH-USDT)
     - "tushare": China A-shares (requires TUSHARE_TOKEN, e.g. 000001.SZ)
     - "baostock": China A-shares via TCP protocol, bypasses HTTP CDN blocks (e.g. 000001.SZ, 601595.SH)
@@ -1271,7 +1274,7 @@ def get_market_data(
     - "auto": auto-detect based on symbol format (with fallback)
 
     Args:
-        codes: List of symbols (e.g. ["AAPL.US", "BTC-USDT", "000001.SZ"]).
+        codes: List of symbols (e.g. ["AAPL.US", "TD.TO", "BTC-USDT", "000001.SZ"]).
         start_date: Start date (YYYY-MM-DD).
         end_date: End date (YYYY-MM-DD).
         source: Data source ("auto", "yfinance", "okx", "tushare", "baostock", "tencent", "akshare", "ccxt").

@@ -1071,7 +1071,12 @@ def _fetch_auto(codes: List[str], config: dict, interval: str = "1D") -> dict:
 
     Args:
         codes: All symbols.
-        config: Backtest config dict.
+        config: Backtest config dict. On success the loaders that actually
+            returned rows are recorded under the private key
+            ``_actual_sources`` so the caller can report true provenance
+            instead of the symbol-pattern guess (``_group_codes_by_source``
+            names the *head* of each chain, which lies whenever that head is an
+            optional package that is not installed).
         interval: Bar interval string.
 
     Returns:
@@ -1079,6 +1084,7 @@ def _fetch_auto(codes: List[str], config: dict, interval: str = "1D") -> dict:
     """
     market_groups = _group_codes_by_market(codes)
     merged = {}
+    served_by: set[str] = set()
     start_date = config.get("start_date", "")
     end_date = config.get("end_date", "")
 
@@ -1135,6 +1141,53 @@ def _fetch_auto(codes: List[str], config: dict, interval: str = "1D") -> dict:
             )
         merged.update(market_result)
 
+        src_name = getattr(loader, "name", "unknown")
+        normalized_codes = _normalize_codes(market_codes, src_name)
+        fields = config.get("extra_fields") if src_name == "tushare" else None
+        result = loader.fetch(
+            normalized_codes,
+            start_date,
+            end_date,
+            fields=fields,
+            interval=interval,
+        )
+        market_result = _restore_original_codes(
+            result, market_codes, normalized_codes
+        )
+        if market_result:
+            served_by.add(src_name)
+        missing = [code for code in market_codes if code not in market_result]
+
+        # Retry only missing symbols so a partial primary response does not
+        # silently shrink the requested universe or refetch successful data.
+        for fb_name in FALLBACK_CHAINS.get(market, []):
+            if not missing:
+                break
+            if fb_name == src_name or fb_name not in LOADER_REGISTRY:
+                continue
+            fb_loader = LOADER_REGISTRY[fb_name]()
+            if not fb_loader.is_available():
+                continue
+            fb_codes = _normalize_codes(missing, fb_name)
+            fallback_result = fb_loader.fetch(
+                fb_codes, start_date, end_date, interval=interval
+            )
+            mapped = _restore_original_codes(fallback_result, missing, fb_codes)
+            if mapped:
+                market_result.update(mapped)
+                missing = [code for code in missing if code not in mapped]
+                served_by.add(str(getattr(fb_loader, "name", fb_name) or fb_name))
+                logger.info(
+                    "Runtime fallback: %s -> %s for %s", src_name, fb_name, market
+                )
+
+        if missing:
+            raise NoAvailableSourceError(
+                f"incomplete data for {market}; missing symbols: {missing}"
+            )
+        merged.update(market_result)
+
+    config["_actual_sources"] = sorted(served_by)
     return merged
 
 

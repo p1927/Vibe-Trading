@@ -87,6 +87,72 @@ async function errorFromResponse(res: Response): Promise<ApiError> {
   return new ApiError(formatApiDetail(detail), res.status, detail);
 }
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+const AUTH_REQUIRED_MESSAGE_KEY = "agent.authRequired";
+
+function getAuthRequiredMessage(): string {
+  return i18n.t(AUTH_REQUIRED_MESSAGE_KEY as never);
+}
+
+// Keep the existing string export compatible with consumers while updating its
+// live ES-module binding whenever the active locale changes.
+export let AUTH_REQUIRED_MESSAGE = getAuthRequiredMessage();
+i18n.on("languageChanged", () => {
+  AUTH_REQUIRED_MESSAGE = getAuthRequiredMessage();
+});
+
+export function isAuthRequiredError(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403);
+}
+
+export interface CorrelationResponse {
+  labels: string[];
+  matrix: number[][];
+}
+
+export interface RegimeEpisode {
+  start: string;
+  end: string | null;
+}
+
+export interface CorrelationRegimeResponse {
+  labels: string[];
+  dates: string[];
+  density: (number | null)[];
+  smoothed: (number | null)[];
+  fused: number[];
+  episodes: RegimeEpisode[];
+  params: {
+    days: number;
+    corr_window: number;
+    edge_threshold: number;
+    smooth_window: number;
+    enter_threshold: number;
+    exit_threshold: number;
+  };
+}
+
+async function errorFromResponse(res: Response): Promise<ApiError> {
+  let detail = `HTTP ${res.status}`;
+  try {
+    const body = await res.json();
+    detail = body.detail || body.message || detail;
+  } catch { /* ignore */ }
+  if (res.status === 401 || res.status === 403) {
+    detail = getAuthRequiredMessage();
+  }
+  return new ApiError(detail, res.status);
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const { headers, ...rest } = options ?? {};
   const mergedHeaders: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
@@ -496,6 +562,16 @@ export const api = {
   createSession: (title?: string) => request<SessionItem>("/sessions", { method: "POST", body: JSON.stringify({ title: title || "" }) }),
   deleteSession: (sid: string) => request<{ status: string }>(`/sessions/${sid}`, { method: "DELETE" }),
   renameSession: (sid: string, title: string) => request<{ status: string }>(`/sessions/${sid}`, { method: "PATCH", body: JSON.stringify({ title }) }),
+  // Codex-style LLM summary title from the first exchange; backend refuses to
+  // overwrite a manual rename, so this is safe to fire-and-forget.
+  autoTitleSession: (sid: string) => request<{ status: string; title: string }>(`/sessions/${sid}/title/auto`, { method: "POST" }),
+  // Scheduled research: cadence + timezone are stored as authored (local
+  // wall-clock cron + IANA key), so list rows render without any UTC math.
+  listScheduledRuns: (signal?: AbortSignal) => request<ScheduledRun[]>("/scheduled-runs", { signal }),
+  createScheduledRun: (body: CreateScheduledRunRequest) =>
+    request<ScheduledRun>("/scheduled-runs", { method: "POST", body: JSON.stringify(body) }),
+  deleteScheduledRun: (id: string) =>
+    request<void>(`/scheduled-runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
   sendMessage: (sid: string, content: string) => request<{ message_id: string; attempt_id: string }>(`/sessions/${sid}/messages`, { method: "POST", body: JSON.stringify({ content }) }),
   cancelSession: (sid: string) => request<{ status: string }>(`/sessions/${sid}/cancel`, { method: "POST" }),
   getSessionMessages: (sid: string) => request<MessageItem[]>(`/sessions/${sid}/messages`),
@@ -1088,6 +1164,31 @@ export const api = {
       { method: "POST" },
     ),
 };
+
+// --- Scheduled research types ---
+
+export interface ScheduledRun {
+  id: string;
+  prompt: string;
+  schedule: string;
+  next_run_at: number;
+  status: string;
+  created_at: number;
+  last_run_at: number | null;
+  consecutive_failures: number;
+  last_error: string | null;
+  failure_kind: string | null;
+  config: Record<string, unknown>;
+  timezone: string | null;
+}
+
+export interface CreateScheduledRunRequest {
+  id?: string;
+  prompt: string;
+  schedule: string;
+  timezone?: string | null;
+  config?: Record<string, unknown>;
+}
 
 // --- Swarm types ---
 
@@ -4199,4 +4300,15 @@ export interface MessageItem {
   created_at: string;
   linked_attempt_id?: string;
   metadata?: Record<string, unknown>;
+  tool_trail?: ToolTrailItem[];
+}
+
+export interface ToolTrailItem {
+  tool: string;
+  status: "running" | "ok" | "error";
+  arguments?: Record<string, string>;
+  elapsed_ms?: number;
+  preview?: string;
+  call_id?: string;
+  timestamp?: number;
 }

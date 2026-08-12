@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from src.agent.context import ContextBuilder
+from src.agent.grounding import GroundingLedger
 from src.agent.memory import WorkspaceMemory
 from src.agent.progress import HeartbeatTimer, ProgressEvent, _set_emitter
 from src.agent.tools import ToolRegistry
@@ -675,6 +676,20 @@ class AgentLoop:
         """
         self.registry = registry
         self.llm = llm
+        runtime_snapshot = getattr(llm, "runtime_snapshot", None)
+        if not isinstance(runtime_snapshot, LLMRuntimeSnapshot):
+            runtime_cfg = get_env_config().llm
+            runtime_snapshot = LLMRuntimeSnapshot(
+                provider=runtime_cfg.langchain_provider.strip().lower() or "openai",
+                configured_model=(
+                    getattr(llm, "model_name", None)
+                    or runtime_cfg.langchain_model_name
+                ).strip(),
+                reasoning_effort=(
+                    runtime_cfg.langchain_reasoning_effort.strip().lower()
+                ),
+            )
+        self._llm_runtime = runtime_snapshot
         self.memory = memory or WorkspaceMemory()
         self._event_callback = event_callback
         self.max_iterations = max_iterations
@@ -743,6 +758,11 @@ class AgentLoop:
             self.memory.run_dir = str(run_dir)
 
         state_store.save_request(run_dir, user_message, {"session_id": session_id})
+        self._grounding = GroundingLedger(
+            run_dir=run_dir,
+            user_message=user_message,
+            history=history,
+        )
 
         context = ContextBuilder(
             self.registry,

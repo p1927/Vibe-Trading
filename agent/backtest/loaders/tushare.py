@@ -79,10 +79,10 @@ class DataLoader:
         interval: str = "1D",
         fields: Optional[List[str]] = None,
     ) -> Dict[str, pd.DataFrame]:
-        """Fetch A-share bars via Tushare API.
+        """Fetch A-share / HK equity bars via Tushare API.
 
         Args:
-            codes: Stock codes (e.g. ``000001.SZ``).
+            codes: Stock codes (e.g. ``000001.SZ``, ``00700.HK``).
             start_date: Start date (YYYY-MM-DD).
             end_date: End date (YYYY-MM-DD).
             fields: Extra fundamental columns (daily only).

@@ -84,6 +84,7 @@ Self-check after writing `signal_engine.py`:
 - 6-digit China A-share codes → automatically append suffix: codes starting with `600/601/603` → `.SH`, all others → `.SZ`
 - US stocks: uppercase letters + `.US`, such as `AAPL.US` (`yfinance` converts automatically)
 - Hong Kong stocks: digits + `.HK`, such as `700.HK` (`yfinance` converts automatically)
+- Canadian stocks: Yahoo ticker + `.TO` for TSX or `.V` for TSXV, such as `TD.TO` or `PNG.V`
 - Cryptocurrencies: `BTC-USDT` format (OKX spot pairs, **must use the hyphen `-`, not slash `/`**)
   - The user may write `BTC/USDT`, but `config.json` must use `"BTC-USDT"`
 
@@ -102,6 +103,7 @@ Self-check after writing `signal_engine.py`:
 | `^\d{6}\.(SZ\|SH\|BJ)$` | China A-shares | tushare | `extra_fields`: pe, pb, pe_ttm, ps_ttm, dv_ttm, total_mv, circ_mv, roe; `fundamental_fields`: income/balancesheet/cashflow/fina_indicator |
 | `^[A-Z]+\.US$` | US stocks | yfinance | - |
 | `^\d{3,5}\.HK$` | Hong Kong stocks | yfinance | - |
+| `^[A-Z0-9&.-]+\.(TO\|V)$` | Canadian stocks (TSX / TSXV) | yahoo / yfinance | - |
 | `^[A-Z]+-USDT$` | Cryptocurrency | okx | - |
 
 **`extra_fields` selection logic**: only China A-shares (`tushare`) support daily valuation fields. If the strategy needs `PE/PB/ROE` and similar daily_basic fields, specify them in `config.json.extra_fields` and `DataLoader` will retrieve them automatically. Hong Kong stocks, US stocks, and crypto do not support `extra_fields`.
@@ -139,6 +141,7 @@ Self-check after writing `signal_engine.py`:
 - `optimizer`: optional, one of `"equal_volatility"` / `"risk_parity"` / `"mean_variance"` / `"max_diversification"` / `"turnover_aware"` / `null` (equal-weight by default)
 - `optimizer_params`: optimizer parameters, such as `{"lookback": 60}`. `mean_variance` additionally supports `{"risk_free": 0.0}`; `turnover_aware` supports `{"risk_aversion": 1.0, "turnover_penalty": 0.5}` (L1 penalty on weight changes; tune to data frequency)
 - `engine`: backtest engine, default `"daily"`. For options strategies, set `"options"` (requires `OptionsSignalEngine`)
+- `position_adjustment`: `"hold"` (default) preserves an open same-direction position until close/reversal; opt in to `"rebalance"` to scale or reduce it toward each target weight using market fills and weighted-average entry accounting
 - `initial_cash`: default 1,000,000
 - `commission`: default 0.1%
 - `validation`: optional statistical validation after backtest completes. Omit to skip. Example:
