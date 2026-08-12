@@ -60,6 +60,16 @@ def _taskkill_windows_process_tree(process: subprocess.Popen[str]) -> None:
             process.kill()
 
 
+def _force_stop_process_tree(process: subprocess.Popen[str]) -> None:
+    """Force-stop one tracked process tree without draining its pipes."""
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        _taskkill_windows_process_tree(process)
+    else:
+        _signal_posix_process_group(process, signal.SIGKILL)
+
+
 def _terminate_process_tree(process: subprocess.Popen[str]) -> tuple[str, str]:
     """Terminate a timed-out process tree, drain its pipes, and reap its root."""
     if os.name == "nt":
@@ -114,20 +124,37 @@ class BackgroundManager:
             )
 
         task_id = uuid.uuid4().hex[:8]
-        self.tasks[task_id] = {
-            "status": "running",
-            "result": None,
-            "command": command,
-            "exit_code": None,
-        }
+        started_at = time.monotonic()
+        with self._lock:
+            self.tasks[task_id] = {
+                "status": "running",
+                "result": None,
+                "command": command,
+                "exit_code": None,
+                "process": None,
+                "cancel_requested": False,
+                "started_at": started_at,
+            }
         threading.Thread(target=self._execute, args=(task_id, command), daemon=True).start()
         return json.dumps({"status": "ok", "task_id": task_id, "message": f"Started: {command[:80]}"})
 
     def _execute(self, task_id: str, command: str) -> None:
         exit_code: int | None = None
         process: subprocess.Popen[str] | None = None
+        output = ""
+        status = "error"
         try:
             process = _start_process(command)
+            with self._lock:
+                task = self.tasks.get(task_id)
+                if task is None:
+                    _force_stop_process_tree(process)
+                    return
+                task["process"] = process
+                cancel_requested = bool(task.get("cancel_requested"))
+            if cancel_requested:
+                _force_stop_process_tree(process)
+
             try:
                 stdout, stderr = process.communicate(timeout=_COMMAND_TIMEOUT_SECONDS)
                 output = _combined_output(stdout, stderr)
@@ -247,10 +274,36 @@ class BackgroundManager:
             t = task
             if not t:
                 return json.dumps({"status": "error", "error": f"Unknown task {task_id}"})
-            return json.dumps({"status": t["status"], "command": t["command"][:60],
-                                "result": t.get("result") or "(running)",
-                                "exit_code": t.get("exit_code")}, ensure_ascii=False)
-        lines = [f"{tid}: [{t['status']}] {t['command'][:60]}" for tid, t in self.tasks.items()]
+            status = t["status"]
+            result = t.get("result")
+            payload = {
+                "status": status,
+                "command": t["command"][:60],
+                "result": result or "(running)",
+                "exit_code": t.get("exit_code"),
+            }
+            started_at = t.get("started_at")
+            if isinstance(started_at, (int, float)):
+                duration = t.get("duration_seconds")
+                if not isinstance(duration, (int, float)):
+                    duration = max(0.0, time.monotonic() - started_at)
+                elapsed = round(duration, 1)
+                payload["elapsed_seconds"] = elapsed
+                payload["timeout_seconds"] = _COMMAND_TIMEOUT_SECONDS
+                if status in {"running", "cancelling"}:
+                    remaining = max(0.0, _COMMAND_TIMEOUT_SECONDS - duration)
+                    payload["timeout_remaining_seconds"] = round(remaining, 1)
+                    if not result:
+                        payload["result"] = (
+                            f"({status} for {elapsed:g}s; automatic timeout "
+                            f"after {_COMMAND_TIMEOUT_SECONDS:g}s; use "
+                            "cancel_background(task_id) to stop safely)"
+                        )
+            return json.dumps(payload, ensure_ascii=False)
+        lines = [
+            f"{tid}: [{status}] {command[:60]}"
+            for tid, status, command in task_summaries
+        ]
         return "\n".join(lines) if lines else "No background tasks."
 
     def drain_notifications(self) -> List[dict]:

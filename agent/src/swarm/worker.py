@@ -18,6 +18,7 @@ from src.agent.context import ContextBuilder
 from src.agent.progress import HeartbeatTimer
 from src.agent.skills import SkillsLoader
 from src.agent.tools import ToolRegistry
+from src.config.limits import TOOL_RESULT_LIMIT
 from src.config.schema import AgentConfig
 from src.providers.chat import ChatLLM, LLMResponse, ProviderStreamError
 from src.providers.content_filter import (
@@ -33,7 +34,7 @@ from src.swarm.models import (
 )
 from src.tools import build_swarm_registry
 from src.tools.mcp import MCPRemoteTool
-from src.tools.redaction import is_sensitive_arg, redact_payload
+from src.tools.redaction import is_sensitive_arg, redact_payload, redact_tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -510,7 +511,7 @@ def run_worker(
     ]
 
     # 6. ReAct loop
-    artifact_dir = run_dir / "artifacts" / agent_id
+    artifact_dir = agent_artifact_dir(run_dir, agent_id)
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
     t0 = time.monotonic()
@@ -790,6 +791,7 @@ def run_worker(
             _emit(
                 event_callback, "tool_call", agent_id, task_id,
                 {"tool": tc.name, "iteration": iteration,
+                 "call_id": tc.id,
                  "arguments": _preview_tool_arguments(tc.arguments),
                  **mcp_meta},
             )
@@ -826,6 +828,7 @@ def run_worker(
                 task_id,
                 {
                     "tool": tc.name,
+                    "call_id": tc.id,
                     "elapsed_ms": int(tc_elapsed * 1000),
                     "status": "error" if result_is_error else "ok",
                     "iteration": iteration,
@@ -925,12 +928,13 @@ def _preview_tool_arguments(arguments: dict) -> dict[str, str]:
 
 
 def _preview_tool_result(result: str) -> str:
-    """Return a short, redacted result preview for streamed events."""
-    try:
-        parsed = json.loads(result)
-    except (TypeError, ValueError):
-        return _truncate_preview(result)
-    return _truncate_preview(redact_payload(parsed))
+    """Return a short, redacted result preview for streamed events.
+
+    Delegates to the shared :func:`redact_tool_result` choke point so a
+    plain-text result is pattern-scrubbed instead of streamed raw (a JSON
+    result was already scrubbed by key).
+    """
+    return _truncate_preview(redact_tool_result(result))
 
 
 def _truncate_preview(value: Any, *, limit: int = 200) -> str:
@@ -987,6 +991,9 @@ def _is_error_result(result: str) -> bool:
     """Did a tool call return a top-level error envelope?
 
     Parses the result as JSON and checks for a top-level ``status == "error"``.
+    Also treats ``ok`` / ``success`` explicitly set to ``False`` as an error,
+    since some tools (e.g. ``get_stock_news``) report failure only through
+    those fields, with no ``status`` key at all.
     A nested ``status`` (e.g. inside ``data``) is intentionally ignored — only
     the envelope matters for the deliverable contract.
 
@@ -1004,7 +1011,11 @@ def _is_error_result(result: str) -> bool:
         # never raise from a classifier on the worker hot path.
         head = text[:160].lower()
         return '"status": "error"' in head or '"status":"error"' in head
-    return isinstance(parsed, dict) and parsed.get("status") == "error"
+    if not isinstance(parsed, dict):
+        return False
+    if parsed.get("status") == "error":
+        return True
+    return parsed.get("ok") is False or parsed.get("success") is False
 
 
 def _classify_deliverable(
@@ -1029,8 +1040,10 @@ def _classify_deliverable(
         return "unparsed tool-call markup (provider did not parse tool calls)"
     if any(m in low for m in _FABRICATION_MARKERS):
         return "explicitly fabricated / mock data"
-    if text.startswith("{") and '"status"' in text[:40] and (
-        '"content"' in text[:300] or '"ok"' in text[:40]
+    if text.startswith("{") and (
+        ('"status"' in text[:40] and ('"content"' in text[:300] or '"ok"' in text[:40]))
+        or '"ok"' in text[:40]
+        or '"success"' in text[:40]
     ):
         return "raw tool-result envelope, not analysis"
     if low.startswith(_PLAN_PREFIXES):

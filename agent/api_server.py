@@ -8,53 +8,10 @@ infrastructure lives in ``src.api.{security,models,helpers,state}``.
 
 from __future__ import annotations
 
-import os
-import sys
-
-from src.config.bootstrap import bootstrap_environment
-
-bootstrap_environment()
-
-
-def _ensure_prediction_ml_runtime() -> None:
-    try:
-        from trade_integrations.ml_runtime_env import prepare_yfinance_runtime
-
-        prepare_yfinance_runtime()
-    except Exception:
-        pass
-
-
-def _require_prediction_ml_runtime() -> int | None:
-    """Return exit code when prediction ML runtime is not ready."""
-    try:
-        from trade_integrations.ml_runtime_env import (
-            ml_runtime_env,
-            prepare_yfinance_runtime,
-            verify_prediction_ml,
-        )
-
-        ok, message = verify_prediction_ml()
-        if ok:
-            for key, value in ml_runtime_env().items():
-                if key.startswith(("DYLD_", "LIBOMP_", "YF_")):
-                    os.environ[key] = value
-            prepare_yfinance_runtime()
-            return None
-        print(f"[stack] prediction ML runtime not ready: {message}", file=sys.stderr)
-        print("[stack] run: ./scripts/ensure_prediction_ml.sh", file=sys.stderr)
-        return 1
-    except Exception as exc:
-        print(f"[stack] prediction ML runtime check failed: {exc}", file=sys.stderr)
-        return 1
-
-
-_ensure_prediction_ml_runtime()
-
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, AsyncIterator, Dict
 
 from fastapi import FastAPI, HTTPException, Request, status  # noqa: F401
 from fastapi.responses import FileResponse  # noqa: F401
@@ -96,6 +53,7 @@ from src.api.security import (  # noqa: F401, E402
     _mint_sse_ticket,
     _origin_matches_request_host,
     _parse_cors_origins,
+    _parse_extra_cors_origins,
     _parse_extra_loopback_hosts,
     _redact_query_secrets,
     _reject_cross_site_browser_request,
@@ -265,16 +223,13 @@ async def _app_lifespan(app: FastAPI):
         await _stop_scheduled_research_executor()
 
 
-# ============================================================================
-# FastAPI Application
-# ============================================================================
-
 app = FastAPI(
     title="Vibe-Trading API",
     description="Vibe-Trading API: natural-language finance research, backtesting, and swarm workflows",
     version=APP_VERSION,
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url=None,  # docs/redoc/openapi re-registered behind require_auth
+    redoc_url=None,  # in register_system_routes -- see the rationale there
+    openapi_url=None,
     lifespan=_app_lifespan,
 )
 
@@ -289,8 +244,18 @@ app.middleware("http")(_reject_untrusted_loopback_host)
 app.middleware("http")(_spa_html_deep_link_fallback)
 app.middleware("http")(_apply_security_headers)
 
+# Middleware functions are defined in src.api.security / src.api.helpers, so
+# the @app.middleware("http") decorator cannot be used here — register them
+# programmatically instead.
+app.middleware("http")(_reject_untrusted_loopback_host)
+app.middleware("http")(_spa_html_deep_link_fallback)
+app.middleware("http")(_apply_security_headers)
+app.middleware("http")(runtime_activity_middleware)
 
+
+# ============================================================================
 # Route registration + re-exports
+# ============================================================================
 
 # --- Runs ---
 from src.api.runs_routes import register_runs_routes  # noqa: E402
@@ -400,59 +365,6 @@ register_auth_routes(app)
 from src.openbb_bridge import try_register_openbb_routes  # noqa: E402  # OPENBB-WORKSPACE-INTEGRATION
 try_register_openbb_routes(app)
 
-# Middleware functions are defined in src.api.security / src.api.helpers, so
-# the @app.middleware("http") decorator cannot be used here — register them
-# programmatically instead.
-app.middleware("http")(_reject_untrusted_loopback_host)
-app.middleware("http")(_spa_html_deep_link_fallback)
-app.middleware("http")(_apply_security_headers)
-app.middleware("http")(runtime_activity_middleware)
-
-
-# ============================================================================
-# Route registration + re-exports
-# ============================================================================
-
-# --- Runs ---
-from src.api.runs_routes import register_runs_routes  # noqa: E402
-register_runs_routes(app)
-
-from src.api.runs_routes import (  # noqa: F401, E402
-    _load_json_file,
-    _load_csv_to_dict,
-    _build_response_from_run_dir,
-)
-
-# --- Sessions ---
-from src.api.sessions_routes import register_sessions_routes  # noqa: E402
-register_sessions_routes(app)
-
-from src.api.sessions_routes import (  # noqa: F401, E402
-    _goal_store,
-    _live_action_frame_from_tool_result,
-    _mandate_proposal_frame_from_tool_result,
-)
-
-# --- System ---
-from src.api.system_routes import register_system_routes  # noqa: E402
-register_system_routes(app)
-
-from src.api.system_routes import _terminate_current_process  # noqa: F401, E402
-
-# --- Settings ---
-from src.api.settings_routes import register_settings_routes  # noqa: E402
-register_settings_routes(app)
-
-from src.api.settings_routes import (  # noqa: F401, E402
-    _baostock_supported,
-    _baostock_installed,
-    _load_llm_providers,
-)
-
-# --- Uploads ---
-from src.api.uploads_routes import register_uploads_routes  # noqa: E402
-register_uploads_routes(app)
-
 from src.api.uploads_routes import (  # noqa: F401, E402
     MAX_UPLOAD_SIZE,
     _BLOCKED_UPLOAD_EXT,
@@ -533,7 +445,9 @@ from src.api.scheduled_routes import register_scheduled_routes  # noqa: E402
 register_scheduled_routes(app)
 
 from src.api.scheduled_routes import (  # noqa: E402, F401
+    CreateRunFromPlaybookRequest,
     CreateScheduledRunRequest,
+    PlaybookResponse,
     ScheduledRunResponse,
     _dispatch_scheduled_research_job,
     _get_scheduled_research_executor,
@@ -557,7 +471,19 @@ def serve_main(argv: list[str] | None = None) -> int:
     import argparse
     import subprocess
     import uvicorn
-    from src.api.helpers import SPAStaticFiles
+    from fastapi.staticfiles import StaticFiles
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+
+    class SPAStaticFiles(StaticFiles):
+        """Serve index.html for browser refreshes on client-side routes."""
+
+        async def get_response(self, path: str, scope: Dict[str, Any]):
+            try:
+                return await super().get_response(path, scope)
+            except StarletteHTTPException as exc:
+                if exc.status_code != status.HTTP_404_NOT_FOUND:
+                    raise
+                return await super().get_response("index.html", scope)
 
     parser = argparse.ArgumentParser(description="Vibe-Trading Server")
     parser.add_argument("--port", type=int, default=8000, help="Listen port (default 8000)")

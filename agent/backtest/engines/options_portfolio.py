@@ -26,93 +26,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-
-# --- Black-Scholes pricing ---
-
-
-def bs_price(S: float, K: float, T: float, r: float, sigma: float,
-             option_type: str = "call") -> float:
-    """Black-Scholes European option pricing.
-
-    Args:
-        S: Underlying spot price.
-        K: Strike price.
-        T: Time to expiry in years.
-        r: Risk-free rate (annualised).
-        sigma: Annualised volatility.
-        option_type: Option type, "call" or "put".
-
-    Returns:
-        Theoretical option price.
-
-    Example:
-        >>> round(bs_price(100, 100, 1.0, 0.05, 0.2, "call"), 2)
-        10.45
-    """
-    # Non-positive S/K makes log(S/K) undefined; reuse the intrinsic fallback
-    # (iv_smile_adjustment already soft-guards non-positive S/K).
-    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
-        if option_type == "call":
-            return max(S - K, 0.0)
-        return max(K - S, 0.0)
-
-    d1 = (np.log(S / K) + (r + sigma ** 2 / 2) * T) / (sigma * np.sqrt(T))
-    d2 = d1 - sigma * np.sqrt(T)
-
-    if option_type == "call":
-        return float(S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2))
-    return float(K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1))
-
-
-# --- Greeks ---
-
-
-def bs_greeks(S: float, K: float, T: float, r: float, sigma: float,
-              option_type: str = "call") -> Dict[str, float]:
-    """Calculate Black-Scholes Greeks.
-
-    Args:
-        S: Underlying spot price.
-        K: Strike price.
-        T: Time to expiry in years.
-        r: Risk-free rate (annualised).
-        sigma: Annualised volatility.
-        option_type: Option type, "call" or "put".
-
-    Returns:
-        Dict containing delta, gamma, theta, vega.
-    """
-    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
-        intrinsic_call = 1.0 if S > K else 0.0
-        delta = intrinsic_call if option_type == "call" else intrinsic_call - 1.0
-        return {"delta": delta, "gamma": 0.0, "theta": 0.0, "vega": 0.0}
-
-    sqrt_T = np.sqrt(T)
-    d1 = (np.log(S / K) + (r + sigma ** 2 / 2) * T) / (sigma * sqrt_T)
-    d2 = d1 - sigma * sqrt_T
-    nd1_pdf = float(norm.pdf(d1))
-
-    # Delta
-    if option_type == "call":
-        delta = float(norm.cdf(d1))
-    else:
-        delta = float(norm.cdf(d1) - 1.0)
-
-    # Gamma (same for call and put)
-    gamma = float(nd1_pdf / (S * sigma * sqrt_T))
-
-    # Theta (daily)
-    theta_common = -(S * nd1_pdf * sigma) / (2 * sqrt_T)
-    if option_type == "call":
-        theta = theta_common - r * K * np.exp(-r * T) * norm.cdf(d2)
-    else:
-        theta = theta_common + r * K * np.exp(-r * T) * norm.cdf(-d2)
-    theta = float(theta / 365.0)  # convert to daily
-
-    # Vega (per 1% change in volatility)
-    vega = float(S * nd1_pdf * sqrt_T / 100.0)
-
-    return {"delta": delta, "gamma": gamma, "theta": theta, "vega": vega}
+from src.quantlib.options import bs_greeks, bs_price, normalise_option_type
 
 
 # --- Historical volatility ---
@@ -131,6 +45,57 @@ def historical_volatility(close: pd.Series, window: int = 30) -> pd.Series:
     log_ret = np.log(close / close.shift(1))
     hv = log_ret.rolling(window=window).std() * np.sqrt(252)
     return hv.fillna(hv.dropna().iloc[0] if len(hv.dropna()) > 0 else 0.3)
+
+
+# --- IV Smile model (v2) ---
+
+
+def iv_smile_adjustment(S: float, K: float, base_iv: float,
+                        skew: float = -0.15, curvature: float = 0.05) -> float:
+    """Adjust IV for moneyness using a quadratic smile model.
+
+    IV(K) = base_iv + skew * log(K/S) + curvature * log(K/S)^2
+
+    Args:
+        S: Spot price.
+        K: Strike price.
+        base_iv: At-the-money implied volatility.
+        skew: Slope of the smile (negative = put skew). Default -0.15.
+        curvature: Curvature of the smile (always positive). Default 0.05.
+
+    Returns:
+        Adjusted implied volatility, floored at 0.01.
+    """
+    if S <= 0 or K <= 0:
+        return max(base_iv, 0.01)
+    log_moneyness = np.log(K / S)
+    adj = base_iv + skew * log_moneyness + curvature * log_moneyness ** 2
+    return max(adj, 0.01)
+
+
+def leg_iv(S: float, K: float, base_iv: float, skew: float, curvature: float) -> float:
+    """Return the implied vol a single leg is priced at.
+
+    Every site that prices a leg must go through this — opening, marking to
+    market, Greeks, and the American continuation value. Opening a leg on the
+    smile and marking it at flat at-the-money vol books a fictitious profit the
+    instant the position exists: on a 30-day 10%-OTM call at ``skew=-0.15`` the
+    gap is +16.7% of premium, and +93.0% at 20% OTM, which then contaminates
+    Sharpe, Calmar and drawdown.
+
+    Args:
+        S: Spot price.
+        K: Strike price.
+        base_iv: At-the-money implied volatility.
+        skew: Slope of the smile; ``0`` with ``curvature`` disables the smile.
+        curvature: Curvature of the smile.
+
+    Returns:
+        The leg's implied volatility.
+    """
+    if skew == 0 and curvature == 0:
+        return base_iv
+    return iv_smile_adjustment(S, K, base_iv, skew, curvature)
 
 
 # --- IV Smile model (v2) ---
@@ -336,7 +301,10 @@ def run_options_backtest(
                 if T_ex <= 0:
                     continue
                 intrinsic = pos.intrinsic_value(spot)
-                continuation = bs_price(spot, pos.strike, T_ex, risk_free_rate, iv_val_ex, pos.option_type)
+                # The continuation value must use the same vol the leg is
+                # marked at, or early exercise triggers off a mispriced hold.
+                iv_ex = leg_iv(spot, pos.strike, iv_val_ex, iv_skew, iv_curvature)
+                continuation = bs_price(spot, pos.strike, T_ex, risk_free_rate, iv_ex, pos.option_type)
                 if intrinsic > 0 and intrinsic > continuation * 1.02:
                     # Early exercise is optimal
                     settlement = intrinsic * pos.qty * contract_multiplier
@@ -404,12 +372,7 @@ def run_options_backtest(
                 expiry_ts = pd.Timestamp(expiry)
                 T = max((expiry_ts - ts).days / 365.0, 0.001)
 
-                # Apply IV smile adjustment (v2) if configured
-                adj_iv = iv_val
-                if iv_skew != 0 or iv_curvature != 0:
-                    adj_iv = iv_smile_adjustment(spot, strike, iv_val, iv_skew, iv_curvature)
-
-                # Black-Scholes price (with smile-adjusted IV if enabled)
+                adj_iv = leg_iv(spot, strike, iv_val, iv_skew, iv_curvature)
                 opt_price = bs_price(spot, strike, T, risk_free_rate, adj_iv, leg_type)
 
                 if action == "open":
@@ -750,11 +713,29 @@ def _calc_options_metrics(
         warnings.append("Sortino ratio requires finite returns.")
 
     # Trade statistics
-    closed_pnl = [
-        float(t["pnl"])
-        for t in trades
-        if t.get("pnl", 0) != 0 and np.isfinite(float(t["pnl"]))
-    ]
+    closed_pnl: List[float] = []
+    ignored_pnl_records = 0
+    for t in trades:
+        raw_pnl = t.get("pnl")
+        if raw_pnl is None:
+            ignored_pnl_records += 1
+            continue
+        try:
+            val = float(raw_pnl)
+        except (TypeError, ValueError):
+            ignored_pnl_records += 1
+            continue
+        if not np.isfinite(val):
+            ignored_pnl_records += 1
+            continue
+        if val != 0:
+            closed_pnl.append(val)
+    if ignored_pnl_records:
+        warnings.append(
+            f"Ignored PnL for {ignored_pnl_records} trade records "
+            "(missing or non-numeric pnl); win rate and profit/loss ratio "
+            "are computed from the remaining trades only."
+        )
     wins = [p for p in closed_pnl if p > 0]
     losses = [p for p in closed_pnl if p < 0]
     win_rate = len(wins) / len(closed_pnl) if closed_pnl else 0.0

@@ -106,6 +106,15 @@ class ToolCallRequest:
     extra_content: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class LLMRuntimeSnapshot:
+    """Immutable identity of the model configuration used by one ChatLLM."""
+
+    provider: str
+    configured_model: str
+    reasoning_effort: str
+
+
 @dataclass
 class LLMResponse:
     """LLM response.
@@ -123,6 +132,9 @@ class LLMResponse:
         content_filter_triggered: ``True`` when the provider blocked the
             response via content moderation (e.g. DashScope/Qwen content
             moderation filter, ``finish_reason == "content_filter"``).
+        response_model: Model identifier reported by the provider response,
+            when available. This is authoritative runtime metadata and must
+            not be inferred from the model's natural-language self-report.
     """
 
     content: Optional[str] = None
@@ -131,6 +143,7 @@ class LLMResponse:
     finish_reason: str = "stop"
     usage_metadata: Optional[Dict[str, int]] = None
     content_filter_triggered: bool = False
+    response_model: Optional[str] = None
 
     @property
     def has_tool_calls(self) -> bool:
@@ -433,16 +446,8 @@ class ChatLLM:
                     break
                 chunk_text = _text_content(chunk.content)
                 if chunk_text and on_text_chunk:
-                    text_delta = chunk_text
-                    if think_filter is not None:
-                        visible, reasoning = think_filter.feed(text_delta)
-                        if reasoning and on_reasoning_chunk:
-                            on_reasoning_chunk(reasoning)
-                        text_delta = visible
-                    if not text_delta:
-                        pass
-                    elif possible_dsml_text:
-                        pending_text += text_delta
+                    if possible_dsml_text:
+                        pending_text += chunk_text
                         if _is_possible_dsml_tool_call_prefix(pending_text):
                             pass
                         else:
@@ -450,9 +455,9 @@ class ChatLLM:
                             on_text_chunk(pending_text)
                             pending_text = ""
                     else:
-                        on_text_chunk(text_delta)
+                        on_text_chunk(chunk_text)
                 reasoning = getattr(chunk, "additional_kwargs", {}).get("reasoning_content")
-                if reasoning and on_reasoning_chunk:
+                if reasoning and not chunk.content and on_reasoning_chunk:
                     on_reasoning_chunk(reasoning)
                 accumulated = chunk if accumulated is None else accumulated + chunk
             if accumulated is None:
@@ -541,6 +546,10 @@ class ChatLLM:
             except (TypeError, ValueError):
                 usage = None
         additional_kwargs = getattr(ai_message, "additional_kwargs", {}) or {}
+        response_metadata = getattr(ai_message, "response_metadata", {}) or {}
+        response_model = response_metadata.get("model_name") or response_metadata.get("model")
+        if response_model is not None:
+            response_model = str(response_model).strip() or None
         thought_signatures_by_id, thought_signatures_by_index = (
             ChatLLM._tool_call_thought_signature_maps(ai_message)
         )
@@ -593,20 +602,14 @@ class ChatLLM:
             raw_finish_reason
         )
 
-        content = "" if dsml_tool_calls else ai_message.content
-        reasoning_content = additional_kwargs.get("reasoning_content")
-        if content and get_env_config().llm.langchain_provider.strip().lower() == "minimax":
-            cleaned, embedded = split_minimax_think_blocks(content)
-            content = cleaned
-            reasoning_content = merge_reasoning(reasoning_content, embedded)
-
         return LLMResponse(
-            content=content,
+            content="" if dsml_tool_calls else content,
             tool_calls=tool_calls,
-            reasoning_content=reasoning_content,
+            reasoning_content=additional_kwargs.get("reasoning_content"),
             finish_reason=finish_reason,
             usage_metadata=usage,
             content_filter_triggered=content_filter_triggered,
+            response_model=response_model,
         )
 
 

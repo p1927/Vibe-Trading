@@ -41,7 +41,7 @@ from src.swarm.task_store import (
 )
 from src.tools.mcp import invalidate_mcp_specs_cache
 from src.tools.redaction import redact_internal_paths
-from src.swarm.worker import run_worker
+from src.swarm.worker import agent_artifact_dir, clear_agent_artifacts, run_worker
 
 logger = logging.getLogger(__name__)
 

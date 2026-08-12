@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SUBCLASSES_CACHE: list[type[BaseTool]] | None = None
-_SHELL_TOOL_NAMES = {"bash", "background_run"}
+_SHELL_TOOL_NAMES = {"bash", "background_run", "cancel_background"}
 
 
 def _discover_subclasses() -> list[type[BaseTool]]:
@@ -150,14 +150,8 @@ def build_registry(
             if not cls.check_available():
                 logger.info("Tool %s unavailable, skipping", cls.name)
                 continue
-            if cls is RememberTool:
-                if (session_config or {}).get("e2e_integration_test"):
-                    logger.info("Tool %s disabled for e2e_integration_test session", cls.name)
-                    continue
-                if persistent_memory is not None:
-                    registry.register(cls(memory=persistent_memory))
-                else:
-                    registry.register(cls())
+            if cls is RememberTool and persistent_memory is not None:
+                registry.register(cls(memory=persistent_memory))
             elif cls in session_injected_classes:
                 registry.register(cls(default_session_id=session_id, event_callback=event_callback))
             elif cls is SwarmTool:
