@@ -1813,6 +1813,24 @@ def test_markdown_list_marker_mask_does_not_weaken_contradiction_check(
     assert [issue["value"] for issue in result.issues if issue["code"] == "numeric_claim_conflict"] == [42.0]
 
 
+@pytest.mark.parametrize(
+    "segment",
+    [
+        "买入股数 = 初始资金 × (1 - 单边成本率) / 期初收盘价",
+        "期末市值 = 买入股数 × 期末收盘价 × (1 - fee_rate)",
+        "net proceeds = shares * closing price * (1 - transaction_rate)",
+    ],
+)
+def test_rate_formula_identity_is_not_read_as_a_price(segment: str) -> None:
+    """The identity in ``1 - rate`` is arithmetic, not a one-unit quote."""
+    assert GroundingLedger._numbers_without_dates_or_percent(segment) == []
+
+
+def test_rate_formula_mask_does_not_hide_an_observed_one_unit_quote() -> None:
+    """A genuine price of 1 remains checked outside a rate expression."""
+    assert GroundingLedger._numbers_without_dates_or_percent("closing price = 1 CNY") == [1.0]
+
+
 def test_in_text_decimal_survives_list_marker_mask(
     tmp_path: Path,
 ) -> None:
