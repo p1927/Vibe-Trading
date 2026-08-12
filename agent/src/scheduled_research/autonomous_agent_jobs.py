@@ -17,9 +17,22 @@ JOB_TYPE_WATCH = "autonomous_agent_watch"
 JOB_TYPE_RESEARCH = "autonomous_agent_research"
 JOB_TYPE_QUANT = "autonomous_agent_quant"
 JOB_TYPE_INFRA_HEAL = "autonomous_agent_infra_heal"
-AUTONOMOUS_JOB_TYPES = frozenset({JOB_TYPE_WATCH, JOB_TYPE_RESEARCH, JOB_TYPE_QUANT, JOB_TYPE_INFRA_HEAL})
+JOB_TYPE_NEWS = "autonomous_agent_news"
+JOB_TYPE_STRATEGY_REVIEW = "autonomous_agent_strategy_review"
+AUTONOMOUS_JOB_TYPES = frozenset(
+    {
+        JOB_TYPE_WATCH,
+        JOB_TYPE_RESEARCH,
+        JOB_TYPE_QUANT,
+        JOB_TYPE_INFRA_HEAL,
+        JOB_TYPE_NEWS,
+        JOB_TYPE_STRATEGY_REVIEW,
+    }
+)
 
 _INFRA_HEAL_MS = 60_000
+_NEWS_MS_DEFAULT = 900_000
+_STRATEGY_REVIEW_MS_DEFAULT = 1_800_000
 
 
 def is_autonomous_scheduler_enabled() -> bool:
@@ -89,6 +102,14 @@ def _is_index_agent(agent: dict[str, Any]) -> bool:
 
 def _infra_heal_job_id(agent_id: str) -> str:
     return f"{agent_id}-infra-heal"
+
+
+def _news_job_id(agent_id: str) -> str:
+    return f"{agent_id}-news"
+
+
+def _strategy_review_job_id(agent_id: str) -> str:
+    return f"{agent_id}-strategy-review"
 
 
 def register_infra_heal_job(agent_id: str) -> None:
@@ -201,6 +222,32 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
                 config={"job_type": JOB_TYPE_QUANT, "autonomous_agent_id": agent_id},
             )
         )
+
+    if agent.get("symbols"):
+        news_ms = str(int(schedules.get("news_ms") or _NEWS_MS_DEFAULT))
+        store.upsert(
+            ScheduledResearchJob(
+                id=_news_job_id(agent_id),
+                prompt=f"News materiality tick for {agent.get('name') or agent_id}",
+                schedule=news_ms,
+                next_run_at=now_ms + int(news_ms),
+                status=JobStatus.PENDING,
+                created_at=now_ms,
+                config={"job_type": JOB_TYPE_NEWS, "autonomous_agent_id": agent_id},
+            )
+        )
+        strategy_review_ms = str(int(schedules.get("strategy_review_ms") or _STRATEGY_REVIEW_MS_DEFAULT))
+        store.upsert(
+            ScheduledResearchJob(
+                id=_strategy_review_job_id(agent_id),
+                prompt=f"Strategy review tick for {agent.get('name') or agent_id}",
+                schedule=strategy_review_ms,
+                next_run_at=now_ms + int(strategy_review_ms),
+                status=JobStatus.PENDING,
+                created_at=now_ms,
+                config={"job_type": JOB_TYPE_STRATEGY_REVIEW, "autonomous_agent_id": agent_id},
+            )
+        )
     logger.info("registered autonomous jobs for %s", agent_id)
 
 
@@ -214,6 +261,8 @@ def unregister_agent_jobs(agent_id: str) -> dict[str, bool]:
         research_id: store.delete(research_id),
         quant_id: store.delete(quant_id),
         _infra_heal_job_id(agent_id): store.delete(_infra_heal_job_id(agent_id)),
+        _news_job_id(agent_id): store.delete(_news_job_id(agent_id)),
+        _strategy_review_job_id(agent_id): store.delete(_strategy_review_job_id(agent_id)),
     }
 
 
@@ -268,6 +317,16 @@ async def dispatch_autonomous_job(job: ScheduledResearchJob) -> None:
         from trade_integrations.monitor.quant_monitor import run_quant_monitor_tick
 
         await asyncio.to_thread(run_quant_monitor_tick, agent_id)
+        return
+    if job_type == JOB_TYPE_NEWS:
+        from trade_integrations.autonomous_agents.news_monitor import run_news_monitor_tick
+
+        await asyncio.to_thread(run_news_monitor_tick, agent_id)
+        return
+    if job_type == JOB_TYPE_STRATEGY_REVIEW:
+        from trade_integrations.autonomous_agents.strategy_review import run_strategy_review_tick
+
+        await asyncio.to_thread(run_strategy_review_tick, agent_id)
         return
     if job_type == JOB_TYPE_RESEARCH:
         import os
