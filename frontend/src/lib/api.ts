@@ -1,5 +1,6 @@
 import { authHeaders, withAuthTicket } from "@/lib/apiAuth";
 import { resolveApiBase } from "@/lib/apiBase";
+import i18n from "@/i18n";
 
 const BASE = resolveApiBase();
 
@@ -39,62 +40,6 @@ function formatApiDetail(detail: unknown): string {
 export function autonomousDeleteErrorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   return error instanceof Error ? error.message : "Delete failed";
-}
-
-export const AUTH_REQUIRED_MESSAGE =
-  "Remote API access requires an API key. Add it in Settings, or run the backend on localhost for local-only use.";
-
-export function isAuthRequiredError(error: unknown): boolean {
-  return error instanceof ApiError && (error.status === 401 || error.status === 403);
-}
-
-export interface CorrelationResponse {
-  labels: string[];
-  matrix: number[][];
-}
-
-export interface RegimeEpisode {
-  start: string;
-  end: string | null;
-}
-
-export interface CorrelationRegimeResponse {
-  labels: string[];
-  dates: string[];
-  density: (number | null)[];
-  smoothed: (number | null)[];
-  fused: number[];
-  episodes: RegimeEpisode[];
-  params: {
-    days: number;
-    corr_window: number;
-    edge_threshold: number;
-    smooth_window: number;
-    enter_threshold: number;
-    exit_threshold: number;
-  };
-}
-
-async function errorFromResponse(res: Response): Promise<ApiError> {
-  let detail: unknown = `HTTP ${res.status}`;
-  try {
-    const body = await res.json();
-    detail = body.detail ?? body.message ?? detail;
-  } catch { /* ignore */ }
-  if (res.status === 401 || res.status === 403) {
-    return new ApiError(AUTH_REQUIRED_MESSAGE, res.status, detail);
-  }
-  return new ApiError(formatApiDetail(detail), res.status, detail);
-}
-
-export class ApiError extends Error {
-  status: number;
-
-  constructor(message: string, status: number) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-  }
 }
 
 const AUTH_REQUIRED_MESSAGE_KEY = "agent.authRequired";
@@ -142,15 +87,15 @@ export interface CorrelationRegimeResponse {
 }
 
 async function errorFromResponse(res: Response): Promise<ApiError> {
-  let detail = `HTTP ${res.status}`;
+  let detail: unknown = `HTTP ${res.status}`;
   try {
     const body = await res.json();
-    detail = body.detail || body.message || detail;
+    detail = body.detail ?? body.message ?? detail;
   } catch { /* ignore */ }
   if (res.status === 401 || res.status === 403) {
-    detail = getAuthRequiredMessage();
+    return new ApiError(AUTH_REQUIRED_MESSAGE, res.status, detail);
   }
-  return new ApiError(detail, res.status);
+  return new ApiError(formatApiDetail(detail), res.status, detail);
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {

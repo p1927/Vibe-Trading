@@ -22,16 +22,19 @@ const proseClassName =
 interface MarkdownContentProps {
   content: string;
   showCursor?: boolean;
+  /** While streaming, skip the heavier rehype plugins (highlight/katex) so
+   *  growing text doesn't get re-parsed on every delta. */
+  streaming?: boolean;
 }
 
-export function MarkdownContent({ content, showCursor = false }: MarkdownContentProps) {
+export function MarkdownContent({ content, showCursor = false, streaming = false }: MarkdownContentProps) {
   const markdown = preprocessCitationLinks(content);
 
   return (
     <div className={proseClassName}>
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
-        rehypePlugins={rehypePlugins}
+        rehypePlugins={streaming ? [] : rehypePlugins}
         components={{
           a: ({ href, children }) => {
             if (href?.startsWith("#source-")) {
