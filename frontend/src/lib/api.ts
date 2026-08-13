@@ -483,6 +483,142 @@ export async function streamIndexPredictionJob(
 }
 
 
+export interface StreamRecordingHandlers {
+  onLog?: (entry: PipelineLogEntry) => void;
+  onDone?: (result: RecordingResult) => void;
+  onError?: (message: string) => void;
+}
+
+async function consumeRecordingSse(
+  res: Response,
+  handlers: StreamRecordingHandlers,
+): Promise<boolean> {
+  if (!res.body) {
+    throw new ApiError("Empty stream body", res.status);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let gotDone = false;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    buffer = parseSseChunk(buffer, (eventType, data) => {
+      if (eventType === "log" && data.entry) {
+        handlers.onLog?.(data.entry as PipelineLogEntry);
+        return;
+      }
+      if (eventType === "done") {
+        gotDone = true;
+        handlers.onDone?.(data.result as RecordingResult);
+        return;
+      }
+      if (eventType === "error") {
+        gotDone = true;
+        handlers.onError?.(String(data.message ?? "Recording failed"));
+      }
+    });
+  }
+  return gotDone;
+}
+
+async function fetchRecordingJobSnapshot(
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<RecordingJobSnapshot | null> {
+  try {
+    const res = await fetch(
+      `${BASE}/trade/recording/${encodeURIComponent(jobId)}`,
+      { headers: authHeaders(), signal },
+    );
+    if (!res.ok) return null;
+    const payload = (await res.json()) as RecordingJobResponse;
+    return payload.job ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const ACTIVE_RECORDING_STATUSES = new Set(["queued", "running"]);
+const RECORDING_POLL_REATTACH_MS = 5000;
+const RECORDING_POLL_REATTACH_MAX_MS = 8 * 60 * 60 * 1000; // a full trading session
+
+async function pollRecordingJobUntilDone(
+  jobId: string,
+  handlers: StreamRecordingHandlers,
+  signal?: AbortSignal,
+  options?: { skipLogsBefore?: number },
+): Promise<void> {
+  const started = Date.now();
+  let lastLogCount = Math.max(0, options?.skipLogsBefore ?? 0);
+  while (Date.now() - started < RECORDING_POLL_REATTACH_MAX_MS) {
+    if (signal?.aborted) return;
+    const job = await fetchRecordingJobSnapshot(jobId, signal);
+    if (job?.logs && job.logs.length > lastLogCount) {
+      for (let i = lastLogCount; i < job.logs.length; i += 1) {
+        handlers.onLog?.(job.logs[i]!);
+      }
+      lastLogCount = job.logs.length;
+    }
+    if (job?.status === "done" && job.result) {
+      handlers.onDone?.(job.result);
+      return;
+    }
+    if (job?.status === "error") {
+      handlers.onError?.(job.error || "Recording failed");
+      return;
+    }
+    if (job?.status && !ACTIVE_RECORDING_STATUSES.has(job.status)) {
+      handlers.onError?.("Recording ended unexpectedly");
+      return;
+    }
+    await sleepMs(RECORDING_POLL_REATTACH_MS, signal);
+  }
+  handlers.onError?.("Recording stream timed out waiting for completion");
+}
+
+export async function streamRecordingJob(
+  jobId: string,
+  handlers: StreamRecordingHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/trade/recording/${encodeURIComponent(jobId)}/stream`, {
+      headers: authHeaders(),
+      signal,
+    });
+  } catch (err) {
+    throw new ApiError(
+      `Network error reaching recording stream. ${err instanceof Error ? err.message : ""}`.trim(),
+      0,
+    );
+  }
+  if (!res.ok) {
+    throw await errorFromResponse(res);
+  }
+  const gotDone = await consumeRecordingSse(res, handlers);
+  if (!gotDone) {
+    const job = await fetchRecordingJobSnapshot(jobId);
+    if (job?.status && ACTIVE_RECORDING_STATUSES.has(job.status)) {
+      await pollRecordingJobUntilDone(jobId, handlers, signal, {
+        skipLogsBefore: job.logs?.length ?? 0,
+      });
+      return;
+    }
+    if (job?.status === "done" && job.result) {
+      handlers.onDone?.(job.result);
+      return;
+    }
+    if (job?.status === "error") {
+      handlers.onError?.(job.error || "Recording failed");
+      return;
+    }
+    handlers.onError?.("Recording stream ended without a result.");
+  }
+}
+
 export const api = {
   uploadFile,
   getCorrelation: (codes: string, days: number, method: "pearson" | "spearman") =>
@@ -822,6 +958,22 @@ export const api = {
       { method: "POST" },
     ),
   streamIndexPredictionJob: streamIndexPredictionJob,
+  startRecording: (body: StartRecordingRequest) =>
+    request<RecordingRunStartResponse>("/trade/recording/start", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getActiveRecording: () => request<RecordingActiveResponse>("/trade/recording/active"),
+  getRecordingJob: (jobId: string) =>
+    request<RecordingJobResponse>(`/trade/recording/${encodeURIComponent(jobId)}`),
+  stopRecording: (jobId: string) =>
+    request<{ status: string; message?: string }>(
+      `/trade/recording/${encodeURIComponent(jobId)}/stop`,
+      { method: "POST" },
+    ),
+  listRecordingSessions: () =>
+    request<RecordingSessionsResponse>("/trade/recording/sessions"),
+  streamRecordingJob: streamRecordingJob,
   getIndexPredictionFactors: () =>
     request<IndexFactorCatalogResponse>("/trade/index-prediction/factors"),
   simulateIndexPrediction: (body: SimulateIndexPredictionRequest) =>
@@ -2477,6 +2629,56 @@ export interface IndexPredictionRunActiveResponse {
 export interface IndexPredictionRunJobResponse {
   status: string;
   job?: IndexPredictionRunJobSnapshot | null;
+}
+
+export interface StartRecordingRequest {
+  underlyings?: string[];
+  poll_interval_s?: number;
+}
+
+export interface RecordingRunStartResponse {
+  status: string;
+  job_id: string;
+  job_status: string;
+  reused?: boolean;
+}
+
+export interface RecordingResult {
+  session_date: string;
+  underlyings: string[];
+  stopped_reason: string;
+  cycles: number;
+  errors: string[];
+}
+
+export interface RecordingJobSnapshot {
+  job_id: string;
+  status: string;
+  underlyings?: string[];
+  poll_interval_s?: number;
+  created_at?: string | null;
+  session_date?: string | null;
+  error?: string | null;
+  logs?: PipelineLogEntry[];
+  result?: RecordingResult | null;
+  last_log_at?: string | null;
+  last_log_message?: string | null;
+  session_pct_complete?: number | null;
+}
+
+export interface RecordingActiveResponse {
+  status: string;
+  job?: RecordingJobSnapshot | null;
+}
+
+export interface RecordingJobResponse {
+  status: string;
+  job?: RecordingJobSnapshot | null;
+}
+
+export interface RecordingSessionsResponse {
+  status: string;
+  sessions: string[];
 }
 
 export interface SimulateIndexPredictionRequest {

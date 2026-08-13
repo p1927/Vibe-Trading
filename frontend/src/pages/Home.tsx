@@ -1,8 +1,6 @@
 import { Link } from "react-router";
 import { ArrowRight, Bot, BarChart3, Zap, UserCircle2, MessageSquarePlus, SearchCode, LineChart, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { ArrowRight, Bot, BarChart3, Zap, UserCircle2, MessageSquarePlus, SearchCode, LineChart, ShieldCheck } from "lucide-react";
-import { useTranslation } from "react-i18next";
 
 export function Home() {
   const { t } = useTranslation();
