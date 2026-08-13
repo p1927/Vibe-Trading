@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from src.api.security import require_local_or_auth
 from trade_integrations.trade_widgets.store import load_trade_widget
+from trade_integrations.ui_links import trade_ui_deep_link
 
 logger = logging.getLogger(__name__)
 
@@ -122,8 +123,8 @@ class ExecutionModeResponse(BaseModel):
     switch_url: str = ""
 
 
-def _openalgo_switch_url(host: str) -> str:
-    return f"{host.rstrip('/')}/"
+def _openalgo_switch_url() -> str:
+    return trade_ui_deep_link(tab="openalgo")
 
 
 def _resolve_execution_mode(analyze: bool, paper_env: bool) -> ExecutionModeResponse:
@@ -131,8 +132,8 @@ def _resolve_execution_mode(analyze: bool, paper_env: bool) -> ExecutionModeResp
     mode = "paper" if analyze else "live"
     live_allowed = not paper_env
     try:
-        host, _ = _openalgo_config()
-        switch_url = _openalgo_switch_url(host)
+        _openalgo_config()
+        switch_url = _openalgo_switch_url()
     except HTTPException:
         switch_url = ""
     return ExecutionModeResponse(
@@ -615,6 +616,61 @@ class IndexPredictionRunActiveResponse(BaseModel):
 class IndexPredictionRunJobResponse(BaseModel):
     status: str = "ok"
     job: IndexPredictionRunJobSnapshot | None = None
+
+
+class StartRecordingRequest(BaseModel):
+    underlyings: List[str] = Field(default_factory=lambda: ["NIFTY", "BANKNIFTY", "SENSEX"])
+    poll_interval_s: int = 10
+    wait_for_open: bool = False
+
+
+class RecordingRunStartResponse(BaseModel):
+    status: str = "ok"
+    job_id: str
+    job_status: str
+    reused: bool = False
+
+
+class RecordingJobSnapshot(BaseModel):
+    job_id: str
+    status: str
+    underlyings: List[str] = Field(default_factory=list)
+    poll_interval_s: int = 10
+    wait_for_open: bool = False
+    created_at: str | None = None
+    session_date: str | None = None
+    error: str | None = None
+    logs: List[Dict[str, Any]] = Field(default_factory=list)
+    result: Dict[str, Any] | None = None
+    last_log_at: str | None = None
+    last_log_message: str | None = None
+    session_pct_complete: float | None = None
+
+
+class RecordingActiveResponse(BaseModel):
+    status: str = "ok"
+    job: RecordingJobSnapshot | None = None
+
+
+class RecordingJobResponse(BaseModel):
+    status: str = "ok"
+    job: RecordingJobSnapshot | None = None
+
+
+class RecordingSessionsResponse(BaseModel):
+    status: str = "ok"
+    sessions: List[str] = Field(default_factory=list)
+
+
+class StartReplayRequest(BaseModel):
+    speed: float | None = None
+    loop: bool | None = None
+
+
+class ReplayStatusResponse(BaseModel):
+    status: str = "ok"
+    message: str | None = None
+    replay: Dict[str, Any] | None = None
 
 
 class RefreshIndexPredictionRequest(BaseModel):
@@ -1248,9 +1304,9 @@ def get_hub_news_pipeline_config(
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
-        from trade_integrations.hub_storage.news_pipeline_config import config_for_api
+        from trade_integrations.dataflows.news_hub_bridge import get_pipeline_config
 
-        return HubNewsPipelineConfigResponse(status="ok", config=config_for_api())
+        return HubNewsPipelineConfigResponse(status="ok", config=get_pipeline_config())
     except Exception as exc:
         logger.exception("hub news pipeline config read failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -1266,17 +1322,10 @@ def patch_hub_news_pipeline_config(
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
-        from trade_integrations.hub_storage.news_pipeline_config import (
-            config_for_api,
-            sync_scheduled_jobs_from_config,
-            update_news_pipeline_config,
-        )
+        from trade_integrations.dataflows.news_hub_bridge import update_pipeline_config
 
         patch = {k: v for k, v in body.model_dump().items() if v is not None}
-        update_news_pipeline_config(patch)
-        sync_result = sync_scheduled_jobs_from_config()
-        payload = config_for_api()
-        payload["scheduler_sync"] = sync_result
+        payload = update_pipeline_config(patch)
         return HubNewsPipelineConfigResponse(status="ok", config=payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1297,7 +1346,7 @@ def run_hub_news_maintenance_now(
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
-        from trade_integrations.dataflows.index_research.news_entity_worker import run_hub_news_entity_job
+        from trade_integrations.dataflows.news_hub_bridge import run_entity_worker_job as run_hub_news_entity_job
 
         summary = run_hub_news_entity_job(
             {
@@ -3034,6 +3083,275 @@ async def stream_index_prediction_run_job(
     if _get_job_record(job_id) is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
     return _index_prediction_run_stream_response(job_id, request)
+
+
+_RECORDING_POLL_SECONDS = 0.5
+_RECORDING_HEARTBEAT_SECONDS = 15.0
+
+
+def _recording_sse_frame(event: str, data: dict[str, Any]) -> str:
+    payload = json.dumps(data, ensure_ascii=False, default=str)
+    return f"event: {event}\ndata: {payload}\n\n"
+
+
+async def _recording_event_stream(job_id: str, request: Request):
+    """Replay stored logs then poll the job store until done/error."""
+    import time as time_mod
+
+    from src.trade.recording_jobs import _get_job_record, reconcile_job
+
+    last_log_idx = 0
+    last_emit = time_mod.monotonic()
+    while True:
+        if await request.is_disconnected():
+            return
+
+        reconcile_job(job_id)
+        job = _get_job_record(job_id)
+        if job is None:
+            yield _recording_sse_frame("error", {"message": "job not found"})
+            return
+        status = str(job.get("status") or "")
+        logs = list(job.get("logs") or [])
+        result = job.get("result")
+        error = job.get("error")
+
+        while last_log_idx < len(logs):
+            yield _recording_sse_frame("log", {"entry": logs[last_log_idx]})
+            last_log_idx += 1
+            last_emit = time_mod.monotonic()
+
+        if status == "done":
+            yield _recording_sse_frame("done", {"result": result})
+            return
+        if status == "error":
+            yield _recording_sse_frame("error", {"message": error or "unknown error"})
+            return
+
+        if time_mod.monotonic() - last_emit >= _RECORDING_HEARTBEAT_SECONDS:
+            yield ": keepalive\n\n"
+            last_emit = time_mod.monotonic()
+
+        await asyncio.sleep(_RECORDING_POLL_SECONDS)
+
+
+def _recording_stream_response(job_id: str, request: Request) -> StreamingResponse:
+    return StreamingResponse(
+        _recording_event_stream(job_id, request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _kick_recording(body: StartRecordingRequest) -> tuple[str, str, bool]:
+    from src.trade.recording_jobs import spawn_worker, start_job
+
+    underlyings = [u.strip().upper() for u in body.underlyings if u.strip()] or [
+        "NIFTY",
+        "BANKNIFTY",
+        "SENSEX",
+    ]
+    job_id, reused = start_job(
+        underlyings=underlyings,
+        poll_interval_s=body.poll_interval_s,
+        wait_for_open=body.wait_for_open,
+    )
+    if not reused:
+        spawn_worker(job_id)
+    else:
+        from src.trade.recording_jobs import _get_job_record, spawn_worker, worker_alive
+
+        existing = _get_job_record(job_id)
+        if existing is not None and not worker_alive(existing):
+            spawn_worker(job_id)
+    from src.trade.recording_jobs import get_job
+
+    snap = get_job(job_id) or {}
+    return job_id, str(snap.get("status") or "queued"), reused
+
+
+@trade_router.post(
+    "/recording/start",
+    response_model=RecordingRunStartResponse,
+    status_code=202,
+)
+def start_recording(
+    body: StartRecordingRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> RecordingRunStartResponse:
+    """Start (or resume) the stock-simulator day recorder."""
+    job_id, job_status, reused = _kick_recording(body)
+    return RecordingRunStartResponse(job_id=job_id, job_status=job_status, reused=reused)
+
+
+@trade_router.get("/recording/active", response_model=RecordingActiveResponse)
+def get_active_recording(
+    _auth: None = Depends(require_local_or_auth),
+) -> RecordingActiveResponse:
+    from src.trade.recording_jobs import get_active_job
+
+    snap = get_active_job()
+    if snap is None:
+        return RecordingActiveResponse(job=None)
+    return RecordingActiveResponse(job=RecordingJobSnapshot(**snap))
+
+
+@trade_router.get("/recording/sessions", response_model=RecordingSessionsResponse)
+def list_recording_sessions(
+    _auth: None = Depends(require_local_or_auth),
+) -> RecordingSessionsResponse:
+    """Days available to replay — scans the exported index parquet files."""
+    from trade_integrations.stock_simulator.catalog import ReplayCatalog
+    from trade_integrations.stock_simulator.config import load_sim_config
+
+    data_root = load_sim_config().data_root
+    catalog = ReplayCatalog(data_root)
+    days: set[str] = set()
+    for symbol, exchange in (
+        ("NIFTY", "NSE_INDEX"),
+        ("BANKNIFTY", "NSE_INDEX"),
+        ("SENSEX", "BSE_INDEX"),
+    ):
+        days.update(catalog.available_dates(symbol, exchange))
+    return RecordingSessionsResponse(sessions=sorted(days, reverse=True))
+
+
+@trade_router.get("/recording/{job_id}", response_model=RecordingJobResponse)
+def get_recording_job(
+    job_id: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> RecordingJobResponse:
+    from src.trade.recording_jobs import get_job, job_id_valid
+
+    if not job_id_valid(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    snap = get_job(job_id)
+    if snap is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    return RecordingJobResponse(job=RecordingJobSnapshot(**snap))
+
+
+@trade_router.post("/recording/{job_id}/stop")
+def stop_recording(
+    job_id: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, str]:
+    """Request cooperative stop for an in-flight recording session."""
+    from src.trade.recording_jobs import _ACTIVE_STATUSES, _get_job_record, job_id_valid, request_stop
+
+    if not job_id_valid(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    job = _get_job_record(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    status = str(job.get("status") or "")
+    if status not in _ACTIVE_STATUSES:
+        raise HTTPException(status_code=409, detail=f"job is not active (status={status})")
+    request_stop(job_id)
+    return {"status": "ok", "message": "stop requested"}
+
+
+@trade_router.get("/recording/{job_id}/stream")
+async def stream_recording_job(
+    job_id: str,
+    request: Request,
+    _auth: None = Depends(require_local_or_auth),
+) -> StreamingResponse:
+    """SSE: replay recorder logs and stream until the session terminates."""
+    from src.trade.recording_jobs import _get_job_record, job_id_valid
+
+    if not job_id_valid(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    if _get_job_record(job_id) is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    return _recording_stream_response(job_id, request)
+
+
+def _openalgo_control_headers() -> dict[str, str] | None:
+    """Return the control-token header, or None if the token isn't configured.
+
+    Fails closed, mirroring the OpenAlgo side: if VibeTrading's half of the
+    shared secret isn't set, callers get a clear 503 rather than a request
+    that silently reaches OpenAlgo with no token and gets rejected there.
+    """
+    token = (os.getenv("OPENALGO_SIMULATOR_CONTROL_TOKEN") or "").strip()
+    if not token:
+        return None
+    return {"X-Simulator-Control-Token": token}
+
+
+def _openalgo_host() -> str:
+    return (os.getenv("OPENALGO_HOST") or "http://127.0.0.1:5001").rstrip("/")
+
+
+@trade_router.post("/recording/{day}/replay", response_model=ReplayStatusResponse)
+def start_replay(
+    day: str,
+    body: StartReplayRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> ReplayStatusResponse:
+    """Arm OpenAlgo's stock simulator to replay a previously recorded day."""
+    import requests
+
+    headers = _openalgo_control_headers()
+    if headers is None:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
+            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
+        )
+    payload: dict[str, Any] = {"date": day}
+    if body.speed is not None:
+        payload["speed"] = body.speed
+    if body.loop is not None:
+        payload["loop"] = body.loop
+    try:
+        res = requests.post(
+            f"{_openalgo_host()}/simulator/control/replay/start",
+            json=payload,
+            headers=headers,
+            timeout=15.0,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
+        ) from exc
+    if res.status_code >= 400:
+        raise HTTPException(status_code=502, detail=res.text[:500])
+    return ReplayStatusResponse(status="ok", replay=res.json())
+
+
+@trade_router.get("/recording/replay/status", response_model=ReplayStatusResponse)
+def get_replay_status(
+    _auth: None = Depends(require_local_or_auth),
+) -> ReplayStatusResponse:
+    """Current simulator replay clock state, without arming a new day."""
+    import requests
+
+    headers = _openalgo_control_headers()
+    if headers is None:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
+            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
+        )
+    try:
+        res = requests.get(
+            f"{_openalgo_host()}/simulator/control/replay/status",
+            headers=headers,
+            timeout=15.0,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
+        ) from exc
+    if res.status_code >= 400:
+        raise HTTPException(status_code=502, detail=res.text[:500])
+    return ReplayStatusResponse(status="ok", replay=res.json())
 
 
 @trade_router.post("/index-prediction/refresh", response_model=IndexPredictionRefreshResponse)

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Circle, Copy, Disc, Square } from "lucide-react";
+import { Circle, Disc, PlayCircle, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   api,
@@ -31,6 +31,7 @@ function statusBadge(status: string | undefined) {
   const s = (status || "idle").toLowerCase();
   const styles: Record<string, string> = {
     queued: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
+    waiting: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
     running: "bg-blue-500/15 text-blue-800 dark:text-blue-200",
     done: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
     error: "bg-red-500/15 text-red-800 dark:text-red-200",
@@ -38,6 +39,7 @@ function statusBadge(status: string | undefined) {
   };
   const labels: Record<string, string> = {
     queued: "Starting…",
+    waiting: "Waiting for Market Open",
     running: "Recording",
     done: "Market Closed — Done",
     error: "Error",
@@ -71,16 +73,21 @@ function ProgressBar({ pct }: { pct: number | null | undefined }) {
 
 export function Simulator() {
   const [selected, setSelected] = useState<string[]>(UNDERLYINGS);
+  const [waitForOpen, setWaitForOpen] = useState(false);
   const [job, setJob] = useState<RecordingJobSnapshot | null>(null);
   const [logs, setLogs] = useState<PipelineLogEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<string[]>([]);
-  const [copiedDay, setCopiedDay] = useState<string | null>(null);
+  const [replayingDay, setReplayingDay] = useState<string | null>(null);
+  const [replayStatus, setReplayStatus] = useState<Record<string, unknown> | null>(null);
+  const [replayError, setReplayError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
 
   const isActive = job?.status === "queued" || job?.status === "running";
+  const isWaiting = job?.status === "running" && logs[logs.length - 1]?.stage === "waiting";
+  const displayStatus = isWaiting ? "waiting" : job?.status;
 
   const loadSessions = useCallback(() => {
     api
@@ -154,7 +161,11 @@ export function Simulator() {
     setError(null);
     setLogs([]);
     try {
-      const res = await api.startRecording({ underlyings: selected, poll_interval_s: 10 });
+      const res = await api.startRecording({
+        underlyings: selected,
+        poll_interval_s: 10,
+        wait_for_open: waitForOpen,
+      });
       const snap = await api.getRecordingJob(res.job_id);
       setJob(snap.job ?? { job_id: res.job_id, status: res.job_status });
       attachStream(res.job_id);
@@ -177,16 +188,16 @@ export function Simulator() {
     }
   };
 
-  const replayCommand = (day: string) =>
-    `NSE_REPLAY_DATE=${day} STOCK_SIMULATOR_MODE=replay uv run app.py  # from openalgo/`;
-
-  const copyReplayCommand = async (day: string) => {
+  const startReplay = async (day: string) => {
+    setReplayingDay(day);
+    setReplayError(null);
     try {
-      await navigator.clipboard.writeText(replayCommand(day));
-      setCopiedDay(day);
-      window.setTimeout(() => setCopiedDay((d) => (d === day ? null : d)), 2000);
-    } catch {
-      /* clipboard unavailable — ignore */
+      const res = await api.startReplay(day);
+      setReplayStatus(res.replay ?? null);
+    } catch (err) {
+      setReplayError(err instanceof Error ? err.message : "Failed to start replay");
+    } finally {
+      setReplayingDay(null);
     }
   };
 
@@ -217,9 +228,19 @@ export function Simulator() {
                 {u}
               </label>
             ))}
+            <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={waitForOpen}
+                disabled={isActive}
+                onChange={(e) => setWaitForOpen(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-border"
+              />
+              Wait for market open
+            </label>
           </div>
           <div className="flex items-center gap-2">
-            {statusBadge(job?.status)}
+            {statusBadge(displayStatus)}
             {isActive ? (
               <button
                 type="button"
@@ -304,21 +325,31 @@ export function Simulator() {
                 </span>
                 <button
                   type="button"
-                  onClick={() => copyReplayCommand(day)}
-                  className="inline-flex h-7 items-center gap-1.5 rounded-md border bg-background px-2.5 text-xs hover:bg-muted/50"
-                  title={replayCommand(day)}
+                  onClick={() => startReplay(day)}
+                  disabled={replayingDay === day}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-md border bg-background px-2.5 text-xs hover:bg-muted/50 disabled:opacity-50"
                 >
-                  <Copy className="h-3 w-3" />
-                  {copiedDay === day ? "Copied" : "Copy replay command"}
+                  <PlayCircle className="h-3 w-3" />
+                  {replayingDay === day ? "Starting…" : "Start Replay"}
                 </button>
               </li>
             ))}
           </ul>
         )}
+
+        {replayError ? <p className="mt-3 text-sm text-destructive">{replayError}</p> : null}
+        {replayStatus ? (
+          <div className="mt-3 rounded-lg border bg-background/60 p-3 text-[11px]">
+            <p className="font-medium text-foreground">Replay armed on OpenAlgo</p>
+            <pre className="mt-1 overflow-auto text-muted-foreground">
+              {JSON.stringify(replayStatus, null, 2)}
+            </pre>
+          </div>
+        ) : null}
         <p className="mt-3 text-[11px] text-muted-foreground">
-          Starting a replay swaps OpenAlgo's active broker session, so it runs from a terminal
-          rather than this page — copy the command above and run it from the <code>openalgo/</code>
-          directory.
+          Starts the simulator's replay clock on the running OpenAlgo instance directly — no
+          restart needed. Watch it in OpenAlgo's own UI once armed (Option Chain / quotes on the
+          stock_simulator broker).
         </p>
       </StatCard>
     </div>

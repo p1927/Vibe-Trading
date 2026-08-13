@@ -60,9 +60,9 @@ def _entity_backpressure_threshold() -> int:
         integrations = trade_root / "integrations"
         if integrations.is_dir() and str(integrations) not in sys.path:
             sys.path.insert(0, str(integrations))
-        from trade_integrations.hub_storage.news_pipeline_config import load_news_pipeline_config
+        from trade_integrations.dataflows.news_hub_bridge import entity_backpressure_threshold
 
-        return int(load_news_pipeline_config().entity_backpressure_threshold)
+        return entity_backpressure_threshold()
     except Exception:
         return 400
 
@@ -76,14 +76,19 @@ def _hub_news_pipeline_health() -> dict[str, Any]:
         integrations = trade_root / "integrations"
         if integrations.is_dir() and str(integrations) not in sys.path:
             sys.path.insert(0, str(integrations))
-        from trade_integrations.dataflows.index_research.news_entity_worker import load_worker_last_summary
-        from trade_integrations.hub_storage.news_staging_store import pipeline_pause_status, staging_queue_detail
+        from trade_integrations.dataflows.news_hub_bridge import (
+            distillation_queue_stats as pipeline_pause_status,
+        )
+        from trade_integrations.dataflows.news_hub_bridge import (
+            load_entity_worker_last_summary,
+            staging_queue_detail,
+        )
 
         pause = pipeline_pause_status(ticker="NIFTY")
         staging = staging_queue_detail(ticker="NIFTY")
         queued = int(staging.get("queued") or 0)
         threshold = _entity_backpressure_threshold()
-        worker_last = load_worker_last_summary() or {}
+        worker_last = load_entity_worker_last_summary() or {}
         processed = int(worker_last.get("processed") or 0)
         drain_rate_per_hour = processed * 4.0 if processed > 0 else None
         estimated_drain_hours = None

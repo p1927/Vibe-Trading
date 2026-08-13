@@ -121,7 +121,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     const preview = text.slice(0, 80).replace(/\s+/g, " ");
     const looksLikeHtml = /^\s*</.test(text);
     const hint = looksLikeHtml
-      ? " Open http://127.0.0.1:5899 for the UI (Vite) or restart the API on port 8899."
+      ? " Open the Trade UI or restart the API on port 8899."
       : "";
     throw new ApiError(
       `Expected JSON from ${path}, got ${contentType || "unknown content type"}: ${preview}${hint}`,
@@ -974,6 +974,12 @@ export const api = {
   listRecordingSessions: () =>
     request<RecordingSessionsResponse>("/trade/recording/sessions"),
   streamRecordingJob: streamRecordingJob,
+  startReplay: (day: string, body: StartReplayRequest = {}) =>
+    request<ReplayStatusResponse>(`/trade/recording/${encodeURIComponent(day)}/replay`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getReplayStatus: () => request<ReplayStatusResponse>("/trade/recording/replay/status"),
   getIndexPredictionFactors: () =>
     request<IndexFactorCatalogResponse>("/trade/index-prediction/factors"),
   simulateIndexPrediction: (body: SimulateIndexPredictionRequest) =>
@@ -2634,6 +2640,7 @@ export interface IndexPredictionRunJobResponse {
 export interface StartRecordingRequest {
   underlyings?: string[];
   poll_interval_s?: number;
+  wait_for_open?: boolean;
 }
 
 export interface RecordingRunStartResponse {
@@ -2656,6 +2663,7 @@ export interface RecordingJobSnapshot {
   status: string;
   underlyings?: string[];
   poll_interval_s?: number;
+  wait_for_open?: boolean;
   created_at?: string | null;
   session_date?: string | null;
   error?: string | null;
@@ -2679,6 +2687,17 @@ export interface RecordingJobResponse {
 export interface RecordingSessionsResponse {
   status: string;
   sessions: string[];
+}
+
+export interface StartReplayRequest {
+  speed?: number;
+  loop?: boolean;
+}
+
+export interface ReplayStatusResponse {
+  status: string;
+  message?: string | null;
+  replay?: Record<string, unknown> | null;
 }
 
 export interface SimulateIndexPredictionRequest {

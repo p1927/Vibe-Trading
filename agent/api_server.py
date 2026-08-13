@@ -200,6 +200,13 @@ async def _app_lifespan(app: FastAPI):
     except Exception:
         logger.debug("external-predictions job hydrate skipped", exc_info=True)
 
+    try:
+        from src.trade.recording_jobs import hydrate_jobs_from_disk as hydrate_recording_jobs
+
+        hydrate_recording_jobs()
+    except Exception:
+        logger.debug("recording job hydrate skipped", exc_info=True)
+
     if get_env_config().agent_tuning.vibe_trading_channels_auto_start:
         await _start_channel_runtime()
 

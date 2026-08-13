@@ -1,0 +1,585 @@
+"""In-memory + file-backed job store for stock-simulator day recording.
+
+Mirrors `index_prediction_run_jobs.py`'s pattern (job.json under
+`log/recording_jobs/{job_id}/job.json`, detached subprocess worker, PID
+liveness/zombie reconciliation) so recording jobs get the same SSE-friendly,
+hot-reload-safe control surface without inventing a new mechanism.
+
+Unlike index-prediction runs (keyed per ticker), only one recording session is
+meaningful at a time, so active-job lookup uses a single fixed key rather than
+a per-ticker map.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import signal
+import subprocess
+import sys
+import threading
+import time
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable
+
+try:
+    import fcntl
+
+    _HAS_FCNTL = True
+except ImportError:  # pragma: no cover - Windows / minimal builds
+    fcntl = None  # type: ignore[assignment]
+    _HAS_FCNTL = False
+
+logger = logging.getLogger(__name__)
+
+RECORDING_JOBS: dict[str, dict[str, Any]] = {}
+_ACTIVE_KEY = "recording"
+_ACTIVE_JOB_ID: str | None = None
+_JOBS_LOCK = threading.RLock()
+
+_JOB_TTL_SECONDS = 60 * 60
+_JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
+_ACTIVE_STATUSES = frozenset({"queued", "running"})
+_WALL_CLOCK_SECONDS = int(os.getenv("RECORDING_RUN_WALL_CLOCK_SECONDS", str(8 * 60 * 60)))
+_QUEUED_NO_PID_SECONDS = int(os.getenv("RECORDING_QUEUED_NO_PID_SECONDS", "60"))
+
+
+def _is_pid_alive(pid: int | None) -> bool:
+    if pid is None or pid <= 0:
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except OSError:
+        return False
+    return True
+
+
+def worker_alive(job: dict[str, Any] | None) -> bool:
+    if job is None:
+        return False
+    status = str(job.get("status") or "")
+    pid = job.get("worker_pid")
+    if status == "queued" and pid is None:
+        return True
+    if pid is None:
+        return status not in _ACTIVE_STATUSES
+    return _is_pid_alive(int(pid))
+
+
+def reconcile_zombie_job(job_id: str) -> bool:
+    job = _get_job_record(job_id)
+    if job is None or job.get("status") not in _ACTIVE_STATUSES:
+        return False
+    if worker_alive(job):
+        return False
+    fail_job(job_id, "worker process exited unexpectedly")
+    return True
+
+
+def _parse_iso_timestamp(ts: str | None) -> float | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _job_age_seconds(job: dict[str, Any]) -> float:
+    created = _parse_iso_timestamp(str(job.get("created_at") or ""))
+    if created is None:
+        return 0.0
+    return max(0.0, datetime.now(timezone.utc).timestamp() - created)
+
+
+def reconcile_queued_job(job_id: str) -> bool:
+    job = _get_job_record(job_id)
+    if job is None or job.get("status") != "queued":
+        return False
+    if job.get("worker_pid") is not None:
+        return False
+    if _job_age_seconds(job) <= _QUEUED_NO_PID_SECONDS:
+        return False
+    fail_job(job_id, f"worker never spawned after {_QUEUED_NO_PID_SECONDS}s", terminate_worker=True)
+    return True
+
+
+def reconcile_stale_job(job_id: str) -> bool:
+    job = _get_job_record(job_id)
+    if job is None or job.get("status") != "running":
+        return False
+    if not worker_alive(job):
+        return False
+    wall_age = _job_age_seconds(job)
+    if wall_age > _WALL_CLOCK_SECONDS:
+        fail_job(
+            job_id,
+            f"recording exceeded wall-clock budget ({int(wall_age)}s > {_WALL_CLOCK_SECONDS}s)",
+            terminate_worker=True,
+        )
+        return True
+    return False
+
+
+def reconcile_job(job_id: str) -> bool:
+    if reconcile_zombie_job(job_id):
+        return True
+    if reconcile_queued_job(job_id):
+        return True
+    if reconcile_stale_job(job_id):
+        return True
+    return False
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _jobs_root() -> Path:
+    from src.trade.hub_bridge import trade_repo_root
+
+    root = trade_repo_root()
+    if root is None:
+        root = Path.cwd()
+    return root / "log" / "recording_jobs"
+
+
+def _job_dir(job_id: str) -> Path:
+    return _jobs_root() / job_id
+
+
+def _job_file(job_id: str) -> Path:
+    return _job_dir(job_id) / "job.json"
+
+
+def _stop_flag_file(job_id: str) -> Path:
+    return _job_dir(job_id) / "stop.flag"
+
+
+def stop_flag_path(job_id: str) -> Path:
+    """Public accessor so the worker process can check the same path."""
+    return _stop_flag_file(job_id)
+
+
+def _job_lock_file(job_id: str) -> Path:
+    return _job_dir(job_id) / ".job.lock"
+
+
+@contextmanager
+def _job_file_lock(job_id: str, *, exclusive: bool = True):
+    if not job_id_valid(job_id):
+        yield
+        return
+    lock_path = _job_lock_file(job_id)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if not _HAS_FCNTL:
+        yield
+        return
+    with open(lock_path, "a+", encoding="utf-8") as lockf:
+        flag = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        fcntl.flock(lockf.fileno(), flag)
+        try:
+            yield
+        finally:
+            fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
+
+
+def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "job_id": job["job_id"],
+        "status": job.get("status"),
+        "underlyings": job.get("underlyings"),
+        "poll_interval_s": job.get("poll_interval_s"),
+        "wait_for_open": bool(job.get("wait_for_open")),
+        "created_at": job.get("created_at"),
+        "logs": list(job.get("logs") or []),
+        "session_date": job.get("session_date"),
+        "result": job.get("result"),
+        "error": job.get("error"),
+        "worker_pid": job.get("worker_pid"),
+        "_finished_at": job.get("_finished_at"),
+    }
+
+
+def _write_job_to_disk_unsafe(job: dict[str, Any]) -> None:
+    job_id = str(job.get("job_id") or "")
+    if not job_id_valid(job_id):
+        return
+    path = _job_file(job_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(_serialize_job(job), ensure_ascii=False, default=str), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _read_job_from_disk_unsafe(job_id: str) -> dict[str, Any] | None:
+    path = _job_file(job_id)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(payload, dict) or not job_id_valid(str(payload.get("job_id") or job_id)):
+        return None
+    payload.setdefault("job_id", job_id)
+    payload.setdefault("logs", [])
+    return payload
+
+
+def _write_job_to_disk(job: dict[str, Any]) -> None:
+    job_id = str(job.get("job_id") or "")
+    with _job_file_lock(job_id, exclusive=True):
+        _write_job_to_disk_unsafe(job)
+
+
+def _read_job_from_disk(job_id: str) -> dict[str, Any] | None:
+    with _job_file_lock(job_id, exclusive=False):
+        return _read_job_from_disk_unsafe(job_id)
+
+
+def _mutate_job_on_disk(
+    job_id: str,
+    mutator: Callable[[dict[str, Any]], bool],
+) -> dict[str, Any] | None:
+    with _job_file_lock(job_id, exclusive=True):
+        job = _read_job_from_disk_unsafe(job_id)
+        if job is None:
+            return None
+        job = dict(job)
+        job.setdefault("logs", [])
+        if not mutator(job):
+            return None
+        _write_job_to_disk_unsafe(job)
+        return job
+
+
+def _merge_job_from_disk(job_id: str, memory: dict[str, Any] | None) -> dict[str, Any] | None:
+    disk = _read_job_from_disk(job_id)
+    if disk is None:
+        return memory
+    if memory is None:
+        return disk
+    mem_logs = len(memory.get("logs") or [])
+    disk_logs = len(disk.get("logs") or [])
+    mem_status = str(memory.get("status") or "")
+    disk_status = str(disk.get("status") or "")
+    if disk_logs > mem_logs or disk_status != mem_status:
+        merged = dict(disk)
+        merged.setdefault("job_id", job_id)
+        return merged
+    return memory
+
+
+def _get_job_record(job_id: str) -> dict[str, Any] | None:
+    global _ACTIVE_JOB_ID
+    with _JOBS_LOCK:
+        memory = RECORDING_JOBS.get(job_id)
+    merged = _merge_job_from_disk(job_id, memory)
+    if merged is not None:
+        with _JOBS_LOCK:
+            RECORDING_JOBS[job_id] = merged
+            if merged.get("status") in _ACTIVE_STATUSES:
+                _ACTIVE_JOB_ID = job_id
+            elif _ACTIVE_JOB_ID == job_id:
+                _ACTIVE_JOB_ID = None
+    return merged
+
+
+def hydrate_jobs_from_disk() -> None:
+    global _ACTIVE_JOB_ID
+    root = _jobs_root()
+    if not root.is_dir():
+        return
+    for path in root.iterdir():
+        if not path.is_dir():
+            continue
+        job_id = path.name
+        if not job_id_valid(job_id):
+            continue
+        job = _read_job_from_disk(job_id)
+        if job is None:
+            continue
+        with _JOBS_LOCK:
+            RECORDING_JOBS[job_id] = job
+            if job.get("status") in _ACTIVE_STATUSES:
+                _ACTIVE_JOB_ID = job_id
+
+
+def _prune_old_jobs() -> None:
+    cutoff = time.time() - _JOB_TTL_SECONDS
+    with _JOBS_LOCK:
+        stale = [
+            job_id
+            for job_id, job in RECORDING_JOBS.items()
+            if job.get("status") in ("done", "error") and job.get("_finished_at", 0) < cutoff
+        ]
+        for job_id in stale:
+            RECORDING_JOBS.pop(job_id, None)
+
+
+def job_id_valid(job_id: str | None) -> bool:
+    return bool(job_id and _JOB_ID_RE.fullmatch(job_id))
+
+
+def _job_snapshot(job: dict[str, Any], *, include_logs: bool = True) -> dict[str, Any]:
+    logs = list(job.get("logs") or [])
+    out: dict[str, Any] = {
+        "job_id": job["job_id"],
+        "status": job["status"],
+        "underlyings": job.get("underlyings"),
+        "poll_interval_s": job.get("poll_interval_s"),
+        "wait_for_open": bool(job.get("wait_for_open")),
+        "created_at": job.get("created_at"),
+        "session_date": job.get("session_date"),
+        "error": job.get("error"),
+    }
+    if logs:
+        last = logs[-1]
+        out["last_log_at"] = last.get("at")
+        out["last_log_message"] = last.get("message")
+    out["session_pct_complete"] = _session_pct_complete(job)
+    if include_logs:
+        out["logs"] = logs
+    if job.get("status") == "done" and job.get("result") is not None:
+        out["result"] = job["result"]
+    return out
+
+
+def _session_pct_complete(job: dict[str, Any]) -> float | None:
+    """Elapsed fraction of the 09:15-15:30 IST trading session (for the UI progress bar)."""
+    from datetime import time as dtime
+    from zoneinfo import ZoneInfo
+
+    created_at = _parse_iso_timestamp(str(job.get("created_at") or ""))
+    if created_at is None:
+        return None
+    ist = ZoneInfo("Asia/Kolkata")
+    now_ist = datetime.now(ist)
+    open_dt = datetime.combine(now_ist.date(), dtime(9, 15), tzinfo=ist)
+    close_dt = datetime.combine(now_ist.date(), dtime(15, 30), tzinfo=ist)
+    total = (close_dt - open_dt).total_seconds()
+    if total <= 0:
+        return None
+    elapsed = (now_ist - open_dt).total_seconds()
+    if job.get("status") in ("done", "error"):
+        finished = job.get("_finished_at")
+        if finished:
+            elapsed = min(elapsed, finished - open_dt.timestamp())
+    return round(max(0.0, min(1.0, elapsed / total)), 4)
+
+
+def get_job(job_id: str) -> dict[str, Any] | None:
+    job = _get_job_record(job_id)
+    if job is None:
+        return None
+    return _job_snapshot(job)
+
+
+def get_active_job() -> dict[str, Any] | None:
+    with _JOBS_LOCK:
+        job_id = _ACTIVE_JOB_ID
+    if not job_id:
+        return None
+    job = _get_job_record(job_id)
+    if job is None or job.get("status") not in _ACTIVE_STATUSES:
+        return None
+    if not worker_alive(job):
+        reconcile_job(job_id)
+        job = _get_job_record(job_id)
+        if job is not None and job.get("status") == "error":
+            return _job_snapshot(job)
+        return None
+    reconcile_job(job_id)
+    job = _get_job_record(job_id)
+    if job is None or job.get("status") not in _ACTIVE_STATUSES:
+        if job is not None and job.get("status") == "error":
+            return _job_snapshot(job)
+        return None
+    return _job_snapshot(job)
+
+
+def start_job(
+    *, underlyings: list[str], poll_interval_s: int = 10, wait_for_open: bool = False
+) -> tuple[str, bool]:
+    """Create or reuse the active recording job. Returns (job_id, reused)."""
+    global _ACTIVE_JOB_ID
+    _prune_old_jobs()
+    with _JOBS_LOCK:
+        existing_id = _ACTIVE_JOB_ID
+        existing_mem = RECORDING_JOBS.get(existing_id) if existing_id else None
+
+    if existing_id:
+        existing = existing_mem or _read_job_from_disk(existing_id)
+        if existing and existing.get("status") in _ACTIVE_STATUSES:
+            if existing.get("worker_pid") is not None and not worker_alive(existing):
+                fail_job(existing_id, "worker process exited unexpectedly")
+            else:
+                with _JOBS_LOCK:
+                    if existing_id not in RECORDING_JOBS:
+                        RECORDING_JOBS[existing_id] = existing
+                return existing_id, True
+
+    job_id = uuid.uuid4().hex
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "underlyings": list(underlyings),
+        "poll_interval_s": int(poll_interval_s),
+        "wait_for_open": bool(wait_for_open),
+        "created_at": _now_iso(),
+        "logs": [],
+        "session_date": None,
+        "result": None,
+        "error": None,
+        "worker_pid": None,
+        "_finished_at": None,
+    }
+    with _JOBS_LOCK:
+        RECORDING_JOBS[job_id] = job
+        _ACTIVE_JOB_ID = job_id
+    _write_job_to_disk(job)
+    return job_id, False
+
+
+def mark_running(job_id: str) -> None:
+    def mutator(job: dict[str, Any]) -> bool:
+        if str(job.get("status") or "") not in _ACTIVE_STATUSES:
+            return False
+        if job.get("status") == "queued":
+            job["status"] = "running"
+        return True
+
+    job = _mutate_job_on_disk(job_id, mutator)
+    if job is None:
+        return
+    with _JOBS_LOCK:
+        RECORDING_JOBS[job_id] = job
+
+
+def append_log(job_id: str, entry: dict[str, Any]) -> None:
+    def mutator(job: dict[str, Any]) -> bool:
+        if str(job.get("status") or "") not in _ACTIVE_STATUSES:
+            return False
+        if job.get("status") == "queued":
+            job["status"] = "running"
+        job.setdefault("logs", []).append(dict(entry))
+        return True
+
+    job = _mutate_job_on_disk(job_id, mutator)
+    if job is None:
+        return
+    with _JOBS_LOCK:
+        RECORDING_JOBS[job_id] = job
+
+
+def complete_job(job_id: str, *, result: dict[str, Any]) -> None:
+    def mutator(job: dict[str, Any]) -> bool:
+        if str(job.get("status") or "") not in _ACTIVE_STATUSES:
+            return False
+        job["status"] = "done"
+        job["result"] = result
+        job["session_date"] = result.get("session_date")
+        job["_finished_at"] = time.time()
+        return True
+
+    job = _mutate_job_on_disk(job_id, mutator)
+    if job is None:
+        return
+    with _JOBS_LOCK:
+        RECORDING_JOBS[job_id] = job
+        global _ACTIVE_JOB_ID
+        if _ACTIVE_JOB_ID == job_id:
+            _ACTIVE_JOB_ID = None
+
+
+def fail_job(job_id: str, message: str, *, terminate_worker: bool = False) -> None:
+    job_for_term = _get_job_record(job_id)
+    if job_for_term is None:
+        return
+    if terminate_worker:
+        _terminate_worker(job_for_term)
+
+    def mutator(job: dict[str, Any]) -> bool:
+        if str(job.get("status") or "") not in _ACTIVE_STATUSES:
+            return False
+        job["status"] = "error"
+        job["error"] = message
+        job["_finished_at"] = time.time()
+        return True
+
+    job = _mutate_job_on_disk(job_id, mutator)
+    if job is None:
+        return
+    with _JOBS_LOCK:
+        RECORDING_JOBS[job_id] = job
+        global _ACTIVE_JOB_ID
+        if _ACTIVE_JOB_ID == job_id:
+            _ACTIVE_JOB_ID = None
+
+
+def request_stop(job_id: str) -> None:
+    """Write the cooperative stop flag the worker polls each cycle."""
+    path = _stop_flag_file(job_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_now_iso(), encoding="utf-8")
+    append_log(
+        job_id,
+        {"stage": "control", "message": "stop requested", "level": "info", "at": _now_iso()},
+    )
+
+
+def _terminate_worker(job: dict[str, Any] | None) -> None:
+    if job is None:
+        return
+    pid = job.get("worker_pid")
+    if pid is None:
+        return
+    try:
+        pid_int = int(pid)
+    except (TypeError, ValueError):
+        return
+    if not _is_pid_alive(pid_int) or pid_int == os.getpid():
+        return
+    try:
+        os.kill(pid_int, signal.SIGTERM)
+    except OSError:
+        pass
+
+
+def _agent_dir() -> Path:
+    here = Path(__file__).resolve()
+    return here.parents[1]
+
+
+def spawn_worker(job_id: str) -> None:
+    """Launch the recorder in a detached subprocess (survives API hot-reload)."""
+    agent_dir = _agent_dir()
+    worker_log = _job_dir(job_id) / "worker.log"
+    worker_log.parent.mkdir(parents=True, exist_ok=True)
+    log_handle = worker_log.open("ab")
+
+    env = os.environ.copy()
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "src.trade.recording_worker", job_id],
+        cwd=str(agent_dir),
+        env=env,
+        start_new_session=True,
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+    )
+    log_handle.close()
+
+    def mutator(job: dict[str, Any]) -> bool:
+        job["worker_pid"] = proc.pid
+        return True
+
+    job = _mutate_job_on_disk(job_id, mutator)
+    if job is not None:
+        with _JOBS_LOCK:
+            RECORDING_JOBS[job_id] = job

@@ -1,5 +1,6 @@
 import { Loader2, PanelRight, Play } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { tradeUiDeepLink } from "@/lib/trade-ui";
 
 export const HORIZON_OPTIONS = [
   { label: "Tactical (2d)", days: 2, name: "A" },
@@ -84,7 +85,7 @@ export function PredictionControls({
           <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">
             {spotError}{" "}
             <a
-              href="http://127.0.0.1:5001"
+              href={tradeUiDeepLink("openalgo")}
               target="_blank"
               rel="noreferrer"
               className="font-medium underline underline-offset-2"

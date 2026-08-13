@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
 import type { IndexPredictionArtifact } from "@/lib/api";
+import { tradeUiDeepLink } from "@/lib/trade-ui";
 
 function fmtPct(v: number | null | undefined, digits = 2): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -109,7 +110,7 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
         <div className="rounded-lg border border-red-500/35 bg-red-500/10 px-3 py-2 text-[11px] text-red-800 dark:text-red-300">
           Live Nifty spot unavailable — {artifact.spot_error}. Re-login INDmoney in{" "}
           <a
-            href="http://127.0.0.1:5001"
+            href={tradeUiDeepLink("openalgo")}
             target="_blank"
             rel="noreferrer"
             className="font-medium underline underline-offset-2"

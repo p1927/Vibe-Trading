@@ -449,7 +449,7 @@ def run_index_calibration_job(config: dict[str, Any] | None = None) -> dict[str,
 def run_hub_news_entity_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Drain staging queue and optionally run heavy entity maintenance."""
     _ensure_trade_integrations_on_path()
-    from trade_integrations.dataflows.index_research.news_entity_worker import run_hub_news_entity_job as _fn
+    from trade_integrations.dataflows.news_hub_bridge import run_entity_worker_job as _fn
 
     try:
         summary = _fn(config)
@@ -467,7 +467,7 @@ def run_hub_news_entity_job(config: dict[str, Any] | None = None) -> dict[str, A
 def run_hub_news_ingest_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Fetch live news from configured sources into hub staging."""
     _ensure_trade_integrations_on_path()
-    from trade_integrations.dataflows.index_research.hub_news_ingest import run_hub_news_ingest
+    from trade_integrations.dataflows.news_hub_bridge import run_hub_news_ingest
 
     cfg = config or {}
     mode = str(cfg.get("mode") or "full").strip().lower()
@@ -729,9 +729,9 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     created = 0
     try:
         _ensure_trade_integrations_on_path()
-        from trade_integrations.hub_storage.news_pipeline_config import sync_scheduled_jobs_from_config
+        from trade_integrations.dataflows.news_hub_bridge import sync_scheduled_jobs
 
-        sync_scheduled_jobs_from_config()
+        sync_scheduled_jobs()
     except Exception as exc:
         logger.warning("hub news pipeline job sync failed: %s", exc)
 
