@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { SimulatorLiveIndexPanel } from "../SimulatorLiveIndexPanel";
 
 const apiMock = vi.hoisted(() => ({
@@ -14,8 +14,21 @@ describe("SimulatorLiveIndexPanel", () => {
   beforeEach(() => {
     apiMock.getHubMarketDataTicks.mockReset();
     apiMock.getHubMarketDataSpot.mockReset();
+    // Stub requestAnimationFrame so lightweight-charts schedules paint on
+    // macrotask instead of synchronously during teardown. Without this the
+    // chart's draw loop fires after the React unmount and produces
+    // "Object is disposed" errors (the canvas element has been removed).
+    // The vitest config's onUnhandledError hook then filters those out.
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      return setTimeout(() => cb(performance.now()), 0) as unknown as number;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+      clearTimeout(id as unknown as ReturnType<typeof setTimeout>);
+    });
   });
   afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
