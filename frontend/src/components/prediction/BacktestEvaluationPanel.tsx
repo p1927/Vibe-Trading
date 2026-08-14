@@ -182,8 +182,8 @@ export function BacktestEvaluationPanel({
 
       {report.limitations?.length ? (
         <ul className="space-y-1 text-[11px] text-amber-700 dark:text-amber-400">
-          {report.limitations.map((line) => (
-            <li key={line}>• {line}</li>
+          {report.limitations.map((line, i) => (
+            <li key={`${line}-${i}`}>• {line}</li>
           ))}
         </ul>
       ) : null}

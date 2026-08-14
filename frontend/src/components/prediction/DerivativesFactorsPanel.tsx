@@ -215,8 +215,8 @@ export function DerivativesFactorsPanel({ days = 365, onLoadState }: Props) {
       )}
       {coverageNotes.length ? (
         <ul className="mt-2 space-y-0.5 text-[10px] text-amber-700 dark:text-amber-400">
-          {coverageNotes.map((n) => (
-            <li key={n}>• {n}</li>
+          {coverageNotes.map((n, i) => (
+            <li key={`${n}-${i}`}>• {n}</li>
           ))}
         </ul>
       ) : null}

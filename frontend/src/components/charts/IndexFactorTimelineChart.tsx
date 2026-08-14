@@ -203,8 +203,8 @@ export function IndexFactorTimelineChart({
       <div ref={ref} style={{ height }} className="rounded-xl border bg-card p-2" />
       {coverageNotes?.length ? (
         <ul className="text-[10px] text-amber-700 dark:text-amber-400">
-          {coverageNotes.map((n) => (
-            <li key={n}>• {n}</li>
+          {coverageNotes.map((n, i) => (
+            <li key={`${n}-${i}`}>• {n}</li>
           ))}
         </ul>
       ) : null}

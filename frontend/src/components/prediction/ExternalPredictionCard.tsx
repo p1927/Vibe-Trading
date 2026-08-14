@@ -238,8 +238,8 @@ export function ExternalPredictionCard({
             ) : null}
             <ul className="list-disc space-y-1.5 ps-4 text-foreground/90">
               {(record.rationale_bullets?.length ? record.rationale_bullets : ["No rationale extracted"]).map(
-                (bullet) => (
-                  <li key={bullet}>{bullet}</li>
+                (bullet, i) => (
+                  <li key={`${bullet}-${i}`}>{bullet}</li>
                 ),
               )}
             </ul>

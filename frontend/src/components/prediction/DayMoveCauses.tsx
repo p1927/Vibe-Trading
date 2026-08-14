@@ -70,8 +70,8 @@ export function DayMoveCauses({ attribution, causalHypotheses, compact }: Props)
               ) : null}
               {h.evidence?.length ? (
                 <ul className="mt-1.5 space-y-0.5 text-[10px] text-muted-foreground">
-                  {h.evidence.slice(0, 2).map((e) => (
-                    <li key={e}>↳ {e}</li>
+                  {h.evidence.slice(0, 2).map((e, i) => (
+                    <li key={`${e}-${i}`}>↳ {e}</li>
                   ))}
                 </ul>
               ) : null}

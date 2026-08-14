@@ -294,8 +294,8 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shock
 
               {facts.length ? (
                 <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-muted-foreground">
-                  {facts.slice(0, 3).map((f) => (
-                    <li key={f}>{f}</li>
+                  {facts.slice(0, 3).map((f, i) => (
+                    <li key={`${f}-${i}`}>{f}</li>
                   ))}
                 </ul>
               ) : null}
