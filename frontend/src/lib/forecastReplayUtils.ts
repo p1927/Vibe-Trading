@@ -196,17 +196,22 @@ export function buildForwardPaths(
     Number.isFinite(anchor.rangeLow) &&
     Number.isFinite(anchor.rangeHigh);
 
+  let cursorDate = anchor.date;
   for (let day = 0; day <= h; day += 1) {
     const t = day / h;
     const level = anchorClose + (horizonTarget - anchorClose) * t;
     let date: string;
-    if (anchorIdx >= 0 && prices[anchorIdx + day]) {
+    if (day === 0) {
+      date = anchor.date;
+    } else if (anchorIdx >= 0 && prices[anchorIdx + day]) {
       date = prices[anchorIdx + day].date;
-    } else if (anchorIdx >= 0 && day > 0) {
-      date = addBusinessDays(anchor.date, day);
     } else {
-      date = day === 0 ? anchor.date : addBusinessDays(anchor.date, day);
+      // Fall back to the previous point's date (not the anchor) so a
+      // weekend/holiday-only estimate can never land before a real
+      // trading date already emitted for an earlier `day`.
+      date = addBusinessDays(cursorDate, 1);
     }
+    cursorDate = date;
 
     predicted.push({ date, close: level });
 

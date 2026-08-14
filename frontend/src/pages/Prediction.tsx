@@ -851,16 +851,16 @@ export function Prediction() {
 
         {artifact?.stage_errors?.length ? (
           <ul className="space-y-1 text-[11px] text-red-700 dark:text-red-400">
-            {artifact.stage_errors.map((e) => (
-              <li key={e}>• Pipeline: {e}</li>
+            {artifact.stage_errors.map((e, i) => (
+              <li key={`${e}-${i}`}>• Pipeline: {e}</li>
             ))}
           </ul>
         ) : null}
 
         {artifact?.data_warnings?.length ? (
           <ul className="space-y-1 text-[11px] text-amber-700 dark:text-amber-400">
-            {artifact.data_warnings.map((w) => (
-              <li key={w}>• {w}</li>
+            {artifact.data_warnings.map((w, i) => (
+              <li key={`${w}-${i}`}>• {w}</li>
             ))}
           </ul>
         ) : null}

@@ -37,7 +37,6 @@ const BACKTEST_COMBINER_IDS = [
   "shrinkage_50",
   "alignment_grid",
   "stress_conditional",
-  "stress_conditional",
   "fixed_legacy",
   "stacked_ridge_meta",
   "equal_weight_ml_3",

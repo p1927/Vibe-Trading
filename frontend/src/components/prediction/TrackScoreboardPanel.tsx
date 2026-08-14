@@ -261,7 +261,7 @@ export function TrackScoreboardPanel({
 
       {(report.limitations?.length ?? 0) > 0 ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
-          {report.limitations!.map((line) => (
+          {[...new Set(report.limitations)].map((line) => (
             <p key={line}>{line}</p>
           ))}
         </div>
