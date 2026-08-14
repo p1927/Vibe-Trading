@@ -980,6 +980,83 @@ export const api = {
       body: JSON.stringify(body),
     }),
   getReplayStatus: () => request<ReplayStatusResponse>("/trade/recording/replay/status"),
+  // /trade/hub/stock_history/* — Phase 8 client surface.
+  _hubStockHistoryQS(params: Record<string, string | number | undefined>): string {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === "") continue;
+      qs.set(k, String(v));
+    }
+    const s = qs.toString();
+    return s ? `?${s}` : "";
+  },
+  getHubMarketDataTicks: (params: { symbol?: string; exchange?: string; since_minutes?: number; limit?: number }) =>
+    request<HubMarketDataTicksResponse>(
+      `/trade/hub/market-data/ticks${api._hubStockHistoryQS({
+        symbol: params.symbol ?? "NIFTY",
+        exchange: params.exchange ?? "NSE_INDEX",
+        since_minutes: params.since_minutes,
+        limit: params.limit,
+      })}`,
+    ),
+  getHubMarketDataSpot: (params: { symbol?: string; exchange?: string }) =>
+    request<HubMarketDataSpotResponse>(
+      `/trade/hub/market-data/spot${api._hubStockHistoryQS({
+        symbol: params.symbol ?? "NIFTY",
+        exchange: params.exchange ?? "NSE_INDEX",
+      })}`,
+    ),
+  getHubMarketDataOptionChain: (params: { symbol?: string; exchange?: string; strike_count?: number; expiry_date?: string }) =>
+    request<HubMarketDataOptionChainResponse>(
+      `/trade/hub/market-data/option-chain${api._hubStockHistoryQS({
+        symbol: params.symbol ?? "NIFTY",
+        exchange: params.exchange ?? "NSE_INDEX",
+        strike_count: params.strike_count,
+        expiry_date: params.expiry_date,
+      })}`,
+    ),
+  getHubMacroFactorPanel: (params: { start: string; end: string }) =>
+    request<HubMacroFactorPanelResponse>(
+      `/trade/hub/macro-factors/panel${api._hubStockHistoryQS({
+        start: params.start,
+        end: params.end,
+      })}`,
+    ),
+  getHubMacroFactorLatest: () =>
+    request<HubMacroFactorLatestResponse>("/trade/hub/macro-factors/latest"),
+  getHubMacroFactorDates: () =>
+    request<HubMacroFactorDatesResponse>("/trade/hub/macro-factors/dates"),
+  getHubIndexHistoryDays: (params: { symbol?: string; exchange?: string }) =>
+    request<HubIndexHistoryDaysResponse>(
+      `/trade/hub/index-history/days${api._hubStockHistoryQS({
+        symbol: params.symbol ?? "NIFTY",
+        exchange: params.exchange ?? "NSE_INDEX",
+      })}`,
+    ),
+  getHubIndexHistoryExpiries: (params: { symbol?: string; exchange?: string }) =>
+    request<HubIndexHistoryExpiriesResponse>(
+      `/trade/hub/index-history/expiries${api._hubStockHistoryQS({
+        symbol: params.symbol ?? "NIFTY",
+        exchange: params.exchange ?? "NSE_INDEX",
+      })}`,
+    ),
+  getHubIndexHistoryBars: (params: { symbol?: string; exchange?: string; since_ist?: string; until_ist?: string }) =>
+    request<HubIndexHistoryBarsResponse>(
+      `/trade/hub/index-history/bars${api._hubStockHistoryQS({
+        symbol: params.symbol ?? "NIFTY",
+        exchange: params.exchange ?? "NSE_INDEX",
+        since_ist: params.since_ist,
+        until_ist: params.until_ist,
+      })}`,
+    ),
+  getHubConstituentsPanel: (params?: { start?: string; end?: string; limit?: number }) =>
+    request<HubConstituentsPanelResponse>(
+      `/trade/hub/constituents/panel${api._hubStockHistoryQS({
+        start: params?.start,
+        end: params?.end,
+        limit: params?.limit,
+      })}`,
+    ),
   getIndexPredictionFactors: () =>
     request<IndexFactorCatalogResponse>("/trade/index-prediction/factors"),
   simulateIndexPrediction: (body: SimulateIndexPredictionRequest) =>
@@ -2698,6 +2775,150 @@ export interface ReplayStatusResponse {
   status: string;
   message?: string | null;
   replay?: Record<string, unknown> | null;
+}
+
+// ============================================================
+// /trade/hub/stock_history/* — market data, macro factors,
+// index history, constituents. Added by Phase 8 of the
+// stock_history refactor; mirrors the backend response models.
+// ============================================================
+
+export interface HubMarketDataSpot {
+  symbol: string;
+  exchange: string;
+  ltp: number;
+  prev_close?: number | null;
+  bid?: number | null;
+  ask?: number | null;
+  volume?: number | null;
+  source: string;
+  as_of: string;
+}
+
+export interface HubMarketDataTicksResponse {
+  status: string;
+  symbol: string;
+  exchange: string;
+  source: string;
+  ticks: Array<{
+    ts: string;
+    symbol: string;
+    exchange: string;
+    price: number;
+    volume?: number | null;
+    open?: number | null;
+    high?: number | null;
+    low?: number | null;
+    oi?: number | null;
+    source?: string;
+  }>;
+  error?: string | null;
+}
+
+export interface HubMarketDataSpotResponse {
+  status: string;
+  symbol: string;
+  exchange: string;
+  spot?: HubMarketDataSpot | null;
+  error?: string | null;
+}
+
+export interface HubMarketDataOptionChainLeg {
+  last_price?: number;
+  oi?: number;
+  volume?: number;
+  top_bid_price?: number;
+  top_ask_price?: number;
+  iv?: number;
+  delta?: number;
+  gamma?: number;
+  theta?: number;
+  vega?: number;
+}
+
+export interface HubMarketDataOptionChainStrike {
+  strike: number;
+  ce?: HubMarketDataOptionChainLeg | null;
+  pe?: HubMarketDataOptionChainLeg | null;
+}
+
+export interface HubMarketDataOptionChainResponse {
+  status: string;
+  underlying: string;
+  exchange: string;
+  expiry_date?: string | null;
+  underlying_ltp?: number | null;
+  underlying_prev_close?: number | null;
+  strikes?: HubMarketDataOptionChainStrike[];
+  source?: string;
+  error?: string | null;
+}
+
+export interface HubMacroFactorPanelResponse {
+  status: string;
+  start: string;
+  end: string;
+  rows: Array<Record<string, number | string | null>>;
+  columns: string[];
+  error?: string | null;
+}
+
+export interface HubMacroFactorLatestResponse {
+  status: string;
+  day?: string | null;
+  factors?: Record<string, number | null> | null;
+  error?: string | null;
+}
+
+export interface HubMacroFactorDatesResponse {
+  status: string;
+  dates: string[];
+  error?: string | null;
+}
+
+export interface HubIndexHistoryDaysResponse {
+  status: string;
+  symbol: string;
+  exchange: string;
+  days: string[];
+  error?: string | null;
+}
+
+export interface HubIndexHistoryExpiriesResponse {
+  status: string;
+  symbol: string;
+  exchange: string;
+  expiries: string[];
+  error?: string | null;
+}
+
+export interface HubIndexHistoryBar {
+  ts_ist: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  trading_day: string;
+  symbol: string;
+  exchange: string;
+  prev_close: number | null;
+  bar_minutes: number;
+  source: string;
+}
+
+export interface HubIndexHistoryBarsResponse {
+  status: string;
+  symbol: string;
+  exchange: string;
+  bars: HubIndexHistoryBar[];
+  error?: string | null;
+}
+
+export interface HubConstituentsPanelResponse {
+  status: string;
+  rows: Array<Record<string, number | string | null>>;
+  error?: string | null;
 }
 
 export interface SimulateIndexPredictionRequest {
