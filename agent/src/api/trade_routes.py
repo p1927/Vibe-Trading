@@ -3705,3 +3705,353 @@ def run_debate(
         logger.exception("run-debate failed for %s", key)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return AgentDebateResponse(status="running", ticker=key, running=True)
+
+
+# ============================================================
+# /trade/hub/{market-data,macro-factors,index-history,constituents}/
+# ============================================================
+# All endpoints are thin pass-throughs to dataflows.stock_history_bridge.
+# The bridge is the single source of truth for in-process Python callers;
+# HTTP is for cross-process callers (Vibe frontend).
+
+class HubMarketDataTicksResponse(BaseModel):
+    status: str
+    symbol: str
+    exchange: str
+    source: str
+    ticks: list[dict[str, Any]] = []
+    error: str | None = None
+
+
+class HubMarketDataSpotResponse(BaseModel):
+    status: str
+    symbol: str
+    exchange: str
+    spot: dict[str, Any] | None = None
+    error: str | None = None
+
+
+class HubMarketDataOptionChainStrike(BaseModel):
+    strike: float
+    ce: dict[str, Any] | None = None
+    pe: dict[str, Any] | None = None
+
+
+class HubMarketDataOptionChainResponse(BaseModel):
+    status: str
+    underlying: str
+    exchange: str
+    expiry_date: str | None = None
+    underlying_ltp: float | None = None
+    underlying_prev_close: float | None = None
+    strikes: list[HubMarketDataOptionChainStrike] = []
+    source: str = "openalgo"
+    error: str | None = None
+
+
+class HubMacroFactorPanelResponse(BaseModel):
+    status: str
+    start: str
+    end: str
+    rows: list[dict[str, Any]] = []
+    columns: list[str] = []
+    error: str | None = None
+
+
+class HubMacroFactorLatestResponse(BaseModel):
+    status: str
+    day: str | None = None
+    factors: dict[str, float | None] | None = None
+    error: str | None = None
+
+
+class HubMacroFactorDatesResponse(BaseModel):
+    status: str
+    dates: list[str] = []
+    error: str | None = None
+
+
+class HubIndexHistoryDaysResponse(BaseModel):
+    status: str
+    symbol: str
+    exchange: str
+    days: list[str] = []
+    error: str | None = None
+
+
+class HubIndexHistoryExpiriesResponse(BaseModel):
+    status: str
+    symbol: str
+    exchange: str
+    expiries: list[str] = []
+    error: str | None = None
+
+
+class HubIndexHistoryBarsResponse(BaseModel):
+    status: str
+    symbol: str
+    exchange: str
+    bars: list[dict[str, Any]] = []
+    error: str | None = None
+
+
+class HubConstituentsPanelResponse(BaseModel):
+    status: str
+    rows: list[dict[str, Any]] = []
+    error: str | None = None
+
+
+@trade_router.get("/hub/market-data/ticks", response_model=HubMarketDataTicksResponse)
+def hub_market_data_ticks(
+    symbol: str = "NIFTY",
+    exchange: str = "NSE_INDEX",
+    since_minutes: int = 240,
+    limit: int = 500,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubMarketDataTicksResponse:
+    """Recent market_ticks rows for the underlying. Empty list when Timescale disabled."""
+    from trade_integrations.dataflows.stock_history_bridge import get_recent_market_ticks
+
+    try:
+        ticks = get_recent_market_ticks(
+            symbol=symbol, exchange=exchange,
+            since_minutes=since_minutes, limit=limit,
+        )
+        return HubMarketDataTicksResponse(
+            status="ok", symbol=symbol.upper(), exchange=exchange.upper(),
+            source="timescale" if ticks else "empty", ticks=ticks,
+        )
+    except Exception as exc:
+        logger.exception("hub market-data ticks failed for %s/%s", symbol, exchange)
+        return HubMarketDataTicksResponse(
+            status="error", symbol=symbol.upper(), exchange=exchange.upper(),
+            source="empty", ticks=[], error=str(exc),
+        )
+
+
+@trade_router.get("/hub/market-data/spot", response_model=HubMarketDataSpotResponse)
+def hub_market_data_spot(
+    symbol: str = "NIFTY",
+    exchange: str = "NSE_INDEX",
+    _auth: None = Depends(require_local_or_auth),
+) -> HubMarketDataSpotResponse:
+    """Current spot — Timescale first, OpenAlgo fallback. Returns 200 with
+    status='error' on degraded state so the UI renders an empty-state cleanly."""
+    from trade_integrations.dataflows.stock_history_bridge import get_live_spot_quote
+
+    quote = get_live_spot_quote(symbol=symbol, exchange=exchange)
+    if quote is None:
+        return HubMarketDataSpotResponse(
+            status="error", symbol=symbol.upper(), exchange=exchange.upper(),
+            error="no spot quote available (Timescale empty and OpenAlgo unreachable)",
+        )
+    return HubMarketDataSpotResponse(
+        status="ok", symbol=symbol.upper(), exchange=exchange.upper(),
+        spot={
+            "symbol": quote.symbol, "exchange": quote.exchange,
+            "ltp": quote.ltp, "prev_close": quote.prev_close,
+            "bid": quote.bid, "ask": quote.ask,
+            "volume": quote.volume, "source": quote.source,
+            "as_of": quote.as_of,
+        },
+    )
+
+
+@trade_router.get("/hub/market-data/option-chain", response_model=HubMarketDataOptionChainResponse)
+def hub_market_data_option_chain(
+    symbol: str = "NIFTY",
+    exchange: str = "NSE_INDEX",
+    strike_count: int = 10,
+    expiry_date: str | None = None,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubMarketDataOptionChainResponse:
+    """Live option chain from OpenAlgo (proxied through stock_history_bridge)."""
+    from trade_integrations.dataflows.stock_history_bridge import get_live_option_chain
+
+    data = get_live_option_chain(
+        underlying=symbol, exchange=exchange,
+        strike_count=strike_count, expiry_date=expiry_date,
+    )
+    if data is None:
+        return HubMarketDataOptionChainResponse(
+            status="error", underlying=symbol.upper(), exchange=exchange.upper(),
+            error="OpenAlgo returned no chain (broker unreachable?)",
+        )
+    strikes_raw = data.get("strikes") or data.get("chain") or []
+    strikes: list[HubMarketDataOptionChainStrike] = []
+    for s in strikes_raw:
+        if not isinstance(s, dict):
+            continue
+        strikes.append(HubMarketDataOptionChainStrike(
+            strike=float(s.get("strike") or s.get("strike_price") or 0),
+            ce=s.get("ce") if "ce" in s else s,
+            pe=s.get("pe") if "pe" in s else s,
+        ))
+    return HubMarketDataOptionChainResponse(
+        status="ok", underlying=symbol.upper(), exchange=exchange.upper(),
+        expiry_date=str(data.get("expiry_date") or data.get("expiry") or "")[:10] or None,
+        underlying_ltp=_safe_float(data.get("underlying_ltp") or data.get("ltp") or data.get("spot")),
+        underlying_prev_close=_safe_float(data.get("underlying_prev_close") or data.get("prev_close")),
+        strikes=strikes, source="openalgo",
+    )
+
+
+@trade_router.get("/hub/macro-factors/panel", response_model=HubMacroFactorPanelResponse)
+def hub_macro_factor_panel(
+    start: str,
+    end: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubMacroFactorPanelResponse:
+    """Wide-form macro factor panel for [start, end] (YYYY-MM-DD)."""
+    from trade_integrations.dataflows.stock_history_bridge import get_macro_factor_panel
+
+    try:
+        df = get_macro_factor_panel(start=start, end=end)
+        if df.empty:
+            return HubMacroFactorPanelResponse(
+                status="ok", start=start, end=end, rows=[], columns=[],
+            )
+        # Replace NaN with None so JSON encoding is clean.
+        df_clean = df.where(df.notna(), None)
+        rows = df_clean.to_dict(orient="records")
+        return HubMacroFactorPanelResponse(
+            status="ok", start=start, end=end,
+            rows=rows, columns=[str(c) for c in df.columns.tolist()],
+        )
+    except Exception as exc:
+        logger.exception("hub macro-factors panel failed for %s/%s", start, end)
+        return HubMacroFactorPanelResponse(
+            status="error", start=start, end=end, rows=[], columns=[], error=str(exc),
+        )
+
+
+@trade_router.get("/hub/macro-factors/latest", response_model=HubMacroFactorLatestResponse)
+def hub_macro_factor_latest(
+    _auth: None = Depends(require_local_or_auth),
+) -> HubMacroFactorLatestResponse:
+    """Most recent day's macro factor snapshot, or {status='error'} when no data."""
+    from trade_integrations.dataflows.stock_history_bridge import get_latest_macro_snapshot
+
+    snap = get_latest_macro_snapshot()
+    if snap is None:
+        return HubMacroFactorLatestResponse(
+            status="error", day=None, factors=None, error="no macro factor data",
+        )
+    return HubMacroFactorLatestResponse(
+        status="ok", day=snap["day"], factors=snap["factors"],
+    )
+
+
+@trade_router.get("/hub/macro-factors/dates", response_model=HubMacroFactorDatesResponse)
+def hub_macro_factor_dates(
+    _auth: None = Depends(require_local_or_auth),
+) -> HubMacroFactorDatesResponse:
+    from trade_integrations.dataflows.stock_history_bridge import list_macro_factor_dates
+    try:
+        return HubMacroFactorDatesResponse(
+            status="ok", dates=list_macro_factor_dates(),
+        )
+    except Exception as exc:
+        logger.exception("hub macro-factors dates failed")
+        return HubMacroFactorDatesResponse(
+            status="error", dates=[], error=str(exc),
+        )
+
+
+@trade_router.get("/hub/index-history/days", response_model=HubIndexHistoryDaysResponse)
+def hub_index_history_days(
+    symbol: str = "NIFTY",
+    exchange: str = "NSE_INDEX",
+    _auth: None = Depends(require_local_or_auth),
+) -> HubIndexHistoryDaysResponse:
+    from trade_integrations.dataflows.stock_history_bridge import list_recorded_index_days
+    try:
+        return HubIndexHistoryDaysResponse(
+            status="ok", symbol=symbol.upper(), exchange=exchange.upper(),
+            days=list_recorded_index_days(symbol=symbol, exchange=exchange),
+        )
+    except Exception as exc:
+        logger.exception("hub index-history days failed")
+        return HubIndexHistoryDaysResponse(
+            status="error", symbol=symbol.upper(), exchange=exchange.upper(),
+            days=[], error=str(exc),
+        )
+
+
+@trade_router.get("/hub/index-history/expiries", response_model=HubIndexHistoryExpiriesResponse)
+def hub_index_history_expiries(
+    symbol: str = "NIFTY",
+    exchange: str = "NSE_INDEX",
+    _auth: None = Depends(require_local_or_auth),
+) -> HubIndexHistoryExpiriesResponse:
+    from trade_integrations.dataflows.stock_history_bridge import list_recorded_option_expiries
+    try:
+        return HubIndexHistoryExpiriesResponse(
+            status="ok", symbol=symbol.upper(), exchange=exchange.upper(),
+            expiries=list_recorded_option_expiries(symbol=symbol, exchange=exchange),
+        )
+    except Exception as exc:
+        logger.exception("hub index-history expiries failed")
+        return HubIndexHistoryExpiriesResponse(
+            status="error", symbol=symbol.upper(), exchange=exchange.upper(),
+            expiries=[], error=str(exc),
+        )
+
+
+@trade_router.get("/hub/index-history/bars", response_model=HubIndexHistoryBarsResponse)
+def hub_index_history_bars(
+    symbol: str = "NIFTY",
+    exchange: str = "NSE_INDEX",
+    since_ist: str = "2015-01-09T09:15:00",
+    until_ist: str = "2026-12-31T15:30:00",
+    _auth: None = Depends(require_local_or_auth),
+) -> HubIndexHistoryBarsResponse:
+    from datetime import datetime
+    from trade_integrations.dataflows.stock_history_bridge import get_index_history
+
+    try:
+        since_dt = datetime.fromisoformat(since_ist)
+        until_dt = datetime.fromisoformat(until_ist)
+        bars = get_index_history(
+            symbol=symbol, exchange=exchange,
+            since_ist=since_dt, until_ist=until_dt,
+        )
+        return HubIndexHistoryBarsResponse(
+            status="ok", symbol=symbol.upper(), exchange=exchange.upper(), bars=bars,
+        )
+    except Exception as exc:
+        logger.exception("hub index-history bars failed")
+        return HubIndexHistoryBarsResponse(
+            status="error", symbol=symbol.upper(), exchange=exchange.upper(),
+            bars=[], error=str(exc),
+        )
+
+
+@trade_router.get("/hub/constituents/panel", response_model=HubConstituentsPanelResponse)
+def hub_constituents_panel(
+    start: str | None = None,
+    end: str | None = None,
+    limit: int = 1000,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubConstituentsPanelResponse:
+    # Constituents live under stock_history.api, not the bridge module.
+    from trade_integrations.stock_history import StockHistory
+
+    try:
+        df = StockHistory().load_constituents_history(start=start, end=end)
+        if df.empty:
+            return HubConstituentsPanelResponse(status="ok", rows=[])
+        df = df.head(limit)
+        df_clean = df.where(df.notna(), None)
+        rows = df_clean.to_dict(orient="records")
+        return HubConstituentsPanelResponse(status="ok", rows=rows)
+    except Exception as exc:
+        logger.exception("hub constituents panel failed")
+        return HubConstituentsPanelResponse(status="error", rows=[], error=str(exc))
+
+
+def _safe_float(v: Any) -> float | None:
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
