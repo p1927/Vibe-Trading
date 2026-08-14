@@ -191,6 +191,24 @@ def _start_scheduled_research_executor() -> None:
     if is_hub_capture_scheduler_enabled():
         register_default_hub_capture_jobs(_get_scheduled_research_store())
     _register_persisted_autonomous_agent_jobs()
+    # Hot-reload safety: every ``register_default_*`` helper stamps
+    # ``next_run_at=now_ms`` so a fresh job fires immediately. On uvicorn
+    # --reload this means every code save re-stamps every default job and the
+    # first executor tick dispatches them all, cascading LLM calls and IO
+    # before the user types anything. Push never-executed PENDING jobs forward
+    # by ``SCHEDULED_RESEARCH_FRESH_DEFER_MS`` (default 30 min) so the
+    # scheduler only fires on the persisted cron schedule, not on every reload.
+    try:
+        from src.scheduled_research.executor import defer_fresh_registrations
+
+        deferred = defer_fresh_registrations(_get_scheduled_research_store())
+        if deferred:
+            logger.info(
+                "deferred %d fresh scheduled job(s) on startup to avoid hot-reload cascade",
+                deferred,
+            )
+    except Exception:
+        logger.exception("defer_fresh_registrations failed on startup")
     try:
         from src.scheduled_research.autonomous_bootstrap import (
             resume_pending_bootstraps,

@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 
 OPTIONS_MONITOR_ENABLE_SCHEDULER_ENV = "OPTIONS_MONITOR_ENABLE_SCHEDULER"
 DEFAULT_OPTIONS_POLL_CRON = "*/5 * * * *"
+# Env guard for the LLM-firing thesis-break auto-dispatch path. When set to a
+# falsey value (0/false/no/off/""), the position monitor will still refresh
+# the widget and emit the event log line, but it will NOT enqueue a full
+# Vibe agent turn for every broken open position. Default ON so prod behaves
+# as before; set to "0" in dev to avoid a flood of LLM calls every 5 min.
+OPTIONS_AUTO_DISPATCH_THESIS_BREAK_ENV = "OPTIONS_AUTO_DISPATCH_THESIS_BREAK"
 
 JOB_TYPE_OPTIONS_PLAN_REFRESH = "options_plan_refresh"
 JOB_TYPE_OPTIONS_POSITION_MONITOR = "options_position_monitor"
@@ -37,6 +43,22 @@ def is_options_scheduler_enabled(value: str | None = None) -> bool:
         os.getenv(OPTIONS_MONITOR_ENABLE_SCHEDULER_ENV, "").strip().lower()
         in _TRUE_VALUES
     )
+
+
+def is_options_thesis_break_auto_dispatch_enabled(
+    value: str | None = None,
+) -> bool:
+    """Return whether ``run_options_position_monitor_job`` should auto-dispatch
+    a full Vibe agent turn for every broken open position.
+
+    Defaults to True (legacy behaviour). Set
+    ``OPTIONS_AUTO_DISPATCH_THESIS_BREAK=0`` in dev to keep the widget
+    refresh / event-log path while suppressing the per-tick LLM cascade.
+    """
+    if value is not None:
+        return value.strip().lower() in _TRUE_VALUES
+    raw = os.getenv(OPTIONS_AUTO_DISPATCH_THESIS_BREAK_ENV, "1").strip().lower()
+    return raw in _TRUE_VALUES
 
 
 def is_options_monitor_active() -> bool:
@@ -301,6 +323,17 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
 
             dispatch_widget_id = str(widget_id or "").strip()
             new_plan_widget_id = str(new_widget_id or "").strip() or None
+            if not is_options_thesis_break_auto_dispatch_enabled():
+                # Widget refresh + event log already emitted above; skip the
+                # LLM-firing auto-dispatch path to avoid a per-tick cascade
+                # when many positions are broken (OPTIONS_AUTO_DISPATCH_THESIS_BREAK=0).
+                logger.info(
+                    "thesis break for %s widget=%s — auto-dispatch suppressed "
+                    "(OPTIONS_AUTO_DISPATCH_THESIS_BREAK=0)",
+                    underlying,
+                    widget_id,
+                )
+                continue
             try:
                 asyncio.get_event_loop().create_task(
                     dispatch_thesis_break_revision(
