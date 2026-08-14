@@ -35,6 +35,12 @@ DISPATCH_TIMEOUT_ENV = "SCHEDULED_RESEARCH_DISPATCH_TIMEOUT_MS"
 WATCHDOG_INTERVAL_ENV = "SCHEDULED_RESEARCH_WATCHDOG_INTERVAL_MS"
 FAILURE_THRESHOLD_ENV = "SCHEDULED_RESEARCH_FAILURE_THRESHOLD"
 SCHEDULER_ENABLED_ENV = "VIBE_TRADING_ENABLE_SCHEDULER"
+# Defer the first run of every freshly-registered job by this many ms so that
+# a uvicorn --reload worker restart does not refire the entire scheduler on
+# every code save. The default of 30 min is shorter than every default cron in
+# this codebase and longer than any realistic dev iteration loop.
+DEFAULT_FRESH_REGISTRATION_DEFER_MS = 30 * 60 * 1000
+FRESH_REGISTRATION_DEFER_ENV = "SCHEDULED_RESEARCH_FRESH_DEFER_MS"
 LAST_RESULT_CONFIG_KEY = "_last_result_summary"
 _RECOVERY_ERROR_MARKERS = (
     "recovered on stack boot",
@@ -48,6 +54,32 @@ _JOB_DISPATCH_TIMEOUT_MS: dict[str, int] = {
     "hub_news_ingest": 10 * 60 * 1000,
 }
 _INDEX_JOB_DISPATCH_TIMEOUT_MS = 30 * 60 * 1000
+
+
+def _autonomous_watch_target_running(job: ScheduledResearchJob) -> bool:
+    """Return whether the agent bound to an autonomous_agent_watch job is running.
+
+    Used by :meth:`ScheduledResearchExecutor.defer_startup_backlog` to skip
+    watches whose agent is not running — otherwise every reload would fire a
+    ``run_watch_tick`` that immediately returns ``agent_not_running`` and
+    re-deploys the same dead path on every subsequent tick until the schedule
+    catches up.
+    """
+    agent_id = str((job.config or {}).get("autonomous_agent_id") or "").strip()
+    if not agent_id:
+        # Legacy watch job without an explicit agent id — fall through; the
+        # dispatcher handles the missing-id case.
+        return True
+    try:
+        from trade_integrations.autonomous_agents.store import get_agent
+    except ImportError:
+        return True
+    try:
+        agent = get_agent(agent_id)
+    except Exception:
+        logger.debug("autonomous agent lookup failed for %s", agent_id, exc_info=True)
+        return True
+    return bool(agent) and str(agent.get("status") or "") == "running"
 
 
 NowFn = Callable[[], int]
@@ -73,6 +105,69 @@ def _startup_grace_ms() -> int:
         return max(0, int(raw))
     except ValueError:
         return DEFAULT_STARTUP_GRACE_MS
+
+
+def _fresh_registration_defer_ms() -> int:
+    """Return the defer window (ms) for first-run jobs after a hot reload.
+
+    Pushing the first run by this much stops uvicorn --reload from re-firing
+    every default scheduled job back-to-back on every code save. Set to 0 to
+    restore the pre-fix behaviour (every reload fires everything).
+    """
+    raw = os.getenv(
+        FRESH_REGISTRATION_DEFER_ENV,
+        str(DEFAULT_FRESH_REGISTRATION_DEFER_MS),
+    ).strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_FRESH_REGISTRATION_DEFER_MS
+
+
+def defer_fresh_registrations(
+    store: ScheduledResearchJobStore,
+    *,
+    now_ms: int | None = None,
+    defer_ms: int | None = None,
+) -> int:
+    """Push ``next_run_at`` forward for never-executed PENDING jobs.
+
+    Every ``register_default_*`` helper stamps ``next_run_at=now_ms`` so a
+    fresh job fires immediately on the next tick. On uvicorn --reload this
+    means every code save re-stamps every default job and the first executor
+    tick dispatches them all, cascading LLM calls and IO before the user types
+    anything. Calling this once after registration defers their first run by
+    a configurable grace window (default 30 min) so the scheduler only fires
+    on the persisted cron schedule, not on every reload.
+
+    Returns the number of jobs deferred.
+    """
+    if defer_ms is None:
+        defer_ms = _fresh_registration_defer_ms()
+    if defer_ms <= 0:
+        return 0
+    now = int(time.time() * 1000) if now_ms is None else now_ms
+    jobs = store.load()
+    deferred = 0
+    for job in jobs.values():
+        if job.status != JobStatus.PENDING:
+            continue
+        # A job that has fired at least once already is on its real schedule;
+        # do not push it back or we lose cadence.
+        if job.last_run_at is not None:
+            continue
+        if job.next_run_at >= now + defer_ms:
+            continue
+        job.next_run_at = now + defer_ms
+        deferred += 1
+        logger.info(
+            "deferring fresh registration of scheduled job %s to %s",
+            job.id,
+            job.next_run_at,
+        )
+    if deferred:
+        store.save(jobs)
+    return deferred
 
 
 def _stale_running_ms() -> int:
@@ -489,6 +584,18 @@ class ScheduledResearchExecutor:
             if job.next_run_at > now:
                 continue
             if str((job.config or {}).get("job_type") or "") == "autonomous_agent_watch":
+                # Autonomous watches are dispatched on a per-agent cadence; their
+                # bootstrap path enqueues the first tick immediately after commit.
+                # If the agent is not running, there is nothing to watch — skip
+                # rather than fire a redundant tick that returns
+                # ``agent_not_running`` (F2).
+                if not _autonomous_watch_target_running(job):
+                    job.next_run_at = now + self._tick_interval_ms
+                    deferred += 1
+                    logger.info(
+                        "deferring autonomous_agent_watch for %s: no running agent",
+                        job.id,
+                    )
                 continue
             try:
                 job.next_run_at = next_due(job.schedule, now)

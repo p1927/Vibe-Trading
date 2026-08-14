@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from src.scheduled_research.executor import (
     ScheduledResearchExecutor,
+    defer_fresh_registrations,
     dispatch_timeout_ms_for,
     is_due,
     is_job_stale_running,
@@ -517,4 +518,115 @@ def test_watchdog_recovers_stale_job_independently(tmp_path: Path, monkeypatch: 
 
     recovered = store.get("stale")
     assert recovered is not None
-    assert recovered.status == JobStatus.PENDING
+
+
+def test_defer_fresh_registrations_pushes_unrun_jobs_forward(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hot-reload safety: a brand-new PENDING job that has never fired
+    should be deferred by ``SCHEDULED_RESEARCH_FRESH_DEFER_MS`` so that
+    ``next_run_at`` is not in the past when the next executor tick runs.
+
+    Jobs that have fired at least once must NOT be touched — pushing an
+    already-cadenced job forward would desync its schedule.
+    """
+    monkeypatch.setenv("SCHEDULED_RESEARCH_FRESH_DEFER_MS", "1800000")  # 30 min
+    store = _store(tmp_path)
+    fresh = _job("fresh", schedule="0 6 * * *", next_run_at=100)
+    fresh.last_run_at = None
+    store.upsert(fresh)
+    matured = _job("matured", schedule="0 6 * * *", next_run_at=200)
+    matured.last_run_at = 50
+    store.upsert(matured)
+
+    deferred = defer_fresh_registrations(store, now_ms=1_000)
+
+    assert deferred == 1
+    fresh_after = store.get("fresh")
+    matured_after = store.get("matured")
+    assert fresh_after is not None
+    assert matured_after is not None
+    assert fresh_after.next_run_at == 1_000 + 1_800_000
+    assert matured_after.next_run_at == 200  # unchanged
+
+
+def test_defer_fresh_registrations_disabled_with_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Set ``SCHEDULED_RESEARCH_FRESH_DEFER_MS=0`` to opt out (preserve
+    pre-fix behaviour for tests / legacy stacks).
+    """
+    monkeypatch.setenv("SCHEDULED_RESEARCH_FRESH_DEFER_MS", "0")
+    store = _store(tmp_path)
+    fresh = _job("fresh", schedule="0 6 * * *", next_run_at=100)
+    store.upsert(fresh)
+
+    deferred = defer_fresh_registrations(store, now_ms=1_000)
+
+    assert deferred == 0
+    assert store.get("fresh").next_run_at == 100
+
+
+def test_defer_startup_backlog_defers_autonomous_watch_when_agent_not_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An autonomous_agent_watch job whose bound agent is not running
+    must be deferred one tick instead of firing and returning
+    ``agent_not_running`` on every hot reload.
+    """
+    import sys
+    from pathlib import Path as _Path
+
+    # Provide a stub for trade_integrations.autonomous_agents.store so the
+    # helper resolves without the full integrations package being installed.
+    stub_module = type(sys)("trade_integrations.autonomous_agents.store")
+    _AGENTS: dict[str, dict[str, str]] = {}
+
+    def _get_agent(agent_id: str) -> dict[str, str] | None:
+        return _AGENTS.get(agent_id)
+
+    stub_module.get_agent = _get_agent  # type: ignore[attr-defined]
+    sys.modules.setdefault("trade_integrations", type(sys)("trade_integrations"))
+    sys.modules["trade_integrations.autonomous_agents"] = type(sys)(
+        "trade_integrations.autonomous_agents"
+    )
+    sys.modules["trade_integrations.autonomous_agents.store"] = stub_module
+
+    store = _store(tmp_path)
+    watch = _job("aa_stopped-watch", schedule="420000", next_run_at=10)
+    watch.config = {"job_type": "autonomous_agent_watch", "autonomous_agent_id": "aa_stopped"}
+    store.upsert(watch)
+
+    calls: list[str] = []
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        calls.append(job.id)
+
+    async def scenario() -> None:
+        # Default tick interval is 60s; defer-fallback pushes to 50 + 60_000.
+        executor = ScheduledResearchExecutor(
+            store,
+            dispatch,
+            now_fn=lambda: 50,
+            tick_interval_ms=60_000,
+        )
+        # Backlog runs once: agent "aa_stopped" is not running, so the watch
+        # is deferred by one tick interval (50 + 60_000).
+        deferred = executor.defer_startup_backlog(50)
+        assert deferred == 1
+        # Tick at 50: defer pushed next_run_at to 50 + 60_000, so the job is
+        # not due and dispatch is NOT called. Without the fix, this tick
+        # would have fired and returned agent_not_running.
+        await executor.tick(50)
+        assert calls == [], (
+            "defer must push next_run_at past now so the reload-tick does NOT "
+            "fire the watch while agent_not_running"
+        )
+
+    asyncio.run(scenario())
+
+    saved = store.get("aa_stopped-watch")
+    assert saved is not None
+    # The defer must have pushed past the original 10.
+    assert saved.next_run_at > 10
+    assert saved.status == JobStatus.PENDING
