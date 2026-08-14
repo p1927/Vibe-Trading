@@ -179,13 +179,17 @@ export function SimulatorLiveIndexPanel({
       return;
     }
     const sorted = [...ticks].sort((a, b) => a.ts.localeCompare(b.ts));
-    const data = sorted
+    const mapped = sorted
       .filter((t) => Number.isFinite(t.price))
       .map((t) => {
         const ms = Date.parse(t.ts);
         return { time: (ms / 1000) as Time, value: t.price };
       })
       .filter((p) => Number.isFinite(p.time));
+    // Lightweight Charts requires strictly ascending, unique times — two
+    // ticks landing in the same second (sub-second polling) would tie.
+    // Keep the latest value for each timestamp.
+    const data = mapped.filter((p, i) => i === mapped.length - 1 || p.time !== mapped[i + 1].time);
     series.setData(data);
   }, [ticks]);
 
