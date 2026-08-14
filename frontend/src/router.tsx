@@ -33,6 +33,9 @@ const Hub = lazy(() => import("@/pages/Hub").then((m) => ({ default: m.Hub })));
 const Simulator = lazy(() =>
   import("@/pages/Simulator").then((m) => ({ default: m.Simulator })),
 );
+const Scheduled = lazy(() =>
+  import("@/pages/Scheduled").then((m) => ({ default: m.Scheduled })),
+);
 const AlphaZoo = lazy(() =>
   import("@/pages/AlphaZoo").then((m) => ({ default: m.AlphaZoo })),
 );
@@ -70,6 +73,7 @@ export const router = createBrowserRouter([
       { path: "/prediction", element: wrap(Prediction) },
       { path: "/hub", element: wrap(Hub) },
       { path: "/simulator", element: wrap(Simulator) },
+      { path: "/scheduled", element: wrap(Scheduled) },
       { path: "/alpha-zoo", element: wrap(AlphaZoo) },
       { path: "/alpha-zoo/bench", element: wrap(AlphaZoo) },
       { path: "/alpha-zoo/compare", element: wrap(AlphaZoo) },
