@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import type { ReplayRange } from "@/components/simulator/SimulatorReplayCalendar";
 
 function parseSimNow(value: unknown): Date | null {
   if (typeof value !== "string" || !value) return null;
@@ -34,6 +35,14 @@ function istMinutesOfDay(d: Date): number {
   return hour * 60 + minute;
 }
 
+function friendlyError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/failed to fetch|networkerror|load failed/i.test(message)) {
+    return "Can't reach the recording API — retrying…";
+  }
+  return message;
+}
+
 function progressPct(d: Date | null): number {
   if (!d) return 0;
   const minutes = istMinutesOfDay(d);
@@ -45,10 +54,10 @@ function progressPct(d: Date | null): number {
 }
 
 export function SimulatorReplayClock({
-  armedDate,
+  armedRange,
   onStop,
 }: {
-  armedDate: string | null;
+  armedRange: ReplayRange | null;
   onStop: () => void;
 }) {
   const [status, setStatus] = useState<Record<string, unknown> | null>(null);
@@ -58,7 +67,7 @@ export function SimulatorReplayClock({
 
   // Poll status every second while armed
   useEffect(() => {
-    if (!armedDate) {
+    if (!armedRange) {
       setStatus(null);
       return;
     }
@@ -67,10 +76,13 @@ export function SimulatorReplayClock({
     const tick = async () => {
       try {
         const res = await api.getReplayStatus();
-        if (!controller.signal.aborted) setStatus(res.replay ?? null);
+        if (!controller.signal.aborted) {
+          setStatus(res.replay ?? null);
+          setError(null);
+        }
       } catch (err) {
         if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : "Failed to fetch status");
+          setError(friendlyError(err));
         }
       }
     };
@@ -80,7 +92,7 @@ export function SimulatorReplayClock({
       controller.abort();
       window.clearInterval(id);
     };
-  }, [armedDate]);
+  }, [armedRange]);
 
   const clock = (status?.clock || {}) as Record<string, unknown>;
   const simNow = parseSimNow(clock.sim_now);
@@ -88,7 +100,11 @@ export function SimulatorReplayClock({
   const loop = clock.loop === true;
   const paused = clock.paused === true;
   const completed = clock.completed === true;
-  const replayDate = typeof clock.replay_date === "string" ? clock.replay_date : armedDate;
+  const replayDate =
+    typeof clock.replay_date === "string" ? clock.replay_date : armedRange?.start ?? null;
+  const weekDates = Array.isArray(clock.week_dates) ? (clock.week_dates as string[]) : [];
+  const weekIndex = typeof clock.week_index === "number" ? clock.week_index : 0;
+  const isRange = Boolean(armedRange && armedRange.start !== armedRange.end);
 
   const pct = useMemo(() => progressPct(simNow), [simNow]);
 
@@ -103,16 +119,17 @@ export function SimulatorReplayClock({
       setStatus(res.replay ?? null);
       if (action === "stop") onStop();
     } catch (err) {
-      setError(err instanceof Error ? err.message : `${action} failed`);
+      setError(err instanceof Error ? friendlyError(err) : `${action} failed`);
     } finally {
       setBusy(null);
     }
   }
 
-  if (!armedDate) {
+  if (!armedRange) {
     return (
       <div className="rounded-lg border bg-background/60 p-3 text-[11px] text-muted-foreground">
-        Select a day on the calendar and press <span className="font-medium text-foreground">Arm replay</span> to start the simulator clock.
+        Select a day (or a start + end range) on the calendar and press{" "}
+        <span className="font-medium text-foreground">Arm replay</span> to start the simulator clock.
       </div>
     );
   }
@@ -128,6 +145,12 @@ export function SimulatorReplayClock({
             {formatHHMM(simNow)}
             <span className="ml-2 text-[11px] text-muted-foreground">IST · {replayDate}</span>
           </p>
+          {isRange ? (
+            <p className="text-[10px] text-muted-foreground">
+              Range {armedRange.start} → {armedRange.end}
+              {weekDates.length > 0 ? ` · day ${weekIndex + 1} of ${weekDates.length}` : ""}
+            </p>
+          ) : null}
         </div>
         <div className="flex items-center gap-1.5">
           <span
@@ -199,7 +222,19 @@ export function SimulatorReplayClock({
         </button>
       </div>
 
-      {error ? <p className="text-[11px] text-destructive">{error}</p> : null}
+      {error ? (
+        <p
+          className={cn(
+            "flex items-center gap-1.5 text-[11px]",
+            error.endsWith("…") ? "text-amber-600 dark:text-amber-400" : "text-destructive",
+          )}
+        >
+          {error.endsWith("…") && (
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+          )}
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { type ReplayCalendarDay } from "@/lib/api";
 
@@ -70,20 +70,34 @@ function sameDay(a: Date, b: Date): boolean {
   );
 }
 
+export interface ReplayRange {
+  start: string;
+  end: string;
+}
+
+/**
+ * GitHub-contribution-style heatmap calendar with two-click range selection:
+ * click a day to anchor the range start, click a second day to set the end
+ * (order-normalized — clicking "before" the anchor flips start/end). A third
+ * click starts a fresh single-day range. Cells strictly between the anchor
+ * and the hovered cell preview the pending range before the second click.
+ */
 export function SimulatorReplayCalendar({
   days,
-  selectedDate,
-  armedDate,
-  onSelect,
+  range,
+  armedRange,
+  onRangeSelect,
 }: {
   days: ReplayCalendarDay[];
-  selectedDate: string | null;
-  armedDate: string | null;
-  onSelect: (date: string) => void;
+  range: ReplayRange | null;
+  armedRange: ReplayRange | null;
+  onRangeSelect: (range: ReplayRange) => void;
 }) {
   const { weeks, months } = useMemo(() => buildGrid(days), [days]);
 
   const today = useMemo(() => new Date(), []);
+  const [anchor, setAnchor] = useState<string | null>(range ? range.start : null);
+  const [hovered, setHovered] = useState<string | null>(null);
 
   if (days.length === 0) {
     return (
@@ -93,10 +107,33 @@ export function SimulatorReplayCalendar({
     );
   }
 
+  function handleClick(key: string) {
+    if (anchor === null || (range && range.start !== range.end)) {
+      // Starting a fresh selection (nothing anchored, or a full range from a
+      // prior selection is already showing).
+      setAnchor(key);
+      onRangeSelect({ start: key, end: key });
+      return;
+    }
+    // Second click completes the range, normalizing order.
+    const start = key < anchor ? key : anchor;
+    const end = key < anchor ? anchor : key;
+    setAnchor(null);
+    onRangeSelect({ start, end });
+  }
+
+  const previewEnd = anchor !== null ? hovered ?? anchor : null;
+  const previewStart = anchor !== null && previewEnd !== null ? (previewEnd < anchor ? previewEnd : anchor) : null;
+  const previewLast = anchor !== null && previewEnd !== null ? (previewEnd < anchor ? anchor : previewEnd) : null;
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-        <span>Hover a square for coverage, click to select. Most recent ~12 months shown.</span>
+        <span>
+          {anchor
+            ? `Range start ${anchor} — click an end day.`
+            : "Click a day for the range start, then click another for the end. Most recent ~12 months shown."}
+        </span>
       </div>
 
       <div className="overflow-x-auto rounded-lg border bg-background/60 p-3">
@@ -128,6 +165,7 @@ export function SimulatorReplayCalendar({
             {/* Cells */}
             <div
               className="grid grid-flow-col gap-[3px]"
+              onMouseLeave={() => setHovered(null)}
               style={{ gridTemplateColumns: `repeat(${weeks.length}, 1fr)` }}
             >
               {weeks.map((week, wi) =>
@@ -135,8 +173,14 @@ export function SimulatorReplayCalendar({
                   const key = cell.date.toISOString().slice(0, 10);
                   const day = cell.day;
                   const lvl = day ? densityLevel(day) : 0;
-                  const isSelected = selectedDate === key;
-                  const isArmed = armedDate === key;
+                  const inSelectedRange = Boolean(range && key >= range.start && key <= range.end);
+                  const isRangeEdge = Boolean(range && (key === range.start || key === range.end));
+                  const inPreview = Boolean(
+                    previewStart && previewLast && key >= previewStart && key <= previewLast,
+                  );
+                  const isArmed = Boolean(
+                    armedRange && key >= armedRange.start && key <= armedRange.end,
+                  );
                   const isFuture = cell.date > today;
                   const isToday = sameDay(cell.date, today);
                   const noData = !day || lvl === 0;
@@ -146,7 +190,8 @@ export function SimulatorReplayCalendar({
                       key={`${wi}-${di}`}
                       type="button"
                       disabled={noData || isFuture}
-                      onClick={() => day && onSelect(day.date)}
+                      onClick={() => day && handleClick(day.date)}
+                      onMouseEnter={() => day && setHovered(day.date)}
                       title={
                         day
                           ? `${day.date} · NIFTY ${day.nifty_rows} · BANKNIFTY ${day.banknifty_rows} · SENSEX ${day.sensex_rows}`
@@ -159,8 +204,10 @@ export function SimulatorReplayCalendar({
                         !noData && lvl === 2 && "border-emerald-500/40 bg-emerald-500/40",
                         !noData && lvl === 3 && "border-emerald-500/50 bg-emerald-500/60",
                         !noData && lvl === 4 && "border-emerald-500/60 bg-emerald-500/80",
-                        isToday && !isArmed && !isSelected && "ring-1 ring-amber-400/60",
-                        isSelected && "ring-2 ring-primary",
+                        isToday && !isArmed && !inSelectedRange && "ring-1 ring-amber-400/60",
+                        inPreview && !inSelectedRange && "ring-1 ring-primary/50",
+                        inSelectedRange && !isRangeEdge && "ring-1 ring-primary/70",
+                        isRangeEdge && "ring-2 ring-primary",
                         isArmed && "ring-2 ring-amber-400",
                         isFuture && "opacity-40",
                       )}
@@ -175,7 +222,7 @@ export function SimulatorReplayCalendar({
         </div>
 
         {/* Legend */}
-        <div className="mt-3 flex items-center gap-2 text-[10px] text-muted-foreground">
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
           <span>Less</span>
           {[0, 1, 2, 3, 4].map((lvl) => (
             <span
@@ -192,7 +239,7 @@ export function SimulatorReplayCalendar({
           ))}
           <span>More</span>
           <span className="ml-3 inline-flex items-center gap-1">
-            <span className="h-[10px] w-[10px] rounded-[2px] ring-2 ring-primary" /> selected
+            <span className="h-[10px] w-[10px] rounded-[2px] ring-2 ring-primary" /> range
           </span>
           <span className="inline-flex items-center gap-1">
             <span className="h-[10px] w-[10px] rounded-[2px] ring-2 ring-amber-400" /> armed

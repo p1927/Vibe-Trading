@@ -10,7 +10,10 @@ import {
 } from "@/lib/api";
 import { SimulatorLiveIndexPanel } from "@/components/simulator/SimulatorLiveIndexPanel";
 import { SimulatorOptionChainPanel } from "@/components/simulator/SimulatorOptionChainPanel";
-import { SimulatorReplayCalendar } from "@/components/simulator/SimulatorReplayCalendar";
+import {
+  SimulatorReplayCalendar,
+  type ReplayRange,
+} from "@/components/simulator/SimulatorReplayCalendar";
 import { SimulatorReplayClock } from "@/components/simulator/SimulatorReplayClock";
 
 const UNDERLYINGS = ["NIFTY", "BANKNIFTY", "SENSEX"];
@@ -86,8 +89,8 @@ export function Simulator() {
   const [sessions, setSessions] = useState<string[]>([]);
   const [calendarDays, setCalendarDays] = useState<ReplayCalendarDay[]>([]);
   const [calendarError, setCalendarError] = useState<string | null>(null);
-  const [replayDate, setReplayDate] = useState<string | null>(null);
-  const [armedDate, setArmedDate] = useState<string | null>(null);
+  const [replayRange, setReplayRange] = useState<ReplayRange | null>(null);
+  const [armedRange, setArmedRange] = useState<ReplayRange | null>(null);
   const [replaySpeed, setReplaySpeed] = useState<number>(1);
   const [replayLoop, setReplayLoop] = useState<boolean>(true);
   const [armingDay, setArmingDay] = useState<string | null>(null);
@@ -114,8 +117,12 @@ export function Simulator() {
       .getReplayCalendar()
       .then((res) => setCalendarDays(res.days || []))
       .catch((err) => {
-        setCalendarDays([]);
-        setCalendarError(err instanceof Error ? err.message : "Failed to load calendar");
+        const message = err instanceof Error ? err.message : "Failed to load calendar";
+        setCalendarError(
+          /failed to fetch|networkerror|load failed/i.test(message)
+            ? "Can't reach the recording API to load the calendar."
+            : message,
+        );
       });
   }, []);
 
@@ -212,20 +219,22 @@ export function Simulator() {
     }
   };
 
-  const armReplay = async (day: string) => {
-    setArmingDay(day);
+  const armReplay = async (range: ReplayRange) => {
+    setArmingDay(range.start);
     setReplayError(null);
     try {
-      const res = await api.startReplay(day, {
+      const res = await api.startReplay(range.start, {
         speed: replaySpeed,
         loop: replayLoop,
+        end_date: range.end !== range.start ? range.end : undefined,
       });
       const replay = (res.replay ?? null) as Record<string, unknown> | null;
       const clock = (replay?.clock || {}) as Record<string, unknown>;
-      const armed =
-        typeof clock.replay_date === "string" ? clock.replay_date : day;
-      setReplayDate(armed);
-      setArmedDate(armed);
+      const armedStart =
+        typeof clock.replay_date === "string" ? clock.replay_date : range.start;
+      const armed: ReplayRange = { start: armedStart, end: range.end };
+      setReplayRange(armed);
+      setArmedRange(armed);
     } catch (err) {
       setReplayError(err instanceof Error ? err.message : "Failed to arm replay");
     } finally {
@@ -234,7 +243,7 @@ export function Simulator() {
   };
 
   const handleSimulatorStopped = useCallback(() => {
-    setArmedDate(null);
+    setArmedRange(null);
   }, []);
 
   return (
@@ -250,11 +259,14 @@ export function Simulator() {
       {/* Phase 9: live index panel + option chain toggle. Auto-switches
           underlying when `selected[0]` changes (driven by Record checkboxes). */}
       <div className="flex flex-wrap items-start gap-3">
-        <SimulatorLiveIndexPanel
-          symbol={selected[0] ?? "NIFTY"}
-          exchange="NSE_INDEX"
-          isRecordingActive={isActive}
-        />
+        <div className="min-w-0 flex-1 basis-full sm:basis-0">
+          <SimulatorLiveIndexPanel
+            symbol={selected[0] ?? "NIFTY"}
+            exchange="NSE_INDEX"
+            isRecordingActive={isActive}
+            height={240}
+          />
+        </div>
         <button
           type="button"
           onClick={() => setShowChain(true)}
@@ -376,18 +388,27 @@ export function Simulator() {
       <StatCard title="Replay">
         <div className="space-y-3">
           {calendarError ? (
-            <p className="text-[11px] text-destructive">{calendarError}</p>
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+              <span>{calendarError}</span>
+              <button
+                type="button"
+                onClick={loadCalendar}
+                className="shrink-0 rounded border border-destructive/40 px-2 py-0.5 text-[10px] font-medium hover:bg-destructive/10"
+              >
+                Retry
+              </button>
+            </div>
           ) : null}
 
           <SimulatorReplayCalendar
             days={calendarDays}
-            selectedDate={replayDate}
-            armedDate={armedDate}
-            onSelect={(day) => setReplayDate(day)}
+            range={replayRange}
+            armedRange={armedRange}
+            onRangeSelect={(range) => setReplayRange(range)}
           />
 
           <SimulatorReplayClock
-            armedDate={armedDate}
+            armedRange={armedRange}
             onStop={handleSimulatorStopped}
           />
 
@@ -398,7 +419,7 @@ export function Simulator() {
                 <select
                   value={replaySpeed}
                   onChange={(e) => setReplaySpeed(Number(e.target.value))}
-                  disabled={Boolean(armedDate)}
+                  disabled={Boolean(armedRange)}
                   className="rounded border bg-background px-1.5 py-0.5 text-xs"
                   data-testid="simulator-speed"
                 >
@@ -412,27 +433,27 @@ export function Simulator() {
                   type="checkbox"
                   checked={replayLoop}
                   onChange={(e) => setReplayLoop(e.target.checked)}
-                  disabled={Boolean(armedDate)}
+                  disabled={Boolean(armedRange)}
                   className="h-3.5 w-3.5 rounded border-border"
                   data-testid="simulator-loop"
                 />
-                Loop at 15:30
+                Loop {replayRange && replayRange.start !== replayRange.end ? "range" : "at 15:30"}
               </label>
             </div>
             <button
               type="button"
-              onClick={() => replayDate && armReplay(replayDate)}
-              disabled={!replayDate || Boolean(armingDay) || Boolean(armedDate)}
+              onClick={() => replayRange && armReplay(replayRange)}
+              disabled={!replayRange || Boolean(armingDay) || Boolean(armedRange)}
               className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               data-testid="simulator-arm"
             >
               <PlayCircle className="h-3.5 w-3.5" />
               {armingDay
                 ? "Arming…"
-                : armedDate
-                ? `Armed · ${armedDate}`
-                : replayDate
-                ? `Arm replay · ${replayDate}`
+                : armedRange
+                ? `Armed · ${armedRange.start}${armedRange.end !== armedRange.start ? ` → ${armedRange.end}` : ""}`
+                : replayRange
+                ? `Arm replay · ${replayRange.start}${replayRange.end !== replayRange.start ? ` → ${replayRange.end}` : ""}`
                 : "Select a date"}
             </button>
           </div>
@@ -447,10 +468,10 @@ export function Simulator() {
                   <li key={d}>
                     <button
                       type="button"
-                      onClick={() => setReplayDate(d)}
+                      onClick={() => setReplayRange({ start: d, end: d })}
                       className={cn(
                         "font-mono text-[11px] hover:underline",
-                        d === replayDate && "text-primary",
+                        replayRange?.start === d && replayRange.end === d && "text-primary",
                       )}
                     >
                       {d}

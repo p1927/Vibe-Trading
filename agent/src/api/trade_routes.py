@@ -665,6 +665,7 @@ class RecordingSessionsResponse(BaseModel):
 class StartReplayRequest(BaseModel):
     speed: float | None = None
     loop: bool | None = None
+    end_date: str | None = None
 
 
 class ReplayStatusResponse(BaseModel):
@@ -3288,6 +3289,25 @@ def _openalgo_host() -> str:
     return (os.getenv("OPENALGO_HOST") or "http://127.0.0.1:5001").rstrip("/")
 
 
+def _openalgo_json(res: "requests.Response") -> Any:
+    """Parse an OpenAlgo control-endpoint response as JSON, or raise a clean 502.
+
+    OpenAlgo returns HTML (its SPA shell) instead of JSON when the request
+    never reaches the simulator_control blueprint — e.g. a stale/mismatched
+    control token, or a mid-restart window. Without this guard that surfaces
+    to callers as an unhandled JSONDecodeError (raw "Internal Server Error",
+    no detail) instead of a diagnosable error.
+    """
+    try:
+        return res.json()
+    except ValueError as exc:
+        preview = res.text[:200].replace("\n", " ")
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenAlgo returned non-JSON from {res.url}: {preview}",
+        ) from exc
+
+
 @trade_router.post("/recording/{day}/replay", response_model=ReplayStatusResponse)
 def start_replay(
     day: str,
@@ -3305,13 +3325,15 @@ def start_replay(
             "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
         )
     payload: dict[str, Any] = {"date": day}
+    if body.end_date:
+        payload["end_date"] = body.end_date
     if body.speed is not None:
         payload["speed"] = body.speed
     if body.loop is not None:
         payload["loop"] = body.loop
     try:
         res = requests.post(
-            f"{_openalgo_host()}/simulator/control/replay/start",
+            f"{_openalgo_host()}/stock_simulator/control/replay/start",
             json=payload,
             headers=headers,
             timeout=15.0,
@@ -3322,7 +3344,7 @@ def start_replay(
         ) from exc
     if res.status_code >= 400:
         raise HTTPException(status_code=502, detail=res.text[:500])
-    return ReplayStatusResponse(status="ok", replay=res.json())
+    return ReplayStatusResponse(status="ok", replay=_openalgo_json(res))
 
 
 @trade_router.get("/recording/replay/status", response_model=ReplayStatusResponse)
@@ -3341,7 +3363,7 @@ def get_replay_status(
         )
     try:
         res = requests.get(
-            f"{_openalgo_host()}/simulator/control/replay/status",
+            f"{_openalgo_host()}/stock_simulator/control/replay/status",
             headers=headers,
             timeout=15.0,
         )
@@ -3351,7 +3373,7 @@ def get_replay_status(
         ) from exc
     if res.status_code >= 400:
         raise HTTPException(status_code=502, detail=res.text[:500])
-    return ReplayStatusResponse(status="ok", replay=res.json())
+    return ReplayStatusResponse(status="ok", replay=_openalgo_json(res))
 
 
 @trade_router.post("/recording/replay/pause", response_model=ReplayStatusResponse)
@@ -3370,7 +3392,7 @@ def pause_replay(
         )
     try:
         res = requests.post(
-            f"{_openalgo_host()}/simulator/control/replay/pause",
+            f"{_openalgo_host()}/stock_simulator/control/replay/pause",
             headers=headers,
             timeout=15.0,
         )
@@ -3380,7 +3402,7 @@ def pause_replay(
         ) from exc
     if res.status_code >= 400:
         raise HTTPException(status_code=502, detail=res.text[:500])
-    return ReplayStatusResponse(status="ok", replay=res.json())
+    return ReplayStatusResponse(status="ok", replay=_openalgo_json(res))
 
 
 @trade_router.post("/recording/replay/resume", response_model=ReplayStatusResponse)
@@ -3399,7 +3421,7 @@ def resume_replay(
         )
     try:
         res = requests.post(
-            f"{_openalgo_host()}/simulator/control/replay/resume",
+            f"{_openalgo_host()}/stock_simulator/control/replay/resume",
             headers=headers,
             timeout=15.0,
         )
@@ -3409,7 +3431,7 @@ def resume_replay(
         ) from exc
     if res.status_code >= 400:
         raise HTTPException(status_code=502, detail=res.text[:500])
-    return ReplayStatusResponse(status="ok", replay=res.json())
+    return ReplayStatusResponse(status="ok", replay=_openalgo_json(res))
 
 
 @trade_router.post("/recording/replay/stop", response_model=ReplayStatusResponse)
@@ -3428,7 +3450,7 @@ def stop_replay(
         )
     try:
         res = requests.post(
-            f"{_openalgo_host()}/simulator/control/replay/stop",
+            f"{_openalgo_host()}/stock_simulator/control/replay/stop",
             headers=headers,
             timeout=15.0,
         )
@@ -3438,7 +3460,7 @@ def stop_replay(
         ) from exc
     if res.status_code >= 400:
         raise HTTPException(status_code=502, detail=res.text[:500])
-    return ReplayStatusResponse(status="ok", replay=res.json())
+    return ReplayStatusResponse(status="ok", replay=_openalgo_json(res))
 
 
 @trade_router.get("/recording/replay/calendar")
@@ -3457,7 +3479,7 @@ def get_replay_calendar(
         )
     try:
         res = requests.get(
-            f"{_openalgo_host()}/simulator/control/replay/calendar",
+            f"{_openalgo_host()}/stock_simulator/control/replay/calendar",
             headers=headers,
             timeout=30.0,
         )
@@ -3467,7 +3489,7 @@ def get_replay_calendar(
         ) from exc
     if res.status_code >= 400:
         raise HTTPException(status_code=502, detail=res.text[:500])
-    return res.json()
+    return _openalgo_json(res)
 
 
 @trade_router.post("/index-prediction/refresh", response_model=IndexPredictionRefreshResponse)

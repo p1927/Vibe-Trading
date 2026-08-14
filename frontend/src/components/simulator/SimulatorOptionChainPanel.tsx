@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 interface Props {
   symbol: string;
@@ -46,6 +47,20 @@ function fmt(v: number | undefined | null, digits = 2): string {
   return v.toLocaleString("en-IN", { maximumFractionDigits: digits });
 }
 
+function closestStrikeIndex(strikes: StrikeRow[], spot: number | null): number {
+  if (spot == null || strikes.length === 0) return -1;
+  let best = 0;
+  let bestDiff = Infinity;
+  strikes.forEach((row, i) => {
+    const diff = Math.abs(row.strike - spot);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = i;
+    }
+  });
+  return best;
+}
+
 export function SimulatorOptionChainPanel({
   symbol,
   exchange = "NSE_INDEX",
@@ -59,6 +74,7 @@ export function SimulatorOptionChainPanel({
   const [expiry, setExpiry] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const fetchChain = async () => {
     setLoading(true);
@@ -83,7 +99,10 @@ export function SimulatorOptionChainPanel({
         setSpot(spotRes.spot.ltp);
         setPrevClose(spotRes.spot.prev_close ?? null);
       }
-      if (chainRes.status === "ok") setError(null);
+      if (chainRes.status === "ok") {
+        setError(null);
+        setLastUpdated(new Date());
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "fetch failed");
     } finally {
@@ -111,25 +130,27 @@ export function SimulatorOptionChainPanel({
         role="dialog"
         aria-modal="true"
         aria-labelledby="option-chain-title"
-        className="flex h-full w-full max-w-md flex-col border-l bg-background shadow-xl sm:max-w-lg"
+        className="flex h-full w-full max-w-md flex-col border-l bg-background shadow-xl sm:max-w-xl lg:max-w-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b px-4 py-3">
-          <div>
+        <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+          <div className="min-w-0">
             <h2 id="option-chain-title" className="text-sm font-semibold">
               {symbol} Option Chain
             </h2>
-            <p className="text-[11px] text-muted-foreground">
-              {expiry ?? "expiry —"} · LTP {fmt(spot)}
-              {prevClose != null && (
-                <>
-                  {" · prev close "}
-                  {fmt(prevClose)}
-                </>
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
+              <span>{expiry ?? "expiry —"}</span>
+              <span className="text-border">·</span>
+              <span className="font-medium text-foreground">LTP {fmt(spot)}</span>
+              {prevClose != null && <span>prev close {fmt(prevClose)}</span>}
+              {lastUpdated && (
+                <span className="text-muted-foreground/70">
+                  updated {lastUpdated.toLocaleTimeString([], { hour12: false })}
+                </span>
               )}
             </p>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
               onClick={fetchChain}
@@ -151,12 +172,19 @@ export function SimulatorOptionChainPanel({
         </div>
         <div className="flex-1 overflow-auto">
           {error && (
-            <p
-              className="border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-xs text-red-700 dark:text-red-400"
+            <div
+              className="flex items-center justify-between gap-3 border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-xs text-red-700 dark:text-red-400"
               data-testid="option-chain-error"
             >
-              {error}
-            </p>
+              <span>{error}</span>
+              <button
+                type="button"
+                onClick={fetchChain}
+                className="shrink-0 rounded border border-red-500/40 px-2 py-0.5 text-[10px] font-medium hover:bg-red-500/10"
+              >
+                Retry
+              </button>
+            </div>
           )}
           {strikes.length === 0 && !loading && !error && (
             <p className="px-4 py-6 text-center text-xs text-muted-foreground">
@@ -168,38 +196,59 @@ export function SimulatorOptionChainPanel({
           )}
           {strikes.length > 0 && (
             <table className="w-full text-[11px] tabular-nums">
-              <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+              <thead className="sticky top-0 z-10 bg-background/95 backdrop-blur">
                 <tr>
-                  <th className="px-2 py-1 text-right" colSpan={4}>CE</th>
-                  <th className="px-2 py-1 text-center">Strike</th>
-                  <th className="px-2 py-1 text-left" colSpan={4}>PE</th>
+                  <th className="bg-emerald-500/10 px-2 py-1 text-right text-emerald-700 dark:text-emerald-400" colSpan={4}>
+                    CALLS
+                  </th>
+                  <th className="border-x bg-muted px-2 py-1 text-center">Strike</th>
+                  <th className="bg-red-500/10 px-2 py-1 text-left text-red-700 dark:text-red-400" colSpan={4}>
+                    PUTS
+                  </th>
                 </tr>
-                <tr className="text-[10px] text-muted-foreground">
-                  <th className="px-2 py-0.5 text-right">LTP</th>
-                  <th className="px-2 py-0.5 text-right">OI</th>
-                  <th className="px-2 py-0.5 text-right">IV</th>
-                  <th className="px-2 py-0.5 text-right">Δ</th>
-                  <th></th>
-                  <th className="px-2 py-0.5 text-left">LTP</th>
-                  <th className="px-2 py-0.5 text-left">OI</th>
-                  <th className="px-2 py-0.5 text-left">IV</th>
-                  <th className="px-2 py-0.5 text-left">Δ</th>
+                <tr className="border-b text-[10px] text-muted-foreground">
+                  <th className="px-2 py-1 text-right font-medium">LTP</th>
+                  <th className="px-2 py-1 text-right font-medium">OI</th>
+                  <th className="px-2 py-1 text-right font-medium">IV</th>
+                  <th className="px-2 py-1 text-right font-medium">Δ</th>
+                  <th className="border-x px-2 py-1"></th>
+                  <th className="px-2 py-1 text-left font-medium">LTP</th>
+                  <th className="px-2 py-1 text-left font-medium">OI</th>
+                  <th className="px-2 py-1 text-left font-medium">IV</th>
+                  <th className="px-2 py-1 text-left font-medium">Δ</th>
                 </tr>
               </thead>
               <tbody>
-                {strikes.map((row) => (
-                  <tr key={row.strike} className="border-t border-border/40">
-                    <td className="px-2 py-1 text-right">{fmt(row.ce?.last_price)}</td>
-                    <td className="px-2 py-1 text-right">{fmt(row.ce?.oi, 0)}</td>
-                    <td className="px-2 py-1 text-right">{fmt(row.ce?.iv)}</td>
-                    <td className="px-2 py-1 text-right">{fmt(row.ce?.delta, 3)}</td>
-                    <td className="px-2 py-1 text-center font-semibold">{fmt(row.strike, 0)}</td>
-                    <td className="px-2 py-1 text-left">{fmt(row.pe?.last_price)}</td>
-                    <td className="px-2 py-1 text-left">{fmt(row.pe?.oi, 0)}</td>
-                    <td className="px-2 py-1 text-left">{fmt(row.pe?.iv)}</td>
-                    <td className="px-2 py-1 text-left">{fmt(row.pe?.delta, 3)}</td>
-                  </tr>
-                ))}
+                {strikes.map((row, i) => {
+                  const isAtm = i === closestStrikeIndex(strikes, spot);
+                  return (
+                    <tr
+                      key={row.strike}
+                      className={cn(
+                        "border-t border-border/40",
+                        isAtm && "bg-primary/5",
+                        !isAtm && i % 2 === 1 && "bg-muted/20",
+                      )}
+                    >
+                      <td className="px-2 py-1.5 text-right">{fmt(row.ce?.last_price)}</td>
+                      <td className="px-2 py-1.5 text-right text-muted-foreground">{fmt(row.ce?.oi, 0)}</td>
+                      <td className="px-2 py-1.5 text-right text-muted-foreground">{fmt(row.ce?.iv)}</td>
+                      <td className="px-2 py-1.5 text-right text-muted-foreground">{fmt(row.ce?.delta, 3)}</td>
+                      <td
+                        className={cn(
+                          "border-x px-2 py-1.5 text-center font-semibold",
+                          isAtm ? "bg-primary/10 text-primary" : "bg-muted/40",
+                        )}
+                      >
+                        {fmt(row.strike, 0)}
+                      </td>
+                      <td className="px-2 py-1.5 text-left">{fmt(row.pe?.last_price)}</td>
+                      <td className="px-2 py-1.5 text-left text-muted-foreground">{fmt(row.pe?.oi, 0)}</td>
+                      <td className="px-2 py-1.5 text-left text-muted-foreground">{fmt(row.pe?.iv)}</td>
+                      <td className="px-2 py-1.5 text-left text-muted-foreground">{fmt(row.pe?.delta, 3)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}

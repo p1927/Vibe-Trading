@@ -39,15 +39,15 @@ describe("SimulatorReplayClock", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows the arm-first hint and does not poll status when armedDate is null", () => {
-    render(<SimulatorReplayClock armedDate={null} onStop={() => {}} />);
-    expect(screen.getByText(/Select a day on the calendar/i)).toBeInTheDocument();
+  it("shows the arm-first hint and does not poll status when armedRange is null", () => {
+    render(<SimulatorReplayClock armedRange={null} onStop={() => {}} />);
+    expect(screen.getByText(/Select a day/i)).toBeInTheDocument();
     expect(apiMock.getReplayStatus).not.toHaveBeenCalled();
   });
 
   it("polls status and renders Pause once armed", async () => {
     apiMock.getReplayStatus.mockResolvedValue(statusPayload());
-    render(<SimulatorReplayClock armedDate="2024-04-15" onStop={() => {}} />);
+    render(<SimulatorReplayClock armedRange={{ start: "2024-04-15", end: "2024-04-15" }} onStop={() => {}} />);
 
     await waitFor(() => {
       expect(apiMock.getReplayStatus).toHaveBeenCalled();
@@ -59,7 +59,7 @@ describe("SimulatorReplayClock", () => {
   it("clicking Pause calls api.pauseReplay and flips to Resume", async () => {
     apiMock.getReplayStatus.mockResolvedValue(statusPayload());
     apiMock.pauseReplay.mockResolvedValue(statusPayload({ paused: true }));
-    render(<SimulatorReplayClock armedDate="2024-04-15" onStop={() => {}} />);
+    render(<SimulatorReplayClock armedRange={{ start: "2024-04-15", end: "2024-04-15" }} onStop={() => {}} />);
 
     const pauseBtn = await screen.findByTestId("simulator-pause");
     fireEvent.click(pauseBtn);
@@ -74,7 +74,7 @@ describe("SimulatorReplayClock", () => {
     apiMock.getReplayStatus.mockResolvedValue(statusPayload());
     apiMock.stopReplay.mockResolvedValue({ replay: null });
     const onStop = vi.fn();
-    render(<SimulatorReplayClock armedDate="2024-04-15" onStop={onStop} />);
+    render(<SimulatorReplayClock armedRange={{ start: "2024-04-15", end: "2024-04-15" }} onStop={onStop} />);
 
     const stopBtn = await screen.findByTestId("simulator-stop");
     fireEvent.click(stopBtn);
@@ -88,7 +88,7 @@ describe("SimulatorReplayClock", () => {
   it("surfaces an error message when pause fails", async () => {
     apiMock.getReplayStatus.mockResolvedValue(statusPayload());
     apiMock.pauseReplay.mockRejectedValue(new Error("network down"));
-    render(<SimulatorReplayClock armedDate="2024-04-15" onStop={() => {}} />);
+    render(<SimulatorReplayClock armedRange={{ start: "2024-04-15", end: "2024-04-15" }} onStop={() => {}} />);
 
     const pauseBtn = await screen.findByTestId("simulator-pause");
     fireEvent.click(pauseBtn);

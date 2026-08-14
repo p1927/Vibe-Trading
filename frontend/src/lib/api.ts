@@ -98,18 +98,34 @@ async function errorFromResponse(res: Response): Promise<ApiError> {
   return new ApiError(formatApiDetail(detail), res.status, detail);
 }
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const { headers, ...rest } = options ?? {};
+  const { headers, signal, ...rest } = options ?? {};
   const mergedHeaders: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
   if (headers) {
     new Headers(headers).forEach((value, key) => {
       mergedHeaders[key] = value;
     });
   }
-  const res = await fetch(`${BASE}${path}`, {
-    ...rest,
-    headers: mergedHeaders,
-  });
+  // Guard against a backend that never responds (e.g. mid-restart) — without
+  // this, fetch() hangs indefinitely and callers see nothing until the user
+  // gives up, rather than a diagnosable timeout error.
+  const timeoutSignal = AbortSignal.timeout(DEFAULT_REQUEST_TIMEOUT_MS);
+  const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      ...rest,
+      headers: mergedHeaders,
+      signal: combinedSignal,
+    });
+  } catch (err) {
+    if (timeoutSignal.aborted) {
+      throw new ApiError(`Request to ${path} timed out after ${DEFAULT_REQUEST_TIMEOUT_MS / 1000}s`, 0);
+    }
+    throw err;
+  }
   if (!res.ok) {
     throw await errorFromResponse(res);
   }
@@ -2776,6 +2792,7 @@ export interface RecordingSessionsResponse {
 export interface StartReplayRequest {
   speed?: number;
   loop?: boolean;
+  end_date?: string;
 }
 
 export interface ReplayStatusResponse {
