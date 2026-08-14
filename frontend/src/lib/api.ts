@@ -980,6 +980,13 @@ export const api = {
       body: JSON.stringify(body),
     }),
   getReplayStatus: () => request<ReplayStatusResponse>("/trade/recording/replay/status"),
+  pauseReplay: () =>
+    request<ReplayStatusResponse>("/trade/recording/replay/pause", { method: "POST" }),
+  resumeReplay: () =>
+    request<ReplayStatusResponse>("/trade/recording/replay/resume", { method: "POST" }),
+  stopReplay: () =>
+    request<ReplayStatusResponse>("/trade/recording/replay/stop", { method: "POST" }),
+  getReplayCalendar: () => request<ReplayCalendarResponse>("/trade/recording/replay/calendar"),
   // /trade/hub/stock_history/* — Phase 8 client surface.
   _hubStockHistoryQS(params: Record<string, string | number | undefined>): string {
     const qs = new URLSearchParams();
@@ -2775,6 +2782,22 @@ export interface ReplayStatusResponse {
   status: string;
   message?: string | null;
   replay?: Record<string, unknown> | null;
+}
+
+export interface ReplayCalendarDay {
+  date: string;
+  has_nifty: boolean;
+  has_banknifty: boolean;
+  has_sensex: boolean;
+  nifty_rows: number;
+  banknifty_rows: number;
+  sensex_rows: number;
+}
+
+export interface ReplayCalendarResponse {
+  status: string;
+  days: ReplayCalendarDay[];
+  underlyings: string[];
 }
 
 // ============================================================

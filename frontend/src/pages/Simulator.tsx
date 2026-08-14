@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Circle, Disc, ListOrdered, PlayCircle, Square } from "lucide-react";
+import { Disc, ListOrdered, PlayCircle, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   api,
   type PipelineLogEntry,
   type RecordingJobSnapshot,
   type RecordingResult,
+  type ReplayCalendarDay,
 } from "@/lib/api";
 import { SimulatorLiveIndexPanel } from "@/components/simulator/SimulatorLiveIndexPanel";
 import { SimulatorOptionChainPanel } from "@/components/simulator/SimulatorOptionChainPanel";
+import { SimulatorReplayCalendar } from "@/components/simulator/SimulatorReplayCalendar";
+import { SimulatorReplayClock } from "@/components/simulator/SimulatorReplayClock";
 
 const UNDERLYINGS = ["NIFTY", "BANKNIFTY", "SENSEX"];
 
@@ -81,11 +84,16 @@ export function Simulator() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<string[]>([]);
-  const [replayingDay, setReplayingDay] = useState<string | null>(null);
-  const [replayStatus, setReplayStatus] = useState<Record<string, unknown> | null>(null);
+  const [calendarDays, setCalendarDays] = useState<ReplayCalendarDay[]>([]);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+  const [replayDate, setReplayDate] = useState<string | null>(null);
+  const [armedDate, setArmedDate] = useState<string | null>(null);
+  const [replaySpeed, setReplaySpeed] = useState<number>(1);
+  const [replayLoop, setReplayLoop] = useState<boolean>(true);
+  const [armingDay, setArmingDay] = useState<string | null>(null);
+  const [replayError, setReplayError] = useState<string | null>(null);
   // Phase 9: option-chain drawer toggle.
   const [showChain, setShowChain] = useState(false);
-  const [replayError, setReplayError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
 
@@ -98,6 +106,17 @@ export function Simulator() {
       .listRecordingSessions()
       .then((res) => setSessions(res.sessions || []))
       .catch(() => {});
+  }, []);
+
+  const loadCalendar = useCallback(() => {
+    setCalendarError(null);
+    api
+      .getReplayCalendar()
+      .then((res) => setCalendarDays(res.days || []))
+      .catch((err) => {
+        setCalendarDays([]);
+        setCalendarError(err instanceof Error ? err.message : "Failed to load calendar");
+      });
   }, []);
 
   const attachStream = useCallback((jobId: string) => {
@@ -124,6 +143,7 @@ export function Simulator() {
 
   useEffect(() => {
     loadSessions();
+    loadCalendar();
     api
       .getActiveRecording()
       .then((res) => {
@@ -192,18 +212,30 @@ export function Simulator() {
     }
   };
 
-  const startReplay = async (day: string) => {
-    setReplayingDay(day);
+  const armReplay = async (day: string) => {
+    setArmingDay(day);
     setReplayError(null);
     try {
-      const res = await api.startReplay(day);
-      setReplayStatus(res.replay ?? null);
+      const res = await api.startReplay(day, {
+        speed: replaySpeed,
+        loop: replayLoop,
+      });
+      const replay = (res.replay ?? null) as Record<string, unknown> | null;
+      const clock = (replay?.clock || {}) as Record<string, unknown>;
+      const armed =
+        typeof clock.replay_date === "string" ? clock.replay_date : day;
+      setReplayDate(armed);
+      setArmedDate(armed);
     } catch (err) {
-      setReplayError(err instanceof Error ? err.message : "Failed to start replay");
+      setReplayError(err instanceof Error ? err.message : "Failed to arm replay");
     } finally {
-      setReplayingDay(null);
+      setArmingDay(null);
     }
   };
+
+  const handleSimulatorStopped = useCallback(() => {
+    setArmedDate(null);
+  }, []);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-6">
@@ -342,46 +374,101 @@ export function Simulator() {
       </StatCard>
 
       <StatCard title="Replay">
-        {sessions.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No recorded sessions yet. Record a full trading day to enable replay.
-          </p>
-        ) : (
-          <ul className="divide-y divide-border/60">
-            {sessions.map((day) => (
-              <li key={day} className="flex items-center justify-between py-2 text-sm">
-                <span className="flex items-center gap-2">
-                  <Circle className="h-2 w-2 fill-emerald-500 text-emerald-500" />
-                  {day}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => startReplay(day)}
-                  disabled={replayingDay === day}
-                  className="inline-flex h-7 items-center gap-1.5 rounded-md border bg-background px-2.5 text-xs hover:bg-muted/50 disabled:opacity-50"
-                >
-                  <PlayCircle className="h-3 w-3" />
-                  {replayingDay === day ? "Starting…" : "Start Replay"}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        <div className="space-y-3">
+          {calendarError ? (
+            <p className="text-[11px] text-destructive">{calendarError}</p>
+          ) : null}
 
-        {replayError ? <p className="mt-3 text-sm text-destructive">{replayError}</p> : null}
-        {replayStatus ? (
-          <div className="mt-3 rounded-lg border bg-background/60 p-3 text-[11px]">
-            <p className="font-medium text-foreground">Replay armed on OpenAlgo</p>
-            <pre className="mt-1 overflow-auto text-muted-foreground">
-              {JSON.stringify(replayStatus, null, 2)}
-            </pre>
+          <SimulatorReplayCalendar
+            days={calendarDays}
+            selectedDate={replayDate}
+            armedDate={armedDate}
+            onSelect={(day) => setReplayDate(day)}
+          />
+
+          <SimulatorReplayClock
+            armedDate={armedDate}
+            onStop={handleSimulatorStopped}
+          />
+
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background/60 p-3">
+            <div className="flex flex-wrap items-center gap-3 text-xs">
+              <label className="flex items-center gap-1.5">
+                Speed
+                <select
+                  value={replaySpeed}
+                  onChange={(e) => setReplaySpeed(Number(e.target.value))}
+                  disabled={Boolean(armedDate)}
+                  className="rounded border bg-background px-1.5 py-0.5 text-xs"
+                  data-testid="simulator-speed"
+                >
+                  {[0.5, 1, 2, 5, 10, 25, 50].map((s) => (
+                    <option key={s} value={s}>{s}×</option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={replayLoop}
+                  onChange={(e) => setReplayLoop(e.target.checked)}
+                  disabled={Boolean(armedDate)}
+                  className="h-3.5 w-3.5 rounded border-border"
+                  data-testid="simulator-loop"
+                />
+                Loop at 15:30
+              </label>
+            </div>
+            <button
+              type="button"
+              onClick={() => replayDate && armReplay(replayDate)}
+              disabled={!replayDate || Boolean(armingDay) || Boolean(armedDate)}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              data-testid="simulator-arm"
+            >
+              <PlayCircle className="h-3.5 w-3.5" />
+              {armingDay
+                ? "Arming…"
+                : armedDate
+                ? `Armed · ${armedDate}`
+                : replayDate
+                ? `Arm replay · ${replayDate}`
+                : "Select a date"}
+            </button>
           </div>
-        ) : null}
-        <p className="mt-3 text-[11px] text-muted-foreground">
-          Starts the simulator's replay clock on the running OpenAlgo instance directly — no
-          restart needed. Watch it in OpenAlgo's own UI once armed (Option Chain / quotes on the
-          stock_simulator broker).
-        </p>
+
+          {sessions.length > 0 ? (
+            <details className="rounded-lg border bg-background/40 px-3 py-2 text-xs">
+              <summary className="cursor-pointer text-muted-foreground">
+                {sessions.length} raw session dates (legacy list)
+              </summary>
+              <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3 md:grid-cols-4">
+                {sessions.map((d) => (
+                  <li key={d}>
+                    <button
+                      type="button"
+                      onClick={() => setReplayDate(d)}
+                      className={cn(
+                        "font-mono text-[11px] hover:underline",
+                        d === replayDate && "text-primary",
+                      )}
+                    >
+                      {d}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+
+          {replayError ? <p className="text-[11px] text-destructive">{replayError}</p> : null}
+          <p className="text-[11px] text-muted-foreground">
+            Configures the simulator's replay clock on the running OpenAlgo instance
+            directly — no restart needed. OpenAlgo then serves quotes from this clock
+            as if it were the live market; the chart in the option chain panel updates
+            accordingly.
+          </p>
+        </div>
       </StatCard>
     </div>
   );

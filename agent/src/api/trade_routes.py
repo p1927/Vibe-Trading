@@ -3354,6 +3354,122 @@ def get_replay_status(
     return ReplayStatusResponse(status="ok", replay=res.json())
 
 
+@trade_router.post("/recording/replay/pause", response_model=ReplayStatusResponse)
+def pause_replay(
+    _auth: None = Depends(require_local_or_auth),
+) -> ReplayStatusResponse:
+    """Pause the simulator clock (does not unload it)."""
+    import requests
+
+    headers = _openalgo_control_headers()
+    if headers is None:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
+            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
+        )
+    try:
+        res = requests.post(
+            f"{_openalgo_host()}/simulator/control/replay/pause",
+            headers=headers,
+            timeout=15.0,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
+        ) from exc
+    if res.status_code >= 400:
+        raise HTTPException(status_code=502, detail=res.text[:500])
+    return ReplayStatusResponse(status="ok", replay=res.json())
+
+
+@trade_router.post("/recording/replay/resume", response_model=ReplayStatusResponse)
+def resume_replay(
+    _auth: None = Depends(require_local_or_auth),
+) -> ReplayStatusResponse:
+    """Resume a paused simulator clock."""
+    import requests
+
+    headers = _openalgo_control_headers()
+    if headers is None:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
+            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
+        )
+    try:
+        res = requests.post(
+            f"{_openalgo_host()}/simulator/control/replay/resume",
+            headers=headers,
+            timeout=15.0,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
+        ) from exc
+    if res.status_code >= 400:
+        raise HTTPException(status_code=502, detail=res.text[:500])
+    return ReplayStatusResponse(status="ok", replay=res.json())
+
+
+@trade_router.post("/recording/replay/stop", response_model=ReplayStatusResponse)
+def stop_replay(
+    _auth: None = Depends(require_local_or_auth),
+) -> ReplayStatusResponse:
+    """Tear down the simulator so OpenAlgo falls back to its real broker."""
+    import requests
+
+    headers = _openalgo_control_headers()
+    if headers is None:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
+            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
+        )
+    try:
+        res = requests.post(
+            f"{_openalgo_host()}/simulator/control/replay/stop",
+            headers=headers,
+            timeout=15.0,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
+        ) from exc
+    if res.status_code >= 400:
+        raise HTTPException(status_code=502, detail=res.text[:500])
+    return ReplayStatusResponse(status="ok", replay=res.json())
+
+
+@trade_router.get("/recording/replay/calendar")
+def get_replay_calendar(
+    _auth: None = Depends(require_local_or_auth),
+):
+    """Per-day parquet coverage for the calendar heatmap."""
+    import requests
+
+    headers = _openalgo_control_headers()
+    if headers is None:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
+            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
+        )
+    try:
+        res = requests.get(
+            f"{_openalgo_host()}/simulator/control/replay/calendar",
+            headers=headers,
+            timeout=30.0,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
+        ) from exc
+    if res.status_code >= 400:
+        raise HTTPException(status_code=502, detail=res.text[:500])
+    return res.json()
+
+
 @trade_router.post("/index-prediction/refresh", response_model=IndexPredictionRefreshResponse)
 def refresh_index_prediction(
     body: RefreshIndexPredictionRequest,
