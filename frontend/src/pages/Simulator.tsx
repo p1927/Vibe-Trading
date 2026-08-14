@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Circle, Disc, PlayCircle, Square } from "lucide-react";
+import { Circle, Disc, ListOrdered, PlayCircle, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   api,
@@ -7,6 +7,8 @@ import {
   type RecordingJobSnapshot,
   type RecordingResult,
 } from "@/lib/api";
+import { SimulatorLiveIndexPanel } from "@/components/simulator/SimulatorLiveIndexPanel";
+import { SimulatorOptionChainPanel } from "@/components/simulator/SimulatorOptionChainPanel";
 
 const UNDERLYINGS = ["NIFTY", "BANKNIFTY", "SENSEX"];
 
@@ -81,6 +83,8 @@ export function Simulator() {
   const [sessions, setSessions] = useState<string[]>([]);
   const [replayingDay, setReplayingDay] = useState<string | null>(null);
   const [replayStatus, setReplayStatus] = useState<Record<string, unknown> | null>(null);
+  // Phase 9: option-chain drawer toggle.
+  const [showChain, setShowChain] = useState(false);
   const [replayError, setReplayError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
@@ -210,6 +214,33 @@ export function Simulator() {
           index ticks), then replay that day through the simulator.
         </p>
       </div>
+
+      {/* Phase 9: live index panel + option chain toggle. Auto-switches
+          underlying when `selected[0]` changes (driven by Record checkboxes). */}
+      <div className="flex flex-wrap items-start gap-3">
+        <SimulatorLiveIndexPanel
+          symbol={selected[0] ?? "NIFTY"}
+          exchange="NSE_INDEX"
+          isRecordingActive={isActive}
+        />
+        <button
+          type="button"
+          onClick={() => setShowChain(true)}
+          className="inline-flex h-9 items-center gap-1.5 self-start rounded-lg border bg-background px-3 text-sm hover:bg-muted/50"
+          title="Show live option chain"
+          data-testid="open-option-chain"
+        >
+          <ListOrdered className="h-3.5 w-3.5" />
+          Option Chain
+        </button>
+      </div>
+      <SimulatorOptionChainPanel
+        symbol={selected[0] ?? "NIFTY"}
+        exchange="NSE_INDEX"
+        open={showChain}
+        onClose={() => setShowChain(false)}
+        recordingActive={isActive}
+      />
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
