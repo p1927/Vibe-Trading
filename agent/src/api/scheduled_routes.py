@@ -219,12 +219,22 @@ def _start_scheduled_research_executor() -> None:
         resumed = resume_pending_bootstraps()
         if resumed:
             logger.info("resumed %d pending autonomous agent bootstrap(s)", resumed)
-        stale = resume_stale_pending_bootstraps()
-        if stale:
-            logger.info("re-scheduled %d stale pending autonomous bootstrap(s)", stale)
-        stale_running = resume_stale_running_bootstraps()
-        if stale_running:
-            logger.info("re-scheduled %d stale running autonomous bootstrap(s)", stale_running)
+        # Hot-reload safety: the age thresholds below (60s pending / 600s
+        # running) exist to detect a genuinely hung bootstrap, but a
+        # uvicorn --reload respawn looks identical from wall-clock alone —
+        # every save older than the threshold re-fires the LLM bootstrap
+        # prefetch again. Skip stale-resume under STACK_DEV; use the
+        # `trade reload agent <id>` (or equivalent) path to resume a
+        # genuinely stuck agent manually while developing.
+        if os.getenv("STACK_DEV", "").strip().lower() in {"1", "true", "yes", "on"}:
+            logger.debug("skipping stale autonomous bootstrap resume in dev mode")
+        else:
+            stale = resume_stale_pending_bootstraps()
+            if stale:
+                logger.info("re-scheduled %d stale pending autonomous bootstrap(s)", stale)
+            stale_running = resume_stale_running_bootstraps()
+            if stale_running:
+                logger.info("re-scheduled %d stale running autonomous bootstrap(s)", stale_running)
         try:
             from trade_integrations.autonomous_agents.recovery import run_autonomous_agent_recovery
 
