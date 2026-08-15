@@ -73,7 +73,10 @@ export function SimulatorReplayClock({
     }
     const controller = new AbortController();
     abortRef.current = controller;
+    let inFlight = false;
     const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const res = await api.getReplayStatus();
         if (!controller.signal.aborted) {
@@ -84,6 +87,8 @@ export function SimulatorReplayClock({
         if (!controller.signal.aborted) {
           setError(friendlyError(err));
         }
+      } finally {
+        inFlight = false;
       }
     };
     tick();
