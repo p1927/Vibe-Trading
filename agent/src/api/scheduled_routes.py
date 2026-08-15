@@ -261,9 +261,14 @@ def _start_scheduled_research_executor() -> None:
                 logger.info("ensured Nautilus watch for running India bridge agent(s)")
     except Exception:
         logger.exception("failed to ensure Nautilus watch on startup")
-    if not _scheduled_research_scheduler_enabled():
-        return
-    _get_scheduled_research_executor().start()
+    # Global scheduled-research jobs (index/options/hub-calibration/trade-data/
+    # hub-capture) default to paused on every boot, the same "always ephemeral,
+    # resume via UI" model used for autonomous agents. Jobs were registered
+    # above so they're visible in the Scheduled UI with their real cadence,
+    # but the executor's dispatch loop is intentionally NOT started here —
+    # only POST /scheduled-runs/scheduler/resume starts it, and every fresh
+    # process start (clean shutdown, crash, or dev --reload) requires that
+    # click again rather than remembering the prior running state.
 
 
 async def _stop_scheduled_research_executor() -> None:
@@ -356,6 +361,45 @@ def register_scheduled_routes(
         h._validate_path_param(value, kind)
 
     # --- Routes ---
+
+    @app.get(
+        "/scheduled-runs/scheduler/status",
+        dependencies=[Depends(require_auth)],
+    )
+    async def scheduler_status() -> Dict[str, Any]:
+        """Report whether the global scheduled-research executor is dispatching jobs.
+
+        ``enabled`` reflects the static env-var gate (VIBE_TRADING_ENABLE_SCHEDULER);
+        ``running`` reflects whether the dispatch loop is actually active right now.
+        Every process boot starts with running=False regardless of prior session state.
+        """
+        executor = _get_scheduled_research_executor()
+        return {"enabled": _scheduled_research_scheduler_enabled(), "running": executor.is_running}
+
+    @app.post(
+        "/scheduled-runs/scheduler/resume",
+        dependencies=[Depends(require_auth)],
+    )
+    async def resume_scheduler() -> Dict[str, Any]:
+        """Start dispatching due global scheduled-research jobs."""
+        if not _scheduled_research_scheduler_enabled():
+            raise HTTPException(
+                status_code=400,
+                detail="scheduler disabled via VIBE_TRADING_ENABLE_SCHEDULER",
+            )
+        executor = _get_scheduled_research_executor()
+        executor.start()
+        return {"status": "ok", "running": executor.is_running}
+
+    @app.post(
+        "/scheduled-runs/scheduler/pause",
+        dependencies=[Depends(require_auth)],
+    )
+    async def pause_scheduler() -> Dict[str, Any]:
+        """Stop dispatching global scheduled-research jobs; due jobs stay pending until resumed."""
+        executor = _get_scheduled_research_executor()
+        await executor.stop()
+        return {"status": "ok", "running": executor.is_running}
 
     @app.post(
         "/scheduled-runs",

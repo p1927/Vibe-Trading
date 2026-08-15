@@ -66,7 +66,15 @@
     "statusFailed": "Failed",
     "statusRunning": "Running",
     "statusCancelled": "Cancelled",
-    "statusPending": "Pending"
+    "statusPending": "Pending",
+    "schedulerPausedTitle": "Scheduler paused",
+    "schedulerPausedBody": "Global scheduled jobs (index/options/hub research) don't run until you resume. Every restart pauses again — nothing fires automatically.",
+    "schedulerRunningTitle": "Scheduler running",
+    "schedulerRunningBody": "Due jobs are dispatching on their configured cadence.",
+    "schedulerDisabled": "Scheduler disabled via server configuration (VIBE_TRADING_ENABLE_SCHEDULER).",
+    "schedulerResume": "Resume scheduler",
+    "schedulerPause": "Pause scheduler",
+    "schedulerStatusError": "Could not load scheduler status."
   },
   "runtime": {
     "monitorBadge": "Runtime Monitor",

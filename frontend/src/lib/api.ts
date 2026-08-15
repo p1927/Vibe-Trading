@@ -669,6 +669,15 @@ export const api = {
     request<ScheduledRun>("/scheduled-runs", { method: "POST", body: JSON.stringify(body) }),
   deleteScheduledRun: (id: string) =>
     request<void>(`/scheduled-runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  // Global scheduler dispatch loop always boots paused; a session's Resume
+  // click is the only thing that starts it, and it never persists across
+  // a restart (matches the autonomous-agent pause-on-boot model).
+  getSchedulerStatus: (signal?: AbortSignal) =>
+    request<{ enabled: boolean; running: boolean }>("/scheduled-runs/scheduler/status", { signal }),
+  resumeScheduler: () =>
+    request<{ status: string; running: boolean }>("/scheduled-runs/scheduler/resume", { method: "POST" }),
+  pauseScheduler: () =>
+    request<{ status: string; running: boolean }>("/scheduled-runs/scheduler/pause", { method: "POST" }),
   sendMessage: (sid: string, content: string) => request<{ message_id: string; attempt_id: string }>(`/sessions/${sid}/messages`, { method: "POST", body: JSON.stringify({ content }) }),
   cancelSession: (sid: string) => request<{ status: string }>(`/sessions/${sid}/cancel`, { method: "POST" }),
   getSessionMessages: (sid: string) => request<MessageItem[]>(`/sessions/${sid}/messages`),
@@ -2751,7 +2760,11 @@ export interface IndexPredictionRunJobResponse {
 
 export interface StartRecordingRequest {
   underlyings?: string[];
+  /** @deprecated Kept for callers that haven't migrated yet. Ignored
+   * when ``category_intervals`` is provided. */
   poll_interval_s?: number;
+  category_intervals?: Record<string, number>;
+  ws_throttle_hz?: number | null;
   wait_for_open?: boolean;
 }
 
@@ -2775,6 +2788,8 @@ export interface RecordingJobSnapshot {
   status: string;
   underlyings?: string[];
   poll_interval_s?: number;
+  category_intervals?: Record<string, number> | null;
+  ws_throttle_hz?: number | null;
   wait_for_open?: boolean;
   created_at?: string | null;
   session_date?: string | null;

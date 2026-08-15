@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CalendarClock, Loader2, Plus, Trash2 } from "lucide-react";
+import { CalendarClock, Loader2, Pause, Play, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, ApiError, type ScheduledRun } from "@/lib/api";
 import {
@@ -81,6 +81,12 @@ export function Scheduled() {
   const [listError, setListError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
 
+  // Global scheduler dispatch loop: always boots paused (server-side, on
+  // every process start) and only this page's Resume button starts it.
+  const [schedulerStatus, setSchedulerStatus] = useState<{ enabled: boolean; running: boolean } | null>(null);
+  const [schedulerError, setSchedulerError] = useState<string | null>(null);
+  const [schedulerBusy, setSchedulerBusy] = useState(false);
+
   const [prompt, setPrompt] = useState("");
   const [mode, setMode] = useState<ComposerMode>("time");
   const [time, setTime] = useState("09:00");
@@ -126,6 +132,36 @@ export function Scheduled() {
       clearInterval(timer);
     };
   }, [refresh]);
+
+  const refreshSchedulerStatus = useCallback(async () => {
+    try {
+      const result = await api.getSchedulerStatus();
+      setSchedulerStatus(result);
+      setSchedulerError(null);
+    } catch (error) {
+      setSchedulerError(error instanceof ApiError ? error.message : String(error));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshSchedulerStatus();
+    const timer = setInterval(() => void refreshSchedulerStatus(), POLL_MS);
+    return () => clearInterval(timer);
+  }, [refreshSchedulerStatus]);
+
+  async function handleToggleScheduler() {
+    if (!schedulerStatus || schedulerBusy) return;
+    setSchedulerBusy(true);
+    try {
+      const result = schedulerStatus.running ? await api.pauseScheduler() : await api.resumeScheduler();
+      setSchedulerStatus((prev) => (prev ? { ...prev, running: result.running } : prev));
+      setSchedulerError(null);
+    } catch (error) {
+      setSchedulerError(error instanceof ApiError ? error.message : String(error));
+    } finally {
+      setSchedulerBusy(false);
+    }
+  }
 
   // Auto-disarm an armed delete after a few seconds (blur is unreliable on
   // Safari/iOS, where buttons do not take focus on click).
@@ -220,6 +256,48 @@ export function Scheduled() {
           <p className={hintClass}>{t("scheduled.subtitle")}</p>
         </div>
       </header>
+
+      {schedulerStatus && (
+        <div
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4",
+            schedulerStatus.running ? "border-success/30 bg-success/5" : "border-warning/30 bg-warning/5",
+          )}
+        >
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium">
+              {schedulerStatus.running ? t("scheduled.schedulerRunningTitle") : t("scheduled.schedulerPausedTitle")}
+            </p>
+            <p className={hintClass}>
+              {!schedulerStatus.enabled
+                ? t("scheduled.schedulerDisabled")
+                : schedulerStatus.running
+                  ? t("scheduled.schedulerRunningBody")
+                  : t("scheduled.schedulerPausedBody")}
+            </p>
+            {schedulerError && (
+              <p role="alert" className="text-xs text-danger">
+                {schedulerError}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleToggleScheduler()}
+            disabled={schedulerBusy || !schedulerStatus.enabled}
+            className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {schedulerBusy ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            ) : schedulerStatus.running ? (
+              <Pause className="h-4 w-4" aria-hidden />
+            ) : (
+              <Play className="h-4 w-4" aria-hidden />
+            )}
+            {schedulerStatus.running ? t("scheduled.schedulerPause") : t("scheduled.schedulerResume")}
+          </button>
+        </div>
+      )}
 
       <form onSubmit={handleCreate} className="space-y-4 rounded-lg border bg-card p-4">
         <div className="space-y-1.5">
