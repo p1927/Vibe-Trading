@@ -1,6 +1,7 @@
 """Read-only news tool: per-stock and global financial headlines.
 
-Two public, no-auth news surfaces are wrapped behind one BaseTool contract:
+Two public, no-auth news surfaces feed the Hub (never served to the caller
+directly):
 
 * China A-share (and general China-market finance) headlines come from
   Eastmoney's free ``search-api`` news-list endpoint. Like every Eastmoney
@@ -10,23 +11,28 @@ Two public, no-auth news surfaces are wrapped behind one BaseTool contract:
 * US / HK headlines come from Yahoo Finance's public v1 search-news surface via
   the frozen, IP-throttled :mod:`backtest.loaders.yahoo_client`.
 
-The tool never re-implements provider plumbing and never issues an un-throttled
-request: every outbound call goes through a frozen client.
+Per the Hub boundary contract (``docs/news-hub-bridge.md``), this tool does not
+hand vendor articles straight to the caller. Each fetch is ingested into
+``trade_integrations.dataflows.news_hub_bridge`` (tagged with the ticker's
+market — CN/HK/US) and the response is read back from the Hub, so results are
+deduped, tagged, and fact-checked the same way as every other news source.
 
 Scopes:
 
 * ``stock`` (default) — headlines for a single security named by ``code``.
 * ``global`` — broad market headlines, no ``code`` required.
 
-A failure for one upstream is reported as an error envelope; the tool never
-raises out of :meth:`StockNewsTool.execute`.
+A failure for one upstream, or a Hub ingest/read failure, is reported as an
+error envelope; the tool never raises out of :meth:`StockNewsTool.execute`.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from backtest.loaders import eastmoney_client, yahoo_client
@@ -34,6 +40,15 @@ from backtest.loaders import eastmoney_client, yahoo_client
 from src.agent.tools import BaseTool
 
 logger = logging.getLogger(__name__)
+
+_TRADE_ROOT = Path(__file__).resolve().parents[4]
+_INTEGRATIONS = _TRADE_ROOT / "integrations"
+if _INTEGRATIONS.is_dir() and str(_INTEGRATIONS) not in sys.path:
+    sys.path.insert(0, str(_INTEGRATIONS))
+
+# Synthetic hub ticker for broad China-market ("global" scope) headlines —
+# mirrors how India global news is bucketed under the "NIFTY" ticker.
+_CN_GLOBAL_TICKER = "CN_MARKET"
 
 # Eastmoney free news search endpoint (JSON list of CMS articles). It is the
 # same surface the site's search box calls; no auth, IP-throttled.
@@ -242,6 +257,82 @@ def _fetch_yahoo_news(query: str, limit: int) -> list[dict[str, Any]]:
     ][:limit]
 
 
+def _article_to_hub_row(article: dict[str, Any], *, vendor: str) -> dict[str, Any]:
+    """Project a compact ``{title,url,source,published,snippet}`` article into
+    the row shape ``news_hub_bridge.ingest_rows_to_hub`` expects.
+    """
+    url = str(article.get("url") or "")
+    source = str(article.get("source") or vendor)
+    published = str(article.get("published") or "")
+    return {
+        "title": str(article.get("title") or ""),
+        "summary": str(article.get("snippet") or ""),
+        "url": url,
+        "source": source,
+        "published_at": published,
+        "sources": [
+            {
+                "vendor": vendor,
+                "publisher": source,
+                "url": url,
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ],
+    }
+
+
+def _hub_headline_to_article(item: dict[str, Any]) -> dict[str, Any]:
+    """Map a hub headline dict (distilled event or staging ref) back into the
+    tool's stable ``{title,url,source,published,snippet}`` article shape.
+    """
+    sources = item.get("sources") or []
+    first_source = sources[0] if sources and isinstance(sources[0], dict) else {}
+    return {
+        "title": _snippet(item.get("title")) or str(item.get("title") or ""),
+        "url": item.get("url") or first_source.get("url") or "",
+        "source": item.get("source") or first_source.get("publisher") or "",
+        "published": item.get("published_at") or item.get("publish_day") or "",
+        "snippet": _snippet(item.get("content_summary") or item.get("summary") or ""),
+    }
+
+
+def _ingest_and_read_from_hub(
+    articles: list[dict[str, Any]],
+    *,
+    ticker: str,
+    market: str,
+    vendor: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Ingest freshly fetched vendor articles into the Hub, then read the
+    response back from the Hub (never serve vendor articles directly).
+
+    Raises:
+        Exception: Any Hub-side failure (trade stack unavailable, ingest gate
+            blocked, etc.) — propagated to the caller, which turns it into the
+            tool's error envelope. There is no silent fallback to raw vendor
+            data; per the Hub boundary contract, this tool only serves what
+            the Hub has ingested and enriched.
+    """
+    from trade_integrations.dataflows import news_hub_bridge as hub
+
+    rows = [
+        _article_to_hub_row(a, vendor=vendor)
+        for a in articles
+        if isinstance(a, dict) and a.get("title")
+    ]
+    if rows:
+        collection_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        hub.ingest_rows_to_hub(
+            rows,
+            ticker=ticker,
+            market=market,
+            collection_day=collection_day,
+        )
+    items = hub.query_with_staging(ticker=ticker, market=market, limit=limit)
+    return [_hub_headline_to_article(item) for item in items][:limit]
+
+
 class StockNewsTool(BaseTool):
     """Read-only per-stock and global financial news headlines."""
 
@@ -321,8 +412,15 @@ class StockNewsTool(BaseTool):
             A success or error JSON envelope.
         """
         try:
-            articles = _fetch_eastmoney_news(_GLOBAL_QUERY, limit)
-        except Exception as exc:  # noqa: BLE001 - surface any fetch failure as envelope
+            fetched = _fetch_eastmoney_news(_GLOBAL_QUERY, limit)
+            articles = _ingest_and_read_from_hub(
+                fetched,
+                ticker=_CN_GLOBAL_TICKER,
+                market="CN",
+                vendor="eastmoney",
+                limit=limit,
+            )
+        except Exception as exc:  # noqa: BLE001 - surface any fetch/hub failure as envelope
             logger.warning("global news fetch failed: %s", exc)
             return self._error(f"eastmoney news fetch failed: {exc}")
         return self._ok(
@@ -362,8 +460,11 @@ class StockNewsTool(BaseTool):
     def _stock_via_eastmoney(self, code: str, query: str, limit: int) -> str:
         """Fetch A-share headlines from Eastmoney for one code."""
         try:
-            articles = _fetch_eastmoney_news(query, limit)
-        except Exception as exc:  # noqa: BLE001 - surface any fetch failure as envelope
+            fetched = _fetch_eastmoney_news(query, limit)
+            articles = _ingest_and_read_from_hub(
+                fetched, ticker=query, market="CN", vendor="eastmoney", limit=limit
+            )
+        except Exception as exc:  # noqa: BLE001 - surface any fetch/hub failure as envelope
             logger.warning("eastmoney news fetch failed for %s: %s", code, exc)
             return self._error(f"eastmoney news fetch failed: {exc}")
         return self._ok(
@@ -374,14 +475,19 @@ class StockNewsTool(BaseTool):
 
     def _stock_via_yahoo(self, code: str, query: str, limit: int) -> str:
         """Fetch US/HK news articles from Yahoo for one code."""
-        market = "hk" if _suffix_of(code) == "HK" else "us"
+        is_hk = _suffix_of(code) == "HK"
+        market_label = "hk" if is_hk else "us"
+        hub_market = "HK" if is_hk else "US"
         try:
-            articles = _fetch_yahoo_news(query, limit)
-        except Exception as exc:  # noqa: BLE001 - surface any fetch failure as envelope
+            fetched = _fetch_yahoo_news(query, limit)
+            articles = _ingest_and_read_from_hub(
+                fetched, ticker=query, market=hub_market, vendor="yahoo", limit=limit
+            )
+        except Exception as exc:  # noqa: BLE001 - surface any fetch/hub failure as envelope
             logger.warning("yahoo news fetch failed for %s: %s", code, exc)
             return self._error(f"yahoo news fetch failed: {exc}")
         return self._ok(
-            market,
+            market_label,
             "yahoo",
             {"scope": "stock", "code": code, "articles": articles},
         )

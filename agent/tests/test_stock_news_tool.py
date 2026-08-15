@@ -3,7 +3,10 @@
 No request leaves the process: the Eastmoney HTTP boundary
 (:func:`backtest.loaders.eastmoney_client.throttled_get_json`) and the Yahoo
 :func:`backtest.loaders.yahoo_client.search_news` helper are mocked so the real
-client + tool parsing run fully offline.
+client + tool parsing run fully offline. The Hub read/write functions
+(:mod:`trade_integrations.dataflows.news_hub_bridge`) are also mocked — this
+tool ingests fetched articles into the Hub and serves the response back from
+the Hub rather than the raw vendor payload, per the Hub boundary contract.
 """
 
 from __future__ import annotations
@@ -22,6 +25,22 @@ from src.tools.stock_news_tool import (
     _snippet,
     _suffix_of,
 )
+from trade_integrations.dataflows import news_hub_bridge
+
+
+def _hub_headline(
+    *, title: str, url: str, source: str, published_at: str, summary: str
+) -> dict[str, Any]:
+    """A minimal hub headline dict, as returned by ``query_with_staging``."""
+    return {
+        "title": title,
+        "url": url,
+        "source": source,
+        "published_at": published_at,
+        "content_summary": summary,
+        "summary": summary,
+        "sources": [{"vendor": source, "publisher": source, "url": url}],
+    }
 
 
 def _em_news_payload() -> dict[str, Any]:
@@ -123,86 +142,169 @@ class TestToolContract:
 class TestExecuteSuccess:
     def test_a_share_stock_news(self) -> None:
         tool = StockNewsTool()
-        with patch.object(
-            eastmoney_client, "throttled_get_json", return_value=_em_news_payload()
-        ) as http:
+        hub_articles = [
+            _hub_headline(
+                title="贵州茅台一季度净利大增",
+                url="https://finance.eastmoney.com/a/1.html",
+                source="东方财富",
+                published_at="2024-04-30 08:00:00",
+                summary="公司披露一季报",
+            )
+        ]
+        with (
+            patch.object(
+                eastmoney_client, "throttled_get_json", return_value=_em_news_payload()
+            ) as http,
+            patch.object(news_hub_bridge, "ingest_rows_to_hub") as ingest,
+            patch.object(
+                news_hub_bridge, "query_with_staging", return_value=hub_articles
+            ) as query,
+        ):
             out = json.loads(tool.execute(code="600519.SH", scope="stock", limit=10))
 
         http.assert_called_once()
         _, kwargs = http.call_args
         assert kwargs["host_key"] == "eastmoney"
 
+        # Fetched vendor rows are ingested into the Hub, tagged with the
+        # A-share market — never handed straight back to the caller.
+        ingest.assert_called_once()
+        _, ingest_kwargs = ingest.call_args
+        assert ingest_kwargs["ticker"] == "600519"
+        assert ingest_kwargs["market"] == "CN"
+        assert len(ingest.call_args.args[0]) == 2
+
+        query.assert_called_once_with(ticker="600519", market="CN", limit=10)
+
         assert out["ok"] is True
         assert out["market"] == "a_share"
         assert out["source"] == "eastmoney"
         assert out["data"]["code"] == "600519.SH"
-        assert len(out["data"]["articles"]) == 2
+        assert len(out["data"]["articles"]) == 1
         first = out["data"]["articles"][0]
         assert first["title"] == "贵州茅台一季度净利大增"
         assert first["source"] == "东方财富"
-        assert first["snippet"].endswith("…")
 
     def test_global_scope_needs_no_code(self) -> None:
         tool = StockNewsTool()
-        with patch.object(
-            eastmoney_client, "throttled_get_json", return_value=_em_news_payload()
+        with (
+            patch.object(
+                eastmoney_client, "throttled_get_json", return_value=_em_news_payload()
+            ),
+            patch.object(news_hub_bridge, "ingest_rows_to_hub") as ingest,
+            patch.object(
+                news_hub_bridge, "query_with_staging", return_value=[]
+            ) as query,
         ):
             out = json.loads(tool.execute(scope="global"))
+
+        _, ingest_kwargs = ingest.call_args
+        assert ingest_kwargs["ticker"] == "CN_MARKET"
+        assert ingest_kwargs["market"] == "CN"
+        query.assert_called_once_with(ticker="CN_MARKET", market="CN", limit=20)
 
         assert out["ok"] is True
         assert out["market"] == "global"
         assert out["source"] == "eastmoney"
         assert out["data"]["scope"] == "global"
-        assert len(out["data"]["articles"]) == 2
 
     def test_us_stock_via_yahoo_returns_articles(self) -> None:
         tool = StockNewsTool()
-        with patch.object(
-            yahoo_client, "search_news", return_value=_yahoo_news()
-        ) as srch:
+        hub_articles = [
+            _hub_headline(
+                title="Apple unveils new products",
+                url="https://example.com/apple-products",
+                source="Reuters",
+                published_at="2024-01-01 00:00:00",
+                summary="Apple announced a new product lineup.",
+            )
+        ]
+        with (
+            patch.object(
+                yahoo_client, "search_news", return_value=_yahoo_news()
+            ) as srch,
+            patch.object(news_hub_bridge, "ingest_rows_to_hub") as ingest,
+            patch.object(
+                news_hub_bridge, "query_with_staging", return_value=hub_articles
+            ) as query,
+        ):
             out = json.loads(tool.execute(code="AAPL.US", limit=1))
 
         srch.assert_called_once_with("AAPL", 1)
+        _, ingest_kwargs = ingest.call_args
+        assert ingest_kwargs["ticker"] == "AAPL"
+        assert ingest_kwargs["market"] == "US"
+        query.assert_called_once_with(ticker="AAPL", market="US", limit=1)
+
         assert out["ok"] is True
         assert out["market"] == "us"
         assert out["source"] == "yahoo"
         assert len(out["data"]["articles"]) == 1
         first = out["data"]["articles"][0]
-        assert first == {
-            "title": "Apple unveils new products",
-            "url": "https://example.com/apple-products",
-            "source": "Reuters",
-            "published": "2024-01-01 00:00:00",
-            "snippet": ("Apple announced a new product lineup. " * 30)[:280].rstrip()
-            + "…",
-        }
+        assert first["title"] == "Apple unveils new products"
+        assert first["url"] == "https://example.com/apple-products"
+        assert first["source"] == "Reuters"
+        assert first["published"] == "2024-01-01 00:00:00"
 
     def test_hk_stock_via_yahoo_returns_articles(self) -> None:
         tool = StockNewsTool()
-        with patch.object(
-            yahoo_client, "search_news", return_value=_yahoo_news()[:1]
-        ) as srch:
+        hub_articles = [
+            _hub_headline(
+                title="Apple unveils new products",
+                url="https://example.com/apple-products",
+                source="Reuters",
+                published_at="2024-01-01 00:00:00",
+                summary="Apple announced a new product lineup.",
+            )
+        ]
+        with (
+            patch.object(
+                yahoo_client, "search_news", return_value=_yahoo_news()[:1]
+            ) as srch,
+            patch.object(news_hub_bridge, "ingest_rows_to_hub") as ingest,
+            patch.object(
+                news_hub_bridge, "query_with_staging", return_value=hub_articles
+            ) as query,
+        ):
             out = json.loads(tool.execute(code="00700.HK"))
 
         srch.assert_called_once_with("00700", 20)
+        _, ingest_kwargs = ingest.call_args
+        assert ingest_kwargs["ticker"] == "00700"
+        assert ingest_kwargs["market"] == "HK"
+        query.assert_called_once_with(ticker="00700", market="HK", limit=20)
+
         assert out["ok"] is True
         assert out["market"] == "hk"
         assert out["source"] == "yahoo"
         assert out["data"]["articles"][0]["title"] == "Apple unveils new products"
 
     def test_yahoo_empty_news_returns_empty_articles(self) -> None:
-        with patch.object(yahoo_client, "search_news", return_value=[]):
+        with (
+            patch.object(yahoo_client, "search_news", return_value=[]),
+            patch.object(news_hub_bridge, "ingest_rows_to_hub") as ingest,
+            patch.object(news_hub_bridge, "query_with_staging", return_value=[]),
+        ):
             out = json.loads(StockNewsTool().execute(code="AAPL.US"))
 
+        # No fetched articles -> nothing to ingest.
+        ingest.assert_not_called()
         assert out["ok"] is True
         assert out["data"]["articles"] == []
 
     def test_yahoo_limit_is_clamped_before_request(self) -> None:
-        with patch.object(yahoo_client, "search_news", return_value=[]) as srch:
+        with (
+            patch.object(yahoo_client, "search_news", return_value=[]) as srch,
+            patch.object(news_hub_bridge, "ingest_rows_to_hub"),
+            patch.object(
+                news_hub_bridge, "query_with_staging", return_value=[]
+            ) as query,
+        ):
             out = json.loads(StockNewsTool().execute(code="AAPL.US", limit=999))
 
         assert out["ok"] is True
         srch.assert_called_once_with("AAPL", 50)
+        query.assert_called_once_with(ticker="AAPL", market="US", limit=50)
 
 
 class TestExecuteError:
