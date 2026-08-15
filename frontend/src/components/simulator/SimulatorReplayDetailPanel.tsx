@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api, type HubIndexHistoryBar, type ReplayCalendarDay } from "@/lib/api";
+import {
+  api,
+  type HubIndexHistoryBar,
+  type HubReplayDayOverviewResponse,
+  type ReplayCalendarDay,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type Underlying = "NIFTY" | "BANKNIFTY" | "SENSEX";
@@ -41,9 +46,39 @@ export function SimulatorReplayDetailPanel({
   const [bars, setBars] = useState<HubIndexHistoryBar[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [overview, setOverview] = useState<HubReplayDayOverviewResponse | null>(null);
+  const [overviewLoading, setOverviewLoading] = useState(false);
 
   useEffect(() => {
     if (day) setUnderlying("NIFTY");
+  }, [day]);
+
+  // Overview loads immediately on open, independent of the per-underlying bar
+  // fetch below — it's a quick "what's on disk for this day" preview across
+  // every data vertical (equities, options, macro factors, constituents),
+  // not the detailed per-minute drill-down.
+  useEffect(() => {
+    if (!day) {
+      setOverview(null);
+      return;
+    }
+    let cancelled = false;
+    setOverviewLoading(true);
+    setOverview(null);
+    api
+      .getHubReplayDayOverview(day.date)
+      .then((res) => {
+        if (!cancelled) setOverview(res);
+      })
+      .catch(() => {
+        if (!cancelled) setOverview(null);
+      })
+      .finally(() => {
+        if (!cancelled) setOverviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [day]);
 
   useEffect(() => {
@@ -148,6 +183,90 @@ export function SimulatorReplayDetailPanel({
               </button>
             </div>
 
+            <div className="space-y-2 border-b p-3">
+              <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                What's recorded this day
+              </div>
+              <div className="grid grid-cols-3 gap-1.5 text-[11px]">
+                {UNDERLYINGS.map((u) => {
+                  const rows = Number(day[ROWS_KEY[u]] ?? 0);
+                  return (
+                    <div
+                      key={u}
+                      className={cn(
+                        "rounded-lg border p-1.5",
+                        rows > 0 ? "bg-background/60" : "bg-muted/30 text-muted-foreground",
+                      )}
+                    >
+                      <div className="text-[9px] text-muted-foreground">{u}</div>
+                      <div className="font-medium tabular-nums">{rows > 0 ? `${rows} bars` : "—"}</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {overviewLoading ? (
+                <p className="text-[11px] text-muted-foreground">Checking equities, options, macro factors…</p>
+              ) : overview && overview.status === "ok" ? (
+                <div className="space-y-1.5 text-[11px]">
+                  <div className="rounded-lg border bg-background/60 p-1.5">
+                    <div className="text-[9px] text-muted-foreground">Equities recorded</div>
+                    {overview.equities.length === 0 ? (
+                      <div className="text-muted-foreground">None</div>
+                    ) : (
+                      <div className="font-medium">
+                        {overview.equities.length} symbol{overview.equities.length === 1 ? "" : "s"}
+                        <span className="ml-1 font-normal text-muted-foreground">
+                          ({overview.equities.slice(0, 6).map((e) => e.symbol).join(", ")}
+                          {overview.equities.length > 6 ? `, +${overview.equities.length - 6} more` : ""})
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg border bg-background/60 p-1.5">
+                    <div className="text-[9px] text-muted-foreground">Option-chain coverage</div>
+                    {Object.keys(overview.options).length === 0 ? (
+                      <div className="text-muted-foreground">None</div>
+                    ) : (
+                      <div className="font-medium">
+                        {Object.entries(overview.options)
+                          .map(([u, expiries]) => `${u} (${expiries.length} expiry file${expiries.length === 1 ? "" : "s"})`)
+                          .join(" · ")}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg border bg-background/60 p-1.5">
+                    <div className="text-[9px] text-muted-foreground">Macro / prediction factors</div>
+                    {overview.macro_factor_keys.length === 0 ? (
+                      <div className="text-muted-foreground">None</div>
+                    ) : (
+                      <div className="font-medium">
+                        {overview.macro_factor_keys.length} factor{overview.macro_factor_keys.length === 1 ? "" : "s"}
+                        <span className="ml-1 font-normal text-muted-foreground">
+                          ({overview.macro_factor_keys.slice(0, 6).join(", ")}
+                          {overview.macro_factor_keys.length > 6 ? `, +${overview.macro_factor_keys.length - 6} more` : ""})
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg border bg-background/60 p-1.5">
+                    <div className="text-[9px] text-muted-foreground">Index constituents</div>
+                    <div className="font-medium">
+                      {overview.constituents_available ? "Available" : "Not available"}
+                    </div>
+                  </div>
+                </div>
+              ) : overview && overview.status !== "ok" ? (
+                <p className="text-[11px] text-destructive">{overview.error || "Failed to load overview"}</p>
+              ) : null}
+            </div>
+
+            <div className="px-3 pt-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Per-minute detail
+            </div>
             <div className="flex border-b text-[11px]">
               {UNDERLYINGS.map((u) => {
                 const rows = Number(day[ROWS_KEY[u]] ?? 0);

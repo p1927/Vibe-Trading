@@ -17,6 +17,7 @@ interface Props {
   open: boolean;
   onClose: () => void;
   recordingActive?: boolean;
+  isReplayArmed?: boolean;
   strikeCount?: number;
 }
 
@@ -66,6 +67,7 @@ export function SimulatorOptionChainPanel({
   exchange = "NSE_INDEX",
   open,
   onClose,
+  isReplayArmed = false,
   strikeCount = 10,
 }: Props) {
   const [strikes, setStrikes] = useState<StrikeRow[]>([]);
@@ -84,8 +86,9 @@ export function SimulatorOptionChainPanel({
           symbol,
           exchange,
           strike_count: strikeCount,
+          replay: isReplayArmed,
         }),
-        api.getHubMarketDataSpot({ symbol, exchange }),
+        api.getHubMarketDataSpot({ symbol, exchange, replay: isReplayArmed }),
       ]);
       if (chainRes.status === "ok") {
         setStrikes((chainRes.strikes ?? []) as StrikeRow[]);
@@ -96,7 +99,15 @@ export function SimulatorOptionChainPanel({
         setStrikes([]);
       }
       if (spotRes.status === "ok" && spotRes.spot) {
-        setSpot(spotRes.spot.ltp);
+        // Chain and spot are two independent calls that each read the
+        // simulator's sim clock in replay mode — if a replay day rolls over
+        // between them they can land on different days. The chain's own
+        // underlying_ltp is what ATM-strike highlighting is computed against,
+        // so keep it authoritative there and only take prev_close from spot;
+        // only fall back to spot's ltp when the chain call itself failed.
+        if (chainRes.status !== "ok") {
+          setSpot(spotRes.spot.ltp);
+        }
         setPrevClose(spotRes.spot.prev_close ?? null);
       }
       if (chainRes.status === "ok") {
@@ -116,7 +127,7 @@ export function SimulatorOptionChainPanel({
     const handle = window.setInterval(fetchChain, 5000);
     return () => window.clearInterval(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, symbol, exchange, strikeCount]);
+  }, [open, symbol, exchange, strikeCount, isReplayArmed]);
 
   if (!open) return null;
 
