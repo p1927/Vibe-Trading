@@ -154,6 +154,23 @@ def _register_persisted_autonomous_agent_jobs() -> None:
 def _start_scheduled_research_executor() -> None:
     """Start scheduled research execution when explicitly enabled."""
     try:
+        from pathlib import Path
+
+        trade_root = Path(__file__).resolve().parents[4]
+        integrations = trade_root / "integrations"
+        if integrations.is_dir() and str(integrations) not in _sys.path:
+            _sys.path.insert(0, str(integrations))
+        from trade_integrations.autonomous_agents.proposals import pause_running_agents_on_boot
+
+        # A process start/restart (crash, deploy, or dev uvicorn --reload
+        # respawn) is indistinguishable on disk from an agent that was
+        # legitimately left running. Force every "running" agent to
+        # "paused" before any resume/bootstrap sweep below can see it, so
+        # nothing auto-fires LLM work until a user explicitly resumes it.
+        pause_running_agents_on_boot()
+    except Exception:
+        logger.exception("failed to boot-pause running autonomous agents")
+    try:
         from src.scheduled_research.lifecycle import recover_scheduler_jobs_on_stack_boot
 
         recover_scheduler_jobs_on_stack_boot(_get_scheduled_research_store())
@@ -209,42 +226,19 @@ def _start_scheduled_research_executor() -> None:
             )
     except Exception:
         logger.exception("defer_fresh_registrations failed on startup")
+    # Note: no bootstrap-resume sweep runs here anymore. Every agent that
+    # was "running" was just boot-paused above, so resuming bootstrap work
+    # is now exclusively a user action via POST /autonomous-agents/{id}/resume
+    # (see autonomous_routes.resume_agent, which re-fires a stuck bootstrap
+    # when appropriate).
     try:
-        from src.scheduled_research.autonomous_bootstrap import (
-            resume_pending_bootstraps,
-            resume_stale_pending_bootstraps,
-            resume_stale_running_bootstraps,
-        )
+        from trade_integrations.autonomous_agents.recovery import run_autonomous_agent_recovery
 
-        resumed = resume_pending_bootstraps()
-        if resumed:
-            logger.info("resumed %d pending autonomous agent bootstrap(s)", resumed)
-        # Hot-reload safety: the age thresholds below (60s pending / 600s
-        # running) exist to detect a genuinely hung bootstrap, but a
-        # uvicorn --reload respawn looks identical from wall-clock alone —
-        # every save older than the threshold re-fires the LLM bootstrap
-        # prefetch again. Skip stale-resume under STACK_DEV; use the
-        # `trade reload agent <id>` (or equivalent) path to resume a
-        # genuinely stuck agent manually while developing.
-        if os.getenv("STACK_DEV", "").strip().lower() in {"1", "true", "yes", "on"}:
-            logger.debug("skipping stale autonomous bootstrap resume in dev mode")
-        else:
-            stale = resume_stale_pending_bootstraps()
-            if stale:
-                logger.info("re-scheduled %d stale pending autonomous bootstrap(s)", stale)
-            stale_running = resume_stale_running_bootstraps()
-            if stale_running:
-                logger.info("re-scheduled %d stale running autonomous bootstrap(s)", stale_running)
-        try:
-            from trade_integrations.autonomous_agents.recovery import run_autonomous_agent_recovery
-
-            recovery = run_autonomous_agent_recovery()
-            if any(recovery.values()):
-                logger.info("autonomous agent recovery: %s", recovery)
-        except Exception:
-            logger.debug("autonomous agent recovery on startup failed", exc_info=True)
+        recovery = run_autonomous_agent_recovery()
+        if any(recovery.values()):
+            logger.info("autonomous agent recovery: %s", recovery)
     except Exception:
-        logger.exception("failed to resume pending autonomous bootstraps")
+        logger.debug("autonomous agent recovery on startup failed", exc_info=True)
     try:
         from pathlib import Path
 

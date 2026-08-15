@@ -148,11 +148,15 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
     if not agent_id:
         return
 
-    if str(agent.get("status") or "") == "draft":
+    status = str(agent.get("status") or "")
+    if status == "draft":
         return
 
     if str(agent.get("pause_reason") or "") == "infra":
         register_infra_heal_job(agent_id)
+        return
+
+    if status in {"paused", "stopped"}:
         return
 
     from src.scheduled_research.store import ScheduledResearchJobStore

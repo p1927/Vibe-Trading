@@ -271,12 +271,14 @@ def pause_agent(
 @autonomous_router.post("/{agent_id}/resume")
 def resume_agent(agent_id: str) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.proposals import resume_autonomous_agent
-    from trade_integrations.autonomous_agents.store import get_agent
+    from trade_integrations.autonomous_agents.store import get_agent, save_agent
     from src.scheduled_research.autonomous_agent_jobs import finalize_infra_heal, register_agent_jobs
+    from src.scheduled_research.autonomous_bootstrap import schedule_agent_bootstrap
 
     try:
         before = get_agent(agent_id)
         was_infra = before is not None and str(before.get("pause_reason") or "") == "infra"
+        was_restart_paused = before is not None and str(before.get("pause_reason") or "") == "restart"
         result = resume_autonomous_agent(agent_id)
         agent = get_agent(agent_id)
         if agent and str(agent.get("status")) == "running":
@@ -287,6 +289,16 @@ def resume_agent(agent_id: str) -> Dict[str, Any]:
                 result = {**result, "agent": agent}
             else:
                 register_agent_jobs(agent)
+                # A boot-paused agent may have had its bootstrap interrupted
+                # mid-flight by the restart (bootstrap_status left at
+                # "pending"/"running" with no decision yet). register_agent_jobs
+                # only re-adds the recurring watch/research/news jobs, so
+                # explicitly kick the bootstrap back off on user resume.
+                if was_restart_paused and bootstrap in {"pending", "running"}:
+                    if bootstrap == "running" and not agent.get("last_decision"):
+                        agent["bootstrap_status"] = "pending"
+                        save_agent(agent)
+                    schedule_agent_bootstrap(agent_id)
         return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
