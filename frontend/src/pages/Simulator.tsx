@@ -18,6 +18,7 @@ import {
 } from "@/components/simulator/SimulatorReplayCalendar";
 import { SimulatorReplayClock } from "@/components/simulator/SimulatorReplayClock";
 import { SimulatorReplayDetailPanel } from "@/components/simulator/SimulatorReplayDetailPanel";
+import { StockHistoryCoveragePanel } from "@/components/simulator/StockHistoryCoveragePanel";
 import {
   RecordingConfigProvider,
   SimulatorRecordingFields,
@@ -741,6 +742,14 @@ export function Simulator() {
       </StatCard>
 
       <SimulatorReplayDetailPanel day={selectedReplayDay} onClose={() => setSelectedReplayDay(null)} />
+
+      <StatCard title="Data coverage">
+        <p className="mb-3 text-[11px] text-muted-foreground">
+          Per-week bucket availability for the simulator. White cells = data
+          missing; click a cell to backfill it via the registered writer.
+        </p>
+        <StockHistoryCoveragePanel />
+      </StatCard>
     </div>
   );
 }
