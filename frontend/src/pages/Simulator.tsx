@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Disc, ListOrdered, PlayCircle, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   api,
+  type ConstituentInfo,
   type PipelineLogEntry,
   type RecordingJobSnapshot,
   type RecordingResult,
@@ -149,6 +150,10 @@ export function Simulator() {
   const [sessions, setSessions] = useState<string[]>([]);
   const [calendarDays, setCalendarDays] = useState<ReplayCalendarDay[]>([]);
   const [calendarError, setCalendarError] = useState<string | null>(null);
+  // Distinct from calendarError: the token simply isn't set up yet, not a
+  // fetch failure — no "Retry" button, since retrying can't fix a missing
+  // env var.
+  const [replayNotConfigured, setReplayNotConfigured] = useState<string | null>(null);
   const [replayRange, setReplayRange] = useState<ReplayRange | null>(null);
   const [armedRange, setArmedRange] = useState<ReplayRange | null>(null);
   const [replaySpeed, setReplaySpeed] = useState<number>(1);
@@ -158,6 +163,44 @@ export function Simulator() {
   const [selectedReplayDay, setSelectedReplayDay] = useState<ReplayCalendarDay | null>(null);
   // Phase 9: option-chain drawer toggle.
   const [showChain, setShowChain] = useState(false);
+
+  // Which symbol drives the live chart + option chain, independent of the
+  // Record checkboxes — any of the three indices are always chartable, plus
+  // the full NIFTY-50 constituent list (not just whatever's picked for
+  // recording — the picker's selection only controls what gets *recorded*,
+  // this controls what the chart *shows*). Bare NSE tickers like
+  // "RELIANCE"; the market-data endpoints accept exchange="NSE" for those,
+  // same as "NSE_INDEX" for the indices.
+  const [primarySymbol, setPrimarySymbol] = useState<{ symbol: string; exchange: string }>({
+    symbol: "NIFTY",
+    exchange: "NSE_INDEX",
+  });
+  const [nifty50, setNifty50] = useState<ConstituentInfo[]>([]);
+  useEffect(() => {
+    api
+      .getRecordingConstituents()
+      .then((res) => setNifty50(res.constituents || []))
+      .catch(() => {});
+  }, []);
+  const chartableSymbols = useMemo(
+    () => [
+      ...UNDERLYINGS.map((u) => ({ symbol: u, exchange: "NSE_INDEX" })),
+      ...nifty50.map((c) => ({ symbol: c.symbol, exchange: "NSE" })),
+    ],
+    [nifty50],
+  );
+  useEffect(() => {
+    const stillValid = chartableSymbols.some(
+      (s) => s.symbol === primarySymbol.symbol && s.exchange === primarySymbol.exchange,
+    );
+    if (!stillValid) setPrimarySymbol(chartableSymbols[0] ?? { symbol: "NIFTY", exchange: "NSE_INDEX" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chartableSymbols]);
+
+  // Whether the underlying's real trading session is open right now, as
+  // reported by the live index panel's poll (null = unknown/check failed).
+  // Drives the "market closed — replay the latest day" banner below.
+  const [marketOpen, setMarketOpen] = useState<boolean | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
 
@@ -174,9 +217,17 @@ export function Simulator() {
 
   const loadCalendar = useCallback(() => {
     setCalendarError(null);
+    setReplayNotConfigured(null);
     api
       .getReplayCalendar()
-      .then((res) => setCalendarDays(res.days || []))
+      .then((res) => {
+        setCalendarDays(res.days || []);
+        if (res.configured === false) {
+          setReplayNotConfigured(
+            res.message || "Replay isn't configured on this OpenAlgo instance yet.",
+          );
+        }
+      })
       .catch((err) => {
         const message = err instanceof Error ? err.message : "Failed to load calendar";
         setCalendarError(
@@ -220,6 +271,30 @@ export function Simulator() {
           setLogs(res.job.logs || []);
           attachStream(res.job.job_id);
         }
+      })
+      .catch(() => {});
+    // A replay armed in a prior session (or by another tab) leaves
+    // STOCK_SIMULATOR_MODE=replay set on the OpenAlgo side even after this
+    // page reloads — without this, the page boots with armedRange=null and
+    // drifts out of sync with the server until the user re-arms manually.
+    // Best-effort: swallow errors (e.g. SIMULATOR_CONTROL_TOKEN not
+    // configured) since this is a background reconciliation, not a
+    // user-initiated action.
+    api
+      .getReplayStatus()
+      .then((res) => {
+        const replay = (res.replay ?? null) as Record<string, unknown> | null;
+        if (!replay || replay.mode !== "replay") return;
+        const clock = (replay.clock || {}) as Record<string, unknown>;
+        const replayDate = typeof clock.replay_date === "string" ? clock.replay_date : null;
+        if (!replayDate) return;
+        // The status endpoint doesn't cleanly distinguish an explicit
+        // start+end range arm from the "last N trading days" week-mode
+        // default, so reconcile conservatively as a single-day arm at the
+        // current replay date rather than guessing a wider range.
+        const armed: ReplayRange = { start: replayDate, end: replayDate };
+        setReplayRange(armed);
+        setArmedRange(armed);
       })
       .catch(() => {});
     return () => abortRef.current?.abort();
@@ -326,16 +401,76 @@ export function Simulator() {
         </p>
       </div>
 
-      {/* Phase 9: live index panel + option chain toggle. Auto-switches
-          underlying when `selected[0]` changes (driven by Record checkboxes). */}
+      {/* Primary chart symbol: any index, or any NIFTY-50 constituent —
+          independent of what's checked for recording below. This only
+          controls what the chart/chain show, not what gets recorded. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          Chart symbol
+          <select
+            value={`${primarySymbol.exchange}:${primarySymbol.symbol}`}
+            onChange={(e) => {
+              const [exchange, symbol] = e.target.value.split(":");
+              setPrimarySymbol({ symbol, exchange });
+            }}
+            className="max-w-[220px] rounded border bg-background px-1.5 py-1 text-xs"
+            data-testid="simulator-primary-symbol"
+          >
+            <optgroup label="Indices">
+              {UNDERLYINGS.map((u) => (
+                <option key={u} value={`NSE_INDEX:${u}`}>
+                  {u}
+                </option>
+              ))}
+            </optgroup>
+            {nifty50.length > 0 && (
+              <optgroup label="NIFTY 50 equities">
+                {[...nifty50]
+                  .sort((a, b) => a.symbol.localeCompare(b.symbol))
+                  .map((c) => (
+                    <option key={c.symbol} value={`NSE:${c.symbol}`}>
+                      {c.symbol} — {c.name}
+                    </option>
+                  ))}
+              </optgroup>
+            )}
+          </select>
+        </label>
+      </div>
+
+      {marketOpen === false && !armedRange && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+          <span>
+            Market is closed right now.
+            {calendarDays[0]
+              ? ` Replay the most recent recorded session (${calendarDays[0].date}) to see it moving.`
+              : " Record a full session (below) to enable replay."}
+          </span>
+          {calendarDays[0] ? (
+            <button
+              type="button"
+              onClick={() => armReplay({ start: calendarDays[0].date, end: calendarDays[0].date })}
+              disabled={Boolean(armingDay)}
+              className="shrink-0 rounded border border-amber-500/40 px-2 py-0.5 font-medium hover:bg-amber-500/10 disabled:opacity-50"
+              data-testid="replay-latest-day"
+            >
+              {armingDay ? "Arming…" : `Replay ${calendarDays[0].date}`}
+            </button>
+          ) : null}
+        </div>
+      )}
+
+      {/* Phase 9: live index panel + option chain toggle. Follows the
+          "Chart symbol" selector above. */}
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1 basis-full sm:basis-0">
           <SimulatorLiveIndexPanel
-            symbol={selected[0] ?? "NIFTY"}
-            exchange="NSE_INDEX"
+            symbol={primarySymbol.symbol}
+            exchange={primarySymbol.exchange}
             isRecordingActive={isActive}
             isReplayArmed={Boolean(armedRange)}
             height={240}
+            onSessionOpenChange={setMarketOpen}
           />
         </div>
         <button
@@ -350,11 +485,12 @@ export function Simulator() {
         </button>
       </div>
       <SimulatorOptionChainPanel
-        symbol={selected[0] ?? "NIFTY"}
-        exchange="NSE_INDEX"
+        symbol={primarySymbol.symbol}
+        exchange={primarySymbol.exchange}
         open={showChain}
         onClose={() => setShowChain(false)}
         recordingActive={isActive}
+        isReplayArmed={Boolean(armedRange)}
       />
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -363,7 +499,11 @@ export function Simulator() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
             {UNDERLYINGS.map((u) => (
-              <label key={u} className="flex items-center gap-1.5 text-sm">
+              <label
+                key={u}
+                className="flex items-center gap-1.5 text-sm"
+                title={isActive ? "Stop the recording to change what's being recorded" : undefined}
+              >
                 <input
                   type="checkbox"
                   checked={selected.includes(u)}
@@ -374,12 +514,17 @@ export function Simulator() {
                 {u}
               </label>
             ))}
-            <SimulatorEquityPicker
-              selected={selectedEquities}
-              onChange={setSelectedEquities}
-              disabled={isActive}
-            />
-            <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <span title={isActive ? "Stop the recording to add or remove equities" : undefined}>
+              <SimulatorEquityPicker
+                selected={selectedEquities}
+                onChange={setSelectedEquities}
+                disabled={isActive}
+              />
+            </span>
+            <label
+              className="flex items-center gap-1.5 text-sm text-muted-foreground"
+              title={isActive ? "Stop the recording to change this" : undefined}
+            >
               <input
                 type="checkbox"
                 checked={waitForOpen}
@@ -477,7 +622,11 @@ export function Simulator() {
 
       <StatCard title="Replay">
         <div className="space-y-3">
-          {calendarError ? (
+          {replayNotConfigured ? (
+            <div className="rounded-lg border border-muted-foreground/20 bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+              Replay not available — {replayNotConfigured}
+            </div>
+          ) : calendarError ? (
             <div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
               <span>{calendarError}</span>
               <button
@@ -529,7 +678,14 @@ export function Simulator() {
                   className="h-3.5 w-3.5 rounded border-border"
                   data-testid="simulator-loop"
                 />
-                Loop {replayRange && replayRange.start !== replayRange.end ? "range" : "at 15:30"}
+                {/* While armed, describe what's actually looping (armedRange),
+                    not the pending calendar selection (replayRange) — the
+                    calendar stays clickable while armed, so replayRange can
+                    drift away from what this checkbox (disabled) controls. */}
+                Loop {(() => {
+                  const active = armedRange ?? replayRange;
+                  return active && active.start !== active.end ? "range" : "at 15:30";
+                })()}
               </label>
             </div>
             <button

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { type ReplayCalendarDay } from "@/lib/api";
@@ -147,9 +147,11 @@ export interface ReplayRange {
  * click starts a fresh single-day range. Cells strictly between the anchor
  * and the hovered cell preview the pending range before the second click.
  *
- * The visible 53-week window can be paged backward/forward a year at a time;
- * clicking a day with data also reports it via `onDaySelect` so a caller can
- * show a details panel for that date.
+ * Double-clicking a day (independent of the range click) reports it via
+ * `onDaySelect` so a caller can show a details panel for that date, without
+ * interrupting an in-progress range selection.
+ *
+ * The visible 53-week window can be paged backward/forward a year at a time.
  */
 export function SimulatorReplayCalendar({
   days,
@@ -173,6 +175,13 @@ export function SimulatorReplayCalendar({
   );
 
   const [windowEnd, setWindowEnd] = useState<string | null>(latestDate);
+  // Whether the visible window should track new data as it arrives (e.g. a
+  // fresh recording lands after a refetch). Any manual paging away from
+  // "latest" turns this off until the user pages back.
+  const [followLatest, setFollowLatest] = useState(true);
+  useEffect(() => {
+    if (followLatest) setWindowEnd(latestDate);
+  }, [followLatest, latestDate]);
   const effectiveWindowEnd = windowEnd ?? latestDate;
 
   const { weeks, months, startSunday } = useMemo(
@@ -197,20 +206,22 @@ export function SimulatorReplayCalendar({
 
   function goPrevYear() {
     const next = addDays(toDateOnly(effectiveWindowEnd!), -WINDOW_DAYS);
+    setFollowLatest(false);
     setWindowEnd(isoDate(next));
   }
   function goNextYear() {
     const next = addDays(toDateOnly(effectiveWindowEnd!), WINDOW_DAYS);
     const capped = latestDate && isoDate(next) > latestDate ? latestDate : isoDate(next);
+    setFollowLatest(Boolean(latestDate) && capped === latestDate);
     setWindowEnd(capped);
   }
   function goToLatest() {
+    setFollowLatest(true);
     setWindowEnd(latestDate);
   }
 
   function handleClick(day: ReplayCalendarDay) {
     const key = day.date;
-    onDaySelect?.(day);
     if (anchor === null || (range && range.start !== range.end)) {
       // Starting a fresh selection (nothing anchored, or a full range from a
       // prior selection is already showing).
@@ -242,8 +253,8 @@ export function SimulatorReplayCalendar({
       <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
         <span>
           {anchor
-            ? `Range start ${anchor} — click an end day.`
-            : "Click a day for the range start, then click another for the end."}
+            ? `Range start ${anchor} — click an end day. Double-click a day for details.`
+            : "Click a day for the range start, then click another for the end. Double-click a day for details."}
         </span>
         <div className="flex items-center gap-1.5">
           <span className="tabular-nums text-foreground/80">{windowLabel}</span>
@@ -293,8 +304,12 @@ export function SimulatorReplayCalendar({
             {ROW_LABELS.map((label, di) => (
               <div
                 key={`wd-${di}`}
-                className="flex items-center text-[9px] leading-none text-muted-foreground/70"
-                style={{ height: `${CELL_PX}px` }}
+                className="text-[9px] text-muted-foreground/70"
+                // Line-height pinned to the cell height (rather than relying on
+                // flex centering + `leading-none`) so the label's text baseline
+                // lands in the middle of its 12px row, matching the day-cell
+                // grid exactly instead of drifting by a subpixel per row.
+                style={{ height: `${CELL_PX}px`, lineHeight: `${CELL_PX}px` }}
               >
                 {label}
               </div>
@@ -302,13 +317,13 @@ export function SimulatorReplayCalendar({
           </div>
 
           <div className="flex flex-col gap-[3px]">
-            <div className="flex gap-[3px]">
+            <div className="flex items-end gap-[3px]" style={{ height: `${CELL_PX}px` }}>
               {weeks.map((_, col) => {
                 const label = months.find((m) => m.col === col)?.label ?? "";
                 return (
                   <div
                     key={`m-${col}`}
-                    className="shrink-0 self-end pb-[2px] text-[9px] leading-none text-muted-foreground/70"
+                    className="shrink-0 text-[9px] leading-none text-muted-foreground/70"
                     style={{ width: `${CELL_PX}px` }}
                   >
                     {label}
@@ -356,10 +371,11 @@ export function SimulatorReplayCalendar({
                         type="button"
                         disabled={noData || isFuture}
                         onClick={() => day && handleClick(day)}
+                        onDoubleClick={() => day && onDaySelect?.(day)}
                         onMouseEnter={() => day && setHovered(day.date)}
                         title={
                           day
-                            ? `${day.date} · NIFTY ${day.nifty_rows} · BANKNIFTY ${day.banknifty_rows} · SENSEX ${day.sensex_rows}`
+                            ? `${day.date} · NIFTY ${day.nifty_rows} · BANKNIFTY ${day.banknifty_rows} · SENSEX ${day.sensex_rows} · double-click for details`
                             : key
                         }
                         className={cn(

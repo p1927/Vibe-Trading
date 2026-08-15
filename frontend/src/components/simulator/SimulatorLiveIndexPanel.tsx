@@ -12,9 +12,11 @@
  * When `isReplayArmed` is true, the panel sends `?replay=1` with both
  * ticks + spot requests so the bridge routes through the simulator's
  * ReplayService (advancing the sim clock and reading the catalog bar)
- * instead of the live broker or Timescale. The header badge flips from
- * "LIVE" to "REPLAY" so the user can see they're looking at the
- * recorded session playing back, not today's real market.
+ * instead of the live broker or Timescale. The header badge reflects which
+ * of the three sources actually answered (see `modeBadge` below): a true
+ * broker quote ("BROKER · LIVE"), recently-recorded Timescale ticks
+ * ("RECENT · RECORDED"), or a replay session ("REPLAY") — rather than
+ * calling everything "LIVE".
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -34,6 +36,10 @@ interface Props {
   isRecordingActive?: boolean;
   isReplayArmed?: boolean;
   height?: number;
+  /** Reports the backend's `session_open` read on every non-replay poll, so
+   *  a parent can show a page-level "market closed" state. `null` means the
+   *  backend's own check failed — treat as unknown, not "closed". */
+  onSessionOpenChange?: (open: boolean | null) => void;
 }
 
 interface Tick {
@@ -54,12 +60,30 @@ function formatPct(v: number | null | undefined): string {
   return `${sign}${v.toFixed(2)}%`;
 }
 
+// The badge used to say "LIVE" regardless of where the number actually came
+// from, which conflated three different sources behind one word. Map the
+// backend's `spot.source` (see get_live_spot_quote in _market_data.py) to a
+// label that tells the truth: "timescale" is recently-recorded playback,
+// not the broker tape; "openalgo" is the only genuinely-live path.
+function modeBadge(
+  isReplayArmed: boolean,
+  source: string | undefined,
+  sessionOpen: boolean | null,
+): { label: string; live: boolean } {
+  if (isReplayArmed) return { label: "REPLAY", live: false };
+  if (source === "openalgo") return { label: "BROKER · LIVE", live: true };
+  if (source === "timescale") return { label: "RECENT · RECORDED", live: false };
+  if (sessionOpen === false) return { label: "MARKET CLOSED", live: false };
+  return { label: "LIVE", live: true };
+}
+
 export function SimulatorLiveIndexPanel({
   symbol,
   exchange = "NSE_INDEX",
   isRecordingActive = false,
   isReplayArmed = false,
   height = 200,
+  onSessionOpenChange,
 }: Props) {
   const [ticks, setTicks] = useState<Tick[]>([]);
   const [spot, setSpot] = useState<{
@@ -70,6 +94,7 @@ export function SimulatorLiveIndexPanel({
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sessionOpen, setSessionOpen] = useState<boolean | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -88,6 +113,7 @@ export function SimulatorLiveIndexPanel({
     setSpot(null);
     setError(null);
     setLoading(true);
+    setSessionOpen(null);
     prevCloseRef.current = null;
     if (seriesRef.current) {
       seriesRef.current.setData([]);
@@ -110,6 +136,12 @@ export function SimulatorLiveIndexPanel({
           api.getHubMarketDataSpot({ symbol, exchange, replay: isReplayArmed }),
         ]);
         if (cancelled) return;
+        if (!isReplayArmed) {
+          const nextSessionOpen = spotRes.session_open ?? null;
+          setSessionOpen(nextSessionOpen);
+          onSessionOpenChange?.(nextSessionOpen);
+        }
+        let lastTickPrice: number | null = null;
         if (ticksRes.status === "ok") {
           const next: Tick[] = ticksRes.ticks.map((t) => ({
             ts: t.ts,
@@ -118,13 +150,22 @@ export function SimulatorLiveIndexPanel({
             open: t.open ?? null,
           }));
           setTicks(next);
+          if (next.length) lastTickPrice = next[next.length - 1].price;
           if (next.length && prevCloseRef.current == null && next[0].open != null) {
             prevCloseRef.current = next[0].open ?? null;
           }
         }
         if (spotRes.status === "ok" && spotRes.spot) {
+          // In replay mode the ticks and spot requests are two independent
+          // calls that each read the simulator's sim clock — if a replay day
+          // rolls over between the two, they can land on different days and
+          // report wildly different prices (e.g. LTP from the new day, chart
+          // still showing the old day's last bars). Prefer the ticks
+          // response's own last price when we have one: it's exactly what
+          // the chart just rendered, so the header number can never disagree
+          // with what's plotted next to it.
           setSpot({
-            ltp: spotRes.spot.ltp,
+            ltp: isReplayArmed && lastTickPrice != null ? lastTickPrice : spotRes.spot.ltp,
             prev_close: spotRes.spot.prev_close ?? null,
             source: spotRes.spot.source,
             as_of: spotRes.spot.as_of ?? null,
@@ -132,6 +173,15 @@ export function SimulatorLiveIndexPanel({
           if (spotRes.spot.prev_close != null && prevCloseRef.current == null) {
             prevCloseRef.current = spotRes.spot.prev_close;
           }
+        } else if (isReplayArmed && lastTickPrice != null) {
+          // Spot failed/empty but ticks succeeded — still show a value
+          // consistent with the chart instead of leaving the header blank.
+          setSpot((prev) => ({
+            ltp: lastTickPrice as number,
+            prev_close: prev?.prev_close ?? null,
+            source: "simulator",
+            as_of: null,
+          }));
         }
         setError(null);
         setLoading(false);
@@ -214,6 +264,7 @@ export function SimulatorLiveIndexPanel({
   }, [spot]);
 
   const positive = (change ?? 0) >= 0;
+  const badge = modeBadge(isReplayArmed, spot?.source, sessionOpen);
 
   return (
     <div className="rounded-xl border bg-card p-4 shadow-sm">
@@ -223,13 +274,24 @@ export function SimulatorLiveIndexPanel({
             className={
               isReplayArmed
                 ? "inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-700 dark:text-amber-300"
+                : !badge.live
+                ? "inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5"
                 : "inline-flex items-center gap-1"
             }
             data-testid="live-spot-mode"
+            title={
+              isReplayArmed
+                ? "Replaying a recorded session through the simulator clock."
+                : badge.live
+                ? "Live quote from the broker (OpenAlgo)."
+                : sessionOpen === false
+                ? "The market is closed right now — no live tape to show."
+                : "Recently recorded ticks from TimescaleDB, not a live broker tape."
+            }
           >
             {symbol}
             <span>·</span>
-            <span>{isReplayArmed ? "REPLAY" : "LIVE"}</span>
+            <span>{badge.label}</span>
           </span>
           {isRecordingActive && !isReplayArmed && (
             <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-red-500 align-middle" />
@@ -271,6 +333,8 @@ export function SimulatorLiveIndexPanel({
         <p className="mt-1 text-xs text-muted-foreground">
           {isReplayArmed
             ? "No replay ticks at the current sim clock — try a different speed or check the replay day."
+            : sessionOpen === false
+            ? "Market is closed right now — arm a replay day below to see it move."
             : "No live ticks — start a recording or check TimescaleDB."}
         </p>
       )}

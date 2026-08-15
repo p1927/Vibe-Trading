@@ -12,6 +12,7 @@ import {
 import { toast } from "sonner";
 import {
   api,
+  ApiError,
   type TradePlanLeg,
   type TradePlanRecommended,
   type TradePlanScenario,
@@ -474,7 +475,19 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
       const mode = result.execution_mode === "paper" ? " (paper)" : "";
       toast.success((result.message || "Basket order submitted") + mode);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Execution failed");
+      // status === 0 means the client aborted (timeout/network) before ever
+      // getting an HTTP response — the basket POST may well have reached
+      // OpenAlgo and landed. Saying "Execution failed" here would be a lie
+      // that could send the trader retrying into a double order; tell them
+      // the outcome is unknown and to verify instead of guessing either way.
+      if (err instanceof ApiError && err.status === 0) {
+        toast.error(
+          "No response from the server — the order status is unknown. Check your positions before retrying.",
+          { duration: 10000 },
+        );
+      } else {
+        toast.error(err instanceof Error ? err.message : "Execution failed");
+      }
     } finally {
       setExecuting(false);
       setConfirmOpen(false);

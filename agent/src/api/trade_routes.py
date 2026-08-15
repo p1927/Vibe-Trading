@@ -935,6 +935,19 @@ class HubNewsIngestRequest(BaseModel):
     lookback_days: int | None = None
 
 
+class HubNewsPipelineTraceSummaryResponse(BaseModel):
+    status: str = "ok"
+    summary: Dict[str, Any] = Field(default_factory=dict)
+    message: str = ""
+
+
+class HubNewsPipelineTraceItemsResponse(BaseModel):
+    status: str = "ok"
+    items: list[Dict[str, Any]] = Field(default_factory=list)
+    count: int = 0
+    message: str = ""
+
+
 class SimulateIndexPredictionRequest(BaseModel):
     ticker: str = "NIFTY"
     horizon_days: int | None = None
@@ -1554,6 +1567,56 @@ def list_hub_discarded_news(
         return HubNewsDiscardedListResponse(status="ok", items=items, count=len(items))
     except Exception as exc:
         logger.exception("hub discarded news list failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/hub/news-pipeline/trace/summary", response_model=HubNewsPipelineTraceSummaryResponse)
+def get_hub_news_pipeline_trace_summary(
+    entity_id: str = "NIFTY",
+    _auth: None = Depends(require_local_or_auth),
+) -> HubNewsPipelineTraceSummaryResponse:
+    """Per-source and per-stage counts for the Hub news pipeline node diagram."""
+    key = entity_id.strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.hub_storage.news_pipeline_trace_store import pipeline_trace_summary
+
+        summary = pipeline_trace_summary(ticker=key)
+        return HubNewsPipelineTraceSummaryResponse(status="ok", summary=summary)
+    except Exception as exc:
+        logger.exception("hub news pipeline trace summary failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/hub/news-pipeline/trace/items", response_model=HubNewsPipelineTraceItemsResponse)
+def list_hub_news_pipeline_trace_items(
+    entity_id: str = "NIFTY",
+    source: str = "",
+    stage: str = "",
+    status: str = "",
+    limit: int = 40,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubNewsPipelineTraceItemsResponse:
+    """List traced refs at a given pipeline node (source and/or stage+status)."""
+    key = entity_id.strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.hub_storage.news_pipeline_trace_store import list_pipeline_trace_items
+
+        items = list_pipeline_trace_items(
+            ticker=key,
+            source=source or None,
+            stage=stage or None,
+            status=status or None,
+            limit=max(1, min(limit, 200)),
+        )
+        return HubNewsPipelineTraceItemsResponse(status="ok", items=items, count=len(items))
+    except Exception as exc:
+        logger.exception("hub news pipeline trace items failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -3543,16 +3606,27 @@ def stop_replay(
 def get_replay_calendar(
     _auth: None = Depends(require_local_or_auth),
 ):
-    """Per-day parquet coverage for the calendar heatmap."""
+    """Per-day parquet coverage for the calendar heatmap.
+
+    Missing configuration is a distinct, expected state (a fresh install
+    that hasn't wired up replay control yet) — it returns 200 with
+    `configured=false` and an empty calendar rather than a 503, so the UI
+    can render "replay not available, configure the token" instead of a
+    generic "calendar failed to load" error with a Retry button that can
+    never succeed.
+    """
     import requests
 
     headers = _openalgo_control_headers()
     if headers is None:
-        raise HTTPException(
-            status_code=503,
-            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
+        return {
+            "status": "ok",
+            "configured": False,
+            "days": [],
+            "underlyings": [],
+            "message": "OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
             "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
-        )
+        }
     try:
         res = requests.get(
             f"{_openalgo_host()}/stock_simulator/control/replay/calendar",
@@ -3565,7 +3639,7 @@ def get_replay_calendar(
         ) from exc
     if res.status_code >= 400:
         raise HTTPException(status_code=502, detail=res.text[:500])
-    return _openalgo_json(res)
+    return {"configured": True, **_openalgo_json(res)}
 
 
 @trade_router.get("/recording/{job_id}", response_model=RecordingJobResponse)
@@ -3993,6 +4067,12 @@ class HubMarketDataSpotResponse(BaseModel):
     symbol: str
     exchange: str
     spot: dict[str, Any] | None = None
+    # Whether the underlying's real trading session is open right now (IST,
+    # weekday + simulator-forced-open aware). None when the check itself
+    # failed — the UI should not claim either state in that case. Lets the
+    # frontend tell "market closed" apart from "broker unreachable", which
+    # otherwise render identically as an empty spot quote.
+    session_open: bool | None = None
     error: str | None = None
 
 
@@ -4063,6 +4143,37 @@ class HubIndexHistoryBarsResponse(BaseModel):
 class HubConstituentsPanelResponse(BaseModel):
     status: str
     rows: list[dict[str, Any]] = []
+    error: str | None = None
+
+
+class HubStockHistoryCoverageResponse(BaseModel):
+    """Per-week, per-bucket availability gate for the stock_simulator.
+
+    `days[*].buckets[name]` carries the per-bucket status (present flag,
+    row count, on-disk location, primary_source, fetch_command). When
+    `is_complete=False` the UI should render the missing cells as white
+    blocks; clicking a cell opens the matching fetch_command.
+    """
+
+    status: str
+    week_start: str
+    week_end: str
+    symbol: str
+    is_complete: bool
+    missing_days: list[str] = []
+    bucket_labels: list[str] = []
+    days: list[dict[str, Any]] = []
+    fetch_list: list[dict[str, Any]] = []
+    error: str | None = None
+
+
+class HubReplayDayOverviewResponse(BaseModel):
+    status: str
+    date: str
+    equities: list[dict[str, Any]] = []
+    options: dict[str, list[str]] = {}
+    macro_factor_keys: list[str] = []
+    constituents_available: bool = False
     error: str | None = None
 
 
@@ -4143,14 +4254,26 @@ def hub_market_data_spot(
         if replay
         else get_live_spot_quote(symbol=symbol, exchange=exchange)
     )
+
+    session_open: bool | None = None
+    if not replay:
+        try:
+            from trade_integrations.autonomous_agents.market_hours import is_trading_session_open
+
+            session_open = is_trading_session_open(market="IN")
+        except Exception:
+            logger.exception("session_open check failed for %s/%s", symbol, exchange)
+
     if quote is None:
         return HubMarketDataSpotResponse(
             status="error", symbol=symbol.upper(), exchange=exchange.upper(),
+            session_open=session_open,
             error="no spot quote available (simulator not running)" if replay
             else "no spot quote available (Timescale empty and OpenAlgo unreachable)",
         )
     return HubMarketDataSpotResponse(
         status="ok", symbol=symbol.upper(), exchange=exchange.upper(),
+        session_open=session_open,
         spot={
             "symbol": quote.symbol, "exchange": quote.exchange,
             "ltp": quote.ltp, "prev_close": quote.prev_close,
@@ -4167,9 +4290,46 @@ def hub_market_data_option_chain(
     exchange: str = "NSE_INDEX",
     strike_count: int = 10,
     expiry_date: str | None = None,
+    replay: int = 0,
     _auth: None = Depends(require_local_or_auth),
 ) -> HubMarketDataOptionChainResponse:
-    """Live option chain from OpenAlgo (proxied through stock_history_bridge)."""
+    """Option chain — live from OpenAlgo, or replay from the simulator.
+
+    When ``replay=1``, reads through the simulator's ReplayService (recorded
+    parquet chain -> Black-Scholes synthesizer fallback) instead of the live
+    broker, which isn't running during a replay session — hitting the live
+    path there just times out with nothing to show.
+    """
+    if replay:
+        from trade_integrations.dataflows.stock_history_bridge import get_replay_option_chain
+
+        data = get_replay_option_chain(
+            underlying=symbol, exchange=exchange,
+            strike_count=strike_count, expiry_date=expiry_date,
+        )
+        if data is None:
+            return HubMarketDataOptionChainResponse(
+                status="error", underlying=symbol.upper(), exchange=exchange.upper(),
+                error="no replay chain available (simulator not running?)",
+            )
+        legs = data.get("chain") or []
+        strikes: list[HubMarketDataOptionChainStrike] = []
+        for leg in legs:
+            if not isinstance(leg, dict):
+                continue
+            strikes.append(HubMarketDataOptionChainStrike(
+                strike=float(leg.get("strike") or leg.get("strike_price") or 0),
+                ce={"last_price": leg.get("ce_ltp"), "oi": leg.get("ce_oi"), "iv": leg.get("ce_iv")},
+                pe={"last_price": leg.get("pe_ltp"), "oi": leg.get("pe_oi"), "iv": leg.get("pe_iv")},
+            ))
+        return HubMarketDataOptionChainResponse(
+            status="ok", underlying=symbol.upper(), exchange=exchange.upper(),
+            expiry_date=str(data.get("expiry_date") or "")[:10] or None,
+            underlying_ltp=_safe_float(data.get("underlying_ltp") or data.get("spot")),
+            underlying_prev_close=None,
+            strikes=strikes, source=str(data.get("source") or "simulator"),
+        )
+
     from trade_integrations.dataflows.stock_history_bridge import get_live_option_chain
 
     data = get_live_option_chain(
@@ -4331,6 +4491,28 @@ def hub_index_history_bars(
         )
 
 
+@trade_router.get("/hub/replay/day-overview", response_model=HubReplayDayOverviewResponse)
+def hub_replay_day_overview(
+    date: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubReplayDayOverviewResponse:
+    """What's on disk for one replay-calendar day: equities, option-chain
+    coverage per underlying, macro factor keys, constituents availability.
+
+    Index/equity spot-bar counts for NIFTY/BANKNIFTY/SENSEX are already in the
+    calendar payload the UI fetches separately — this fills in everything the
+    calendar heatmap doesn't carry.
+    """
+    from trade_integrations.dataflows.stock_history_bridge import get_replay_day_overview
+
+    try:
+        overview = get_replay_day_overview(date=date)
+        return HubReplayDayOverviewResponse(status="ok", **overview)
+    except Exception as exc:
+        logger.exception("hub replay day-overview failed for %s", date)
+        return HubReplayDayOverviewResponse(status="error", date=date, error=str(exc))
+
+
 @trade_router.get("/hub/constituents/panel", response_model=HubConstituentsPanelResponse)
 def hub_constituents_panel(
     start: str | None = None,
@@ -4352,6 +4534,38 @@ def hub_constituents_panel(
     except Exception as exc:
         logger.exception("hub constituents panel failed")
         return HubConstituentsPanelResponse(status="error", rows=[], error=str(exc))
+
+
+@trade_router.get("/hub/stock-history/coverage", response_model=HubStockHistoryCoverageResponse)
+def hub_stock_history_coverage(
+    week: str,
+    symbol: str = "NIFTY",
+    include_optional: int = 0,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubStockHistoryCoverageResponse:
+    """Per-week bucket-coverage snapshot for the stock_simulator.
+
+    `week` is any ISO date in the target ISO week (rounded to Mon..Fri).
+    The response carries per-day, per-bucket status with `primary_source`
+    and `fetch_command` for every missing bucket — the UI uses this to
+    render the white-cell gap and surface the backfill command on click.
+    """
+    from trade_integrations.stock_history import StockHistory
+
+    try:
+        report = StockHistory().coverage_report(
+            week_start=week,
+            symbol=symbol,
+            include_optional=bool(include_optional),
+        )
+        payload = report.as_dict()
+        return HubStockHistoryCoverageResponse(status="ok", **payload)
+    except Exception as exc:
+        logger.exception("stock-history coverage failed for week=%s", week)
+        return HubStockHistoryCoverageResponse(
+            status="error", week_start="", week_end="",
+            symbol=symbol, is_complete=False, error=str(exc),
+        )
 
 
 def _safe_float(v: Any) -> float | None:

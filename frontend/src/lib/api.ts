@@ -100,8 +100,15 @@ async function errorFromResponse(res: Response): Promise<ApiError> {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const { headers, signal, ...rest } = options ?? {};
+interface RequestOptions extends RequestInit {
+  /** Override the default 20s abort timeout for endpoints known to run long
+   *  (e.g. execute-basket, which chains multiple OpenAlgo calls upstream). */
+  timeoutMs?: number;
+}
+
+async function request<T>(path: string, options?: RequestOptions): Promise<T> {
+  const { headers, signal, timeoutMs, ...rest } = options ?? {};
+  const effectiveTimeoutMs = timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const mergedHeaders: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
   if (headers) {
     new Headers(headers).forEach((value, key) => {
@@ -111,7 +118,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   // Guard against a backend that never responds (e.g. mid-restart) — without
   // this, fetch() hangs indefinitely and callers see nothing until the user
   // gives up, rather than a diagnosable timeout error.
-  const timeoutSignal = AbortSignal.timeout(DEFAULT_REQUEST_TIMEOUT_MS);
+  const timeoutSignal = AbortSignal.timeout(effectiveTimeoutMs);
   const combinedSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
   let res: Response;
   try {
@@ -122,7 +129,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     });
   } catch (err) {
     if (timeoutSignal.aborted) {
-      throw new ApiError(`Request to ${path} timed out after ${DEFAULT_REQUEST_TIMEOUT_MS / 1000}s`, 0);
+      throw new ApiError(`Request to ${path} timed out after ${effectiveTimeoutMs / 1000}s`, 0);
     }
     throw err;
   }
@@ -911,15 +918,20 @@ export const api = {
       body: JSON.stringify({ broker }),
     }),
 
+  // execute-basket chains multiple OpenAlgo calls upstream (backend timeout=45s
+  // per call); give it headroom above the 20s default so the UI doesn't report
+  // a timeout while the order is still landing.
   executeTradeBasket: (body: ExecuteTradeBasketRequest) =>
     request<ExecuteTradeBasketResponse>("/trade/execute-basket", {
       method: "POST",
       body: JSON.stringify(body),
+      timeoutMs: 60_000,
     }),
   fetchTradeCharges: (body: TradeChargesRequest) =>
     request<TradeChargesResponse>("/trade/charges", {
       method: "POST",
       body: JSON.stringify(body),
+      timeoutMs: 45_000,
     }),
   getTradeWidget: (widgetId: string) =>
     request<TradePlanWidget>(`/trade/widget/${encodeURIComponent(widgetId)}`),
@@ -1050,13 +1062,20 @@ export const api = {
         replay: params.replay ? "1" : undefined,
       })}`,
     ),
-  getHubMarketDataOptionChain: (params: { symbol?: string; exchange?: string; strike_count?: number; expiry_date?: string }) =>
+  getHubMarketDataOptionChain: (params: {
+    symbol?: string;
+    exchange?: string;
+    strike_count?: number;
+    expiry_date?: string;
+    replay?: boolean;
+  }) =>
     request<HubMarketDataOptionChainResponse>(
       `/trade/hub/market-data/option-chain${api._hubStockHistoryQS({
         symbol: params.symbol ?? "NIFTY",
         exchange: params.exchange ?? "NSE_INDEX",
         strike_count: params.strike_count,
         expiry_date: params.expiry_date,
+        replay: params.replay ? "1" : undefined,
       })}`,
     ),
   getHubMacroFactorPanel: (params: { start: string; end: string }) =>
@@ -1092,6 +1111,10 @@ export const api = {
         since_ist: params.since_ist,
         until_ist: params.until_ist,
       })}`,
+    ),
+  getHubReplayDayOverview: (date: string) =>
+    request<HubReplayDayOverviewResponse>(
+      `/trade/hub/replay/day-overview${api._hubStockHistoryQS({ date })}`,
     ),
   getHubConstituentsPanel: (params?: { start?: string; end?: string; limit?: number }) =>
     request<HubConstituentsPanelResponse>(
@@ -1387,6 +1410,27 @@ export const api = {
       `/trade/hub/staging/drain?entity_id=${encodeURIComponent(entityId)}&limit=${encodeURIComponent(String(limit))}`,
       { method: "POST" },
     ),
+  getHubNewsPipelineTraceSummary: (entityId = "NIFTY") =>
+    request<HubNewsPipelineTraceSummaryResponse>(
+      `/trade/hub/news-pipeline/trace/summary?entity_id=${encodeURIComponent(entityId)}`,
+    ),
+  listHubNewsPipelineTraceItems: (params: {
+    entityId?: string;
+    source?: string;
+    stage?: string;
+    status?: string;
+    limit?: number;
+  } = {}) => {
+    const search = new URLSearchParams();
+    search.set("entity_id", params.entityId ?? "NIFTY");
+    if (params.source) search.set("source", params.source);
+    if (params.stage) search.set("stage", params.stage);
+    if (params.status) search.set("status", params.status);
+    search.set("limit", String(params.limit ?? 40));
+    return request<HubNewsPipelineTraceItemsResponse>(
+      `/trade/hub/news-pipeline/trace/items?${search.toString()}`,
+    );
+  },
 };
 
 // --- Scheduled research types ---
@@ -2857,6 +2901,11 @@ export interface ReplayCalendarResponse {
   status: string;
   days: ReplayCalendarDay[];
   underlyings: string[];
+  // false when OPENALGO_SIMULATOR_CONTROL_TOKEN isn't configured — a
+  // distinct, expected "not set up yet" state, not a fetch failure. Absent
+  // (undefined) on older backends; treat that as configured.
+  configured?: boolean;
+  message?: string;
 }
 
 // ============================================================
@@ -2902,6 +2951,10 @@ export interface HubMarketDataSpotResponse {
   symbol: string;
   exchange: string;
   spot?: HubMarketDataSpot | null;
+  // Whether the underlying's real trading session is open right now. `null`
+  // when the backend's own check failed (don't claim either state then).
+  // Always absent/null on replay responses — replay has its own clock.
+  session_open?: boolean | null;
   error?: string | null;
 }
 
@@ -2994,6 +3047,21 @@ export interface HubIndexHistoryBarsResponse {
   symbol: string;
   exchange: string;
   bars: HubIndexHistoryBar[];
+  error?: string | null;
+}
+
+export interface HubReplayDayOverviewEquity {
+  symbol: string;
+  rows: number;
+}
+
+export interface HubReplayDayOverviewResponse {
+  status: string;
+  date: string;
+  equities: HubReplayDayOverviewEquity[];
+  options: Record<string, string[]>;
+  macro_factor_keys: string[];
+  constituents_available: boolean;
   error?: string | null;
 }
 
@@ -3718,6 +3786,47 @@ export interface HubNewsIngestRequest {
   ticker?: string;
   sources?: string;
   lookback_days?: number;
+}
+
+export interface HubNewsPipelineTraceStep {
+  step_id?: string;
+  status?: "ok" | "skipped" | "failed" | "discarded" | string;
+  duration_ms?: number;
+  error?: string;
+  detail?: Record<string, unknown>;
+}
+
+export interface HubNewsPipelineTraceItem {
+  ref_id?: string;
+  ticker?: string;
+  source?: string;
+  title?: string;
+  url?: string;
+  steps?: HubNewsPipelineTraceStep[];
+  final_status?: string;
+  discard_reason?: string;
+  created_at?: string;
+  expires_at?: string;
+}
+
+export interface HubNewsPipelineTraceSummary {
+  total?: number;
+  by_source?: Record<string, number>;
+  by_stage?: Record<string, Record<string, number>>;
+  by_final_status?: Record<string, number>;
+}
+
+export interface HubNewsPipelineTraceSummaryResponse {
+  status: string;
+  summary?: HubNewsPipelineTraceSummary;
+  message?: string;
+}
+
+export interface HubNewsPipelineTraceItemsResponse {
+  status: string;
+  items?: HubNewsPipelineTraceItem[];
+  count?: number;
+  message?: string;
 }
 
 export interface IndexBacktestResponse {
