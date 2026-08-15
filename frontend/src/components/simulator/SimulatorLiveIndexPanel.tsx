@@ -8,6 +8,13 @@
  *
  * Auto-switches underlying when `symbol` prop changes (driven by the
  * Record section's underlying checkboxes).
+ *
+ * When `isReplayArmed` is true, the panel sends `?replay=1` with both
+ * ticks + spot requests so the bridge routes through the simulator's
+ * ReplayService (advancing the sim clock and reading the catalog bar)
+ * instead of the live broker or Timescale. The header badge flips from
+ * "LIVE" to "REPLAY" so the user can see they're looking at the
+ * recorded session playing back, not today's real market.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -25,6 +32,7 @@ interface Props {
   symbol: string;
   exchange?: string;
   isRecordingActive?: boolean;
+  isReplayArmed?: boolean;
   height?: number;
 }
 
@@ -50,6 +58,7 @@ export function SimulatorLiveIndexPanel({
   symbol,
   exchange = "NSE_INDEX",
   isRecordingActive = false,
+  isReplayArmed = false,
   height = 200,
 }: Props) {
   const [ticks, setTicks] = useState<Tick[]>([]);
@@ -96,8 +105,9 @@ export function SimulatorLiveIndexPanel({
             exchange,
             since_minutes: 240,
             limit: 500,
+            replay: isReplayArmed,
           }),
-          api.getHubMarketDataSpot({ symbol, exchange }),
+          api.getHubMarketDataSpot({ symbol, exchange, replay: isReplayArmed }),
         ]);
         if (cancelled) return;
         if (ticksRes.status === "ok") {
@@ -208,10 +218,24 @@ export function SimulatorLiveIndexPanel({
   return (
     <div className="rounded-xl border bg-card p-4 shadow-sm">
       <div className="flex items-center justify-between">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-          {symbol} · LIVE
-          {isRecordingActive && (
-            <span className="ml-2 inline-block h-2 w-2 animate-pulse rounded-full bg-red-500 align-middle" />
+        <p className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+          <span
+            className={
+              isReplayArmed
+                ? "inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-700 dark:text-amber-300"
+                : "inline-flex items-center gap-1"
+            }
+            data-testid="live-spot-mode"
+          >
+            {symbol}
+            <span>·</span>
+            <span>{isReplayArmed ? "REPLAY" : "LIVE"}</span>
+          </span>
+          {isRecordingActive && !isReplayArmed && (
+            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-red-500 align-middle" />
+          )}
+          {isReplayArmed && (
+            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-500 align-middle" />
           )}
         </p>
         {spot?.source && (
@@ -245,7 +269,9 @@ export function SimulatorLiveIndexPanel({
       )}
       {ticks.length === 0 && !loading && !error && (
         <p className="mt-1 text-xs text-muted-foreground">
-          No live ticks — start a recording or check TimescaleDB.
+          {isReplayArmed
+            ? "No replay ticks at the current sim clock — try a different speed or check the replay day."
+            : "No live ticks — start a recording or check TimescaleDB."}
         </p>
       )}
       <div ref={containerRef} className="mt-3 w-full" style={{ height }} />

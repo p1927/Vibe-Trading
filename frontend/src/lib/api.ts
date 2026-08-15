@@ -989,6 +989,8 @@ export const api = {
     ),
   listRecordingSessions: () =>
     request<RecordingSessionsResponse>("/trade/recording/sessions"),
+  getRecordingConstituents: () =>
+    request<RecordingConstituentsResponse>("/trade/recording/constituents"),
   streamRecordingJob: streamRecordingJob,
   startReplay: (day: string, body: StartReplayRequest = {}) =>
     request<ReplayStatusResponse>(`/trade/recording/${encodeURIComponent(day)}/replay`, {
@@ -1013,20 +1015,30 @@ export const api = {
     const s = qs.toString();
     return s ? `?${s}` : "";
   },
-  getHubMarketDataTicks: (params: { symbol?: string; exchange?: string; since_minutes?: number; limit?: number }) =>
+  getHubMarketDataTicks: (params: {
+    symbol?: string;
+    exchange?: string;
+    since_minutes?: number;
+    limit?: number;
+    /** When true, the bridge routes through the simulator's ReplayService
+     *  instead of Timescale / live broker. Pass when armed. */
+    replay?: boolean;
+  }) =>
     request<HubMarketDataTicksResponse>(
       `/trade/hub/market-data/ticks${api._hubStockHistoryQS({
         symbol: params.symbol ?? "NIFTY",
         exchange: params.exchange ?? "NSE_INDEX",
         since_minutes: params.since_minutes,
         limit: params.limit,
+        replay: params.replay ? "1" : undefined,
       })}`,
     ),
-  getHubMarketDataSpot: (params: { symbol?: string; exchange?: string }) =>
+  getHubMarketDataSpot: (params: { symbol?: string; exchange?: string; replay?: boolean }) =>
     request<HubMarketDataSpotResponse>(
       `/trade/hub/market-data/spot${api._hubStockHistoryQS({
         symbol: params.symbol ?? "NIFTY",
         exchange: params.exchange ?? "NSE_INDEX",
+        replay: params.replay ? "1" : undefined,
       })}`,
     ),
   getHubMarketDataOptionChain: (params: { symbol?: string; exchange?: string; strike_count?: number; expiry_date?: string }) =>
@@ -2787,6 +2799,18 @@ export interface RecordingJobResponse {
 export interface RecordingSessionsResponse {
   status: string;
   sessions: string[];
+}
+
+export interface ConstituentInfo {
+  symbol: string;
+  name: string;
+  sector: string;
+  weight: number | null;
+}
+
+export interface RecordingConstituentsResponse {
+  status: string;
+  constituents: ConstituentInfo[];
 }
 
 export interface StartReplayRequest {

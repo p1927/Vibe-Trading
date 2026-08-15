@@ -8,6 +8,7 @@ import {
   type RecordingResult,
   type ReplayCalendarDay,
 } from "@/lib/api";
+import { SimulatorEquityPicker } from "@/components/simulator/SimulatorEquityPicker";
 import { SimulatorLiveIndexPanel } from "@/components/simulator/SimulatorLiveIndexPanel";
 import { SimulatorOptionChainPanel } from "@/components/simulator/SimulatorOptionChainPanel";
 import {
@@ -15,6 +16,7 @@ import {
   type ReplayRange,
 } from "@/components/simulator/SimulatorReplayCalendar";
 import { SimulatorReplayClock } from "@/components/simulator/SimulatorReplayClock";
+import { SimulatorReplayDetailPanel } from "@/components/simulator/SimulatorReplayDetailPanel";
 
 const UNDERLYINGS = ["NIFTY", "BANKNIFTY", "SENSEX"];
 
@@ -81,6 +83,7 @@ function ProgressBar({ pct }: { pct: number | null | undefined }) {
 
 export function Simulator() {
   const [selected, setSelected] = useState<string[]>(UNDERLYINGS);
+  const [selectedEquities, setSelectedEquities] = useState<string[]>([]);
   const [waitForOpen, setWaitForOpen] = useState(false);
   const [job, setJob] = useState<RecordingJobSnapshot | null>(null);
   const [logs, setLogs] = useState<PipelineLogEntry[]>([]);
@@ -95,6 +98,7 @@ export function Simulator() {
   const [replayLoop, setReplayLoop] = useState<boolean>(true);
   const [armingDay, setArmingDay] = useState<string | null>(null);
   const [replayError, setReplayError] = useState<string | null>(null);
+  const [selectedReplayDay, setSelectedReplayDay] = useState<ReplayCalendarDay | null>(null);
   // Phase 9: option-chain drawer toggle.
   const [showChain, setShowChain] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -193,7 +197,7 @@ export function Simulator() {
     setLogs([]);
     try {
       const res = await api.startRecording({
-        underlyings: selected,
+        underlyings: [...selected, ...selectedEquities],
         poll_interval_s: 10,
         wait_for_open: waitForOpen,
       });
@@ -264,6 +268,7 @@ export function Simulator() {
             symbol={selected[0] ?? "NIFTY"}
             exchange="NSE_INDEX"
             isRecordingActive={isActive}
+            isReplayArmed={Boolean(armedRange)}
             height={240}
           />
         </div>
@@ -303,6 +308,11 @@ export function Simulator() {
                 {u}
               </label>
             ))}
+            <SimulatorEquityPicker
+              selected={selectedEquities}
+              onChange={setSelectedEquities}
+              disabled={isActive}
+            />
             <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
               <input
                 type="checkbox"
@@ -330,7 +340,7 @@ export function Simulator() {
               <button
                 type="button"
                 onClick={startRecording}
-                disabled={busy || selected.length === 0}
+                disabled={busy || selected.length + selectedEquities.length === 0}
                 className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
                 <Disc className="h-3.5 w-3.5" />
@@ -405,6 +415,8 @@ export function Simulator() {
             range={replayRange}
             armedRange={armedRange}
             onRangeSelect={(range) => setReplayRange(range)}
+            onDaySelect={setSelectedReplayDay}
+            selectedDate={selectedReplayDay?.date ?? null}
           />
 
           <SimulatorReplayClock
@@ -491,6 +503,8 @@ export function Simulator() {
           </p>
         </div>
       </StatCard>
+
+      <SimulatorReplayDetailPanel day={selectedReplayDay} onClose={() => setSelectedReplayDay(null)} />
     </div>
   );
 }

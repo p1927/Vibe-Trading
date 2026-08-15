@@ -662,6 +662,18 @@ class RecordingSessionsResponse(BaseModel):
     sessions: List[str] = Field(default_factory=list)
 
 
+class ConstituentInfo(BaseModel):
+    symbol: str
+    name: str = ""
+    sector: str = ""
+    weight: float | None = None
+
+
+class RecordingConstituentsResponse(BaseModel):
+    status: str = "ok"
+    constituents: List[ConstituentInfo] = Field(default_factory=list)
+
+
 class StartReplayRequest(BaseModel):
     speed: float | None = None
     loop: bool | None = None
@@ -3205,9 +3217,10 @@ def get_active_recording(
 def list_recording_sessions(
     _auth: None = Depends(require_local_or_auth),
 ) -> RecordingSessionsResponse:
-    """Days available to replay — scans the exported index parquet files."""
+    """Days available to replay — scans the exported index + equity parquet files."""
     from trade_integrations.stock_simulator.catalog import ReplayCatalog
     from trade_integrations.stock_simulator.config import load_sim_config
+    from trade_integrations.stock_simulator.hf_paths import equities_dir
 
     data_root = load_sim_config().data_root
     catalog = ReplayCatalog(data_root)
@@ -3218,7 +3231,36 @@ def list_recording_sessions(
         ("SENSEX", "BSE_INDEX"),
     ):
         days.update(catalog.available_dates(symbol, exchange))
+
+    eq_dir = equities_dir(data_root)
+    if eq_dir.is_dir():
+        for path in eq_dir.glob("*.parquet"):
+            days.update(catalog.available_dates(path.stem.upper(), "NSE"))
+
     return RecordingSessionsResponse(sessions=sorted(days, reverse=True))
+
+
+@trade_router.get("/recording/constituents", response_model=RecordingConstituentsResponse)
+def get_recording_constituents(
+    _auth: None = Depends(require_local_or_auth),
+) -> RecordingConstituentsResponse:
+    """Current NIFTY50 constituents, for the equity-recording picker."""
+    from trade_integrations.dataflows.index_research.constituents import (
+        load_nifty50_constituents,
+    )
+
+    rows = load_nifty50_constituents()
+    return RecordingConstituentsResponse(
+        constituents=[
+            ConstituentInfo(
+                symbol=row.symbol,
+                name=row.name or row.symbol,
+                sector=row.sector,
+                weight=row.weight,
+            )
+            for row in rows
+        ]
+    )
 
 
 def _openalgo_control_headers() -> dict[str, str] | None:
@@ -3945,9 +3987,34 @@ def hub_market_data_ticks(
     exchange: str = "NSE_INDEX",
     since_minutes: int = 240,
     limit: int = 500,
+    replay: int = 0,
     _auth: None = Depends(require_local_or_auth),
 ) -> HubMarketDataTicksResponse:
-    """Recent market_ticks rows for the underlying. Empty list when Timescale disabled."""
+    """Recent market_ticks rows for the underlying. Empty list when Timescale disabled.
+
+    When ``replay=1``, route through the simulator's ReplayService so the
+    chart shows ticks from the recorded session (advances the sim clock and
+    reads the catalog bar at sim_now). Falls back to Timescale on miss.
+    """
+    if replay:
+        from trade_integrations.dataflows.stock_history_bridge import get_replay_market_ticks
+
+        try:
+            ticks = get_replay_market_ticks(
+                symbol=symbol, exchange=exchange,
+                since_minutes=since_minutes, limit=limit,
+            )
+            return HubMarketDataTicksResponse(
+                status="ok", symbol=symbol.upper(), exchange=exchange.upper(),
+                source="simulator" if ticks else "empty", ticks=ticks,
+            )
+        except Exception as exc:
+            logger.exception("hub market-data ticks (replay) failed for %s/%s", symbol, exchange)
+            return HubMarketDataTicksResponse(
+                status="error", symbol=symbol.upper(), exchange=exchange.upper(),
+                source="empty", ticks=[], error=str(exc),
+            )
+
     from trade_integrations.dataflows.stock_history_bridge import get_recent_market_ticks
 
     try:
@@ -3971,17 +4038,31 @@ def hub_market_data_ticks(
 def hub_market_data_spot(
     symbol: str = "NIFTY",
     exchange: str = "NSE_INDEX",
+    replay: int = 0,
     _auth: None = Depends(require_local_or_auth),
 ) -> HubMarketDataSpotResponse:
     """Current spot — Timescale first, OpenAlgo fallback. Returns 200 with
-    status='error' on degraded state so the UI renders an empty-state cleanly."""
-    from trade_integrations.dataflows.stock_history_bridge import get_live_spot_quote
+    status='error' on degraded state so the UI renders an empty-state cleanly.
 
-    quote = get_live_spot_quote(symbol=symbol, exchange=exchange)
+    When ``replay=1``, read from the simulator's ReplayService (advances sim
+    clock and returns the catalog bar at sim_now). Tag the response with
+    ``source=simulator`` so the UI can badge it.
+    """
+    from trade_integrations.dataflows.stock_history_bridge import (
+        get_live_spot_quote,
+        get_replay_spot_quote,
+    )
+
+    quote = (
+        get_replay_spot_quote(symbol=symbol, exchange=exchange)
+        if replay
+        else get_live_spot_quote(symbol=symbol, exchange=exchange)
+    )
     if quote is None:
         return HubMarketDataSpotResponse(
             status="error", symbol=symbol.upper(), exchange=exchange.upper(),
-            error="no spot quote available (Timescale empty and OpenAlgo unreachable)",
+            error="no spot quote available (simulator not running)" if replay
+            else "no spot quote available (Timescale empty and OpenAlgo unreachable)",
         )
     return HubMarketDataSpotResponse(
         status="ok", symbol=symbol.upper(), exchange=exchange.upper(),
