@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { Database, ExternalLink, Loader2, Newspaper, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type HubDiscardedNewsItem, type HubNewsItem, type HubNewsPipelineConfig, type HubStatusResponse, type ObservabilitySummaryResponse } from "@/lib/api";
+import { CronFrequencyPicker } from "@/components/CronFrequencyPicker";
+import { NewsPipelineGraph } from "@/components/NewsPipelineGraph";
 
 type NewsFilter = "all" | "staging" | "distilled" | "discarded";
 
@@ -475,6 +477,7 @@ export function Hub() {
   const [error, setError] = useState<string | null>(null);
   const [newsFilter, setNewsFilter] = useState<NewsFilter>("all");
   const [showQueue, setShowQueue] = useState(false);
+  const [newsView, setNewsView] = useState<"list" | "pipeline">("list");
 
   const [maintainerSummary, setMaintainerSummary] = useState<string | null>(null);
 
@@ -781,51 +784,41 @@ export function Hub() {
           <div className="grid gap-4 md:grid-cols-2">
             <label className="space-y-1 text-sm">
               <span className="text-[11px] text-muted-foreground">Full ingest cron</span>
-              <input
-                type="text"
+              <CronFrequencyPicker
                 value={pipelineDraft.full_ingest_cron ?? ""}
-                onChange={(e) => patchDraft({ full_ingest_cron: e.target.value })}
-                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
+                onChange={(v) => patchDraft({ full_ingest_cron: v })}
               />
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-[11px] text-muted-foreground">Light ingest cron</span>
-              <input
-                type="text"
+              <CronFrequencyPicker
                 value={pipelineDraft.light_ingest_cron ?? ""}
-                onChange={(e) => patchDraft({ light_ingest_cron: e.target.value })}
+                onChange={(v) => patchDraft({ light_ingest_cron: v })}
                 disabled={!pipelineDraft.light_ingest_enabled}
-                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] disabled:opacity-50"
               />
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-[11px] text-muted-foreground">Entity drain cron</span>
-              <input
-                type="text"
+              <CronFrequencyPicker
                 value={pipelineDraft.entity_drain_cron ?? ""}
-                onChange={(e) => patchDraft({ entity_drain_cron: e.target.value })}
-                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
+                onChange={(v) => patchDraft({ entity_drain_cron: v })}
               />
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-[11px] text-muted-foreground">
                 Maintainer cron (repair · backfill · merge · cleanup)
               </span>
-              <input
-                type="text"
+              <CronFrequencyPicker
                 value={pipelineDraft.entity_maintenance_cron ?? ""}
-                onChange={(e) => patchDraft({ entity_maintenance_cron: e.target.value })}
-                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
+                onChange={(v) => patchDraft({ entity_maintenance_cron: v })}
               />
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-[11px] text-muted-foreground">Continuous drain cron</span>
-              <input
-                type="text"
+              <CronFrequencyPicker
                 value={pipelineDraft.entity_drain_continuous_cron ?? ""}
-                onChange={(e) => patchDraft({ entity_drain_continuous_cron: e.target.value })}
+                onChange={(v) => patchDraft({ entity_drain_continuous_cron: v })}
                 disabled={!pipelineDraft.entity_drain_continuous_enabled}
-                className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] disabled:opacity-50"
               />
             </label>
             <label className="flex items-center gap-2 self-end text-sm">
@@ -1002,6 +995,22 @@ export function Hub() {
       ) : null}
 
       <StatCard title="News & references" className="col-span-full">
+        <div className="mb-3 inline-flex rounded-lg border p-0.5 text-[11px]">
+          {(["list", "pipeline"] as const).map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setNewsView(key)}
+              className={cn(
+                "rounded-md px-2.5 py-1 capitalize",
+                newsView === key ? "bg-muted font-medium" : "text-muted-foreground",
+              )}
+            >
+              {key === "pipeline" ? "Pipeline view" : "List"}
+            </button>
+          ))}
+        </div>
+
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <Newspaper className="h-4 w-4 text-muted-foreground" />
@@ -1021,43 +1030,47 @@ export function Hub() {
               {newsInventory?.discarded_count ?? 0} discarded (30d)
             </span>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-lg border p-0.5 text-[11px]">
-              {(["all", "staging", "distilled", "discarded"] as const).map((key) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setNewsFilter(key)}
-                  className={cn(
-                    "rounded-md px-2 py-1 capitalize",
-                    newsFilter === key ? "bg-muted font-medium" : "text-muted-foreground",
-                  )}
-                >
-                  {key}
-                </button>
-              ))}
+          {newsView === "list" ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-lg border p-0.5 text-[11px]">
+                {(["all", "staging", "distilled", "discarded"] as const).map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setNewsFilter(key)}
+                    className={cn(
+                      "rounded-md px-2 py-1 capitalize",
+                      newsFilter === key ? "bg-muted font-medium" : "text-muted-foreground",
+                    )}
+                  >
+                    {key}
+                  </button>
+                ))}
+              </div>
+              <label className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={showQueue}
+                  onChange={(e) => setShowQueue(e.target.checked)}
+                  className="rounded border-border"
+                />
+                Raw queue only
+              </label>
+              <button
+                type="button"
+                disabled={busy !== null}
+                onClick={() => void drainStaging()}
+                className="rounded-md border px-2 py-1 text-[11px] hover:bg-muted/50 disabled:opacity-50"
+              >
+                {busy === "drain" ? "Draining…" : "Drain staging (20)"}
+              </button>
             </div>
-            <label className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={showQueue}
-                onChange={(e) => setShowQueue(e.target.checked)}
-                className="rounded border-border"
-              />
-              Raw queue only
-            </label>
-            <button
-              type="button"
-              disabled={busy !== null}
-              onClick={() => void drainStaging()}
-              className="rounded-md border px-2 py-1 text-[11px] hover:bg-muted/50 disabled:opacity-50"
-            >
-              {busy === "drain" ? "Draining…" : "Drain staging (20)"}
-            </button>
-          </div>
+          ) : null}
         </div>
 
-        {!filteredNews.length ? (
+        {newsView === "pipeline" ? (
+          <NewsPipelineGraph entityId="NIFTY" />
+        ) : !filteredNews.length ? (
           <p className="rounded-lg border border-dashed bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
             {newsFilter === "discarded"
               ? "No discarded headlines in the retention window."
