@@ -172,6 +172,30 @@ def get_autonomous_agent(agent_id: str) -> Dict[str, Any]:
     return enrich_agent(agent)
 
 
+@autonomous_router.get("/{agent_id}/pnl-history")
+def get_autonomous_agent_pnl_history(
+    agent_id: str,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Dict[str, Any]:
+    from trade_integrations.autonomous_agents.pnl_ledger import load_pnl_series
+    from trade_integrations.autonomous_agents.store import get_agent
+
+    if not get_agent(agent_id):
+        raise HTTPException(status_code=404, detail="agent not found")
+    series = load_pnl_series(agent_id, since=since, until=until)
+    samples = [
+        {
+            "snapshot_at": row["snapshot_at"].isoformat() if row["snapshot_at"] is not None else None,
+            "unrealized_pnl_inr": row["unrealized_pnl_inr"],
+            "realized_pnl_inr_cum": row["realized_pnl_inr_cum"],
+            "open_positions": row["open_positions"],
+        }
+        for row in series.to_dict("records")
+    ]
+    return {"agent_id": agent_id, "samples": samples}
+
+
 @autonomous_router.post("/commit")
 def commit_autonomous_agent_route(
     body: CommitAutonomousAgentRequest,
