@@ -2760,11 +2760,14 @@ export interface IndexPredictionRunJobResponse {
 
 export interface StartRecordingRequest {
   underlyings?: string[];
+  equities?: string[];
   /** @deprecated Kept for callers that haven't migrated yet. Ignored
    * when ``category_intervals`` is provided. */
   poll_interval_s?: number;
   category_intervals?: Record<string, number>;
+  equity_intervals?: Record<string, number>;
   ws_throttle_hz?: number | null;
+  historical_config?: { interval: string; lookback_days: number } | null;
   wait_for_open?: boolean;
 }
 

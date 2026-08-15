@@ -620,7 +620,12 @@ class IndexPredictionRunJobResponse(BaseModel):
 
 class StartRecordingRequest(BaseModel):
     underlyings: List[str] = Field(default_factory=lambda: ["NIFTY", "BANKNIFTY", "SENSEX"])
-    poll_interval_s: int = 10
+    equities: List[str] = Field(default_factory=list)
+    poll_interval_s: int = 10                       # legacy; used only when category_intervals is None
+    category_intervals: Dict[str, int] | None = None
+    equity_intervals: Dict[str, int] | None = None
+    ws_throttle_hz: float | None = None
+    historical_config: Dict[str, Any] | None = None
     wait_for_open: bool = False
 
 
@@ -635,7 +640,12 @@ class RecordingJobSnapshot(BaseModel):
     job_id: str
     status: str
     underlyings: List[str] = Field(default_factory=list)
+    equities: List[str] = Field(default_factory=list)
     poll_interval_s: int = 10
+    category_intervals: Dict[str, int] | None = None
+    equity_intervals: Dict[str, int] | None = None
+    ws_throttle_hz: float | None = None
+    historical_config: Dict[str, Any] | None = None
     wait_for_open: bool = False
     created_at: str | None = None
     session_date: str | None = None
@@ -3160,7 +3170,76 @@ def _recording_stream_response(job_id: str, request: Request) -> StreamingRespon
     )
 
 
+# Known REST categories the day-recorder polls. The set is the union of
+# the keys passed to ``CategoryScheduler.intervals`` in
+# ``session_recorder.run_recording_session`` — anything else here would
+# be stored on disk but never read by the recorder, so we reject it at
+# the API boundary.
+_KNOWN_RECORDING_CATEGORIES = (
+    "option_chain", "market_depth", "full_quote",
+    "equity_option_chain", "equity_market_depth", "equity_full_quote",
+)
+
+# Indmoney-native interval tokens for the historical-candle pull
+# (matches session_recorder._HISTORICAL_INTERVAL_API).
+_VALID_HISTORICAL_INTERVALS_API = (
+    "1minute", "5minute", "15minute", "30minute",
+    "60minute", "120minute", "240minute",
+    "1day", "1week", "1month",
+)
+
+
+def _validate_recording_payload(body: StartRecordingRequest) -> None:
+    """Reject malformed category_intervals / ws_throttle_hz / equity
+    / historical payloads at the API boundary so the worker never
+    sees a config it can't honour."""
+    intervals_payloads = [
+        ("category_intervals", body.category_intervals),
+        ("equity_intervals", body.equity_intervals),
+    ]
+    for field_name, payload in intervals_payloads:
+        if payload is None:
+            continue
+        unknown = set(payload) - set(_KNOWN_RECORDING_CATEGORIES)
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{field_name} contains unknown key(s) {sorted(unknown)}; "
+                    f"valid keys are {list(_KNOWN_RECORDING_CATEGORIES)}"
+                ),
+            )
+        for cat, seconds in payload.items():
+            if seconds < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{field_name}[{cat!r}] must be >= 0 (0 = off)",
+                )
+    if body.ws_throttle_hz is not None and body.ws_throttle_hz < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="ws_throttle_hz must be >= 0 (0 / null = unlimited)",
+        )
+    if body.historical_config is not None:
+        interval = body.historical_config.get("interval")
+        lookback = body.historical_config.get("lookback_days")
+        if interval is not None and interval not in _VALID_HISTORICAL_INTERVALS_API:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"historical_config.interval={interval!r} not supported; "
+                    f"valid intervals are {list(_VALID_HISTORICAL_INTERVALS_API)}"
+                ),
+            )
+        if lookback is not None and (not isinstance(lookback, int) or lookback < 1):
+            raise HTTPException(
+                status_code=400,
+                detail="historical_config.lookback_days must be a positive integer",
+            )
+
+
 def _kick_recording(body: StartRecordingRequest) -> tuple[str, str, bool]:
+    _validate_recording_payload(body)
     from src.trade.recording_jobs import spawn_worker, start_job
 
     underlyings = [u.strip().upper() for u in body.underlyings if u.strip()] or [
@@ -3168,9 +3247,15 @@ def _kick_recording(body: StartRecordingRequest) -> tuple[str, str, bool]:
         "BANKNIFTY",
         "SENSEX",
     ]
+    equities = [e.strip().upper() for e in body.equities if e.strip()]
     job_id, reused = start_job(
         underlyings=underlyings,
+        equities=equities,
         poll_interval_s=body.poll_interval_s,
+        category_intervals=body.category_intervals,
+        equity_intervals=body.equity_intervals,
+        ws_throttle_hz=body.ws_throttle_hz,
+        historical_config=body.historical_config,
         wait_for_open=body.wait_for_open,
     )
     if not reused:

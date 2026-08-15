@@ -11,6 +11,7 @@ import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,37 @@ def run_worker(job_id: str) -> None:
         return
 
     underlyings = list(job.get("underlyings") or [])
+    equities = list(job.get("equities") or [])
     poll_interval_s = int(job.get("poll_interval_s") or 10)
+    # Per-category intervals. None means "fall back to poll_interval_s
+    # for all three REST categories" (the recorder applies this fallback
+    # in run_recording_session).
+    raw_category_intervals = job.get("category_intervals")
+    category_intervals: dict[str, float] | None = (
+        {k: float(v) for k, v in raw_category_intervals.items()}
+        if isinstance(raw_category_intervals, dict)
+        else None
+    )
+    raw_equity_intervals = job.get("equity_intervals")
+    equity_intervals: dict[str, float] | None = (
+        {k: float(v) for k, v in raw_equity_intervals.items()}
+        if isinstance(raw_equity_intervals, dict)
+        else None
+    )
+    raw_ws_throttle = job.get("ws_throttle_hz")
+    ws_throttle_hz: float | None = (
+        float(raw_ws_throttle) if isinstance(raw_ws_throttle, (int, float)) and raw_ws_throttle > 0
+        else None
+    )
+    raw_historical = job.get("historical_config")
+    historical_config: dict[str, Any] | None = (
+        {"interval": str(raw_historical["interval"]),
+         "lookback_days": int(raw_historical["lookback_days"])}
+        if isinstance(raw_historical, dict)
+        and "interval" in raw_historical
+        and "lookback_days" in raw_historical
+        else None
+    )
     wait_for_open = bool(job.get("wait_for_open"))
 
     jobs.mark_running(job_id)
@@ -50,7 +81,12 @@ def run_worker(job_id: str) -> None:
         result = run_recording_session(
             job_id,
             underlyings=underlyings,
+            equities=equities,
             poll_interval_s=poll_interval_s,
+            category_intervals=category_intervals,
+            equity_intervals=equity_intervals,
+            ws_throttle_hz=ws_throttle_hz,
+            historical_config=historical_config,
             data_root=Path(data_root),
             on_log=on_log,
             should_stop=should_stop,

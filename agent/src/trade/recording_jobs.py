@@ -194,7 +194,12 @@ def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
         "job_id": job["job_id"],
         "status": job.get("status"),
         "underlyings": job.get("underlyings"),
+        "equities": job.get("equities"),
         "poll_interval_s": job.get("poll_interval_s"),
+        "category_intervals": job.get("category_intervals"),
+        "equity_intervals": job.get("equity_intervals"),
+        "ws_throttle_hz": job.get("ws_throttle_hz"),
+        "historical_config": job.get("historical_config"),
         "wait_for_open": bool(job.get("wait_for_open")),
         "created_at": job.get("created_at"),
         "logs": list(job.get("logs") or []),
@@ -333,7 +338,12 @@ def _job_snapshot(job: dict[str, Any], *, include_logs: bool = True) -> dict[str
         "job_id": job["job_id"],
         "status": job["status"],
         "underlyings": job.get("underlyings"),
+        "equities": job.get("equities"),
         "poll_interval_s": job.get("poll_interval_s"),
+        "category_intervals": job.get("category_intervals"),
+        "equity_intervals": job.get("equity_intervals"),
+        "ws_throttle_hz": job.get("ws_throttle_hz"),
+        "historical_config": job.get("historical_config"),
         "wait_for_open": bool(job.get("wait_for_open")),
         "created_at": job.get("created_at"),
         "session_date": job.get("session_date"),
@@ -405,9 +415,36 @@ def get_active_job() -> dict[str, Any] | None:
 
 
 def start_job(
-    *, underlyings: list[str], poll_interval_s: int = 10, wait_for_open: bool = False
+    *,
+    underlyings: list[str],
+    poll_interval_s: int = 10,
+    category_intervals: dict[str, int] | None = None,
+    ws_throttle_hz: float | None = None,
+    wait_for_open: bool = False,
+    equities: list[str] | None = None,
+    equity_intervals: dict[str, int] | None = None,
+    historical_config: dict[str, Any] | None = None,
 ) -> tuple[str, bool]:
-    """Create or reuse the active recording job. Returns (job_id, reused)."""
+    """Create or reuse the active recording job. Returns (job_id, reused).
+
+    ``category_intervals``: per-REST-category cadence in seconds. ``None``
+    (or empty) keeps the legacy behaviour — all three categories share
+    ``poll_interval_s``. The worker applies this directly; this function
+    only persists it so the snapshot reflects what the user configured.
+
+    ``ws_throttle_hz``: max recorded WS LTP ticks per second. ``None``
+    or ``<= 0`` means unlimited. The worker passes the value through to
+    the recorder's ``MaxRateLimiter``.
+
+    ``equities``: NIFTY50 trading symbols to record per-equity polls /
+    historical candles for. Empty list → no per-equity work.
+
+    ``equity_intervals``: same shape as ``category_intervals`` but for
+    the three equity REST polls.
+
+    ``historical_config``: ``None`` (skip) or a dict with Indmoney
+    interval + lookback days. Pulled once per equity at session start.
+    """
     global _ACTIVE_JOB_ID
     _prune_old_jobs()
     with _JOBS_LOCK:
@@ -430,7 +467,31 @@ def start_job(
         "job_id": job_id,
         "status": "queued",
         "underlyings": list(underlyings),
+        "equities": list(equities or []),
         "poll_interval_s": int(poll_interval_s),
+        # Persist as None for legacy callers so the snapshot truthfully
+        # reports "no per-category config" rather than a synthesised map.
+        "category_intervals": (
+            {k: int(v) for k, v in category_intervals.items()}
+            if category_intervals
+            else None
+        ),
+        "equity_intervals": (
+            {k: int(v) for k, v in equity_intervals.items()}
+            if equity_intervals
+            else None
+        ),
+        "ws_throttle_hz": (
+            float(ws_throttle_hz) if ws_throttle_hz and ws_throttle_hz > 0 else None
+        ),
+        "historical_config": (
+            {"interval": str(historical_config["interval"]),
+             "lookback_days": int(historical_config["lookback_days"])}
+            if historical_config
+            and "interval" in historical_config
+            and "lookback_days" in historical_config
+            else None
+        ),
         "wait_for_open": bool(wait_for_open),
         "created_at": _now_iso(),
         "logs": [],

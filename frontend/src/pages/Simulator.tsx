@@ -17,6 +17,20 @@ import {
 } from "@/components/simulator/SimulatorReplayCalendar";
 import { SimulatorReplayClock } from "@/components/simulator/SimulatorReplayClock";
 import { SimulatorReplayDetailPanel } from "@/components/simulator/SimulatorReplayDetailPanel";
+import {
+  RecordingConfigProvider,
+  SimulatorRecordingFields,
+} from "@/components/simulator/SimulatorRecordingFields";
+import {
+  DEFAULT_CATEGORY_INTERVALS,
+  DEFAULT_EQUITY_INTERVALS,
+  DEFAULT_HISTORICAL_CONFIG,
+  DEFAULT_WS_THROTTLE_HZ,
+  historicalIntervalKeyToApi,
+  historicalLookbackKeyToDays,
+  type HistoricalIntervalKey,
+  type HistoricalLookbackKey,
+} from "@/lib/intervalOptions";
 
 const UNDERLYINGS = ["NIFTY", "BANKNIFTY", "SENSEX"];
 
@@ -85,6 +99,49 @@ export function Simulator() {
   const [selected, setSelected] = useState<string[]>(UNDERLYINGS);
   const [selectedEquities, setSelectedEquities] = useState<string[]>([]);
   const [waitForOpen, setWaitForOpen] = useState(false);
+  // Per-category recording intervals (seconds) + WS LTP throttle (Hz).
+  // Lifted from the disclosure so the page passes them into
+  // api.startRecording rather than the now-removed poll_interval_s.
+  const [categoryIntervals, setCategoryIntervals] = useState<Record<string, number>>({
+    ...DEFAULT_CATEGORY_INTERVALS,
+  });
+  // Per-equity (NIFTY50) intervals — defaults to *off* per the plan so
+  // the user opts in. Shared cadence across all selected equities.
+  const [equityIntervals, setEquityIntervals] = useState<Record<string, number>>({
+    ...DEFAULT_EQUITY_INTERVALS,
+  });
+  // Historical candle config. Pulled once per equity at session start.
+  const [historicalConfig, setHistoricalConfigState] = useState<{
+    interval: HistoricalIntervalKey;
+    lookback_days: HistoricalLookbackKey;
+  }>(DEFAULT_HISTORICAL_CONFIG);
+  const setHistoricalConfig = useCallback(
+    (
+      next:
+        | {
+            interval: HistoricalIntervalKey;
+            lookback_days: HistoricalLookbackKey;
+          }
+        | null,
+    ) => {
+      if (next === null) {
+        setHistoricalConfigState(DEFAULT_HISTORICAL_CONFIG);
+      } else {
+        setHistoricalConfigState(next);
+      }
+    },
+    [],
+  );
+  const [wsThrottleHz, setWsThrottleHz] = useState<number | null>(DEFAULT_WS_THROTTLE_HZ);
+  const setCategoryInterval = useCallback((category: string, seconds: number) => {
+    setCategoryIntervals((prev) => ({ ...prev, [category]: seconds }));
+  }, []);
+  const setEquityInterval = useCallback((category: string, seconds: number) => {
+    setEquityIntervals((prev) => ({ ...prev, [category]: seconds }));
+  }, []);
+  const setWsThrottle = useCallback((hz: number | null) => {
+    setWsThrottleHz(hz);
+  }, []);
   const [job, setJob] = useState<RecordingJobSnapshot | null>(null);
   const [logs, setLogs] = useState<PipelineLogEntry[]>([]);
   const [busy, setBusy] = useState(false);
@@ -198,7 +255,16 @@ export function Simulator() {
     try {
       const res = await api.startRecording({
         underlyings: [...selected, ...selectedEquities],
-        poll_interval_s: 10,
+        equities: selectedEquities,
+        category_intervals: categoryIntervals,
+        equity_intervals: equityIntervals,
+        ws_throttle_hz: wsThrottleHz,
+        historical_config: historicalConfig
+          ? {
+              interval: historicalIntervalKeyToApi(historicalConfig.interval),
+              lookback_days: historicalLookbackKeyToDays(historicalConfig.lookback_days),
+            }
+          : null,
         wait_for_open: waitForOpen,
       });
       const snap = await api.getRecordingJob(res.job_id);
@@ -350,6 +416,20 @@ export function Simulator() {
           </div>
         </div>
 
+        <RecordingConfigProvider
+          config={{
+            categoryIntervals,
+            equityIntervals,
+            wsThrottleHz,
+            historicalConfig,
+            setCategoryInterval,
+            setEquityInterval,
+            setWsThrottle,
+            setHistoricalConfig,
+          }}
+        >
+          <SimulatorRecordingFields disabled={isActive} />
+        </RecordingConfigProvider>
         {job ? (
           <div className="mt-4 space-y-3">
             <div className="flex items-center justify-between text-[11px] text-muted-foreground">
