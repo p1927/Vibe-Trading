@@ -3221,57 +3221,6 @@ def list_recording_sessions(
     return RecordingSessionsResponse(sessions=sorted(days, reverse=True))
 
 
-@trade_router.get("/recording/{job_id}", response_model=RecordingJobResponse)
-def get_recording_job(
-    job_id: str,
-    _auth: None = Depends(require_local_or_auth),
-) -> RecordingJobResponse:
-    from src.trade.recording_jobs import get_job, job_id_valid
-
-    if not job_id_valid(job_id):
-        raise HTTPException(status_code=400, detail="invalid job_id")
-    snap = get_job(job_id)
-    if snap is None:
-        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
-    return RecordingJobResponse(job=RecordingJobSnapshot(**snap))
-
-
-@trade_router.post("/recording/{job_id}/stop")
-def stop_recording(
-    job_id: str,
-    _auth: None = Depends(require_local_or_auth),
-) -> dict[str, str]:
-    """Request cooperative stop for an in-flight recording session."""
-    from src.trade.recording_jobs import _ACTIVE_STATUSES, _get_job_record, job_id_valid, request_stop
-
-    if not job_id_valid(job_id):
-        raise HTTPException(status_code=400, detail="invalid job_id")
-    job = _get_job_record(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
-    status = str(job.get("status") or "")
-    if status not in _ACTIVE_STATUSES:
-        raise HTTPException(status_code=409, detail=f"job is not active (status={status})")
-    request_stop(job_id)
-    return {"status": "ok", "message": "stop requested"}
-
-
-@trade_router.get("/recording/{job_id}/stream")
-async def stream_recording_job(
-    job_id: str,
-    request: Request,
-    _auth: None = Depends(require_local_or_auth),
-) -> StreamingResponse:
-    """SSE: replay recorder logs and stream until the session terminates."""
-    from src.trade.recording_jobs import _get_job_record, job_id_valid
-
-    if not job_id_valid(job_id):
-        raise HTTPException(status_code=400, detail="invalid job_id")
-    if _get_job_record(job_id) is None:
-        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
-    return _recording_stream_response(job_id, request)
-
-
 def _openalgo_control_headers() -> dict[str, str] | None:
     """Return the control-token header, or None if the token isn't configured.
 
@@ -3490,6 +3439,57 @@ def get_replay_calendar(
     if res.status_code >= 400:
         raise HTTPException(status_code=502, detail=res.text[:500])
     return _openalgo_json(res)
+
+
+@trade_router.get("/recording/{job_id}", response_model=RecordingJobResponse)
+def get_recording_job(
+    job_id: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> RecordingJobResponse:
+    from src.trade.recording_jobs import get_job, job_id_valid
+
+    if not job_id_valid(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    snap = get_job(job_id)
+    if snap is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    return RecordingJobResponse(job=RecordingJobSnapshot(**snap))
+
+
+@trade_router.post("/recording/{job_id}/stop")
+def stop_recording(
+    job_id: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, str]:
+    """Request cooperative stop for an in-flight recording session."""
+    from src.trade.recording_jobs import _ACTIVE_STATUSES, _get_job_record, job_id_valid, request_stop
+
+    if not job_id_valid(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    job = _get_job_record(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    status = str(job.get("status") or "")
+    if status not in _ACTIVE_STATUSES:
+        raise HTTPException(status_code=409, detail=f"job is not active (status={status})")
+    request_stop(job_id)
+    return {"status": "ok", "message": "stop requested"}
+
+
+@trade_router.get("/recording/{job_id}/stream")
+async def stream_recording_job(
+    job_id: str,
+    request: Request,
+    _auth: None = Depends(require_local_or_auth),
+) -> StreamingResponse:
+    """SSE: replay recorder logs and stream until the session terminates."""
+    from src.trade.recording_jobs import _get_job_record, job_id_valid
+
+    if not job_id_valid(job_id):
+        raise HTTPException(status_code=400, detail="invalid job_id")
+    if _get_job_record(job_id) is None:
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found")
+    return _recording_stream_response(job_id, request)
 
 
 @trade_router.post("/index-prediction/refresh", response_model=IndexPredictionRefreshResponse)
