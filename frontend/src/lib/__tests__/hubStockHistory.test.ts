@@ -79,15 +79,72 @@ describe("Phase 8 — /trade/hub/stock_history/* client methods", () => {
       mockJsonResponse({ status: "ok", day: "2026-08-15", factors: { us_10y: 4.2 } }),
     );
     await api.getHubMacroFactorLatest();
-    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0])
-      .toContain("/trade/hub/macro-factors/latest");
+    const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(url).toContain("/trade/hub/macro-factors/latest");
+  });
+});
 
+describe("Phase 9 — /trade/hub/stock-history/coverage + backfill", () => {
+  beforeEach(() => {
+    globalThis.fetch = vi.fn();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("getHubStockHistoryCoverage encodes week + symbol", async () => {
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-      mockJsonResponse({ status: "ok", dates: ["2026-08-01"] }),
+      mockJsonResponse({
+        status: "ok", week_start: "2026-08-10", week_end: "2026-08-14",
+        symbol: "NIFTY", is_complete: false, missing_days: ["2026-08-10"],
+        bucket_labels: ["macro_factors"],
+        days: [], fetch_list: [],
+      }),
     );
-    await api.getHubMacroFactorDates();
-    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[1][0])
-      .toContain("/trade/hub/macro-factors/dates");
+    await api.getHubStockHistoryCoverage({ week: "2026-08-10", symbol: "NIFTY" });
+    const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(url).toContain("/trade/hub/stock-history/coverage");
+    expect(url).toContain("week=2026-08-10");
+    expect(url).toContain("symbol=NIFTY");
+  });
+
+  it("getHubStockHistoryCoverage omits include_optional when false", async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      mockJsonResponse({
+        status: "ok", week_start: "2026-08-10", week_end: "2026-08-14",
+        symbol: "NIFTY", is_complete: true, missing_days: [],
+        bucket_labels: [], days: [], fetch_list: [],
+      }),
+    );
+    await api.getHubStockHistoryCoverage({ week: "2026-08-10" });
+    const url = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(url).not.toContain("include_optional=");
+  });
+
+  it("postHubStockHistoryBackfill POSTs JSON body", async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      mockJsonResponse({
+        status: "ok",
+        summary: {
+          week_start: "2026-08-10", week_end: "2026-08-14", symbol: "NIFTY",
+          had_errors: false, ok_count: 1, failed_count: 0, skipped_count: 0,
+          duration_ms: 100, results: [],
+        },
+        coverage_after: null,
+      }),
+    );
+    await api.postHubStockHistoryBackfill({
+      week: "2026-08-10", buckets: ["macro_factors"], verify_after: true,
+    });
+    const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toContain("/trade/hub/stock-history/backfill");
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(init.body);
+    expect(body.week).toBe("2026-08-10");
+    expect(body.buckets).toEqual(["macro_factors"]);
+    expect(body.verify_after).toBe(true);
   });
 
   it("getHubIndexHistoryDays and getHubIndexHistoryExpiries encode symbol/exchange", async () => {

@@ -1124,6 +1124,25 @@ export const api = {
         limit: params?.limit,
       })}`,
     ),
+  // /trade/hub/stock-history/coverage — per-week bucket availability gate.
+  getHubStockHistoryCoverage: (params: {
+    week: string;
+    symbol?: string;
+    include_optional?: boolean;
+  }) =>
+    request<HubStockHistoryCoverageResponse>(
+      `/trade/hub/stock-history/coverage${api._hubStockHistoryQS({
+        week: params.week,
+        symbol: params.symbol ?? "NIFTY",
+        include_optional: params.include_optional ? "1" : undefined,
+      })}`,
+    ),
+  // /trade/hub/stock-history/backfill — run writers for missing buckets.
+  postHubStockHistoryBackfill: (req: HubStockHistoryBackfillRequest) =>
+    request<HubStockHistoryBackfillResponse>("/trade/hub/stock-history/backfill", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
   getIndexPredictionFactors: () =>
     request<IndexFactorCatalogResponse>("/trade/index-prediction/factors"),
   simulateIndexPrediction: (body: SimulateIndexPredictionRequest) =>
@@ -3068,6 +3087,93 @@ export interface HubReplayDayOverviewResponse {
 export interface HubConstituentsPanelResponse {
   status: string;
   rows: Array<Record<string, number | string | null>>;
+  error?: string | null;
+}
+
+// ============================================================
+// /trade/hub/stock-history/coverage — per-week bucket availability
+// gate for the stock_simulator. White cells in the UI = missing;
+// click through to see the fetch_command for each missing bucket.
+// ============================================================
+
+export interface HubStockHistoryCoverageBucketStatus {
+  bucket: string;
+  present: boolean;
+  rows?: number | null;
+  location?: string | null;
+  primary_source: string;
+  fetch_command: string;
+  fallback?: string | null;
+}
+
+export interface HubStockHistoryCoverageDay {
+  day: string;
+  is_weekday: boolean;
+  is_complete: boolean;
+  present: string[];
+  missing: string[];
+  buckets: Record<string, HubStockHistoryCoverageBucketStatus>;
+}
+
+export interface HubStockHistoryCoverageFetchJob {
+  bucket: string;
+  days: string[];
+  primary_source: string;
+  fetch_command: string;
+  rationale: string;
+}
+
+export interface HubStockHistoryCoverageResponse {
+  status: string;
+  week_start: string;
+  week_end: string;
+  symbol: string;
+  is_complete: boolean;
+  missing_days: string[];
+  bucket_labels: string[];
+  days: HubStockHistoryCoverageDay[];
+  fetch_list: HubStockHistoryCoverageFetchJob[];
+  error?: string | null;
+}
+
+export interface HubStockHistoryBackfillResult {
+  bucket: string;
+  days: string[];
+  status: string;
+  rows_written: number;
+  message: string;
+  error?: string | null;
+  duration_ms: number;
+  handler_type: string;
+  had_errors: boolean;
+}
+
+export interface HubStockHistoryBackfillSummary {
+  week_start: string;
+  week_end: string;
+  symbol: string;
+  had_errors: boolean;
+  ok_count: number;
+  failed_count: number;
+  skipped_count: number;
+  duration_ms: number;
+  results: HubStockHistoryBackfillResult[];
+}
+
+export interface HubStockHistoryBackfillRequest {
+  week: string;
+  symbol?: string;
+  include_optional?: boolean;
+  dry_run?: boolean;
+  max_jobs?: number;
+  buckets?: string[];
+  verify_after?: boolean;
+}
+
+export interface HubStockHistoryBackfillResponse {
+  status: string;
+  summary: HubStockHistoryBackfillSummary;
+  coverage_after?: HubStockHistoryCoverageResponse | null;
   error?: string | null;
 }
 

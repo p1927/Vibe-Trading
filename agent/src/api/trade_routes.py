@@ -4167,6 +4167,37 @@ class HubStockHistoryCoverageResponse(BaseModel):
     error: str | None = None
 
 
+class HubStockHistoryBackfillRequest(BaseModel):
+    """Request body for POST /hub/stock-history/backfill.
+
+    `buckets` filters which missing buckets to fill (e.g. when the user
+    clicks a single cell in the heatmap). `max_jobs` caps the total
+    number of jobs in one HTTP call so a runaway UI click can't kick
+    off 30 parallel HuggingFace downloads.
+    """
+
+    week: str
+    symbol: str = "NIFTY"
+    include_optional: int = 0
+    dry_run: int = 0
+    max_jobs: int | None = None
+    buckets: list[str] | None = None
+    verify_after: int = 1
+
+
+class HubStockHistoryBackfillResponse(BaseModel):
+    """Response shape for POST /hub/stock-history/backfill.
+
+    `summary` carries the rolled-up BackfillSummary; `coverage_after`
+    is the post-backfill coverage snapshot (when `verify_after=1`).
+    """
+
+    status: str
+    summary: dict[str, Any] = {}
+    coverage_after: dict[str, Any] | None = None
+    error: str | None = None
+
+
 class HubReplayDayOverviewResponse(BaseModel):
     status: str
     date: str
@@ -4565,6 +4596,48 @@ def hub_stock_history_coverage(
         return HubStockHistoryCoverageResponse(
             status="error", week_start="", week_end="",
             symbol=symbol, is_complete=False, error=str(exc),
+        )
+
+
+@trade_router.post("/hub/stock-history/backfill", response_model=HubStockHistoryBackfillResponse)
+def hub_stock_history_backfill(
+    req: HubStockHistoryBackfillRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubStockHistoryBackfillResponse:
+    """Run backfill handlers for missing buckets in `req.week`.
+
+    Companion to `/hub/stock-history/coverage`: builds the coverage
+    report, then runs each `FetchJob` in `fetch_list` through the
+    registered handler for that bucket. Re-runs coverage at the end
+    unless `verify_after=0`.
+
+    Safety rails:
+    - `dry_run=1` emits a plan but never touches a writer
+    - `max_jobs` caps the total jobs in one HTTP call
+    - `buckets` filters which missing buckets to fill (single-cell click)
+    """
+    from trade_integrations.stock_history import StockHistory
+
+    try:
+        sh = StockHistory()
+        summary = sh.backfill_into_week(
+            week_start=req.week,
+            symbol=req.symbol,
+            include_optional=bool(req.include_optional),
+            dry_run=bool(req.dry_run),
+            max_jobs=req.max_jobs,
+            buckets=req.buckets,
+            verify_after=bool(req.verify_after),
+        )
+        return HubStockHistoryBackfillResponse(
+            status="ok",
+            summary=summary.as_dict(),
+            coverage_after=summary.coverage_after,
+        )
+    except Exception as exc:
+        logger.exception("stock-history backfill failed for week=%s", req.week)
+        return HubStockHistoryBackfillResponse(
+            status="error", error=str(exc),
         )
 
 
