@@ -491,6 +491,85 @@ def test_index_plan_refresh_uses_shorter_stale_threshold(
     assert dispatch_timeout_ms_for(poll) == 10 * 60 * 1000
 
 
+def test_stale_threshold_always_exceeds_dispatch_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: stale-running threshold must be >= dispatch timeout + buffer.
+
+    Previously ``stale_running_ms_for`` returned the global default (45 min) for
+    every job_type not in the special-case list. ``hub_news_entity`` has a
+    dispatch timeout of 20 min and ``hub_news_ingest`` has 10 min — both
+    shorter than 45 min. A long-running dispatch finishing near its timeout
+    boundary would have ``last_run_at`` close to the threshold and the watchdog
+    could recover it mid-cleanup, discarding the completion write. The fix
+    guarantees the threshold is at least ``dispatch_timeout + watchdog_buffer``.
+    """
+    monkeypatch.setenv("SCHEDULED_RESEARCH_STALE_RUNNING_MS", "10000")  # 10s default
+    monkeypatch.setenv(
+        "SCHEDULED_RESEARCH_WATCHDOG_INTERVAL_MS", "60000"
+    )  # 60s — matches default; clamp floor is 60s
+
+    # hub_news_entity: 20 min dispatch
+    drain = _job(
+        "drain",
+        schedule="*/15 * * * *",
+        status=JobStatus.RUNNING,
+        created_at=0,
+    )
+    drain.last_run_at = 0
+    drain.config = {"job_type": "hub_news_entity"}
+    drain_timeout = dispatch_timeout_ms_for(drain)
+    drain_stale = stale_running_ms_for(drain)
+    assert drain_timeout == 20 * 60 * 1000
+    assert drain_stale >= drain_timeout + 60_000, (
+        f"stale ({drain_stale}) must be >= dispatch_timeout ({drain_timeout}) + 60s buffer"
+    )
+
+    # hub_news_ingest: 10 min dispatch
+    ingest = _job(
+        "ingest",
+        schedule="0 */4 * * *",
+        status=JobStatus.RUNNING,
+        created_at=0,
+    )
+    ingest.last_run_at = 0
+    ingest.config = {"job_type": "hub_news_ingest"}
+    ingest_timeout = dispatch_timeout_ms_for(ingest)
+    ingest_stale = stale_running_ms_for(ingest)
+    assert ingest_timeout == 10 * 60 * 1000
+    assert ingest_stale >= ingest_timeout + 60_000, (
+        f"stale ({ingest_stale}) must be >= dispatch_timeout ({ingest_timeout}) + 60s buffer"
+    )
+
+    # Custom dispatch_timeout in config overrides and is also covered
+    custom = _job(
+        "custom",
+        schedule="1000",
+        status=JobStatus.RUNNING,
+        created_at=0,
+    )
+    custom.last_run_at = 0
+    custom.config = {"job_type": "company_research_archive", "dispatch_timeout_ms": 30 * 60 * 1000}
+    custom_stale = stale_running_ms_for(custom)
+    custom_timeout = dispatch_timeout_ms_for(custom)
+    assert custom_timeout == 30 * 60 * 1000
+    assert custom_stale >= custom_timeout + 60_000
+
+    # Watchdog cannot recover a dispatch still within its dispatch_timeout + buffer
+    # window. After last_run_at = T, watchdog at T + dispatch_timeout + buffer/2
+    # must NOT mark stale.
+    now_ms = drain_timeout + 30_000  # half-buffer into the safe window
+    assert is_job_stale_running(drain, now_ms) is False, (
+        "watchdog must not recover a dispatch within its timeout + buffer window"
+    )
+    # But the watchdog CAN recover once the safe window is exceeded (this is
+    # the genuine crash-recovery path that must still work).
+    now_ms = drain_timeout + 2 * 60_000  # well past timeout + buffer
+    assert is_job_stale_running(drain, now_ms) is True, (
+        "watchdog must still recover a hung dispatch after timeout + buffer"
+    )
+
+
 def test_watchdog_recovers_stale_job_independently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SCHEDULED_RESEARCH_WATCHDOG_INTERVAL_MS", "20")
     store = _store(tmp_path)

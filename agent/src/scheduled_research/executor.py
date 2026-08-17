@@ -186,6 +186,21 @@ def _index_plan_refresh_stale_ms() -> int:
         return DEFAULT_INDEX_PLAN_REFRESH_STALE_MS
 
 
+def _watchdog_buffer_ms() -> int:
+    """Buffer above the dispatch timeout for stale-running recovery.
+
+    The watchdog fires on a separate interval (default 60s) and recovers any
+    RUNNING job whose ``last_run_at`` is older than
+    :func:`stale_running_ms_for`. If the stale threshold is shorter than the
+    dispatch timeout (or the dispatch + cleanup), the watchdog can recover a
+    still-cleaning-up job, and ``_persist_completion`` silently discards the
+    completion because ``current.status != RUNNING``. Guarantee a buffer of
+    one watchdog interval above the dispatch timeout so a dispatch can always
+    finish and write its completion before the watchdog decides it's stale.
+    """
+    return max(_watchdog_interval_ms(), 60_000)
+
+
 def stale_running_ms_for(job: ScheduledResearchJob) -> int:
     """Return stale threshold for *job* (poll jobs use a shorter window)."""
     job_type = str(job.config.get("job_type") or "")
@@ -197,7 +212,14 @@ def stale_running_ms_for(job: ScheduledResearchJob) -> int:
             return max(120_000, 2 * interval)
         except ValueError:
             return 120_000
-    return _stale_running_ms()
+    # Guarantee the stale threshold is at least ``dispatch_timeout + buffer``
+    # so the watchdog cannot fire mid-cleanup. Without this, a long-running
+    # hub-news drain (e.g. 20-min dispatch + LLM adjudication cleanup) would
+    # be recovered after ``stale_running_ms`` (default 45 min) but before the
+    # completion code path runs, silently dropping the ``last_run_at`` write
+    # via the ``current.status != RUNNING`` guard in ``_persist_completion``.
+    base = _stale_running_ms()
+    return max(base, dispatch_timeout_ms_for(job) + _watchdog_buffer_ms())
 
 
 def is_job_stale_running(job: ScheduledResearchJob, now_ms: int) -> bool:
