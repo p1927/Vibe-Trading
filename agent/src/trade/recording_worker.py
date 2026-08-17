@@ -21,6 +21,16 @@ def _now_iso() -> str:
 
 
 def run_worker(job_id: str) -> None:
+    # This process's stdout/stderr is redirected to worker.log with no
+    # other logging config in the call path — without this, every
+    # logger.info/warning call (e.g. tick_stream's connect/subscribe/
+    # close diagnostics) is silently dropped by Python's unconfigured
+    # root logger instead of reaching the log file.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
     from src.trade.hub_bridge import ensure_trade_stack_path
     from src.trade import recording_jobs as jobs
 
@@ -62,7 +72,14 @@ def run_worker(job_id: str) -> None:
     )
     wait_for_open = bool(job.get("wait_for_open"))
 
-    jobs.mark_running(job_id)
+    # When ``wait_for_open`` is set, defer the ``queued → running``
+    # promotion — the recorder will transition ``queued →
+    # waiting_for_open`` itself on first sleep, then back to
+    # ``running`` when the wait releases. Promoting eagerly here
+    # would race the recorder's ``mark_waiting_for_open`` call and
+    # leave the job stuck as ``running`` for the entire wait.
+    if not wait_for_open:
+        jobs.mark_running(job_id)
 
     def on_log(entry: dict) -> None:
         jobs.append_log(job_id, entry)
@@ -102,6 +119,53 @@ def run_worker(job_id: str) -> None:
                 "errors": result.errors,
             },
         )
+
+        # End-of-session macro/flow gap-fill is deliberately detached
+        # from this worker's critical path. ``run_recording_session``
+        # used to run ``StockHistory().supplement_today(...)``
+        # synchronously here, which could take many minutes (it walks
+        # the yfinance/searxng/crawl4ai chain and may invoke the LLM
+        # for some buckets). That blocked ``complete_job`` from firing
+        # and left the SSE event stream showing ``status="running"``
+        # for the whole supplement window, so the UI's Stop button
+        # appeared non-functional. Spawning it as a separate
+        # subprocess means the recorder exits within ~1s of Stop, the
+        # SSE delivers the ``done`` event immediately, and the
+        # supplement continues independently — including honouring the
+        # same stop flag if the user clicks Stop again.
+        try:
+            from src.trade.recording_supplement_worker import (
+                spawn_supplement_worker,
+            )
+
+            spawn_supplement_worker(job_id, result.session_date)
+            jobs.append_log(
+                job_id,
+                {
+                    "stage": "supplement",
+                    "message": "spawned detached subprocess",
+                    "level": "info",
+                    "at": _now_iso(),
+                },
+            )
+        except Exception as exc:
+            # Spawn failure must not flip the already-``done`` job back
+            # to ``error`` — operators can see the failure in
+            # supplement.log and re-run manually.
+            logger.warning(
+                "failed to spawn supplement subprocess (job=%s): %s",
+                job_id,
+                exc,
+            )
+            jobs.append_log(
+                job_id,
+                {
+                    "stage": "supplement",
+                    "message": f"spawn failed: {exc}",
+                    "level": "warning",
+                    "at": _now_iso(),
+                },
+            )
     except Exception as exc:
         logger.exception("recording worker failed (job=%s)", job_id)
         jobs.append_log(

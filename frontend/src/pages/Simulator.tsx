@@ -58,6 +58,7 @@ function statusBadge(status: string | undefined) {
   const styles: Record<string, string> = {
     queued: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
     waiting: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
+    waiting_for_open: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
     running: "bg-blue-500/15 text-blue-800 dark:text-blue-200",
     done: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
     error: "bg-red-500/15 text-red-800 dark:text-red-200",
@@ -66,6 +67,7 @@ function statusBadge(status: string | undefined) {
   const labels: Record<string, string> = {
     queued: "Starting…",
     waiting: "Waiting for Market Open",
+    waiting_for_open: "Waiting for Market Open",
     running: "Recording",
     done: "Market Closed — Done",
     error: "Error",
@@ -205,9 +207,23 @@ export function Simulator() {
   const abortRef = useRef<AbortController | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
 
-  const isActive = job?.status === "queued" || job?.status === "running";
+  const isActive =
+    job?.status === "queued" ||
+    job?.status === "waiting_for_open" ||
+    job?.status === "running";
   const isWaiting = job?.status === "running" && logs[logs.length - 1]?.stage === "waiting";
-  const displayStatus = isWaiting ? "waiting" : job?.status;
+  const isWaitingForOpen = job?.status === "waiting_for_open";
+  const displayStatus = isWaitingForOpen
+    ? "waiting_for_open"
+    : isWaiting
+      ? "waiting"
+      : job?.status;
+  const waitingForOpenLog = isWaitingForOpen
+    ? [...logs].reverse().find((entry) => entry?.stage === "waiting")
+    : undefined;
+  const nextOpenAtLabel =
+    (waitingForOpenLog?.detail as { next_open_at?: string } | undefined)
+      ?.next_open_at || "";
 
   const loadSessions = useCallback(() => {
     api
@@ -351,10 +367,23 @@ export function Simulator() {
 
   const stopRecording = async () => {
     if (!job) return;
+    // Optimistic flip so the UI visibly reacts within one frame —
+    // ``complete_job`` on the server fires within ~1s of Stop and the
+    // SSE ``done`` event will catch up shortly; this just removes the
+    // window where the user wonders whether the click was received.
+    // The recorder worker is now detached from the end-of-session
+    // supplement, so the SSE ``done`` event lands essentially
+    // immediately in practice — this is belt-and-braces UX.
+    const previousStatus = job.status;
+    setJob((prev) => (prev ? { ...prev, status: "done" } : prev));
     setBusy(true);
     try {
       await api.stopRecording(job.job_id);
     } catch (err) {
+      // POST failed (network or 409 because the job already finished).
+      // Roll back to the pre-click status — the SSE stream will
+      // overwrite it with the real state on the next tick either way.
+      setJob((prev) => (prev ? { ...prev, status: previousStatus } : prev));
       setError(err instanceof Error ? err.message : "Failed to stop recording");
     } finally {
       setBusy(false);
@@ -521,6 +550,14 @@ export function Simulator() {
           </div>
           <div className="flex items-center gap-2">
             {statusBadge(displayStatus)}
+            {isWaitingForOpen && nextOpenAtLabel ? (
+              <span
+                className="text-[11px] text-amber-800 dark:text-amber-200"
+                title={`Next NSE open at ${nextOpenAtLabel}`}
+              >
+                Next open at {nextOpenAtLabel.slice(11, 16)} IST
+              </span>
+            ) : null}
             {isActive ? (
               <button
                 type="button"

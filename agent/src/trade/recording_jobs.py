@@ -44,7 +44,7 @@ _JOBS_LOCK = threading.RLock()
 
 _JOB_TTL_SECONDS = 60 * 60
 _JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
-_ACTIVE_STATUSES = frozenset({"queued", "running"})
+_ACTIVE_STATUSES = frozenset({"queued", "waiting_for_open", "running"})
 _WALL_CLOCK_SECONDS = int(os.getenv("RECORDING_RUN_WALL_CLOCK_SECONDS", str(8 * 60 * 60)))
 _QUEUED_NO_PID_SECONDS = int(os.getenv("RECORDING_QUEUED_NO_PID_SECONDS", "60"))
 
@@ -99,7 +99,16 @@ def _job_age_seconds(job: dict[str, Any]) -> float:
 
 def reconcile_queued_job(job_id: str) -> bool:
     job = _get_job_record(job_id)
-    if job is None or job.get("status") != "queued":
+    if job is None:
+        return False
+    status = str(job.get("status") or "")
+    if status == "waiting_for_open":
+        # Worker is sleeping in the deferred-wake loop (Phase 2 of the
+        # wait-for-open plan). Leave it alone — the recorder handles
+        # its own liveness and exits with `stopped_reason="wait_timeout"`
+        # if the wait exceeds `RECORDING_WAIT_MAX_HOURS`.
+        return False
+    if status != "queued":
         return False
     if job.get("worker_pid") is not None:
         return False
@@ -510,9 +519,14 @@ def start_job(
 
 def mark_running(job_id: str) -> None:
     def mutator(job: dict[str, Any]) -> bool:
-        if str(job.get("status") or "") not in _ACTIVE_STATUSES:
+        # Allow transition from ``waiting_for_open`` as well as
+        # ``queued`` — the recorder enters ``waiting_for_open`` during
+        # the deferred-wake wait loop and bumps back to ``running``
+        # once the wait releases.
+        status = str(job.get("status") or "")
+        if status not in _ACTIVE_STATUSES:
             return False
-        if job.get("status") == "queued":
+        if status in {"queued", "waiting_for_open"}:
             job["status"] = "running"
         return True
 
@@ -521,6 +535,29 @@ def mark_running(job_id: str) -> None:
         return
     with _JOBS_LOCK:
         RECORDING_JOBS[job_id] = job
+
+
+def mark_waiting_for_open(job_id: str) -> bool:
+    """Transition ``queued`` → ``waiting_for_open``. No-op from any other
+    status (including ``waiting_for_open`` itself — the recorder calls
+    this on its first sleep slice and the call must be idempotent if
+    the disk round-trip races the in-memory cache).
+
+    Returns ``True`` if the job transitioned on disk, ``False`` if the
+    job was missing or already past ``queued``.
+    """
+    def mutator(job: dict[str, Any]) -> bool:
+        if str(job.get("status") or "") != "queued":
+            return False
+        job["status"] = "waiting_for_open"
+        return True
+
+    job = _mutate_job_on_disk(job_id, mutator)
+    if job is None:
+        return False
+    with _JOBS_LOCK:
+        RECORDING_JOBS[job_id] = job
+    return True
 
 
 def append_log(job_id: str, entry: dict[str, Any]) -> None:
