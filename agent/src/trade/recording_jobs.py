@@ -210,6 +210,7 @@ def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
         "ws_throttle_hz": job.get("ws_throttle_hz"),
         "historical_config": job.get("historical_config"),
         "wait_for_open": bool(job.get("wait_for_open")),
+        "next_open_at": job.get("next_open_at"),
         "created_at": job.get("created_at"),
         "logs": list(job.get("logs") or []),
         "session_date": job.get("session_date"),
@@ -354,6 +355,11 @@ def _job_snapshot(job: dict[str, Any], *, include_logs: bool = True) -> dict[str
         "ws_throttle_hz": job.get("ws_throttle_hz"),
         "historical_config": job.get("historical_config"),
         "wait_for_open": bool(job.get("wait_for_open")),
+        # Phase C: surface the scheduled wake deadline (ISO string) so the
+        # UI can render "Next open at HH:MM IST" even for jobs whose log
+        # stream is still empty (the cron-driven respawn path doesn't emit
+        # a "waiting" log entry until after the wake fires).
+        "next_open_at": job.get("next_open_at"),
         "created_at": job.get("created_at"),
         "session_date": job.get("session_date"),
         "error": job.get("error"),
@@ -557,6 +563,67 @@ def mark_waiting_for_open(job_id: str) -> bool:
         return False
     with _JOBS_LOCK:
         RECORDING_JOBS[job_id] = job
+    return True
+
+
+def set_waiting_for_open_at(
+    job_id: str, *, next_open_at: datetime
+) -> bool:
+    """Persist ``next_open_at`` on a ``queued`` job and flip status to
+    ``waiting_for_open``. Used by the cron-driven respawn path (Phase C)
+    when the API entry receives ``wait_for_open=True`` and the market is
+    closed — the API persists the wake deadline here and registers a
+    ``ScheduledResearchJob`` separately; no worker subprocess is
+    spawned.
+
+    No-op from any other status (idempotent). Returns ``True`` on
+    transition, ``False`` otherwise.
+    """
+    def mutator(job: dict[str, Any]) -> bool:
+        if str(job.get("status") or "") != "queued":
+            return False
+        job["status"] = "waiting_for_open"
+        job["next_open_at"] = (
+            next_open_at.isoformat()
+            if isinstance(next_open_at, datetime)
+            else str(next_open_at)
+        )
+        return True
+
+    job = _mutate_job_on_disk(job_id, mutator)
+    if job is None:
+        return False
+    with _JOBS_LOCK:
+        RECORDING_JOBS[job_id] = job
+    return True
+
+
+def wake_recording_job(job_id: str) -> bool:
+    """Called by the scheduled-research executor when a recording's
+    deferred wake deadline fires. Flips status to ``running`` and
+    spawns a fresh worker.
+
+    Idempotent: returns ``False`` if the job is no longer in a wakeable
+    state (already running / done / errored) or if a worker is somehow
+    already alive (concurrent dispatch race).
+
+    Returns ``True`` on successful worker spawn.
+    """
+    job = _get_job_record(job_id)
+    if job is None:
+        return False
+    status = str(job.get("status") or "")
+    if status != "waiting_for_open":
+        # Already running, done, or errored — skip (idempotent).
+        return False
+    if _is_pid_alive(job.get("worker_pid")):
+        # Defensive: if a worker is somehow already alive (concurrent
+        # dispatch race), skip the spawn.
+        return False
+    # Flip status BEFORE spawning so the UI reflects the transition
+    # before the worker subprocess starts.
+    mark_running(job_id)
+    spawn_worker(job_id)
     return True
 
 

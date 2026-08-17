@@ -100,6 +100,17 @@ async def _dispatch_scheduled_research_job(job) -> None:
     if job_type in AUTONOMOUS_JOB_TYPES:
         await dispatch_autonomous_job(job)
         return
+    # Phase C: recording-wake jobs (cron-driven respawn of
+    # ``wait_for_open=True`` recordings). See
+    # ``src.scheduled_research.recording_wake_jobs``.
+    from src.scheduled_research.recording_wake_jobs import (
+        RECORDING_WAKE_JOB_TYPES,
+        dispatch_recording_wake_job,
+    )
+
+    if job_type in RECORDING_WAKE_JOB_TYPES:
+        await dispatch_recording_wake_job(job)
+        return
 
     host = _sys.modules.get("api_server") or _sys.modules.get("agent.api_server")
     svc = host._get_session_service()

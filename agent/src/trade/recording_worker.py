@@ -70,16 +70,12 @@ def run_worker(job_id: str) -> None:
         and "lookback_days" in raw_historical
         else None
     )
-    wait_for_open = bool(job.get("wait_for_open"))
-
-    # When ``wait_for_open`` is set, defer the ``queued → running``
-    # promotion — the recorder will transition ``queued →
-    # waiting_for_open`` itself on first sleep, then back to
-    # ``running`` when the wait releases. Promoting eagerly here
-    # would race the recorder's ``mark_waiting_for_open`` call and
-    # leave the job stuck as ``running`` for the entire wait.
-    if not wait_for_open:
-        jobs.mark_running(job_id)
+    # Phase C: ``wait_for_open`` is no longer a worker-side concern.
+    # The recorder only spawns when NSE hours are already open (the
+    # API entry schedules a deferred wake via the scheduled-research
+    # executor otherwise), so the worker can always promote
+    # ``queued → running`` unconditionally.
+    jobs.mark_running(job_id)
 
     def on_log(entry: dict) -> None:
         jobs.append_log(job_id, entry)
@@ -107,7 +103,11 @@ def run_worker(job_id: str) -> None:
             data_root=Path(data_root),
             on_log=on_log,
             should_stop=should_stop,
-            wait_for_open=wait_for_open,
+            # Phase C: the worker only runs when NSE hours are open
+            # (cron-driven respawn owns the wait path). Pass False
+            # unconditionally so the recorder's wait branch is
+            # never entered.
+            wait_for_open=False,
         )
         jobs.complete_job(
             job_id,

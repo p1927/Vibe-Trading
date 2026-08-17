@@ -212,18 +212,17 @@ export function Simulator() {
     job?.status === "waiting_for_open" ||
     job?.status === "running";
   const isWaitingForOpen = job?.status === "waiting_for_open";
-  // Phase B removed the legacy ``isWaiting`` log-stage derivation:
-  // after Phase 2 the recorder never enters a wait path while its
-  // job status is already ``running`` (it transitions queued →
-  // waiting_for_open → running), so the log-stage fallback is dead
-  // code. The new status is the single source of truth.
   const displayStatus = isWaitingForOpen ? "waiting_for_open" : job?.status;
-  const waitingForOpenLog = isWaitingForOpen
-    ? [...logs].reverse().find((entry) => entry?.stage === "waiting")
-    : undefined;
+  // Phase C: prefer the structured ``next_open_at`` field from the job
+  // snapshot (set by ``set_waiting_for_open_at`` in recording_jobs.py)
+  // over the legacy log-entry fallback. The fallback still works for
+  // jobs persisted before Phase C, but new waits have an empty log
+  // stream until the scheduled wake fires.
   const nextOpenAtLabel =
-    (waitingForOpenLog?.detail as { next_open_at?: string } | undefined)
-      ?.next_open_at || "—";
+    job?.next_open_at ||
+    (([...logs].reverse().find((entry) => entry?.stage === "waiting")
+      ?.detail as { next_open_at?: string } | undefined)?.next_open_at) ||
+    "—";
 
   const loadSessions = useCallback(() => {
     api

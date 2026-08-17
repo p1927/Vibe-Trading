@@ -8,7 +8,7 @@ import os
 import re
 import threading
 import asyncio
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -652,6 +652,11 @@ class RecordingJobSnapshot(BaseModel):
     ws_throttle_hz: float | None = None
     historical_config: Dict[str, Any] | None = None
     wait_for_open: bool = False
+    # Phase C: ISO timestamp of the scheduled wake deadline when the
+    # recorder is in ``waiting_for_open`` state. The frontend renders
+    # the "Next open at HH:MM IST" subtitle from this directly (with a
+    # log-entry fallback for jobs persisted before Phase C).
+    next_open_at: str | None = None
     created_at: str | None = None
     session_date: str | None = None
     error: str | None = None
@@ -3335,10 +3340,69 @@ def _kick_recording(body: StartRecordingRequest) -> tuple[str, str, bool]:
         historical_config=body.historical_config,
         wait_for_open=body.wait_for_open,
     )
-    if not reused:
+
+    # Phase C: when ``wait_for_open=True`` and the market is closed,
+    # do NOT spawn a worker — register a deferred wake instead.
+    # The recorder never enters an in-process wait loop; the
+    # scheduled-research executor wakes the recording at
+    # ``next_open_at`` via :func:`wake_recording_job`.
+    market_closed = False
+    if body.wait_for_open:
+        try:
+            from nautilus_openalgo_bridge.market_hours import (
+                is_real_nse_market_open,
+                next_real_nse_open_at,
+            )
+            from trade_integrations.execution.openalgo_client import (
+                OpenAlgoClient,
+            )
+
+            market_closed = not is_real_nse_market_open()
+            if market_closed:
+                # Compute next_open_at (holiday-aware via Phase A).
+                try:
+                    _holidays_raw = OpenAlgoClient().get_market_holidays()
+                    holidays = frozenset({
+                        date.fromisoformat(str(row["date"])[:10])
+                        for row in _holidays_raw
+                        if isinstance(row, dict)
+                        and str(row.get("holiday_type") or "").upper()
+                        == "TRADING_HOLIDAY"
+                        and row.get("date")
+                    })
+                except Exception:
+                    holidays = frozenset()
+                next_open_at = next_real_nse_open_at(holidays=holidays)
+                # Persist status + schedule the wake. No worker subprocess.
+                from src.trade.recording_jobs import set_waiting_for_open_at
+                from src.trade.recording_wait_scheduler import (
+                    schedule_recording_wake,
+                )
+
+                set_waiting_for_open_at(
+                    job_id, next_open_at=next_open_at
+                )
+                schedule_recording_wake(
+                    recording_job_id=job_id,
+                    next_open_at=next_open_at,
+                )
+        except Exception:
+            # Don't break the API on a scheduler failure — fall back to
+            # legacy in-process wait (the recorder still has its own
+            # wait loop path which Phase 5 will retire).
+            market_closed = False
+
+    if market_closed:
+        # Don't spawn — the wake scheduler owns the lifecycle now.
+        pass
+    elif not reused:
         spawn_worker(job_id)
     else:
-        from src.trade.recording_jobs import _get_job_record, spawn_worker, worker_alive
+        from src.trade.recording_jobs import (
+            _get_job_record,
+            spawn_worker,
+            worker_alive,
+        )
 
         existing = _get_job_record(job_id)
         if existing is not None and not worker_alive(existing):
@@ -3497,6 +3561,25 @@ def start_replay(
         ) from exc
     if res.status_code >= 400:
         raise HTTPException(status_code=502, detail=res.text[:500])
+    # Mirror the arm into *this* process too: OpenAlgo sets
+    # ``STOCK_SIMULATOR_MODE=replay`` on its own gunicorn worker, but VibeTrading
+    # runs in a separate process. Without mirroring, the in-process replay
+    # helpers (``get_replay_market_ticks`` / ``get_replay_spot_quote``) keep
+    # seeing ``is_replay=False`` and return empty lists even when the user has
+    # explicitly armed — leaving the Simulator chart blank after "Replay
+    # {date}" until the user reloads the OpenAlgo worker.
+    os.environ["STOCK_SIMULATOR_MODE"] = "replay"
+    os.environ["NSE_REPLAY_DATE"] = day[:10]
+    if body.end_date:
+        os.environ["NSE_REPLAY_END_DATE"] = body.end_date[:10]
+    elif "NSE_REPLAY_END_DATE" in os.environ:
+        # A previous range-arm left an end_date in this process's env; clear it
+        # so a plain single-day arm doesn't silently inherit the old range.
+        os.environ.pop("NSE_REPLAY_END_DATE", None)
+    if body.speed is not None:
+        os.environ["NSE_REPLAY_SPEED"] = str(body.speed)
+    if body.loop is not None:
+        os.environ["NSE_REPLAY_LOOP"] = "1" if body.loop else "0"
     return ReplayStatusResponse(status="ok", replay=_openalgo_json(res))
 
 
@@ -3613,6 +3696,13 @@ def stop_replay(
         ) from exc
     if res.status_code >= 400:
         raise HTTPException(status_code=502, detail=res.text[:500])
+    # Clear the mirrored replay env on this side too, matching the start
+    # arm — otherwise the next reload of the page still sees ``STOCK_SIMULATOR_MODE=replay``
+    # locally even after the user pressed Stop, and Vibe's replay helpers would
+    # keep returning data against a torn-down OpenAlgo side.
+    os.environ.pop("STOCK_SIMULATOR_MODE", None)
+    os.environ.pop("NSE_REPLAY_DATE", None)
+    os.environ.pop("NSE_REPLAY_END_DATE", None)
     return ReplayStatusResponse(status="ok", replay=_openalgo_json(res))
 
 

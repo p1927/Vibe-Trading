@@ -2862,6 +2862,11 @@ export interface RecordingJobSnapshot {
   category_intervals?: Record<string, number> | null;
   ws_throttle_hz?: number | null;
   wait_for_open?: boolean;
+  // Phase C: ISO timestamp of the scheduled wake deadline when the
+  // recorder is in ``waiting_for_open`` state. Surfaced by the API so
+  // the Simulator can render "Next open at HH:MM IST" without
+  // relying on the log-entry fallback.
+  next_open_at?: string | null;
   created_at?: string | null;
   session_date?: string | null;
   error?: string | null;
