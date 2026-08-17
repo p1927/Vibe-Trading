@@ -211,19 +211,19 @@ export function Simulator() {
     job?.status === "queued" ||
     job?.status === "waiting_for_open" ||
     job?.status === "running";
-  const isWaiting = job?.status === "running" && logs[logs.length - 1]?.stage === "waiting";
   const isWaitingForOpen = job?.status === "waiting_for_open";
-  const displayStatus = isWaitingForOpen
-    ? "waiting_for_open"
-    : isWaiting
-      ? "waiting"
-      : job?.status;
+  // Phase B removed the legacy ``isWaiting`` log-stage derivation:
+  // after Phase 2 the recorder never enters a wait path while its
+  // job status is already ``running`` (it transitions queued →
+  // waiting_for_open → running), so the log-stage fallback is dead
+  // code. The new status is the single source of truth.
+  const displayStatus = isWaitingForOpen ? "waiting_for_open" : job?.status;
   const waitingForOpenLog = isWaitingForOpen
     ? [...logs].reverse().find((entry) => entry?.stage === "waiting")
     : undefined;
   const nextOpenAtLabel =
     (waitingForOpenLog?.detail as { next_open_at?: string } | undefined)
-      ?.next_open_at || "";
+      ?.next_open_at || "—";
 
   const loadSessions = useCallback(() => {
     api
@@ -550,12 +550,14 @@ export function Simulator() {
           </div>
           <div className="flex items-center gap-2">
             {statusBadge(displayStatus)}
-            {isWaitingForOpen && nextOpenAtLabel ? (
+            {isWaitingForOpen ? (
               <span
                 className="text-[11px] text-amber-800 dark:text-amber-200"
                 title={`Next NSE open at ${nextOpenAtLabel}`}
               >
-                Next open at {nextOpenAtLabel.slice(11, 16)} IST
+                {nextOpenAtLabel === "—"
+                  ? "Awaiting next NSE open"
+                  : `Next open at ${nextOpenAtLabel.slice(11, 16)} IST`}
               </span>
             ) : null}
             {isActive ? (
