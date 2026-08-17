@@ -630,3 +630,164 @@ def test_defer_startup_backlog_defers_autonomous_watch_when_agent_not_running(
     # The defer must have pushed past the original 10.
     assert saved.next_run_at > 10
     assert saved.status == JobStatus.PENDING
+
+
+def test_running_job_with_no_last_run_at_is_not_stale(tmp_path: Path) -> None:
+    """Regression: a freshly dispatched job with a fresh last_run_at must
+    survive the watchdog until completion can persist.
+
+    Previously the stale watchdog would recover a RUNNING job whose
+    ``last_run_at`` was older than the stale threshold WHILE the dispatch
+    coroutine was awaiting inside ``_run_job``. The watchdog reset
+    ``status`` to PENDING and advanced ``next_run_at``; when dispatch
+    completed, ``_persist_completion`` silently discarded the completion
+    write (because ``current.status != RUNNING``), so ``last_run_at`` stayed
+    frozen at the old timestamp even though the job ran successfully. The
+    fix stamps ``last_run_at = now_ms`` BEFORE the dispatch await so the
+    watchdog sees a fresh timestamp.
+    """
+    store = _store(tmp_path)
+    # A PENDING job with a 30-day-old last_run_at — the watchdog would
+    # previously have flagged this stale on the first watchdog tick after
+    # dispatch started.
+    old_completed_ms = 30 * 24 * 60 * 60 * 1000
+    job = _job(
+        "fresh-runner",
+        schedule="*/15 * * * *",
+        next_run_at=old_completed_ms,
+        created_at=old_completed_ms,
+    )
+    job.last_run_at = old_completed_ms
+    job.config = {"job_type": "hub_news_entity", "mode": "drain", "ticker": "NIFTY"}
+    store.upsert(job)
+
+    # First tick at now_ms: dispatches the due job. Inside _run_job, the
+    # fix stamps last_run_at = now_ms BEFORE awaiting dispatch. A watchdog
+    # tick interleaved between the upsert and the dispatch await would
+    # otherwise see the old last_run_at and recover the job.
+    now_ms = old_completed_ms + 60 * 1000
+    calls: list[str] = []
+
+    async def dispatch(j: ScheduledResearchJob) -> None:
+        calls.append(j.id)
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(store, dispatch)
+        await executor.tick(now_ms)
+
+    asyncio.run(scenario())
+
+    saved = store.get("fresh-runner")
+    assert saved is not None
+    assert calls == ["fresh-runner"], "dispatch must run exactly once"
+    assert saved.last_run_at == now_ms, (
+        "last_run_at must be the tick timestamp, not the old 30-day value — "
+        "the bug froze it at the old value because the watchdog reset status "
+        "to PENDING before _persist_completion could write the new value"
+    )
+    assert saved.status == JobStatus.COMPLETED
+    assert saved.next_run_at > now_ms, "next_run_at must advance to the next 15-min slot"
+
+
+def test_mid_dispatch_watchdog_does_not_recover_job(tmp_path: Path) -> None:
+    """Regression: the watchdog must leave a freshly-started dispatch alone.
+
+    With the fix, ``_run_job`` stamps ``last_run_at = now_ms`` before
+    awaiting the dispatch. A watchdog tick that runs while the dispatch is
+    in flight must see ``now_ms - last_run_at < stale_threshold`` and leave
+    the job's RUNNING status alone so completion can persist.
+    """
+    store = _store(tmp_path)
+    now_ms = 1_000_000
+    # 30-day-old job that just transitioned to RUNNING
+    job = _job(
+        "in-flight",
+        schedule="*/15 * * * *",
+        next_run_at=now_ms,
+        status=JobStatus.RUNNING,
+        created_at=0,
+    )
+    job.last_run_at = now_ms  # _run_job just stamped this
+    job.config = {"job_type": "hub_news_entity"}
+    store.upsert(job)
+
+    # 1 minute later, watchdog ticks
+    watchdog_now = now_ms + 60 * 1000
+
+    async def scenario() -> None:
+        async def dispatch(j: ScheduledResearchJob) -> None:
+            pass
+
+        executor = ScheduledResearchExecutor(store, dispatch)
+        recovered = executor.recover_stale_running(watchdog_now, startup=False)
+
+    asyncio.run(scenario())
+    saved = store.get("in-flight")
+    assert saved is not None
+    assert saved.status == JobStatus.RUNNING, (
+        "watchdog must NOT recover a job that just started dispatching — "
+        "last_run_at is fresh and within the stale threshold"
+    )
+
+
+def test_stale_running_still_recovers_when_last_run_at_is_old(tmp_path: Path) -> None:
+    """Regression: the fix must not regress the original recovery path.
+
+    A RUNNING job whose ``last_run_at`` is genuinely older than the stale
+    threshold (i.e. an actual hang from a previous dispatch) must still be
+    recovered.
+    """
+    store = _store(tmp_path)
+    long_ago = 24 * 60 * 60 * 1000
+    job = _job(
+        "hung",
+        schedule="*/15 * * * *",
+        next_run_at=long_ago - 100,
+        status=JobStatus.RUNNING,
+        created_at=long_ago,
+    )
+    job.last_run_at = long_ago  # last_run_at was set 24h ago — genuinely stale
+    job.config = {"job_type": "index_plan_refresh"}
+    store.upsert(job)
+
+    now_ms = long_ago + 60 * 60 * 1000  # 1 hour after last_run_at
+    recovered = 0
+
+    async def scenario() -> None:
+        nonlocal recovered
+
+        async def dispatch(j: ScheduledResearchJob) -> None:
+            pass
+
+        executor = ScheduledResearchExecutor(store, dispatch)
+        recovered = executor.recover_stale_running(now_ms, startup=False)
+
+    asyncio.run(scenario())
+
+    assert recovered == 1, "a hung job with old last_run_at must still be recovered"
+    saved = store.get("hung")
+    assert saved is not None
+    assert saved.status == JobStatus.PENDING
+    assert saved.next_run_at > now_ms, "recovered job must be advanced to its next cron slot"
+
+
+def test_recovered_running_job_with_no_last_run_at_still_recovered(tmp_path: Path) -> None:
+    """Regression: a never-completed job (last_run_at=None, RUNNING) is still
+    flagged stale by the watchdog via the created_at fallback.
+
+    Without this, an orphan from a crash on a job's very first run (no
+    last_run_at written) would never be recovered.
+    """
+    job = _job(
+        "never-finished",
+        schedule="*/15 * * * *",
+        next_run_at=0,
+        status=JobStatus.RUNNING,
+        created_at=0,
+    )
+    job.last_run_at = None  # crashed on first run, never wrote last_run_at
+    job.config = {"job_type": "hub_news_entity"}
+
+    # Long after created_at → stale by the created_at fallback
+    now_ms = 60 * 60 * 1000  # 1 hour after creation
+    assert is_job_stale_running(job, now_ms) is True

@@ -1,4 +1,5 @@
 import i18n from "@/i18n";
+import { isAbortError } from "@/lib/abort";
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { AlertTriangle } from "lucide-react";
 
@@ -38,6 +39,12 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    // Aborts that bubble to a render-phase boundary are not crashes — they
+    // are a parent cancelling work mid-render. Reporting them as a crash
+    // would render a false "Vibe crashed" banner in the parent shell.
+    if (isAbortError(error)) {
+      return;
+    }
     // Best-effort report to the parent shell. The shell keeps a per-app
     // banner; we don't throw if the report fails (e.g. cross-origin
     // sandbox, no parent). The console.error below preserves the original

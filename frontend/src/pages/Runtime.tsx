@@ -16,6 +16,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { api, type LiveBrokerStatus, type LiveMandateLimits, type LiveStatus, type TradingConnectorProfile, type TradingConnectorsResponse } from "@/lib/api";
+import { isAbortError } from "@/lib/abort";
 import { cn } from "@/lib/utils";
 
 const RUNTIME_POLL_INTERVAL_MS = 15_000;
@@ -65,7 +66,15 @@ export function Runtime() {
     setConnectorsError(null);
 
     const connectorsPromise = api.getTradingConnectors(controller.signal).catch((err) => {
-      if (controller.signal.aborted) throw err;
+      // Aborts are normal lifecycle (refresh / unmount). Return a sentinel
+      // instead of re-throwing: re-throwing here would surface as an
+      // unhandledrejection in the next microtask before the outer
+      // try/catch at the await below attached, which the parent's
+      // unhandledrejection listener (main.tsx) used to render as
+      // "Vibe crashed". See lib/abort.ts for the contract.
+      if (controller.signal.aborted || isAbortError(err)) {
+        return null;
+      }
       console.warn("Failed to load trading connectors", err);
       setConnectorsError(err instanceof Error ? err.message : tRef.current("runtime.connectorProfilesUnavailable"));
       return null;
@@ -76,7 +85,9 @@ export function Runtime() {
       if (!mountedRef.current || !isCurrentStatusRequest(activeRequestRef.current, requestId, controller)) return;
       setStatus(next);
     } catch (err) {
-      if (controller.signal.aborted) return;
+      // Same abort rationale as above: a refresh / unmount aborting this
+      // fetch is not a status-load failure. Swallow silently.
+      if (controller.signal.aborted || isAbortError(err)) return;
       if (!mountedRef.current || !isCurrentStatusRequest(activeRequestRef.current, requestId, controller)) return;
       console.warn("Failed to load runtime status", err);
       setStatus(null);

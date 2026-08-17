@@ -105,7 +105,9 @@ export function SimulatorLiveIndexPanel({
   const pollMs = isRecordingActive ? 2000 : 5000;
   const prevCloseRef = useRef<number | null>(null);
 
-  // Reset chart when symbol changes (avoids stale data bleed-over).
+  // Reset chart when symbol changes, or when switching into/out of replay
+  // mode (avoids stale live/replay data bleeding into the other view while
+  // the next poll is in flight).
   const symbolKey = `${symbol}:${exchange}`;
 
   useEffect(() => {
@@ -118,7 +120,7 @@ export function SimulatorLiveIndexPanel({
     if (seriesRef.current) {
       seriesRef.current.setData([]);
     }
-  }, [symbolKey]);
+  }, [symbolKey, isReplayArmed]);
 
   // Fetch loop.
   useEffect(() => {
@@ -198,7 +200,7 @@ export function SimulatorLiveIndexPanel({
       cancelled = true;
       window.clearInterval(handle);
     };
-  }, [symbolKey, pollMs]);
+  }, [symbolKey, pollMs, isReplayArmed]);
 
   // Mount chart once.
   useEffect(() => {

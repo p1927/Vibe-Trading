@@ -5,6 +5,7 @@ import { RouterProvider } from "react-router";
 import { Toaster } from "sonner";
 import { ErrorBoundary } from "./components/common/ErrorBoundary";
 import { router } from "./router";
+import { isAbortError } from "./lib/abort";
 // Self-hosted fonts (VT-006): vendor the woff2 files locally instead of the
 // Google Fonts CDN. Weights match tailwind.config.ts (Inter 400/500/600/700,
 // JetBrains Mono 400/500/700).
@@ -76,6 +77,16 @@ window.addEventListener("error", (event) => {
 
 window.addEventListener("unhandledrejection", (event) => {
   const reason = event.reason;
+  // Aborts are normal lifecycle (request superseded by refresh, component
+  // unmounted mid-fetch, etc.) — they are not crashes and must NOT post a
+  // `{type:"iframe-error", source:"vibe", message:"signal is aborted
+  // without reason"}` to the parent shell (which renders "Vibe crashed").
+  // Without this filter every 15 s runtime-tab poll produced a spurious
+  // banner. See lib/abort.ts for the contract.
+  if (isAbortError(reason)) {
+    event.preventDefault();
+    return;
+  }
   const message =
     reason instanceof Error
       ? reason.message

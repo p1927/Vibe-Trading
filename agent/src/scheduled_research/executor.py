@@ -685,6 +685,18 @@ class ScheduledResearchExecutor:
             job.last_error = None
 
         job.status = JobStatus.RUNNING
+        # Stamp ``last_run_at`` before the dispatch await so the stale
+        # watchdog (a separate task) sees a fresh ``last_run_at`` while the
+        # dispatch is in flight. Without this, ``last_run_at`` stays at its
+        # previous value (often days old) and ``is_job_stale_running`` falls
+        # back to ``created_at``, marking every mid-dispatch job stale within
+        # 60 seconds. The watchdog then advances ``next_run_at`` and resets
+        # ``status`` to PENDING; when the dispatch completes,
+        # ``_persist_completion`` reads back a PENDING job and silently
+        # discards the completion write (because ``current.status != RUNNING``),
+        # leaving ``last_run_at`` frozen at the old timestamp even though the
+        # job ran successfully.
+        job.last_run_at = now_ms
         self._store.upsert(job)
 
         timeout_ms = dispatch_timeout_ms_for(job)

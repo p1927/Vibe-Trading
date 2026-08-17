@@ -185,6 +185,49 @@ describe("Runtime page", () => {
     expect(signal.aborted).toBe(true);
   });
 
+  it("does not surface aborted fetches as unhandled rejections on refresh", async () => {
+    // The previous bug: every 15 s runtime-tab poll aborted the prior
+    // fetch via controller.abort(); Runtime.tsx's .catch() re-threw the
+    // DOMException, which landed in unhandledrejection for one microtask
+    // and the parent shell rendered "Vibe crashed" with the message
+    // "signal is aborted without reason". After the fix the abort is
+    // swallowed before the postMessage handler can see it.
+    const first = deferred<LiveStatus>();
+    const second = deferred<LiveStatus>();
+    apiMock.getLiveStatus
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (event: PromiseRejectionEvent) => {
+      unhandled.push(event.reason);
+      event.preventDefault();
+    };
+    window.addEventListener("unhandledrejection", onUnhandled);
+
+    try {
+      render(<Runtime />);
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+      // Resolve the second request first (newest wins), then reject the
+      // first with an AbortError (the prior fetch the refresh superseded).
+      await act(async () => {
+        second.resolve(makeStatus());
+        await second.promise;
+      });
+      await act(async () => {
+        first.reject(new DOMException("signal is aborted without reason", "AbortError"));
+        // Allow microtasks to drain so any (incorrect) unhandledrejection
+        // would have fired by now.
+        await new Promise((r) => setTimeout(r, 0));
+      });
+
+      expect(unhandled).toEqual([]);
+    } finally {
+      window.removeEventListener("unhandledrejection", onUnhandled);
+    }
+  });
+
   it("renders sub-minute mandate expiry as seconds", async () => {
     const baseStatus = makeStatus();
     const expiresAt = new Date(Date.now() + 45_000).toISOString();
