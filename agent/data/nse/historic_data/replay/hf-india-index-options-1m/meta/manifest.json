@@ -1,0 +1,27 @@
+{
+  "files": [
+    {
+      "dataset": "index_tape_nifty",
+      "path": "replay/hf-india-index-options-1m/index/NIFTY.parquet",
+      "rows": 2255,
+      "date_range": {
+        "start": "2026-06-29 03:45:00+00:00",
+        "end": "2026-08-17 10:00:00+00:00"
+      },
+      "sha256": "8bef16df019192cafd8231836b10edb5920eae39a08b11978d1b6281587cc42a",
+      "updated_at": "2026-08-17T14:27:01.779882+00:00"
+    },
+    {
+      "dataset": "option_chain_nifty_2026-08-18",
+      "path": "replay/hf-india-index-options-1m/options/NIFTY/2026-08-18.parquet",
+      "rows": 42,
+      "date_range": {
+        "start": "2026-08-17 19:13:35.671427+05:30",
+        "end": "2026-08-17 19:13:35.671427+05:30"
+      },
+      "sha256": "bccea6ae00424c8be728b5c3b134dfbd472171c322b23468523ef5f80e0b68fa",
+      "updated_at": "2026-08-17T13:43:35.683309+00:00"
+    }
+  ],
+  "updated_at": "2026-08-17T14:27:01.779890+00:00"
+}

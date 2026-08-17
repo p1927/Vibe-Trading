@@ -621,6 +621,11 @@ class IndexPredictionRunJobResponse(BaseModel):
 class StartRecordingRequest(BaseModel):
     underlyings: List[str] = Field(default_factory=lambda: ["NIFTY", "BANKNIFTY", "SENSEX"])
     equities: List[str] = Field(default_factory=list)
+    # Opt-in convenience: merges the live NIFTY50 constituent list (via
+    # constituents.load_nifty50_constituents()) into `equities` at job
+    # start, instead of requiring the caller to paste all 50 symbols.
+    # Default False so existing/automated callers are unaffected.
+    include_nifty50_constituents: bool = False
     poll_interval_s: int = 10                       # legacy; used only when category_intervals is None
     category_intervals: Dict[str, int] | None = None
     equity_intervals: Dict[str, int] | None = None
@@ -3311,6 +3316,15 @@ def _kick_recording(body: StartRecordingRequest) -> tuple[str, str, bool]:
         "SENSEX",
     ]
     equities = [e.strip().upper() for e in body.equities if e.strip()]
+    if body.include_nifty50_constituents:
+        from trade_integrations.dataflows.index_research.constituents import (
+            load_nifty50_constituents,
+        )
+
+        constituent_symbols = {
+            r.symbol.strip().upper() for r in load_nifty50_constituents() if r.symbol.strip()
+        }
+        equities = sorted(set(equities) | constituent_symbols)
     job_id, reused = start_job(
         underlyings=underlyings,
         equities=equities,

@@ -1138,10 +1138,15 @@ export const api = {
       })}`,
     ),
   // /trade/hub/stock-history/backfill — run writers for missing buckets.
+  // Backend handlers declare up to 900s each (e.g. index_tape/option_chain's
+  // IndMoney-then-HuggingFace dual-source fetch) — the default 20s abort
+  // was cutting the request off long before a legitimately-slow backfill
+  // could finish, surfacing as a false "timed out" error.
   postHubStockHistoryBackfill: (req: HubStockHistoryBackfillRequest) =>
     request<HubStockHistoryBackfillResponse>("/trade/hub/stock-history/backfill", {
       method: "POST",
       body: JSON.stringify(req),
+      timeoutMs: 900_000,
     }),
   getIndexPredictionFactors: () =>
     request<IndexFactorCatalogResponse>("/trade/index-prediction/factors"),
