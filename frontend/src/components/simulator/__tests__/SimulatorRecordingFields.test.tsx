@@ -7,7 +7,7 @@ import {
 } from "../SimulatorRecordingFields";
 
 describe("SimulatorRecordingFields", () => {
-  it("renders a disclosure with all five INDmoney surface groups", () => {
+  it("renders a disclosure with the recorder-relevant surface groups", () => {
     const { container } = render(<SimulatorRecordingFields />);
 
     // The <details> wrapper carries the testid; the disclosure content is
@@ -26,9 +26,11 @@ describe("SimulatorRecordingFields", () => {
     }
   });
 
-  it("lists every INDmoney endpoint the openalgo adapter actually calls", () => {
-    // Anchored to the adapter at openalgo/broker/indmoney/api/. New endpoints
-    // added there should also appear here so users see the full surface.
+  it("lists every INDmoney market-data endpoint the recorder actually calls", () => {
+    // Anchored to the adapter at openalgo/broker/indmoney/api/. New market-data
+    // endpoints added there should also appear here so users see the full surface.
+    // Orders/portfolio/account endpoints are intentionally out of scope — the
+    // disclosure only covers what the day recorder captures.
     const expectedEndpoints = [
       "/market/option-chain",
       "/market/quotes/mkt",
@@ -37,19 +39,6 @@ describe("SimulatorRecordingFields", () => {
       "/market/quotes",
       "/market/instruments",
       "/market/historical",
-      "/order-book",
-      "/trade-book",
-      "/order",
-      "/smart/order",
-      "/order/modify",
-      "/smart/order/modify",
-      "/order/cancel",
-      "/smart/order/cancel",
-      "/portfolio/holdings",
-      "/portfolio/positions",
-      "/user/profile",
-      "/funds",
-      "/margin",
     ];
     const { container } = render(<SimulatorRecordingFields />);
     const codes = Array.from(container.querySelectorAll("code"));

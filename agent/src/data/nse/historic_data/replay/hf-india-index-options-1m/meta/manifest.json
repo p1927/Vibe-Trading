@@ -1,0 +1,16 @@
+{
+  "files": [
+    {
+      "dataset": "index_tape_nifty",
+      "path": "replay/hf-india-index-options-1m/index/NIFTY.parquet",
+      "rows": 1,
+      "date_range": {
+        "start": "2026-08-17 07:33:00+05:30",
+        "end": "2026-08-17 07:33:00+05:30"
+      },
+      "sha256": "65190ae4f77027191160bf6b40766af025e3ad96b9f65a01ff78459f66e01c83",
+      "updated_at": "2026-08-17T02:03:53.987708+00:00"
+    }
+  ],
+  "updated_at": "2026-08-17T02:03:53.987714+00:00"
+}

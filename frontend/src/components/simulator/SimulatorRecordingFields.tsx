@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import { Database, LineChart, Wallet, Receipt, ListOrdered, BookOpen, User2, Radio, ChevronDown } from "lucide-react";
+import { Database, LineChart, Receipt, User2, Radio, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_CATEGORY_INTERVALS,
@@ -283,151 +283,6 @@ export const RECORDING_FIELD_GROUPS: RecordingFieldGroup[] = [
     ],
   },
   {
-    title: "Orders & trades",
-    icon: ListOrdered,
-    hint: "Order book, trade book, and order-management endpoints — read-only recording hooks.",
-    sections: [
-      {
-        name: "Read-only ledger",
-        fields: [
-          {
-            label: "Order book (live orders)",
-            fields: [
-              "order_id",
-              "symbol / exchange",
-              "side (BUY/SELL)",
-              "quantity / price / trigger_price",
-              "order_type (MKT/LMT/SL/SL-M)",
-              "product (CNC/MIS/NRML)",
-              "status (open/completed/cancelled/rejected)",
-              "timestamp",
-            ],
-            cadence: "on-demand",
-            status: "wired",
-            endpoint: "/order-book",
-          },
-          {
-            label: "Trade book (fills)",
-            fields: [
-              "trade_id",
-              "order_id",
-              "symbol",
-              "quantity / fill_price",
-              "side",
-              "timestamp",
-            ],
-            cadence: "on-demand",
-            status: "wired",
-            endpoint: "/trade-book",
-          },
-        ],
-      },
-      {
-        name: "Order management (not recorded by the day recorder)",
-        fields: [
-          {
-            label: "Place order",
-            fields: ["regular / smart order", "exchange, symbol, qty, price, product"],
-            cadence: "on-demand",
-            status: "available",
-            endpoint: "/order, /smart/order",
-          },
-          {
-            label: "Modify order",
-            fields: ["quantity, price, trigger_price, order_type"],
-            cadence: "on-demand",
-            status: "available",
-            endpoint: "/order/modify, /smart/order/modify",
-          },
-          {
-            label: "Cancel order",
-            fields: ["order_id"],
-            cadence: "on-demand",
-            status: "available",
-            endpoint: "/order/cancel, /smart/order/cancel",
-          },
-        ],
-      },
-    ],
-  },
-  {
-    title: "Portfolio & positions",
-    icon: BookOpen,
-    hint: "Current holdings, positions, and the realised / unrealised P&L snapshot.",
-    sections: [
-      {
-        name: "Holdings & positions",
-        fields: [
-          {
-            label: "Holdings (long-term, CNC)",
-            fields: [
-              "symbol / exchange",
-              "quantity / average_price",
-              "ltp",
-              "current_value",
-              "pnl (realised + unrealised)",
-            ],
-            cadence: "on-demand",
-            status: "wired",
-            endpoint: "/portfolio/holdings",
-          },
-          {
-            label: "Positions (intraday + carry-forward)",
-            fields: [
-              "symbol / exchange / product",
-              "quantity / buy_avg / sell_avg",
-              "ltp",
-              "pnl realised / unrealised",
-              "multiplier",
-            ],
-            cadence: "on-demand",
-            status: "wired",
-            endpoint: "/portfolio/positions",
-          },
-        ],
-      },
-    ],
-  },
-  {
-    title: "Account, funds & margin",
-    icon: Wallet,
-    hint: "User identity, available cash, and margin calculations.",
-    sections: [
-      {
-        name: "Account",
-        fields: [
-          {
-            label: "User profile",
-            fields: ["client_id / user_name / email / mobile"],
-            cadence: "per-request",
-            status: "wired",
-            endpoint: "/user/profile",
-          },
-          {
-            label: "Funds (cash, collateral, margins)",
-            fields: [
-              "availablecash",
-              "collateral",
-              "m2mrealized / m2munrealized",
-              "utiliseddebits",
-              "detailed_avl_balance (eq_cnc, eq_mis, option_buy, ...)",
-            ],
-            cadence: "on-demand",
-            status: "wired",
-            endpoint: "/funds",
-          },
-          {
-            label: "Margin calculator (per-basket)",
-            fields: ["total_margin_required", "span_margin", "exposure_margin"],
-            cadence: "on-demand",
-            status: "wired",
-            endpoint: "/margin",
-          },
-        ],
-      },
-    ],
-  },
-  {
     title: "Session metadata",
     icon: Database,
     hint: "What the recorder itself writes around the captured data.",
@@ -618,6 +473,18 @@ export function useRecordingConfig(): RecordingConfig {
   return _resolveConfig();
 }
 
+/** Fallback cadence restored when a toggle is switched back on after
+ * having been turned off (so re-enabling doesn't leave the interval at
+ * 0/off). Mirrors the page's non-zero defaults. */
+const RESTORE_SECONDS_FALLBACK: Record<string, number> = {
+  option_chain: 10,
+  market_depth: 10,
+  full_quote: 30,
+  equity_option_chain: 10,
+  equity_market_depth: 10,
+  equity_full_quote: 30,
+};
+
 function IntervalControl({
   category,
   disabled,
@@ -644,27 +511,43 @@ function IntervalControl({
     if (isEquity) ctx.setEquityInterval(category, s);
     else ctx.setCategoryInterval(category, s);
   };
+  const enabled = seconds > 0;
   return (
-    <label className="inline-flex items-center gap-1.5">
-      <span className="text-[10px] text-muted-foreground">Record every:</span>
-      <select
-        value={selectedKey}
-        disabled={disabled}
-        onChange={(e) => {
-          const next = intervalKeyToSeconds(e.target.value);
-          setSeconds(next ?? 0);
-        }}
-        className="rounded border bg-background px-1.5 py-0.5 text-[10px]"
-        data-testid={`interval-select-${category}`}
-        aria-label={`Recording interval for ${category}`}
-      >
-        {INTERVAL_OPTIONS.map((opt) => (
-          <option key={opt.key} value={opt.key}>
-            {opt.label}
-          </option>
-        ))}
-      </select>
-    </label>
+    <div className="flex items-center gap-2">
+      <label className="inline-flex items-center gap-1.5" title={enabled ? "Recording this field" : "Not recorded"}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={disabled}
+          onChange={(e) =>
+            setSeconds(e.target.checked ? RESTORE_SECONDS_FALLBACK[category] ?? 10 : 0)
+          }
+          className="h-3.5 w-3.5 rounded border-border"
+          data-testid={`interval-toggle-${category}`}
+          aria-label={`Record ${category}`}
+        />
+      </label>
+      <label className="inline-flex items-center gap-1.5">
+        <span className="text-[10px] text-muted-foreground">Record every:</span>
+        <select
+          value={selectedKey}
+          disabled={disabled || !enabled}
+          onChange={(e) => {
+            const next = intervalKeyToSeconds(e.target.value);
+            setSeconds(next ?? 0);
+          }}
+          className="rounded border bg-background px-1.5 py-0.5 text-[10px]"
+          data-testid={`interval-select-${category}`}
+          aria-label={`Recording interval for ${category}`}
+        >
+          {INTERVAL_OPTIONS.map((opt) => (
+            <option key={opt.key} value={opt.key}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
   );
 }
 

@@ -9,7 +9,7 @@ import {
   type RecordingResult,
   type ReplayCalendarDay,
 } from "@/lib/api";
-import { SimulatorEquityPicker } from "@/components/simulator/SimulatorEquityPicker";
+import { SimulatorInstrumentPicker } from "@/components/simulator/SimulatorInstrumentPicker";
 import { SimulatorLiveIndexPanel } from "@/components/simulator/SimulatorLiveIndexPanel";
 import { SimulatorOptionChainPanel } from "@/components/simulator/SimulatorOptionChainPanel";
 import {
@@ -320,10 +320,6 @@ export function Simulator() {
     return () => window.clearInterval(interval);
   }, [isActive, job?.job_id]);
 
-  const toggleUnderlying = (u: string) => {
-    setSelected((prev) => (prev.includes(u) ? prev.filter((x) => x !== u) : [...prev, u]));
-  };
-
   const startRecording = async () => {
     setBusy(true);
     setError(null);
@@ -499,26 +495,13 @@ export function Simulator() {
       <StatCard title="Record">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            {UNDERLYINGS.map((u) => (
-              <label
-                key={u}
-                className="flex items-center gap-1.5 text-sm"
-                title={isActive ? "Stop the recording to change what's being recorded" : undefined}
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.includes(u)}
-                  disabled={isActive}
-                  onChange={() => toggleUnderlying(u)}
-                  className="h-3.5 w-3.5 rounded border-border"
-                />
-                {u}
-              </label>
-            ))}
-            <span title={isActive ? "Stop the recording to add or remove equities" : undefined}>
-              <SimulatorEquityPicker
-                selected={selectedEquities}
-                onChange={setSelectedEquities}
+            <span title={isActive ? "Stop the recording to change what's being recorded" : undefined}>
+              <SimulatorInstrumentPicker
+                indices={UNDERLYINGS}
+                selectedIndices={selected}
+                onChangeIndices={setSelected}
+                selectedEquities={selectedEquities}
+                onChangeEquities={setSelectedEquities}
                 disabled={isActive}
               />
             </span>

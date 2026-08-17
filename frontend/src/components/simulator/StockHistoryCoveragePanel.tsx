@@ -16,9 +16,9 @@
  * (useEffect, lucide-react icons, cn() helper, @/lib/api client).
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Wand2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, localIsoDate } from "@/lib/utils";
 import {
   type HubStockHistoryBackfillRequest,
   type HubStockHistoryBackfillResponse,
@@ -43,9 +43,7 @@ function mondayOf(d: Date): Date {
   return out;
 }
 
-function isoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
+const isoDate = localIsoDate;
 
 function addDays(d: Date, n: number): Date {
   return new Date(d.getTime() + n * DAY_MS);
@@ -168,10 +166,14 @@ export function StockHistoryCoveragePanel({
     setWeekStart((prev) => addDays(prev, deltaDays));
   }, []);
 
-  const weekEndIso = useMemo(() => {
-    if (!report) return isoDate(addDays(weekStart, 4));
-    return report.week_end;
-  }, [weekStart, report]);
+  // Prefer the backend's own week_start/week_end once loaded — it's the
+  // authoritative Mon..Fri span for whatever `week` we asked it to resolve,
+  // and can legitimately differ from the locally-computed `weekStartIso`
+  // (e.g. immediately after `shiftWeek`, before the new report has landed).
+  // Mixing a fresh local start with a stale backend end previously showed
+  // a reversed 1-2 day range instead of a full week.
+  const displayWeekStart = report?.week_start ?? weekStartIso;
+  const displayWeekEnd = report?.week_end ?? isoDate(addDays(weekStart, 4));
 
   return (
     <div className={cn("flex flex-col gap-3", className)}>
@@ -186,7 +188,7 @@ export function StockHistoryCoveragePanel({
             <ChevronLeft className="h-4 w-4" />
           </button>
           <div className="font-mono text-sm">
-            {weekStartIso} &mdash; {weekEndIso}
+            {displayWeekStart} &mdash; {displayWeekEnd}
           </div>
           <button
             type="button"

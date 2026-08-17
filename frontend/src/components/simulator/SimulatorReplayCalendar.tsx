@@ -1,19 +1,28 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, localIsoDate } from "@/lib/utils";
 import { type ReplayCalendarDay } from "@/lib/api";
 
 // Rows are JS Sun..Sat (0..6). Show a label every other row so we render
 // Mon/Wed/Fri exactly, matching GitHub's contribution graph.
 const ROW_LABELS = ["", "Mon", "", "Wed", "", "Fri", ""];
 
-// Cell + gap dimensions, shared by the weekday column, month-label row, and
-// cell columns so a flex row/column layout keeps everything aligned without
-// any manual grid-index math.
+// Cell + gap dimensions. The grid (weekday column, month-label row, and
+// cell columns) is laid out with CSS Grid on a shared row/column track
+// list, so every label's row/column index maps directly onto a cell's —
+// no manual padding-offset math that can drift out of sync.
 const CELL_PX = 12;
 const CELL_GAP_PX = 3;
+const LABEL_COL_PX = 28;
+const HEADER_ROW_PX = 14;
 const WEEKS = 53;
 const WINDOW_DAYS = WEEKS * 7;
+// Minimum column gap between two month labels. Short calendar windows can
+// start mid-month, putting that month's label 1 column from the next
+// month's — close enough that the label text (up to 4 characters) visibly
+// overlaps. Suppress a label if it would land within this many columns of
+// the last one shown, mirroring GitHub's contribution-graph behaviour.
+const MIN_MONTH_LABEL_GAP_COLS = 3;
 
 type Underlying = "nifty" | "banknifty" | "sensex";
 
@@ -21,9 +30,7 @@ function toDateOnly(iso: string): Date {
   return new Date(iso + "T00:00:00");
 }
 
-function isoDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
+const isoDate = localIsoDate;
 
 function addDays(d: Date, n: number): Date {
   const next = new Date(d);
@@ -49,6 +56,7 @@ function buildGrid(
   const weeks: { date: Date; day: ReplayCalendarDay | null }[][] = [];
   const months: { col: number; label: string; year: number }[] = [];
   const seenMonth = new Set<string>();
+  let lastLabelCol = -Infinity;
 
   for (let w = 0; w < WEEKS; w++) {
     const week: { date: Date; day: ReplayCalendarDay | null }[] = [];
@@ -56,16 +64,21 @@ function buildGrid(
       const cell = addDays(startSunday, w * 7 + d);
       const key = isoDate(cell);
       const day = byKey.get(key) ?? null;
-      // Label the first cell of every new month so columns stay grouped.
+      // Label the first cell of every new month so columns stay grouped —
+      // but skip the label if it would sit too close to the previous one
+      // (a short first/last month in the window), so labels never overlap.
       if (d === 0) {
         const mkey = `${cell.getFullYear()}-${cell.getMonth()}`;
         if (!seenMonth.has(mkey)) {
           seenMonth.add(mkey);
-          months.push({
-            col: w,
-            label: cell.toLocaleString(undefined, { month: "short" }),
-            year: cell.getFullYear(),
-          });
+          if (w - lastLabelCol >= MIN_MONTH_LABEL_GAP_COLS) {
+            months.push({
+              col: w,
+              label: cell.toLocaleString(undefined, { month: "short" }),
+              year: cell.getFullYear(),
+            });
+            lastLabelCol = w;
+          }
         }
       }
       week.push({ date: cell, day });
@@ -143,9 +156,14 @@ export interface ReplayRange {
 /**
  * GitHub-contribution-style heatmap calendar with two-click range selection:
  * click a day to anchor the range start, click a second day to set the end
- * (order-normalized — clicking "before" the anchor flips start/end). A third
- * click starts a fresh single-day range. Cells strictly between the anchor
- * and the hovered cell preview the pending range before the second click.
+ * (order-normalized — clicking "before" the anchor flips start/end). Cells
+ * strictly between the anchor and the hovered cell preview the pending
+ * range before the second click.
+ *
+ * Clicking the day that is currently the *entire* selection (a single-day
+ * range) toggles it off instead of re-selecting it — the only way to clear
+ * a selection otherwise. Clicking any other day starts a fresh single-day
+ * selection (or, with an anchor pending, completes a range).
  *
  * Double-clicking a day (independent of the range click) reports it via
  * `onDaySelect` so a caller can show a details panel for that date, without
@@ -164,7 +182,7 @@ export function SimulatorReplayCalendar({
   days: ReplayCalendarDay[];
   range: ReplayRange | null;
   armedRange: ReplayRange | null;
-  onRangeSelect: (range: ReplayRange) => void;
+  onRangeSelect: (range: ReplayRange | null) => void;
   onDaySelect?: (day: ReplayCalendarDay) => void;
   selectedDate?: string | null;
 }) {
@@ -222,6 +240,15 @@ export function SimulatorReplayCalendar({
 
   function handleClick(day: ReplayCalendarDay) {
     const key = day.date;
+    // Re-clicking the day that is currently the whole (single-day)
+    // selection toggles it off. Without this, a second click on the same
+    // day just "completed" a zero-length range identical to what was
+    // already there — selection could never be cleared.
+    if (range && range.start === key && range.end === key) {
+      setAnchor(null);
+      onRangeSelect(null);
+      return;
+    }
     if (anchor === null || (range && range.start !== range.end)) {
       // Starting a fresh selection (nothing anchored, or a full range from a
       // prior selection is already showing).
@@ -290,123 +317,120 @@ export function SimulatorReplayCalendar({
 
       <div className="overflow-x-auto rounded-lg border bg-background/60 p-3">
         {/*
-          Flex layout: a fixed weekday-label column next to a scroll-free
-          column containing the month-label row above the week columns. Each
-          week is its own flex column of 7 day cells, so cell stacking and
-          label alignment fall out of normal flex flow instead of manual
-          CSS-grid index math.
+          CSS Grid: one shared row/column track list for the weekday-label
+          column, the month-label header row, and every day cell. Each
+          label/cell is placed by explicit grid-row/grid-column index, so
+          alignment is guaranteed by the grid itself rather than by manual
+          padding/gap arithmetic staying in sync across three separate flex
+          containers.
         */}
-        <div className="flex items-start gap-[3px]" onMouseLeave={() => setHovered(null)}>
-          <div
-            className="flex shrink-0 flex-col gap-[3px]"
-            style={{ paddingTop: `${CELL_PX + CELL_GAP_PX}px` }}
-          >
-            {ROW_LABELS.map((label, di) => (
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: `${LABEL_COL_PX}px repeat(${weeks.length}, ${CELL_PX}px)`,
+            gridTemplateRows: `${HEADER_ROW_PX}px repeat(7, ${CELL_PX}px)`,
+            columnGap: `${CELL_GAP_PX}px`,
+            rowGap: `${CELL_GAP_PX}px`,
+          }}
+          onMouseLeave={() => setHovered(null)}
+        >
+          {ROW_LABELS.map((label, di) =>
+            label ? (
               <div
                 key={`wd-${di}`}
-                className="text-[9px] text-muted-foreground/70"
-                // Line-height pinned to the cell height (rather than relying on
-                // flex centering + `leading-none`) so the label's text baseline
-                // lands in the middle of its 12px row, matching the day-cell
-                // grid exactly instead of drifting by a subpixel per row.
-                style={{ height: `${CELL_PX}px`, lineHeight: `${CELL_PX}px` }}
+                className="text-[9px] leading-none text-muted-foreground/70"
+                style={{
+                  gridColumn: 1,
+                  gridRow: di + 2,
+                  alignSelf: "center",
+                }}
               >
                 {label}
               </div>
-            ))}
-          </div>
+            ) : null,
+          )}
 
-          <div className="flex flex-col gap-[3px]">
-            <div className="flex items-end gap-[3px]" style={{ height: `${CELL_PX}px` }}>
-              {weeks.map((_, col) => {
-                const label = months.find((m) => m.col === col)?.label ?? "";
-                return (
-                  <div
-                    key={`m-${col}`}
-                    className="shrink-0 text-[9px] leading-none text-muted-foreground/70"
-                    style={{ width: `${CELL_PX}px` }}
-                  >
-                    {label}
-                  </div>
-                );
-              })}
+          {months.map((m) => (
+            <div
+              key={`m-${m.col}`}
+              className="shrink-0 text-[9px] leading-none text-muted-foreground/70"
+              style={{ gridColumn: m.col + 2, gridRow: 1, alignSelf: "end" }}
+            >
+              {m.label}
             </div>
+          ))}
 
-            <div className="flex gap-[3px]">
-              {weeks.map((week, wi) => (
-                <div key={wi} className="flex shrink-0 flex-col gap-[3px]">
-                  {week.map((cell, di) => {
-                    const key = isoDate(cell.date);
-                    const day = cell.day;
-                    const total = day ? densityLevel(day) : 0;
-                    const underlying = day ? perUnderlying(day) : null;
-                    const inSelectedRange = Boolean(range && key >= range.start && key <= range.end);
-                    const isRangeEdge = Boolean(range && (key === range.start || key === range.end));
-                    const inPreview = Boolean(
-                      previewStart && previewLast && key >= previewStart && key <= previewLast,
-                    );
-                    const isArmed = Boolean(
-                      armedRange && key >= armedRange.start && key <= armedRange.end,
-                    );
-                    const isFuture = cell.date > today;
-                    const isToday = sameDay(cell.date, today);
-                    const isSelected = Boolean(selectedDate && key === selectedDate);
-                    const noData = !day || total === 0;
+          {weeks.map((week, wi) =>
+            week.map((cell, di) => {
+              const key = isoDate(cell.date);
+              const day = cell.day;
+              const total = day ? densityLevel(day) : 0;
+              const underlying = day ? perUnderlying(day) : null;
+              const inSelectedRange = Boolean(range && key >= range.start && key <= range.end);
+              const isRangeEdge = Boolean(range && (key === range.start || key === range.end));
+              const inPreview = Boolean(
+                previewStart && previewLast && key >= previewStart && key <= previewLast,
+              );
+              const isArmed = Boolean(
+                armedRange && key >= armedRange.start && key <= armedRange.end,
+              );
+              const isFuture = cell.date > today;
+              const isToday = sameDay(cell.date, today);
+              const isSelected = Boolean(selectedDate && key === selectedDate);
+              const noData = !day || total === 0;
 
-                    // Pick the dominant underlying (highest density tier
-                    // present) for the cell background; the other two
-                    // contribute as borders so all three are visible at a
-                    // glance.
-                    const dom: Underlying = underlying
-                      ? (["nifty", "banknifty", "sensex"] as Underlying[]).reduce(
-                          (best, u) => (underlying[u] > underlying[best] ? u : best),
-                          "nifty",
-                        )
-                      : "nifty";
-                    const domLvl = underlying ? underlying[dom] : 0;
+              // Pick the dominant underlying (highest density tier
+              // present) for the cell background; the other two
+              // contribute as borders so all three are visible at a
+              // glance.
+              const dom: Underlying = underlying
+                ? (["nifty", "banknifty", "sensex"] as Underlying[]).reduce(
+                    (best, u) => (underlying[u] > underlying[best] ? u : best),
+                    "nifty",
+                  )
+                : "nifty";
+              const domLvl = underlying ? underlying[dom] : 0;
 
-                    return (
-                      <button
-                        key={`${wi}-${di}`}
-                        type="button"
-                        disabled={noData || isFuture}
-                        onClick={() => day && handleClick(day)}
-                        onDoubleClick={() => day && onDaySelect?.(day)}
-                        onMouseEnter={() => day && setHovered(day.date)}
-                        title={
-                          day
-                            ? `${day.date} · NIFTY ${day.nifty_rows} · BANKNIFTY ${day.banknifty_rows} · SENSEX ${day.sensex_rows} · double-click for details`
-                            : key
-                        }
-                        className={cn(
-                          "rounded-[2px] border transition-colors",
-                          "h-[12px] w-[12px]",
-                          noData && "border-border/40 bg-muted/40",
-                          !noData && UNDERLYING_PALETTE[dom][domLvl],
-                          // Underlying presence strips. When a cell has any
-                          // data, paint a thin top/left/right border in the
-                          // other two underlyings' colours so all three
-                          // stack visibly.
-                          !noData && underlying?.nifty && underlying.nifty > 0 && "border-l-2 border-l-emerald-500/70",
-                          !noData && underlying?.banknifty && underlying.banknifty > 0 && "border-r-2 border-r-blue-500/70",
-                          !noData && underlying?.sensex && underlying.sensex > 0 && "border-t-2 border-t-amber-500/70",
-                          isToday && !isArmed && !inSelectedRange && "ring-1 ring-amber-400/60",
-                          inPreview && !inSelectedRange && "ring-1 ring-primary/50",
-                          inSelectedRange && !isRangeEdge && "ring-1 ring-primary/70",
-                          isRangeEdge && "ring-2 ring-primary",
-                          isArmed && "ring-2 ring-amber-400",
-                          isSelected && "ring-2 ring-foreground",
-                          isFuture && "opacity-40",
-                        )}
-                        aria-label={day ? `Replay ${day.date}` : `No data ${key}`}
-                        data-testid={`replay-day-${key}`}
-                      />
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          </div>
+              return (
+                <button
+                  key={`${wi}-${di}`}
+                  type="button"
+                  disabled={noData || isFuture}
+                  onClick={() => day && handleClick(day)}
+                  onDoubleClick={() => day && onDaySelect?.(day)}
+                  onMouseEnter={() => day && setHovered(day.date)}
+                  title={
+                    day
+                      ? `${day.date} · NIFTY ${day.nifty_rows} · BANKNIFTY ${day.banknifty_rows} · SENSEX ${day.sensex_rows} · double-click for details`
+                      : key
+                  }
+                  style={{ gridColumn: wi + 2, gridRow: di + 2 }}
+                  className={cn(
+                    "rounded-[2px] border transition-colors",
+                    "h-[12px] w-[12px]",
+                    noData && "border-border/40 bg-muted/40",
+                    !noData && UNDERLYING_PALETTE[dom][domLvl],
+                    // Underlying presence strips. When a cell has any
+                    // data, paint a thin top/left/right border in the
+                    // other two underlyings' colours so all three
+                    // stack visibly.
+                    !noData && underlying?.nifty && underlying.nifty > 0 && "border-l-2 border-l-emerald-500/70",
+                    !noData && underlying?.banknifty && underlying.banknifty > 0 && "border-r-2 border-r-blue-500/70",
+                    !noData && underlying?.sensex && underlying.sensex > 0 && "border-t-2 border-t-amber-500/70",
+                    isToday && !isArmed && !inSelectedRange && "ring-1 ring-amber-400/60",
+                    inPreview && !inSelectedRange && "ring-1 ring-primary/50",
+                    inSelectedRange && !isRangeEdge && "ring-1 ring-primary/70",
+                    isRangeEdge && "ring-2 ring-primary",
+                    isArmed && "ring-2 ring-amber-400",
+                    isSelected && "ring-2 ring-foreground",
+                    isFuture && "opacity-40",
+                  )}
+                  aria-label={day ? `Replay ${day.date}` : `No data ${key}`}
+                  data-testid={`replay-day-${key}`}
+                />
+              );
+            }),
+          )}
         </div>
 
         {/* Legend */}
