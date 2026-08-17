@@ -277,47 +277,83 @@ function CoverageHeatmap({ report, loading, selected, onCellClick }: HeatmapProp
   }
 
   const labels = report.bucket_labels;
-  const labelWidth = Math.max(...labels.map((l) => l.length)) + 2;
+    // Per-key macro / valuation / rate rows have long internal names
+    // (e.g. `valuation_nifty_pe`); show a short human label in the cell
+    // while keeping the long id in the data-row attribute so the
+    // backfill click still targets the right bucket name.
+    const SHORT_LABEL: Record<string, string> = {
+      macro_oil_brent: "Oil (Brent)",
+      macro_oil_wti: "Oil (WTI)",
+      macro_usd_inr: "USD/INR",
+      macro_gold: "Gold",
+      macro_sp500: "S&P 500",
+      macro_india_vix: "India VIX",
+      valuation_nifty_pe: "NIFTY PE",
+      valuation_nifty_pb: "NIFTY PB",
+      valuation_nifty_dy: "NIFTY DivY",
+      rate_repo_rate: "Repo",
+      rate_india_10y: "India 10Y",
+      rate_india_91d_tbill: "India 91d",
+      index_tape_nifty: "NIFTY 1-min",
+      index_tape_banknifty: "BANKNIFTY 1-min",
+      index_tape_sensex: "SENSEX 1-min",
+      option_chain_nifty: "NIFTY chain",
+      option_chain_banknifty: "BANKNIFTY chain",
+      option_chain_sensex: "SENSEX chain",
+      constituents: "Const.",
+      constituent_ohlcv: "Const. OHLCV",
+      equity_ohlcv: "All-50 equities",
+      corporate_actions: "Corp. actions",
+      intraday_5min: "5-min intraday",
+      news_events: "News",
+      ticks_daily: "Timescale ticks",
+    };
+    const labelWidth = Math.max(
+      ...labels.map((l) => (SHORT_LABEL[l] ?? l).length)
+    ) + 2;
 
-  return (
-    <div className="overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-700">
-      <table className="w-full border-collapse text-xs">
-        <thead>
-          <tr>
-            <th
-              className="border-b border-zinc-200 bg-zinc-50 px-2 py-1 text-left font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-              style={{ minWidth: `${labelWidth}ch` }}
-            >
-              bucket
-            </th>
-            {report.days.map((d) => (
+    return (
+      <div className="overflow-x-auto rounded-md border border-zinc-200 dark:border-zinc-700">
+        <table className="w-full border-collapse text-xs">
+          <thead>
+            <tr>
               <th
-                key={d.day}
-                className="border-b border-zinc-200 bg-zinc-50 px-2 py-1 text-center font-mono font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
-                style={{ minWidth: "5rem" }}
+                className="border-b border-zinc-200 bg-zinc-50 px-2 py-1 text-left font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                style={{ minWidth: `${labelWidth}ch` }}
               >
-                {d.day.slice(5)}
+                bucket
               </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {labels.map((bucket) => (
-            <tr key={bucket}>
-              <td className="border-b border-zinc-100 bg-white px-2 py-1 font-mono text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
-                {bucket}
-              </td>
-              {report.days.map((day) => (
-                <CoverageCell
-                  key={`${bucket}-${day.day}`}
-                  bucket={bucket}
-                  day={day}
-                  selected={selected}
-                  onClick={onCellClick}
-                />
+              {report.days.map((d) => (
+                <th
+                  key={d.day}
+                  className="border-b border-zinc-200 bg-zinc-50 px-2 py-1 text-center font-mono font-medium text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                  style={{ minWidth: "5rem" }}
+                >
+                  {d.day.slice(5)}
+                </th>
               ))}
             </tr>
-          ))}
+          </thead>
+          <tbody>
+            {labels.map((bucket) => (
+              <tr key={bucket} data-bucket={bucket}>
+                <td
+                  className="border-b border-zinc-100 bg-white px-2 py-1 font-mono text-zinc-700 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300"
+                  title={bucket}
+                >
+                  {SHORT_LABEL[bucket] ?? bucket}
+                </td>
+                {report.days.map((day) => (
+                  <CoverageCell
+                    key={`${bucket}-${day.day}`}
+                    bucket={bucket}
+                    day={day}
+                    selected={selected}
+                    onClick={onCellClick}
+                  />
+                ))}
+              </tr>
+            ))}
         </tbody>
       </table>
     </div>
