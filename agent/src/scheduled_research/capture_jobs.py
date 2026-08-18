@@ -19,9 +19,19 @@ HUB_CAPTURE_ENABLE_SCHEDULER_ENV = "HUB_CAPTURE_ENABLE_SCHEDULER"
 HUB_CAPTURE_INTRADAY_CRON_ENV = "HUB_CAPTURE_INTRADAY_CRON"
 DEFAULT_INTRADAY_CRON = "0 10,13,15 * * 1-5"
 
-JOB_TYPE_HUB_CAPTURE_INTRADAY = "hub_capture_intraday"
+# Flow/VIX snapshot cadence — more frequent than the option-chain job
+# above since fii_net_5d/dii_net_5d/nifty_pcr/dii_absorption_ratio are
+# pinned Ridge factors (see docs/factors-document.md); default mirrors the
+# recorder's own flow_poller.py cadence (every 30 min during the session).
+HUB_CAPTURE_FACTOR_SNAPSHOT_CRON_ENV = "HUB_CAPTURE_FACTOR_SNAPSHOT_CRON"
+DEFAULT_FACTOR_SNAPSHOT_CRON = "*/30 9-16 * * 1-5"
 
-HUB_CAPTURE_JOB_TYPES = frozenset({JOB_TYPE_HUB_CAPTURE_INTRADAY})
+JOB_TYPE_HUB_CAPTURE_INTRADAY = "hub_capture_intraday"
+JOB_TYPE_HUB_CAPTURE_FACTOR_SNAPSHOT = "hub_capture_factor_snapshot"
+
+HUB_CAPTURE_JOB_TYPES = frozenset(
+    {JOB_TYPE_HUB_CAPTURE_INTRADAY, JOB_TYPE_HUB_CAPTURE_FACTOR_SNAPSHOT}
+)
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
@@ -56,10 +66,23 @@ def run_hub_capture_intraday_job(config: dict[str, Any] | None = None) -> dict[s
     return summary
 
 
+def run_hub_capture_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.hub_capture.factor_snapshot import run_factor_snapshot_capture
+
+    entity_id = (config or {}).get("entity_id")
+    summary = run_factor_snapshot_capture(entity_id=str(entity_id).upper() if entity_id else None)
+    logger.info("hub capture factor snapshot: %s", summary.get("status"))
+    return summary
+
+
 def dispatch_hub_capture_job_sync(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_HUB_CAPTURE_INTRADAY:
         run_hub_capture_intraday_job(job.config)
+        return
+    if job_type == JOB_TYPE_HUB_CAPTURE_FACTOR_SNAPSHOT:
+        run_hub_capture_factor_snapshot_job(job.config)
         return
     raise ValueError(f"unsupported hub_capture job_type: {job_type!r}")
 
@@ -71,22 +94,46 @@ async def dispatch_hub_capture_job(job: ScheduledResearchJob) -> None:
 def register_default_hub_capture_jobs(store: ScheduledResearchJobStore) -> int:
     if not is_hub_capture_scheduler_enabled():
         return 0
+    now_ms = int(time.time() * 1000)
+    registered = 0
+
     cron = os.getenv(HUB_CAPTURE_INTRADAY_CRON_ENV, DEFAULT_INTRADAY_CRON).strip()
     validate_schedule(cron)
     job_id = "hub-capture-intraday"
-    if store.get(job_id) is not None:
-        return 0
-    now_ms = int(time.time() * 1000)
-    store.upsert(
-        ScheduledResearchJob(
-            id=job_id,
-            prompt="Hub capture: intraday NIFTY option chain snapshots for proprietary factor history",
-            schedule=cron,
-            next_run_at=now_ms,
-            status=JobStatus.PENDING,
-            created_at=now_ms,
-            config={"job_type": JOB_TYPE_HUB_CAPTURE_INTRADAY, "entity_id": "NIFTY"},
+    if store.get(job_id) is None:
+        store.upsert(
+            ScheduledResearchJob(
+                id=job_id,
+                prompt="Hub capture: intraday NIFTY option chain snapshots for proprietary factor history",
+                schedule=cron,
+                next_run_at=now_ms,
+                status=JobStatus.PENDING,
+                created_at=now_ms,
+                config={"job_type": JOB_TYPE_HUB_CAPTURE_INTRADAY, "entity_id": "NIFTY"},
+            )
         )
-    )
-    logger.info("registered hub capture job %s (%s)", job_id, cron)
-    return 1
+        logger.info("registered hub capture job %s (%s)", job_id, cron)
+        registered += 1
+
+    # Independent of the intraday job above — registered separately so
+    # deployments that already have "hub-capture-intraday" (from before this
+    # job existed) still pick up the new one instead of short-circuiting.
+    factor_cron = os.getenv(HUB_CAPTURE_FACTOR_SNAPSHOT_CRON_ENV, DEFAULT_FACTOR_SNAPSHOT_CRON).strip()
+    validate_schedule(factor_cron)
+    factor_job_id = "hub-capture-factor-snapshot"
+    if store.get(factor_job_id) is None:
+        store.upsert(
+            ScheduledResearchJob(
+                id=factor_job_id,
+                prompt="Hub capture: FII/DII flow + India VIX snapshots for proprietary factor history",
+                schedule=factor_cron,
+                next_run_at=now_ms,
+                status=JobStatus.PENDING,
+                created_at=now_ms,
+                config={"job_type": JOB_TYPE_HUB_CAPTURE_FACTOR_SNAPSHOT, "entity_id": "NIFTY"},
+            )
+        )
+        logger.info("registered hub capture job %s (%s)", factor_job_id, factor_cron)
+        registered += 1
+
+    return registered

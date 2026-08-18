@@ -23,6 +23,8 @@ INDEX_MONITOR_POLL_CRON_ENV = "INDEX_MONITOR_POLL_CRON"
 DEFAULT_SNAPSHOT_CRON = "0 18 * * *"
 DEFAULT_FULL_CRON = "0 8 * * 1"
 DEFAULT_INDEX_POLL_CRON = "*/5 * * * *"
+STOCK_HISTORY_COVERAGE_SWEEP_CRON_ENV = "STOCK_HISTORY_COVERAGE_SWEEP_CRON"
+DEFAULT_STOCK_HISTORY_COVERAGE_SWEEP_CRON = "0 19 * * *"
 
 JOB_TYPE_INDEX_FACTOR_SNAPSHOT = "index_factor_snapshot"
 JOB_TYPE_INDEX_RESEARCH = "index_research"
@@ -33,6 +35,7 @@ JOB_TYPE_COMPANY_RESEARCH_ARCHIVE = "company_research_archive"
 JOB_TYPE_INDEX_PREDICTION_POST_CLOSE = "index_prediction_post_close"
 JOB_TYPE_HUB_NEWS_ENTITY = "hub_news_entity"
 JOB_TYPE_HUB_NEWS_INGEST = "hub_news_ingest"
+JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP = "stock_history_coverage_sweep"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -43,6 +46,7 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_PREDICTION_POST_CLOSE,
     JOB_TYPE_HUB_NEWS_ENTITY,
     JOB_TYPE_HUB_NEWS_INGEST,
+    JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP,
 })
 
 LAST_RESULT_CONFIG_KEY = "_last_result_summary"
@@ -446,6 +450,46 @@ def run_index_calibration_job(config: dict[str, Any] | None = None) -> dict[str,
     )
 
 
+def run_stock_history_coverage_sweep_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Daily full-coverage backfill sweep.
+
+    Before this job existed, the only automatic trigger for the
+    stock_history coverage buckets was `StockHistory.supplement_today()`
+    (called once per recording session for 3 macro/flow buckets only —
+    and until recently that call was itself a no-op due to a bucket-
+    name mismatch, see `stock_history/coverage.py`). Every other bucket
+    (constituents, constituent_ohlcv, sector_index_daily, equity_ohlcv,
+    index_tape_*, ...) had a working backfill handler but nothing ever
+    called it, so several went stale for weeks to over a year with no
+    error surfaced anywhere. This job runs `backfill_into_week` for the
+    current ISO week across every registered bucket (`include_optional`
+    covers the optional/soft buckets too), so gaps get caught the same
+    week they appear instead of accumulating silently.
+    """
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.stock_history.api import StockHistory
+    from trade_integrations.dataflows.company_research.market import india_trading_date_iso
+
+    cfg = config or {}
+    try:
+        sh = StockHistory()
+        summary = sh.backfill_into_week(
+            week_start=india_trading_date_iso()[:10],
+            include_optional=bool(cfg.get("include_optional", True)),
+            verify_after=True,
+        )
+        return {
+            "status": "error" if summary.had_errors else "ok",
+            "ok_count": summary.ok_count,
+            "failed_count": summary.failed_count,
+            "skipped_count": summary.skipped_count,
+            "had_errors": summary.had_errors,
+        }
+    except Exception as exc:
+        logger.exception("stock_history coverage sweep failed")
+        return {"status": "error", "error": str(exc), "had_errors": True}
+
+
 def run_hub_news_entity_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Drain staging queue and optionally run heavy entity maintenance."""
     _ensure_trade_integrations_on_path()
@@ -543,6 +587,11 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         _attach_job_result_summary(job, summary)
         logger.info("hub news ingest completed for job %s: %s", job.id, summary)
         return
+    if job_type == JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP:
+        summary = run_stock_history_coverage_sweep_job(job.config)
+        _attach_job_result_summary(job, summary)
+        logger.info("stock_history coverage sweep completed for job %s: %s", job.id, summary)
+        return
     raise ValueError(f"unsupported index job_type: {job_type!r}")
 
 
@@ -555,8 +604,12 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     """Register default NIFTY index jobs when missing. Returns count created."""
     snapshot_cron = os.getenv(INDEX_RESEARCH_SNAPSHOT_CRON_ENV, DEFAULT_SNAPSHOT_CRON).strip()
     full_cron = os.getenv(INDEX_RESEARCH_FULL_CRON_ENV, DEFAULT_FULL_CRON).strip()
+    coverage_sweep_cron = os.getenv(
+        STOCK_HISTORY_COVERAGE_SWEEP_CRON_ENV, DEFAULT_STOCK_HISTORY_COVERAGE_SWEEP_CRON
+    ).strip()
     validate_schedule(snapshot_cron)
     validate_schedule(full_cron)
+    validate_schedule(coverage_sweep_cron)
 
     skip_unified_duplicates = False
     try:
@@ -700,6 +753,19 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "enrich_days": _POST_CLOSE_LIGHT_ENRICH_DAYS,
                 "horizon_days": 14,
                 "include_bottom_up": True,
+            },
+        ),
+        ScheduledResearchJob(
+            id="stock-history-coverage-sweep",
+            prompt="Daily full-coverage backfill sweep (all stock_history buckets)",
+            schedule=coverage_sweep_cron,
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP,
+                "include_optional": True,
+                "dispatch_timeout_ms": 1_800_000,
             },
         ),
     ]

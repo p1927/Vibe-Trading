@@ -150,7 +150,6 @@ export function Simulator() {
   const [logs, setLogs] = useState<PipelineLogEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sessions, setSessions] = useState<string[]>([]);
   const [calendarDays, setCalendarDays] = useState<ReplayCalendarDay[]>([]);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   // Distinct from calendarError: the token simply isn't set up yet, not a
@@ -224,13 +223,6 @@ export function Simulator() {
       ?.detail as { next_open_at?: string } | undefined)?.next_open_at) ||
     "—";
 
-  const loadSessions = useCallback(() => {
-    api
-      .listRecordingSessions()
-      .then((res) => setSessions(res.sessions || []))
-      .catch(() => {});
-  }, []);
-
   const loadCalendar = useCallback(() => {
     setCalendarError(null);
     setReplayNotConfigured(null);
@@ -265,7 +257,7 @@ export function Simulator() {
           onLog: (entry) => setLogs((prev) => [...prev, entry]),
           onDone: (result: RecordingResult) => {
             setJob((prev) => (prev ? { ...prev, status: "done", result } : prev));
-            loadSessions();
+            loadCalendar();
           },
           onError: (message) => {
             setJob((prev) => (prev ? { ...prev, status: "error", error: message } : prev));
@@ -274,10 +266,9 @@ export function Simulator() {
         controller.signal,
       )
       .catch(() => {});
-  }, [loadSessions]);
+  }, [loadCalendar]);
 
   useEffect(() => {
-    loadSessions();
     loadCalendar();
     api
       .getActiveRecording()
@@ -727,30 +718,6 @@ export function Simulator() {
                 : "Select a date"}
             </button>
           </div>
-
-          {sessions.length > 0 ? (
-            <details className="rounded-lg border bg-background/40 px-3 py-2 text-xs">
-              <summary className="cursor-pointer text-muted-foreground">
-                {sessions.length} raw session dates (legacy list)
-              </summary>
-              <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-3 md:grid-cols-4">
-                {sessions.map((d) => (
-                  <li key={d}>
-                    <button
-                      type="button"
-                      onClick={() => setReplayRange({ start: d, end: d })}
-                      className={cn(
-                        "font-mono text-[11px] hover:underline",
-                        replayRange?.start === d && replayRange.end === d && "text-primary",
-                      )}
-                    >
-                      {d}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </details>
-          ) : null}
 
           {replayError ? <p className="text-[11px] text-destructive">{replayError}</p> : null}
           <p className="text-[11px] text-muted-foreground">

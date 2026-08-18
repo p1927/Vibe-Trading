@@ -10,7 +10,7 @@ import {
   type PriceBar,
   type ReplayCalendarDay,
 } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, localIsoDate } from "@/lib/utils";
 
 type Underlying = "NIFTY" | "BANKNIFTY" | "SENSEX";
 
@@ -55,8 +55,22 @@ function fmtNum(n: number | null | undefined): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+// A partially-backfilled bucket can return a non-empty `bars` array where
+// individual rows carry null/non-finite OHLC. Those slip past every
+// `bars.length === 0` gate downstream and render as candles ECharts silently
+// drops — a blank chart with no explanation. Filter them out here so
+// `bars.length` and "does this actually have plottable data" agree.
+function barHasFiniteOhlc(b: HubIndexHistoryBar): boolean {
+  return (
+    Number.isFinite(b.open) &&
+    Number.isFinite(b.high) &&
+    Number.isFinite(b.low) &&
+    Number.isFinite(b.close)
+  );
+}
+
 function barsToPriceBars(bars: HubIndexHistoryBar[]): PriceBar[] {
-  return bars.map((b) => ({
+  return bars.filter(barHasFiniteOhlc).map((b) => ({
     time: b.ts_ist.slice(11, 16),
     open: b.open,
     high: b.high,
@@ -94,7 +108,7 @@ export function SimulatorReplayDetailPanel({
   const [coverageDay, setCoverageDay] = useState<HubStockHistoryCoverageDay | null>(null);
   const [coverageLoading, setCoverageLoading] = useState(false);
   const [coverageError, setCoverageError] = useState<string | null>(null);
-  const [backfilling, setBackfilling] = useState<string | null>(null);
+  const [backfilling, setBackfilling] = useState<Set<string>>(new Set());
   const [backfillResult, setBackfillResult] = useState<
     Record<string, HubStockHistoryBackfillResult | { error: string }>
   >({});
@@ -218,20 +232,21 @@ export function SimulatorReplayDetailPanel({
   const priceBars = useMemo(() => barsToPriceBars(bars), [bars]);
 
   const summary = useMemo(() => {
-    if (bars.length === 0) return null;
-    const open = bars[0].open;
-    const close = bars[bars.length - 1].close;
-    const high = Math.max(...bars.map((b) => b.high));
-    const low = Math.min(...bars.map((b) => b.low));
-    const volume = bars.reduce((sum, b) => sum + (b.volume || 0), 0);
-    return { open, close, high, low, volume, count: bars.length };
+    const finiteBars = bars.filter(barHasFiniteOhlc);
+    if (finiteBars.length === 0) return null;
+    const open = finiteBars[0].open;
+    const close = finiteBars[finiteBars.length - 1].close;
+    const high = Math.max(...finiteBars.map((b) => b.high));
+    const low = Math.min(...finiteBars.map((b) => b.low));
+    const volume = finiteBars.reduce((sum, b) => sum + (b.volume || 0), 0);
+    return { open, close, high, low, volume, count: finiteBars.length };
   }, [bars]);
 
   const open = day !== null;
 
   const runBackfill = async (bucket: string) => {
     if (!day) return;
-    setBackfilling(bucket);
+    setBackfilling((prev) => new Set(prev).add(bucket));
     try {
       const resp = await api.postHubStockHistoryBackfill({
         week: day.date,
@@ -258,7 +273,11 @@ export function SimulatorReplayDetailPanel({
         [bucket]: { error: err instanceof Error ? err.message : String(err) },
       }));
     } finally {
-      setBackfilling(null);
+      setBackfilling((prev) => {
+        const next = new Set(prev);
+        next.delete(bucket);
+        return next;
+      });
     }
   };
 
@@ -424,7 +443,7 @@ export function SimulatorReplayDetailPanel({
                   <div className="space-y-1.5">
                     {Object.values(coverageDay.buckets).map((status) => {
                       const progress = backfillResult[status.bucket];
-                      const isBackfilling = backfilling === status.bucket;
+                      const isBackfilling = backfilling.has(status.bucket);
                       return (
                         <div
                           key={status.bucket}
@@ -459,30 +478,50 @@ export function SimulatorReplayDetailPanel({
                             ) : null}
                             <span>source: {status.primary_source || "—"}</span>
                           </div>
-                          {!status.present ? (
-                            <div className="mt-1.5 flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => void runBackfill(status.bucket)}
-                                disabled={isBackfilling}
-                                className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-background px-2 py-0.5 text-[10px] font-medium text-amber-800 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-300"
-                              >
-                                {isBackfilling ? (
-                                  <Loader2 className="h-3 w-3 animate-spin" />
-                                ) : (
-                                  <Wand2 className="h-3 w-3" />
-                                )}
-                                {isBackfilling ? "Backfilling…" : "Backfill this bucket"}
-                              </button>
-                              {progress && "error" in progress ? (
-                                <span className="text-[10px] text-destructive">error: {progress.error}</span>
-                              ) : progress ? (
-                                <span className="text-[10px] text-emerald-700 dark:text-emerald-300">
-                                  {progress.status} — {progress.rows_written} row(s)
-                                </span>
-                              ) : null}
-                            </div>
-                          ) : null}
+                          {!status.present ? (() => {
+                            // Live-only sources (e.g. NIFTY option chain) have no
+                            // historical fallback for days other than today — the
+                            // backend already says so via `fallback`. Skip the
+                            // button (and the wasted round trip) and say why.
+                            const knownUnfillable =
+                              day != null &&
+                              day.date !== localIsoDate(new Date()) &&
+                              (status.fallback ?? "").toLowerCase().includes("not backfillable");
+                            if (knownUnfillable) {
+                              return (
+                                <div className="mt-1.5 text-[10px] text-muted-foreground">
+                                  Not backfillable for {day!.date} — this source only has a live snapshot for today.
+                                </div>
+                              );
+                            }
+                            return (
+                              <div className="mt-1.5 flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void runBackfill(status.bucket)}
+                                  disabled={isBackfilling}
+                                  className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-background px-2 py-0.5 text-[10px] font-medium text-amber-800 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-300"
+                                >
+                                  {isBackfilling ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Wand2 className="h-3 w-3" />
+                                  )}
+                                  {isBackfilling ? "Backfilling…" : "Backfill this bucket"}
+                                </button>
+                                {progress && "error" in progress && progress.error ? (
+                                  <span className="text-[10px] text-destructive">error: {progress.error}</span>
+                                ) : progress && "status" in progress ? (
+                                  <span className="text-[10px] text-emerald-700 dark:text-emerald-300">
+                                    {progress.status} — {progress.rows_written} row(s)
+                                    {progress.rows_written === 0 && progress.message ? (
+                                      <span className="ml-1 text-muted-foreground">— {progress.message}</span>
+                                    ) : null}
+                                  </span>
+                                ) : null}
+                              </div>
+                            );
+                          })() : null}
                         </div>
                       );
                     })}
@@ -523,7 +562,7 @@ export function SimulatorReplayDetailPanel({
                   </p>
                 ) : loading ? (
                   <p className="text-[11px] text-muted-foreground">Loading {underlying} bars…</p>
-                ) : bars.length === 0 ? (
+                ) : priceBars.length === 0 ? (
                   indexTapeMissing ? (
                     <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-[11px] text-amber-800 dark:text-amber-300">
                       <p>

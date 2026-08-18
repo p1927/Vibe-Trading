@@ -60,6 +60,14 @@ data/minutes/
 data/overnight*.log
 data/*.log
 data/test_write.txt
+
+# NSE_REPLAY_DATA_ROOT should always resolve to the repo-root data/ tree.
+# A relative-path/cwd mismatch (recorder subprocess vs. main API process)
+# has previously caused it to resolve here instead, writing a whole
+# orphaned duplicate of the replay bundle that no reader ever sees — see
+# recording_jobs.py::spawn_worker. Ignored defensively so that class of
+# bug can't silently get committed again.
+agent/data/
 agent/.pytest_tmp/
 agent/vibe_trading.egg-info/
 agent/vibe_trading_ai.egg-info/

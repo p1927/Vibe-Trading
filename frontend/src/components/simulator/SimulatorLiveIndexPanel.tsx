@@ -95,6 +95,11 @@ export function SimulatorLiveIndexPanel({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sessionOpen, setSessionOpen] = useState<boolean | null>(null);
+  // The backend's real reason for empty replay ticks/spot (not armed, no
+  // bars in the window, an exception) — preferred over the guessed
+  // messages below so the empty state tells the truth instead of a plausible
+  // but possibly wrong guess.
+  const [emptyReason, setEmptyReason] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -116,6 +121,7 @@ export function SimulatorLiveIndexPanel({
     setError(null);
     setLoading(true);
     setSessionOpen(null);
+    setEmptyReason(null);
     prevCloseRef.current = null;
     if (seriesRef.current) {
       seriesRef.current.setData([]);
@@ -156,6 +162,7 @@ export function SimulatorLiveIndexPanel({
           if (next.length && prevCloseRef.current == null && next[0].open != null) {
             prevCloseRef.current = next[0].open ?? null;
           }
+          setEmptyReason(next.length === 0 ? ticksRes.error ?? null : null);
         }
         if (spotRes.status === "ok" && spotRes.spot) {
           // In replay mode the ticks and spot requests are two independent
@@ -184,6 +191,10 @@ export function SimulatorLiveIndexPanel({
             source: "simulator",
             as_of: null,
           }));
+        } else if (isReplayArmed && lastTickPrice == null && spotRes.error) {
+          // Neither call returned data — prefer the spot error over the
+          // ticks one when ticks didn't give a reason of its own.
+          setEmptyReason((prev) => prev ?? spotRes.error ?? null);
         }
         setError(null);
         setLoading(false);
@@ -334,7 +345,8 @@ export function SimulatorLiveIndexPanel({
       {ticks.length === 0 && !loading && !error && (
         <p className="mt-1 text-xs text-muted-foreground">
           {isReplayArmed
-            ? "No replay ticks at the current sim clock — try a different speed or check the replay day."
+            ? emptyReason ??
+              "No replay ticks at the current sim clock — try a different speed or check the replay day."
             : sessionOpen === false
             ? "Market is closed right now — arm a replay day below to see it move."
             : "No live ticks — start a recording or check TimescaleDB."}

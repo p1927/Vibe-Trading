@@ -418,6 +418,14 @@ function CellDrawer({ selected, backfill, onClose, onBackfill }: DrawerProps) {
   const { day, bucket, status } = selected;
   const isMissing = !status.present;
   const progress = backfill && backfill.bucket === bucket ? backfill : null;
+  // Some sources (e.g. NIFTY option chain) are live-only snapshots with no
+  // historical fallback — the backend already knows this and says so in
+  // `fallback`. For any day other than today, clicking "Backfill" there can
+  // never do anything but a wasted round trip, so show that explanation up
+  // front instead of a button that will just come back empty.
+  const today = localIsoDate(new Date());
+  const knownUnfillable =
+    day !== today && (status.fallback ?? "").toLowerCase().includes("not backfillable");
   return (
     <div
       className="rounded-md border border-zinc-200 bg-white p-3 text-xs dark:border-zinc-700 dark:bg-zinc-950"
@@ -475,32 +483,45 @@ function CellDrawer({ selected, backfill, onClose, onBackfill }: DrawerProps) {
               <span className="text-zinc-500">fallback:</span> {status.fallback}
             </div>
           )}
-          <button
-            type="button"
-            onClick={() => onBackfill(bucket)}
-            disabled={progress?.status === "running"}
-            className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-400 bg-white px-2 py-1 text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:bg-amber-950 dark:text-amber-100 dark:hover:bg-amber-900"
-          >
-            {progress?.status === "running" ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Wand2 className="h-4 w-4" />
-            )}
-            {progress?.status === "running"
-              ? "Backfilling…"
-              : "Backfill this bucket"}
-          </button>
-          {progress && progress.status === "done" && progress.result && (
-            <div className="mt-2 font-mono text-emerald-700 dark:text-emerald-300">
-              {progress.result.status} — {progress.result.rows_written} row(s) in
-              {" "}
-              {progress.result.duration_ms} ms
+          {knownUnfillable ? (
+            <div className="mt-2 text-zinc-600 dark:text-zinc-400">
+              Not backfillable for {day} — this source only has a live snapshot for today.
             </div>
-          )}
-          {progress && progress.status === "error" && (
-            <div className="mt-2 font-mono text-rose-700 dark:text-rose-300">
-              error: {progress.error ?? progress.result?.error ?? "unknown"}
-            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => onBackfill(bucket)}
+                disabled={progress?.status === "running"}
+                className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-400 bg-white px-2 py-1 text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:bg-amber-950 dark:text-amber-100 dark:hover:bg-amber-900"
+              >
+                {progress?.status === "running" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Wand2 className="h-4 w-4" />
+                )}
+                {progress?.status === "running"
+                  ? "Backfilling…"
+                  : "Backfill this bucket"}
+              </button>
+              {progress && progress.status === "done" && progress.result && (
+                <div className="mt-2 font-mono text-emerald-700 dark:text-emerald-300">
+                  {progress.result.status} — {progress.result.rows_written} row(s) in
+                  {" "}
+                  {progress.result.duration_ms} ms
+                  {progress.result.rows_written === 0 && progress.result.message && (
+                    <div className="mt-1 text-zinc-600 dark:text-zinc-400">
+                      {progress.result.message}
+                    </div>
+                  )}
+                </div>
+              )}
+              {progress && progress.status === "error" && (
+                <div className="mt-2 font-mono text-rose-700 dark:text-rose-300">
+                  error: {progress.error ?? progress.result?.error ?? "unknown"}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

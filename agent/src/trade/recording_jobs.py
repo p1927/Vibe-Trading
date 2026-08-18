@@ -730,6 +730,17 @@ def spawn_worker(job_id: str) -> None:
     log_handle = worker_log.open("ab")
 
     env = os.environ.copy()
+    # NSE_REPLAY_DATA_ROOT is configured as a path relative to *this*
+    # process's cwd (typically the repo root). The worker below runs with
+    # cwd=agent_dir instead (needed for `-m src.trade.recording_worker` to
+    # resolve), so the same relative string would land two directories off
+    # — silently writing every recorded session into a brand-new, orphaned
+    # `vibetrading/agent/data/...` tree that no reader (replay calendar,
+    # chart, coverage panel) ever looks at. Resolve it against our own cwd
+    # before handing it to the child so both processes agree on one path.
+    data_root_raw = env.get("NSE_REPLAY_DATA_ROOT")
+    if data_root_raw and not Path(data_root_raw).is_absolute():
+        env["NSE_REPLAY_DATA_ROOT"] = str(Path(data_root_raw).resolve())
     proc = subprocess.Popen(
         [sys.executable, "-m", "src.trade.recording_worker", job_id],
         cwd=str(agent_dir),

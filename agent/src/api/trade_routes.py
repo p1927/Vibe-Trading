@@ -4331,13 +4331,14 @@ def hub_market_data_ticks(
         from trade_integrations.dataflows.stock_history_bridge import get_replay_market_ticks
 
         try:
-            ticks = get_replay_market_ticks(
+            ticks, reason = get_replay_market_ticks(
                 symbol=symbol, exchange=exchange,
                 since_minutes=since_minutes, limit=limit,
             )
             return HubMarketDataTicksResponse(
                 status="ok", symbol=symbol.upper(), exchange=exchange.upper(),
                 source="simulator" if ticks else "empty", ticks=ticks,
+                error=reason if not ticks else None,
             )
         except Exception as exc:
             logger.exception("hub market-data ticks (replay) failed for %s/%s", symbol, exchange)
@@ -4384,11 +4385,11 @@ def hub_market_data_spot(
         get_replay_spot_quote,
     )
 
-    quote = (
-        get_replay_spot_quote(symbol=symbol, exchange=exchange)
-        if replay
-        else get_live_spot_quote(symbol=symbol, exchange=exchange)
-    )
+    replay_reason: str | None = None
+    if replay:
+        quote, replay_reason = get_replay_spot_quote(symbol=symbol, exchange=exchange)
+    else:
+        quote = get_live_spot_quote(symbol=symbol, exchange=exchange)
 
     session_open: bool | None = None
     if not replay:
@@ -4403,7 +4404,7 @@ def hub_market_data_spot(
         return HubMarketDataSpotResponse(
             status="error", symbol=symbol.upper(), exchange=exchange.upper(),
             session_open=session_open,
-            error="no spot quote available (simulator not running)" if replay
+            error=replay_reason if replay
             else "no spot quote available (Timescale empty and OpenAlgo unreachable)",
         )
     return HubMarketDataSpotResponse(

@@ -3,9 +3,13 @@
  *
  * Portal-mounted drawer showing the live option chain for the selected
  * underlying. Polls /trade/hub/market-data/option-chain every 5 s.
- * Shows strikes + CE/PE LTP, OI, IV, delta. Pause when closed.
+ * Shows strikes + CE/PE LTP, OI (with a Groww-style OI bar), IV, delta.
+ * ITM strikes are shaded, the ATM strike is highlighted, and the header
+ * strip carries LTP/change plus the put-call ratio — styled after Groww's
+ * option-chain layout (OI outermost, LTP innermost next to the strike).
+ * Pause when closed.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
@@ -21,31 +25,36 @@ interface Props {
   strikeCount?: number;
 }
 
+interface Leg {
+  last_price?: number;
+  oi?: number;
+  iv?: number;
+  delta?: number;
+  volume?: number;
+  top_bid_price?: number;
+  top_ask_price?: number;
+}
+
 interface StrikeRow {
   strike: number;
-  ce?: {
-    last_price?: number;
-    oi?: number;
-    iv?: number;
-    delta?: number;
-    volume?: number;
-    top_bid_price?: number;
-    top_ask_price?: number;
-  } | null;
-  pe?: {
-    last_price?: number;
-    oi?: number;
-    iv?: number;
-    delta?: number;
-    volume?: number;
-    top_bid_price?: number;
-    top_ask_price?: number;
-  } | null;
+  ce?: Leg | null;
+  pe?: Leg | null;
 }
 
 function fmt(v: number | undefined | null, digits = 2): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return v.toLocaleString("en-IN", { maximumFractionDigits: digits });
+}
+
+// Groww-style compact OI numerals: thousand/lakh/crore suffixes instead of
+// raw grouped digits — matches how OI reads on Groww's chain at a glance.
+function fmtOi(v: number | undefined | null): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  const abs = Math.abs(v);
+  if (abs >= 1e7) return `${(v / 1e7).toFixed(2)}Cr`;
+  if (abs >= 1e5) return `${(v / 1e5).toFixed(2)}L`;
+  if (abs >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
+  return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
 function closestStrikeIndex(strikes: StrikeRow[], spot: number | null): number {
@@ -60,6 +69,24 @@ function closestStrikeIndex(strikes: StrikeRow[], spot: number | null): number {
     }
   });
   return best;
+}
+
+// Horizontal bar behind an OI cell, width relative to the max OI on that
+// side of the chain in the current view — the visual buildup cue Groww's
+// chain uses instead of making you compare raw numbers row by row.
+function OiBar({ value, max, side }: { value: number | undefined; max: number; side: "ce" | "pe" }) {
+  if (!Number.isFinite(value) || !value || max <= 0) return null;
+  const pct = Math.max(2, Math.min(100, (value / max) * 100));
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "absolute inset-y-0 top-[15%] h-[70%] rounded-sm",
+        side === "ce" ? "right-0 bg-emerald-500/15" : "left-0 bg-red-500/15",
+      )}
+      style={{ width: `${pct}%` }}
+    />
+  );
 }
 
 export function SimulatorOptionChainPanel({
@@ -129,7 +156,43 @@ export function SimulatorOptionChainPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, symbol, exchange, strikeCount, isReplayArmed]);
 
+  const change = useMemo(() => {
+    if (spot == null || prevClose == null) return null;
+    return spot - prevClose;
+  }, [spot, prevClose]);
+
+  const changePct = useMemo(() => {
+    if (spot == null || prevClose == null || prevClose === 0) return null;
+    return ((spot - prevClose) / prevClose) * 100;
+  }, [spot, prevClose]);
+
+  const { maxCeOi, maxPeOi, pcr } = useMemo(() => {
+    let ceOiTotal = 0;
+    let peOiTotal = 0;
+    let ceOiMax = 0;
+    let peOiMax = 0;
+    for (const row of strikes) {
+      const ceOi = row.ce?.oi;
+      const peOi = row.pe?.oi;
+      if (Number.isFinite(ceOi)) {
+        ceOiTotal += ceOi as number;
+        ceOiMax = Math.max(ceOiMax, ceOi as number);
+      }
+      if (Number.isFinite(peOi)) {
+        peOiTotal += peOi as number;
+        peOiMax = Math.max(peOiMax, peOi as number);
+      }
+    }
+    return {
+      maxCeOi: ceOiMax,
+      maxPeOi: peOiMax,
+      pcr: ceOiTotal > 0 ? peOiTotal / ceOiTotal : null,
+    };
+  }, [strikes]);
+
   if (!open) return null;
+
+  const positive = (change ?? 0) >= 0;
 
   return createPortal(
     <div
@@ -144,41 +207,71 @@ export function SimulatorOptionChainPanel({
         className="flex h-full w-full max-w-md flex-col border-l bg-background shadow-xl sm:max-w-xl lg:max-w-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
-          <div className="min-w-0">
-            <h2 id="option-chain-title" className="text-sm font-semibold">
-              {symbol} Option Chain
-            </h2>
-            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
-              <span>{expiry ?? "expiry —"}</span>
-              <span className="text-border">·</span>
-              <span className="font-medium text-foreground">LTP {fmt(spot)}</span>
-              {prevClose != null && <span>prev close {fmt(prevClose)}</span>}
+        <div className="sticky top-0 z-20 border-b bg-background/95 px-4 py-3 backdrop-blur">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 id="option-chain-title" className="text-sm font-semibold">
+                {symbol} Option Chain
+              </h2>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">{expiry ?? "expiry —"}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                onClick={fetchChain}
+                className="rounded-md p-1.5 hover:bg-muted"
+                aria-label="Refresh chain"
+                title="Refresh"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md p-1.5 hover:bg-muted"
+                aria-label="Close option chain"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
+            <div className="flex items-baseline gap-2">
+              <span className="text-2xl font-semibold tabular-nums">{fmt(spot)}</span>
+              {change != null && (
+                <span
+                  className={cn(
+                    "text-xs font-medium tabular-nums",
+                    positive ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
+                  )}
+                >
+                  {positive ? "▲" : "▼"} {fmt(Math.abs(change))}
+                  {changePct != null && <> ({positive ? "+" : ""}{changePct.toFixed(2)}%)</>}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+              <span>
+                PCR{" "}
+                <span
+                  className={cn(
+                    "font-semibold tabular-nums",
+                    pcr == null
+                      ? "text-foreground"
+                      : pcr >= 1
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-red-600 dark:text-red-400",
+                  )}
+                >
+                  {pcr == null ? "—" : pcr.toFixed(2)}
+                </span>
+              </span>
               {lastUpdated && (
                 <span className="text-muted-foreground/70">
                   updated {lastUpdated.toLocaleTimeString([], { hour12: false })}
                 </span>
               )}
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              onClick={fetchChain}
-              className="rounded-md p-1.5 hover:bg-muted"
-              aria-label="Refresh chain"
-              title="Refresh"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-md p-1.5 hover:bg-muted"
-              aria-label="Close option chain"
-            >
-              <X className="h-4 w-4" />
-            </button>
+            </div>
           </div>
         </div>
         <div className="flex-1 overflow-auto">
@@ -206,7 +299,7 @@ export function SimulatorOptionChainPanel({
             <p className="px-4 py-6 text-center text-xs text-muted-foreground">Loading…</p>
           )}
           {strikes.length > 0 && (
-            <table className="w-full text-[11px] tabular-nums">
+            <table className="w-full border-collapse text-[11px] tabular-nums">
               <thead className="sticky top-0 z-10 bg-background/95 backdrop-blur">
                 <tr>
                   <th className="bg-emerald-500/10 px-2 py-1 text-right text-emerald-700 dark:text-emerald-400" colSpan={4}>
@@ -218,45 +311,53 @@ export function SimulatorOptionChainPanel({
                   </th>
                 </tr>
                 <tr className="border-b text-[10px] text-muted-foreground">
-                  <th className="px-2 py-1 text-right font-medium">LTP</th>
-                  <th className="px-2 py-1 text-right font-medium">OI</th>
-                  <th className="px-2 py-1 text-right font-medium">IV</th>
-                  <th className="px-2 py-1 text-right font-medium">Δ</th>
-                  <th className="border-x px-2 py-1"></th>
-                  <th className="px-2 py-1 text-left font-medium">LTP</th>
-                  <th className="px-2 py-1 text-left font-medium">OI</th>
-                  <th className="px-2 py-1 text-left font-medium">IV</th>
-                  <th className="px-2 py-1 text-left font-medium">Δ</th>
+                  <th className="px-2 py-0.5 text-right font-medium">OI</th>
+                  <th className="px-2 py-0.5 text-right font-medium">IV</th>
+                  <th className="px-2 py-0.5 text-right font-medium">Δ</th>
+                  <th className="px-2 py-0.5 text-right font-medium">LTP</th>
+                  <th className="border-x px-2 py-0.5"></th>
+                  <th className="px-2 py-0.5 text-left font-medium">LTP</th>
+                  <th className="px-2 py-0.5 text-left font-medium">Δ</th>
+                  <th className="px-2 py-0.5 text-left font-medium">IV</th>
+                  <th className="px-2 py-0.5 text-left font-medium">OI</th>
                 </tr>
               </thead>
               <tbody>
                 {strikes.map((row, i) => {
                   const isAtm = i === closestStrikeIndex(strikes, spot);
+                  const ceItm = spot != null && row.strike < spot;
+                  const peItm = spot != null && row.strike > spot;
                   return (
                     <tr
                       key={row.strike}
                       className={cn(
                         "border-t border-border/40",
                         isAtm && "bg-primary/5",
-                        !isAtm && i % 2 === 1 && "bg-muted/20",
+                        !isAtm && i % 2 === 1 && "bg-muted/10",
                       )}
                     >
-                      <td className="px-2 py-1.5 text-right">{fmt(row.ce?.last_price)}</td>
-                      <td className="px-2 py-1.5 text-right text-muted-foreground">{fmt(row.ce?.oi, 0)}</td>
-                      <td className="px-2 py-1.5 text-right text-muted-foreground">{fmt(row.ce?.iv)}</td>
-                      <td className="px-2 py-1.5 text-right text-muted-foreground">{fmt(row.ce?.delta, 3)}</td>
+                      <td className={cn("relative overflow-hidden px-2 py-1 text-right text-muted-foreground", !isAtm && ceItm && "bg-emerald-500/5")}>
+                        <OiBar value={row.ce?.oi} max={maxCeOi} side="ce" />
+                        <span className="relative">{fmtOi(row.ce?.oi)}</span>
+                      </td>
+                      <td className={cn("px-2 py-1 text-right text-muted-foreground", !isAtm && ceItm && "bg-emerald-500/5")}>{fmt(row.ce?.iv)}</td>
+                      <td className={cn("px-2 py-1 text-right text-muted-foreground", !isAtm && ceItm && "bg-emerald-500/5")}>{fmt(row.ce?.delta, 3)}</td>
+                      <td className={cn("px-2 py-1 text-right font-medium", !isAtm && ceItm && "bg-emerald-500/5")}>{fmt(row.ce?.last_price)}</td>
                       <td
                         className={cn(
-                          "border-x px-2 py-1.5 text-center font-semibold",
+                          "border-x px-2 py-1 text-center font-semibold",
                           isAtm ? "bg-primary/10 text-primary" : "bg-muted/40",
                         )}
                       >
                         {fmt(row.strike, 0)}
                       </td>
-                      <td className="px-2 py-1.5 text-left">{fmt(row.pe?.last_price)}</td>
-                      <td className="px-2 py-1.5 text-left text-muted-foreground">{fmt(row.pe?.oi, 0)}</td>
-                      <td className="px-2 py-1.5 text-left text-muted-foreground">{fmt(row.pe?.iv)}</td>
-                      <td className="px-2 py-1.5 text-left text-muted-foreground">{fmt(row.pe?.delta, 3)}</td>
+                      <td className={cn("px-2 py-1 text-left font-medium", !isAtm && peItm && "bg-red-500/5")}>{fmt(row.pe?.last_price)}</td>
+                      <td className={cn("px-2 py-1 text-left text-muted-foreground", !isAtm && peItm && "bg-red-500/5")}>{fmt(row.pe?.delta, 3)}</td>
+                      <td className={cn("px-2 py-1 text-left text-muted-foreground", !isAtm && peItm && "bg-red-500/5")}>{fmt(row.pe?.iv)}</td>
+                      <td className={cn("relative overflow-hidden px-2 py-1 text-left text-muted-foreground", !isAtm && peItm && "bg-red-500/5")}>
+                        <OiBar value={row.pe?.oi} max={maxPeOi} side="pe" />
+                        <span className="relative">{fmtOi(row.pe?.oi)}</span>
+                      </td>
                     </tr>
                   );
                 })}
