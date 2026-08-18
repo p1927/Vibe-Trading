@@ -3529,6 +3529,74 @@ def _openalgo_json(res: "requests.Response") -> Any:
         ) from exc
 
 
+def _mirror_replay_env(status_payload: Any) -> None:
+    """Mirror OpenAlgo's replay-clock state into this process's env.
+
+    OpenAlgo and VibeTrading run as separate processes with independent
+    ``os.environ``. The in-process replay bridge (``get_replay_market_ticks``
+    / ``get_replay_spot_quote`` / ``get_replay_option_chain``, used by the
+    chart and option-chain endpoints) reads ``STOCK_SIMULATOR_MODE`` /
+    ``NSE_REPLAY_*`` from *this* process, not from OpenAlgo's — so any
+    handler that learns OpenAlgo's replay state (arm, status poll, pause,
+    resume, seek) needs to mirror it here too, not just the initial arm.
+    Without this, a VibeTrading process that didn't witness the original arm
+    (restarted, or the arm happened from another tab/session) shows a
+    correctly-running sim clock while the chart stays blank and the option
+    chain reports "simulator not running".
+
+    Config fields (date/speed/loop/etc.) are mirrored via env vars, which
+    ``get_replay_service`` only reloads on when they change — a seek or a
+    pause/resume touches none of them, so it would otherwise never propagate
+    to this process's clock. To keep the two clocks from drifting apart (or
+    ignoring OpenAlgo's seeks/pauses entirely), also force this process's
+    ``ReplayService`` to hard-sync to OpenAlgo's actual ``sim_now``/``paused``
+    after every control round-trip, rather than relying on config-hash
+    comparison alone.
+    """
+    if not isinstance(status_payload, dict):
+        return
+    mode = str(status_payload.get("mode") or "").strip().lower()
+    if mode != "replay":
+        os.environ.pop("STOCK_SIMULATOR_MODE", None)
+        return
+    clock = status_payload.get("clock")
+    clock = clock if isinstance(clock, dict) else {}
+    replay_date = str(clock.get("replay_date") or "").strip()[:10]
+    if not replay_date:
+        return
+    os.environ["STOCK_SIMULATOR_MODE"] = "replay"
+    os.environ["NSE_REPLAY_DATE"] = replay_date
+    week_dates = status_payload.get("week_dates")
+    if isinstance(week_dates, list) and len(week_dates) > 1:
+        os.environ["NSE_REPLAY_END_DATE"] = str(week_dates[-1])[:10]
+    else:
+        os.environ.pop("NSE_REPLAY_END_DATE", None)
+    speed = clock.get("speed")
+    if speed is not None:
+        os.environ["NSE_REPLAY_SPEED"] = str(speed)
+    loop = clock.get("loop")
+    if loop is not None:
+        os.environ["NSE_REPLAY_LOOP"] = "1" if loop else "0"
+
+    sim_now_str = clock.get("sim_now")
+    if not sim_now_str:
+        return
+    try:
+        from datetime import datetime
+
+        from trade_integrations.stock_simulator.replay import get_replay_service
+
+        target = datetime.fromisoformat(str(sim_now_str))
+        service = get_replay_service()
+        service.seek(target)
+        if bool(clock.get("paused")):
+            service.pause()
+        else:
+            service.resume()
+    except Exception:
+        logger.debug("failed to hard-sync local replay clock to OpenAlgo's", exc_info=True)
+
+
 @trade_router.post("/recording/{day}/replay", response_model=ReplayStatusResponse)
 def start_replay(
     day: str,
@@ -3571,20 +3639,14 @@ def start_replay(
     # helpers (``get_replay_market_ticks`` / ``get_replay_spot_quote``) keep
     # seeing ``is_replay=False`` and return empty lists even when the user has
     # explicitly armed — leaving the Simulator chart blank after "Replay
-    # {date}" until the user reloads the OpenAlgo worker.
-    os.environ["STOCK_SIMULATOR_MODE"] = "replay"
-    os.environ["NSE_REPLAY_DATE"] = day[:10]
-    if body.end_date:
-        os.environ["NSE_REPLAY_END_DATE"] = body.end_date[:10]
-    elif "NSE_REPLAY_END_DATE" in os.environ:
-        # A previous range-arm left an end_date in this process's env; clear it
-        # so a plain single-day arm doesn't silently inherit the old range.
+    # {date}" until the user reloads the OpenAlgo worker. Also clear a
+    # previous range-arm's end_date so a plain single-day arm doesn't
+    # silently inherit the old range before `_mirror_replay_env` runs.
+    if not body.end_date:
         os.environ.pop("NSE_REPLAY_END_DATE", None)
-    if body.speed is not None:
-        os.environ["NSE_REPLAY_SPEED"] = str(body.speed)
-    if body.loop is not None:
-        os.environ["NSE_REPLAY_LOOP"] = "1" if body.loop else "0"
-    return ReplayStatusResponse(status="ok", replay=_openalgo_json(res))
+    payload = _openalgo_json(res)
+    _mirror_replay_env(payload)
+    return ReplayStatusResponse(status="ok", replay=payload)
 
 
 @trade_router.get("/recording/replay/status", response_model=ReplayStatusResponse)
@@ -3613,7 +3675,9 @@ def get_replay_status(
         ) from exc
     if res.status_code >= 400:
         raise HTTPException(status_code=502, detail=res.text[:500])
-    return ReplayStatusResponse(status="ok", replay=_openalgo_json(res))
+    payload = _openalgo_json(res)
+    _mirror_replay_env(payload)
+    return ReplayStatusResponse(status="ok", replay=payload)
 
 
 @trade_router.post("/recording/replay/pause", response_model=ReplayStatusResponse)
@@ -3642,7 +3706,9 @@ def pause_replay(
         ) from exc
     if res.status_code >= 400:
         raise HTTPException(status_code=502, detail=res.text[:500])
-    return ReplayStatusResponse(status="ok", replay=_openalgo_json(res))
+    payload = _openalgo_json(res)
+    _mirror_replay_env(payload)
+    return ReplayStatusResponse(status="ok", replay=payload)
 
 
 @trade_router.post("/recording/replay/resume", response_model=ReplayStatusResponse)
@@ -3671,7 +3737,9 @@ def resume_replay(
         ) from exc
     if res.status_code >= 400:
         raise HTTPException(status_code=502, detail=res.text[:500])
-    return ReplayStatusResponse(status="ok", replay=_openalgo_json(res))
+    payload = _openalgo_json(res)
+    _mirror_replay_env(payload)
+    return ReplayStatusResponse(status="ok", replay=payload)
 
 
 @trade_router.post("/recording/replay/seek", response_model=ReplayStatusResponse)
@@ -3706,7 +3774,9 @@ def seek_replay(
         ) from exc
     if res.status_code >= 400:
         raise HTTPException(status_code=502, detail=res.text[:500])
-    return ReplayStatusResponse(status="ok", replay=_openalgo_json(res))
+    payload = _openalgo_json(res)
+    _mirror_replay_env(payload)
+    return ReplayStatusResponse(status="ok", replay=payload)
 
 
 @trade_router.post("/recording/replay/stop", response_model=ReplayStatusResponse)
@@ -4237,6 +4307,14 @@ class HubMarketDataOptionChainResponse(BaseModel):
     error: str | None = None
 
 
+class HubMarketDataOptionExpiriesResponse(BaseModel):
+    status: str
+    underlying: str
+    exchange: str
+    expiries: list[str] = []
+    error: str | None = None
+
+
 class HubMacroFactorPanelResponse(BaseModel):
     status: str
     start: str
@@ -4489,14 +4567,14 @@ def hub_market_data_option_chain(
     if replay:
         from trade_integrations.dataflows.stock_history_bridge import get_replay_option_chain
 
-        data = get_replay_option_chain(
+        data, reason = get_replay_option_chain(
             underlying=symbol, exchange=exchange,
             strike_count=strike_count, expiry_date=expiry_date,
         )
         if data is None:
             return HubMarketDataOptionChainResponse(
                 status="error", underlying=symbol.upper(), exchange=exchange.upper(),
-                error="no replay chain available (simulator not running?)",
+                error=reason or "no replay chain available (simulator not running?)",
             )
         legs = data.get("chain") or []
         strikes: list[HubMarketDataOptionChainStrike] = []
@@ -4545,6 +4623,50 @@ def hub_market_data_option_chain(
         strikes=strikes,
         source=str(data.get("source") or "openalgo"),
     )
+
+
+@trade_router.get("/hub/market-data/option-expiries", response_model=HubMarketDataOptionExpiriesResponse)
+def hub_market_data_option_expiries(
+    symbol: str = "NIFTY",
+    exchange: str = "NSE_INDEX",
+    replay: int = 0,
+    _auth: None = Depends(require_local_or_auth),
+) -> HubMarketDataOptionExpiriesResponse:
+    """Expiries selectable in the option-chain dropdown.
+
+    In replay mode, the next several recorded expiries on/after the
+    currently-armed day (see `get_replay_option_expiries` for why this isn't
+    scoped to "expiries with a parquet bundle covering this exact day" — that
+    predicate collapses to a single entry almost every session). Live mode
+    returns every expiry OpenAlgo/the recorder has ever captured for the
+    underlying, since there's no "current day" to scope to.
+    """
+    if replay:
+        from trade_integrations.dataflows.stock_history_bridge import get_replay_option_expiries
+
+        expiries, reason = get_replay_option_expiries(underlying=symbol, exchange=exchange)
+        if reason and not expiries:
+            return HubMarketDataOptionExpiriesResponse(
+                status="error", underlying=symbol.upper(), exchange=exchange.upper(),
+                expiries=[], error=reason,
+            )
+        return HubMarketDataOptionExpiriesResponse(
+            status="ok", underlying=symbol.upper(), exchange=exchange.upper(), expiries=expiries,
+        )
+
+    from trade_integrations.dataflows.stock_history_bridge import list_recorded_option_expiries
+
+    try:
+        return HubMarketDataOptionExpiriesResponse(
+            status="ok", underlying=symbol.upper(), exchange=exchange.upper(),
+            expiries=list_recorded_option_expiries(symbol=symbol, exchange=exchange),
+        )
+    except Exception as exc:
+        logger.exception("hub market-data option-expiries failed for %s/%s", symbol, exchange)
+        return HubMarketDataOptionExpiriesResponse(
+            status="error", underlying=symbol.upper(), exchange=exchange.upper(),
+            expiries=[], error=str(exc),
+        )
 
 
 @trade_router.get("/hub/macro-factors/panel", response_model=HubMacroFactorPanelResponse)

@@ -141,7 +141,15 @@ export function SimulatorLiveIndexPanel({
           api.getHubMarketDataTicks({
             symbol,
             exchange,
-            since_minutes: 240,
+            // In replay mode the user can seek anywhere in the trading
+            // session (09:15-15:30 IST, 375 minutes) and expects the chart
+            // to keep showing everything from session open up to the new
+            // sim clock position. A fixed 240-minute lookback would silently
+            // drop the earlier candles once sim_now is more than 4 hours
+            // past open, since every poll fully replaces the chart's
+            // dataset with just this window. Live mode keeps the tighter
+            // rolling window since it isn't seekable.
+            since_minutes: isReplayArmed ? 400 : 240,
             limit: 500,
             replay: isReplayArmed,
           }),
@@ -255,18 +263,32 @@ export function SimulatorLiveIndexPanel({
       series.setData([]);
       return;
     }
-    const sorted = [...ticks].sort((a, b) => a.ts.localeCompare(b.ts));
-    const mapped = sorted
+    // Compute the numeric time first, then sort/dedupe on that — sorting on
+    // the raw ISO string is unsafe because bars and the live simulator tick
+    // can use different timestamp formats (naive vs tz-aware, whole-second
+    // vs sub-second), so string order doesn't always match time order. At
+    // higher simulator speeds the live tick's sub-second drift grows large
+    // enough to violate ascending order and crash setData().
+    const mapped = ticks
       .filter((t) => Number.isFinite(t.price))
       .map((t) => {
         const ms = Date.parse(t.ts);
-        return { time: (ms / 1000) as Time, value: t.price };
+        return { time: Math.floor(ms / 1000) as Time, value: t.price };
       })
       .filter((p) => Number.isFinite(p.time));
+    mapped.sort((a, b) => (a.time as number) - (b.time as number));
     // Lightweight Charts requires strictly ascending, unique times — two
     // ticks landing in the same second (sub-second polling) would tie.
     // Keep the latest value for each timestamp.
-    const data = mapped.filter((p, i) => i === mapped.length - 1 || p.time !== mapped[i + 1].time);
+    const data: { time: Time; value: number }[] = [];
+    for (const p of mapped) {
+      const last = data[data.length - 1];
+      if (last && last.time === p.time) {
+        last.value = p.value;
+      } else {
+        data.push({ time: p.time, value: p.value });
+      }
+    }
     series.setData(data);
   }, [ticks]);
 

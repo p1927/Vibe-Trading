@@ -1085,6 +1085,14 @@ export const api = {
         replay: params.replay ? "1" : undefined,
       })}`,
     ),
+  getHubMarketDataOptionExpiries: (params: { symbol?: string; exchange?: string; replay?: boolean }) =>
+    request<HubMarketDataOptionExpiriesResponse>(
+      `/trade/hub/market-data/option-expiries${api._hubStockHistoryQS({
+        symbol: params.symbol ?? "NIFTY",
+        exchange: params.exchange ?? "NSE_INDEX",
+        replay: params.replay ? "1" : undefined,
+      })}`,
+    ),
   getHubMacroFactorPanel: (params: { start: string; end: string }) =>
     request<HubMacroFactorPanelResponse>(
       `/trade/hub/macro-factors/panel${api._hubStockHistoryQS({
@@ -3022,6 +3030,14 @@ export interface HubMarketDataOptionChainResponse {
   underlying_prev_close?: number | null;
   strikes?: HubMarketDataOptionChainStrike[];
   source?: string;
+  error?: string | null;
+}
+
+export interface HubMarketDataOptionExpiriesResponse {
+  status: string;
+  underlying: string;
+  exchange: string;
+  expiries?: string[];
   error?: string | null;
 }
 

@@ -6,6 +6,7 @@ import { SimulatorOptionChainPanel } from "../SimulatorOptionChainPanel";
 const apiMock = vi.hoisted(() => ({
   getHubMarketDataOptionChain: vi.fn(),
   getHubMarketDataSpot: vi.fn(),
+  getHubMarketDataOptionExpiries: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({ api: apiMock }));
@@ -14,6 +15,10 @@ describe("SimulatorOptionChainPanel", () => {
   beforeEach(() => {
     apiMock.getHubMarketDataOptionChain.mockReset();
     apiMock.getHubMarketDataSpot.mockReset();
+    apiMock.getHubMarketDataOptionExpiries.mockReset();
+    apiMock.getHubMarketDataOptionExpiries.mockResolvedValue({
+      status: "ok", underlying: "NIFTY", exchange: "NSE_INDEX", expiries: [],
+    });
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -108,6 +113,64 @@ describe("SimulatorOptionChainPanel", () => {
     render(<SimulatorOptionChainPanel symbol="NIFTY" open={true} onClose={() => {}} />);
     await waitFor(() => {
       expect(screen.getByText(/no strikes returned/i)).toBeInTheDocument();
+    });
+  });
+
+  it("shows an expiry dropdown when multiple expiries are available and refetches on change", async () => {
+    apiMock.getHubMarketDataOptionExpiries.mockResolvedValue({
+      status: "ok", underlying: "NIFTY", exchange: "NSE_INDEX",
+      expiries: ["2026-08-21", "2026-08-28"],
+    });
+    apiMock.getHubMarketDataOptionChain.mockResolvedValue({
+      status: "ok", underlying: "NIFTY", exchange: "NSE_INDEX",
+      expiry_date: "2026-08-21", underlying_ltp: 24750.0,
+      strikes: [
+        { strike: 24700.0, ce: { last_price: 100.5 }, pe: { last_price: 80.0 } },
+      ],
+    });
+    apiMock.getHubMarketDataSpot.mockResolvedValue({
+      status: "ok", symbol: "NIFTY", exchange: "NSE_INDEX",
+      spot: { symbol: "NIFTY", exchange: "NSE_INDEX", ltp: 24750.0, prev_close: 24700,
+              source: "openalgo", as_of: "2026-08-15T09:31:00Z" },
+    });
+
+    render(<SimulatorOptionChainPanel symbol="NIFTY" open={true} onClose={() => {}} />);
+
+    const select = await screen.findByTestId("option-chain-expiry-select");
+    await waitFor(() => {
+      expect(apiMock.getHubMarketDataOptionChain).toHaveBeenCalledWith(
+        expect.objectContaining({ expiry_date: "2026-08-21" }),
+      );
+    });
+
+    fireEvent.change(select, { target: { value: "2026-08-28" } });
+
+    await waitFor(() => {
+      expect(apiMock.getHubMarketDataOptionChain).toHaveBeenCalledWith(
+        expect.objectContaining({ expiry_date: "2026-08-28" }),
+      );
+    });
+  });
+
+  it("renders a moving line at the spot price once strikes and spot are loaded", async () => {
+    apiMock.getHubMarketDataOptionChain.mockResolvedValue({
+      status: "ok", underlying: "NIFTY", exchange: "NSE_INDEX",
+      expiry_date: "2026-08-21", underlying_ltp: 24725.0,
+      strikes: [
+        { strike: 24700.0, ce: { last_price: 100.5 }, pe: { last_price: 80.0 } },
+        { strike: 24750.0, ce: { last_price: 70.0 }, pe: { last_price: 100.0 } },
+      ],
+    });
+    apiMock.getHubMarketDataSpot.mockResolvedValue({
+      status: "ok", symbol: "NIFTY", exchange: "NSE_INDEX",
+      spot: { symbol: "NIFTY", exchange: "NSE_INDEX", ltp: 24725.0, prev_close: 24700,
+              source: "openalgo", as_of: "2026-08-15T09:31:00Z" },
+    });
+
+    render(<SimulatorOptionChainPanel symbol="NIFTY" open={true} onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("option-chain-spot-line")).toBeInTheDocument();
     });
   });
 });

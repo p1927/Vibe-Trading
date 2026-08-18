@@ -9,7 +9,7 @@
  * option-chain layout (OI outermost, LTP innermost next to the strike).
  * Pause when closed.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
@@ -101,9 +101,38 @@ export function SimulatorOptionChainPanel({
   const [spot, setSpot] = useState<number | null>(null);
   const [prevClose, setPrevClose] = useState<number | null>(null);
   const [expiry, setExpiry] = useState<string | null>(null);
+  const [expiries, setExpiries] = useState<string[]>([]);
+  const [selectedExpiry, setSelectedExpiry] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const tableWrapRef = useRef<HTMLDivElement | null>(null);
+  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
+  const [linePx, setLinePx] = useState<number | null>(null);
+
+  // Discover which expiries have data before fetching a chain for one —
+  // reset the selection whenever the underlying/replay-day context changes
+  // so a stale expiry from the previous symbol isn't carried over.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setSelectedExpiry(null);
+    setExpiries([]);
+    api
+      .getHubMarketDataOptionExpiries({ symbol, exchange, replay: isReplayArmed })
+      .then((res) => {
+        if (cancelled) return;
+        const list = res.expiries ?? [];
+        setExpiries(list);
+        if (list.length > 0) setSelectedExpiry(list[0]);
+      })
+      .catch(() => {
+        if (!cancelled) setExpiries([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, symbol, exchange, isReplayArmed]);
 
   const fetchChain = async () => {
     setLoading(true);
@@ -113,6 +142,7 @@ export function SimulatorOptionChainPanel({
           symbol,
           exchange,
           strike_count: strikeCount,
+          expiry_date: selectedExpiry ?? undefined,
           replay: isReplayArmed,
         }),
         api.getHubMarketDataSpot({ symbol, exchange, replay: isReplayArmed }),
@@ -154,7 +184,7 @@ export function SimulatorOptionChainPanel({
     const handle = window.setInterval(fetchChain, 5000);
     return () => window.clearInterval(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, symbol, exchange, strikeCount, isReplayArmed]);
+  }, [open, symbol, exchange, strikeCount, isReplayArmed, selectedExpiry]);
 
   const change = useMemo(() => {
     if (spot == null || prevClose == null) return null;
@@ -190,6 +220,40 @@ export function SimulatorOptionChainPanel({
     };
   }, [strikes]);
 
+  // Position a horizontal line at the strike-table row that corresponds to
+  // the live spot price, interpolated between the two bracketing strikes so
+  // it tracks the actual LTP rather than snapping to the nearest strike row.
+  useLayoutEffect(() => {
+    function measure() {
+      const wrap = tableWrapRef.current;
+      const tbody = tbodyRef.current;
+      if (!wrap || !tbody || spot == null || strikes.length === 0) {
+        setLinePx(null);
+        return;
+      }
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+      if (rows.length !== strikes.length || rows.length === 0) {
+        setLinePx(null);
+        return;
+      }
+      let upperIdx = strikes.findIndex((r) => r.strike >= spot);
+      if (upperIdx === -1) upperIdx = strikes.length - 1;
+      const lowerIdx = upperIdx > 0 ? upperIdx - 1 : upperIdx;
+      const lowerStrike = strikes[lowerIdx].strike;
+      const upperStrike = strikes[upperIdx].strike;
+      const frac = upperStrike === lowerStrike ? 0 : (spot - lowerStrike) / (upperStrike - lowerStrike);
+      const wrapRect = wrap.getBoundingClientRect();
+      const lowerRect = rows[lowerIdx].getBoundingClientRect();
+      const upperRect = rows[upperIdx].getBoundingClientRect();
+      const lowerMid = lowerRect.top + lowerRect.height / 2 - wrapRect.top;
+      const upperMid = upperRect.top + upperRect.height / 2 - wrapRect.top;
+      setLinePx(lowerMid + (upperMid - lowerMid) * Math.max(0, Math.min(1, frac)));
+    }
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [strikes, spot]);
+
   if (!open) return null;
 
   const positive = (change ?? 0) >= 0;
@@ -213,7 +277,23 @@ export function SimulatorOptionChainPanel({
               <h2 id="option-chain-title" className="text-sm font-semibold">
                 {symbol} Option Chain
               </h2>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">{expiry ?? "expiry —"}</p>
+              {expiries.length > 1 ? (
+                <select
+                  aria-label="Expiry"
+                  value={selectedExpiry ?? ""}
+                  onChange={(e) => setSelectedExpiry(e.target.value)}
+                  className="mt-0.5 rounded border bg-background px-1.5 py-0.5 text-[11px] text-foreground"
+                  data-testid="option-chain-expiry-select"
+                >
+                  {expiries.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="mt-0.5 text-[11px] text-muted-foreground">{expiry ?? selectedExpiry ?? "expiry —"}</p>
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-1">
               <button
@@ -299,7 +379,20 @@ export function SimulatorOptionChainPanel({
             <p className="px-4 py-6 text-center text-xs text-muted-foreground">Loading…</p>
           )}
           {strikes.length > 0 && (
-            <table className="w-full border-collapse text-[11px] tabular-nums">
+            <div ref={tableWrapRef} className="relative">
+              {linePx != null && (
+                <div
+                  aria-hidden="true"
+                  data-testid="option-chain-spot-line"
+                  className="pointer-events-none absolute inset-x-0 z-[5] border-t-2 border-dashed border-amber-500"
+                  style={{ top: `${linePx}px` }}
+                >
+                  <span className="absolute right-1 -translate-y-1/2 rounded bg-amber-500 px-1 py-0.5 text-[9px] font-semibold leading-none text-black">
+                    {fmt(spot)}
+                  </span>
+                </div>
+              )}
+              <table className="w-full border-collapse text-[11px] tabular-nums">
               <thead className="sticky top-0 z-10 bg-background/95 backdrop-blur">
                 <tr>
                   <th className="bg-emerald-500/10 px-2 py-1 text-right text-emerald-700 dark:text-emerald-400" colSpan={4}>
@@ -322,7 +415,7 @@ export function SimulatorOptionChainPanel({
                   <th className="px-2 py-0.5 text-left font-medium">OI</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody ref={tbodyRef}>
                 {strikes.map((row, i) => {
                   const isAtm = i === closestStrikeIndex(strikes, spot);
                   const ceItm = spot != null && row.strike < spot;
@@ -362,7 +455,8 @@ export function SimulatorOptionChainPanel({
                   );
                 })}
               </tbody>
-            </table>
+              </table>
+            </div>
           )}
         </div>
       </div>

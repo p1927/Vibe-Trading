@@ -126,3 +126,56 @@ def test_seek_replay_propagates_openalgo_error() -> None:
         res = _client().post("/trade/recording/replay/seek", json={"time": "not-a-time"})
 
     assert res.status_code == 502
+
+
+def test_replay_status_mirrors_env_when_process_missed_the_arm(monkeypatch) -> None:
+    """A VibeTrading process that never witnessed the original arm (restarted,
+    or armed from another tab) must still pick up OpenAlgo's replay state on
+    the next status poll — otherwise the chart/option-chain endpoints, which
+    read STOCK_SIMULATOR_MODE/NSE_REPLAY_* from *this* process, stay dark even
+    though the sim clock is visibly running."""
+    monkeypatch.delenv("STOCK_SIMULATOR_MODE", raising=False)
+    monkeypatch.delenv("NSE_REPLAY_DATE", raising=False)
+    monkeypatch.delenv("NSE_REPLAY_END_DATE", raising=False)
+
+    def fake_get(url, headers=None, timeout=None):
+        return _FakeResponse(
+            200,
+            {
+                "mode": "replay",
+                "week_dates": ["2024-04-15", "2024-04-16"],
+                "clock": {
+                    "replay_date": "2024-04-15",
+                    "sim_now": "2024-04-15T11:30:00+05:30",
+                    "speed": 2.0,
+                    "loop": False,
+                },
+            },
+        )
+
+    with patch("requests.get", side_effect=fake_get):
+        res = _client().get("/trade/recording/replay/status")
+
+    assert res.status_code == 200
+    import os
+
+    assert os.environ["STOCK_SIMULATOR_MODE"] == "replay"
+    assert os.environ["NSE_REPLAY_DATE"] == "2024-04-15"
+    assert os.environ["NSE_REPLAY_END_DATE"] == "2024-04-16"
+    assert os.environ["NSE_REPLAY_SPEED"] == "2.0"
+    assert os.environ["NSE_REPLAY_LOOP"] == "0"
+
+
+def test_replay_status_clears_env_when_openalgo_reports_not_armed(monkeypatch) -> None:
+    monkeypatch.setenv("STOCK_SIMULATOR_MODE", "replay")
+
+    def fake_get(url, headers=None, timeout=None):
+        return _FakeResponse(200, {"mode": "", "clock": {}})
+
+    with patch("requests.get", side_effect=fake_get):
+        res = _client().get("/trade/recording/replay/status")
+
+    assert res.status_code == 200
+    import os
+
+    assert "STOCK_SIMULATOR_MODE" not in os.environ
