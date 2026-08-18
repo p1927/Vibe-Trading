@@ -64,7 +64,10 @@ function formatPct(v: number | null | undefined): string {
 // from, which conflated three different sources behind one word. Map the
 // backend's `spot.source` (see get_live_spot_quote in _market_data.py) to a
 // label that tells the truth: "timescale" is recently-recorded playback,
-// not the broker tape; "openalgo" is the only genuinely-live path.
+// not the broker tape; "openalgo" is the only genuinely-live path;
+// "parquet_fallback" is from the replay bundle (the chart is showing
+// recent intraday bars because the recorder's hot tier is empty — the
+// recorder or Timescale writer has stalled).
 function modeBadge(
   isReplayArmed: boolean,
   source: string | undefined,
@@ -73,6 +76,7 @@ function modeBadge(
   if (isReplayArmed) return { label: "REPLAY", live: false };
   if (source === "openalgo") return { label: "BROKER · LIVE", live: true };
   if (source === "timescale") return { label: "RECENT · RECORDED", live: false };
+  if (source === "parquet_fallback") return { label: "RECENT · FALLBACK", live: false };
   if (sessionOpen === false) return { label: "MARKET CLOSED", live: false };
   return { label: "LIVE", live: true };
 }

@@ -4354,9 +4354,20 @@ def hub_market_data_ticks(
             symbol=symbol, exchange=exchange,
             since_minutes=since_minutes, limit=limit,
         )
+        # Each tick's per-row ``source`` field tells the bridge where it
+        # came from ("openalgo"/"indmoney_recorder_ws" from the hot tier,
+        # "parquet_fallback" from the replay bundle when the hot tier is
+        # empty — used to render a chart line even when the recorder
+        # hasn't populated TimescaleDB yet, which previously rendered a
+        # blank plot). Surface that here so the UI badge can tell the
+        # truth rather than silently labelling stale bars as live ticks.
+        if ticks and any(t.get("source") == "parquet_fallback" for t in ticks):
+            wrapper_source = "parquet_fallback"
+        else:
+            wrapper_source = "timescale" if ticks else "empty"
         return HubMarketDataTicksResponse(
             status="ok", symbol=symbol.upper(), exchange=exchange.upper(),
-            source="timescale" if ticks else "empty", ticks=ticks,
+            source=wrapper_source, ticks=ticks,
         )
     except Exception as exc:
         logger.exception("hub market-data ticks failed for %s/%s", symbol, exchange)
@@ -4492,7 +4503,8 @@ def hub_market_data_option_chain(
         expiry_date=str(data.get("expiry_date") or data.get("expiry") or "")[:10] or None,
         underlying_ltp=_safe_float(data.get("underlying_ltp") or data.get("ltp") or data.get("spot")),
         underlying_prev_close=_safe_float(data.get("underlying_prev_close") or data.get("prev_close")),
-        strikes=strikes, source="openalgo",
+        strikes=strikes,
+        source=str(data.get("source") or "openalgo"),
     )
 
 

@@ -559,6 +559,12 @@ def serve_main(argv: list[str] | None = None) -> int:
             log_level="info",
             reload=args.reload,
             reload_dirs=reload_dirs,
+            # Open SSE streams (recording/prediction-run/alpha-bench logs) never
+            # close on their own — only when the client disconnects. Without a
+            # bound here, a stale browser tab holding one open makes --reload's
+            # graceful shutdown wait forever (observed as "Waiting for
+            # connections to close..." then nothing). Force-close after 5s.
+            timeout_graceful_shutdown=5,
         )
     finally:
         if vite_proc:
