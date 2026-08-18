@@ -706,6 +706,10 @@ class ReplayStatusResponse(BaseModel):
     replay: Dict[str, Any] | None = None
 
 
+class SeekReplayRequest(BaseModel):
+    time: str
+
+
 class RefreshIndexPredictionRequest(BaseModel):
     ticker: str = "NIFTY"
     horizon_days: int | None = None
@@ -3658,6 +3662,41 @@ def resume_replay(
     try:
         res = requests.post(
             f"{_openalgo_host()}/stock_simulator/control/replay/resume",
+            headers=headers,
+            timeout=15.0,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
+        ) from exc
+    if res.status_code >= 400:
+        raise HTTPException(status_code=502, detail=res.text[:500])
+    return ReplayStatusResponse(status="ok", replay=_openalgo_json(res))
+
+
+@trade_router.post("/recording/replay/seek", response_model=ReplayStatusResponse)
+def seek_replay(
+    body: SeekReplayRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> ReplayStatusResponse:
+    """Scrub the simulator clock to an arbitrary point in the armed day.
+
+    ``body.time`` is either ``HH:MM[:SS]`` (applied to the currently armed
+    replay date) or a full ISO datetime.
+    """
+    import requests
+
+    headers = _openalgo_control_headers()
+    if headers is None:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
+            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
+        )
+    try:
+        res = requests.post(
+            f"{_openalgo_host()}/stock_simulator/control/replay/seek",
+            json={"time": body.time},
             headers=headers,
             timeout=15.0,
         )

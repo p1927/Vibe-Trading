@@ -92,3 +92,37 @@ def test_start_replay_propagates_openalgo_error() -> None:
         res = _client().post("/trade/recording/not-a-date/replay", json={})
 
     assert res.status_code == 502
+
+
+def test_seek_replay_returns_503_without_token(monkeypatch) -> None:
+    monkeypatch.delenv("OPENALGO_SIMULATOR_CONTROL_TOKEN", raising=False)
+    res = _client().post("/trade/recording/replay/seek", json={"time": "11:30"})
+    assert res.status_code == 503
+    assert "OPENALGO_SIMULATOR_CONTROL_TOKEN" in res.json()["detail"]
+
+
+def test_seek_replay_forwards_time_to_openalgo() -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["json"] = json
+        return _FakeResponse(200, {"clock": {"sim_now": "2024-04-15T11:30:00+05:30"}})
+
+    with patch("requests.post", side_effect=fake_post):
+        res = _client().post("/trade/recording/replay/seek", json={"time": "11:30"})
+
+    assert res.status_code == 200
+    assert captured["url"].endswith("/stock_simulator/control/replay/seek")
+    assert captured["json"] == {"time": "11:30"}
+    assert res.json()["replay"]["clock"]["sim_now"] == "2024-04-15T11:30:00+05:30"
+
+
+def test_seek_replay_propagates_openalgo_error() -> None:
+    def fake_post(url, json=None, headers=None, timeout=None):
+        return _FakeResponse(400, {"status": "error", "message": "time must be HH:MM[:SS]"})
+
+    with patch("requests.post", side_effect=fake_post):
+        res = _client().post("/trade/recording/replay/seek", json={"time": "not-a-time"})
+
+    assert res.status_code == 502

@@ -57,6 +57,11 @@ export const MACRO_EXTENDED_KEYS = [
   "usd_inr_momentum_5d",
   "us_10y_velocity_3d",
   "fii_net_5d_momentum",
+  "nifty_ichimoku_conv",
+  "nifty_ichimoku_base",
+  "nifty_supertrend",
+  "nifty_keltner_pct_b",
+  "index_sentiment_news",
 ] as const;
 
 /** Full Ridge feature universe for UI verification — keep in sync with factor_matrix.py. */

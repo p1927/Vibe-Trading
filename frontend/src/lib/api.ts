@@ -1023,6 +1023,13 @@ export const api = {
     request<ReplayStatusResponse>("/trade/recording/replay/pause", { method: "POST" }),
   resumeReplay: () =>
     request<ReplayStatusResponse>("/trade/recording/replay/resume", { method: "POST" }),
+  /** Scrub the sim clock to an arbitrary point. `time` is "HH:MM[:SS]" on the
+   * currently armed day, or a full ISO datetime. */
+  seekReplay: (time: string) =>
+    request<ReplayStatusResponse>("/trade/recording/replay/seek", {
+      method: "POST",
+      body: JSON.stringify({ time }),
+    }),
   stopReplay: () =>
     request<ReplayStatusResponse>("/trade/recording/replay/stop", { method: "POST" }),
   getReplayCalendar: () => request<ReplayCalendarResponse>("/trade/recording/replay/calendar"),
