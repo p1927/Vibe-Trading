@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Wand2, X } from "lucide-react";
+import { Loader2, Search, Wand2, X } from "lucide-react";
 import { CandlestickChart } from "@/components/charts/CandlestickChart";
 import {
   api,
@@ -116,9 +116,19 @@ export function SimulatorReplayDetailPanel({
   // re-runs even when `underlying` didn't change (e.g. backfilling the
   // bucket behind the currently-selected tab).
   const [barsRefreshKey, setBarsRefreshKey] = useState(0);
+  // Compact filter for the canonical coverage bucket list — search by
+  // name/key, toggle "missing only" to focus on what needs a backfill,
+  // and "present only" to confirm what's already on disk. Resets when
+  // the user closes/reopens the panel for a different day.
+  const [bucketFilter, setBucketFilter] = useState("");
+  const [bucketStatusFilter, setBucketStatusFilter] = useState<"all" | "present" | "missing">("all");
 
   useEffect(() => {
-    if (day) setUnderlying("NIFTY");
+    if (day) {
+      setUnderlying("NIFTY");
+      setBucketFilter("");
+      setBucketStatusFilter("all");
+    }
   }, [day]);
 
   // Overview loads immediately on open, independent of the per-underlying bar
@@ -440,92 +450,65 @@ export function SimulatorReplayDetailPanel({
                 ) : !coverageDay ? (
                   <p className="text-[11px] text-muted-foreground">No coverage data for this date.</p>
                 ) : (
-                  <div className="space-y-1.5">
-                    {Object.values(coverageDay.buckets).map((status) => {
-                      const progress = backfillResult[status.bucket];
-                      const isBackfilling = backfilling.has(status.bucket);
-                      return (
-                        <div
-                          key={status.bucket}
+                  <>
+                    {/* Compact filter row — search box + present/missing
+                        toggle. Lays out on one line at desktop widths,
+                        wraps gracefully below. Filtering happens
+                        client-side; the bucket list is small (≤ a few
+                        dozen rows). */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <div className="relative flex min-w-[140px] flex-1 items-center sm:max-w-[220px]">
+                        <Search className="pointer-events-none absolute left-2 h-3 w-3 text-muted-foreground" />
+                        <input
+                          type="search"
+                          value={bucketFilter}
+                          onChange={(e) => setBucketFilter(e.target.value)}
+                          placeholder="Filter buckets…"
+                          aria-label="Filter buckets"
+                          className="w-full rounded-md border bg-background py-1 pl-7 pr-6 text-[11px] placeholder:text-muted-foreground/70 focus:outline-none focus:ring-2 focus:ring-emerald-500/40"
+                        />
+                        {bucketFilter ? (
+                          <button
+                            type="button"
+                            onClick={() => setBucketFilter("")}
+                            aria-label="Clear filter"
+                            className="absolute right-1 rounded-full p-0.5 text-muted-foreground hover:bg-muted"
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        ) : null}
+                      </div>
+                      {(["all", "missing", "present"] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => setBucketStatusFilter(mode)}
+                          aria-pressed={bucketStatusFilter === mode}
                           className={cn(
-                            "rounded-lg border p-2 text-[11px]",
-                            status.present ? "bg-emerald-500/5" : "bg-amber-500/5",
+                            "rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors",
+                            bucketStatusFilter === mode
+                              ? mode === "missing"
+                                ? "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                                : mode === "present"
+                                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                                : "border-border bg-muted text-foreground"
+                              : "border-border bg-background text-muted-foreground hover:bg-muted",
                           )}
                         >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div>
-                              <span className="font-medium">
-                                {BUCKET_DISPLAY_NAMES[status.bucket] ?? status.bucket}
-                              </span>
-                              <span className="ml-2 font-mono text-[10px] text-muted-foreground">
-                                {status.bucket}
-                              </span>
-                            </div>
-                            <span
-                              className={cn(
-                                "inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-medium",
-                                status.present
-                                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                                  : "bg-amber-500/15 text-amber-800 dark:text-amber-300",
-                              )}
-                            >
-                              {status.present ? "present" : "missing"}
-                            </span>
-                          </div>
-                          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-muted-foreground">
-                            {status.rows !== undefined && status.rows !== null ? (
-                              <span>rows: {fmtNum(status.rows)}</span>
-                            ) : null}
-                            <span>source: {status.primary_source || "—"}</span>
-                          </div>
-                          {!status.present ? (() => {
-                            // Live-only sources (e.g. NIFTY option chain) have no
-                            // historical fallback for days other than today — the
-                            // backend already says so via `fallback`. Skip the
-                            // button (and the wasted round trip) and say why.
-                            const knownUnfillable =
-                              day != null &&
-                              day.date !== localIsoDate(new Date()) &&
-                              (status.fallback ?? "").toLowerCase().includes("not backfillable");
-                            if (knownUnfillable) {
-                              return (
-                                <div className="mt-1.5 text-[10px] text-muted-foreground">
-                                  Not backfillable for {day!.date} — this source only has a live snapshot for today.
-                                </div>
-                              );
-                            }
-                            return (
-                              <div className="mt-1.5 flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => void runBackfill(status.bucket)}
-                                  disabled={isBackfilling}
-                                  className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-background px-2 py-0.5 text-[10px] font-medium text-amber-800 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-300"
-                                >
-                                  {isBackfilling ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                  ) : (
-                                    <Wand2 className="h-3 w-3" />
-                                  )}
-                                  {isBackfilling ? "Backfilling…" : "Backfill this bucket"}
-                                </button>
-                                {progress && "error" in progress && progress.error ? (
-                                  <span className="text-[10px] text-destructive">error: {progress.error}</span>
-                                ) : progress && "status" in progress ? (
-                                  <span className="text-[10px] text-emerald-700 dark:text-emerald-300">
-                                    {progress.status} — {progress.rows_written} row(s)
-                                    {progress.rows_written === 0 && progress.message ? (
-                                      <span className="ml-1 text-muted-foreground">— {progress.message}</span>
-                                    ) : null}
-                                  </span>
-                                ) : null}
-                              </div>
-                            );
-                          })() : null}
-                        </div>
-                      );
-                    })}
-                  </div>
+                          {mode === "all" ? "All" : mode === "missing" ? "Missing" : "Present"}
+                        </button>
+                      ))}
+                    </div>
+                    <BucketList
+                      buckets={coverageDay.buckets}
+                      filter={bucketFilter}
+                      statusFilter={bucketStatusFilter}
+                      backfillResult={backfillResult}
+                      backfilling={backfilling}
+                      onBackfill={runBackfill}
+                      day={day}
+                    />
+                  </>
                 )}
               </div>
 
@@ -618,5 +601,147 @@ export function SimulatorReplayDetailPanel({
         ) : null}
       </aside>
     </>
+  );
+}
+
+interface BucketListProps {
+  buckets: HubStockHistoryCoverageDay["buckets"];
+  filter: string;
+  statusFilter: "all" | "present" | "missing";
+  backfillResult: Record<
+    string,
+    HubStockHistoryBackfillResult | { error: string }
+  >;
+  backfilling: Set<string>;
+  onBackfill: (bucket: string) => void;
+  day: ReplayCalendarDay;
+}
+
+function BucketList({
+  buckets,
+  filter,
+  statusFilter,
+  backfillResult,
+  backfilling,
+  onBackfill,
+  day,
+}: BucketListProps) {
+  // Apply the text + status filters client-side. The list is small
+  // (≤ a few dozen rows on any normal week), so a single linear pass
+  // here is plenty.
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    return Object.values(buckets).filter((s) => {
+      if (statusFilter === "present" && !s.present) return false;
+      if (statusFilter === "missing" && s.present) return false;
+      if (q) {
+        const display = (BUCKET_DISPLAY_NAMES[s.bucket] ?? s.bucket).toLowerCase();
+        if (!display.includes(q) && !s.bucket.toLowerCase().includes(q)) return false;
+      }
+      return true;
+    });
+  }, [buckets, filter, statusFilter]);
+
+  if (filtered.length === 0) {
+    return (
+      <p className="rounded-md border bg-background/40 px-2 py-1.5 text-[10px] text-muted-foreground">
+        No buckets match the current filter.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {filtered.map((status) => {
+        const progress = backfillResult[status.bucket];
+        const isBackfilling = backfilling.has(status.bucket);
+        return (
+          <div
+            key={status.bucket}
+            className={cn(
+              "rounded-lg border p-2 text-[11px]",
+              status.present ? "bg-emerald-500/5" : "bg-amber-500/5",
+            )}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <span className="font-medium">
+                  {BUCKET_DISPLAY_NAMES[status.bucket] ?? status.bucket}
+                </span>
+                <span className="ml-2 font-mono text-[10px] text-muted-foreground">
+                  {status.bucket}
+                </span>
+              </div>
+              <span
+                className={cn(
+                  "inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-medium",
+                  status.present
+                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                    : "bg-amber-500/15 text-amber-800 dark:text-amber-300",
+                )}
+              >
+                {status.present ? "present" : "missing"}
+              </span>
+            </div>
+            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-muted-foreground">
+              {status.rows !== undefined && status.rows !== null ? (
+                <span>rows: {fmtNum(status.rows)}</span>
+              ) : null}
+              <span>source: {status.primary_source || "—"}</span>
+            </div>
+            {!status.present
+              ? (() => {
+                  // Live-only sources (e.g. NIFTY option chain) have no
+                  // historical fallback for days other than today — the
+                  // backend already says so via `fallback`. Skip the
+                  // button (and the wasted round trip) and say why.
+                  const knownUnfillable =
+                    day.date !== localIsoDate(new Date()) &&
+                    (status.fallback ?? "").toLowerCase().includes("not backfillable");
+                  if (knownUnfillable) {
+                    return (
+                      <div className="mt-1.5 text-[10px] text-muted-foreground">
+                        Not backfillable for {day.date} — this source only has a
+                        live snapshot for today.
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onBackfill(status.bucket)}
+                        disabled={isBackfilling}
+                        className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-background px-2 py-0.5 text-[10px] font-medium text-amber-800 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-300"
+                      >
+                        {isBackfilling ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Wand2 className="h-3 w-3" />
+                        )}
+                        {isBackfilling ? "Backfilling…" : "Backfill this bucket"}
+                      </button>
+                      {progress && "error" in progress && progress.error ? (
+                        <span className="text-[10px] text-destructive">
+                          error: {progress.error}
+                        </span>
+                      ) : progress && "status" in progress ? (
+                        <span className="text-[10px] text-emerald-700 dark:text-emerald-300">
+                          {progress.status} — {progress.rows_written} row(s)
+                          {progress.rows_written === 0 && progress.message ? (
+                            <span className="ml-1 text-muted-foreground">
+                              — {progress.message}
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : null}
+                    </div>
+                  );
+                })()
+              : null}
+          </div>
+        );
+      })}
+    </div>
   );
 }

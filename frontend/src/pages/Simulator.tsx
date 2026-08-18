@@ -634,7 +634,7 @@ export function Simulator() {
       </StatCard>
 
       <StatCard title="Replay">
-        <div className="space-y-3">
+        <div className="space-y-4">
           {replayNotConfigured ? (
             <div className="rounded-lg border border-muted-foreground/20 bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
               Replay not available — {replayNotConfigured}
@@ -666,8 +666,8 @@ export function Simulator() {
             onStop={handleSimulatorStopped}
           />
 
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background/60 p-3">
-            <div className="flex flex-wrap items-center gap-3 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background/60 p-4">
+            <div className="flex flex-wrap items-center gap-4 text-xs">
               <label className="flex items-center gap-1.5">
                 Speed
                 <select
@@ -736,7 +736,7 @@ export function Simulator() {
           Per-week bucket availability for the simulator. White cells = data
           missing; click a cell to backfill it via the registered writer.
         </p>
-        <StockHistoryCoveragePanel />
+        <StockHistoryCoveragePanel includeOptional />
       </StatCard>
     </div>
   );

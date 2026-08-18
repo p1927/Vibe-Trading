@@ -12,7 +12,7 @@ const ROW_LABELS = ["", "Mon", "", "Wed", "", "Fri", ""];
 // list, so every label's row/column index maps directly onto a cell's —
 // no manual padding-offset math that can drift out of sync.
 const CELL_PX = 12;
-const CELL_GAP_PX = 3;
+const CELL_GAP_PX = 4;
 const LABEL_COL_PX = 28;
 const HEADER_ROW_PX = 14;
 const WEEKS = 53;
@@ -315,7 +315,7 @@ export function SimulatorReplayCalendar({
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border bg-background/60 p-3">
+      <div className="overflow-x-auto rounded-lg border bg-background/60 p-4">
         {/*
           CSS Grid: one shared row/column track list for the weekday-label
           column, the month-label header row, and every day cell. Each
@@ -434,7 +434,7 @@ export function SimulatorReplayCalendar({
         </div>
 
         {/* Legend */}
-        <div className="mt-3 flex flex-wrap items-center gap-3 text-[10px] text-muted-foreground">
+        <div className="mt-4 flex flex-wrap items-center gap-3 text-[10px] text-muted-foreground">
           <div className="flex items-center gap-2">
             <span>Less</span>
             {[1, 2, 3, 4].map((lvl) => (

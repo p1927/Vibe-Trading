@@ -196,7 +196,7 @@ export function SimulatorReplayClock({
 
   if (!armedRange) {
     return (
-      <div className="rounded-lg border bg-background/60 p-3 text-[11px] text-muted-foreground">
+      <div className="rounded-lg border bg-background/60 p-4 text-[11px] text-muted-foreground">
         Select a day (or a start + end range) on the calendar and press{" "}
         <span className="font-medium text-foreground">Arm replay</span> to start the simulator clock.
       </div>
@@ -204,7 +204,7 @@ export function SimulatorReplayClock({
   }
 
   return (
-    <div className="space-y-3 rounded-lg border bg-background/60 p-3">
+    <div className="space-y-4 rounded-lg border bg-background/60 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="space-y-0.5">
           <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
