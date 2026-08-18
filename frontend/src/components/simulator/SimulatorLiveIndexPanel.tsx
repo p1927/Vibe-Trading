@@ -273,7 +273,15 @@ export function SimulatorLiveIndexPanel({
       .filter((t) => Number.isFinite(t.price))
       .map((t) => {
         const ms = Date.parse(t.ts);
-        return { time: Math.floor(ms / 1000) as Time, value: t.price };
+        // Lightweight Charts always renders a numeric `Time` on its axis as
+        // UTC clock time — it has no timezone option. `t.ts` is IST (NSE's
+        // trading hours), so the *true* UTC epoch displays 5:30 earlier
+        // than the actual IST wall clock (09:15 IST would show as 03:45).
+        // Shift the instant forward by IST's UTC offset before truncating
+        // to seconds, so the axis's "UTC" label happens to read the real
+        // IST time instead.
+        const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+        return { time: Math.floor((ms + IST_OFFSET_MS) / 1000) as Time, value: t.price };
       })
       .filter((p) => Number.isFinite(p.time));
     mapped.sort((a, b) => (a.time as number) - (b.time as number));

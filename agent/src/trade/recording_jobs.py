@@ -64,7 +64,16 @@ def worker_alive(job: dict[str, Any] | None) -> bool:
         return False
     status = str(job.get("status") or "")
     pid = job.get("worker_pid")
-    if status == "queued" and pid is None:
+    # A ``waiting_for_open`` job legitimately has no worker_pid — the
+    # Phase C cron-driven wake path (``set_waiting_for_open_at`` /
+    # ``schedule_recording_wake``) never spawns a worker subprocess
+    # until the scheduled wake fires; the job just sits with a
+    # deferred-wake schedule and no PID. Without this branch,
+    # ``reconcile_zombie_job`` (invoked on every SSE tick and every
+    # ``get_active_job()`` poll) treated that as "worker died" and
+    # immediately failed the job — killing every wait-for-open
+    # recording seconds after arming it, well before market open.
+    if status in ("queued", "waiting_for_open") and pid is None:
         return True
     if pid is None:
         return status not in _ACTIVE_STATUSES

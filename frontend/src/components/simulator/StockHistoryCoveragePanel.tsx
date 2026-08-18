@@ -133,6 +133,22 @@ const NIFTY50_LIVE_PRESET: ReadonlySet<string> = new Set([
   "news_events",
 ]);
 
+/** First-paint default — one representative bucket per recording
+ *  pillar (index tape, option chain, daily OHLCV history, the macro
+ *  factor umbrella, equities, news) instead of every individual
+ *  factor-key bucket. The panel now tracks each of the ~90 ML factor
+ *  keys as its own bucket so nothing is silently unrecorded, but
+ *  showing all of them on first paint would be unreadable — everything
+ *  beyond this set is one search/toggle away in the filter bar. */
+const DEFAULT_VISIBLE_PRESET: ReadonlySet<string> = new Set([
+  "index_tape_nifty",
+  "option_chain_nifty",
+  "nifty_ohlcv_daily",
+  "macro_factors",
+  "equity_ohlcv",
+  "news_events",
+]);
+
 function bucketLabel(bucket: string): string {
   return SHORT_LABEL[bucket] ?? bucket;
 }
@@ -308,7 +324,11 @@ export function StockHistoryCoveragePanel({
   useEffect(() => {
     if (bucketFilter !== null) return;
     if (totalBuckets === 0) return;
-    setBucketFilter(new Set(allBuckets));
+    const defaults = allBuckets.filter((b) => DEFAULT_VISIBLE_PRESET.has(b));
+    // Fall back to "everything" if none of the default pillars exist in
+    // this deployment's bucket registry yet, so the panel never opens
+    // to an empty grid.
+    setBucketFilter(new Set(defaults.length > 0 ? defaults : allBuckets));
   }, [allBuckets, totalBuckets, bucketFilter]);
 
   const selectedBucketsList = useMemo(() => {
@@ -465,7 +485,7 @@ export function StockHistoryCoveragePanel({
                 type="button"
                 aria-label="Previous year"
                 onClick={() => shiftYear(-7 * YEAR_WEEKS)}
-                className="rounded-lg border bg-background px-2.5 py-1.5 text-sm transition-colors hover:bg-muted disabled:opacity-50"
+                className="rounded-lg border bg-background px-2.5 py-1.5 text-sm transition-all hover:bg-muted active:scale-95 disabled:opacity-50"
               >
                 <ChevronsLeft className="h-4 w-4" />
               </button>
@@ -481,11 +501,17 @@ export function StockHistoryCoveragePanel({
                 range={dateRange}
                 onRangeChange={handleDateRangeChange}
               />
+              <span
+                className="rounded-md bg-muted/60 px-2 py-1 font-mono text-[10px] text-muted-foreground"
+                title="Calendar year shown at the right edge of the window"
+              >
+                yr {parseIsoDate(yearEnd).getFullYear()}
+              </span>
               <button
                 type="button"
                 aria-label="Next year"
                 onClick={() => shiftYear(7 * YEAR_WEEKS)}
-                className="rounded-lg border bg-background px-2.5 py-1.5 text-sm transition-colors hover:bg-muted disabled:opacity-50"
+                className="rounded-lg border bg-background px-2.5 py-1.5 text-sm transition-all hover:bg-muted active:scale-95 disabled:opacity-50"
               >
                 <ChevronsRight className="h-4 w-4" />
               </button>
@@ -1170,14 +1196,20 @@ function CoverageHeatmap({
     );
   }
 
-  // In week view we render every bucket — the dropdown filter is
-  // about which day is "green" (AND across selected buckets), not
-  // about which row to hide. Hiding rows here would break the
-  // user's mental model: they picked buckets, they want to see if
-  // THOSE buckets exist on the days they care about.
-  const labels = report.bucket_labels;
+  // Week view now hides unselected rows: with ~90 factor-key buckets
+  // in the registry, rendering every row by default is unreadable.
+  // `bucketFilter`'s default is a curated 5-6 bucket preset
+  // (`DEFAULT_VISIBLE_PRESET`); the dropdown's search/checkboxes are
+  // how a user brings any of the other ~85 buckets into view.
+  const labels = isAllSelected
+    ? report.bucket_labels
+    : report.bucket_labels.filter((b) => selectedBuckets.has(b));
   if (labels.length === 0) {
-    return null;
+    return (
+      <div className="rounded-xl border bg-card/50 px-3 py-8 text-center text-xs text-muted-foreground shadow-sm">
+        No buckets selected — use the filter above to pick one, or "All" to see everything.
+      </div>
+    );
   }
 
   // For each day, compute a synthetic boolean "is the AND of selected
