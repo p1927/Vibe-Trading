@@ -48,11 +48,65 @@ const SESSION_OPEN_MIN = 9 * 60 + 15;
 const SESSION_CLOSE_MIN = 15 * 60 + 30;
 const SESSION_SPAN_MIN = SESSION_CLOSE_MIN - SESSION_OPEN_MIN;
 
+// Width of each minute cell inside the coverage strip. 100% / total session
+// minutes → ~0.267% per cell. Using per-minute divs would balloon the DOM
+// with 375 nodes; instead we merge contiguous covered/gap minutes into
+// ranges and render one div per range — typically a handful.
+const COVERAGE_MINUTE_PCT = 100 / SESSION_SPAN_MIN;
+
 function progressPct(d: Date | null): number {
   if (!d) return 0;
   const minutes = istMinutesOfDay(d);
   if (SESSION_SPAN_MIN <= 0) return 0;
   return Math.max(0, Math.min(1, (minutes - SESSION_OPEN_MIN) / SESSION_SPAN_MIN));
+}
+
+interface CoverageRange {
+  /** Minute-of-day (IST) where this range starts. */
+  startMin: number;
+  /** Number of consecutive minutes in this range. */
+  length: number;
+  /** True if the range is "covered" (green), false if it's a gap (transparent). */
+  covered: boolean;
+}
+
+/** Merge contiguous covered/gap minutes into ranges so we can render one
+ * absolutely-positioned div per range instead of 375 per-minute cells. */
+function buildCoverageRanges(covered: Set<number>): CoverageRange[] {
+  const ranges: CoverageRange[] = [];
+  let currentStart: number | null = null;
+  let currentHas = false;
+  let currentLen = 0;
+  for (let m = 0; m < SESSION_SPAN_MIN; m++) {
+    const minute = SESSION_OPEN_MIN + m;
+    const has = covered.has(minute);
+    if (currentStart === null) {
+      currentStart = minute;
+      currentHas = has;
+      currentLen = 1;
+      continue;
+    }
+    if (has === currentHas) {
+      currentLen += 1;
+    } else {
+      ranges.push({ startMin: currentStart, length: currentLen, covered: currentHas });
+      currentStart = minute;
+      currentHas = has;
+      currentLen = 1;
+    }
+  }
+  if (currentStart !== null) {
+    ranges.push({ startMin: currentStart, length: currentLen, covered: currentHas });
+  }
+  return ranges;
+}
+
+/** IST minute-of-day from an ISO string like `2024-04-15T10:00:00+05:30`. */
+function istMinuteFromIso(value: unknown): number | null {
+  if (typeof value !== "string" || !value) return null;
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return null;
+  return istMinutesOfDay(d);
 }
 
 function pctToHHMMSS(pct: number): string {
@@ -76,6 +130,7 @@ export function SimulatorReplayClock({
   const [error, setError] = useState<string | null>(null);
   const [scrubPct, setScrubPct] = useState<number | null>(null);
   const [seeking, setSeeking] = useState(false);
+  const [coverage, setCoverage] = useState<Set<number>>(() => new Set());
   const abortRef = useRef<AbortController | null>(null);
   const trackRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
@@ -128,12 +183,63 @@ export function SimulatorReplayClock({
 
   const livePct = useMemo(() => progressPct(simNow), [simNow]);
   const pct = scrubPct ?? livePct;
+  const coverageRanges = useMemo(() => buildCoverageRanges(coverage), [coverage]);
 
   // Once a seek lands, drop the local override so subsequent status polls
   // (server truth) drive the bar again.
   useEffect(() => {
     if (!draggingRef.current && !seeking) setScrubPct(null);
   }, [simNow, seeking]);
+
+  // Fetch per-minute recording coverage for the armed day. Refetched only
+  // when replay_date changes (or first arms). Bars come from
+  // /trade/hub/index-history/bars — minute-resolution, so each bar's start
+  // minute + (bar_minutes-1) trailing minutes are marked covered.
+  useEffect(() => {
+    if (!replayDate) {
+      setCoverage(new Set());
+      return;
+    }
+    let cancelled = false;
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const since = `${replayDate}T09:15:00+05:30`;
+        const until = `${replayDate}T15:30:00+05:30`;
+        const res = await api.getHubIndexHistoryBars({
+          symbol: "NIFTY",
+          exchange: "NSE_INDEX",
+          since_ist: since,
+          until_ist: until,
+        });
+        if (cancelled) return;
+        const next = new Set<number>();
+        if (res.status === "ok" && Array.isArray(res.bars)) {
+          for (const bar of res.bars) {
+            const startMin = istMinuteFromIso(bar.ts_ist);
+            if (startMin === null) continue;
+            // bar_minutes ≥ 1; clamp the span to session bounds so a stray
+            // pre/post-market bar doesn't paint outside the slider.
+            const span = Math.max(1, Number(bar.bar_minutes ?? 1));
+            const endMin = Math.min(SESSION_CLOSE_MIN, startMin + span);
+            for (let m = Math.max(SESSION_OPEN_MIN, startMin); m < endMin; m++) {
+              next.add(m);
+            }
+          }
+        }
+        setCoverage(next);
+      } catch {
+        // Silent — if the endpoint is unreachable, the bar just stays muted.
+        // Don't raise a banner here; the status poll already surfaces fetch
+        // failures from the replay service itself.
+        if (!cancelled) setCoverage(new Set());
+      }
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [replayDate]);
 
   function pctFromClientX(clientX: number): number {
     const el = trackRef.current;
@@ -275,7 +381,14 @@ export function SimulatorReplayClock({
             }
           }}
         >
-          <div className="absolute inset-y-0 top-[3px] h-1.5 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            className="absolute inset-y-0 top-[3px] h-1.5 w-full overflow-hidden rounded-full bg-muted"
+            data-testid="simulator-coverage-track"
+          >
+            {/* Progress fill (current clock position) sits at the bottom of the
+                stack; coverage cells paint on top so the user sees the green
+                "data available" strip regardless of where the clock currently
+                is. The fill's right edge is still the visible clock marker. */}
             <div
               className={cn(
                 "h-full rounded-full",
@@ -284,6 +397,21 @@ export function SimulatorReplayClock({
               )}
               style={{ width: `${(pct * 100).toFixed(1)}%` }}
             />
+            {coverageRanges.map((r, i) => (
+              <div
+                key={`${r.startMin}-${i}`}
+                data-testid="simulator-coverage-cell"
+                data-covered={r.covered ? "1" : "0"}
+                className={cn(
+                  "absolute inset-y-0",
+                  r.covered ? "bg-emerald-500/60" : "bg-transparent",
+                )}
+                style={{
+                  left: `${((r.startMin - SESSION_OPEN_MIN) * COVERAGE_MINUTE_PCT).toFixed(2)}%`,
+                  width: `${(r.length * COVERAGE_MINUTE_PCT).toFixed(2)}%`,
+                }}
+              />
+            ))}
           </div>
           <div
             className={cn(
