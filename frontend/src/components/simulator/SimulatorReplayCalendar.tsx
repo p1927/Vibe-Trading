@@ -88,12 +88,31 @@ function buildGrid(
   return { weeks, months, startSunday };
 }
 
+// A full NSE/BSE index session is 09:15-15:30 IST = 375 one-minute bars.
+// Row counts are per-day 1-minute bar counts (see catalog.py::day_counts),
+// so this is the right denominator for "how complete is this day's
+// recording" regardless of which underlying — a day recorded from a partial
+// session (late arm, early market close, a recorder gap) reports fewer rows
+// than a fully-covered day, and should render visibly fainter rather than
+// bucketing into the same tier as a complete day.
+const FULL_DAY_BAR_COUNT = 375;
+
 function densityLevel(day: ReplayCalendarDay): 0 | 1 | 2 | 3 | 4 {
   const total = day.nifty_rows + day.banknifty_rows + day.sensex_rows;
-  if (total === 0) return 1;
-  if (total < 200) return 1;
-  if (total < 1000) return 2;
-  if (total < 5000) return 3;
+  if (total <= 0) return 0;
+  return coverageLevel(total / FULL_DAY_BAR_COUNT);
+}
+
+// Bucket a 0..1 coverage fraction into 5 render tiers: 0 = no data, 1..4 =
+// increasingly complete. Thresholds are fractions of a full day's bars, not
+// absolute row counts, so a day recorded 20% of the session (e.g. armed
+// mid-morning, or the market closed early) reads as clearly "partial" —
+// very faded — rather than looking identical to a fully-covered day.
+function coverageLevel(fraction: number): 0 | 1 | 2 | 3 | 4 {
+  if (fraction <= 0) return 0;
+  if (fraction < 0.25) return 1;
+  if (fraction < 0.6) return 2;
+  if (fraction < 0.95) return 3;
   return 4;
 }
 
@@ -101,17 +120,10 @@ function densityLevel(day: ReplayCalendarDay): 0 | 1 | 2 | 3 | 4 {
 // (amber) inside the same cell so the calendar shows *which* underlyings are
 // available, not just how many bars total.
 function perUnderlying(day: ReplayCalendarDay): Record<Underlying, 0 | 1 | 2 | 3 | 4> {
-  function lvl(rows: number): 0 | 1 | 2 | 3 | 4 {
-    if (rows <= 0) return 0;
-    if (rows < 200) return 1;
-    if (rows < 1000) return 2;
-    if (rows < 5000) return 3;
-    return 4;
-  }
   return {
-    nifty: lvl(day.nifty_rows),
-    banknifty: lvl(day.banknifty_rows),
-    sensex: lvl(day.sensex_rows),
+    nifty: coverageLevel(day.nifty_rows / FULL_DAY_BAR_COUNT),
+    banknifty: coverageLevel(day.banknifty_rows / FULL_DAY_BAR_COUNT),
+    sensex: coverageLevel(day.sensex_rows / FULL_DAY_BAR_COUNT),
   };
 }
 
