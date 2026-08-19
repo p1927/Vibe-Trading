@@ -326,7 +326,11 @@ export function computePayoff(
   let maxLoss = Infinity
   const zeroCrossings: number[] = []
 
-  let prevExpiry: number | null = null
+  // Tracks the last *nonzero* sign seen so a sample that lands exactly on
+  // zero (common when strikes/premiums align with the sample grid) doesn't
+  // get counted as two crossings — one going in, one coming out.
+  let prevSign = 0
+  let havePrev = false
   for (let i = 0; i <= steps; i++) {
     const x = lo + i * step
     const atExpiry = totalPnlAt(legs, x, daysAtExpiry, ivShiftPct, fallbackIv, now)
@@ -334,10 +338,12 @@ export function computePayoff(
     samples.push({ underlying: x, expiry: atExpiry, tplus0: atT0 })
     if (atExpiry > maxProfit) maxProfit = atExpiry
     if (atExpiry < maxLoss) maxLoss = atExpiry
-    if (prevExpiry !== null && Math.sign(prevExpiry) !== Math.sign(atExpiry)) {
+    const sign = Math.sign(atExpiry)
+    if (havePrev && sign !== 0 && prevSign !== 0 && sign !== prevSign) {
       zeroCrossings.push(i - 1)
     }
-    prevExpiry = atExpiry
+    if (sign !== 0) prevSign = sign
+    havePrev = true
   }
 
   // Linearly interpolate breakevens at zero crossings.

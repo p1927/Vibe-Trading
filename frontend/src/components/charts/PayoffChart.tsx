@@ -168,7 +168,7 @@ export function PayoffChart({
         line: { color: colors.expiryLine, width: 2.2 },
         customdata: pctFromSpot as unknown as PlotlyTypes.Datum[],
         hovertemplate:
-          "<b>At Expiry P&L</b> ₹%{y:,.0f}<br>Chg. from Spot: %{customdata}<extra></extra>",
+          "Spot: %{x:,.2f}<br><b>At Expiry P&L</b> ₹%{y:,.0f}<br>Chg. from Spot: %{customdata}<extra></extra>",
       },
     ];
 
@@ -180,7 +180,7 @@ export function PayoffChart({
         mode: "lines",
         name: "T+0",
         line: { color: colors.tplus0Line, width: 2, dash: "dash" },
-        hovertemplate: "<b>T+0 P&L</b> ₹%{y:,.0f}<extra></extra>",
+        hovertemplate: "Spot: %{x:,.2f}<br><b>T+0 P&L</b> ₹%{y:,.0f}<extra></extra>",
       });
     }
 
