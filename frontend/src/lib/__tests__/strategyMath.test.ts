@@ -272,13 +272,18 @@ describe("Synthetic Long Future (BUY CE100 + SELL PE100)", () => {
   ];
   const result = payoffFor(legs);
 
-  it("has unlimited upside and unlimited downside", () => {
+  it("has unlimited upside but a finite downside floor at S=0", () => {
     expect(result.maxProfit).toBe(Infinity);
-    expect(result.maxLoss).toBe(-Infinity);
+    // Underlying is floored at 0: worst case is -strike (call worthless,
+    // put assigned at the full strike), not -Infinity.
+    expect(Number.isFinite(result.maxLoss)).toBe(true);
+    expect(result.maxLoss).toBeCloseTo(-100, 1);
   });
 
-  it("breaks even at the strike (zero net premium)", () => {
-    expect(sortedBreakevens(result.breakevens)).toEqual([expect.closeTo(100, 1)]);
+  it("breaks even at the strike (zero net premium), reported once", () => {
+    const bes = sortedBreakevens(result.breakevens);
+    expect(bes).toHaveLength(1);
+    expect(bes[0]).toBeCloseTo(100, 1);
   });
 });
 
@@ -318,13 +323,16 @@ describe("Long Future", () => {
   const legs = [leg({ side: "BUY", segment: "FUTURE", price: 100, lots: 1, lotSize: 1 })];
   const result = payoffFor(legs);
 
-  it("is linear with unlimited profit and unlimited loss", () => {
+  it("has unlimited profit but a finite loss floor at S=0", () => {
     expect(result.maxProfit).toBe(Infinity);
-    expect(result.maxLoss).toBe(-Infinity);
+    expect(Number.isFinite(result.maxLoss)).toBe(true);
+    expect(result.maxLoss).toBeCloseTo(-100, 1); // -entry price
   });
 
-  it("breaks even at the entry price", () => {
-    expect(sortedBreakevens(result.breakevens)).toEqual([expect.closeTo(100, 1)]);
+  it("breaks even at the entry price, reported once", () => {
+    const bes = sortedBreakevens(result.breakevens);
+    expect(bes).toHaveLength(1);
+    expect(bes[0]).toBeCloseTo(100, 1);
   });
 });
 
@@ -348,7 +356,10 @@ describe("Covered Call (BUY FUTURE + SELL CE)", () => {
     expect(result.maxProfit).toBeCloseTo(15, 1); // (110-100) + 5
   });
 
-  it("has unlimited downside (future leg is uncapped below)", () => {
-    expect(result.maxLoss).toBe(-Infinity);
+  it("has a finite loss floor at S=0, not -Infinity", () => {
+    expect(Number.isFinite(result.maxLoss)).toBe(true);
+    // Future leg loses its full entry price at S=0; the short call adds
+    // its premium as a cushion.
+    expect(result.maxLoss).toBeCloseTo(-95, 1); // -100 (future) + 5 (call premium)
   });
 });
