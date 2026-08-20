@@ -3876,7 +3876,13 @@ def stop_recording(
     _auth: None = Depends(require_local_or_auth),
 ) -> dict[str, str]:
     """Request cooperative stop for an in-flight recording session."""
-    from src.trade.recording_jobs import _ACTIVE_STATUSES, _get_job_record, job_id_valid, request_stop
+    from src.trade.recording_jobs import (
+        _ACTIVE_STATUSES,
+        _get_job_record,
+        fail_job,
+        job_id_valid,
+        request_stop,
+    )
 
     if not job_id_valid(job_id):
         raise HTTPException(status_code=400, detail="invalid job_id")
@@ -3886,6 +3892,20 @@ def stop_recording(
     status = str(job.get("status") or "")
     if status not in _ACTIVE_STATUSES:
         raise HTTPException(status_code=409, detail=f"job is not active (status={status})")
+    if status == "waiting_for_open":
+        # No worker subprocess exists yet to poll the cooperative stop
+        # flag (Phase C: the recorder never spawns during the wait — see
+        # ``_kick_recording``), so ``request_stop`` alone would silently
+        # do nothing until the deferred wake eventually fires. Cancel the
+        # scheduled wake and end the job directly instead.
+        try:
+            from src.trade.recording_wait_scheduler import cancel_recording_wake
+
+            cancel_recording_wake(recording_job_id=job_id)
+        except Exception:
+            logger.exception("failed to cancel recording wake for %s on stop", job_id)
+        fail_job(job_id, "stopped by user while waiting for market open")
+        return {"status": "ok", "message": "wait cancelled"}
     request_stop(job_id)
     return {"status": "ok", "message": "stop requested"}
 

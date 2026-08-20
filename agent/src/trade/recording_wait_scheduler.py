@@ -2,9 +2,19 @@
 
 A recording that's waiting for market open (``status="waiting_for_open"``)
 gets a one-shot ``ScheduledResearchJob`` whose dispatch callable runs
-:func:`recording_jobs.wake_recording_job` at ``next_open_at``. The
-executor polls every ~60 s (existing infra) and dispatches at the
-deadline; the dispatch wakes the recording by spawning a fresh worker.
+:func:`recording_jobs.wake_recording_job` at ``next_open_at``.
+
+Dispatch is handled by a dedicated poll loop (:func:`start_recording_wake_poller`)
+rather than the general scheduled-research executor. The general executor's
+dispatch loop is *intentionally* left stopped on every process boot — it
+gates LLM-cost-bearing jobs (agent sessions, index/options research) behind
+an explicit "Resume scheduler" click so nothing fires automatically after a
+restart. A recording wake is not an LLM-cost job (it only flips a status and
+spawns a data-recording subprocess the user already asked for), so tying it
+to that same gate means a recording silently never wakes up unless the user
+also happens to visit the unrelated Scheduled-Research panel and click
+Resume. This module's poller runs unconditionally so ``wait_for_open``
+recordings wake up on their own, matching the feature's original contract.
 
 Single source of truth for the schedule expression. ``recording_wake:``
 prefix on the job id namespaces these jobs alongside other scheduled-
@@ -17,6 +27,7 @@ stale schedule in the store.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -128,3 +139,89 @@ def _get_store() -> "ScheduledResearchJobStore":
     from src.scheduled_research.store import ScheduledResearchJobStore
 
     return ScheduledResearchJobStore()
+
+
+_POLL_INTERVAL_S = 30.0
+_poller_task: "asyncio.Task | None" = None
+
+
+async def _recording_wake_poll_tick(store: "ScheduledResearchJobStore") -> None:
+    """Dispatch any due ``recording_wake`` schedule entries and clear them.
+
+    Single-shot semantics: whether or not the recording actually woke
+    (it may already be running/stopped/errored — see
+    :func:`recording_jobs.wake_recording_job`), the schedule entry is
+    removed so it isn't dispatched again on the next tick.
+    """
+    from src.trade.recording_jobs import wake_recording_job
+
+    try:
+        jobs = store.load()
+    except Exception:
+        logger.exception("recording_wake poller: failed to load store")
+        return
+    now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+    due = [
+        job
+        for job in jobs.values()
+        if str(job.config.get("job_type") or "") == JOB_TYPE_RECORDING_WAKE
+        and job.next_run_at <= now_ms
+    ]
+    for job in due:
+        recording_job_id = str(job.config.get("recording_job_id") or "").strip()
+        if not recording_job_id:
+            logger.error("recording_wake poller: job %s missing recording_job_id", job.id)
+            _cancel_existing(store, job.id)
+            continue
+        logger.info("recording_wake poller: firing for recording job %s", recording_job_id)
+        try:
+            woke = wake_recording_job(recording_job_id)
+        except Exception:
+            logger.exception(
+                "recording_wake poller: wake_recording_job failed for %s", recording_job_id
+            )
+            woke = False
+        if not woke:
+            logger.warning(
+                "recording_wake poller: recording job %s was not in a wakeable "
+                "state (already running/done/errored?)",
+                recording_job_id,
+            )
+        _cancel_existing(store, job.id)
+
+
+async def _recording_wake_poll_loop(store: "ScheduledResearchJobStore") -> None:
+    while True:
+        await _recording_wake_poll_tick(store)
+        await asyncio.sleep(_POLL_INTERVAL_S)
+
+
+def start_recording_wake_poller(store: "ScheduledResearchJobStore | None" = None) -> None:
+    """Start the recording-wake poll loop, if not already running.
+
+    Deliberately independent of the general scheduled-research executor's
+    enable/resume gate (see module docstring) — a ``wait_for_open``
+    recording must wake up on its own regardless of whether the user has
+    ever touched the Scheduled-Research panel. Safe to call repeatedly
+    (e.g. on every API startup, including uvicorn --reload respawns);
+    a second call while a task is already running is a no-op.
+    """
+    global _poller_task
+    if _poller_task is not None and not _poller_task.done():
+        return
+    store = store if store is not None else _get_store()
+    loop = asyncio.get_running_loop()
+    _poller_task = loop.create_task(_recording_wake_poll_loop(store))
+
+
+async def stop_recording_wake_poller() -> None:
+    global _poller_task
+    task = _poller_task
+    _poller_task = None
+    if task is None:
+        return
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        pass

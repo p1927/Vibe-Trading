@@ -156,6 +156,16 @@ def defer_fresh_registrations(
         # do not push it back or we lose cadence.
         if job.last_run_at is not None:
             continue
+        # recording_wake jobs are a single cheap status-flip + subprocess
+        # spawn, not an LLM-cost cascade risk — the thing this defer exists
+        # to prevent. Deferring them here means a backend restart while the
+        # market is already open (or close to opening) pushes the wake
+        # another `defer_ms` into the future for no reason, leaving a
+        # wait_for_open recording stuck in "waiting_for_open" long after
+        # the market opened. Exempt them so they fire at their real,
+        # already-computed `next_open_at` deadline.
+        if str(job.config.get("job_type") or "") == "recording_wake":
+            continue
         if job.next_run_at >= now + defer_ms:
             continue
         job.next_run_at = now + defer_ms

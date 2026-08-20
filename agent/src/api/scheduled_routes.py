@@ -219,6 +219,16 @@ def _start_scheduled_research_executor() -> None:
     if is_hub_capture_scheduler_enabled():
         register_default_hub_capture_jobs(_get_scheduled_research_store())
     _register_persisted_autonomous_agent_jobs()
+    # Recording-wake poller: unlike the general executor below, this starts
+    # unconditionally (not gated by the scheduler enable/resume flag) — see
+    # ``src.trade.recording_wait_scheduler`` module docstring for why a
+    # ``wait_for_open`` recording must not depend on that LLM-cost gate.
+    try:
+        from src.trade.recording_wait_scheduler import start_recording_wake_poller
+
+        start_recording_wake_poller(_get_scheduled_research_store())
+    except Exception:
+        logger.exception("failed to start recording-wake poller on startup")
     # Hot-reload safety: every ``register_default_*`` helper stamps
     # ``next_run_at=now_ms`` so a fresh job fires immediately. On uvicorn
     # --reload this means every code save re-stamps every default job and the
@@ -296,6 +306,12 @@ async def _stop_scheduled_research_executor() -> None:
     if executor is not None:
         await executor.stop()
     _scheduled_research_executor = None
+    try:
+        from src.trade.recording_wait_scheduler import stop_recording_wake_poller
+
+        await stop_recording_wake_poller()
+    except Exception:
+        logger.exception("failed to stop recording-wake poller on shutdown")
 
 
 # ---------------------------------------------------------------------------
