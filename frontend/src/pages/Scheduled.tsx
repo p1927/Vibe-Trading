@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CalendarClock, Loader2, Pause, Play, Plus, Trash2 } from "lucide-react";
+import { CalendarClock, Loader2, Pause, PauseCircle, Play, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, ApiError, type ScheduledRun } from "@/lib/api";
 import {
@@ -80,6 +80,7 @@ export function Scheduled() {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [pausingIds, setPausingIds] = useState<Set<string>>(new Set());
 
   // Global scheduler dispatch loop: always boots paused (server-side, on
   // every process start) and only this page's Resume button starts it.
@@ -212,6 +213,24 @@ export function Scheduled() {
       await refresh();
     } catch (error) {
       setListError(error instanceof ApiError ? error.message : String(error));
+    }
+  }
+
+  async function handleToggleJobPaused(run: ScheduledRun) {
+    if (pausingIds.has(run.id)) return;
+    setPausingIds((prev) => new Set(prev).add(run.id));
+    try {
+      const updated = run.paused ? await api.resumeScheduledRun(run.id) : await api.pauseScheduledRun(run.id);
+      setRuns((prev) => prev.map((r) => (r.id === run.id ? updated : r)));
+      setListError(null);
+    } catch (error) {
+      setListError(error instanceof ApiError ? error.message : String(error));
+    } finally {
+      setPausingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(run.id);
+        return next;
+      });
     }
   }
 
@@ -453,6 +472,9 @@ export function Scheduled() {
                       <span className="font-medium">{cadenceLabel(run)}</span>
                       <span className={hintClass}>{zone}</span>
                       <StatusPill label={status.label} tone={status.tone} />
+                      {run.paused && (
+                        <StatusPill label={t("scheduled.jobPaused")} tone="warning" />
+                      )}
                     </div>
                     <p className="truncate text-sm text-muted-foreground">{run.prompt}</p>
                     <p className={hintClass}>
@@ -488,15 +510,37 @@ export function Scheduled() {
                       </button>
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => setPendingDelete(run.id)}
-                      aria-label={t("scheduled.deleteAria", { prompt: run.prompt })}
-                      className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                      {t("scheduled.delete")}
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleJobPaused(run)}
+                        disabled={pausingIds.has(run.id)}
+                        aria-label={
+                          run.paused
+                            ? t("scheduled.resumeJobAria", { prompt: run.prompt })
+                            : t("scheduled.pauseJobAria", { prompt: run.prompt })
+                        }
+                        className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {pausingIds.has(run.id) ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                        ) : run.paused ? (
+                          <Play className="h-3.5 w-3.5" aria-hidden />
+                        ) : (
+                          <PauseCircle className="h-3.5 w-3.5" aria-hidden />
+                        )}
+                        {run.paused ? t("scheduled.resumeJob") : t("scheduled.pauseJob")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPendingDelete(run.id)}
+                        aria-label={t("scheduled.deleteAria", { prompt: run.prompt })}
+                        className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                        {t("scheduled.delete")}
+                      </button>
+                    </div>
                   )}
                 </li>
               );

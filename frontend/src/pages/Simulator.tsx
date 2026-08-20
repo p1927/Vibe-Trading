@@ -53,7 +53,7 @@ function StatCard({
   );
 }
 
-function statusBadge(status: string | undefined) {
+function statusBadge(status: string | undefined, stoppedReason?: string | null) {
   const s = (status || "idle").toLowerCase();
   const styles: Record<string, string> = {
     queued: "bg-amber-500/15 text-amber-800 dark:text-amber-200",
@@ -69,7 +69,12 @@ function statusBadge(status: string | undefined) {
     waiting: "Waiting for Market Open",
     waiting_for_open: "Waiting for Market Open",
     running: "Recording",
-    done: "Market Closed — Done",
+    // "done" covers both a natural market-close stop and a manual Stop —
+    // only label it "Market Closed" when that's actually why it ended
+    // (``stopped_reason`` from the recorder's ``RecordingResult``);
+    // otherwise say "Stopped" so a manual stop mid-session (market still
+    // open) doesn't claim the market closed.
+    done: stoppedReason === "market_closed" ? "Market Closed — Done" : "Stopped",
     error: "Error",
     idle: "Idle",
   };
@@ -625,7 +630,7 @@ export function Simulator() {
                 Auto Record ON
               </span>
             ) : null}
-            {statusBadge(displayStatus)}
+            {statusBadge(displayStatus, job?.result?.stopped_reason)}
             {isWaitingForOpen ? (
               <span
                 className="text-[11px] text-amber-800 dark:text-amber-200"

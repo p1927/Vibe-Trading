@@ -167,3 +167,40 @@ def test_delete_rejects_unsafe_job_id(
     response = client.delete("/scheduled-runs/bad.id")
 
     assert response.status_code == 400
+
+
+def test_pause_sets_paused_without_touching_schedule(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    _seed(store, id="pause-me", next_run_at=1_700_000_000_000)
+
+    response = client.post("/scheduled-runs/pause-me/pause")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["paused"] is True
+    assert body["next_run_at"] == 1_700_000_000_000
+    stored = store.get("pause-me")
+    assert stored is not None
+    assert stored.paused is True
+    assert stored.next_run_at == 1_700_000_000_000
+
+
+def test_resume_clears_paused(client: TestClient, store: ScheduledResearchJobStore):
+    job = _seed(store, id="resume-me")
+    job.paused = True
+    store.upsert(job)
+
+    response = client.post("/scheduled-runs/resume-me/resume")
+
+    assert response.status_code == 200
+    assert response.json()["paused"] is False
+    stored = store.get("resume-me")
+    assert stored is not None
+    assert stored.paused is False
+
+
+def test_pause_unknown_job_returns_404(client: TestClient):
+    response = client.post("/scheduled-runs/never-existed/pause")
+
+    assert response.status_code == 404

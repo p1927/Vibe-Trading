@@ -313,8 +313,12 @@ def is_due(job: ScheduledResearchJob, now_ms: int) -> bool:
     job in particular keeps its old ``next_run_at`` (advancement may itself be
     what failed), so excluding it here prevents a re-dispatch loop every tick.
     Already-running jobs are left alone during live polling. Executor startup
-    recovers stale persisted ``RUNNING`` jobs separately.
+    recovers stale persisted ``RUNNING`` jobs separately. A paused job is
+    skipped without mutating ``next_run_at``, so its original cadence resumes
+    unchanged the moment it is unpaused.
     """
+    if job.paused:
+        return False
     if job.status in {JobStatus.CANCELLED, JobStatus.RUNNING, JobStatus.FAILED}:
         return False
     return job.next_run_at <= now_ms

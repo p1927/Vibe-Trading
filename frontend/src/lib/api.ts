@@ -676,6 +676,10 @@ export const api = {
     request<ScheduledRun>("/scheduled-runs", { method: "POST", body: JSON.stringify(body) }),
   deleteScheduledRun: (id: string) =>
     request<void>(`/scheduled-runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  pauseScheduledRun: (id: string) =>
+    request<ScheduledRun>(`/scheduled-runs/${encodeURIComponent(id)}/pause`, { method: "POST" }),
+  resumeScheduledRun: (id: string) =>
+    request<ScheduledRun>(`/scheduled-runs/${encodeURIComponent(id)}/resume`, { method: "POST" }),
   // Global scheduler dispatch loop always boots paused; a session's Resume
   // click is the only thing that starts it, and it never persists across
   // a restart (matches the autonomous-agent pause-on-boot model).
@@ -1491,6 +1495,7 @@ export interface ScheduledRun {
   consecutive_failures: number;
   last_error: string | null;
   failure_kind: string | null;
+  paused: boolean;
   config: Record<string, unknown>;
   timezone: string | null;
 }

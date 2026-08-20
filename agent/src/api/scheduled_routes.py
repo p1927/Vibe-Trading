@@ -353,6 +353,7 @@ class ScheduledRunResponse(BaseModel):
     next_run_at: int
     status: str
     created_at: int
+    paused: bool = False
     config: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -493,3 +494,37 @@ def register_scheduled_routes(
             raise HTTPException(
                 status_code=404, detail=f"scheduled run {job_id} not found"
             )
+
+    def _set_job_paused(job_id: str, paused: bool) -> ScheduledRunResponse:
+        _host_validate_path_param(job_id, "job_id")
+        store = _get_scheduled_research_store()
+        job = store.get(job_id)
+        if job is None:
+            raise HTTPException(
+                status_code=404, detail=f"scheduled run {job_id} not found"
+            )
+        job.paused = paused
+        store.upsert(job)
+        return ScheduledRunResponse(**job.to_dict())
+
+    @app.post(
+        "/scheduled-runs/{job_id}/pause",
+        response_model=ScheduledRunResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def pause_scheduled_run(job_id: str) -> ScheduledRunResponse:
+        """Pause a single scheduled job without changing its schedule or config.
+
+        The job is skipped by the executor's due-check until resumed; its
+        ``next_run_at`` is left untouched.
+        """
+        return _set_job_paused(job_id, True)
+
+    @app.post(
+        "/scheduled-runs/{job_id}/resume",
+        response_model=ScheduledRunResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def resume_scheduled_run(job_id: str) -> ScheduledRunResponse:
+        """Resume a single paused scheduled job on its existing cadence."""
+        return _set_job_paused(job_id, False)

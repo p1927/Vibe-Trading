@@ -74,7 +74,12 @@
     "schedulerDisabled": "Scheduler disabled via server configuration (VIBE_TRADING_ENABLE_SCHEDULER).",
     "schedulerResume": "Resume scheduler",
     "schedulerPause": "Pause scheduler",
-    "schedulerStatusError": "Could not load scheduler status."
+    "schedulerStatusError": "Could not load scheduler status.",
+    "jobPaused": "Paused",
+    "pauseJob": "Pause",
+    "resumeJob": "Resume",
+    "pauseJobAria": "Pause scheduled run for {{prompt}}",
+    "resumeJobAria": "Resume scheduled run for {{prompt}}"
   },
   "runtime": {
     "monitorBadge": "Runtime Monitor",

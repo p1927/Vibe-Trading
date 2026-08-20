@@ -118,6 +118,10 @@ class ScheduledResearchJob:
         last_error: Truncated error message from the most recent failed dispatch.
         last_result_summary: Compact JSON-serializable summary from the last run.
         consecutive_failures: Count of consecutive dispatch failures (resets on success).
+        paused: When ``True``, this job is skipped by the executor's due-check
+            regardless of ``next_run_at``, without touching its schedule or
+            other config. A user toggles this per-job independently of the
+            global scheduler pause/resume switch.
         config: Opaque dict for future backtest parameters.
     """
 
@@ -131,6 +135,7 @@ class ScheduledResearchJob:
     last_error: Optional[str] = None
     last_result_summary: Optional[Dict[str, Any]] = None
     consecutive_failures: int = 0
+    paused: bool = False
     config: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -151,6 +156,7 @@ class ScheduledResearchJob:
             "last_error": self.last_error,
             "last_result_summary": self.last_result_summary,
             "consecutive_failures": self.consecutive_failures,
+            "paused": self.paused,
             "config": self.config,
         }
 
@@ -195,6 +201,9 @@ class ScheduledResearchJob:
         consecutive_failures = data.get("consecutive_failures", 0)
         if not isinstance(consecutive_failures, int):
             raise TypeError("'consecutive_failures' must be an integer")
+        paused = data.get("paused", False)
+        if not isinstance(paused, bool):
+            raise TypeError("'paused' must be a boolean")
         status = JobStatus(data["status"])
         raw_config = data.get("config")
         config: Dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
@@ -209,5 +218,6 @@ class ScheduledResearchJob:
             last_error=last_error,
             last_result_summary=last_result_summary,
             consecutive_failures=consecutive_failures,
+            paused=paused,
             config=config,
         )
