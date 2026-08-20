@@ -1419,8 +1419,16 @@ export const api = {
       `/trade/capture-registry/intraday?entity_id=${encodeURIComponent(entityId)}`,
       { method: "POST" },
     ),
-  getHubStatus: (entityId = "NIFTY") =>
-    request<HubStatusResponse>(`/trade/hub/status?entity_id=${encodeURIComponent(entityId)}`),
+  getHubStatus: (entityId = "NIFTY", query: HubStatusQuery = {}) => {
+    const params = new URLSearchParams({ entity_id: entityId });
+    if (query.search) params.set("search", query.search);
+    if (query.sort) params.set("sort", query.sort);
+    if (query.page) params.set("page", String(query.page));
+    if (query.pageSize) params.set("page_size", String(query.pageSize));
+    if (query.windowHours) params.set("window_hours", String(query.windowHours));
+    if (query.provenance) params.set("provenance", query.provenance);
+    return request<HubStatusResponse>(`/trade/hub/status?${params.toString()}`);
+  },
   getObservabilitySummary: () =>
     request<ObservabilitySummaryResponse>("/trade/observability/summary"),
   getHubNewsPipelineConfig: () =>
@@ -3725,6 +3733,31 @@ export interface HubNewsItem {
   future_events?: HubNewsFutureEvent[];
   article_opinions?: HubNewsArticleOpinion[];
   enrichment_modes?: string[];
+  market_relevance_score?: number;
+  market_relevance_basis?: HubNewsRelevanceBasis;
+  market_relevance_provisional?: boolean;
+  source_count?: number;
+  group_ref_ids?: string[];
+  group_members?: HubNewsGroupMember[];
+}
+
+export interface HubNewsRelevanceBasis {
+  sub_scores?: Record<string, number>;
+  weights?: Record<string, number>;
+  rule_score?: number;
+  llm_used?: boolean;
+  llm?: { score?: number; reasoning?: string };
+  ambiguous_band?: number[];
+  tape_alignment?: string | null;
+  details?: Record<string, unknown>;
+}
+
+export interface HubNewsGroupMember {
+  ref_id?: string;
+  title?: string;
+  url?: string;
+  source?: string;
+  published_at?: string;
 }
 
 export interface HubDiscardedNewsItem {
@@ -3803,6 +3836,10 @@ export interface HubStatusPayload {
     items?: HubNewsItem[];
     staging_queue?: HubNewsItem[];
     discarded_items?: HubDiscardedNewsItem[];
+    total_count?: number;
+    page?: number;
+    page_size?: number;
+    has_more?: boolean;
   };
   verified_news?: Record<
     string,
@@ -3834,10 +3871,30 @@ export interface HubStatusPayload {
   };
 }
 
+export interface HubNewsPage {
+  total_count?: number;
+  page?: number;
+  page_size?: number;
+  has_more?: boolean;
+  sort?: string;
+  search?: string;
+  window_hours?: number | null;
+}
+
+export interface HubStatusQuery {
+  search?: string;
+  sort?: "relevance" | "time";
+  page?: number;
+  pageSize?: number;
+  windowHours?: number;
+  provenance?: string;
+}
+
 export interface HubStatusResponse {
   status: string;
   hub?: HubStatusPayload;
   message?: string;
+  news_page?: HubNewsPage;
 }
 
 export interface ObservabilitySummaryResponse {
@@ -3871,6 +3928,8 @@ export interface HubNewsPipelineConfig {
   cluster_threshold?: number;
   relevance_gate_enabled?: boolean;
   relevance_min_confidence?: number;
+  relevance_score_llm_ambiguous_low?: number;
+  relevance_score_llm_ambiguous_high?: number;
   relevance_rule_first?: boolean;
   discard_retention_days?: number;
   wiki_search_enabled?: boolean;
@@ -3914,6 +3973,8 @@ export interface HubNewsPipelineConfigUpdate {
   cluster_threshold?: number;
   relevance_gate_enabled?: boolean;
   relevance_min_confidence?: number;
+  relevance_score_llm_ambiguous_low?: number;
+  relevance_score_llm_ambiguous_high?: number;
   relevance_rule_first?: boolean;
   discard_retention_days?: number;
   wiki_search_enabled?: boolean;

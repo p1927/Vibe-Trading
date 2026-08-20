@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Database, ExternalLink, Loader2, Newspaper, RefreshCw } from "lucide-react";
+import { Database, ExternalLink, Loader2, Newspaper, RefreshCw, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, type HubDiscardedNewsItem, type HubNewsItem, type HubNewsPipelineConfig, type HubStatusResponse, type ObservabilitySummaryResponse } from "@/lib/api";
+import { api, type HubDiscardedNewsItem, type HubNewsItem, type HubNewsPipelineConfig, type HubStatusQuery, type HubStatusResponse, type ObservabilitySummaryResponse } from "@/lib/api";
 import { CronFrequencyPicker } from "@/components/CronFrequencyPicker";
 import { NewsPipelineGraph } from "@/components/NewsPipelineGraph";
 
@@ -410,6 +410,137 @@ function NewsRow({
   );
 }
 
+function relevanceBadge(score?: number, provisional?: boolean) {
+  if (typeof score !== "number") return null;
+  const tone =
+    score > 0.7
+      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+      : score >= 0.4
+        ? "bg-amber-500/15 text-amber-800 dark:text-amber-200"
+        : "bg-muted text-muted-foreground";
+  return (
+    <span
+      className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums", tone)}
+      title={provisional ? "Provisional (pre-distillation) relevance score" : "Market relevance score"}
+    >
+      {score.toFixed(2)}
+      {provisional ? "*" : ""}
+    </span>
+  );
+}
+
+function RankedNewsCard({
+  item,
+  expanded,
+  onToggleExpand,
+  onDiscard,
+  onDiscardSimilar,
+  discarding,
+}: {
+  item: HubNewsItem;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onDiscard?: (item: HubNewsItem) => void;
+  onDiscardSimilar?: (item: HubNewsItem) => void;
+  discarding?: boolean;
+}) {
+  const members = item.group_members ?? [];
+  const sourceCount = item.source_count ?? members.length ?? 0;
+  const link = item.url || item.references?.[0]?.url || item.sources?.[0]?.url;
+  const extraSources = Math.max(0, sourceCount - 1);
+
+  return (
+    <article className="flex flex-col rounded-lg border bg-background/60 p-3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {relevanceBadge(item.market_relevance_score, item.market_relevance_provisional)}
+        {provenanceBadge(item.provenance)}
+        {item.ticker ? (
+          <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            {item.ticker}
+          </span>
+        ) : null}
+      </div>
+      <h3 className="mt-1.5 text-[13px] font-semibold leading-snug line-clamp-2">
+        {item.title || "Untitled"}
+      </h3>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        {item.source || "unknown source"}
+        {item.published_at ? ` · ${item.published_at.slice(0, 16).replace("T", " ")}` : ""}
+      </p>
+      {item.summary ? (
+        <p className="mt-1.5 text-[12px] leading-relaxed text-foreground/90 line-clamp-1">
+          {item.summary}
+        </p>
+      ) : null}
+
+      {extraSources > 0 ? (
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className="mt-2 self-start rounded-md border px-2 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/50"
+        >
+          {expanded ? "Hide sources" : `+${extraSources} more source${extraSources > 1 ? "s" : ""}`}
+        </button>
+      ) : null}
+
+      {expanded && members.length ? (
+        <ul className="mt-2 space-y-1 border-t pt-2 text-[11px]">
+          {members.map((member, idx) => (
+            <li key={member.ref_id || `${member.url}-${idx}`} className="truncate">
+              <span className="text-muted-foreground">{member.source || "source"} · </span>
+              {member.url ? (
+                <a
+                  href={member.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  {member.title || member.url}
+                </a>
+              ) : (
+                <span>{member.title || "Untitled"}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {link ? (
+          <a
+            href={link}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] hover:bg-muted/50"
+          >
+            Open <ExternalLink className="h-3 w-3" />
+          </a>
+        ) : null}
+        {onDiscard ? (
+          <button
+            type="button"
+            disabled={discarding}
+            onClick={() => onDiscard(item)}
+            className="rounded-md border border-red-500/30 px-2 py-1 text-[10px] text-red-700 hover:bg-red-500/10 disabled:opacity-50 dark:text-red-300"
+          >
+            Discard
+          </button>
+        ) : null}
+        {onDiscardSimilar ? (
+          <button
+            type="button"
+            disabled={discarding}
+            onClick={() => onDiscardSimilar(item)}
+            className="rounded-md border px-2 py-1 text-[10px] hover:bg-muted/50 disabled:opacity-50"
+          >
+            Discard similar
+          </button>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
 function DiscardedRow({
   item,
   onUndo,
@@ -478,14 +609,34 @@ export function Hub() {
   const [newsFilter, setNewsFilter] = useState<NewsFilter>("all");
   const [showQueue, setShowQueue] = useState(false);
   const [newsView, setNewsView] = useState<"list" | "pipeline">("list");
+  const [newsSection, setNewsSection] = useState<"ranked" | "all">("ranked");
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [newsPage, setNewsPage] = useState(1);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+
+  const NEWS_PAGE_SIZE = 20;
+  const ALL_NEWS_WINDOW_HOURS = 24;
 
   const [maintainerSummary, setMaintainerSummary] = useState<string | null>(null);
+
+  const newsQuery = useMemo<HubStatusQuery>(() => {
+    const query: HubStatusQuery = {
+      page: newsPage,
+      pageSize: NEWS_PAGE_SIZE,
+      sort: newsSection === "all" ? "time" : "relevance",
+    };
+    if (searchQuery) query.search = searchQuery;
+    if (newsSection === "all") query.windowHours = ALL_NEWS_WINDOW_HOURS;
+    if (newsFilter !== "all" && newsFilter !== "discarded") query.provenance = newsFilter;
+    return query;
+  }, [newsFilter, newsPage, newsSection, searchQuery]);
 
   const load = useCallback(async () => {
     setError(null);
     try {
       const [res, cfgRes, obsRes] = await Promise.all([
-        api.getHubStatus("NIFTY"),
+        api.getHubStatus("NIFTY", newsQuery),
         api.getHubNewsPipelineConfig().catch(() => null),
         api.getObservabilitySummary().catch(() => null),
       ]);
@@ -500,7 +651,7 @@ export function Hub() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [newsQuery]);
 
   useEffect(() => {
     void load();
@@ -509,6 +660,16 @@ export function Hub() {
     }, 30_000);
     return () => window.clearInterval(timer);
   }, [load]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearchQuery(searchInput.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  // Any change to what is being listed invalidates the current page offset.
+  useEffect(() => {
+    setNewsPage(1);
+  }, [searchQuery, newsFilter, newsSection, showQueue]);
 
   const hub = data?.hub;
   const gates = hub?.gates;
@@ -522,14 +683,52 @@ export function Hub() {
   const capture = hub?.capture;
   const factorCoverage = hub?.factor_coverage;
 
-  const filteredNews = useMemo(() => {
+  const newsPageMeta = data?.news_page;
+
+  // "discarded" and "raw queue only" are unpaginated server-side payloads, so
+  // those two views page on the client; everything else uses the server page.
+  const clientPaged = newsFilter === "discarded" || showQueue;
+
+  const newsSource = useMemo(() => {
     if (newsFilter === "discarded") {
-      return newsInventory?.discarded_items ?? [];
+      return (newsInventory?.discarded_items ?? []) as HubDiscardedNewsItem[];
     }
-    const items = showQueue ? newsInventory?.staging_queue ?? [] : newsInventory?.items ?? [];
-    if (newsFilter === "all") return items;
-    return items.filter((item) => matchesNewsProvenance(item.provenance, newsFilter));
-  }, [newsFilter, newsInventory?.discarded_items, newsInventory?.items, newsInventory?.staging_queue, showQueue]);
+    if (showQueue) {
+      const queue = (newsInventory?.staging_queue ?? []).filter((item) =>
+        matchesNewsProvenance(item.provenance, newsFilter),
+      );
+      const needle = searchQuery.toLowerCase();
+      return needle
+        ? queue.filter((item) =>
+            `${item.title ?? ""} ${item.summary ?? ""}`.toLowerCase().includes(needle),
+          )
+        : queue;
+    }
+    return newsInventory?.items ?? [];
+  }, [
+    newsFilter,
+    newsInventory?.discarded_items,
+    newsInventory?.items,
+    newsInventory?.staging_queue,
+    searchQuery,
+    showQueue,
+  ]);
+
+  const filteredNews = useMemo(() => {
+    if (!clientPaged) return newsSource;
+    const start = (newsPage - 1) * NEWS_PAGE_SIZE;
+    return newsSource.slice(start, start + NEWS_PAGE_SIZE);
+  }, [clientPaged, newsPage, newsSource]);
+
+  const totalNewsCount = clientPaged ? newsSource.length : newsPageMeta?.total_count ?? newsSource.length;
+  const hasMoreNews = clientPaged
+    ? newsPage * NEWS_PAGE_SIZE < newsSource.length
+    : Boolean(newsPageMeta?.has_more);
+  const newsRangeStart = totalNewsCount === 0 ? 0 : (newsPage - 1) * NEWS_PAGE_SIZE + 1;
+  const newsRangeEnd = Math.min(newsPage * NEWS_PAGE_SIZE, totalNewsCount);
+
+  const toggleGroup = (key: string) =>
+    setExpandedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
 
   const resolveItemId = (item: HubNewsItem) =>
     item.ref_id || item.event_id || item.id || "";
@@ -1011,6 +1210,36 @@ export function Hub() {
           ))}
         </div>
 
+        {newsView === "list" ? (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[220px] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="Search headlines…"
+                className="w-full rounded-full border bg-background py-1.5 pl-9 pr-3 text-[12px] outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
+            <div className="inline-flex rounded-lg border p-0.5 text-[11px]">
+              {(["ranked", "all"] as const).map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setNewsSection(key)}
+                  className={cn(
+                    "rounded-md px-2.5 py-1",
+                    newsSection === key ? "bg-muted font-medium" : "text-muted-foreground",
+                  )}
+                >
+                  {key === "ranked" ? "Ranked" : `All news (${ALL_NEWS_WINDOW_HOURS}h)`}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <Newspaper className="h-4 w-4 text-muted-foreground" />
@@ -1087,9 +1316,9 @@ export function Hub() {
               />
             ))}
           </div>
-        ) : (
+        ) : newsSection === "all" ? (
           <div className="grid gap-2 md:grid-cols-2">
-            {(filteredNews as HubNewsItem[]).slice(0, 40).map((item) => (
+            {(filteredNews as HubNewsItem[]).map((item) => (
               <NewsRow
                 key={item.id || item.ref_id || item.title}
                 item={item}
@@ -1099,7 +1328,51 @@ export function Hub() {
               />
             ))}
           </div>
+        ) : (
+          <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {(filteredNews as HubNewsItem[]).map((item) => {
+              const key = item.id || item.ref_id || item.event_id || item.title || "";
+              return (
+                <RankedNewsCard
+                  key={key}
+                  item={item}
+                  expanded={Boolean(expandedGroups[key])}
+                  onToggleExpand={() => toggleGroup(key)}
+                  onDiscard={(row) => void discardNews(row, false)}
+                  onDiscardSimilar={(row) => void discardNews(row, true)}
+                  discarding={busy !== null}
+                />
+              );
+            })}
+          </div>
         )}
+
+        {newsView === "list" && filteredNews.length ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+            <span className="tabular-nums">
+              {newsRangeStart}–{newsRangeEnd} of {totalNewsCount}
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={newsPage <= 1}
+                onClick={() => setNewsPage((prev) => Math.max(1, prev - 1))}
+                className="rounded-md border px-2 py-1 hover:bg-muted/50 disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <span className="tabular-nums">Page {newsPage}</span>
+              <button
+                type="button"
+                disabled={!hasMoreNews}
+                onClick={() => setNewsPage((prev) => prev + 1)}
+                className="rounded-md border px-2 py-1 hover:bg-muted/50 disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        ) : null}
       </StatCard>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

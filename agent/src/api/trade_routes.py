@@ -895,10 +895,21 @@ class CaptureRegistryResponse(BaseModel):
     message: str = ""
 
 
+class HubNewsPage(BaseModel):
+    total_count: int = 0
+    page: int = 1
+    page_size: int = 20
+    has_more: bool = False
+    sort: str = "relevance"
+    search: str = ""
+    window_hours: int | None = None
+
+
 class HubStatusResponse(BaseModel):
     status: str = "ok"
     hub: Dict[str, Any] = Field(default_factory=dict)
     message: str = ""
+    news_page: HubNewsPage = Field(default_factory=HubNewsPage)
 
 
 class HubStagingDrainResponse(BaseModel):
@@ -930,6 +941,8 @@ class HubNewsPipelineConfigUpdate(BaseModel):
     cluster_threshold: float | None = None
     relevance_gate_enabled: bool | None = None
     relevance_min_confidence: float | None = None
+    relevance_score_llm_ambiguous_low: float | None = None
+    relevance_score_llm_ambiguous_high: float | None = None
     relevance_rule_first: bool | None = None
     discard_retention_days: int | None = None
     wiki_search_enabled: bool | None = None
@@ -1321,23 +1334,46 @@ def run_capture_registry_intraday(
 @trade_router.get("/hub/status", response_model=HubStatusResponse)
 def get_hub_status(
     entity_id: str = "NIFTY",
+    search: str | None = None,
+    sort: str = "relevance",
+    page: int = 1,
+    page_size: int = 20,
+    window_hours: int | None = None,
+    provenance: str | None = None,
     _auth: None = Depends(require_local_or_auth),
 ) -> HubStatusResponse:
     """Return hub inventory: staging queue, verified news, cache health, capture stats."""
     key = entity_id.strip().upper()
+    size = max(1, min(int(page_size or 20), 100))
+    current_page = max(1, int(page or 1))
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
         from trade_integrations.hub_storage.hub_status import build_hub_status
+        from trade_integrations.hub_storage.news_feed_query import apply_news_feed_to_hub
 
-        hub = build_hub_status(entity_id=key)
+        # The feed pool has to cover every page the client can ask for, so the
+        # inventory load scales with the requested page rather than the old 50.
+        pool_size = max(50, min(current_page * size + size, 400))
+        hub = build_hub_status(entity_id=key, news_limit=pool_size)
         gates = hub.get("gates") or {}
         if not gates.get("hub_ready", True):
             blocking = list(gates.get("blocking") or [])
             message = str((blocking[0] or {}).get("user_message") or "Hub migration required")
             return HubStatusResponse(status="migration_required", hub=hub, message=message)
-        return HubStatusResponse(status="ok", hub=hub)
+
+        page_meta = apply_news_feed_to_hub(
+            hub,
+            ticker=key,
+            search=search,
+            sort=sort,
+            page=current_page,
+            page_size=size,
+            window_hours=window_hours,
+            provenance=provenance,
+        )
+        return HubStatusResponse(status="ok", hub=hub, news_page=HubNewsPage(**page_meta))
     except Exception as exc:
         logger.exception("hub status failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
