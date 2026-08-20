@@ -8,7 +8,7 @@ import os
 import re
 import threading
 import asyncio
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -639,6 +639,31 @@ class RecordingRunStartResponse(BaseModel):
     job_id: str
     job_status: str
     reused: bool = False
+
+
+class AutoRecordRequest(BaseModel):
+    """Toggle Auto Record. Same recording-config shape as ``StartRecordingRequest``
+    (minus ``wait_for_open``, which is implied) — the config is captured as the
+    daily template when ``enabled=True`` and ignored when ``enabled=False``."""
+
+    enabled: bool
+    underlyings: List[str] = Field(default_factory=lambda: ["NIFTY", "BANKNIFTY", "SENSEX"])
+    equities: List[str] = Field(default_factory=list)
+    include_nifty50_constituents: bool = False
+    poll_interval_s: int = 10
+    category_intervals: Dict[str, int] | None = None
+    equity_intervals: Dict[str, int] | None = None
+    ws_throttle_hz: float | None = None
+    historical_config: Dict[str, Any] | None = None
+
+
+class AutoRecordStatusResponse(BaseModel):
+    status: str = "ok"
+    enabled: bool
+    config: Dict[str, Any] | None = None
+    updated_at: str | None = None
+    active_job_id: str | None = None
+    active_job_status: str | None = None
 
 
 class RecordingJobSnapshot(BaseModel):
@@ -3315,10 +3340,11 @@ def _validate_recording_payload(body: StartRecordingRequest) -> None:
             )
 
 
-def _kick_recording(body: StartRecordingRequest) -> tuple[str, str, bool]:
+def _normalize_recording_request(
+    body: StartRecordingRequest,
+) -> tuple[list[str], list[str]]:
+    """Validate + normalise underlyings/equities shared by start + auto-record."""
     _validate_recording_payload(body)
-    from src.trade.recording_jobs import spawn_worker, start_job
-
     underlyings = [u.strip().upper() for u in body.underlyings if u.strip()] or [
         "NIFTY",
         "BANKNIFTY",
@@ -3334,7 +3360,14 @@ def _kick_recording(body: StartRecordingRequest) -> tuple[str, str, bool]:
             r.symbol.strip().upper() for r in load_nifty50_constituents() if r.symbol.strip()
         }
         equities = sorted(set(equities) | constituent_symbols)
-    job_id, reused = start_job(
+    return underlyings, equities
+
+
+def _kick_recording(body: StartRecordingRequest) -> tuple[str, str, bool]:
+    underlyings, equities = _normalize_recording_request(body)
+    from src.trade.recording_jobs import kick_recording
+
+    return kick_recording(
         underlyings=underlyings,
         equities=equities,
         poll_interval_s=body.poll_interval_s,
@@ -3344,77 +3377,6 @@ def _kick_recording(body: StartRecordingRequest) -> tuple[str, str, bool]:
         historical_config=body.historical_config,
         wait_for_open=body.wait_for_open,
     )
-
-    # Phase C: when ``wait_for_open=True`` and the market is closed,
-    # do NOT spawn a worker — register a deferred wake instead.
-    # The recorder never enters an in-process wait loop; the
-    # scheduled-research executor wakes the recording at
-    # ``next_open_at`` via :func:`wake_recording_job`.
-    market_closed = False
-    if body.wait_for_open:
-        try:
-            from nautilus_openalgo_bridge.market_hours import (
-                is_real_nse_market_open,
-                next_real_nse_open_at,
-            )
-            from trade_integrations.execution.openalgo_client import (
-                OpenAlgoClient,
-            )
-
-            market_closed = not is_real_nse_market_open()
-            if market_closed:
-                # Compute next_open_at (holiday-aware via Phase A).
-                try:
-                    _holidays_raw = OpenAlgoClient().get_market_holidays()
-                    holidays = frozenset({
-                        date.fromisoformat(str(row["date"])[:10])
-                        for row in _holidays_raw
-                        if isinstance(row, dict)
-                        and str(row.get("holiday_type") or "").upper()
-                        == "TRADING_HOLIDAY"
-                        and row.get("date")
-                    })
-                except Exception:
-                    holidays = frozenset()
-                next_open_at = next_real_nse_open_at(holidays=holidays)
-                # Persist status + schedule the wake. No worker subprocess.
-                from src.trade.recording_jobs import set_waiting_for_open_at
-                from src.trade.recording_wait_scheduler import (
-                    schedule_recording_wake,
-                )
-
-                set_waiting_for_open_at(
-                    job_id, next_open_at=next_open_at
-                )
-                schedule_recording_wake(
-                    recording_job_id=job_id,
-                    next_open_at=next_open_at,
-                )
-        except Exception:
-            # Don't break the API on a scheduler failure — fall back to
-            # legacy in-process wait (the recorder still has its own
-            # wait loop path which Phase 5 will retire).
-            market_closed = False
-
-    if market_closed:
-        # Don't spawn — the wake scheduler owns the lifecycle now.
-        pass
-    elif not reused:
-        spawn_worker(job_id)
-    else:
-        from src.trade.recording_jobs import (
-            _get_job_record,
-            spawn_worker,
-            worker_alive,
-        )
-
-        existing = _get_job_record(job_id)
-        if existing is not None and not worker_alive(existing):
-            spawn_worker(job_id)
-    from src.trade.recording_jobs import get_job
-
-    snap = get_job(job_id) or {}
-    return job_id, str(snap.get("status") or "queued"), reused
 
 
 @trade_router.post(
@@ -3853,6 +3815,97 @@ def get_replay_calendar(
     if res.status_code >= 400:
         raise HTTPException(status_code=502, detail=res.text[:500])
     return {"configured": True, **_openalgo_json(res)}
+
+
+@trade_router.post("/recording/auto-record", response_model=AutoRecordStatusResponse)
+def set_auto_record(
+    body: AutoRecordRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> AutoRecordStatusResponse:
+    """Enable/disable Auto Record: re-arm ``wait_for_open`` recording every
+    trading day (start at open, the recorder already stops itself at
+    market close — see ``session_recorder.py``'s in-loop market-hours
+    gate). Enabling captures the given config as the daily template and,
+    if nothing is currently recording, immediately arms a session (starts
+    right away if the market's open now, otherwise schedules today/next
+    session's wake — same as pressing Record with "wait for market open").
+    Disabling only stops future re-arms; it does not touch an
+    already-running or already-waiting session — stop that separately via
+    ``POST /recording/{job_id}/stop`` if desired.
+
+    Registered before the ``/recording/{job_id}`` GET route below so
+    ``auto-record`` isn't swallowed as a ``job_id`` path parameter.
+    """
+    from src.trade.recording_auto import save_auto_record
+
+    config: Dict[str, Any] | None = None
+    if body.enabled:
+        underlyings, equities = _normalize_recording_request(
+            StartRecordingRequest(
+                underlyings=body.underlyings,
+                equities=body.equities,
+                include_nifty50_constituents=body.include_nifty50_constituents,
+                poll_interval_s=body.poll_interval_s,
+                category_intervals=body.category_intervals,
+                equity_intervals=body.equity_intervals,
+                ws_throttle_hz=body.ws_throttle_hz,
+                historical_config=body.historical_config,
+            )
+        )
+        config = {
+            "underlyings": underlyings,
+            "equities": equities,
+            "poll_interval_s": body.poll_interval_s,
+            "category_intervals": body.category_intervals,
+            "equity_intervals": body.equity_intervals,
+            "ws_throttle_hz": body.ws_throttle_hz,
+            "historical_config": body.historical_config,
+        }
+    state = save_auto_record(enabled=body.enabled, config=config)
+
+    from src.trade.recording_jobs import get_active_job
+
+    if body.enabled and get_active_job() is None:
+        from src.trade.recording_jobs import kick_recording
+
+        kick_recording(
+            underlyings=config["underlyings"],
+            equities=config["equities"],
+            poll_interval_s=config["poll_interval_s"],
+            category_intervals=config["category_intervals"],
+            equity_intervals=config["equity_intervals"],
+            ws_throttle_hz=config["ws_throttle_hz"],
+            historical_config=config["historical_config"],
+            wait_for_open=True,
+        )
+    active = get_active_job()
+    active_job_id = active.get("job_id") if active else None
+    active_job_status = active.get("status") if active else None
+    return AutoRecordStatusResponse(
+        enabled=state["enabled"],
+        config=state["config"],
+        updated_at=state["updated_at"],
+        active_job_id=active_job_id,
+        active_job_status=active_job_status,
+    )
+
+
+@trade_router.get("/recording/auto-record", response_model=AutoRecordStatusResponse)
+def get_auto_record(
+    _auth: None = Depends(require_local_or_auth),
+) -> AutoRecordStatusResponse:
+    from src.trade.recording_auto import load_auto_record
+    from src.trade.recording_jobs import get_active_job
+
+    state = load_auto_record()
+    active = get_active_job()
+    return AutoRecordStatusResponse(
+        enabled=state["enabled"],
+        config=state["config"],
+        updated_at=state["updated_at"],
+        active_job_id=active.get("job_id") if active else None,
+        active_job_status=active.get("status") if active else None,
+    )
 
 
 @trade_router.get("/recording/{job_id}", response_model=RecordingJobResponse)

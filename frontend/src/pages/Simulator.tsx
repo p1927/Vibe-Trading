@@ -103,6 +103,8 @@ export function Simulator() {
   const [selected, setSelected] = useState<string[]>(UNDERLYINGS);
   const [selectedEquities, setSelectedEquities] = useState<string[]>([]);
   const [waitForOpen, setWaitForOpen] = useState(false);
+  const [autoRecord, setAutoRecordState] = useState(false);
+  const [autoRecordBusy, setAutoRecordBusy] = useState(false);
   // Per-category recording intervals (seconds) + WS LTP throttle (Hz).
   // Lifted from the disclosure so the page passes them into
   // api.startRecording rather than the now-removed poll_interval_s.
@@ -280,6 +282,10 @@ export function Simulator() {
         }
       })
       .catch(() => {});
+    api
+      .getAutoRecord()
+      .then((res) => setAutoRecordState(res.enabled))
+      .catch(() => {});
     // A replay armed in a prior session (or by another tab) leaves
     // STOCK_SIMULATOR_MODE=replay set on the OpenAlgo side even after this
     // page reloads — without this, the page boots with armedRange=null and
@@ -325,6 +331,65 @@ export function Simulator() {
     }, 5000);
     return () => window.clearInterval(interval);
   }, [isActive, job?.job_id]);
+
+  // Auto Record re-arms a fresh job server-side (see
+  // recording_wait_scheduler.py's poller) once the previous day's session
+  // ends — no button press involved. The 5s job-refresh loop above only
+  // re-fetches the *known* job id, so while auto-record is on and nothing
+  // is locally tracked as active, poll for a newly-armed job to pick up.
+  useEffect(() => {
+    if (!autoRecord || isActive) return;
+    const discover = () => {
+      api
+        .getActiveRecording()
+        .then((res) => {
+          if (res.job && res.job.job_id !== job?.job_id) {
+            setJob(res.job);
+            setLogs(res.job.logs || []);
+            attachStream(res.job.job_id);
+          }
+        })
+        .catch(() => {});
+    };
+    discover();
+    const interval = window.setInterval(discover, 20000);
+    return () => window.clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRecord, isActive]);
+
+  const setAutoRecord = async (enabled: boolean) => {
+    setAutoRecordBusy(true);
+    setError(null);
+    try {
+      const res = await api.setAutoRecord({
+        enabled,
+        underlyings: [...selected, ...selectedEquities],
+        equities: selectedEquities,
+        category_intervals: categoryIntervals,
+        equity_intervals: equityIntervals,
+        ws_throttle_hz: wsThrottleHz,
+        historical_config: historicalConfig
+          ? {
+              interval: historicalIntervalKeyToApi(historicalConfig.interval),
+              lookback_days: historicalLookbackKeyToDays(historicalConfig.lookback_days),
+            }
+          : null,
+      });
+      setAutoRecordState(res.enabled);
+      if (res.active_job_id && res.active_job_id !== job?.job_id) {
+        const snap = await api.getRecordingJob(res.active_job_id);
+        if (snap.job) {
+          setJob(snap.job);
+          setLogs(snap.job.logs || []);
+          attachStream(snap.job.job_id);
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update auto-record");
+    } finally {
+      setAutoRecordBusy(false);
+    }
+  };
 
   const startRecording = async () => {
     setBusy(true);
@@ -537,8 +602,29 @@ export function Simulator() {
               />
               Wait for market open
             </label>
+            <label
+              className="flex items-center gap-1.5 text-sm text-muted-foreground"
+              title="Automatically start recording at market open and stop at close, every trading day — no need to press Start each morning. Uses whatever's picked above at the moment you turn this on."
+            >
+              <input
+                type="checkbox"
+                checked={autoRecord}
+                disabled={autoRecordBusy}
+                onChange={(e) => setAutoRecord(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-border"
+              />
+              Auto Record
+            </label>
           </div>
           <div className="flex items-center gap-2">
+            {autoRecord ? (
+              <span
+                className="rounded-full bg-violet-500/15 px-2.5 py-0.5 text-[11px] font-medium text-violet-800 dark:text-violet-200"
+                title="Every trading day: starts at open, stops at close, re-arms for the next day automatically."
+              >
+                Auto Record ON
+              </span>
+            ) : null}
             {statusBadge(displayStatus)}
             {isWaitingForOpen ? (
               <span
@@ -629,6 +715,9 @@ export function Simulator() {
         ) : (
           <p className="mt-3 text-sm text-muted-foreground">
             No recording in progress. Recording stops automatically at market close (15:30 IST).
+            {autoRecord
+              ? " Auto Record is on — it will start on its own at the next market open."
+              : ""}
           </p>
         )}
       </StatCard>

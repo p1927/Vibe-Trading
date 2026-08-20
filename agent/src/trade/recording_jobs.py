@@ -23,7 +23,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -530,6 +530,91 @@ def start_job(
         _ACTIVE_JOB_ID = job_id
     _write_job_to_disk(job)
     return job_id, False
+
+
+def kick_recording(
+    *,
+    underlyings: list[str],
+    equities: list[str] | None = None,
+    poll_interval_s: int = 10,
+    category_intervals: dict[str, int] | None = None,
+    equity_intervals: dict[str, int] | None = None,
+    ws_throttle_hz: float | None = None,
+    historical_config: dict[str, Any] | None = None,
+    wait_for_open: bool = False,
+) -> tuple[str, str, bool]:
+    """Create/reuse a recording job and either spawn a worker now or, when
+    ``wait_for_open=True`` and the market is closed, register a deferred
+    wake instead (Phase C — see :mod:`src.trade.recording_wait_scheduler`).
+
+    Shared core behind both the ``POST /trade/recording/start`` HTTP
+    handler (``_kick_recording`` in ``src.api.trade_routes``, which layers
+    request validation + underlying/equity normalisation on top) and the
+    auto-record poller, which calls this directly with an already-normalised
+    config template — no HTTP layer involved.
+
+    Returns ``(job_id, job_status, reused)``.
+    """
+    job_id, reused = start_job(
+        underlyings=underlyings,
+        equities=equities or [],
+        poll_interval_s=poll_interval_s,
+        category_intervals=category_intervals,
+        equity_intervals=equity_intervals,
+        ws_throttle_hz=ws_throttle_hz,
+        historical_config=historical_config,
+        wait_for_open=wait_for_open,
+    )
+
+    # Phase C: when ``wait_for_open=True`` and the market is closed,
+    # do NOT spawn a worker — register a deferred wake instead.
+    # The recorder never enters an in-process wait loop; the
+    # recording-wake poller wakes it at ``next_open_at`` via
+    # :func:`wake_recording_job`.
+    market_closed = False
+    if wait_for_open:
+        try:
+            from nautilus_openalgo_bridge.market_hours import (
+                is_real_nse_market_open,
+                next_real_nse_open_at,
+            )
+            from trade_integrations.execution.openalgo_client import OpenAlgoClient
+
+            market_closed = not is_real_nse_market_open()
+            if market_closed:
+                # Compute next_open_at (holiday-aware).
+                try:
+                    _holidays_raw = OpenAlgoClient().get_market_holidays()
+                    holidays = frozenset({
+                        date.fromisoformat(str(row["date"])[:10])
+                        for row in _holidays_raw
+                        if isinstance(row, dict)
+                        and str(row.get("holiday_type") or "").upper() == "TRADING_HOLIDAY"
+                        and row.get("date")
+                    })
+                except Exception:
+                    holidays = frozenset()
+                next_open_at = next_real_nse_open_at(holidays=holidays)
+                from src.trade.recording_wait_scheduler import schedule_recording_wake
+
+                set_waiting_for_open_at(job_id, next_open_at=next_open_at)
+                schedule_recording_wake(recording_job_id=job_id, next_open_at=next_open_at)
+        except Exception:
+            logger.exception("kick_recording: wait_for_open scheduling failed for %s", job_id)
+            market_closed = False
+
+    if market_closed:
+        # Don't spawn — the wake scheduler owns the lifecycle now.
+        pass
+    elif not reused:
+        spawn_worker(job_id)
+    else:
+        existing = _get_job_record(job_id)
+        if existing is not None and not worker_alive(existing):
+            spawn_worker(job_id)
+
+    snap = get_job(job_id) or {}
+    return job_id, str(snap.get("status") or "queued"), reused
 
 
 def mark_running(job_id: str) -> None:

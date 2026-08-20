@@ -190,9 +190,50 @@ async def _recording_wake_poll_tick(store: "ScheduledResearchJobStore") -> None:
         _cancel_existing(store, job.id)
 
 
+async def _maybe_rearm_auto_record() -> None:
+    """When Auto Record is on and nothing is currently recording, kick a
+    fresh ``wait_for_open`` job using the persisted config template.
+
+    Self-limiting: ``kick_recording`` computes ``next_open_at`` from *now*,
+    so calling this right after today's session ends (market closed)
+    naturally schedules tomorrow's session rather than looping today.
+    While a job is queued/waiting_for_open/running, ``get_active_job()``
+    returns non-``None`` and this is a no-op — so a job that's merely
+    *waiting* for tomorrow's open is not re-kicked every tick.
+    """
+    from src.trade.recording_auto import load_auto_record
+    from src.trade.recording_jobs import get_active_job, kick_recording
+
+    state = load_auto_record()
+    if not state.get("enabled"):
+        return
+    config = state.get("config") or {}
+    try:
+        if get_active_job() is not None:
+            return
+    except Exception:
+        logger.exception("auto-record poller: get_active_job failed")
+        return
+    logger.info("auto-record poller: no active recording — re-arming for next session")
+    try:
+        kick_recording(
+            underlyings=list(config.get("underlyings") or []),
+            equities=list(config.get("equities") or []),
+            poll_interval_s=int(config.get("poll_interval_s") or 10),
+            category_intervals=config.get("category_intervals"),
+            equity_intervals=config.get("equity_intervals"),
+            ws_throttle_hz=config.get("ws_throttle_hz"),
+            historical_config=config.get("historical_config"),
+            wait_for_open=True,
+        )
+    except Exception:
+        logger.exception("auto-record poller: kick_recording failed")
+
+
 async def _recording_wake_poll_loop(store: "ScheduledResearchJobStore") -> None:
     while True:
         await _recording_wake_poll_tick(store)
+        await _maybe_rearm_auto_record()
         await asyncio.sleep(_POLL_INTERVAL_S)
 
 

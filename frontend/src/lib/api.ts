@@ -1001,6 +1001,12 @@ export const api = {
       body: JSON.stringify(body),
     }),
   getActiveRecording: () => request<RecordingActiveResponse>("/trade/recording/active"),
+  getAutoRecord: () => request<AutoRecordStatusResponse>("/trade/recording/auto-record"),
+  setAutoRecord: (body: AutoRecordRequest) =>
+    request<AutoRecordStatusResponse>("/trade/recording/auto-record", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   getRecordingJob: (jobId: string) =>
     request<RecordingJobResponse>(`/trade/recording/${encodeURIComponent(jobId)}`),
   stopRecording: (jobId: string) =>
@@ -2852,6 +2858,26 @@ export interface StartRecordingRequest {
   ws_throttle_hz?: number | null;
   historical_config?: { interval: string; lookback_days: number } | null;
   wait_for_open?: boolean;
+}
+
+export interface AutoRecordRequest {
+  enabled: boolean;
+  underlyings?: string[];
+  equities?: string[];
+  poll_interval_s?: number;
+  category_intervals?: Record<string, number>;
+  equity_intervals?: Record<string, number>;
+  ws_throttle_hz?: number | null;
+  historical_config?: { interval: string; lookback_days: number } | null;
+}
+
+export interface AutoRecordStatusResponse {
+  status: string;
+  enabled: boolean;
+  config: Record<string, unknown> | null;
+  updated_at: string | null;
+  active_job_id: string | null;
+  active_job_status: string | null;
 }
 
 export interface RecordingRunStartResponse {
