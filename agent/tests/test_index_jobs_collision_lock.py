@@ -3,10 +3,12 @@
 the weekly scheduled full-refresh (``run_index_research_job``) must not race
 a concurrent manual "Run analysis" for the same ticker.
 
-Two independent guards are exercised here:
+Three independent guards are exercised here:
 1. ``run_index_research_job`` checks ``get_active_job`` up front and skips
    instead of starting a second run.
-2. ``start_job`` itself is lock-protected and reuse-safe per ticker, so even
+2. ``run_index_factor_snapshot_job`` (the daily cron job) has the equivalent
+   guard — it originally lacked one entirely, unlike its two siblings.
+3. ``start_job`` itself is lock-protected and reuse-safe per ticker, so even
    two calls that both pass the first check (a check-then-act race) cannot
    create two independent jobs for the same ticker.
 """
@@ -50,6 +52,27 @@ def test_run_index_research_job_skips_when_manual_run_active(monkeypatch: pytest
         "ticker": "NIFTY",
         "active_job_id": "manual-job-1",
     }
+
+
+def test_run_index_factor_snapshot_job_skips_when_manual_run_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The daily snapshot cron job must also back off when a manual run is
+    active for the ticker — it previously had no such guard at all."""
+    active_job = {"job_id": "manual-job-2", "status": "queued"}
+    monkeypatch.setattr(run_jobs, "get_active_job", lambda ticker: active_job)
+
+    def _must_not_be_called(*args, **kwargs):
+        raise AssertionError("persist_daily_hub_market_data must not run while a manual run is active")
+
+    monkeypatch.setattr(
+        "trade_integrations.dataflows.index_research.history_ingest.persist_daily_hub_market_data",
+        _must_not_be_called,
+    )
+
+    result = index_jobs.run_index_factor_snapshot_job({"ticker": "NIFTY"})
+
+    assert result == {"skipped": True, "reason": "manual_run_active", "ticker": "NIFTY"}
 
 
 def test_start_job_dedups_concurrent_calls_for_same_ticker() -> None:
