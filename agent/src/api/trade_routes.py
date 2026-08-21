@@ -4734,8 +4734,8 @@ def hub_market_data_option_chain(
                 continue
             strikes.append(HubMarketDataOptionChainStrike(
                 strike=float(leg.get("strike") or leg.get("strike_price") or 0),
-                ce={"last_price": leg.get("ce_ltp"), "oi": leg.get("ce_oi"), "iv": leg.get("ce_iv")},
-                pe={"last_price": leg.get("pe_ltp"), "oi": leg.get("pe_oi"), "iv": leg.get("pe_iv")},
+                ce={"last_price": leg.get("ce_ltp"), "oi": leg.get("ce_oi"), "volume": leg.get("ce_volume"), "iv": leg.get("ce_iv")},
+                pe={"last_price": leg.get("pe_ltp"), "oi": leg.get("pe_oi"), "volume": leg.get("pe_volume"), "iv": leg.get("pe_iv")},
             ))
         return HubMarketDataOptionChainResponse(
             status="ok", underlying=symbol.upper(), exchange=exchange.upper(),
