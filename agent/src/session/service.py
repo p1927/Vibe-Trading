@@ -150,13 +150,9 @@ class SessionService:
         message_id: str,
     ) -> None:
         try:
-            import sys
-            from pathlib import Path
+            from src.trade.hub_bridge import ensure_trade_stack_path
 
-            trade_root = Path(__file__).resolve().parents[4]
-            integrations = trade_root / "integrations"
-            if integrations.is_dir() and str(integrations) not in sys.path:
-                sys.path.insert(0, str(integrations))
+            ensure_trade_stack_path()
             from trade_integrations.autonomous_agents.intent_capabilities import summarize_intent_change
             from trade_integrations.autonomous_agents.intent_hooks import maybe_refresh_intent_on_user_message
             from trade_integrations.autonomous_agents.intent_store import load_intent_from_session_config
@@ -590,13 +586,9 @@ class SessionService:
     @staticmethod
     def _clear_agent_streaming(agent_id: str) -> None:
         try:
-            import sys
-            from pathlib import Path
+            from src.trade.hub_bridge import ensure_trade_stack_path
 
-            trade_root = Path(__file__).resolve().parents[3]
-            integrations = trade_root / "integrations"
-            if integrations.is_dir() and str(integrations) not in sys.path:
-                sys.path.insert(0, str(integrations))
+            ensure_trade_stack_path()
             from trade_integrations.autonomous_agents.bootstrap import safe_finalize_bootstrap_if_ready
             from trade_integrations.autonomous_agents.store import get_agent, save_agent
 

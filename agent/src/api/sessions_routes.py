@@ -236,13 +236,9 @@ def _mandate_proposal_frame_from_tool_result(event: Any) -> Optional[str]:
 
 def _load_autonomous_proposal(proposal_id: str) -> Optional[Dict[str, Any]]:
     try:
-        import sys
-        from pathlib import Path
+        from src.trade.hub_bridge import ensure_trade_stack_path
 
-        trade_root = Path(__file__).resolve().parents[4]
-        integrations = trade_root / "integrations"
-        if integrations.is_dir() and str(integrations) not in sys.path:
-            sys.path.insert(0, str(integrations))
+        ensure_trade_stack_path()
         from trade_integrations.autonomous_agents.store import load_proposal
 
         data = load_proposal(proposal_id)
