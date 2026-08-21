@@ -484,6 +484,9 @@ class ChatLLM:
                     cancelled = True
                     break
                 chunk_text = _text_content(chunk.content)
+                chunk_reasoning = ""
+                if think_filter is not None and chunk_text:
+                    chunk_text, chunk_reasoning = think_filter.feed(chunk_text)
                 if chunk_text and on_text_chunk:
                     if possible_dsml_text:
                         pending_text += chunk_text
@@ -495,6 +498,8 @@ class ChatLLM:
                             pending_text = ""
                     else:
                         on_text_chunk(chunk_text)
+                if chunk_reasoning and on_reasoning_chunk:
+                    on_reasoning_chunk(chunk_reasoning)
                 reasoning = getattr(chunk, "additional_kwargs", {}).get("reasoning_content")
                 if reasoning and not chunk.content and on_reasoning_chunk:
                     on_reasoning_chunk(reasoning)
@@ -620,6 +625,11 @@ class ChatLLM:
             )
 
         content = _text_content(ai_message.content)
+        reasoning_content = additional_kwargs.get("reasoning_content")
+        provider = get_env_config().llm.langchain_provider.strip().lower()
+        if provider == "minimax" and content:
+            content, embedded_thinking = split_minimax_think_blocks(content)
+            reasoning_content = merge_reasoning(reasoning_content, embedded_thinking)
         dsml_tool_calls = [] if native_tool_calls else _parse_dsml_tool_calls(content)
         tool_calls = native_tool_calls or dsml_tool_calls
 
@@ -644,7 +654,7 @@ class ChatLLM:
         return LLMResponse(
             content="" if dsml_tool_calls else content,
             tool_calls=tool_calls,
-            reasoning_content=additional_kwargs.get("reasoning_content"),
+            reasoning_content=reasoning_content,
             finish_reason=finish_reason,
             usage_metadata=usage,
             content_filter_triggered=content_filter_triggered,

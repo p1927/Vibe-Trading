@@ -94,7 +94,6 @@ function formatMoney(amount: number | undefined, market: "IN" | "US" | undefined
 
 function ProposalInfraStrip({
   market,
-  backend,
   health,
 }: {
   market?: "IN" | "US";

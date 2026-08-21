@@ -65,6 +65,7 @@ export const router = createBrowserRouter([
     errorElement: <RouteErrorFallback />,
     children: [
       { path: "/", element: wrap(Home) },
+      { path: "/about", element: wrap(Home) },
       { path: "/agent", element: <Agent /> },
       { path: "/autonomous", element: wrap(Autonomous) },
       { path: "/runtime", element: wrap(Runtime) },
@@ -77,7 +78,6 @@ export const router = createBrowserRouter([
       { path: "/prediction", element: wrap(Prediction) },
       { path: "/hub", element: wrap(Hub) },
       { path: "/simulator", element: wrap(Simulator) },
-      { path: "/scheduled", element: wrap(Scheduled) },
       { path: "/options", element: wrap(OptionsLab) },
       { path: "/alpha-zoo", element: wrap(AlphaZoo) },
       { path: "/alpha-zoo/bench", element: wrap(AlphaZoo) },

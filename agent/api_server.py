@@ -253,7 +253,7 @@ from src.api.swarm_routes import _get_swarm_runtime  # noqa: F401, E402
 # --- Live trading ---
 from src.api.live_routes import register_live_routes  # noqa: E402
 register_live_routes(app)
-
+import src.api.trading_connector_routes as _tcr, src.api.trade_routes as _tr; app.include_router(_tcr.router); app.include_router(_tr.trade_router)  # noqa: E401,E402,E702
 from src.api.live_routes import (  # noqa: F401, E402
     CommitMandateRequest,
     LiveHaltRequest,

@@ -1730,6 +1730,19 @@ export interface EquityPoint {
   drawdown: string | number;
 }
 
+/** Monte Carlo fan-chart payload: percentile envelope + sampled paths over trade order. */
+export interface MonteCarloEquityPaths {
+  steps: number[];
+  initial_capital: number;
+  actual: number[];
+  band_p5: number[];
+  band_p25: number[];
+  band_p50: number[];
+  band_p75: number[];
+  band_p95: number[];
+  samples: number[][];
+}
+
 export interface ValidationData {
   monte_carlo?: {
     actual_sharpe: number;
@@ -1742,6 +1755,8 @@ export interface ValidationData {
     simulated_sharpe_p95: number;
     n_simulations: number;
     n_trades: number;
+    sharpe_samples?: number[];
+    equity_paths?: MonteCarloEquityPaths;
     error?: string;
   };
   bootstrap?: {
@@ -1752,6 +1767,7 @@ export interface ValidationData {
     prob_positive: number;
     confidence: number;
     n_bootstrap: number;
+    sharpe_samples?: number[];
     error?: string;
   };
   walk_forward?: {
@@ -2739,7 +2755,7 @@ export interface ExecuteTradeBasketResponse {
 }
 
 export interface TradeChargesRequest {
-  legs: Array<Record<string, unknown>>;
+  legs: Array<Record<string, unknown>> | TradePlanLeg[];
   spot?: number;
   broker_preset?: string;
   include_exit?: boolean;

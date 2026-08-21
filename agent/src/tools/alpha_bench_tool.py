@@ -382,6 +382,7 @@ def _load_csi300_panel(start: str, end: str) -> dict[str, pd.DataFrame]:
 
     if not codes:
         codes = list(_CSI300_FALLBACK_CODES)
+        constituent_source = "hand-picked fallback"
         logger.warning("csi300: using %d-name fallback (degraded run)", len(codes))
 
     # Fetch raw daily in parallel — we need ``amount`` which the standard
@@ -547,11 +548,13 @@ def _load_sp500_panel(start: str, end: str) -> dict[str, pd.DataFrame]:
 
     # Attach a non-DataFrame metadata blob. Registry.compute() only iterates
     # required column names, so this extra key is ignored by the compute path.
+    degraded = constituent_source != "wikipedia"
     panel["_meta"] = {
         "universe": "sp500",
         "survivorship_bias": True,
+        "degraded": degraded,
         "constituent_source": constituent_source,
-        "constituent_source_date": _SP500_CONSTITUENT_SOURCE_DATE,
+        "constituent_source_date": None if degraded else _SP500_CONSTITUENT_SOURCE_DATE,
         "constituent_count": len(codes),
         "sector_source": "wikipedia GICS" if "sector" in panel else None,
         "sector_coverage": round(sector_coverage, 4),

@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 
 import requests
+import trade_integrations.http as trade_http
 
 from src import preflight
 
@@ -42,7 +43,7 @@ def test_llm_preflight_probe_does_not_follow_redirects(monkeypatch) -> None:
         response.status_code = 307
         return response
 
-    monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr(trade_http, "get", fake_get)
 
     result = preflight._check_llm_provider()
 
@@ -66,7 +67,7 @@ def test_llm_preflight_probe_reports_request_errors(monkeypatch) -> None:
         del url, kwargs
         raise requests.Timeout("timed out")
 
-    monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr(trade_http, "get", fake_get)
 
     result = preflight._check_llm_provider()
 

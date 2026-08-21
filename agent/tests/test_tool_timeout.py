@@ -51,7 +51,9 @@ def test_tool_timeout_returns_error_and_stops_heartbeats(monkeypatch) -> None:
         max_iterations=1,
     )
 
-    result, elapsed_ms = agent._invoke_tool("slow_tool", {})
+    result, elapsed_ms = agent._invoke_tool(
+        "slow_tool", {}, call_id="slow-call"
+    )
     event_count_at_return = len(events)
     time.sleep(0.08)
 
@@ -76,7 +78,9 @@ def test_write_tool_timeout_warns_but_does_not_return_before_completion(monkeypa
         max_iterations=1,
     )
 
-    result, elapsed_ms = agent._invoke_tool("place_order", {})
+    result, elapsed_ms = agent._invoke_tool(
+        "place_order", {}, call_id="write-call"
+    )
 
     assert json.loads(result) == {"status": "ok"}
     assert registry.completed is True

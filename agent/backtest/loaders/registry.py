@@ -51,6 +51,7 @@ VALID_SOURCES: set[str] = {
     "fmp",
     "qveris",  # QVERIS-INTEGRATION
     "india_broker",
+    "pykrx",
     "longbridge",
     "mt5",
     "tickerall",
@@ -101,6 +102,7 @@ def _ensure_registered() -> None:
         "backtest.loaders.fmp_loader",
         "backtest.loaders.qveris_loader",  # QVERIS-INTEGRATION
         "backtest.loaders.india_broker_loader",
+        "backtest.loaders.pykrx_loader",
         "backtest.loaders.longbridge",
         "backtest.loaders.mt5_loader",
         "backtest.loaders.tickerall_loader",

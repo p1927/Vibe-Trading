@@ -74,6 +74,10 @@ from src.factors.registry import Registry, RegistryError
 # We treat ``<repo>`` (and any subdirectory thereof) as the write-allow root.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
+# Benchmarkable data universes: every name here must have a panel loader in
+# ``src.tools.alpha_bench_tool._UNIVERSE_TAG``. There is no KRX (or NSE/BSE)
+# panel yet, so Korea/India are deliberately absent — ``alpha bench`` would
+# fail at universe load, not produce a Korean benchmark.
 _UNIVERSE_CHOICES = ["csi300", "sp500", "btc-usdt"]
 
 # Per-row fields that only ``bench_runner_strict`` produces. They are the
@@ -174,7 +178,10 @@ def cmd_alpha_list(args: argparse.Namespace) -> int:
     """
     try:
         reg = Registry()
-        ids = reg.list(zoo=args.zoo, theme=args.theme, universe=args.universe)
+        universe = args.universe
+        if universe is not None:
+            universe = _LIST_UNIVERSE_ALIASES.get(universe, universe)
+        ids = reg.list(zoo=args.zoo, theme=args.theme, universe=universe)
 
         limit = getattr(args, "limit", None)
         total = len(ids)
@@ -696,6 +703,10 @@ def cmd_alpha_bench(args: argparse.Namespace) -> int:
 
         top_rows = [_normalise_row(r) for r in top_rows_raw]
         failures_for_report = [_normalise_skipped(s) for s in skipped[:10]]
+        # Universe metadata (e.g. the sp500 loader's survivorship_bias flag),
+        # forwarded by bench_runner.run_bench as result["meta"] and already
+        # kept by alpha_routes._result_for_wire for the SSE/frontend path.
+        universe_meta = result.get("meta")
 
         report_path: Path | None = None
         try:
@@ -722,6 +733,8 @@ def cmd_alpha_bench(args: argparse.Namespace) -> int:
                 "failures": failures_for_report,
                 "strict": bool(getattr(args, "strict", False)),
             }
+            if universe_meta:
+                context["meta"] = universe_meta
             report_path.write_text(_render_html(context), encoding="utf-8")
         except Exception as exc:  # noqa: BLE001 — report is nice-to-have
             _err(f"warning: could not write HTML report: {exc}")
@@ -744,6 +757,8 @@ def cmd_alpha_bench(args: argparse.Namespace) -> int:
                     envelope[key] = result[key]
             if result.get("oos_split") is not None:
                 envelope["oos_split"] = result["oos_split"]
+        if universe_meta:
+            envelope["meta"] = universe_meta
         if report_path is not None:
             envelope["report_path"] = str(report_path)
         print(json.dumps(envelope, indent=2, default=str))
@@ -935,8 +950,12 @@ def add_subparser(subparsers: Any) -> argparse.ArgumentParser:
     p_list.add_argument(
         "--universe",
         default=None,
-        choices=_UNIVERSE_CHOICES,
-        help=f"Filter by universe ({', '.join(_UNIVERSE_CHOICES)})",
+        choices=_LIST_UNIVERSE_CHOICES + _UNIVERSE_CHOICES,
+        help=(
+            "Filter by factor universe "
+            f"({', '.join(_LIST_UNIVERSE_CHOICES)}); the benchmark names "
+            f"({', '.join(_UNIVERSE_CHOICES)}) are accepted as aliases"
+        ),
     )
     p_list.add_argument(
         "--limit",

@@ -24,8 +24,8 @@ class _DummyAgentLoop:
     def __init__(self, *, registry, llm, event_callback, max_iterations, persistent_memory) -> None:
         del registry, llm, event_callback, max_iterations, persistent_memory
 
-    def run(self, *, user_message: str, history, session_id: str) -> dict[str, str]:
-        del user_message, history, session_id
+    def run(self, *, user_message: str, history, session_id: str, session_config=None) -> dict[str, str]:
+        del user_message, history, session_id, session_config
         return {"status": "completed"}
 
 

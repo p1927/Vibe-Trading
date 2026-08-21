@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from backtest.loaders._http import resolve_min_interval
 from backtest.loaders.base import cached_loader_fetch, validate_date_range
 from backtest.loaders.registry import register
 
@@ -45,19 +46,6 @@ def throttled_get_json(
     del host_key, min_interval
     if tiered_http_get is None:
         raise RuntimeError("trade_integrations.tiered_api is required for finnhub loader")
-    return tiered_http_get("finnhub", url, params=params or {}, credential_param="token")
-
-
-def throttled_get_json(
-    url: str,
-    *,
-    host_key: str | None = None,
-    min_interval: float | None = None,
-    params: dict | None = None,
-) -> object:
-    del host_key, min_interval
-    if tiered_http_get is None:
-        raise RuntimeError("trade_integrations.tiered_api is not available")
     return tiered_http_get("finnhub", url, params=params or {}, credential_param="token")
 
 logger = logging.getLogger(__name__)
@@ -226,6 +214,14 @@ class DataLoader:
         """
         del fields
         validate_date_range(start_date, end_date)
+
+        # Daily-only candle resolution; do not silently return day bars for ``1H``.
+        if str(interval).strip().lower() not in {"1d", "d", "day", "daily"}:
+            logger.warning(
+                "finnhub supports daily bars only; rejecting interval=%r",
+                interval,
+            )
+            return {}
 
         from src.config.accessor import get_env_config
 

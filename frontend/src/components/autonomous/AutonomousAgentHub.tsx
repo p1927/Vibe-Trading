@@ -134,7 +134,7 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
     }
   };
 
-  const confirmFlattenDelete = (agent: AutonomousAgentInstance, prompt: string) => {
+  const confirmFlattenDelete = (_agent: AutonomousAgentInstance, prompt: string) => {
     if (!window.confirm(prompt)) return false;
     return window.confirm(
       "This will flatten agent-scoped positions before delete. Continue?",

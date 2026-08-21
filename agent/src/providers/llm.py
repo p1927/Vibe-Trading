@@ -1065,6 +1065,8 @@ def _ensure_dotenv() -> None:
     global _dotenv_loaded
     from src.config.bootstrap import bootstrap_environment, is_bootstrapped
 
+    if _dotenv_loaded:
+        return
     if is_bootstrapped():
         _dotenv_loaded = True
         return
@@ -1416,6 +1418,19 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
         api_key,
         source=_credential_env_source(caps.api_key_env),
     )
+    extra_body: dict[str, Any] | None = (
+        {"reasoning": {"effort": effort}}
+        if effort and not use_responses_api and caps.openrouter_reasoning_body
+        else None
+    )
+    if caps.minimax_reasoning_split:
+        # MiniMax M3 emits chain-of-thought inline in ``content`` unless asked
+        # to split it into a separate reasoning channel via these fields.
+        extra_body = {
+            **(extra_body or {}),
+            "reasoning_split": True,
+            "thinking": {"type": "adaptive"},
+        }
     kwargs: dict[str, Any] = {
         "model": name,
         "api_key": api_key or None,
@@ -1431,11 +1446,7 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
             if use_responses_api and effort
             else None
         ),
-        "extra_body": (
-            {"reasoning": {"effort": effort}}
-            if effort and not use_responses_api and caps.openrouter_reasoning_body
-            else None
-        ),
+        "extra_body": extra_body,
         "reasoning_effort": (
             effort
             if (

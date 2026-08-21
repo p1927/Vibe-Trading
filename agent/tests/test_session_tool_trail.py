@@ -111,8 +111,8 @@ def test_run_with_agent_consolidates_tool_events_by_call_id(
             del registry, llm, max_iterations, persistent_memory
             self._event_callback = event_callback
 
-        def run(self, *, user_message: str, history, session_id: str):
-            del user_message, history, session_id
+        def run(self, *, user_message: str, history, session_id: str, session_config=None):
+            del user_message, history, session_id, session_config
             self._event_callback(
                 "tool_call",
                 {

@@ -141,7 +141,7 @@ function ExternalSourceDiscoverPanel({
     setManualError(null);
     setAddingManual(true);
     try {
-      await onAddSource(validated.payload!);
+      await onAddSource(validated.payload! as unknown as Record<string, unknown>);
       setManualName("");
       setManualDomain("");
       setManualEntryUrls("");
@@ -402,7 +402,7 @@ export function ExternalPredictionsPanel({
           setAddFlowError(validated.error ?? "Invalid add-site request.");
           return;
         }
-        await onAddSource(validated.payload!);
+        await onAddSource(validated.payload! as unknown as Record<string, unknown>);
         setPendingAddCandidate(null);
       } catch (err) {
         setAddFlowError(err instanceof Error ? err.message : "Failed to add source.");
@@ -562,17 +562,17 @@ export function ExternalPredictionsPanel({
         ) : null}
         {(snapshot?.sources_error ?? 0) > 0 ? (
           <span className="rounded-full bg-red-500/10 px-2 py-0.5 tabular-nums text-red-700 dark:text-red-300">
-            {snapshot.sources_error} crawl error{(snapshot.sources_error ?? 0) === 1 ? "" : "s"}
+            {snapshot?.sources_error} crawl error{(snapshot?.sources_error ?? 0) === 1 ? "" : "s"}
           </span>
         ) : null}
         {(snapshot?.sources_not_found ?? 0) > 0 ? (
           <span className="rounded-full bg-amber-500/10 px-2 py-0.5 tabular-nums text-amber-800 dark:text-amber-300">
-            {snapshot.sources_not_found} no forecast
+            {snapshot?.sources_not_found} no forecast
           </span>
         ) : null}
         {(snapshot?.refresh_attempt_failures ?? 0) > 0 ? (
           <span className="rounded-full bg-amber-500/15 px-2 py-0.5 font-medium text-amber-800 dark:text-amber-300">
-            {snapshot.refresh_attempt_failures} refresh failed — cached kept
+            {snapshot?.refresh_attempt_failures} refresh failed — cached kept
           </span>
         ) : null}
         {refreshing && runJobId ? (

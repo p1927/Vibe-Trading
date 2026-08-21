@@ -177,7 +177,6 @@ export function runPredictionUiAudit(
     status: statusFrom({
       ok: spotOk && !artifact.spot_error && artifact.spot_source === "openalgo",
       warn: spotOk && artifact.spot_source !== "openalgo",
-      error: Boolean(artifact.spot_error) || !spotOk,
     }),
     source: "OpenAlgo LIVE quote (INDmoney) — no history fallback",
     userValue: artifact.spot_error

@@ -183,10 +183,13 @@ def _reset_env_config():
     rather than the one instance of it.
     """
     from src.config.accessor import reset_env_config
+    from src.config.bootstrap import reset_bootstrap
 
     saved_environ = dict(os.environ)
     reset_env_config()
+    reset_bootstrap()
     yield
     os.environ.clear()
     os.environ.update(saved_environ)
     reset_env_config()
+    reset_bootstrap()

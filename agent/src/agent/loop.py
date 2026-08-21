@@ -991,6 +991,10 @@ class AgentLoop:
         # an AttributeError on first access.
         self._session_id: str = ""
         self._session_config: dict[str, Any] = {}
+        self._compact_policy = _resolve_compact_policy("", {})
+        self._auto_compact_count = 0
+        self._emergency_compact_used = False
+        self._tail_token_budget = TAIL_TOKEN_BUDGET
 
     def cancel(self) -> None:
         """Cancel the current loop.
@@ -2104,12 +2108,15 @@ class AgentLoop:
             )
             redacted_args = redact_payload(args)
             event_args = {k: str(v)[:200] for k, v in redacted_args.items()}
-            self._emit("tool_call", {"tool": tc.name, "arguments": event_args, "iter": iteration})
+            self._emit(
+                "tool_call",
+                {"tool": tc.name, "arguments": event_args, "iter": iteration, "call_id": tc.id},
+            )
             trace.write({"type": "tool_call", "iter": iteration, "tool": tc.name, "call_id": tc.id, "args": redacted_args})
             runnable.append((tc, args))
         def _run(tc_args: tuple) -> tuple:
             tc, args = tc_args
-            result, elapsed_ms = self._invoke_tool(tc.name, args)
+            result, elapsed_ms = self._invoke_tool(tc.name, args, call_id=tc.id)
             return tc, result, elapsed_ms
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(runnable), 8)) as pool:
@@ -2155,15 +2162,24 @@ class AgentLoop:
 
         redacted_args = redact_payload(args)
         event_args = {k: str(v)[:200] for k, v in redacted_args.items()}
-        self._emit("tool_call", {"tool": tc.name, "arguments": event_args, "iter": iteration})
+        self._emit(
+            "tool_call",
+            {"tool": tc.name, "arguments": event_args, "iter": iteration, "call_id": tc.id},
+        )
         trace.write({"type": "tool_call", "iter": iteration, "tool": tc.name, "call_id": tc.id, "args": redacted_args})
         logger.info(f"Tool call: {tc.name}({list(args.keys())})")
 
-        result, elapsed_ms = self._invoke_tool(tc.name, args)
+        result, elapsed_ms = self._invoke_tool(tc.name, args, call_id=tc.id)
 
         self._finalize_tool_result(tc, result, elapsed_ms, context, messages, trace, react_trace, iteration)
 
-    def _invoke_tool(self, tool_name: str, args: Dict[str, Any]) -> tuple[str, int]:
+    def _invoke_tool(
+        self,
+        tool_name: str,
+        args: Dict[str, Any],
+        *,
+        call_id: str,
+    ) -> tuple[str, int]:
         """Execute a tool with heartbeat + structured progress emission.
 
         Installs a thread-local progress emitter so the tool may call
@@ -2176,6 +2192,7 @@ class AgentLoop:
         Args:
             tool_name: Tool name to execute.
             args: Tool arguments dict.
+            call_id: Stable identity of this tool invocation.
 
         Returns:
             Tuple of (result_str, elapsed_ms).
@@ -2188,11 +2205,13 @@ class AgentLoop:
                 return
             payload = event.to_dict()
             payload["tool"] = tool_name
+            payload["call_id"] = call_id
             self._emit("tool_progress", payload)
 
         def _on_heartbeat(payload: Dict[str, Any]) -> None:
             if timed_out.is_set():
                 return
+            payload["call_id"] = call_id
             self._emit("tool_heartbeat", payload)
 
         t0 = _time.perf_counter()
@@ -2248,6 +2267,7 @@ class AgentLoop:
             elapsed_ms = _elapsed_ms()
             payload: Dict[str, Any] = {
                 "tool": tool_name,
+                "call_id": call_id,
                 "stage": stage,
                 "message": message,
                 "elapsed_s": round(elapsed_ms / 1000, 2),

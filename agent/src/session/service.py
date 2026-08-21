@@ -294,10 +294,11 @@ class SessionService:
         *,
         include_shell_tools: bool = False,
     ) -> None:
-        attempt.mark_running()
-        self.store.update_attempt(attempt)
-        self.event_bus.emit(session.session_id, "attempt.started", {"attempt_id": attempt.attempt_id})
-
+        # Bookkeeping (mark_running/update_attempt/emit "attempt.started") is done
+        # by _run_attempt itself, inside its try/finally that owns the in-flight
+        # claim — doing it here too (outside any try/finally) meant a failure in
+        # this pre-run step (e.g. a store write error) left the session claimed
+        # forever, since _release_session is never reached.
         prefetch_timeout = 120.0
         try:
             import os
@@ -326,6 +327,27 @@ class SessionService:
                 attempt.attempt_id,
             )
             research_context = ""
+        except asyncio.CancelledError:
+            # cancel_current() can land here — before _run_attempt (and the
+            # in-flight claim it owns) is ever reached, e.g. while the run is
+            # still on prefetch. Without this, the claim was never released.
+            attempt.mark_cancelled(reason="cancelled by user")
+            self.store.update_attempt(attempt)
+            self.event_bus.emit(
+                session.session_id,
+                "attempt.cancelled",
+                {"attempt_id": attempt.attempt_id, "status": attempt.status.value},
+            )
+            self._active_tasks.pop(session.session_id, None)
+            self._release_session(session.session_id)
+            raise
+        except Exception as exc:
+            attempt.mark_failed(error=str(exc))
+            self.store.update_attempt(attempt)
+            self.event_bus.emit(session.session_id, "attempt.failed", {"attempt_id": attempt.attempt_id, "error": str(exc)})
+            self._active_tasks.pop(session.session_id, None)
+            self._release_session(session.session_id)
+            return
         await self._run_attempt(
             session,
             attempt,
@@ -426,10 +448,6 @@ class SessionService:
         if task is not None and not task.done():
             task.cancel()
             return True
-        task = self._active_tasks.get(session_id)
-        if task is not None and not task.done():
-            task.cancel()
-            return True
         return False
 
     async def _run_attempt(
@@ -462,7 +480,7 @@ class SessionService:
             )
             if result.get("status") == "success":
                 attempt.mark_completed(summary=result.get("content", ""))
-            elif status == "cancelled":
+            elif result.get("status") == "cancelled":
                 # A cooperative cancel is not an outage; AttemptStatus.CANCELLED
                 # existed but was dead because every non-success landed in the
                 # failure branch.
@@ -740,6 +758,79 @@ class SessionService:
         result["tools_called"] = sorted(tools_called)
         return result
 
+    @staticmethod
+    def _record_tool_trail_event(
+        tool_trail: list[Dict[str, Any]],
+        event_type: str,
+        data: Dict[str, Any],
+    ) -> None:
+        """Consolidate live tool events into a compact history record.
+
+        Args:
+            tool_trail: Mutable per-attempt trail.
+            event_type: Agent event type (`tool_call` or `tool_result`).
+            data: Already-redacted live event payload.
+        """
+        tool = str(data.get("tool") or "")
+        if not tool:
+            return
+
+        call_id_value = data.get("call_id")
+        call_id = call_id_value if isinstance(call_id_value, str) and call_id_value else None
+
+        if event_type == "tool_call":
+            entry: Dict[str, Any] = {
+                "tool": tool,
+                "status": "running",
+                "arguments": (
+                    dict(data["arguments"])
+                    if isinstance(data.get("arguments"), dict)
+                    else {}
+                ),
+                "timestamp": int(time.time() * 1000),
+            }
+            if call_id:
+                entry["call_id"] = call_id
+            tool_trail.append(entry)
+            return
+
+        match = None
+        if call_id:
+            match = next(
+                (
+                    entry
+                    for entry in tool_trail
+                    if entry.get("call_id") == call_id
+                    and entry.get("status") == "running"
+                ),
+                None,
+            )
+        if match is None:
+            match = next(
+                (
+                    entry
+                    for entry in tool_trail
+                    if entry.get("tool") == tool
+                    and entry.get("status") == "running"
+                ),
+                None,
+            )
+        if match is None:
+            match = {
+                "tool": tool,
+                "arguments": {},
+                "timestamp": int(time.time() * 1000),
+            }
+            tool_trail.append(match)
+
+        match["status"] = "ok" if data.get("status") == "ok" else "error"
+        elapsed_ms = data.get("elapsed_ms")
+        if isinstance(elapsed_ms, (int, float)) and not isinstance(elapsed_ms, bool):
+            match["elapsed_ms"] = max(0, int(elapsed_ms))
+        match["preview"] = str(data.get("preview") or "")
+        if call_id:
+            match["call_id"] = call_id
+
     async def _maybe_orchestrator_propose_guard(
         self,
         session_id: str,
@@ -920,7 +1011,7 @@ class SessionService:
 
         history = []
         for msg in messages[:-1]:
-            message_id = msg.message_id if hasattr(msg, "message_id") else str(msg.get("message_id") or "")
+            message_id = str(getattr(msg, "message_id", None) or (msg.get("message_id") if isinstance(msg, dict) else None) or "")
             if not passed_cutoff:
                 if message_id == cutoff_id:
                     passed_cutoff = True

@@ -26,6 +26,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
+from backtest.loaders._http import resolve_min_interval
 from backtest.loaders.base import cached_loader_fetch, validate_date_range
 from backtest.loaders.registry import register
 
@@ -46,20 +47,6 @@ def throttled_get_json(
     del host_key, min_interval
     if tiered_http_get is None:
         raise RuntimeError("trade_integrations.tiered_api is required for alphavantage loader")
-    return tiered_http_get("alpha_vantage", url, params=params or {})
-
-
-def throttled_get_json(
-    url: str,
-    *,
-    host_key: str | None = None,
-    min_interval: float | None = None,
-    params: dict | None = None,
-) -> object:
-    """Backward-compatible shim — routes through tiered_api hub + queue."""
-    del host_key, min_interval
-    if tiered_http_get is None:
-        raise RuntimeError("trade_integrations.tiered_api is not available")
     return tiered_http_get("alpha_vantage", url, params=params or {})
 
 logger = logging.getLogger(__name__)
@@ -165,6 +152,14 @@ class DataLoader:
             or carry no in-range bars are omitted.
         """
         validate_date_range(start_date, end_date)
+
+        # Daily-only TIME_SERIES_DAILY; do not silently return day bars for ``1H``.
+        if str(interval).strip().lower() not in {"1d", "d", "day", "daily"}:
+            logger.warning(
+                "alphavantage supports daily bars only; rejecting interval=%r",
+                interval,
+            )
+            return {}
 
         api_key = _resolve_api_key()
         if not api_key:

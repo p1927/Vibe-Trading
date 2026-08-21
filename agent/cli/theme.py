@@ -217,7 +217,27 @@ def is_dark() -> bool:
     return _dark
 
 
-class Theme:
+class _ThemeMeta(type):
+    """Metaclass that lazily resolves style attributes on the ``Theme`` class.
+
+    ``Theme.primary`` is a *class*-level attribute access, which Python
+    dispatches through the metaclass's ``__getattr__`` -- defining
+    ``__getattr__`` directly on ``Theme`` only intercepts misses on
+    *instances* of ``Theme`` and never fires for ``Theme.<attr>`` itself.
+    """
+
+    def __getattr__(cls, name: str) -> Style | str:
+        _ensure_theme()
+        assert _styles is not None and _dark is not None
+        if name == "brand_hex":
+            return BRAND_ORANGE_DARK if _dark else BRAND_ORANGE_LIGHT
+        try:
+            return getattr(_styles, name)
+        except AttributeError as exc:
+            raise AttributeError(f"{cls.__name__}.{name}") from exc
+
+
+class Theme(metaclass=_ThemeMeta):
     """Namespace of Rich :class:`Style` instances used across the CLI.
 
     Use as attribute access (``Theme.primary``) so that swapping the
@@ -229,17 +249,6 @@ class Theme:
         >>> from cli.theme import Theme, get_console
         >>> get_console().print("Vibe-Trading", style=Theme.primary)
     """
-
-    @classmethod
-    def __getattr__(cls, name: str) -> Style | str:
-        _ensure_theme()
-        assert _styles is not None and _dark is not None
-        if name == "brand_hex":
-            return BRAND_ORANGE_DARK if _dark else BRAND_ORANGE_LIGHT
-        try:
-            return getattr(_styles, name)
-        except AttributeError as exc:
-            raise AttributeError(f"{cls.__name__}.{name}") from exc
 
 
 __all__ = [

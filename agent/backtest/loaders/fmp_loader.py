@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from backtest.loaders._http import resolve_min_interval
 from backtest.loaders.base import cached_loader_fetch, validate_date_range
 from backtest.loaders.registry import register
 
@@ -135,7 +136,7 @@ class DataLoader:
         """
         validate_date_range(start_date, end_date)
 
-        if interval != "1D":
+        if str(interval).strip().lower() not in {"1d", "d", "day", "daily"}:
             logger.warning("fmp only supports 1D bars; got interval=%r", interval)
             return {}
 

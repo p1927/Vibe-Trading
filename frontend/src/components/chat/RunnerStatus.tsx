@@ -58,25 +58,25 @@ function formatUsd(value: number | undefined): string {
 }
 
 function formatRelative(value: string | number | null | undefined): string {
-  if (value == null || value === "") return "never";
+  if (value == null || value === "") return i18n.t("runnerStatus.never");
   const then = typeof value === "number"
     ? (value < 1_000_000_000_000 ? value * 1000 : value)
     : new Date(value).getTime();
-  if (!Number.isFinite(then)) return "unknown";
+  if (!Number.isFinite(then)) return i18n.t("runnerStatus.unknown");
   const deltaSec = Math.round((Date.now() - then) / 1000);
-  if (deltaSec < 0) return "just now";
-  if (deltaSec < 60) return `${deltaSec}s ago`;
-  if (deltaSec < 3600) return `${Math.floor(deltaSec / 60)}m ago`;
-  if (deltaSec < 86_400) return `${Math.floor(deltaSec / 3600)}h ago`;
-  return `${Math.floor(deltaSec / 86_400)}d ago`;
+  if (deltaSec < 0) return i18n.t("runnerStatus.justNow");
+  if (deltaSec < 60) return i18n.t("runnerStatus.secondsAgo", { n: deltaSec });
+  if (deltaSec < 3600) return i18n.t("runnerStatus.minutesAgo", { n: Math.floor(deltaSec / 60) });
+  if (deltaSec < 86_400) return i18n.t("runnerStatus.hoursAgo", { n: Math.floor(deltaSec / 3600) });
+  return i18n.t("runnerStatus.daysAgo", { n: Math.floor(deltaSec / 86_400) });
 }
 
 function formatCountdown(iso: string | undefined): { label: string; expired: boolean; soon: boolean } {
   if (!iso) return { label: "—", expired: false, soon: false };
   const target = new Date(iso).getTime();
-  if (!Number.isFinite(target)) return { label: "unknown", expired: false, soon: false };
+  if (!Number.isFinite(target)) return { label: i18n.t("runnerStatus.unknown"), expired: false, soon: false };
   const deltaSec = Math.round((target - Date.now()) / 1000);
-  if (deltaSec <= 0) return { label: "expired", expired: true, soon: false };
+  if (deltaSec <= 0) return { label: i18n.t("runnerStatus.expired"), expired: true, soon: false };
   const days = Math.floor(deltaSec / 86_400);
   const hours = Math.floor((deltaSec % 86_400) / 3600);
   const minutes = Math.floor((deltaSec % 3600) / 60);
@@ -96,7 +96,7 @@ function summarizeLimits(limits: LiveMandateLimits | undefined): string {
 }
 
 function fallbackAuthorizeInstruction(): string {
-  return "Run `vibe-trading connector list`, choose the broker profile, then run `vibe-trading connector authorize <profile>` from the desktop session that will hold the broker connection.";
+  return i18n.t("runnerStatus.fallbackInstruction");
 }
 
 function connectorDisplayName(
@@ -243,8 +243,8 @@ function BrokerRow({
   const mandate = broker.mandate ?? null;
   const countdown = formatCountdown(mandate?.expires_at);
   const authorizeInstruction = authorizeHint?.instruction
-    ?? (authorizeFailed ? fallbackAuthorizeInstruction() : "Loading connector authorization instructions...");
-  const authorizeNote = "The connector channel stays read-only until OAuth succeeds and a mandate is committed.";
+    ?? (authorizeFailed ? fallbackAuthorizeInstruction() : i18n.t("runnerStatus.loadingInstructions"));
+  const authorizeNote = i18n.t("runnerStatus.authorizeNote");
 
   useEffect(() => {
     let cancelled = false;
@@ -269,14 +269,14 @@ function BrokerRow({
     try {
       if (runnerAlive) {
         await api.stopLiveRunner(brokerKey);
-        toast.success(`Runner stopped for ${brokerKey}`);
+        toast.success(i18n.t("runnerStatus.runnerStoppedFor", { broker: brokerKey }));
       } else {
         await api.startLiveRunner(brokerKey);
-        toast.success(`Runner started for ${brokerKey}`);
+        toast.success(i18n.t("runnerStatus.runnerStartedFor", { broker: brokerKey }));
       }
       onRefresh();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Runner control failed.");
+      toast.error(error instanceof Error ? error.message : i18n.t("runnerStatus.runnerControlFailed"));
     } finally {
       setBusy(false);
     }
