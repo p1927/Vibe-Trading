@@ -76,53 +76,9 @@ async def _dispatch_scheduled_research_job(job) -> Optional[str]:
         which is what lets the delivery outbox find the briefing once the
         run actually finishes. ``None`` for the direct pipeline paths.
     """
-    from src.scheduled_research.index_jobs import INDEX_JOB_TYPES, dispatch_index_job
-    from src.scheduled_research.options_jobs import OPTIONS_JOB_TYPES, dispatch_options_job
-    from src.scheduled_research.trade_data_jobs import TRADE_DATA_JOB_TYPES, dispatch_trade_data_job
-    from src.scheduled_research.hub_calibration_jobs import (
-        HUB_CALIBRATION_JOB_TYPES,
-        dispatch_hub_calibration_job,
-    )
+    from src.scheduled_research.job_dispatch_registry import try_dispatch_pipeline_job
 
-    job_type = str(job.config.get("job_type") or "")
-    if job_type in INDEX_JOB_TYPES:
-        await dispatch_index_job(job)
-        return
-    if job_type in OPTIONS_JOB_TYPES:
-        await dispatch_options_job(job)
-        return
-    if job_type in TRADE_DATA_JOB_TYPES:
-        await dispatch_trade_data_job(job)
-        return
-    if job_type in HUB_CALIBRATION_JOB_TYPES:
-        await dispatch_hub_calibration_job(job)
-        return
-    from src.scheduled_research.capture_jobs import (
-        HUB_CAPTURE_JOB_TYPES,
-        dispatch_hub_capture_job,
-    )
-
-    if job_type in HUB_CAPTURE_JOB_TYPES:
-        await dispatch_hub_capture_job(job)
-        return
-    from src.scheduled_research.autonomous_agent_jobs import (
-        AUTONOMOUS_JOB_TYPES,
-        dispatch_autonomous_job,
-    )
-
-    if job_type in AUTONOMOUS_JOB_TYPES:
-        await dispatch_autonomous_job(job)
-        return
-    # Phase C: recording-wake jobs (cron-driven respawn of
-    # ``wait_for_open=True`` recordings). See
-    # ``src.scheduled_research.recording_wake_jobs``.
-    from src.scheduled_research.recording_wake_jobs import (
-        RECORDING_WAKE_JOB_TYPES,
-        dispatch_recording_wake_job,
-    )
-
-    if job_type in RECORDING_WAKE_JOB_TYPES:
-        await dispatch_recording_wake_job(job)
+    if await try_dispatch_pipeline_job(job):
         return
 
     host = _sys.modules.get("api_server") or _sys.modules.get("agent.api_server")
@@ -217,12 +173,9 @@ def _get_scheduled_research_executor():
 def _register_persisted_autonomous_agent_jobs() -> None:
     """Re-register scheduler jobs for running autonomous agents after API restart."""
     try:
-        from pathlib import Path
+        from src.trade.hub_bridge import ensure_trade_stack_path
 
-        trade_root = Path(__file__).resolve().parents[4]
-        integrations = trade_root / "integrations"
-        if integrations.is_dir() and str(integrations) not in _sys.path:
-            _sys.path.insert(0, str(integrations))
+        ensure_trade_stack_path()
         from trade_integrations.autonomous_agents.store import list_agents
         from src.scheduled_research.autonomous_agent_jobs import register_agent_jobs
 
@@ -236,12 +189,9 @@ def _register_persisted_autonomous_agent_jobs() -> None:
 def _start_scheduled_research_executor() -> None:
     """Start scheduled research execution when explicitly enabled."""
     try:
-        from pathlib import Path
+        from src.trade.hub_bridge import ensure_trade_stack_path
 
-        trade_root = Path(__file__).resolve().parents[4]
-        integrations = trade_root / "integrations"
-        if integrations.is_dir() and str(integrations) not in _sys.path:
-            _sys.path.insert(0, str(integrations))
+        ensure_trade_stack_path()
         from trade_integrations.autonomous_agents.proposals import pause_running_agents_on_boot
 
         # A process start/restart (crash, deploy, or dev uvicorn --reload
@@ -332,15 +282,12 @@ def _start_scheduled_research_executor() -> None:
     except Exception:
         logger.debug("autonomous agent recovery on startup failed", exc_info=True)
     try:
-        from pathlib import Path
-
         if os.getenv("STACK_DEV", "").strip().lower() in {"1", "true", "yes", "on"}:
             logger.debug("skipping Nautilus watch ensure in dev mode (use: trade reload nautilus)")
         else:
-            trade_root = Path(__file__).resolve().parents[3]
-            integrations = trade_root / "integrations"
-            if integrations.is_dir() and str(integrations) not in _sys.path:
-                _sys.path.insert(0, str(integrations))
+            from src.trade.hub_bridge import ensure_trade_stack_path
+
+            ensure_trade_stack_path()
             from trade_integrations.autonomous_agents.nautilus_watch import (
                 ensure_nautilus_watch_for_running_agents,
                 get_watch_process_status,
