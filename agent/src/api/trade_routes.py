@@ -4734,8 +4734,16 @@ def hub_market_data_option_chain(
                 continue
             strikes.append(HubMarketDataOptionChainStrike(
                 strike=float(leg.get("strike") or leg.get("strike_price") or 0),
-                ce={"last_price": leg.get("ce_ltp"), "oi": leg.get("ce_oi"), "volume": leg.get("ce_volume"), "iv": leg.get("ce_iv")},
-                pe={"last_price": leg.get("pe_ltp"), "oi": leg.get("pe_oi"), "volume": leg.get("pe_volume"), "iv": leg.get("pe_iv")},
+                ce={
+                    "last_price": leg.get("ce_ltp"), "oi": leg.get("ce_oi"), "volume": leg.get("ce_volume"),
+                    "iv": leg.get("ce_iv"), "delta": leg.get("ce_delta"), "gamma": leg.get("ce_gamma"),
+                    "theta": leg.get("ce_theta"), "vega": leg.get("ce_vega"),
+                },
+                pe={
+                    "last_price": leg.get("pe_ltp"), "oi": leg.get("pe_oi"), "volume": leg.get("pe_volume"),
+                    "iv": leg.get("pe_iv"), "delta": leg.get("pe_delta"), "gamma": leg.get("pe_gamma"),
+                    "theta": leg.get("pe_theta"), "vega": leg.get("pe_vega"),
+                },
             ))
         return HubMarketDataOptionChainResponse(
             status="ok", underlying=symbol.upper(), exchange=exchange.upper(),
