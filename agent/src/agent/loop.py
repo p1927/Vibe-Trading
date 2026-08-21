@@ -110,6 +110,10 @@ def _compact_hard_cap() -> int:
     return max(int(_token_threshold() * 2.5), 100_000)
 
 
+COMPACT_POLICY_NORMAL = "normal"
+COMPACT_POLICY_DEFER = "defer"
+
+
 def _resolve_compact_policy(user_message: str, session_config: dict[str, Any] | None) -> str:
     """Defer mid-attempt compaction for autonomous scheduler turns (bootstrap/research/revision)."""
     from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
@@ -982,6 +986,11 @@ class AgentLoop:
         self._released_fallback = False
         self._released_fallback_reason: str | None = None
         self._written_files: set[str] = set()
+        # Normally set in run(); defaulted here so tests and other callers
+        # that exercise loop internals directly (bypassing run()) don't hit
+        # an AttributeError on first access.
+        self._session_id: str = ""
+        self._session_config: dict[str, Any] = {}
 
     def cancel(self) -> None:
         """Cancel the current loop.

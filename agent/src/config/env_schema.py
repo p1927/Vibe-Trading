@@ -270,6 +270,12 @@ class APIConfig(_EnvBase):
     api_auth_key: str = Field(alias="API_AUTH_KEY", default="")
     vibe_trading_api_key: str = Field(alias="VIBE_TRADING_API_KEY", default="")
     cors_origins: str = Field(alias="CORS_ORIGINS", default="")
+    # Additive, unlike CORS_ORIGINS: these origins are appended to the loopback
+    # defaults instead of replacing them. Used to admit a hosted console (e.g.
+    # OpenBB Workspace) without discarding the local-dev origins.
+    vibe_trading_extra_cors_origins: str = Field(
+        alias="VIBE_TRADING_EXTRA_CORS_ORIGINS", default="",
+    )
     api_allowed_hosts: str = Field(alias="API_ALLOWED_HOSTS", default="")
     # Comma-separated Host/Origin allow-list for the network MCP transports
     # (--transport sse / http). Empty means loopback-only (127.0.0.1,

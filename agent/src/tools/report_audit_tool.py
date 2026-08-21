@@ -76,6 +76,20 @@ def _is_valid_label(label: str) -> bool:
     return True
 
 
+def _split_md_table_row(line: str) -> list[str]:
+    """Split a markdown table row, keeping empty leading/trailing/middle cells.
+
+    Filtering empties would shift later values onto earlier headers
+    (``| Profit |  | 25M |`` must stay under Q2, not Q1).
+    """
+    parts = line.strip().split("|")
+    if parts and parts[0] == "":
+        parts = parts[1:]
+    if parts and parts[-1] == "":
+        parts = parts[:-1]
+    return [c.strip().strip("*_~").strip() for c in parts]
+
+
 def _parse_md_tables(lines: list[str]) -> list[tuple[str, str, float, str, int, str]]:
     """Parse markdown tables into (row_label, col_header, value, unit, lineno, raw)."""
     results: list[tuple[str, str, float, str, int, str]] = []
@@ -83,21 +97,21 @@ def _parse_md_tables(lines: list[str]) -> list[tuple[str, str, float, str, int, 
     while i < len(lines):
         line = lines[i].strip()
         if "|" in line and not _TABLE_SEP_RE.match(line):
-            headers_raw = [h.strip().strip("*_").strip() for h in line.split("|")]
-            headers_raw = [h for h in headers_raw if h]
+            headers_raw = [h.strip().strip("*_").strip() for h in _split_md_table_row(line)]
             if i + 1 < len(lines) and _TABLE_SEP_RE.match(lines[i + 1].strip()):
                 i += 2  # skip the separator row
                 while i < len(lines):
                     dline = lines[i].strip()
                     if not dline or not dline.startswith("|"):
                         break
-                    cells = [c.strip().strip("*_~").strip() for c in dline.split("|")]
-                    cells = [c for c in cells if c != ""]
+                    cells = _split_md_table_row(dline)
                     if len(cells) < 2:
                         i += 1
                         continue
                     row_label = cells[0]
                     for col_idx, cell in enumerate(cells[1:], start=1):
+                        if not cell:
+                            continue
                         col_header = (
                             headers_raw[col_idx]
                             if col_idx < len(headers_raw)
@@ -230,6 +244,24 @@ def _pct_diff_for_json(diff: float) -> float | None:
     return round(diff * 100, 2)
 
 
+def _finite_number(value: Any) -> float | None:
+    """Coerce a verification value to a finite float, or None when unusable.
+
+    Args:
+        value: Raw ``reported_value``/``fetched_value`` from a result item.
+
+    Returns:
+        The value as a finite float, or ``None`` when it is missing, not
+        numeric, or non-finite (NaN/Infinity) — i.e. cannot be verified.
+        A genuine reported ``0`` is a valid number and returns ``0.0``.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def render_verdict(results: list[dict[str, Any]], report_name: str = "") -> dict[str, Any]:
     """Render a PASS/FAIL verdict from per-point verification results.
 
@@ -237,6 +269,10 @@ def render_verdict(results: list[dict[str, Any]], report_name: str = "") -> dict
     at :data:`_TOLERANCE`. A second source (``fetched_value2``) may be supplied;
     both sources must pass for a point to pass, both fail to fail, otherwise the
     point warns (treated as a caliber mismatch, not a failure).
+
+    A point whose ``reported_value`` is missing, ``None``, or non-finite is
+    unverifiable, so it fails with an explicit ``reason`` instead of being
+    treated as a reported zero. A genuine reported ``0`` stays valid.
 
     Args:
         results: List of verification objects — ``{id, label, reported_value,
@@ -257,10 +293,33 @@ def render_verdict(results: list[dict[str, Any]], report_name: str = "") -> dict
         if fetched is None:
             continue  # not verified — skip, do not count
         total += 1
-        reported = float(item.get("reported_value", 0))
         label = item.get("label", "?")
         unit = item.get("unit", "")
         source = item.get("fetched_source", "?")
+
+        # A missing/non-numeric reported value is unverifiable evidence, NOT a
+        # reported zero: fabricating 0.0 here would let `None` vs fetched 0 pass
+        # the tolerance check and falsely certify the report.
+        raw_reported = item.get("reported_value")
+        reported = _finite_number(raw_reported)
+        if reported is None:
+            fail_items.append({
+                "id": item.get("id"), "label": label,
+                "reported": None, "unit": unit,
+                "fetched": _finite_number(fetched), "source": source,
+                "fetched2": _finite_number(item.get("fetched_value2")),
+                "source2": item.get("fetched_source2", ""),
+                "diff1_pct": None, "diff2_pct": None,
+                "reason": (
+                    "reported value missing — cannot verify"
+                    if raw_reported is None
+                    else f"reported value is not a finite number ({raw_reported!r}) — cannot verify"
+                ),
+                "raw_text": item.get("raw_text", ""),
+                "line_number": item.get("line_number", 0),
+            })
+            continue
+
         fetched = float(fetched)
         diff1 = _pct_diff(reported, fetched)
 
@@ -390,9 +449,16 @@ class ReportAuditTool(BaseTool):
                 report_text = kwargs.get("report_text")
                 if not isinstance(report_text, str) or not report_text.strip():
                     return _err("report_text (non-empty markdown) is required for extract")
-                ratio = float(kwargs.get("ratio") or 0.15)
-                seed = kwargs.get("seed")
-                seed = int(seed) if seed is not None else None
+                raw_ratio = kwargs.get("ratio")
+                try:
+                    ratio = float(raw_ratio) if raw_ratio is not None and raw_ratio != "" else 0.15
+                except (TypeError, ValueError, OverflowError):
+                    return _err(f"invalid ratio: {raw_ratio!r}")
+                raw_seed = kwargs.get("seed")
+                try:
+                    seed = int(raw_seed) if raw_seed is not None and raw_seed != "" else None
+                except (TypeError, ValueError, OverflowError):
+                    return _err(f"invalid seed: {raw_seed!r}")
                 points = extract_data_points(report_text)
                 sampled = sample_points(points, ratio=ratio, seed=seed)
                 result: dict[str, Any] = {

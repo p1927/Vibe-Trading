@@ -419,7 +419,7 @@ def _terminal_width() -> int:
 
 
 def _ensure_cli_env() -> None:
-    """Load dotenv values before rendering CLI-only settings."""
+    """Load dotenv values before a CLI path reads configuration."""
     try:
         from src.providers.llm import _ensure_dotenv
 
@@ -1015,6 +1015,50 @@ def _mandate_proposal_from_tool_result(data: Dict[str, Any]) -> Optional[Dict[st
     return _load_full_proposal(match.group(1))
 
 
+def _ensure_session_id(title: str, *, session_id: Optional[str] = None) -> str:
+    """Return a host-owned session id, registering the session record if new.
+
+    The research-goal tools are registered unconditionally and resolve their
+    session from the host runtime, so any entry point that calls
+    :func:`_run_agent` without an id makes every goal call fail validation with
+    ``session_id is required`` while the run still reports success (#885).
+
+    Persistence is best effort. ``Session`` populates ``session_id`` on
+    construction, so a store or index failure still yields a usable id rather
+    than falling back to the empty string that caused the bug.
+
+    Args:
+        title: Text used as the session title; truncated for display.
+        session_id: Explicit id to register, for callers that need the same
+            session across repeated invocations. Defaults to a fresh id.
+
+    Returns:
+        A non-empty session id.
+    """
+    from src.session.models import Session, SessionStatus
+    from src.session.store import SessionStore
+
+    session = Session(
+        title=title.strip()[:60] or "untitled",
+        status=SessionStatus.ACTIVE,
+    )
+    if session_id:
+        session.session_id = session_id
+    try:
+        SessionStore(base_dir=SESSIONS_DIR).create_session(session)
+    except Exception:  # noqa: BLE001 — an existing or unwritable session must not block the run
+        return session.session_id
+
+    # Index for FTS5 cross-session search, mirroring the interactive REPL.
+    try:
+        from src.session.search import get_shared_index
+
+        get_shared_index().index_session(session.session_id, session.title)
+    except Exception:  # noqa: BLE001 — search index is optional
+        pass
+    return session.session_id
+
+
 def _run_agent(
     prompt: str,
     history: Optional[List[Dict]] = None,
@@ -1453,14 +1497,23 @@ def cmd_run(prompt: str, max_iter: int, *, json_mode: bool = False, no_rich: boo
         else:
             console.print(f"[dim]Prompt:[/dim] {preview}{suffix}\n")
     start = time.perf_counter()
+    session_id = _ensure_session_id(prompt)
     try:
         if json_mode or no_rich:
-            result = _run_agent(prompt, max_iter=max_iter, no_rich=no_rich, stream_output=not json_mode)
+            result = _run_agent(
+                prompt,
+                max_iter=max_iter,
+                no_rich=no_rich,
+                stream_output=not json_mode,
+                session_id=session_id,
+            )
         else:
             dashboard = _RunDashboard(prompt, max_iter)
             with Live(dashboard.render(), console=console, refresh_per_second=6, transient=True) as live:
                 dashboard.live = live
-                result = _run_agent(prompt, max_iter=max_iter, dashboard=dashboard)
+                result = _run_agent(
+                    prompt, max_iter=max_iter, dashboard=dashboard, session_id=session_id
+                )
                 dashboard.finish(result, time.perf_counter() - start)
     except KeyboardInterrupt:
         if json_mode:
@@ -1547,6 +1600,13 @@ def cmd_continue(
     trace_dir.mkdir(parents=True, exist_ok=True)
 
     history = _build_history_from_trace(trace_dir)
+    # Continuations of one run share a session so goals and evidence accumulate
+    # across them. A session-backed run_id already *is* a session id (sessions
+    # and their traces share ``SESSIONS_DIR``); a plain run gets a derived id.
+    session_id = _ensure_session_id(
+        prompt,
+        session_id=run_id if session_trace_dir.exists() else f"run-{run_id}",
+    )
     if not json_mode and no_rich:
         print(f"Continue {run_id}: {prompt[:120]}\n")
     if json_mode or no_rich:
@@ -1559,6 +1619,7 @@ def cmd_continue(
                 max_iter=max_iter,
                 no_rich=no_rich,
                 stream_output=not json_mode,
+                session_id=session_id,
             )
         except KeyboardInterrupt:
             if json_mode:
@@ -1591,6 +1652,7 @@ def cmd_continue(
                 run_dir_override=str(trace_dir),
                 max_iter=max_iter,
                 dashboard=dashboard,
+                session_id=session_id,
             )
             dashboard.finish(result, time.perf_counter() - start)
     except KeyboardInterrupt:
@@ -1959,6 +2021,9 @@ def cmd_interactive(max_iter: int) -> None:
     history: List[Dict[str, str]] = []
     stats = _SessionStats(session_start=time.monotonic())
     prompt_session = _create_prompt_session(stats)
+    # Created on the first agent turn so a REPL used only for slash commands
+    # leaves no empty session behind.
+    session_id = ""
 
     while True:
         if prompt_session is None:
@@ -1983,11 +2048,19 @@ def cmd_interactive(max_iter: int) -> None:
 
         # Natural language -> agent
         start = time.perf_counter()
+        if not session_id:
+            session_id = _ensure_session_id(user_input)
         try:
             dashboard = _RunDashboard(user_input, max_iter)
             with Live(dashboard.render(), console=console, refresh_per_second=6, transient=True) as live:
                 dashboard.live = live
-                result = _run_agent(user_input, history=history[-6:], max_iter=max_iter, dashboard=dashboard)
+                result = _run_agent(
+                    user_input,
+                    history=history[-6:],
+                    max_iter=max_iter,
+                    dashboard=dashboard,
+                    session_id=session_id,
+                )
                 dashboard.finish(result, time.perf_counter() - start)
         except KeyboardInterrupt:
             console.print("\n[yellow]Interrupted[/yellow]")
@@ -2787,7 +2860,9 @@ def cmd_session_chat(session_id: str, max_iter: int) -> None:
             _timer = threading.Thread(target=_session_event_timer, args=(spinner,), daemon=True)
             _timer.start()
             try:
-                result = _run_agent(prompt, history=history[-6:], max_iter=max_iter)
+                result = _run_agent(
+                    prompt, history=history[-6:], max_iter=max_iter, session_id=session_id
+                )
             except KeyboardInterrupt:
                 console.print("\n[yellow]Interrupted[/yellow]")
                 continue
@@ -4181,6 +4256,8 @@ def _print_connector_account(result: dict[str, Any]) -> int:
     # broker_sdk connectors (Longbridge, …) return a ``balances`` list instead of
     # IBKR-style ``summary`` tag/value rows; render that when present (#735).
     if not rows and result.get("balances"):
+        label = accounts if accounts != "(none)" else result.get("profile_id", result.get("profile", "unknown"))
+        console.print(f"Accounts: [cyan]{rich_escape(str(label))}[/cyan]")
         return _print_connector_balances(result)
     account_data = _normalize_mcp_value(result.get("account"))
     if not rows and isinstance(account_data, dict) and account_data:
@@ -4602,6 +4679,7 @@ def cmd_connector_revoke(profile_id: Optional[str]) -> int:
 
 def _dispatch_connector(args: argparse.Namespace) -> int:
     """Route parsed ``connector`` subcommands."""
+    _ensure_cli_env()
     sub = getattr(args, "connector_command", None)
     if sub == "list":
         return cmd_connector_list()
@@ -4743,11 +4821,6 @@ def _build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--host", default="0.0.0.0", help="Bind address")
     serve_parser.add_argument("--port", type=int, default=8000, help="Listen port")
     serve_parser.add_argument("--dev", action="store_true", help="Start the Vite dev server")
-    serve_parser.add_argument(
-        "--reload",
-        action="store_true",
-        help="Auto-reload on code changes (integrations/, agent/)",
-    )
 
     provider_parser = subparsers.add_parser("provider", help="Manage OAuth providers")
     provider_subparsers = provider_parser.add_subparsers(dest="provider_command")
@@ -4837,12 +4910,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=str(AGENT_DIR.parent / "frontend"),
         help="Path to the frontend directory (default: <repo>/frontend)",
     )
-    dev_parser.add_argument(
-        "--reload-api",
-        action="store_true",
-        help="Enable Vibe API auto-reload (integrations + agent code)",
-    )
-    memory_parser = subparsers.add_parser("memory", help="Manage persistent agent memory")
+
+    memory_parser = subparsers.add_parser("memory", help="Inspect persistent memory")
     memory_subparsers = memory_parser.add_subparsers(dest="memory_command")
 
     memory_list_parser = memory_subparsers.add_parser("list", help="List memory entries")
@@ -5658,7 +5727,6 @@ def cmd_dev(
     backend_port: int = 8899,
     frontend_port: int = 5899,
     frontend_dir: Optional[Path] = None,
-    reload_api: bool = False,
 ) -> int:
     """Start backend + Vite dev server in one foreground process.
 
@@ -5717,8 +5785,6 @@ def cmd_dev(
         return EXIT_USAGE_ERROR
 
     backend_cmd = [sys.executable, "-m", "cli._legacy", "serve", "--port", str(backend_port)]
-    if reload_api or os.getenv("STACK_DEV_RELOAD", "").strip().lower() in ("1", "true", "yes", "on"):
-        backend_cmd.append("--reload")
     # On Windows, ``npm`` is typically ``npm.cmd``. ``subprocess.Popen`` does
     # not consult ``PATHEXT`` for bare command names, so the call would fail
     # with ``FileNotFoundError`` even though ``shutil.which("npm")`` returned
@@ -5742,45 +5808,6 @@ def cmd_dev(
     children: List[subprocess.Popen] = []
     exit_code = EXIT_SUCCESS
 
-    verify_script = AGENT_DIR.parent.parent / "scripts" / "verify_prediction_ml.py"
-    if verify_script.is_file():
-        launch_env = os.environ.copy()
-        try:
-            import sys as _sys
-
-            integrations = AGENT_DIR.parent.parent / "integrations"
-            if integrations.is_dir() and str(integrations) not in _sys.path:
-                _sys.path.insert(0, str(integrations))
-            from trade_integrations.ml_runtime_env import ml_runtime_env
-
-            launch_env = ml_runtime_env()
-        except Exception:
-            pass
-        verify = subprocess.run(
-            [sys.executable, str(verify_script)],
-            capture_output=True,
-            text=True,
-            env=launch_env,
-        )
-        if verify.returncode != 0:
-            detail = (verify.stderr or verify.stdout or "prediction ML runtime not ready").strip()
-            console.print(f"[red]Prediction ML runtime not ready:[/red] {detail}")
-            console.print("[dim]Run: ./scripts/ensure_prediction_ml.sh[/dim]")
-            return EXIT_USAGE_ERROR
-
-    launch_env = os.environ.copy()
-    try:
-        import sys as _sys
-
-        integrations = AGENT_DIR.parent.parent / "integrations"
-        if integrations.is_dir() and str(integrations) not in _sys.path:
-            _sys.path.insert(0, str(integrations))
-        from trade_integrations.ml_runtime_env import ml_runtime_env
-
-        launch_env = ml_runtime_env()
-    except Exception:
-        pass
-
     def _terminate_all() -> None:
         for child in children:
             if child.poll() is None:
@@ -5790,9 +5817,9 @@ def cmd_dev(
                     pass
 
     try:
-        backend = subprocess.Popen(backend_cmd, cwd=str(AGENT_DIR), env=launch_env)
+        backend = subprocess.Popen(backend_cmd, cwd=str(AGENT_DIR))
         children.append(backend)
-        frontend = subprocess.Popen(frontend_cmd, cwd=str(frontend_dir), env=launch_env)
+        frontend = subprocess.Popen(frontend_cmd, cwd=str(frontend_dir))
         children.append(frontend)
 
         # Wire signal handlers only after both children are tracked. On
@@ -5847,10 +5874,6 @@ def cmd_dev(
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entrypoint returning a process exit code."""
-    from src.config.bootstrap import bootstrap_environment
-
-    bootstrap_environment()
-
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     parser = _build_parser()
     try:
@@ -5874,7 +5897,6 @@ def main(argv: list[str] | None = None) -> int:
                 backend_port=args.port,
                 frontend_port=args.frontend_port,
                 frontend_dir=Path(args.frontend_dir),
-                reload_api=getattr(args, "reload_api", False),
             )
         )
     if args.command == "serve":

@@ -340,6 +340,23 @@ class PersistentMemory:
                 logger.warning("Failed to remove memory entry %s: %s", entry.path, exc)
                 return False
             self._rebuild_index()
+
+        from src.config.accessor import get_env_config
+
+        if get_env_config().memory.fts_index_enabled:
+            try:
+                from src.memory.search_index import get_shared_index
+                get_shared_index().remove_entry(entry.id)
+            except Exception:
+                logger.debug("FTS5 remove_entry failed", exc_info=True)
+
+        if get_env_config().memory.links_enabled:
+            try:
+                from src.memory.semantic_links import SemanticLinker
+                SemanticLinker(self._dir).remove_relations(entry.path)
+            except Exception:
+                logger.debug("Failed to remove relations for %s", entry.path, exc_info=True)
+
         return True
 
     def find_relevant(
@@ -498,6 +515,7 @@ class PersistentMemory:
             # recover_extensionless_entries() renames orphans to, or the same
             # entry ends up on disk twice.
             path = hierarchy.route_entry(memory_type, f"{slug}.md")
+            filename = path.relative_to(self._dir).as_posix()
         else:
             filename = f"{memory_type}_{slug}.md"
             path = self._dir / filename
@@ -523,6 +541,8 @@ class PersistentMemory:
             f"last_accessed: {now_iso}\n"
             f"importance: 0.5\n"
             f"related_memories: []\n"
+            f"category: {memory_type}\n"
+            f"compression_level: raw\n"
             f"---\n\n"
             f"{clean_content}"
         )
@@ -533,10 +553,52 @@ class PersistentMemory:
                 )
             path.write_text(frontmatter, encoding="utf-8")
             self._update_index(stripped_name, filename, description or stripped_name)
+
+            if get_env_config().memory.links_enabled:
+                try:
+                    from src.memory.semantic_links import SemanticLinker, _tokenize_for_bm25
+                    linker = SemanticLinker(self._dir)
+                    all_entries = self._scan_entries()
+                    new_entry = next((e for e in all_entries if e.path == path), None)
+                    if new_entry:
+                        entry_tokens = _tokenize_for_bm25(
+                            f"{new_entry.title} {new_entry.description} {new_entry.body}"
+                        )
+                        all_entries_data = [
+                            (e.path.name, _tokenize_for_bm25(
+                                f"{e.title} {e.description} {e.body}"
+                            ))
+                            for e in all_entries if e.path != path
+                        ]
+                        links = linker.discover_links(
+                            entry_title=new_entry.path.name,
+                            entry_tokens=entry_tokens,
+                            all_entries_data=all_entries_data,
+                        )
+                        if links:
+                            linker.save_relations(path, links)
+                except Exception:
+                    logger.debug("semantic link discovery failed", exc_info=True)
+
+            if get_env_config().memory.fts_index_enabled:
+                try:
+                    from src.memory.search_index import get_shared_index
+                    index = get_shared_index()
+                    index.index_entry(
+                        entry_id=entry_id,
+                        title=safe_name,
+                        description=safe_desc,
+                        keywords="",
+                        body=clean_content,
+                    )
+                except Exception:
+                    logger.debug("FTS5 index_entry failed", exc_info=True)
         return path
 
     def remove(self, name: str) -> bool:
         """Remove a memory entry by name. Returns True if found and removed."""
+        from src.config.accessor import get_env_config
+
         for entry in self._scan_entries():
             if entry.title == name:
                 with memory_lock(self._dir) as acquired:
@@ -544,6 +606,21 @@ class PersistentMemory:
                         logger.warning("remove(%s): lock timeout", name)
                     entry.path.unlink(missing_ok=True)
                     self._rebuild_index()
+
+                if get_env_config().memory.fts_index_enabled:
+                    try:
+                        from src.memory.search_index import get_shared_index
+                        get_shared_index().remove_entry(entry.id)
+                    except Exception:
+                        logger.debug("FTS5 remove_entry failed", exc_info=True)
+
+                if get_env_config().memory.links_enabled:
+                    try:
+                        from src.memory.semantic_links import SemanticLinker
+                        SemanticLinker(self._dir).remove_relations(entry.path)
+                    except Exception:
+                        logger.debug("Failed to remove relations for %s", entry.path, exc_info=True)
+
                 return True
         return False
 

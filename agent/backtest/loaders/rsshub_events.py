@@ -1,14 +1,11 @@
-"""Hub-backed event/sentiment provider with point-in-time safeguards.
+"""RSSHub event/sentiment provider with point-in-time safeguards.
 
 A news / announcement / sentiment provider that runs parallel to the Tushare
-fundamental layer (:mod:`backtest.loaders.tushare_fundamentals`). Per the Hub
-boundary contract (``docs/news-hub-bridge.md``: "Anyone who needs news ... must
-use [news_hub_bridge]"), this module no longer talks to a self-hosted RSSHub
-instance directly — it reads normalised, deduped, fact-checked headlines back
-from ``trade_integrations.dataflows.news_hub_bridge.query_with_staging``,
-normalises each item into the ``event-driven`` skill schema (``ts_code,
-knowable_date, event_type, score, source, summary``), and attaches a
-point-in-time-safe ``event_score`` column to daily price frames.
+fundamental layer (:mod:`backtest.loaders.tushare_fundamentals`). It pulls feeds
+from a self-hosted `RSSHub <https://docs.rsshub.app>`_ instance, normalises each
+item into the ``event-driven`` skill schema (``date, event_type, score, source,
+summary``), and attaches a point-in-time-safe ``event_score`` column to daily
+price frames.
 
 Point-in-time discipline (mirrors the fundamentals enricher): every item is
 stamped with a *knowable date* — the date a backtest could first have acted on
@@ -17,35 +14,35 @@ with ``knowable_date <= as_of`` are ever returned. No feed item can leak into a
 bar dated before it became knowable.
 
 Scoring is pluggable. A deterministic, dependency-free lexicon scorer is used by
-default (the Hub does not expose a pre-scored sentiment field); callers may pass
-any ``scorer(title, summary) -> float`` (e.g. an LLM judge, as the
-``event-driven`` skill describes) to override it.
+default; callers may pass any ``scorer(title, summary) -> float`` (e.g. an LLM
+judge, as the ``event-driven`` skill describes) to override it.
 """
 
 from __future__ import annotations
 
 import logging
-import sys
+import os
+import time
 from dataclasses import dataclass
-from pathlib import Path
+from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Iterable, Mapping
+from xml.etree.ElementTree import ParseError
 
 import numpy as np
 import pandas as pd
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
+
+from backtest.loaders.base import positive_env_float, retry_with_budget
 
 logger = logging.getLogger(__name__)
 
-_TRADE_ROOT = Path(__file__).resolve().parents[4]
-_INTEGRATIONS = _TRADE_ROOT / "integrations"
-if _INTEGRATIONS.is_dir() and str(_INTEGRATIONS) not in sys.path:
-    sys.path.insert(0, str(_INTEGRATIONS))
-
-# Hub query is bounded by a generous limit rather than an exact count: unlike
-# the old per-feed RSSHub fetch (one HTTP call per feed x code), a single Hub
-# query already returns verified + staged items across a `since..until` window,
-# and callers care about "everything knowable by as_of", not a page size. 500
-# comfortably covers any realistic per-code lookback without being unbounded.
-_HUB_QUERY_LIMIT = 500
+RSSHUB_BASE_URL_ENV = "RSSHUB_BASE_URL"
+RSSHUB_BASE_URL_PLACEHOLDERS = {"", "https://rsshub.example.com"}
+RSSHUB_TIMEOUT_ENV = "RSSHUB_TIMEOUT_S"
+RSSHUB_BUDGET_ENV = "RSSHUB_FETCH_BUDGET_S"
+DEFAULT_TIMEOUT_S = 15.0
+DEFAULT_BUDGET_S = 60.0
 
 #: Hour (local to the feed timestamps) at/after which a publication is treated as
 #: knowable only on the next calendar day, matching the event-driven skill's
@@ -80,9 +77,10 @@ CODE_STYLES: frozenset[str] = frozenset({"raw", "exchange_prefix", "bare"})
 def format_code_for_route(code: str, style: str) -> str:
     """Convert a backtest code (e.g. ``"600519.SH"``) to a route's expected form.
 
-    Retained from the RSSHub-route era: feed configs still declare a
-    ``code_style`` for the per-symbol shape they were written against, even
-    though the Hub path itself no longer builds route URLs.
+    RSSHub routes disagree on instrument formatting: some take the exchange-
+    prefixed form (``SH600519``, e.g. xueqiu), some the bare number (``600519``),
+    some a vendor-specific string. The backtest engine always passes the dotted
+    ``"600519.SH"`` form, so a feed declares the shape its route needs.
 
     Args:
         code: Dotted instrument code (``"600519.SH"``); passed through if it has
@@ -108,20 +106,19 @@ def format_code_for_route(code: str, style: str) -> str:
 
 @dataclass(frozen=True)
 class FeedSpec:
-    """Machine-readable metadata for one configured event feed.
+    """Machine-readable metadata for one RSSHub feed route.
 
     Attributes:
         name: Stable feed identifier used in configs (e.g. ``"sina_announcements"``).
-        route_template: Historical RSSHub route template (kept for config
-            back-compat / documentation only — the Hub path no longer builds
-            URLs from it).
+        route_template: RSSHub route with a ``{code}`` placeholder, joined to the
+            base URL (e.g. ``"/sina/announcement/{code}"``). Routes without a
+            ``{code}`` placeholder are treated as market-wide feeds.
         event_type: Event class emitted for items from this feed; one of the
             event-driven taxonomy (``earnings``/``macro``/``policy``/
-            ``sentiment``/``insider``/``technical_break``). Used as the
-            fallback ``event_type`` when the Hub item carries no usable
-            ``event_kind``.
-        code_style: Historical per-symbol code shape (kept for back-compat);
-            one of :data:`CODE_STYLES`.
+            ``sentiment``/``insider``/``technical_break``).
+        code_style: How the dotted backtest code is rewritten before it is
+            substituted into a per-symbol ``route_template`` — one of
+            :data:`CODE_STYLES`. Ignored for market-wide routes.
     """
 
     name: str
@@ -147,8 +144,8 @@ def feed_specs_from_config(entries: Iterable[Mapping[str, Any]]) -> list[FeedSpe
 
     Each entry must carry ``name``, ``route_template`` and ``event_type``; an
     optional ``code_style`` defaults to ``"raw"``. There is intentionally no
-    built-in feed catalogue — feeds are always declared explicitly in config
-    (or passed to the provider constructor).
+    built-in feed catalogue — routes evolve and silently rot, so feeds are always
+    declared explicitly in config (or passed to the provider constructor).
 
     Args:
         entries: Iterable of mapping objects, one per feed.
@@ -182,8 +179,8 @@ def feed_specs_from_config(entries: Iterable[Mapping[str, Any]]) -> list[FeedSpe
     return specs
 
 
-#: No built-in feed catalogue: feeds are always supplied explicitly (via config
-#: ``event_feeds`` or the provider constructor).
+#: No built-in feed catalogue: RSSHub routes change and break, so feeds are always
+#: supplied explicitly (via config ``event_feeds`` or the provider constructor).
 DEFAULT_FEEDS: tuple[FeedSpec, ...] = ()
 
 # ── Default dependency-free lexicon scorer ───────────────────────────────────
@@ -288,18 +285,11 @@ def _clean_summary(text: str | None) -> str:
     return " ".join(text.replace(",", " ").split())
 
 
-# Taxonomy values event_type/event_kind is expected to take. Anything outside
-# this set from the Hub is treated as "not a usable taxonomy value" and the
-# feed's configured event_type is used as a fallback instead.
-_EVENT_TAXONOMY: frozenset[str] = frozenset(
-    {"earnings", "macro", "policy", "sentiment", "insider", "technical_break"}
-)
-
-
 class RSSHubEventProvider:
-    """Point-in-time-safe event/sentiment provider backed by the news Hub.
+    """Point-in-time-safe event/sentiment provider backed by RSSHub.
 
     Attributes:
+        base_url: Root of the RSSHub instance (no trailing slash).
         feeds: Registered feed specs keyed by name.
         close_cutoff_hour: Hour after which items roll to the next knowable day.
     """
@@ -315,28 +305,25 @@ class RSSHubEventProvider:
         """Initialise the provider.
 
         Args:
-            base_url: Vestigial — retained only so existing callers that pass
-                a (now-unused) RSSHub base URL don't break; the Hub path makes
-                no HTTP calls of its own.
+            base_url: RSSHub root URL; defaults to ``$RSSHUB_BASE_URL``.
             feeds: Feed specs to register; defaults to :data:`DEFAULT_FEEDS`.
-            client: Vestigial — retained for signature back-compat; unused.
+            client: Optional injected HTTP client exposing ``get(url, timeout=...)``
+                that returns an object with ``.text`` and ``.raise_for_status()``
+                (an ``httpx.Client``-like). Injectable for offline testing.
             close_cutoff_hour: Knowable-date roll cutoff (0-23).
         """
+        from src.config.accessor import get_env_config
+
+        resolved = (base_url if base_url is not None else get_env_config().data.rsshub_base_url).strip()
+        self.base_url = resolved.rstrip("/")
         specs = tuple(feeds) if feeds is not None else DEFAULT_FEEDS
         self.feeds: dict[str, FeedSpec] = {spec.name: spec for spec in specs}
         self.close_cutoff_hour = close_cutoff_hour
-        self.base_url = base_url
         self._client = client
 
     def is_available(self) -> bool:
-        """Whether the Hub (``trade_integrations``) can be located/imported."""
-        if (_INTEGRATIONS / "trade_integrations").is_dir():
-            return True
-        try:
-            import trade_integrations  # noqa: F401
-        except ImportError:
-            return False
-        return True
+        """Whether a usable RSSHub base URL is configured."""
+        return self.base_url not in {p.rstrip("/") for p in RSSHUB_BASE_URL_PLACEHOLDERS}
 
     def list_feeds(self) -> list[str]:
         """Return registered feed names in stable order."""
@@ -361,16 +348,13 @@ class RSSHubEventProvider:
         feeds: Iterable[str] | None = None,
         scorer: ScorerFn | None = None,
     ) -> pd.DataFrame:
-        """Fetch and normalise Hub headlines, dropping anything not yet knowable.
+        """Fetch and normalise feed items, dropping anything not yet knowable.
 
         Args:
             codes: Instrument codes to query.
             as_of: Point-in-time boundary; items with ``knowable_date > as_of``
                 are excluded (no look-ahead).
-            feeds: Feed names to query; defaults to all registered feeds. Only
-                used to validate config and to supply a fallback
-                ``event_type`` — the Hub path itself queries once per code,
-                not once per feed.
+            feeds: Feed names to query; defaults to all registered feeds.
             scorer: Optional ``scorer(title, summary) -> float`` override;
                 defaults to :func:`default_lexicon_scorer`.
 
@@ -378,108 +362,140 @@ class RSSHubEventProvider:
             Tidy frame with :data:`EVENT_COLUMNS`, sorted by
             ``(ts_code, knowable_date)`` and de-duplicated.
         """
-        from trade_integrations.dataflows import news_hub_bridge as hub
-        from trade_integrations.dataflows.news_hub_bridge import hub_ticker_for_symbol
-
         score_fn = scorer or default_lexicon_scorer
         feed_names = list(feeds) if feeds is not None else self.list_feeds()
-        specs = [self.describe_feed(name) for name in feed_names]
-        # A code can be queried against multiple feeds; the Hub has no hard
-        # 1:1 feed->event_type mapping, so the first requested feed's
-        # event_type is the fallback used for any item without a usable
-        # event_kind. When no feeds are configured, fall back to "sentiment".
-        fallback_event_type = specs[0].event_type if specs else "sentiment"
-
         as_of_date = pd.Timestamp(as_of).normalize()
-        until = as_of_date.strftime("%Y-%m-%d")
 
         code_list = list(codes)
         rows: list[dict[str, Any]] = []
         attempted = 0
         failed = 0
-        for code in code_list:
-            attempted += 1
-            market, ticker = hub_ticker_for_symbol(code)
-            try:
-                items = hub.query_with_staging(
-                    ticker=ticker,
-                    market=market,
-                    until=until,
-                    limit=_HUB_QUERY_LIMIT,
-                )
-            except Exception as exc:  # noqa: BLE001 - counted, surfaced below if all fail
-                logger.warning("Hub query failed for %s (%s/%s): %s", code, market, ticker, exc)
-                failed += 1
-                continue
-            for item in items:
-                rows.extend(self._item_to_rows(item, code, fallback_event_type, score_fn))
+        for feed_name in feed_names:
+            spec = self.describe_feed(feed_name)
+            for code in code_list:
+                attempted += 1
+                xml_text = self._fetch_feed(spec, code)
+                if not xml_text:
+                    failed += 1
+                    continue
+                rows.extend(self._parse_items(xml_text, code, spec, score_fn))
 
-        # A configured-but-fully-unreachable Hub must fail loudly rather than
+        # A configured-but-fully-unreachable provider must fail loudly rather than
         # silently scoring every bar 0.0 (which reads as "sentiment considered, no
-        # signal"). A reachable query that simply returned no items is legitimate.
+        # signal"). A reachable feed that simply returned no items is legitimate.
         if attempted and failed == attempted:
             raise EventProviderError(
-                f"All {attempted} Hub event query(ies) failed for codes={code_list}; "
-                f"verify the news Hub is reachable (feeds={feed_names})"
+                f"All {attempted} RSSHub feed fetch(es) failed for base_url "
+                f"{self.base_url!r}; verify the instance is reachable and the "
+                f"configured routes exist (feeds={feed_names})"
             )
 
         if not rows:
             return pd.DataFrame(columns=EVENT_COLUMNS)
 
         frame = pd.DataFrame(rows, columns=list(EVENT_COLUMNS))
-        # Belt-and-suspenders: the Hub's `until` filters on published_at, which
-        # is not the same as knowable_date once the close-cutoff-hour rollover
-        # is applied, so this client-side filter must stay.
         frame = frame[frame["knowable_date"] <= as_of_date]
         frame = frame.drop_duplicates(subset=["ts_code", "knowable_date", "event_type", "summary"])
         frame = frame.sort_values(["ts_code", "knowable_date"]).reset_index(drop=True)
         return frame
 
-    def _item_to_rows(
+    def _fetch_feed(self, spec: FeedSpec, code: str) -> str:
+        """Fetch raw RSS XML for one feed/code, bounded by a wall-clock budget.
+
+        Returns the response body on success, or ``""`` when the fetch could not
+        complete within the budget — the caller logs and counts that as a failed
+        feed so an all-feeds-unreachable run can be surfaced loudly.
+        """
+        if spec.is_per_symbol:
+            route = spec.route_template.format(code=format_code_for_route(code, spec.code_style))
+        else:
+            route = spec.route_template
+        url = f"{self.base_url}{route}"
+        timeout = positive_env_float(RSSHUB_TIMEOUT_ENV, DEFAULT_TIMEOUT_S)
+        budget = positive_env_float(RSSHUB_BUDGET_ENV, DEFAULT_BUDGET_S)
+        client = self._client or self._default_client()
+        deadline = time.monotonic() + budget
+
+        def _do() -> str:
+            response = client.get(url, timeout=timeout)
+            response.raise_for_status()
+            return response.text
+
+        try:
+            return retry_with_budget(
+                _do,
+                transient=Exception,
+                deadline=deadline,
+                label=f"rsshub fetch {spec.name} for {code}",
+            )
+        except TimeoutError:
+            logger.warning(
+                "RSSHub feed %r for %s unreachable within %.0fs budget (%s); "
+                "no items contributed from this feed",
+                spec.name,
+                code,
+                budget,
+                url,
+            )
+            return ""
+
+    @staticmethod
+    def _default_client() -> Any:
+        """Construct a default httpx client (imported lazily)."""
+        import httpx
+
+        return httpx.Client(follow_redirects=True)
+
+    def _parse_items(
         self,
-        item: Mapping[str, Any],
+        xml_text: str,
         code: str,
-        fallback_event_type: str,
+        spec: FeedSpec,
         score_fn: ScorerFn,
     ) -> list[dict[str, Any]]:
-        """Map one Hub headline dict into zero or one :data:`EVENT_COLUMNS` row.
+        """Parse RSS 2.0 ``<item>`` nodes into normalised event rows.
 
-        Returns an empty list when the item carries no usable publish
-        timestamp (nothing to compute ``knowable_date`` from).
+        Uses ``defusedxml`` to neutralise XXE / entity-expansion attacks in the
+        untrusted feed payload; malformed or hostile XML yields no rows.
         """
-        title = str(item.get("title") or "")
-        summary = _clean_summary(
-            item.get("content_summary") or item.get("summary") or item.get("title") or ""
-        )
-        published_raw = item.get("published_at") or item.get("publish_day")
-        if not published_raw:
-            return []
         try:
-            published = pd.Timestamp(published_raw)
-        except (TypeError, ValueError):
-            return []
-        if pd.isna(published):
+            root = ET.fromstring(xml_text)
+        except (ParseError, DefusedXmlException):
             return []
 
-        event_kind = item.get("event_kind")
-        event_type = (
-            event_kind
-            if isinstance(event_kind, str) and event_kind.strip() and event_kind.strip() in _EVENT_TAXONOMY
-            else fallback_event_type
-        )
+        rows: list[dict[str, Any]] = []
+        for item in root.iter("item"):
+            title = (item.findtext("title") or "").strip()
+            summary = _clean_summary(item.findtext("description"))
+            pub_raw = item.findtext("pubDate")
+            published = _parse_pubdate(pub_raw)
+            if published is None:
+                continue
+            rows.append(
+                {
+                    "ts_code": code,
+                    "knowable_date": _knowable_date(published, self.close_cutoff_hour),
+                    "event_type": spec.event_type,
+                    "score": float(score_fn(title, summary)),
+                    "source": spec.name,
+                    "summary": summary or title,
+                }
+            )
+        return rows
 
-        source_label = f"hub:{item.get('source')}" if item.get("source") else "hub"
 
-        return [
-            {
-                "ts_code": code,
-                "knowable_date": _knowable_date(published, self.close_cutoff_hour),
-                "event_type": event_type,
-                "score": float(score_fn(title, summary)),
-                "source": source_label,
-                "summary": summary or title,
-            }
-        ]
+def _parse_pubdate(value: str | None) -> pd.Timestamp | None:
+    """Parse an RFC-822 (RSS) or ISO ``pubDate`` into a Timestamp, or None."""
+    if not value or not value.strip():
+        return None
+    try:
+        return pd.Timestamp(parsedate_to_datetime(value))
+    except (TypeError, ValueError):
+        pass
+    try:
+        return pd.Timestamp(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def enrich_price_frames_with_events(

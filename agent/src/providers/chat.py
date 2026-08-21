@@ -432,6 +432,7 @@ class ChatLLM:
                     on_text_chunk=on_text_chunk,
                     on_reasoning_chunk=on_reasoning_chunk,
                     timeout=timeout,
+                    idle_timeout_s=idle_timeout_s,
                     should_cancel=should_cancel,
                 )
                 llm_meta["tool_calls"] = len(response.tool_calls or [])
@@ -444,6 +445,7 @@ class ChatLLM:
                 on_text_chunk=on_text_chunk,
                 on_reasoning_chunk=on_reasoning_chunk,
                 timeout=timeout,
+                idle_timeout_s=idle_timeout_s,
                 should_cancel=should_cancel,
             )
 
@@ -454,6 +456,7 @@ class ChatLLM:
         on_text_chunk: Optional[Any] = None,
         on_reasoning_chunk: Optional[Any] = None,
         timeout: Optional[int] = None,
+        idle_timeout_s: Optional[float] = None,
         should_cancel: Optional[Callable[[], bool]] = None,
     ) -> LLMResponse:
         """Internal stream_chat body (instrumentation wraps the public method)."""
