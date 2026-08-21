@@ -237,10 +237,16 @@ export function OptionsChainTable({ referenceSpot }: Props) {
               className="rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary/40"
             >
               <option value="stock_simulator">
-                {t("options.chain.sourceStockSimulator", { defaultValue: "Stock Simulator" })}
+                {t("options.chain.sourceStockSimulator", { defaultValue: "Live (Stock Simulator)" })}
+              </option>
+              <option value="indmoney">
+                {t("options.chain.sourceIndmoney", { defaultValue: "Live (INDmoney)" })}
               </option>
               <option value="openalgo">
-                {t("options.chain.sourceOpenalgo", { defaultValue: "OpenAlgo (live)" })}
+                {t("options.chain.sourceOpenalgo", { defaultValue: "Live (OpenAlgo)" })}
+              </option>
+              <option value="stock_history">
+                {t("options.chain.sourceStockHistory", { defaultValue: "Historical (recorded)" })}
               </option>
             </select>
           )}

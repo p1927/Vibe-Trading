@@ -24,8 +24,11 @@ _SOURCE_PATTERNS = [
     (re.compile(r"^[A-Z]+\.US$", re.I), "yahoo"),
     (re.compile(r"^\d{3,5}\.HK$", re.I), "tencent"),
     # India: NSE (RELIANCE.NS) / BSE (500325.BO). Tickers may carry '&' and '-'
-    # (e.g. M&M.NS, BAJAJ-AUTO.NS). Served by Yahoo's public chart endpoint.
-    (re.compile(r"^[A-Z0-9&.\-]+\.(NS|BO)$", re.I), "yahoo"),
+    # (e.g. M&M.NS, BAJAJ-AUTO.NS). stock_simulator (recorded NSE data) is the
+    # default per registry.FALLBACK_CHAINS["india_equity"]; when the requested
+    # range/symbol isn't recorded, the chain below degrades to Yahoo's public
+    # chart endpoint automatically.
+    (re.compile(r"^[A-Z0-9&.\-]+\.(NS|BO)$", re.I), "stock_simulator"),
     # Canada: Toronto Stock Exchange (TD.TO) / TSX Venture (PNG.V).
     (re.compile(r"^[A-Z0-9&.\-]+\.(TO|V)$", re.I), "yahoo"),
     # Yahoo futures (GC=F, CL=F) and forex (EURUSD=X) suffix conventions —

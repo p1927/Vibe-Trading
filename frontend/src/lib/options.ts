@@ -130,8 +130,11 @@ export interface OptionsChainResponse {
   error?: string;
 }
 
-/** Which connector serves India options data — the only market with more than one today. */
-export type IndiaOptionsSource = "stock_simulator" | "openalgo";
+/** Which connector serves India options data — no automatic fallback between
+ * them; an unavailable source errors rather than silently trying another.
+ * `stock_simulator`/`indmoney`/`openalgo` are live (real top-of-book bid/ask);
+ * `stock_history` is the recorded/replay archive (no bid/ask in its fields). */
+export type IndiaOptionsSource = "stock_simulator" | "indmoney" | "openalgo" | "stock_history";
 
 // ---------------------------------------------------------------------------
 // API contract — GET /options/research (India-only ranked strategies)

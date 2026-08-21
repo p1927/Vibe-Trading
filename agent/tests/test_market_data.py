@@ -39,11 +39,11 @@ from src.market_data import (
         ("AAPL.US", "yahoo"),
         ("700.HK", "tencent"),
         ("00700.HK", "tencent"),
-        ("RELIANCE.NS", "yahoo"),  # India NSE
-        ("TCS.NS", "yahoo"),
-        ("M&M.NS", "yahoo"),  # ampersand in ticker
-        ("BAJAJ-AUTO.NS", "yahoo"),  # hyphen in ticker
-        ("500325.BO", "yahoo"),  # India BSE (numeric scrip code)
+        ("RELIANCE.NS", "stock_simulator"),  # India NSE
+        ("TCS.NS", "stock_simulator"),
+        ("M&M.NS", "stock_simulator"),  # ampersand in ticker
+        ("BAJAJ-AUTO.NS", "stock_simulator"),  # hyphen in ticker
+        ("500325.BO", "stock_simulator"),  # India BSE (numeric scrip code)
         ("TD.TO", "yahoo"),  # Canada TSX
         ("BBD-B.TO", "yahoo"),  # hyphenated TSX class symbol
         ("PNG.V", "yahoo"),  # Canada TSX Venture
