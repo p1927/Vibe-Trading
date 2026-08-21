@@ -212,7 +212,12 @@
     "delivery_failed": "Versand an {{channel}} fehlgeschlagen",
     "resumeJob": "Resume",
     "pauseJobAria": "Pause scheduled run for {{prompt}}",
-    "resumeJobAria": "Resume scheduled run for {{prompt}}"
+    "resumeJobAria": "Resume scheduled run for {{prompt}}",
+    "verdictEmpty": "Noch kein Urteil",
+    "verdictUnreadable": "Letztes Urteil nicht lesbar",
+    "verdictNoCalls": "Keine Calls",
+    "verdictDelta": "{{was}} → {{now}}",
+    "verdictRecorded": "Stand {{when}}"
   },
   "reports": {
     "badge": "Berichte",

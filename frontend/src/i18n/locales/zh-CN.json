@@ -212,7 +212,12 @@
     "delivery_failed": "推送到 {{channel}} 失败",
     "resumeJob": "Resume",
     "pauseJobAria": "Pause scheduled run for {{prompt}}",
-    "resumeJobAria": "Resume scheduled run for {{prompt}}"
+    "resumeJobAria": "Resume scheduled run for {{prompt}}",
+    "verdictEmpty": "尚无判定",
+    "verdictUnreadable": "最新判定无法解析",
+    "verdictNoCalls": "无调用",
+    "verdictDelta": "{{was}} → {{now}}",
+    "verdictRecorded": "记于 {{when}}"
   },
   "reports": {
     "badge": "报告",

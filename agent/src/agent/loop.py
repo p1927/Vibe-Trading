@@ -179,6 +179,23 @@ def _goal_max_continuations() -> int:
     from src.config.accessor import get_env_config
     return get_env_config().agent_tuning.vibe_trading_goal_max_continuations
 
+
+def _stall_timeout_seconds() -> float:
+    """Return the run-stall watchdog timeout in seconds (0/negative disables).
+
+    A run that makes no forward progress (no LLM completion, no tool result)
+    for this long is treated as a zombie and failed explicitly with a clear
+    reason instead of staying "running" forever with no state.json
+    (recurring 2026-08 zombie runs). Heartbeats do NOT count as progress: a
+    hung tool keeps emitting heartbeats, which is exactly the case the
+    watchdog must catch.
+    """
+    ov = _override("STALL_TIMEOUT_SECONDS")
+    if ov is not None:
+        return ov
+    from src.config.accessor import get_env_config
+    return get_env_config().agent_tuning.vibe_trading_run_stall_timeout_seconds
+
 logger = logging.getLogger(__name__)
 
 
@@ -387,6 +404,68 @@ def _summary_chunks(msgs: list, limit: int = SUMMARY_CHUNK_CHARS) -> list[str]:
     flush_current()
     return chunks or ["[]"]
 
+
+def _verification_ledger(messages: list) -> str:
+    """Extract terse deterministic-verification records from a message list.
+
+    Walks the conversation for successful financial_rigor tool results
+    (the deterministic calculator/verifier) and renders each as a short
+    "already verified" line. Re-attached to the compressed context after
+    auto-compact so the model does not re-run identical expressions it can
+    no longer see (2026-08-20 INTC run re-ran the same calcs 5-9x each
+    after compaction cleared the outputs).
+
+    Args:
+        messages: Message list to scan (tool results only).
+
+    Returns:
+        Newline-joined ledger lines, or an empty string when nothing found.
+    """
+    lines: list[str] = []
+    for msg in messages:
+        if msg.get("role") != "tool":
+            continue
+        content = msg.get("content", "")
+        if not isinstance(content, str):
+            continue
+        try:
+            payload = json.loads(content)
+        except Exception:  # noqa: BLE001 - non-JSON results are skipped
+            continue
+        if not isinstance(payload, dict) or payload.get("status") != "ok":
+            continue
+        command = payload.get("command")
+        if command == "calc" and payload.get("result_exact") is not None:
+            expr = payload.get("expr", "?")
+            result_exact = payload.get("result_exact")
+            lines.append(f"calc {expr} = {result_exact}")
+        elif command == "verify_market_cap" and payload.get("verdict") is not None:
+            verdict = payload.get("verdict")
+            deviation_pct = payload.get("deviation_pct")
+            lines.append(f"market_cap verdict={verdict} dev={deviation_pct}%")
+        elif command == "verify_valuation" and payload.get("metrics"):
+            metrics = payload["metrics"]
+            if isinstance(metrics, dict) and metrics:
+                summary = ", ".join(f"{k}={v}" for k, v in list(metrics.items())[:8])
+                lines.append(f"valuation {summary}")
+        elif command == "cross_validate" and payload.get("all_consistent") is not None:
+            field_name = payload.get("field", "?")
+            all_consistent = payload.get("all_consistent")
+            lines.append(f"cross_validate field={field_name} consistent={all_consistent}")
+        elif command == "benford" and payload.get("reliable") is not None:
+            reliable = payload.get("reliable")
+            conformity = payload.get("conformity", "?")
+            lines.append(f"benford reliable={reliable} conformity={conformity}")
+    # Deduplicate while preserving order; cap the ledger size.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for line in lines:
+        if line not in seen:
+            seen.add(line)
+            unique.append(line)
+        if len(unique) >= 60:
+            break
+    return "\n".join(unique)
 
 def _microcompact(messages: list) -> None:
     """Layer 1: silently prune old tool results, keeping the most recent N intact.
@@ -995,6 +1074,16 @@ class AgentLoop:
         self._auto_compact_count = 0
         self._emergency_compact_used = False
         self._tail_token_budget = TAIL_TOKEN_BUDGET
+        self._stall_reason: str | None = None
+        self._last_activity_wall: float = 0.0
+        self._run_done = threading.Event()
+        # Identical deterministic tool calls (e.g. financial_rigor calc with
+        # the same expression) are served from this cache instead of being
+        # re-executed. Regression: after auto-compact cleared earlier tool
+        # results, the model re-ran the same financial_rigor expressions
+        # 5-9x each (2026-08-20 INTC run) because it could no longer see its
+        # own verification records.
+        self._called_identical: dict[tuple[str, str], str] = {}
 
     def cancel(self) -> None:
         """Cancel the current loop.
@@ -1098,6 +1187,10 @@ class AgentLoop:
         self._released_fallback = False
         self._released_fallback_reason = None
         self._written_files = set()
+        self._stall_reason = None
+        self._last_activity_wall = _time.time()
+        self._run_done = threading.Event()
+        self._called_identical = {}
         run_started_wall = _time.time()
 
         state_store = RunStateStore()
@@ -1164,6 +1257,20 @@ class AgentLoop:
         goal_continuations = 0
         goal_last_progress: tuple[int, int] | None = None
         wrap_up_at = max(1, int(self.max_iterations * 0.8))
+
+        # Zombie-run watchdog: fail a run that makes no forward progress
+        # (no LLM completion, no tool result) for the stall timeout instead
+        # of leaving it "running" forever with no state.json. Heartbeats do
+        # not count as progress - a hung tool keeps emitting them.
+        stall_timeout = _stall_timeout_seconds()
+        if stall_timeout > 0:
+            watchdog = threading.Thread(
+                target=self._stall_watchdog,
+                args=(trace, run_dir, state_store, stall_timeout),
+                name="run-stall-watchdog",
+                daemon=True,
+            )
+            watchdog.start()
 
         try:
             while iteration < self.max_iterations:
@@ -1344,6 +1451,9 @@ class AgentLoop:
                 # end the run now, without executing any of its tool calls.
                 if self._cancel_event.is_set():
                     break
+
+                # An LLM response arrived - real progress for the stall watchdog.
+                self._last_activity_wall = _time.time()
 
                 usage = getattr(response, "usage_metadata", None)
                 if getattr(response, "response_model", None):
@@ -1710,6 +1820,7 @@ class AgentLoop:
             trace.write({"type": "end", "iter": self._run_iteration, "status": "error", "reason": str(exc), "iterations": iteration})
             trace.close()
             state_store.mark_failure(run_dir, str(exc))
+            self._run_done.set()
             return {
                 "status": "failed",
                 "error_code": error_code,
@@ -1726,7 +1837,12 @@ class AgentLoop:
         # returned dict so SessionService can surface a meaningful UI
         # message instead of "Execution failed: unknown" (issue #114).
         final_reason: str | None = None
-        if self._cancel_event.is_set():
+        if self._stall_reason is not None:
+            # The stall watchdog already wrote the failed state; keep this
+            # run's terminal status honest instead of overwriting it.
+            final_reason = self._stall_reason
+            final_status = "failed"
+        elif self._cancel_event.is_set():
             final_reason = "cancelled by user"
             state_store.mark_cancelled(run_dir, final_reason)
             final_status = "cancelled"
@@ -1811,6 +1927,8 @@ class AgentLoop:
         if final_reason is not None:
             result["reason"] = final_reason
 
+        self._run_done.set()
+
         cf_warnings = compute_content_filter_warnings(
             content_filter_count, max(1, iteration),
         )
@@ -1818,6 +1936,75 @@ class AgentLoop:
             result["content_filter_warnings"] = cf_warnings
 
         return result
+
+    def _stall_watchdog(
+        self,
+        trace: TraceWriter,
+        run_dir: Path,
+        state_store: Any,
+        stall_timeout: float,
+    ) -> None:
+        """Fail the run when no forward progress happens for the stall timeout.
+
+        A run can hang inside a tool or provider call without ever raising:
+        the bash subprocess stuck in ``communicate()`` (2026-08-20 INTC run,
+        19:20:55 -> never returned) is the canonical case. Such a run stays
+        "running" forever with no state.json - a zombie. This daemon thread
+        watches wall-clock progress (LLM completions and tool results only,
+        NOT heartbeats) and, once the stall timeout passes, writes a failed
+        end event and state, and sets the cancel event so the loop exits at
+        its next boundary.
+
+        Args:
+            trace: Trace writer for this run.
+            run_dir: Run directory for state.json.
+            state_store: RunStateStore.
+            stall_timeout: Stall threshold in seconds.
+        """
+        # Capture the done-event locally: a reused AgentLoop replaces
+        # self._run_done when the next run starts, and this thread must
+        # not keep watching with the old run timeout.
+        run_done = self._run_done
+        warned = False
+        while not run_done.is_set():
+            wait_s = min(30.0, max(5.0, stall_timeout / 4))
+            if run_done.wait(timeout=wait_s):
+                return
+            idle = _time.time() - self._last_activity_wall
+            if idle < stall_timeout:
+                warned = False
+                continue
+            if not warned:
+                warned = True
+                self._emit(
+                    "stall_warning",
+                    {"idle_s": round(idle, 1), "timeout_s": stall_timeout},
+                )
+                continue
+            reason = (
+                "run stalled: no LLM completion or tool result for "
+                + str(int(idle)) + "s (stall watchdog)"
+            )
+            self._stall_reason = reason
+            try:
+                trace.write(
+                    {
+                        "type": "end",
+                        "iter": self._run_iteration,
+                        "status": "failed",
+                        "reason": reason,
+                        "stalled": True,
+                    }
+                )
+            except Exception:  # noqa: BLE001 - best-effort
+                pass
+            try:
+                state_store.mark_failure(run_dir, reason)
+            except Exception:  # noqa: BLE001 - best-effort
+                pass
+            self._emit("stalled", {"reason": reason})
+            self._cancel_event.set()
+            return
 
     # -- Tool execution with read/write batching --------------------------------
 
@@ -1897,6 +2084,37 @@ class AgentLoop:
                                 self._grounding.identity_summary(),
                             ),
                         )
+                    )
+                    continue
+
+            # Deterministic tools (e.g. financial_rigor calc) return the same
+            # result for the same args. Checked AFTER authorization above so a
+            # cached repeat can never bypass the identity gate. After auto-compact cleared earlier
+            # tool outputs, the model used to re-run identical expressions
+            # 5-9x each (2026-08-20 INTC run) to re-verify numbers it could
+            # no longer see. Serve an identical prior call from cache instead.
+            if tool_def is not None and getattr(tool_def, "deterministic", False):
+                cache_key = self._identical_call_key(tc.name, tc.arguments)
+                if cache_key is not None and cache_key in self._called_identical:
+                    cached = self._called_identical[cache_key]
+                    messages.append(context.format_tool_result(tc.id, tc.name, cached))
+                    trace.write({
+                        "type": "tool_result_cached",
+                        "iter": iteration,
+                        "tool": tc.name,
+                        "call_id": tc.id,
+                    })
+                    react_trace.append({"type": "tool_result_cached", "tool": tc.name})
+                    self._emit(
+                        "tool_result",
+                        {
+                            "tool": tc.name,
+                            "status": "ok",
+                            "elapsed_ms": 0,
+                            "preview": cached[:200],
+                            "call_id": tc.id,
+                            "cached": True,
+                        },
                     )
                     continue
 
@@ -2415,6 +2633,24 @@ class AgentLoop:
             "file write is a failure."
         )
 
+    def _identical_call_key(self, tool_name: str, arguments: Mapping[str, Any]) -> tuple[str, str] | None:
+        """Build a stable key identifying a deterministic tool invocation.
+
+        Args:
+            tool_name: Tool name.
+            arguments: Tool arguments.
+
+        Returns:
+            Tuple of (tool_name, canonical JSON of the args) usable as a
+            dict key, or None when the args cannot be serialized.
+        """
+        try:
+            normalized = _normalize_tool_run_dir(dict(arguments or {}), self.memory.run_dir)
+            canonical = json.dumps(normalized, sort_keys=True, ensure_ascii=False, default=str)
+        except Exception:  # noqa: BLE001 - un-serializable args are never cached
+            return None
+        return (tool_name, canonical)
+
     def _finalize_tool_result(
         self,
         tc: Any,
@@ -2443,6 +2679,9 @@ class AgentLoop:
         """
         if update_memory:
             self._update_memory(tc.name)
+
+        # A tool completed - real progress for the stall watchdog.
+        self._last_activity_wall = _time.time()
 
         success = _is_tool_success(result)
         if success:
@@ -2473,23 +2712,18 @@ class AgentLoop:
                     }
                 )
 
-        if self._grounding is not None:
-            self._grounding.ingest_tool_result(
-                tool_name=tc.name,
-                arguments=_normalize_tool_run_dir(tc.arguments, self.memory.run_dir),
-                result=result,
-                call_id=tc.id,
-                success=success,
-            )
-            if tc.name == "search_symbol":
-                trace.write(
-                    {
-                        "type": "identity_state",
-                        "iter": iteration,
-                        "call_id": tc.id,
-                        "identity": self._grounding.identity_summary(),
-                    }
-                )
+        # Cache successful deterministic results so an identical later call is
+        # served without re-execution (regression: repeated financial_rigor
+        # calcs after compaction, 2026-08-20 INTC run).
+        if success:
+            try:
+                tool_def = self.registry.get(tc.name)
+            except Exception:  # noqa: BLE001
+                tool_def = None
+            if tool_def is not None and getattr(tool_def, "deterministic", False):
+                cache_key = self._identical_call_key(tc.name, tc.arguments)
+                if cache_key is not None:
+                    self._called_identical[cache_key] = result
 
         status = "ok" if success else "error"
         truncated = truncate_tool_result(result)
@@ -2731,6 +2965,14 @@ class AgentLoop:
             )
         self._previous_summary = summary
 
+        # Preserve deterministic verification records across the compaction.
+        # The LLM summary does not reliably retain exact calc results, so the
+        # model used to re-run the same financial_rigor expressions after a
+        # compact to "re-verify" numbers it could no longer see (2026-08-20
+        # INTC run: identical calcs re-ran 5-9x each). Re-attach a terse
+        # ledger of already-verified values so the model does not re-run them.
+        verification_ledger = _verification_ledger(head)
+
         tokens_before = estimate_tokens(messages)
         trace.write_text_entry(
             {
@@ -2749,6 +2991,12 @@ class AgentLoop:
         # Reconstruct: system + summary + acknowledge + preserved tail
         state_summary = self.memory.to_summary()
         compressed = f"[Conversation compressed — handoff summary. Transcript: {transcript_path}]\n\n{summary}"
+        if verification_ledger:
+            compressed += (
+                "\n\n[Verified tool results from the compressed turns - do NOT "
+                "re-run these tools, they are already verified]:\n"
+                + verification_ledger
+            )
         if state_summary and state_summary != "(empty state)":
             compressed += f"\n\nCurrent agent state:\n{state_summary}"
 
@@ -2809,6 +3057,7 @@ _LEGACY_LAZY = {
     "STREAM_RETRY_DELAY_S": _stream_retry_delay_s,
     "TOOL_TIMEOUT_SECONDS": _tool_timeout_seconds,
     "GOAL_MAX_CONTINUATIONS": _goal_max_continuations,
+    "STALL_TIMEOUT_SECONDS": _stall_timeout_seconds,
 }
 
 

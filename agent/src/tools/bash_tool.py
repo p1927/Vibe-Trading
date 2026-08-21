@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import signal
 import subprocess
 from typing import Any
 
@@ -12,6 +14,47 @@ from src.tools._shell_safety import broad_python_kill_error
 
 _OUTPUT_LIMIT = 50_000
 _DEFAULT_TIMEOUT = 120
+# How long to wait for output to drain after killing a timed-out process
+# tree before giving up (the pipes are held by grandchildren).
+_DRAIN_TIMEOUT = 5
+
+
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    """Kill a subprocess and its whole descendant tree.
+
+    On Windows, ``cmd.exe /c <command>`` spawns grandchildren (e.g. a piped
+    ``findstr``) that inherit the stdout/stderr pipe write handles. Killing
+    only the shell leaves those grandchildren alive, so a later
+    ``communicate()`` blocks forever waiting for EOF that never arrives -
+    the exact 2026-08-20 hang (bash call at 19:20:55 never returned, cmd.exe
+    + findstr still alive 20 minutes later). ``taskkill /F /T`` kills the
+    tree; POSIX uses ``killpg`` on the process group.
+
+    Args:
+        proc: The Popen object whose tree should be killed.
+    """
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+                timeout=10,
+            )
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    else:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
 
 class BashTool(BaseTool):
@@ -73,33 +116,59 @@ class BashTool(BaseTool):
                 ensure_ascii=False,
             )
 
+        # Spawn with a dedicated process group so a timeout can kill the
+        # WHOLE tree, not just cmd.exe. Without this, grandchildren that
+        # inherited the pipe handles keep communicate() blocked forever.
+        creationflags = 0
+        start_new_session = False
+        if os.name == "nt":
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            start_new_session = True
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 command,
                 shell=True,
                 cwd=cwd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                timeout=_DEFAULT_TIMEOUT,
                 encoding="utf-8",
                 errors="replace",
+                creationflags=creationflags,
+                start_new_session=start_new_session,
             )
-            stdout = result.stdout[:_OUTPUT_LIMIT] if len(result.stdout) > _OUTPUT_LIMIT else result.stdout
-            stderr = result.stderr[:_OUTPUT_LIMIT] if len(result.stderr) > _OUTPUT_LIMIT else result.stderr
-            return json.dumps({
-                "status": "ok" if result.returncode == 0 else "error",
-                "exit_code": result.returncode,
-                "stdout": stdout,
-                "stderr": stderr,
-            }, ensure_ascii=False)
-        except subprocess.TimeoutExpired:
-            return json.dumps({
-                "status": "error",
-                "error": f"Command timed out after {_DEFAULT_TIMEOUT}s",
-            }, ensure_ascii=False)
         except Exception as exc:
             return json.dumps({
                 "status": "error",
-                "error": str(exc),
+                "error": f"Could not start command: {exc}",
             }, ensure_ascii=False)
+
+        try:
+            stdout, stderr = proc.communicate(timeout=_DEFAULT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            # Kill the tree, then drain with a bounded second wait. The tree
+            # kill closes the inherited pipe handles, so the drain returns.
+            _kill_process_tree(proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=_DRAIN_TIMEOUT)
+            except Exception:
+                stdout, stderr = "", ""
+            stdout = (stdout or "")[:_OUTPUT_LIMIT]
+            stderr = (stderr or "")[:_OUTPUT_LIMIT]
+            return json.dumps({
+                "status": "error",
+                "error_code": "tool_timeout",
+                "error": f"Command timed out after {_DEFAULT_TIMEOUT}s",
+                "stdout": stdout,
+                "stderr": stderr,
+            }, ensure_ascii=False)
+
+        stdout = stdout[:_OUTPUT_LIMIT] if len(stdout) > _OUTPUT_LIMIT else stdout
+        stderr = stderr[:_OUTPUT_LIMIT] if len(stderr) > _OUTPUT_LIMIT else stderr
+        return json.dumps({
+            "status": "ok" if proc.returncode == 0 else "error",
+            "exit_code": proc.returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+        }, ensure_ascii=False)

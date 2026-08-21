@@ -25,6 +25,10 @@ class BaseTool(ABC):
     parameters: Dict[str, Any] = {}
     repeatable: bool = False
     is_readonly: bool = True
+    # Pure, side-effect-free computation: identical args always produce the
+    # same result, so the loop may serve repeated identical calls from cache
+    # instead of re-executing them (financial_rigor calc/verify, etc.).
+    deterministic: bool = False
 
     @classmethod
     def check_available(cls) -> bool:

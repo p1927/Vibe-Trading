@@ -1524,6 +1524,21 @@ export const api = {
 
 // --- Scheduled research types ---
 
+export interface VerdictItem {
+  symbol: string;
+  state: string;
+  reason: string;
+}
+
+export interface VerdictRecord {
+  session_id: string;
+  recorded_at: number;
+  parse: string;
+  outcome: string;
+  items: VerdictItem[];
+  previous: VerdictRecord | null;
+}
+
 export interface ScheduledRun {
   id: string;
   prompt: string;
@@ -1545,6 +1560,9 @@ export interface ScheduledRun {
   delivery_status: string;
   delivery_error: string | null;
   delivery_updated_at: number | null;
+  // The latest run's parsed verdict, embedded with its predecessor so the list
+  // renders a delta in one query. Null until a completed run records one.
+  last_verdict: VerdictRecord | null;
 }
 
 export interface CreateScheduledRunRequest {

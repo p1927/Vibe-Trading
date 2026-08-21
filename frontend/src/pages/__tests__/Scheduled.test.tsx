@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Scheduled } from "@/pages/Scheduled";
-import { ApiError, api, type ScheduledRun } from "@/lib/api";
+import { ApiError, api, type ScheduledRun, type VerdictRecord } from "@/lib/api";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -41,6 +41,7 @@ function run(overrides: Partial<ScheduledRun> = {}): ScheduledRun {
     delivery_status: "none",
     delivery_error: null,
     delivery_updated_at: null,
+    last_verdict: null,
     ...overrides,
   };
 }
@@ -213,5 +214,71 @@ describe("briefing delivery", () => {
     render(<Scheduled />);
 
     expect(await screen.findByText(/channel unreachable/i)).toBeInTheDocument();
+  });
+});
+
+function verdict(overrides: Partial<VerdictRecord> = {}): VerdictRecord {
+  return {
+    session_id: "sess-1",
+    recorded_at: 1_789_000_000_000,
+    parse: "ok",
+    outcome: "FLAT",
+    items: [{ symbol: "600519.SH", state: "FLAT", reason: "band held" }],
+    previous: null,
+    ...overrides,
+  };
+}
+
+describe("Scheduled page verdict cell", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocked.listScheduledRuns.mockResolvedValue([]);
+  });
+
+  it("renders the latest verdict with its delta and the recorded time", async () => {
+    mocked.listScheduledRuns.mockResolvedValue([
+      run({
+        last_verdict: verdict({
+          outcome: "DRIFT",
+          items: [{ symbol: "600519.SH", state: "DRIFT", reason: "band crossed" }],
+          previous: verdict({ session_id: "sess-0", outcome: "FLAT", recorded_at: 1_788_000_000_000 }),
+        }),
+      }),
+    ]);
+    render(<Scheduled />);
+
+    expect(await screen.findByText(/600519.SH DRIFT/)).toBeInTheDocument();
+    expect(screen.getByText(/FLAT → DRIFT/)).toBeInTheDocument();
+    expect(screen.getByText(/as of/)).toBeInTheDocument();
+  });
+
+  it("shows an explicit empty state when no run has recorded one", async () => {
+    mocked.listScheduledRuns.mockResolvedValue([run({ last_verdict: null })]);
+    render(<Scheduled />);
+
+    expect(await screen.findByText("No verdict yet")).toBeInTheDocument();
+  });
+
+  it("renders nothing for ad-hoc monitors permanently at no_verdict_section", async () => {
+    mocked.listScheduledRuns.mockResolvedValue([run({ last_verdict: verdict({ parse: "no_verdict_section", items: [] }) })]);
+    render(<Scheduled />);
+
+    await screen.findByRole("listitem");
+    expect(screen.queryByText(/No verdict yet/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("verdict-line-auckland-scan")).toBeNull();
+  });
+
+  it("never shows a wrong verdict: a malformed section reads as unreadable", async () => {
+    mocked.listScheduledRuns.mockResolvedValue([run({ last_verdict: verdict({ parse: "contract_violation", items: [] }) })]);
+    render(<Scheduled />);
+
+    expect(await screen.findByText("Latest verdict unreadable")).toBeInTheDocument();
+  });
+
+  it("reads an empty item list as a real 'no calls' answer", async () => {
+    mocked.listScheduledRuns.mockResolvedValue([run({ last_verdict: verdict({ items: [] }) })]);
+    render(<Scheduled />);
+
+    expect(await screen.findByText(/No calls/)).toBeInTheDocument();
   });
 });

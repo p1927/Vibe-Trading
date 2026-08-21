@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Dict, List, Optional
 import ssl
 import urllib.request
@@ -25,6 +26,16 @@ from backtest.loaders.registry import register
 logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+
+# Tencent fqkline caps a single response at `_PAGE_SIZE` bars.  Requests for a
+# multi-year window (e.g. 2018-2025 daily) silently truncate at 500 bars
+# (roughly the first 2 years) unless we paginate by advancing the start date.
+_PAGE_SIZE = 500
+# 12 pages * 500 bars = 6000 bars ≈ 24 trading years; a hard cap also guards
+# against pathological loop behavior if the API ever stops advancing.
+_MAX_PAGES = 12
+_PAGE_RETRIES = 3
+_PAGE_BACKOFF = 0.6
 
 _SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
@@ -93,9 +104,10 @@ class DataLoader:
                 logger.warning("tencent failed for %s: %s", code, exc)
         return result
 
-    def _fetch_one(
+    def _request_page(
         self, code: str, start_date: str, end_date: str,
     ) -> Optional[pd.DataFrame]:
+        """Fetch up to `_PAGE_SIZE` bars in [start_date, end_date]."""
         if not _is_a_share(code) and not _is_hk_equity(code):
             return None
 
@@ -115,7 +127,7 @@ class DataLoader:
 
         url = (
             f"{_BASE_URL}?param={tencent_code},day,"
-            f"{start_date},{end_date},500,qfq"
+            f"{start_date},{end_date},{_PAGE_SIZE},qfq"
         )
 
         req = urllib.request.Request(url, headers={
@@ -163,4 +175,70 @@ class DataLoader:
         df = df[["open", "high", "low", "close", "volume"]].dropna(
             subset=["open", "high", "low", "close"]
         )
+        return df
+
+    def _fetch_one(
+        self, code: str, start_date: str, end_date: str,
+    ) -> Optional[pd.DataFrame]:
+        """Paginate [start_date, end_date] in `_PAGE_SIZE`-bar windows.
+
+        The Tencent API returns at most 500 bars per request regardless of the
+        requested window, so a multi-year range is silently truncated unless we
+        advance the start date by one day past the last bar of each page. A
+        window this loader cannot serve in full raises instead of returning a
+        quietly short series, matching the other bounded-window loaders.
+        """
+        chunks: List[pd.DataFrame] = []
+        cursor = start_date
+        seen_starts: set[str] = set()
+
+        for _ in range(_MAX_PAGES):
+            if cursor in seen_starts:
+                raise ValueError(
+                    f"incomplete tencent history: {code} stopped advancing at "
+                    f"{cursor} before reaching {end_date}"
+                )
+            seen_starts.add(cursor)
+
+            page: Optional[pd.DataFrame] = None
+            last_error: Optional[Exception] = None
+            for attempt in range(_PAGE_RETRIES):
+                try:
+                    page = self._request_page(code, cursor, end_date)
+                    last_error = None
+                    break
+                except Exception as exc:  # noqa: BLE001 - transient network jitter
+                    last_error = exc
+                    if attempt < _PAGE_RETRIES - 1:
+                        time.sleep(_PAGE_BACKOFF * (2 ** attempt))
+            if last_error is not None:
+                # Partial pages already collected would read as a complete
+                # history downstream; a failed page is an error, not a series.
+                raise ValueError(
+                    f"incomplete tencent history: {code} page at {cursor} failed "
+                    f"after {_PAGE_RETRIES} attempts: {last_error}"
+                ) from last_error
+
+            if page is None or page.empty:
+                break
+            chunks.append(page)
+
+            # A short page means the window is exhausted.
+            if len(page) < _PAGE_SIZE:
+                break
+            last = page.index.max()
+            next_start = (last + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+            if next_start > end_date:
+                break
+            cursor = next_start
+        else:
+            raise ValueError(
+                f"incomplete tencent history: {code} hit {_MAX_PAGES} pages "
+                f"without reaching {end_date}"
+            )
+
+        if not chunks:
+            return None
+        df = pd.concat(chunks)
+        df = df[~df.index.duplicated(keep="last")].sort_index()
         return df

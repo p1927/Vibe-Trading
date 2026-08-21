@@ -19,6 +19,8 @@ from src.agent.loop import (
     _normalize_tool_run_dir,
     _archive_backtest_result,
     _llm_timeout_seconds,
+    _stall_timeout_seconds,
+    _verification_ledger,
 )
 
 
@@ -531,3 +533,68 @@ def test_pending_write_directive_tracks_written_targets(tmp_path: Path) -> None:
     assert "old_plan.md" in agent2._pending_write_directive(
         f"please update {old}", now - 10,
     )
+
+
+# ---------------------------------------------------------------------------
+# _verification_ledger
+# ---------------------------------------------------------------------------
+
+
+def test_verification_ledger_extracts_calc_results() -> None:
+    """A successful financial_rigor calc result becomes a terse ledger line."""
+    messages = [
+        {"role": "tool", "name": "financial_rigor", "content": json.dumps({
+            "status": "ok", "command": "calc",
+            "expr": "92.13/101.65-1", "result": -0.0937, "result_exact": "-0.09365912",
+        })},
+        {"role": "tool", "name": "financial_rigor", "content": json.dumps({
+            "status": "ok", "command": "calc",
+            "expr": "85.4/108.8-1", "result": -0.2151, "result_exact": "-0.21507353",
+        })},
+    ]
+    from src.agent.loop import _verification_ledger
+    ledger = _verification_ledger(messages)
+    assert "calc 92.13/101.65-1 = -0.09365912" in ledger
+    assert "calc 85.4/108.8-1 = -0.21507353" in ledger
+
+
+def test_verification_ledger_skips_errors_and_other_tools() -> None:
+    """Failed results, non-financial_rigor tools, and non-JSON are skipped."""
+    messages = [
+        {"role": "tool", "name": "financial_rigor", "content": json.dumps({
+            "status": "error", "command": "calc", "error": "malformed",
+        })},
+        {"role": "tool", "name": "get_market_data", "content": json.dumps({"status": "ok"})},
+        {"role": "tool", "name": "financial_rigor", "content": "not json at all"},
+        {"role": "user", "content": "hello"},
+    ]
+    from src.agent.loop import _verification_ledger
+    assert _verification_ledger(messages) == ""
+
+
+def test_verification_ledger_deduplicates_and_caps() -> None:
+    """Duplicate ledger lines collapse; the ledger is capped."""
+    messages = [
+        {"role": "tool", "name": "financial_rigor", "content": json.dumps({
+            "status": "ok", "command": "calc",
+            "expr": "a/b", "result": 1.0, "result_exact": "1.0",
+        })},
+        {"role": "tool", "name": "financial_rigor", "content": json.dumps({
+            "status": "ok", "command": "calc",
+            "expr": "a/b", "result": 1.0, "result_exact": "1.0",
+        })},
+    ]
+    from src.agent.loop import _verification_ledger
+    ledger = _verification_ledger(messages)
+    assert ledger.count("calc a/b") == 1
+
+
+def test_stall_timeout_seconds_default_and_override(monkeypatch) -> None:
+    """The stall watchdog timeout reads config and honors a module override."""
+    import src.agent.loop as loop_module
+
+    assert _stall_timeout_seconds() > 0
+    monkeypatch.setattr(loop_module, "STALL_TIMEOUT_SECONDS", 42.0, raising=False)
+    assert _stall_timeout_seconds() == 42.0
+    monkeypatch.delattr(loop_module, "STALL_TIMEOUT_SECONDS", raising=False)
+    assert _stall_timeout_seconds() > 0

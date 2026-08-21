@@ -359,6 +359,9 @@ class AgentTuningConfig(_EnvBase):
     vibe_trading_llm_timeout_seconds: float = Field(
         alias="VIBE_TRADING_LLM_TIMEOUT_SECONDS", default=300.0,
     )
+    vibe_trading_run_stall_timeout_seconds: float = Field(
+        alias="VIBE_TRADING_RUN_STALL_TIMEOUT_SECONDS", default=1800.0,
+    )
     vibe_trading_goal_max_continuations: int = Field(
         alias="VIBE_TRADING_GOAL_MAX_CONTINUATIONS", default=3,
     )

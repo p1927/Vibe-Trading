@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { CalendarClock, Loader2, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -210,6 +210,53 @@ export function Scheduled() {
       default:
         return cadence.expression;
     }
+  }
+
+  function verdictCell(run: ScheduledRun): ReactNode {
+    const verdict = run.last_verdict;
+    if (verdict === null) {
+      return (
+        <p className={hintClass} data-testid={`verdict-empty-${run.id}`}>
+          {t("scheduled.verdictEmpty")}
+        </p>
+      );
+    }
+    // A monitor built from an ad-hoc prompt never produces a verdict section,
+    // and that is its correct permanent state: render nothing, not a warning.
+    if (verdict.parse === "no_verdict_section") {
+      return null;
+    }
+    if (verdict.parse === "contract_violation") {
+      // Never show a wrong verdict: the malformed run reads as unreadable, and
+      // the prior good one is still visible through `previous` next release.
+      return (
+        <p className={hintClass} data-testid={`verdict-unreadable-${run.id}`}>
+          {t("scheduled.verdictUnreadable")}
+        </p>
+      );
+    }
+    const when = formatInZone(verdict.recorded_at, displayZone(run), locale);
+    if (verdict.items.length === 0) {
+      return (
+        <p className={hintClass} data-testid={`verdict-nocalls-${run.id}`}>
+          {t("scheduled.verdictNoCalls")} · {t("scheduled.verdictRecorded", { when })}
+        </p>
+      );
+    }
+    const delta =
+      verdict.previous && verdict.previous.outcome !== verdict.outcome
+        ? t("scheduled.verdictDelta", { was: verdict.previous.outcome, now: verdict.outcome })
+        : null;
+    return (
+      <p className="break-words text-xs text-muted-foreground" data-testid={`verdict-line-${run.id}`}>
+        <span className="font-medium text-foreground">
+          {verdict.items.map((item) => `${item.symbol} ${item.state}`).join(" · ")}
+        </span>
+        {" · "}
+        {delta ? <span>{delta} · </span> : null}
+        {t("scheduled.verdictRecorded", { when })}
+      </p>
+    );
   }
 
   function statusLabel(run: ScheduledRun): { label: string; tone: "success" | "danger" | "warning" | "neutral" } {
@@ -450,6 +497,7 @@ export function Scheduled() {
                           : ""}
                       </p>
                     )}
+                    {verdictCell(run)}
                   </div>
                   {pendingDelete === run.id ? (
                     <div className="flex items-center gap-1.5">

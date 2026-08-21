@@ -212,7 +212,12 @@
     "delivery_failed": "تعذّر الإرسال إلى {{channel}}",
     "resumeJob": "Resume",
     "pauseJobAria": "Pause scheduled run for {{prompt}}",
-    "resumeJobAria": "Resume scheduled run for {{prompt}}"
+    "resumeJobAria": "Resume scheduled run for {{prompt}}",
+    "verdictEmpty": "لا يوجد تقييم بعد",
+    "verdictUnreadable": "تعذر قراءة أحدث تقييم",
+    "verdictNoCalls": "لا إشارات",
+    "verdictDelta": "{{was}} ← {{now}}",
+    "verdictRecorded": "اعتبارًا من {{when}}"
   },
   "reports": {
     "badge": "التقارير",

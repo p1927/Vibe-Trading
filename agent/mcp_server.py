@@ -2927,7 +2927,7 @@ def reap_stale_runs() -> str:
 
 
 @mcp.tool
-def retry_run(run_id: str) -> str:
+def retry_run(run_id: str, resume: bool = False) -> str:
     """Retry a failed, stale, or cancelled swarm run.
 
     Re-launches a brand-new run with the same preset and variables as the
@@ -2935,8 +2935,17 @@ def retry_run(run_id: str) -> str:
     spotting a ``failed`` or stale run via ``list_runs``. A still-``running``
     run cannot be retried — cancel or reap it first.
 
+    With ``resume=True`` (replay), completed upstream tasks and their artifacts
+    are carried into the new run as-is and only the failed/cancelled subgraph
+    re-executes — completed independent branches are not re-run. ``resume``
+    only applies to a ``failed`` or ``cancelled`` run; ``resume=True`` for any
+    other status is refused with an error (a plain retry without ``resume``
+    remains available for any non-running run).
+
     Args:
         run_id: ID of the run to retry (from ``list_runs`` / ``get_swarm_status``).
+        resume: Replay the failed/cancelled subgraph instead of re-running the
+            whole preset. Default ``False`` preserves the existing full re-run.
 
     Returns:
         JSON payload for the newly created run (``run_id`` / ``status`` /
@@ -2962,6 +2971,17 @@ def retry_run(run_id: str) -> str:
             {"status": "error", "error": "Cannot retry a running run. Cancel or reap it first."},
             ensure_ascii=False,
         )
+    if resume and reconciled.status not in (RunStatus.failed, RunStatus.cancelled):
+        return json.dumps(
+            {
+                "status": "error",
+                "error": (
+                    f"Cannot resume a run in status '{reconciled.status.value}'; "
+                    "resume only applies to failed or cancelled runs."
+                ),
+            },
+            ensure_ascii=False,
+        )
 
     agent_config = load_swarm_agent_config()
     runtime = SwarmRuntime(store=store, agent_config=agent_config)
@@ -2970,6 +2990,7 @@ def retry_run(run_id: str) -> str:
             reconciled.preset_name,
             reconciled.user_vars or {},
             include_shell_tools=_include_shell_tools,
+            resume_from=reconciled if resume else None,
         )
     except FileNotFoundError as exc:
         return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False)

@@ -212,7 +212,12 @@
     "delivery_failed": "{{channel}} へ配信できませんでした",
     "resumeJob": "Resume",
     "pauseJobAria": "Pause scheduled run for {{prompt}}",
-    "resumeJobAria": "Resume scheduled run for {{prompt}}"
+    "resumeJobAria": "Resume scheduled run for {{prompt}}",
+    "verdictEmpty": "判定はまだありません",
+    "verdictUnreadable": "最新の判定を読み取れません",
+    "verdictNoCalls": "コールなし",
+    "verdictDelta": "{{was}} → {{now}}",
+    "verdictRecorded": "{{when}} 時点"
   },
   "reports": {
     "badge": "レポート",
