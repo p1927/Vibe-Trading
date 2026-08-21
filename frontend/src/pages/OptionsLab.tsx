@@ -74,6 +74,11 @@ export function OptionsLab() {
     () => buildPresetLegs("long_call", DEFAULT_PARAMS.entry_spot) ?? [],
   );
   const [activePresetId, setActivePresetId] = useState<string | null>("long_call");
+  // Ref so the market-switch effect and the live-spot callback can each
+  // rebuild legs against the currently-active preset without depending on
+  // (and re-running on every keystroke change of) `activePresetId`.
+  const activePresetIdRef = useRef(activePresetId);
+  activePresetIdRef.current = activePresetId;
   const [result, setResult] = useState<OptionsPayoffResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -111,6 +116,26 @@ export function OptionsLab() {
     setActivePresetId(presetId);
     setLegs(presetLegs);
   };
+
+  // Rough placeholder until a real chain loads — NIFTY trades around 24000,
+  // a US-scale default (~100) would make the payoff builder's strikes
+  // nonsensical the instant India is selected.
+  const DEFAULT_INDIA_SPOT_GUESS = 24000;
+
+  const applySpot = useCallback((spot: number) => {
+    if (!Number.isFinite(spot) || spot <= 0) return;
+    setParams((prev) => ({ ...prev, entry_spot: spot }));
+    const presetLegs = buildPresetLegs(activePresetIdRef.current ?? "long_call", spot);
+    if (presetLegs) setLegs(presetLegs);
+  }, []);
+
+  // Snap entry_spot/strikes to a market-appropriate scale immediately on
+  // switch — OptionsChainTable's onUnderlyingLtp callback (below) then
+  // refines this to the real spot once its chain loads.
+  useEffect(() => {
+    applySpot(market === "india_equity" ? DEFAULT_INDIA_SPOT_GUESS : DEFAULT_PARAMS.entry_spot);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [market]);
 
   const handleLegsChange = (next: OptionLeg[]) => {
     setActivePresetId(null);
@@ -282,6 +307,7 @@ export function OptionsLab() {
         market={market}
         source={source}
         underlying={market === "india_equity" ? underlying : undefined}
+        onUnderlyingLtp={applySpot}
       />
 
       {market === "india_equity" && <IndiaStrategyPanel underlying={underlying} />}

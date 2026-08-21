@@ -338,6 +338,7 @@ def _success(
         "ticker": ticker,
         "expiration": expiration,
         "expirations": expirations,
+        "underlying_ltp": underlying_ltp,
         "calls_count": len(calls),
         "puts_count": len(puts),
         "calls": calls,

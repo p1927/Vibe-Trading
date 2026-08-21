@@ -115,6 +115,9 @@ export interface OptionsChainData {
   expiration: number;
   /** Epoch seconds. */
   expirations: number[];
+  /** Underlying spot at fetch time — only India rows carry this today (the
+   * US/Yahoo tool doesn't surface it); `undefined` there, not `null`. */
+  underlying_ltp?: number | null;
   calls_count: number;
   puts_count: number;
   calls: OptionsContractRow[];

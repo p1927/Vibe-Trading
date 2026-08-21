@@ -142,9 +142,16 @@ interface Props {
   source: IndiaOptionsSource;
   /** Underlying picked from the page-level India picker; ignored for `market === "us"`. */
   underlying?: string;
+  /** Fired with the real underlying spot once a chain successfully loads —
+   * lets the page align the payoff builder's entry_spot/strikes to the
+   * actual market instead of leaving them at whatever scale the previous
+   * market's defaults were (e.g. ~100 for a US preset vs ~24000 for NIFTY). */
+  onUnderlyingLtp?: (spot: number) => void;
 }
 
-export function OptionsChainTable({ referenceSpot, market, source, underlying }: Props) {
+export function OptionsChainTable({
+  referenceSpot, market, source, underlying, onUnderlyingLtp,
+}: Props) {
   const { t } = useTranslation();
   const [tickerInput, setTickerInput] = useState(DEFAULT_TICKER);
   const [data, setData] = useState<OptionsChainData | null>(null);
@@ -169,6 +176,10 @@ export function OptionsChainTable({ referenceSpot, market, source, underlying }:
           return;
         }
         setData(res.data);
+        const ltp = res.data.underlying_ltp;
+        if (ltp !== null && ltp !== undefined && Number.isFinite(ltp) && ltp > 0) {
+          onUnderlyingLtp?.(ltp);
+        }
       } catch (e) {
         if (generation.current !== gen) return;
         setError(e instanceof Error ? e.message : t("options.chain.errorTitle"));
@@ -177,7 +188,7 @@ export function OptionsChainTable({ referenceSpot, market, source, underlying }:
         if (generation.current === gen) setLoading(false);
       }
     },
-    [t, market, source],
+    [t, market, source, onUnderlyingLtp],
   );
 
   // Re-fetch whenever the page-level market/source/underlying selection
