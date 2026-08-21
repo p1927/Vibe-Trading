@@ -428,9 +428,9 @@ Más allá del OHLCV, **22 herramientas de datos de solo lectura** alcanzan fund
 Los inventarios detallados se pliegan a continuación para mantener el README principal fácil de escanear. Ábrelos cuando quieras inspeccionar los bloques de construcción disponibles.
 
 <details>
-<summary><b>Biblioteca de Skills Financieras</b> <sub>90 skills en 9 categorías</sub></summary>
+<summary><b>Biblioteca de Skills Financieras</b> <sub>93 skills en 9 categorías</sub></summary>
 
-- 📊 90 skills financieras especializadas organizadas en 9 categorías
+- 📊 93 skills financieras especializadas organizadas en 9 categorías
 - 🌐 Cobertura completa desde mercados tradicionales hasta cripto y DeFi
 - 🔬 Capacidades integrales que abarcan desde el sourcing de datos hasta la investigación cuantitativa
 
@@ -498,7 +498,7 @@ clon (`pip install -e .`).
 </details>
 
 <details>
-<summary><b>Conectores de Broker</b> <sub>13 brokers — lectura + paper, live acotado donde esté soportado</sub></summary>
+<summary><b>Conectores de Broker</b> <sub>14 brokers — lectura + paper, live acotado donde esté soportado</sub></summary>
 
 Perfiles centrados en el conector. La mayoría hace lectura + colocación de órdenes en cuenta paper — IBKR es de solo lectura, Robinhood es solo live (sin cuenta paper), y Trading 212 rechaza la colocación de órdenes por completo, incluido el paper; la colocación de órdenes live está acotada por un mandato definido por el usuario (lista blanca de símbolos, límites de tamaño de orden / exposición, límite diario de operaciones, interruptor de apagado instantáneo) y nunca retiene fondos — el broker ejecuta. Las herramientas de colocación de órdenes se mantienen fuera de MCP (solo agente + CLI). Las rutas de investigación / backtest están estructuralmente vetadas de cualquier endpoint live.
 
@@ -513,6 +513,7 @@ Perfiles centrados en el conector. La mayoría hace lectura + colocación de ór
 | **eToro** | global | lectura + paper + live acotado (API pública; las claves demo solo alcanzan rutas `/demo`, además de flujos de copy-trading) |
 | **MetaTrader 5** | forex / CFD | lectura + paper + live acotado (estilo Exness; guardia de identidad demo ⇔ paper) |
 | **Longbridge** · **Dhan** · **Shoonya** | EE. UU. / HK · India (NSE/BSE) | solo lectura + paper — sin discriminador de runtime paper/live, por lo que la colocación de órdenes live se rechaza de forma estricta |
+| **OpenAlgo** | India (NSE/BSE) | lectura + paper + live acotado (discriminador de alternancia Analyze; datos de mercado de EE. UU. solo lectura) |
 | **Trading 212** | Reino Unido / UE | completamente de solo lectura — `place_order` / `cancel_order` se rechazan de forma estricta incluso en paper |
 
 Paper-vs-live es una **guardia de runtime estructural por broker** (formato de id de cuenta, separación de host, flag demo, o entorno de trading), nunca un flag de configuración que el agente pueda cambiar. Un broker que no exponga tal discriminador queda limitado a paper + solo lectura.
@@ -520,7 +521,7 @@ Paper-vs-live es una **guardia de runtime estructural por broker** (formato de i
 </details>
 
 <details>
-<summary><b>Equipos de Trading Preconfigurados</b> <sub>30 presets de swarm</sub></summary>
+<summary><b>Equipos de Trading Preconfigurados</b> <sub>31 presets de swarm</sub></summary>
 
 - 🏢 30 equipos de agentes listos para usar
 - ⚡ Flujos de trabajo financieros preconfigurados
@@ -1301,7 +1302,7 @@ Explora en ClawHub: [clawhub.ai/skills/vibe-trading](https://clawhub.ai/skills/v
 <details>
 <summary><b>OpenSpace — self-evolving skills</b></summary>
 
-Los 90 skills de finanzas están publicados en [open-space.cloud](https://open-space.cloud) y evolucionan de forma autónoma mediante el motor de auto-evolución de OpenSpace.
+Los 93 skills de finanzas están publicados en [open-space.cloud](https://open-space.cloud) y evolucionan de forma autónoma mediante el motor de auto-evolución de OpenSpace.
 
 Para usarlo con OpenSpace, añade ambos servidores MCP a la configuración de tu agente:
 
@@ -1323,7 +1324,7 @@ Para usarlo con OpenSpace, añade ambos servidores MCP a la configuración de tu
 }
 ```
 
-OpenSpace descubrirá automáticamente los 90 skills, habilitando auto-fix, auto-improve y compartición comunitaria. Busca skills de Vibe-Trading mediante `search_skills("finance backtest")` en cualquier agente conectado a OpenSpace.
+OpenSpace descubrirá automáticamente los 93 skills, habilitando auto-fix, auto-improve y compartición comunitaria. Busca skills de Vibe-Trading mediante `search_skills("finance backtest")` en cualquier agente conectado a OpenSpace.
 
 </details>
 
@@ -1656,7 +1657,7 @@ Vibe-Trading/
 │   │   ├── agent/                  # Núcleo del agente ReAct
 │   │   │   ├── loop.py             #   compresión de 5 capas + agrupación de herramientas de lectura/escritura
 │   │   │   ├── context.py          #   system prompt + auto-recuperación desde memoria persistente
-│   │   │   ├── skills.py           #   cargador de skills (90 incluidas + creadas por el usuario vía CRUD)
+│   │   │   ├── skills.py           #   cargador de skills (93 incluidas + creadas por el usuario vía CRUD)
 │   │   │   ├── tools.py            #   clase base de herramientas + registro
 │   │   │   ├── memory.py           #   estado ligero del workspace por ejecución
 │   │   │   ├── frontmatter.py      #   parser de frontmatter YAML compartido
@@ -1683,7 +1684,7 @@ Vibe-Trading/
 │   │   ├── api/                    # Módulos de rutas FastAPI
 │   │   │   └── alpha_routes.py     #   /alpha/list, /alpha/{id}, /alpha/bench, flujo SSE
 │   │   │
-│   │   ├── skills/                 # 90 skills financieras en 9 categorías (un SKILL.md cada una)
+│   │   ├── skills/                 # 93 skills financieras en 9 categorías (un SKILL.md cada una)
 │   │   ├── swarm/                  # Motor de ejecución de DAG swarm
 │   │   │   └── presets/            #   30 definiciones YAML de presets swarm
 │   │   ├── session/                # Chat multi-turno + búsqueda de sesiones FTS5

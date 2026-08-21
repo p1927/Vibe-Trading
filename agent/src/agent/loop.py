@@ -1193,28 +1193,7 @@ class AgentLoop:
                     notif_text = "\n".join(f"[bg:{n['task_id']}] {n['status']}: {n['result']}" for n in notifs)
                     messages.append({"role": "user", "content": f"<background-results>\n{notif_text}\n</background-results>\n\n<system>Continue processing with the background results above.</system>"})
 
-                # Estimate transcript size once; each compaction layer below
-                # escalates only when its own token threshold is crossed.
-                tokens = estimate_tokens(messages)
-
-                # Layer 1: microcompact — prune old tool results only under
-                # memory pressure, so short, low-pressure runs keep their full
-                # tool history available for the model to reference instead of
-                # having every result past the most recent few cleared.
-                if tokens > int(_token_threshold() * 0.5):
-                    _microcompact(messages)
-                    tokens = estimate_tokens(messages)
-
-                # Layer 2: context collapse (fold long text, zero API cost)
-                if tokens > int(_token_threshold() * 0.7):
-                    _context_collapse(messages)
-                    tokens = estimate_tokens(messages)
-
-                # Layer 3: auto_compact (token threshold exceeded)
-                _tok_threshold = _token_threshold()
-                if tokens > _tok_threshold:
-                    logger.info(f"Auto compact triggered: {tokens} tokens > {_tok_threshold}")
-                    self._auto_compact(messages, run_dir, trace, iteration=current_iter)
+                self._apply_context_pressure_management(messages, run_dir, trace, iteration=current_iter)
 
                 logger.info(f"ReAct iteration {iteration}/{self.max_iterations}")
 
@@ -2542,6 +2521,66 @@ class AgentLoop:
 
     # -- Context compression ---------------------------------------------------
 
+    def _apply_context_pressure_management(
+        self,
+        messages: list,
+        run_dir: Path,
+        trace: TraceWriter,
+        iteration: int = 0,
+    ) -> None:
+        """Run the three-layer compaction cascade, honoring ``self._compact_policy``.
+
+        Layers 1 (microcompact) and 2 (context collapse) always run — they
+        mutate messages in place at zero API cost and never lose information
+        outright. Layer 3 (auto_compact, an LLM summary) is the expensive,
+        lossy one: under ``COMPACT_POLICY_DEFER`` (an autonomous scheduler
+        turn mid-attempt) it's skipped unless the transcript has grown past
+        ``_compact_hard_cap()``, in which case it still runs once — an
+        "emergency compact" — so a deferred run can't grow unbounded.
+
+        Args:
+            messages: Message list (mutated in place by the layers below).
+            run_dir: Run directory, forwarded to ``_auto_compact``.
+            trace: TraceWriter, forwarded to ``_auto_compact``.
+            iteration: Current trace iteration.
+        """
+        tokens = estimate_tokens(messages)
+
+        # Layer 1: microcompact — prune old tool results only under memory
+        # pressure, so short, low-pressure runs keep their full tool history
+        # available for the model to reference instead of having every
+        # result past the most recent few cleared.
+        if tokens > int(_token_threshold() * 0.5):
+            _microcompact(messages)
+            tokens = estimate_tokens(messages)
+
+        # Layer 2: context collapse (fold long text, zero API cost)
+        if tokens > int(_token_threshold() * 0.7):
+            _context_collapse(messages)
+            tokens = estimate_tokens(messages)
+
+        # Layer 3: auto_compact (token threshold exceeded)
+        _tok_threshold = _token_threshold()
+        if tokens <= _tok_threshold:
+            return
+
+        if self._compact_policy == COMPACT_POLICY_DEFER:
+            hard_cap = _compact_hard_cap()
+            if tokens <= hard_cap:
+                logger.info(
+                    f"Auto compact deferred (scheduler turn): {tokens} tokens > "
+                    f"{_tok_threshold} but below hard cap {hard_cap}"
+                )
+                return
+            logger.info(
+                f"Emergency compact: deferred run exceeded hard cap "
+                f"({tokens} tokens > {hard_cap})"
+            )
+            self._emergency_compact_used = True
+
+        logger.info(f"Auto compact triggered: {tokens} tokens > {_tok_threshold}")
+        self._auto_compact(messages, run_dir, trace, iteration=iteration)
+
     def _auto_compact(
         self,
         messages: list,
@@ -2589,7 +2628,7 @@ class AgentLoop:
         for i in range(len(body) - 1, -1, -1):
             content = body[i].get("content", "")
             msg_tokens = (len(str(content)) // 4) + 10
-            if accumulated + msg_tokens > TAIL_TOKEN_BUDGET:
+            if accumulated + msg_tokens > self._tail_token_budget:
                 cut_idx = i + 1
                 break
             accumulated += msg_tokens

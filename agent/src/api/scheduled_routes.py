@@ -6,6 +6,7 @@ Mounted by ``agent/api_server.py`` via ``register_scheduled_routes(app, ...)``.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sys as _sys
 import time
