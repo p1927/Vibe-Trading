@@ -16,9 +16,13 @@ Routes (auth via the caller-supplied ``require_auth`` dependency):
   suggestions for one underlying (wraps the ``options_research`` pipeline)
 
 Both routes are thin HTTP wrappers around the existing agent tools
-(``OptionsPayoffTool`` / ``OptionsChainTool`` / ``IndiaOptionsChainTool``) so
-validation and math stay identical to the MCP surface — no formula is
-reimplemented here.
+(``OptionsPayoffTool`` / ``OptionsChainTool``) so validation and math stay
+identical to the MCP surface — no formula is reimplemented here. The
+``market="india_equity"`` branch and ``GET /options/research`` are fork-only
+additions that live in the ``india_options_routes.py`` sidecar (see
+``docs/FORK_CONVENTIONS.md``) — this file only carries the two additive query
+params, a one-line delegate call, and a one-line route registration call, so
+upstream syncs to this file stay low-conflict.
 
 ``POST /options/payoff`` returns the tool's envelope verbatim plus one additive
 top-level ``greeks`` object: portfolio Greeks at entry (sum of ``qty * greek``
@@ -46,16 +50,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
 from typing import Annotated, Any, Awaitable, Callable, Literal
 
 from fastapi import Depends, FastAPI, Query
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
+from src.api.india_options_routes import fetch_india_chain, register_india_options_routes
 from src.quantlib.options import bs_greeks
-from src.tools.india_options_chain_tool import IndiaOptionsChainTool
-from src.tools.india_options_research_tool import IndiaOptionsResearchTool
 from src.tools.options_chain_tool import OptionsChainTool
 from src.tools.options_payoff_tool import OptionsPayoffTool, _coerce_legs
 
@@ -245,20 +247,12 @@ def register_options_routes(
             )
 
         if market == "india_equity":
-            kwargs: dict[str, Any] = {"ticker": ticker}
-            if expiration is not None:
-                kwargs["expiry_date"] = datetime.fromtimestamp(
-                    expiration, tz=timezone.utc
-                ).strftime("%Y-%m-%d")
-            if source:
-                kwargs["source"] = source
-            tool: OptionsChainTool | IndiaOptionsChainTool = IndiaOptionsChainTool()
-        else:
-            kwargs = {"ticker": ticker}
-            if expiration is not None:
-                kwargs["expiration"] = expiration
-            tool = OptionsChainTool()
+            return await fetch_india_chain(ticker, expiration, source)
 
+        kwargs: dict[str, Any] = {"ticker": ticker}
+        if expiration is not None:
+            kwargs["expiration"] = expiration
+        tool = OptionsChainTool()
         try:
             raw = await asyncio.to_thread(tool.execute, **kwargs)
             envelope = json.loads(raw)
@@ -275,32 +269,8 @@ def register_options_routes(
         return envelope
 
     # -----------------------------------------------------------------------
-    # GET /options/research (India only — auto-ranked strategy suggestions)
+    # GET /options/research (India only — auto-ranked strategy suggestions;
+    # entirely fork-only, registered from the sidecar module)
     # -----------------------------------------------------------------------
 
-    @app.get("/options/research", dependencies=[Depends(require_auth)])
-    async def options_research(
-        ticker: str | None = Query(None, max_length=64),
-        expiry_date: str | None = Query(None, max_length=16),
-    ) -> Response:
-        """Wrap ``IndiaOptionsResearchTool`` (network I/O, run in a thread)."""
-        if ticker is None or not ticker.strip():
-            return JSONResponse(
-                status_code=400, content={"ok": False, "error": "ticker is required"}
-            )
-        kwargs: dict[str, Any] = {"ticker": ticker}
-        if expiry_date:
-            kwargs["expiry_date"] = expiry_date
-        tool = IndiaOptionsResearchTool()
-        try:
-            raw = await asyncio.to_thread(tool.execute, **kwargs)
-            envelope = json.loads(raw)
-        except Exception:  # noqa: BLE001 — never leak a stack frame to clients
-            logger.exception("options research tool call failed (ticker=%s)", ticker)
-            return JSONResponse(
-                status_code=502,
-                content={"ok": False, "error": "options research request failed"},
-            )
-        if not envelope.get("ok"):
-            return JSONResponse(status_code=502, content=envelope)
-        return envelope
+    register_india_options_routes(app, require_auth)

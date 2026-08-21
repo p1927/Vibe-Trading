@@ -1,0 +1,94 @@
+"""Fork-only India options routes/dispatch — sidecar for ``options_routes.py``.
+
+``options_routes.py`` is an upstream-owned file (inherited from
+``HKUDS/Vibe-Trading``'s Options Lab feature). Per this repo's fork
+conventions (``docs/FORK_CONVENTIONS.md``), fork-only behavior belongs in a
+file the fork owns, with at most a single import + call site left in the
+upstream file, so future upstream syncs to ``options_routes.py`` stay close
+to a fast-forward instead of conflicting with India-specific logic woven
+into its route bodies.
+
+Exposes:
+
+- ``fetch_india_chain(...)`` — the whole ``market="india_equity"`` branch of
+  ``GET /options/chain``, called with one line from ``options_chain()``.
+- ``register_india_options_routes(app, require_auth)`` — registers
+  ``GET /options/research`` (the ranked-strategies endpoint, entirely new
+  and fork-only), called once from ``register_options_routes()``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from datetime import datetime, timezone
+from typing import Any, Awaitable, Callable
+
+from fastapi import Depends, FastAPI, Query
+from fastapi.responses import JSONResponse, Response
+
+from src.tools.india_options_chain_tool import IndiaOptionsChainTool
+from src.tools.india_options_research_tool import IndiaOptionsResearchTool
+
+logger = logging.getLogger(__name__)
+
+AuthDep = Callable[..., Awaitable[Any] | Any]
+
+
+async def fetch_india_chain(
+    ticker: str, expiration: int | None, source: str | None
+) -> Response:
+    """Run ``IndiaOptionsChainTool`` and return its envelope as an HTTP
+    response — same error-surface contract as the US chain branch this
+    replaces in ``options_chain()``."""
+    kwargs: dict[str, Any] = {"ticker": ticker}
+    if expiration is not None:
+        kwargs["expiry_date"] = datetime.fromtimestamp(
+            expiration, tz=timezone.utc
+        ).strftime("%Y-%m-%d")
+    if source:
+        kwargs["source"] = source
+
+    try:
+        raw = await asyncio.to_thread(IndiaOptionsChainTool().execute, **kwargs)
+        envelope = json.loads(raw)
+    except Exception:  # noqa: BLE001 — never leak a stack frame to clients
+        logger.exception("india options chain tool call failed (ticker=%s)", ticker)
+        return JSONResponse(
+            status_code=502,
+            content={"ok": False, "error": "options chain request failed"},
+        )
+    if not envelope.get("ok"):
+        return JSONResponse(status_code=502, content=envelope)
+    return envelope
+
+
+def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
+    """Mount ``GET /options/research`` (India-only ranked strategy suggestions)."""
+
+    @app.get("/options/research", dependencies=[Depends(require_auth)])
+    async def options_research(
+        ticker: str | None = Query(None, max_length=64),
+        expiry_date: str | None = Query(None, max_length=16),
+    ) -> Response:
+        """Wrap ``IndiaOptionsResearchTool`` (network I/O, run in a thread)."""
+        if ticker is None or not ticker.strip():
+            return JSONResponse(
+                status_code=400, content={"ok": False, "error": "ticker is required"}
+            )
+        kwargs: dict[str, Any] = {"ticker": ticker}
+        if expiry_date:
+            kwargs["expiry_date"] = expiry_date
+        try:
+            raw = await asyncio.to_thread(IndiaOptionsResearchTool().execute, **kwargs)
+            envelope = json.loads(raw)
+        except Exception:  # noqa: BLE001 — never leak a stack frame to clients
+            logger.exception("options research tool call failed (ticker=%s)", ticker)
+            return JSONResponse(
+                status_code=502,
+                content={"ok": False, "error": "options research request failed"},
+            )
+        if not envelope.get("ok"):
+            return JSONResponse(status_code=502, content=envelope)
+        return envelope
