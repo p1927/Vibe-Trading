@@ -6,13 +6,12 @@ import asyncio
 import json
 import logging
 import os
-import sys
 import time
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.trade.hub_bridge import ensure_trade_stack_path
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +69,7 @@ def is_options_monitor_active() -> bool:
 
 
 def _ensure_trade_integrations_on_path() -> None:
-    trade_root = Path(__file__).resolve().parents[4]
-    integrations = trade_root / "integrations"
-    if integrations.is_dir() and str(integrations) not in sys.path:
-        sys.path.insert(0, str(integrations))
+    ensure_trade_stack_path()
 
 
 def _parse_as_of(value: Any) -> datetime | None:

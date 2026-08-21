@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
+from src.trade.hub_bridge import ensure_trade_stack_path
+
 watch_router = APIRouter(prefix="/watches", tags=["watches"])
 
-_TRADE_ROOT = Path(__file__).resolve().parents[4]
-_INTEGRATIONS = _TRADE_ROOT / "integrations"
-if _INTEGRATIONS.is_dir() and str(_INTEGRATIONS) not in sys.path:
-    sys.path.insert(0, str(_INTEGRATIONS))
+try:
+    ensure_trade_stack_path()
+except Exception:
+    pass
 
 
 class CreateWatchRequest(BaseModel):

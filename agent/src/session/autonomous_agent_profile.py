@@ -41,13 +41,9 @@ def filter_registry_for_autonomous_agent(
     if not is_autonomous_agent_session(session_config):
         return registry
     try:
-        import sys
-        from pathlib import Path
+        from src.trade.hub_bridge import ensure_trade_stack_path
 
-        trade_root = Path(__file__).resolve().parents[4]
-        integrations = trade_root / "integrations"
-        if integrations.is_dir() and str(integrations) not in sys.path:
-            sys.path.insert(0, str(integrations))
+        ensure_trade_stack_path()
         from trade_integrations.autonomous_agents.intent_capabilities import (
             is_tool_allowed_for_capabilities,
             resolve_capabilities,

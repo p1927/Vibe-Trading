@@ -50,13 +50,9 @@ def needs_bootstrap_finalize_guard(
         return False
 
     try:
-        import sys
-        from pathlib import Path
+        from src.trade.hub_bridge import ensure_trade_stack_path
 
-        trade_root = Path(__file__).resolve().parents[4]
-        integrations = trade_root / "integrations"
-        if integrations.is_dir() and str(integrations) not in sys.path:
-            sys.path.insert(0, str(integrations))
+        ensure_trade_stack_path()
         from trade_integrations.autonomous_agents.bootstrap import bootstrap_finalize_prerequisites_met
         from trade_integrations.autonomous_agents.store import get_agent
         from trade_integrations.execution.profile import resolve_profile
@@ -95,13 +91,9 @@ async def maybe_retry_bootstrap_widget(
 
     agent_id = str((session_config or {}).get("autonomous_agent_id") or "").strip()
     try:
-        import sys
-        from pathlib import Path
+        from src.trade.hub_bridge import ensure_trade_stack_path
 
-        trade_root = Path(__file__).resolve().parents[4]
-        integrations = trade_root / "integrations"
-        if integrations.is_dir() and str(integrations) not in sys.path:
-            sys.path.insert(0, str(integrations))
+        ensure_trade_stack_path()
         from trade_integrations.autonomous_agents.store import get_agent
     except Exception:
         return False

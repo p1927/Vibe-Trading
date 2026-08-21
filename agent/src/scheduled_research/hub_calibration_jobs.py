@@ -5,13 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
 import time
-from pathlib import Path
 from typing import Any
 
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
 from src.scheduled_research.store import ScheduledResearchJobStore
+from src.trade.hub_bridge import ensure_trade_stack_path
 
 logger = logging.getLogger(__name__)
 
@@ -54,10 +53,7 @@ def is_hub_calibration_scheduler_enabled(value: str | None = None) -> bool:
 
 
 def _ensure_trade_integrations_on_path() -> None:
-    trade_root = Path(__file__).resolve().parents[4]
-    integrations = trade_root / "integrations"
-    if integrations.is_dir() and str(integrations) not in sys.path:
-        sys.path.insert(0, str(integrations))
+    ensure_trade_stack_path()
 
 
 def run_hub_morning_calibration_job(config: dict[str, Any] | None = None) -> dict[str, Any]:

@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-import sys
 from datetime import datetime, timezone
-from pathlib import Path
 
 from src.api.async_bridge import schedule_coroutine
+from src.trade.hub_bridge import ensure_trade_stack_path
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +15,7 @@ _STALE_RUNNING_BOOTSTRAP_MAX_AGE_S = 600.0
 
 
 def _ensure_integrations_on_path() -> None:
-    trade_root = Path(__file__).resolve().parents[3]
-    integrations = trade_root / "integrations"
-    if integrations.is_dir() and str(integrations) not in sys.path:
-        sys.path.insert(0, str(integrations))
+    ensure_trade_stack_path()
 
 
 def schedule_agent_bootstrap(agent_id: str) -> bool:

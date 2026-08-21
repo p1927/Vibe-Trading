@@ -53,13 +53,9 @@ def _job_display_label(job: ScheduledResearchJob) -> str:
 
 def _entity_backpressure_threshold() -> int:
     try:
-        import sys
-        from pathlib import Path
+        from src.trade.hub_bridge import ensure_trade_stack_path
 
-        trade_root = Path(__file__).resolve().parents[4]
-        integrations = trade_root / "integrations"
-        if integrations.is_dir() and str(integrations) not in sys.path:
-            sys.path.insert(0, str(integrations))
+        ensure_trade_stack_path()
         from trade_integrations.dataflows.news_hub_bridge import entity_backpressure_threshold
 
         return entity_backpressure_threshold()
@@ -69,13 +65,9 @@ def _entity_backpressure_threshold() -> int:
 
 def _hub_news_pipeline_health() -> dict[str, Any]:
     try:
-        import sys
-        from pathlib import Path
+        from src.trade.hub_bridge import ensure_trade_stack_path
 
-        trade_root = Path(__file__).resolve().parents[4]
-        integrations = trade_root / "integrations"
-        if integrations.is_dir() and str(integrations) not in sys.path:
-            sys.path.insert(0, str(integrations))
+        ensure_trade_stack_path()
         from trade_integrations.dataflows.news_hub_bridge import (
             distillation_queue_stats as pipeline_pause_status,
         )

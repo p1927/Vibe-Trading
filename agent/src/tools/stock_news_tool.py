@@ -30,21 +30,20 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from backtest.loaders import eastmoney_client, yahoo_client
 
 from src.agent.tools import BaseTool
+from src.trade.hub_bridge import ensure_trade_stack_path
 
 logger = logging.getLogger(__name__)
 
-_TRADE_ROOT = Path(__file__).resolve().parents[4]
-_INTEGRATIONS = _TRADE_ROOT / "integrations"
-if _INTEGRATIONS.is_dir() and str(_INTEGRATIONS) not in sys.path:
-    sys.path.insert(0, str(_INTEGRATIONS))
+try:
+    ensure_trade_stack_path()
+except Exception:
+    pass
 
 # Synthetic hub ticker for broad China-market ("global" scope) headlines —
 # mirrors how India global news is bucketed under the "NIFTY" ticker.

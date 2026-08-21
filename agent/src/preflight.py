@@ -211,13 +211,9 @@ def _check_okx() -> CheckResult:
 def _check_yfinance() -> CheckResult:
     """Check yfinance availability."""
     try:
-        import sys
-        from pathlib import Path
+        from src.trade.hub_bridge import ensure_trade_stack_path
 
-        repo_root = Path(__file__).resolve().parents[3]
-        integrations = repo_root / "integrations"
-        if integrations.is_dir() and str(integrations) not in sys.path:
-            sys.path.insert(0, str(integrations))
+        ensure_trade_stack_path()
         from trade_integrations.ml_runtime_env import prepare_yfinance_runtime
 
         prepare_yfinance_runtime()
@@ -315,13 +311,9 @@ def _check_ccxt() -> CheckResult:
 def _check_prediction_ml() -> CheckResult:
     """Verify forecast-lab ML runtime (libomp + lightgbm/xgboost/darts)."""
     try:
-        import sys
-        from pathlib import Path
+        from src.trade.hub_bridge import ensure_trade_stack_path
 
-        repo_root = Path(__file__).resolve().parents[3]
-        integrations = repo_root / "integrations"
-        if integrations.is_dir() and str(integrations) not in sys.path:
-            sys.path.insert(0, str(integrations))
+        ensure_trade_stack_path()
         from trade_integrations.ml_runtime_env import verify_prediction_ml
 
         ok, message = verify_prediction_ml()

@@ -4,22 +4,22 @@ from __future__ import annotations
 
 import logging
 import sys
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from src.api.security import require_local_or_auth
+from src.trade.hub_bridge import ensure_trade_stack_path
 
 logger = logging.getLogger(__name__)
 
 autonomous_router = APIRouter(prefix="/autonomous-agents", tags=["autonomous-agents"])
 
-_TRADE_ROOT = Path(__file__).resolve().parents[4]
-_INTEGRATIONS = _TRADE_ROOT / "integrations"
-if _INTEGRATIONS.is_dir() and str(_INTEGRATIONS) not in sys.path:
-    sys.path.insert(0, str(_INTEGRATIONS))
+try:
+    ensure_trade_stack_path()
+except Exception:
+    pass
 
 
 def _session_service():
