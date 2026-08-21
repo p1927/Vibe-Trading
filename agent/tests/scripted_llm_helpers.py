@@ -15,8 +15,10 @@ are unaffected; this is for new tests that want a plain scripted sequence.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Callable
 
+from src.agent.tools import BaseTool
 from src.providers.chat import LLMResponse, ToolCallRequest
 
 
@@ -82,3 +84,47 @@ class ScriptedChatLLM:
     @property
     def call_count(self) -> int:
         return len(self.calls)
+
+
+class FakeSearchSymbolTool(BaseTool):
+    """Fake ``search_symbol`` resolver — registers a canonical identity lock.
+
+    ``AgentLoop``'s ``GroundingLedger`` (``src/agent/grounding.py``) requires
+    ANY market-actionable tool call whose arguments carry a symbol (order
+    tools included) to consume a symbol already "locked" by a prior
+    ``search_symbol`` call in an *earlier* turn of the same run — a resolver
+    result from the same batch as the consuming call doesn't count. Skip this
+    step in a full-``AgentLoop`` test and every write-tool call (including
+    ``LiveOrderGuardTool``'s) is blocked by ``identity_required`` before it
+    ever reaches the tool's own ``execute()`` — which makes an assertion like
+    "the adapter was never called" trivially true regardless of what the tool
+    under test would have done, silently proving nothing.
+
+    Script a ``llm_tool_call("search_symbol", {"query": <symbol>})`` turn
+    before the tool call you actually want to test; this fake resolves it to
+    a single unambiguous candidate for that exact symbol so the identity gate
+    locks and the next turn's tool call is actually dispatched.
+    """
+
+    name = "search_symbol"
+    description = "Resolve a query to a canonical tradable instrument."
+    parameters = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+    }
+    repeatable = True
+
+    def execute(self, **kwargs: Any) -> str:
+        query = str(kwargs.get("query") or "")
+        return json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "query": query,
+                    "candidates": [
+                        {"symbol": query, "source": "test_resolver", "exchange": "NASDAQ"}
+                    ],
+                },
+            }
+        )

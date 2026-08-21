@@ -261,6 +261,7 @@ pythonpath = ["agent"]
 markers = [
     "unit: Unit tests (fast, no network)",
     "integration: Integration tests (may need network)",
+    "runtime_dst: Hypothesis DST-lite property/state-machine tests over src/live/runtime/",
 ]
 
 [tool.ruff]
