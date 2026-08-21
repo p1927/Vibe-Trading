@@ -1,10 +1,11 @@
-"""Tencent Finance loader: free, no-auth A-share data via HTTP API.
+"""Tencent Finance loader: free, no-auth A-share / HK data via HTTP API.
 
 Uses Tencent's ifzq.gtimg.cn API which is not blocked by eastmoney's CDN.
-Covers: A-shares (SH/SZ).  No API token required.
+Covers: A-shares (SH/SZ) and HK equities.  No API token required.
 
 API format:
   https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh601595,day,2026-06-01,2026-06-13,500,qfq
+  https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=hk00700,day,2026-06-01,2026-06-13,500,qfq
 """
 
 from __future__ import annotations
@@ -12,7 +13,10 @@ from __future__ import annotations
 import json
 import logging
 from typing import Dict, List, Optional
+import ssl
+import urllib.request
 
+import certifi
 import pandas as pd
 
 from backtest.loaders.base import cached_loader_fetch, validate_date_range
@@ -22,17 +26,27 @@ logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 
+_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 def _is_a_share(code: str) -> bool:
     return code.upper().endswith((".SZ", ".SH"))
 
 
+def _is_hk_equity(code: str) -> bool:
+    return code.upper().endswith(".HK")
+
+
 @register
 class DataLoader:
-    """Tencent Finance A-share OHLCV loader (free, HTTP, no auth)."""
+    """Tencent Finance A-share / HK OHLCV loader (free, HTTP, no auth)."""
 
     name = "tencent"
-    markets = {"a_share"}
+    markets = {"a_share", "hk_equity"}
+    # Volume unit is market-dependent (HKUDS/Vibe-Trading#1062): the A-share
+    # endpoint reports board lots (1 lot = 100 shares) while the HK endpoint
+    # reports single shares. Empirically verified 2026-08-11 against
+    # 600519.SH (55,128 lots) and 00700.HK (31,100,240 shares).
+    volume_units = {"a_share": "lots", "hk_equity": "shares"}
     requires_auth = False
 
     def is_available(self) -> bool:
@@ -82,7 +96,7 @@ class DataLoader:
     def _fetch_one(
         self, code: str, start_date: str, end_date: str,
     ) -> Optional[pd.DataFrame]:
-        if not _is_a_share(code):
+        if not _is_a_share(code) and not _is_hk_equity(code):
             return None
 
         parts = code.upper().split(".")
@@ -93,6 +107,9 @@ class DataLoader:
             tencent_code = f"sh{symbol}"
         elif suffix == "SZ":
             tencent_code = f"sz{symbol}"
+        elif suffix == "HK":
+            # Tencent expects a zero-padded 5-digit HK code (hk00700).
+            tencent_code = f"hk{symbol.zfill(5)}"
         else:
             return None
 
@@ -101,12 +118,11 @@ class DataLoader:
             f"{start_date},{end_date},500,qfq"
         )
 
-        import urllib.request
         req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Referer": "https://web.ifzq.gtimg.cn/",
         })
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=15, context=_SSL_CONTEXT) as resp:
             raw = resp.read().decode("utf-8")
 
         data = json.loads(raw)

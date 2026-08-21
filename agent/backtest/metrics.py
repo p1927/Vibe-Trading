@@ -5,12 +5,13 @@ Provides annualisation helpers, trade statistics, and full metric calculation.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
-from backtest.models import TradeRecord
+from backtest.models import FillRecord, TradeRecord
 
 # ─── Annualisation factor mapping ───
 
@@ -19,32 +20,247 @@ from backtest.models import TradeRecord
 # sessions are marginally longer (~330 min) — an approximation in line with the
 # rest of this annualisation table; the key fix is that intraday mootdx/futu no
 # longer fall back to the bars_per_day=1 default, which mis-annualised vol/Sharpe.
-_TRADING_DAYS = {"tushare": 252, "yfinance": 252, "okx": 365, "akshare": 252, "ccxt": 365, "mootdx": 252, "futu": 252, "mt5": 260}
-# mt5 is a forex/CFD feed: 24x5 sessions → 260 trading days, 24h intraday bars.
-_BARS_PER_DAY = {
-    "1m":  {"tushare": 240, "okx": 1440, "yfinance": 390, "akshare": 240, "ccxt": 1440, "mootdx": 240, "futu": 240, "mt5": 1440},
-    "5m":  {"tushare": 48,  "okx": 288,  "yfinance": 78,  "akshare": 48,  "ccxt": 288,  "mootdx": 48,  "futu": 48,  "mt5": 288},
-    "15m": {"tushare": 16,  "okx": 96,   "yfinance": 26,  "akshare": 16,  "ccxt": 96,   "mootdx": 16,  "futu": 16,  "mt5": 96},
-    "30m": {"tushare": 8,   "okx": 48,   "yfinance": 13,  "akshare": 8,   "ccxt": 48,   "mootdx": 8,   "futu": 8,   "mt5": 48},
-    "1H":  {"tushare": 4,   "okx": 24,   "yfinance": 7,   "akshare": 4,   "ccxt": 24,   "mootdx": 4,   "futu": 4,   "mt5": 24},
-    "4H":  {"tushare": 1,   "okx": 6,    "yfinance": 2,   "akshare": 1,   "ccxt": 6,    "mootdx": 1,   "futu": 1,   "mt5": 6},
-    "1D":  {"tushare": 1,   "okx": 1,    "yfinance": 1,   "akshare": 1,   "ccxt": 1,    "mootdx": 1,   "futu": 1,   "mt5": 1},
+_TRADING_DAYS = {
+    # existing
+    "tushare": 252, "yfinance": 252, "okx": 365, "akshare": 252, "ccxt": 365,
+    "mootdx": 252, "futu": 252, "mt5": 260,
+    # tickerall serves the same broker forex/CFD feed as mt5 (hosted, no local
+    # terminal), so it mirrors mt5's 24x5 annualisation everywhere in this table.
+    "tickerall": 260,
+    # crypto
+    "binance": 365,
+    # A-share equity
+    "baostock": 252, "tencent": 252, "eastmoney": 252, "sina": 252,
+    # US / international equity
+    "yahoo": 252, "finnhub": 252, "alphavantage": 252, "tiingo": 252,
+    "fmp": 252, "stooq": 252, "longbridge": 252,
+    # resampling sources (local files / paid data — interval depends on source
+    # data granularity; model as US equity session as a conservative default)
+    "local": 252, "qveris": 252,
+    # Indian equity
+    "india_broker": 252,
+    # Korean equity (KRX)
+    "pykrx": 252,
 }
+# mt5 is a forex/CFD feed: 24x5 sessions → 260 trading days, 24h intraday bars.
+# US equity (yfinance-style): 6.5h sessions → 390 1m bars/day.
+# A-share equity (tushare-style): 4.0h sessions → 240 1m bars/day.
+# Crypto (okx/ccxt-style): 24h sessions → 1440 1m bars/day.
+# Indian equity: 6.25h sessions → 375 1m bars/day.
+# Korean equity (pykrx): 6.5h sessions → 390 1m bars/day. The loader itself
+# serves daily bars only, so the intraday rows exist to keep the table complete
+# (and correct if KRX intraday ever arrives under this key), not because pykrx
+# can return them.
+_BARS_PER_DAY = {
+    #  --- US/international equity (6.5h session) ---
+    "1m":  {"yfinance": 390, "yahoo": 390, "finnhub": 390, "alphavantage": 390,
+            "tiingo": 390, "fmp": 390, "stooq": 390, "longbridge": 390,
+            "local": 390, "qveris": 390,
+            # A-share equity (4.0h session)
+            "tushare": 240, "akshare": 240, "baostock": 240, "tencent": 240,
+            "eastmoney": 240, "sina": 240, "mootdx": 240, "futu": 240,
+            # crypto (24h)
+            "okx": 1440, "ccxt": 1440, "binance": 1440,
+            # forex/CFD (24h intraday)
+            "mt5": 1440, "tickerall": 1440,
+            # Indian equity (6.25h session)
+            "india_broker": 375,
+            # Korean equity (6.5h session, 09:00-15:30 KST)
+            "pykrx": 390,
+            },
+    "5m":  {"yfinance": 78,  "yahoo": 78,  "finnhub": 78,  "alphavantage": 78,
+            "tiingo": 78,  "fmp": 78,  "stooq": 78,  "longbridge": 78,
+            "local": 78, "qveris": 78,
+            "tushare": 48,  "akshare": 48,  "baostock": 48,  "tencent": 48,
+            "eastmoney": 48,  "sina": 48,  "mootdx": 48,  "futu": 48,
+            "okx": 288,  "ccxt": 288,  "binance": 288,
+            "mt5": 288, "tickerall": 288,
+            "india_broker": 75,
+            "pykrx": 78,
+            },
+    "15m": {"yfinance": 26,  "yahoo": 26,  "finnhub": 26,  "alphavantage": 26,
+            "tiingo": 26,  "fmp": 26,  "stooq": 26,  "longbridge": 26,
+            "local": 26, "qveris": 26,
+            "tushare": 16,  "akshare": 16,  "baostock": 16,  "tencent": 16,
+            "eastmoney": 16,  "sina": 16,  "mootdx": 16,  "futu": 16,
+            "okx": 96,   "ccxt": 96,   "binance": 96,
+            "mt5": 96, "tickerall": 96,
+            "india_broker": 25,
+            "pykrx": 26,
+            },
+    "30m": {"yfinance": 13,  "yahoo": 13,  "finnhub": 13,  "alphavantage": 13,
+            "tiingo": 13,  "fmp": 13,  "stooq": 13,  "longbridge": 13,
+            "local": 13, "qveris": 13,
+            "tushare": 8,   "akshare": 8,   "baostock": 8,   "tencent": 8,
+            "eastmoney": 8,   "sina": 8,   "mootdx": 8,   "futu": 8,
+            "okx": 48,   "ccxt": 48,   "binance": 48,
+            "mt5": 48, "tickerall": 48,
+            "india_broker": 13,
+            "pykrx": 13,
+            },
+    "1H":  {"yfinance": 7,   "yahoo": 7,   "finnhub": 7,   "alphavantage": 7,
+            "tiingo": 7,   "fmp": 7,   "stooq": 7,   "longbridge": 7,
+            "local": 7, "qveris": 7,
+            "tushare": 4,   "akshare": 4,   "baostock": 4,   "tencent": 4,
+            "eastmoney": 4,   "sina": 4,   "mootdx": 4,   "futu": 4,
+            "okx": 24,   "ccxt": 24,   "binance": 24,
+            "mt5": 24, "tickerall": 24,
+            "india_broker": 7,
+            "pykrx": 7,
+            },
+    "4H":  {"yfinance": 2,   "yahoo": 2,   "finnhub": 2,   "alphavantage": 2,
+            "tiingo": 2,   "fmp": 2,   "stooq": 2,   "longbridge": 2,
+            "local": 2, "qveris": 2,
+            "tushare": 1,   "akshare": 1,   "baostock": 1,   "tencent": 1,
+            "eastmoney": 1,   "sina": 1,   "mootdx": 1,   "futu": 1,
+            "okx": 6,    "ccxt": 6,    "binance": 6,
+            "mt5": 6, "tickerall": 6,
+            "india_broker": 2,
+            "pykrx": 2,
+            },
+    "1D":  {"yfinance": 1,   "yahoo": 1,   "finnhub": 1,   "alphavantage": 1,
+            "tiingo": 1,   "fmp": 1,   "stooq": 1,   "longbridge": 1,
+            "local": 1, "qveris": 1,
+            "tushare": 1,   "akshare": 1,   "baostock": 1,   "tencent": 1,
+            "eastmoney": 1,   "sina": 1,   "mootdx": 1,   "futu": 1,
+            "okx": 1,    "ccxt": 1,    "binance": 1,
+            "mt5": 1, "tickerall": 1,
+            "india_broker": 1,
+            "pykrx": 1,
+            },
+}
+
+# Runner/loaders also emit these aliases; map them onto the table keys above.
+_SOURCE_ALIASES = {"yahoo": "yfinance", "binance": "ccxt"}
+
+
+def _normalize_interval(interval: str) -> str:
+    """Map project interval tokens onto ``_BARS_PER_DAY`` keys.
+
+    Minute bars stay lowercase (``1m``); hour/day use the uppercase keys the
+    table already stores (``1H`` / ``4H`` / ``1D``). Loaders accept both cases
+    after the interval-map fixes; annualisation must too.
+    """
+    token = str(interval or "1D").strip()
+    lower = token.lower()
+    if lower in ("1m", "5m", "15m", "30m"):
+        return lower
+    if lower in ("1h", "4h", "1d"):
+        return lower.upper()
+    return token
 
 
 def calc_bars_per_year(interval: str = "1D", source: str = "tushare") -> int:
     """Number of bars per year for annualisation.
 
     Args:
-        interval: Bar size (1m / 5m / 15m / 30m / 1H / 4H / 1D).
-        source: Data source (tushare / yfinance / okx).
+        interval: Bar size (1m / 5m / 15m / 30m / 1H / 4H / 1D), case-insensitive
+            like loaders accept (``1h`` → ``1H``, ``4h`` → ``4H``, ``1d`` → ``1D``).
+        source: Data source (any VALID_SOURCES entry). Defaults to 252 days, 1 bar/day
+            when source is missing from the table.
 
     Returns:
         Bars per year.
     """
-    trading_days = _TRADING_DAYS.get(source, 252)
-    bars_per_day = _BARS_PER_DAY.get(interval, {}).get(source, 1)
+    interval_key = _normalize_interval(interval)
+    source_key = str(source or "").strip().lower()
+    source_key = _SOURCE_ALIASES.get(source_key, source_key)
+    trading_days = _TRADING_DAYS.get(source_key, 252)
+    bars_per_day = _BARS_PER_DAY.get(interval_key, {}).get(source_key, 1)
     return trading_days * bars_per_day
+
+
+# ─── Sign-safe returns ───
+
+_log = logging.getLogger(__name__)
+
+
+def bar_returns(close: Any, *, label: str = "") -> Any:
+    """Per-bar simple returns, defined only where the prior price is positive.
+
+    ``close.pct_change()`` silently assumes ``price[t-1] > 0``. That holds for
+    equities but not for instruments that can print zero or negative prices,
+    such as European day-ahead power. As the divisor approaches zero an
+    ordinary absolute move reads as an enormous *percentage* move, so a
+    compounded aggregate explodes; at exactly zero the next bar is ``inf``,
+    which ``fillna`` does not neutralise (it fills ``NaN``) and which collapses
+    ``(1 + r).prod()`` to ``nan`` (#872).
+
+    A return is therefore defined only when the previous price is finite and
+    strictly positive. Otherwise it is undefined and reported as ``0.0``,
+    never ``inf`` or ``nan``. For an all-positive series this is identical to
+    ``pct_change().fillna(0.0)``, so ordinary equity/crypto runs are unchanged.
+
+    The prior price is carried forward across gaps. ``pct_change`` did this
+    implicitly via ``fill_method='pad'`` — its default on pandas < 3, removed
+    in 3.0 — so *not* forwarding it would silently change every gapped series
+    (a halt longer than ``_align``'s ``ffill_limit``, a thinly-traded symbol)
+    and would make the bit-identity claim above false on the pinned pandas.
+    Doing it here explicitly keeps that promise and, unlike the old default,
+    gives the same answer on every supported pandas version. Note the effect
+    is to attribute the whole across-gap move to the resumed bar; that is what
+    a position held through the halt actually earned. Whether that is the right
+    convention for *statistics* (it is not, for correlation — see
+    ``correlation.py``, which drops the observation instead) is a separate
+    question from whether this function may change it as a side effect.
+
+    Args:
+        close: Raw price ``Series`` or per-symbol ``DataFrame``.
+        label: Optional name used when warning about undefined bars.
+
+    Returns:
+        Returns aligned to ``close``, with the first bar ``0.0``.
+    """
+    # ffill *then* shift: the divisor is the last known price, not NaN.
+    prev = close.ffill().shift(1)
+    # ``inf > 0`` is True, so finiteness has to be asserted, not assumed.
+    usable_prev = np.isfinite(prev) & (prev > 0)
+    positive_prev = prev.where(usable_prev)
+
+    undefined = int((prev.notna() & ~usable_prev).to_numpy().sum())
+    if undefined:
+        # Silence is the actual hazard here: a wrong return is a wrong reported
+        # number, not a crash, so the run has to say it defaulted.
+        _log.warning(
+            "%s: %d bar(s) follow a non-positive or non-finite prior price; "
+            "their return is undefined and reported as 0.0 (issue #872)",
+            label or "returns",
+            undefined,
+        )
+
+    # ``close / prev - 1`` is exactly the expression ``pct_change`` uses, kept
+    # verbatim so results for positive series are bit-identical, not merely
+    # equal to within floating-point error.
+    ret = close / positive_prev - 1
+    return ret.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+
+def buy_and_hold_return(close: Any) -> Optional[float]:
+    """Total buy-and-hold return as a price relative, not a compounded product.
+
+    ``(1 + close.pct_change()).prod() - 1`` telescopes to ``P_end / P_start - 1``
+    only while every price is positive; once a near-zero price enters the
+    series the product diverges from what a held position actually earned. On
+    the reproduction in #872 it reported ``+39,560%`` where the price relative
+    gives ``-42.7%``. This computes the price relative directly, so the two
+    agree exactly for ordinary series and it stays honest for the rest.
+
+    Args:
+        close: Raw price series, already ``dropna()``-ed.
+
+    Returns:
+        Total return, or ``None`` when the entry price is not strictly
+        positive and no honest percentage exists.
+    """
+    if len(close) < 2:
+        return None
+    first = float(close.iloc[0])
+    last = float(close.iloc[-1])
+    # ``inf > 0`` is True, so an infinite entry price would otherwise yield a
+    # clean-looking -100% instead of "no honest percentage exists".
+    if not (np.isfinite(first) and first > 0) or not np.isfinite(last):
+        return None
+    return last / first - 1.0
 
 
 def win_rate_and_stats(trades: List[TradeRecord]) -> Dict[str, float]:
@@ -217,6 +433,31 @@ def calc_trade_turnover_series(
     return (traded_margin / denominator).replace([np.inf, -np.inf], np.nan).fillna(0.0)
 
 
+def calc_fill_turnover_series(
+    fills: List[FillRecord],
+    equity_curve: pd.Series,
+) -> pd.Series:
+    """Per-bar turnover from immutable execution-fill evidence."""
+    if equity_curve is None or equity_curve.empty:
+        return pd.Series(dtype=float)
+
+    traded_margin = pd.Series(0.0, index=equity_curve.index, dtype=float)
+    for fill in fills:
+        try:
+            margin_value = float(fill.margin)
+        except (TypeError, ValueError):
+            continue
+        if (
+            fill.timestamp in traded_margin.index
+            and np.isfinite(margin_value)
+            and margin_value > 0
+        ):
+            traded_margin.loc[fill.timestamp] += margin_value
+
+    denominator = 2.0 * equity_curve.abs().replace(0.0, np.nan)
+    return (traded_margin / denominator).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+
 def calc_metrics(
     equity_curve: pd.Series,
     trades: List[TradeRecord],
@@ -251,7 +492,8 @@ def calc_metrics(
     # Calendar-day annualization for cross-market (bars_per_year=None)
     if bars_per_year is None:
         first, last = equity_curve.index[0], equity_curve.index[-1]
-        calendar_days = (last - first).days
+        diff = last - first
+        calendar_days = diff.days if hasattr(diff, "days") else 0
         years = calendar_days / 365.25 if calendar_days > 0 else 1.0
         bpy = int(n / years) if years > 0 else 252
     else:
@@ -292,7 +534,11 @@ def calc_metrics(
         sharpe = 0.0
 
     # Drawdown
-    peak = equity_curve.cummax()
+    # The account starts at ``initial_cash`` before the first recorded bar, so
+    # that value is the initial high-water mark.  Using only observed equity
+    # understates a first-bar loss and makes drawdown nonsensical after equity
+    # crosses zero.
+    peak = equity_curve.cummax().clip(lower=float(initial_cash))
     dd = (equity_curve - peak) / peak.replace(0, 1)
     max_dd = float(dd.min())
 
@@ -326,10 +572,13 @@ def calc_metrics(
     bench_return = 0.0
     excess = 0.0
     ir = 0.0
+    tracking_error = 0.0
+    bench_beta = 0.0
     if bench_ret is not None and len(bench_ret) > 0:
         bench_return = float((1 + bench_ret).prod() - 1)
         excess = total_ret - bench_return
-        active_ret = port_ret - bench_ret.reindex(port_ret.index).fillna(0.0)
+        aligned_bench = bench_ret.reindex(port_ret.index).fillna(0.0)
+        active_ret = port_ret - aligned_bench
         # Same ddof=1 small-sample guard as ``vol`` / ``downside_std`` so the
         # information ratio stays finite for a single-observation series.
         active_std = float(active_ret.std()) if len(active_ret) > 1 and returns_finite else 0.0
@@ -340,6 +589,18 @@ def calc_metrics(
         )
         if not np.isfinite(ir):
             ir = 0.0
+        # The information ratio's own denominator, annualised. A
+        # benchmark-relative mandate is written around this number, and it was
+        # being computed and thrown away.
+        tracking_error = active_std * np.sqrt(bpy) if returns_finite else 0.0
+        if not np.isfinite(tracking_error):
+            tracking_error = 0.0
+        bench_var = float(aligned_bench.var()) if len(aligned_bench) > 1 else 0.0
+        if returns_finite and bench_var > 0:
+            covariance = float(port_ret.cov(aligned_bench))
+            bench_beta = covariance / bench_var
+            if not np.isfinite(bench_beta):
+                bench_beta = 0.0
 
     return {
         "final_value": float(equity_curve.iloc[-1]),
@@ -358,6 +619,8 @@ def calc_metrics(
         "benchmark_return": round(bench_return, 6),
         "excess_return": round(excess, 6),
         "information_ratio": round(ir, 4),
+        "tracking_error": round(float(tracking_error), 6),
+        "benchmark_beta": round(float(bench_beta), 4),
         "avg_turnover": round(avg_turnover, 6),
         "total_turnover": round(total_turnover, 6),
     }
@@ -372,5 +635,6 @@ def _empty_metrics(initial_cash: float) -> Dict[str, Any]:
         "win_rate": 0, "profit_loss_ratio": 0, "profit_factor": 0,
         "max_consecutive_loss": 0, "avg_holding_days": 0, "trade_count": 0,
         "benchmark_return": 0, "excess_return": 0, "information_ratio": 0,
+        "tracking_error": 0.0, "benchmark_beta": 0.0,
         "avg_turnover": 0.0, "total_turnover": 0.0,
     }

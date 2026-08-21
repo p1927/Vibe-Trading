@@ -115,7 +115,11 @@ _NON_LATIN_SCRIPT_RANGES = (
     "Ѐ-ӿ"  # Cyrillic
 )
 
-_TOKEN_RE = re.compile(rf"[a-zA-Z0-9]{{3,}}|[{_NON_LATIN_SCRIPT_RANGES}]")
+# Matches search_index.py's FTS5 query sanitizer minimum (2+ ASCII chars) so
+# the token-scan fallback in find_relevant() finds the same content the FTS5
+# path does — short tokens like ticker symbols ("GE") or country codes ("US")
+# must be retrievable regardless of whether VT_MEMORY_FTS_INDEX is enabled.
+_TOKEN_RE = re.compile(rf"[a-zA-Z0-9]{{2,}}|[{_NON_LATIN_SCRIPT_RANGES}]")
 _SLUG_DISALLOWED_RE = re.compile(rf"[^a-z0-9_\-{_NON_LATIN_SCRIPT_RANGES}]")
 
 
@@ -138,10 +142,12 @@ class MemoryEntry:
     last_accessed: float = 0.0
     importance: float = 0.5
     related_memories: tuple[str, ...] = ()
+    category: str = ""              # H-MEM directory classification
+    compression_level: str = "raw"  # raw/daily/digest
 
 
 def _tokenize(text: str) -> set[str]:
-    """Split text into searchable tokens (ASCII >=3 chars + non-Latin chars)."""
+    """Split text into searchable tokens (ASCII >=2 chars + non-Latin chars)."""
     return set(_TOKEN_RE.findall(text.lower()))
 
 
@@ -219,8 +225,18 @@ class PersistentMemory:
 
     def _scan_entries(self) -> List[MemoryEntry]:
         """Scan all .md files (except MEMORY.md) and parse frontmatter."""
+        from src.config.accessor import get_env_config
+        cfg = get_env_config().memory
+
+        if cfg.hierarchy_enabled:
+            from src.memory.hierarchy import MemoryHierarchy
+            hierarchy = MemoryHierarchy(self._dir)
+            md_files = hierarchy.scan_all()
+        else:
+            md_files = sorted(self._dir.glob("*.md"))
+
         entries: List[MemoryEntry] = []
-        for path in sorted(self._dir.glob("*.md")):
+        for path in md_files:
             if path.name == "MEMORY.md":
                 continue
             try:
@@ -241,6 +257,9 @@ class PersistentMemory:
                 and len(r) == 6
                 and all(c in "0123456789abcdef" for c in r.lower())
             )
+
+            category = _coerce_str(meta.get("category"), default="")
+            compression_level = _coerce_str(meta.get("compression_level"), default="raw")
 
             qs = meta.get("quality_score", 0.5)
             try:
@@ -285,6 +304,8 @@ class PersistentMemory:
                     last_accessed=last_acc,
                     importance=importance,
                     related_memories=related,
+                    category=category,
+                    compression_level=compression_level,
                 )
             )
         return entries
@@ -325,6 +346,52 @@ class PersistentMemory:
         self, query: str, max_results: int = MAX_RESULTS
     ) -> List[MemoryEntry]:
         """Keyword search across all entries, weighted by importance."""
+        from src.config.accessor import get_env_config
+        cfg = get_env_config().memory
+
+        if cfg.fts_index_enabled:
+            try:
+                from src.memory.search_index import get_shared_index
+                index = get_shared_index()
+                matches = index.search(query, max_results=max_results)
+
+                # Auto-rebuild on first empty search if entries exist on disk
+                all_entries = None
+                if not matches and not index._auto_rebuilt:
+                    all_entries = self._scan_entries()
+                    if all_entries:
+                        entries_data = [
+                            (e.id, e.title, e.description, " ".join(e.keywords), e.body)
+                            for e in all_entries
+                        ]
+                        index.rebuild_all(entries_data)
+                        index._auto_rebuilt = True
+                        matches = index.search(query, max_results=max_results)
+
+                if matches:
+                    # Map FTS results back to full entries
+                    if all_entries is None:
+                        all_entries = self._scan_entries()
+                    entry_map = {e.id: e for e in all_entries}
+                    fts_pairs = [
+                        (m, entry_map[m.entry_id]) for m in matches if m.entry_id in entry_map
+                    ]
+                    if fts_pairs:
+                        if _is_decay_enabled():
+                            # FTS5's rank is more negative for stronger matches;
+                            # negate it onto the same scale the token-scan
+                            # fallback below uses and apply the same importance
+                            # weighting, so decay isn't silently inert whenever
+                            # FTS produces a result.
+                            fts_pairs.sort(
+                                key=lambda pair: -pair[0].rank * (0.5 + 0.5 * pair[1].importance),
+                                reverse=True,
+                            )
+                        fts_results = [entry for _, entry in fts_pairs]
+                        return fts_results[:max_results]
+            except Exception:
+                logger.debug("FTS5 search failed, falling back to scan", exc_info=True)
+
         query_tokens = _tokenize(query)
         if not query_tokens:
             return []
@@ -346,7 +413,29 @@ class PersistentMemory:
                 scored.append((final_score, entry))
 
         scored.sort(key=lambda x: (-x[0], -x[1].modified_at))
-        return [entry for _, entry in scored[:max_results]]
+        results = [entry for _, entry in scored[:max_results]]
+
+        if cfg.links_enabled and results:
+            try:
+                from src.memory.semantic_links import SemanticLinker
+                linker = SemanticLinker(self._dir)
+                all_entries = self._scan_entries()
+                linked_ids: set[str] = set()
+                for r in results:
+                    relations = linker.load_relations(r.path)
+                    for target_file, _score in relations:
+                        linked_ids.add(Path(target_file).stem)
+                # Add linked entries not already in results
+                result_paths = {r.path for r in results}
+                for entry in all_entries:
+                    if len(results) >= max_results:
+                        break
+                    if entry.path.stem in linked_ids and entry.path not in result_paths:
+                        results.append(entry)
+            except Exception:
+                logger.debug("semantic link expansion failed", exc_info=True)
+
+        return results
 
     def is_duplicate(self, name: str, description: str, content: str = "") -> bool:
         """Check if a memory with similar content was recently written.
@@ -397,8 +486,21 @@ class PersistentMemory:
             digest = hashlib.sha256(stripped_name.encode("utf-8")).hexdigest()[:6]
             slug = f"{slug}_{digest}" if slug else digest
 
-        filename = f"{memory_type}_{slug}.md"
-        path = self._dir / filename
+        from src.config.accessor import get_env_config
+        if get_env_config().memory.hierarchy_enabled:
+            from src.memory.hierarchy import MemoryHierarchy
+            hierarchy = MemoryHierarchy(self._dir)
+            # route_entry() treats its second argument as the leaf filename
+            # verbatim, so the ".md" has to be here: a bare slug wrote entries
+            # with no suffix, and every scan filters on suffix == ".md", which
+            # made them invisible to list_entries() and find(). The category
+            # directory already carries the type, and the name must match what
+            # recover_extensionless_entries() renames orphans to, or the same
+            # entry ends up on disk twice.
+            path = hierarchy.route_entry(memory_type, f"{slug}.md")
+        else:
+            filename = f"{memory_type}_{slug}.md"
+            path = self._dir / filename
         safe_name = stripped_name.replace("\n", " ").replace("\r", " ")
         safe_desc = (description or stripped_name).replace("\n", " ").replace("\r", " ")
         clean_content = _truncate_body(_sanitize_body(content))
@@ -452,8 +554,9 @@ class PersistentMemory:
         if self._index_path.exists():
             lines = self._index_path.read_text(encoding="utf-8").split("\n")
             updated = False
+            target_prefix = f"- [{title}]("
             for i, line in enumerate(lines):
-                if f"[{title}]" in line:
+                if line.startswith(target_prefix):
                     lines[i] = new_line
                     updated = True
                     break

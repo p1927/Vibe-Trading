@@ -23,8 +23,9 @@ def infer_market(code: str) -> str:
 
     1. Crypto pair spellings (``BTC-USDT``, ``ETH/USD`` …).
     2. Explicit exchange suffix — always authoritative (``.HK``, ``.SH``/
-       ``.SZ``/``.BJ``, ``.US``). Bare HK and A-share codes are both purely
-       numeric, so the suffix is the only reliable disambiguator.
+       ``.SZ``/``.BJ``, ``.TO``/``.V``, ``.US``). Bare HK and A-share codes
+       are both purely numeric, so the suffix is the only reliable
+       disambiguator.
     3. Bare numeric codes by digit length: A-share codes are exactly 6 digits
        (600000, 000001, 300750, 688981, 830799); HK codes are at most 5
        (700, 0700, 9988, 3690). Prefix alone cannot tell them apart — both
@@ -39,6 +40,10 @@ def infer_market(code: str) -> str:
         return "hk_equity"
     if code_upper.endswith((".SH", ".SZ", ".BJ")):
         return "a_share"
+    if code_upper.endswith((".KS", ".KQ")):
+        return "kr_equity"
+    if code_upper.endswith((".TO", ".V")):
+        return "ca_equity"
     if code_upper.endswith(".US"):
         return "us_equity"
     if code_upper.isdigit():
@@ -142,7 +147,10 @@ def _rolling_correlation_matrix(
         # (e.g. crypto via OKX/CCXT at UTC midnight vs US equity via
         # yfinance at EDT midnight = 04:00 UTC) align correctly.
         ts.index = ts.index.normalize()
-        rets = ts.pct_change().dropna()
+        # ``fill_method=None`` is explicit because under the project's
+        # pandas>=2,<3 pin the ``pct_change`` default forward-fills missing
+        # prices, silently manufacturing 0% returns on halted sessions.
+        rets = ts.pct_change(fill_method=None).dropna()
         rets.name = code
         returns_frames.append(rets)
 

@@ -105,10 +105,12 @@ class TestSafeUserPath:
 
 
 class TestSafeDocumentPath:
-    def test_upload_handle_resolves_to_agent_uploads(self) -> None:
+    def test_upload_handle_resolves_to_runtime_uploads(self) -> None:
+        from src.config.paths import get_uploads_dir
+
         result = safe_document_path("uploads/local.csv")
 
-        assert result == (Path(__file__).resolve().parents[1] / "uploads" / "local.csv").resolve()
+        assert result == (get_uploads_dir() / "local.csv").resolve()
 
     def test_upload_handle_traversal_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="outside allowed document roots"):
@@ -145,6 +147,27 @@ class TestSafeRunDir:
         result = safe_run_dir(str(agent_runs))
 
         assert result == agent_runs.resolve()
+
+    def test_rejection_lists_allowed_roots_and_mcp_scope(self, tmp_path: Path, monkeypatch):
+        """A rejection must say what IS allowed, not only which env var exists.
+
+        Reported in #963: an MCP client user could only guess at the boundary,
+        and setting the variable in a shell silently does nothing because the
+        client spawns the server itself.
+        """
+        allowed = tmp_path / "allowed"
+        allowed.mkdir()
+        monkeypatch.setenv("VIBE_TRADING_ALLOWED_RUN_ROOTS", str(allowed))
+        rejected = tmp_path / "elsewhere"
+        rejected.mkdir()
+
+        with pytest.raises(ValueError) as excinfo:
+            safe_run_dir(str(rejected))
+
+        message = str(excinfo.value)
+        assert "outside allowed run roots" in message
+        assert f"  - {allowed.resolve()}" in message
+        assert "MCP client" in message
 
 
 class TestSafeRunId:

@@ -1,6 +1,6 @@
 ---
 name: yfinance
-description: yfinance global market data interface — retrieve OHLCV, financials, insider transactions, and institutional holdings for US stocks, HK stocks, ETFs, and indices via Yahoo Finance. Free, no API key required.
+description: yfinance global market data interface — retrieve OHLCV and research data for US, HK, and Canadian stocks, ETFs, and indices via Yahoo Finance. Free, no API key required.
 category: data-source
 ---
 # yfinance
@@ -38,8 +38,9 @@ one you need rather than loading them all:
 > form for any new reference docs.
 
 The Yahoo client uses the project ticker convention (`AAPL.US` → `AAPL`,
-`00700.HK` → `0700.HK`); see the [Ticker Format Conversion](#ticker-format-conversion)
-table below — the same rules apply across all of the interfaces above.
+`00700.HK` → `0700.HK`, `TD.TO` and `PNG.V` pass through); see the
+[Ticker Format Conversion](#ticker-format-conversion) table below — the same
+rules apply across all of the interfaces above.
 
 ## Quick Start
 
@@ -47,7 +48,7 @@ Preferred OHLCV tool call:
 
 ```json
 {
-  "codes": ["AAPL.US", "700.HK"],
+  "codes": ["AAPL.US", "700.HK", "TD.TO", "PNG.V"],
   "start_date": "2025-01-01",
   "end_date": "2026-01-01",
   "source": "yfinance",
@@ -61,7 +62,12 @@ If you must write a Python script for OHLCV, use the DataLoader instead of raw `
 from backtest.loaders.registry import get_loader_cls_with_fallback
 
 loader = get_loader_cls_with_fallback("yfinance")()
-data = loader.fetch(["AAPL.US", "700.HK"], "2025-01-01", "2026-01-01", interval="1D")
+data = loader.fetch(
+    ["AAPL.US", "700.HK", "TD.TO", "PNG.V"],
+    "2025-01-01",
+    "2026-01-01",
+    interval="1D",
+)
 
 for symbol, df in data.items():
     print(symbol, df.tail())

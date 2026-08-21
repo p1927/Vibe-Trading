@@ -39,6 +39,9 @@ const Scheduled = lazy(() =>
 const AlphaZoo = lazy(() =>
   import("@/pages/AlphaZoo").then((m) => ({ default: m.AlphaZoo })),
 );
+const OptionsLab = lazy(() =>
+  import("@/pages/OptionsLab").then((m) => ({ default: m.OptionsLab })),
+);
 
 function PageLoader() {
   return (
@@ -65,6 +68,7 @@ export const router = createBrowserRouter([
       { path: "/agent", element: <Agent /> },
       { path: "/autonomous", element: wrap(Autonomous) },
       { path: "/runtime", element: wrap(Runtime) },
+      { path: "/scheduled", element: wrap(Scheduled) },
       { path: "/reports", element: wrap(Reports) },
       { path: "/settings", element: wrap(Settings) },
       { path: "/runs/:runId", element: wrap(RunDetail) },
@@ -74,6 +78,7 @@ export const router = createBrowserRouter([
       { path: "/hub", element: wrap(Hub) },
       { path: "/simulator", element: wrap(Simulator) },
       { path: "/scheduled", element: wrap(Scheduled) },
+      { path: "/options", element: wrap(OptionsLab) },
       { path: "/alpha-zoo", element: wrap(AlphaZoo) },
       { path: "/alpha-zoo/bench", element: wrap(AlphaZoo) },
       { path: "/alpha-zoo/compare", element: wrap(AlphaZoo) },

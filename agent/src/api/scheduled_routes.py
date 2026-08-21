@@ -6,7 +6,7 @@ Mounted by ``agent/api_server.py`` via ``register_scheduled_routes(app, ...)``.
 from __future__ import annotations
 
 import logging
-import os
+import re
 import sys as _sys
 import time
 import uuid
@@ -14,6 +14,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from starlette.responses import Response
 
 from src.config.accessor import get_env_config
 
@@ -26,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 _SCHEDULED_RESEARCH_SCHEDULER_ENV = "VIBE_TRADING_ENABLE_SCHEDULER"
 _SCHEDULED_RESEARCH_TRUE_VALUES = {"1", "true", "yes", "on"}
+
+# Mirrors ``_SAFE_PATH_PARAM_RE`` in src/api/helpers.py, which the delete route
+# enforces on the job id. Kept in sync so a job can never be created under an
+# id the delete route refuses.
+_SAFE_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
 # ---------------------------------------------------------------------------
@@ -51,17 +57,23 @@ def _get_scheduled_research_store():
     return _scheduled_research_store
 
 
-async def _dispatch_scheduled_research_job(job) -> None:
+async def _dispatch_scheduled_research_job(job) -> Optional[str]:
     """Dispatch a scheduled research job.
 
-    Jobs with ``config.job_type`` in ``index_factor_snapshot`` or
-    ``index_research`` run the index research pipeline directly. All other
-    jobs enqueue an agent session (legacy path).
+    Jobs with ``config.job_type`` in one of the pipeline job-type sets (index
+    research, options, trade-data, hub-calibration, hub-capture, autonomous
+    agent, recording-wake) run their dedicated pipeline directly and return
+    ``None``. All other jobs enqueue an agent session (legacy path).
 
     ``send_message`` queues the agent attempt and returns once accepted; it
     does not wait for that agent run to reach a terminal status. The executor's
-    ``COMPLETED`` state for those paths means "successfully enqueued" or
-    "pipeline finished" respectively.
+    ``COMPLETED`` state for the pipeline paths means "pipeline finished"; for
+    the legacy path it means "successfully enqueued."
+
+    Returns:
+        The session id the attempt was enqueued into (legacy path only),
+        which is what lets the delivery outbox find the briefing once the
+        run actually finishes. ``None`` for the direct pipeline paths.
     """
     from src.scheduled_research.index_jobs import INDEX_JOB_TYPES, dispatch_index_job
     from src.scheduled_research.options_jobs import OPTIONS_JOB_TYPES, dispatch_options_job
@@ -127,6 +139,62 @@ async def _dispatch_scheduled_research_job(job) -> None:
         session.session_id,
     )
     await svc.send_message(session.session_id, job.prompt)
+    return session.session_id
+
+
+def _read_scheduled_briefing(session_id: str) -> Optional[tuple[str, str]]:
+    """Return ``(terminal status, briefing text)`` once a run has finished.
+
+    The assistant reply carries the attempt's terminal status in its metadata,
+    and it is the same text the user sees in the session — delivering anything
+    else would mean the channel and the app disagree about what the run said.
+
+    Args:
+        session_id: Session the scheduled run was dispatched into.
+
+    Returns:
+        The status and text, or ``None`` while the run is still in flight.
+    """
+    host = _sys.modules.get("api_server") or _sys.modules.get("agent.api_server")
+    svc = host._get_session_service() if host else None
+    if not svc:
+        return None
+    for message in reversed(svc.get_messages(session_id, limit=50)):
+        if message.role != "assistant":
+            continue
+        status = (message.metadata or {}).get("status")
+        if isinstance(status, str) and status:
+            return status, message.content or ""
+    return None
+
+
+async def _send_scheduled_briefing(channel: str, target: Optional[str], text: str) -> None:
+    """Deliver one briefing through the configured IM channel.
+
+    Args:
+        channel: Channel id as configured in the channel runtime.
+        target: Address within that channel, or ``None`` for its default.
+        text: The briefing to deliver.
+
+    Raises:
+        RuntimeError: If the channel runtime is unavailable or has no such
+            channel, so the outbox records a retryable failure rather than
+            reporting a delivery that never happened.
+    """
+    from src.channels.bus.events import OutboundMessage
+
+    host = _sys.modules.get("api_server") or _sys.modules.get("agent.api_server")
+    manager = getattr(host, "_channel_manager", None) if host else None
+    if manager is None:
+        raise RuntimeError("channel runtime is not running")
+    adapter = manager.get_channel(channel)
+    if adapter is None:
+        raise RuntimeError(f"channel {channel!r} is not configured")
+    if not target:
+        raise RuntimeError(f"channel {channel!r} has no delivery target configured")
+    await adapter.send(
+        OutboundMessage(channel=channel, chat_id=target, content=text)
+    )
 
 
 def _get_scheduled_research_executor():
@@ -139,6 +207,8 @@ def _get_scheduled_research_executor():
             _get_scheduled_research_store(),
             _dispatch_scheduled_research_job,
             enabled=_scheduled_research_scheduler_enabled(),
+            briefing_reader=_read_scheduled_briefing,
+            channel_sender=_send_scheduled_briefing,
         )
     return _scheduled_research_executor
 
@@ -323,7 +393,12 @@ class CreateScheduledRunRequest(BaseModel):
     """Request body for POST /scheduled-runs."""
 
     id: Optional[str] = Field(
-        None, description="Job id; auto-generated UUID when omitted"
+        None,
+        description=(
+            "Job id; auto-generated UUID when omitted. Must match the id rule "
+            "the delete route enforces: letters, digits, '_' and '-', 1-128 "
+            "characters."
+        ),
     )
     prompt: str = Field(
         ..., min_length=1, description="Research prompt or backtest description"
@@ -342,6 +417,85 @@ class CreateScheduledRunRequest(BaseModel):
             "pipeline jobs (see scheduled_research.index_jobs)."
         ),
     )
+    timezone: Optional[str] = Field(
+        None,
+        description=(
+            "IANA timezone key the cron schedule is evaluated in "
+            "(e.g. 'Pacific/Auckland'); null = UTC, the pre-existing "
+            "semantics. Ignored by interval schedules."
+        ),
+    )
+    delivery_channel: Optional[str] = Field(
+        None,
+        description=(
+            "Channel id a finished briefing is pushed to. Delivery is opt-in "
+            "per job: omit this and results stay in the app, which is the "
+            "behaviour every existing job keeps."
+        ),
+    )
+    delivery_target: Optional[str] = Field(
+        None,
+        description="Address within that channel (chat / group / user id).",
+    )
+
+
+class PlaybookResponse(BaseModel):
+    """Catalogue record for one research playbook template.
+
+    ``body`` is the raw instruction text with ``{{placeholders}}`` unresolved.
+    It is populated only by the single-template endpoint; the list endpoint
+    leaves it null so a catalogue response stays small.
+    """
+
+    slug: str
+    name: str
+    description: str
+    suggested_schedule: str
+    suggested_timezone: Optional[str] = None
+    markets: List[str] = Field(default_factory=list)
+    data_capabilities: List[str] = Field(default_factory=list)
+    variables: Dict[str, str] = Field(default_factory=dict)
+    body: Optional[str] = None
+
+
+class CreateRunFromPlaybookRequest(BaseModel):
+    """Request body for POST /scheduled-runs/playbooks/{slug}.
+
+    Every field is optional: posting ``{}`` schedules the template on its own
+    suggested cadence with its declared variable defaults.
+    """
+
+    id: Optional[str] = Field(
+        None, description="Job id; defaults to a slug-prefixed generated id"
+    )
+    schedule: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Schedule override (interval-ms or 5-field cron); defaults to the "
+            "template's suggested_schedule"
+        ),
+    )
+    timezone: Optional[str] = Field(
+        None,
+        description=(
+            "IANA timezone override. Omit the field to keep the template's "
+            "suggested_timezone; send null explicitly to force UTC."
+        ),
+    )
+    variables: Dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Overrides for the template's declared variables. An undeclared "
+            "name is rejected rather than silently ignored."
+        ),
+    )
+    config: Dict[str, Any] = Field(
+        default_factory=dict, description="Session config forwarded to the agent run"
+    )
+    next_run_at: Optional[int] = Field(
+        None, description="Explicit first-fire epoch-ms, bypassing the default rule"
+    )
 
 
 class ScheduledRunResponse(BaseModel):
@@ -354,7 +508,43 @@ class ScheduledRunResponse(BaseModel):
     status: str
     created_at: int
     paused: bool = False
+    last_run_at: Optional[int] = None
+    consecutive_failures: int = 0
+    last_error: Optional[str] = None
+    failure_kind: Optional[str] = None
     config: Dict[str, Any] = Field(default_factory=dict)
+    timezone: Optional[str] = None
+    delivery_channel: Optional[str] = None
+    delivery_target: Optional[str] = None
+    delivery_status: str = "none"
+    delivery_error: Optional[str] = None
+    delivery_updated_at: Optional[int] = None
+    last_verdict: Optional[Dict[str, Any]] = None
+
+
+def _job_to_response(job: ScheduledResearchJob) -> "ScheduledRunResponse":
+    """Flatten a job for the wire, delivery record included.
+
+    ``to_dict`` nests the outbox row; the API keeps it flat because the list
+    view reads it per row and a nested object would make every consumer reach
+    through a key that means nothing to them.
+
+    Args:
+        job: The stored job.
+
+    Returns:
+        The response model for that job.
+    """
+    payload = job.to_dict()
+    delivery = payload.pop("delivery", {}) or {}
+    last_verdict = payload.pop("last_verdict", None)
+    return ScheduledRunResponse(
+        **payload,
+        last_verdict=last_verdict,
+        delivery_status=delivery.get("status", "none"),
+        delivery_error=delivery.get("error"),
+        delivery_updated_at=delivery.get("updated_at"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -445,26 +635,69 @@ def register_scheduled_routes(
         from src.scheduled_research.models import (
             JobStatus,
             ScheduledResearchJob,
+            is_interval_schedule,
             validate_schedule,
+            validate_timezone,
+            validate_timezone_shape,
         )
+
+        from src.scheduled_research.executor import next_due
+
+        # A job whose id the delete route rejects can never be cancelled
+        # through the API, so the id is held to that same rule at creation
+        # rather than at first attempted delete.
+        if request.id is not None and not _SAFE_JOB_ID_RE.fullmatch(request.id):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "job id must be 1-128 characters of letters, digits, "
+                    "'_' or '-'"
+                ),
+            )
 
         try:
             validate_schedule(request.schedule)
+            # Interval schedules ignore the timezone, and the executor
+            # deliberately skips resolving it for them so an interval job keeps
+            # advancing on a host whose timezone database lacks the key. The
+            # create path follows the same rule: only a cron schedule, whose
+            # evaluation actually needs the zone, resolves it. Both forms still
+            # reject a blank value.
+            if is_interval_schedule(request.schedule):
+                validate_timezone_shape(request.timezone)
+            else:
+                validate_timezone(request.timezone)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         now_ms = int(time.time() * 1000)
+        next_run_at = request.next_run_at
+        if next_run_at is None:
+            next_run_at = now_ms
+            if request.timezone is not None and not is_interval_schedule(request.schedule):
+                # A timezone-carrying cron job's contract is the authored wall
+                # clock, so its first fire is the first authored occurrence —
+                # not the creation moment. Interval jobs and timezone-less
+                # jobs keep the pre-existing immediate-first-fire default.
+                try:
+                    next_run_at = next_due(request.schedule, now_ms, request.timezone)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+
         job = ScheduledResearchJob(
             id=request.id or str(uuid.uuid4()),
             prompt=request.prompt,
             schedule=request.schedule,
-            next_run_at=request.next_run_at if request.next_run_at is not None else now_ms,
+            next_run_at=next_run_at,
             status=JobStatus.PENDING,
             created_at=now_ms,
             config=request.config,
+            timezone=request.timezone,
+            delivery_channel=request.delivery_channel,
+            delivery_target=request.delivery_target,
         )
         _get_scheduled_research_store().upsert(job)
-        return ScheduledRunResponse(**job.to_dict())
+        return _job_to_response(job)
 
     @app.get(
         "/scheduled-runs",
@@ -479,14 +712,14 @@ def register_scheduled_routes(
         jobs = _get_scheduled_research_store().list_jobs(
             status=status_filter, limit=limit
         )
-        return [ScheduledRunResponse(**j.to_dict()) for j in jobs]
+        return [_job_to_response(j) for j in jobs]
 
     @app.delete(
         "/scheduled-runs/{job_id}",
         status_code=status.HTTP_204_NO_CONTENT,
         dependencies=[Depends(require_auth)],
     )
-    async def delete_scheduled_run(job_id: str) -> None:
+    async def delete_scheduled_run(job_id: str) -> Response:
         """Cancel (delete) a scheduled research job by id."""
         _host_validate_path_param(job_id, "job_id")
         removed = _get_scheduled_research_store().delete(job_id)
@@ -494,6 +727,7 @@ def register_scheduled_routes(
             raise HTTPException(
                 status_code=404, detail=f"scheduled run {job_id} not found"
             )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     def _set_job_paused(job_id: str, paused: bool) -> ScheduledRunResponse:
         _host_validate_path_param(job_id, "job_id")
@@ -528,3 +762,119 @@ def register_scheduled_routes(
     async def resume_scheduled_run(job_id: str) -> ScheduledRunResponse:
         """Resume a single paused scheduled job on its existing cadence."""
         return _set_job_paused(job_id, False)
+
+    # --- Playbook templates ---
+    #
+    # Mounted under /scheduled-runs because a template is only useful as the
+    # source of a scheduled run. ``{job_id}`` never matches across a "/", so
+    # these paths cannot collide with the CRUD routes above. Every one carries
+    # the same ``require_auth`` dependency: there is deliberately no unguarded
+    # way to enumerate the catalogue or create a job from it.
+
+    @app.get(
+        "/scheduled-runs/playbooks",
+        response_model=List[PlaybookResponse],
+        dependencies=[Depends(require_auth)],
+    )
+    async def list_research_playbooks() -> List[PlaybookResponse]:
+        """List the available research playbook templates, without bodies."""
+        from src.scheduled_research.playbooks import PlaybookError, list_playbooks
+
+        try:
+            playbooks = list_playbooks()
+        except (PlaybookError, OSError) as exc:
+            # A malformed file is surfaced, not skipped: a user template the
+            # loader refuses must be visible as a broken template rather than
+            # vanish from the catalogue.
+            raise HTTPException(
+                status_code=500, detail=f"playbook catalogue is unreadable: {exc}"
+            ) from exc
+        return [PlaybookResponse(**pb.to_dict()) for pb in playbooks]
+
+    @app.get(
+        "/scheduled-runs/playbooks/{slug}",
+        response_model=PlaybookResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def get_research_playbook(slug: str) -> PlaybookResponse:
+        """Read one research playbook template, including its instruction body."""
+        from src.scheduled_research.playbooks import (
+            PlaybookError,
+            PlaybookNotFoundError,
+            get_playbook,
+        )
+
+        _host_validate_path_param(slug, "slug")
+        try:
+            playbook = get_playbook(slug)
+        except PlaybookNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (PlaybookError, OSError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return PlaybookResponse(**playbook.to_dict(include_body=True))
+
+    @app.post(
+        "/scheduled-runs/playbooks/{slug}",
+        response_model=ScheduledRunResponse,
+        status_code=status.HTTP_201_CREATED,
+        dependencies=[Depends(require_auth)],
+    )
+    async def create_scheduled_run_from_playbook(
+        slug: str,
+        request: CreateRunFromPlaybookRequest,
+    ) -> ScheduledRunResponse:
+        """Create a scheduled research job from a template.
+
+        The template body becomes ``job.prompt`` verbatim — the natural-language
+        data requirements are never rewritten into tool calls here; routing
+        stays the agent's job at run time.
+
+        Schedule and timezone are validated by ``ResearchPlaybook.to_job``,
+        which calls the same ``validate_schedule`` / ``validate_timezone`` the
+        plain ``POST /scheduled-runs`` path uses, so the two entry points can
+        never accept different schedule grammars.
+        """
+        from src.scheduled_research.playbooks import (
+            PlaybookError,
+            PlaybookNotFoundError,
+            get_playbook,
+        )
+
+        _host_validate_path_param(slug, "slug")
+        # Unlike POST /scheduled-runs this checks the caller-supplied id up
+        # front: an id outside the safe pattern would persist fine but could
+        # never be removed through DELETE /scheduled-runs/{job_id}, which
+        # rejects it with 400.
+        if request.id is not None:
+            _host_validate_path_param(request.id, "id")
+
+        try:
+            playbook = get_playbook(slug)
+        except PlaybookNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (PlaybookError, OSError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        kwargs: Dict[str, Any] = {}
+        # An omitted timezone keeps the template's suggestion; an explicit null
+        # means UTC. Pydantic collapses both to ``None``, so the distinction has
+        # to come from the fields the caller actually sent.
+        if "timezone" in request.model_fields_set:
+            kwargs["timezone"] = request.timezone
+
+        try:
+            job = playbook.to_job(
+                job_id=request.id,
+                schedule=request.schedule,
+                variables=request.variables,
+                config=request.config,
+                next_run_at=request.next_run_at,
+                **kwargs,
+            )
+        except ValueError as exc:
+            # Covers PlaybookError (undeclared/oversized variable) and the
+            # schedule / timezone / cron-window failures, all ValueError.
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        _get_scheduled_research_store().upsert(job)
+        return _job_to_response(job)

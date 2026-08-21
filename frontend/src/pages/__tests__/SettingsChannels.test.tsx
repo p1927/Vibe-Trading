@@ -5,6 +5,7 @@ const apiMock = vi.hoisted(() => ({
   getLLMSettings: vi.fn(),
   getDataSourceSettings: vi.fn(),
   getChannelStatus: vi.fn(),
+  listLLMModels: vi.fn(),
   startChannels: vi.fn(),
   stopChannels: vi.fn(),
   updateLLMSettings: vi.fn(),
@@ -103,6 +104,12 @@ describe("Settings IM channels panel", () => {
     apiMock.getLLMSettings.mockResolvedValue(llmSettings());
     apiMock.getDataSourceSettings.mockResolvedValue(dataSourceSettings());
     apiMock.getChannelStatus.mockResolvedValue(channelStatus());
+    apiMock.listLLMModels.mockResolvedValue({
+      provider: "openrouter",
+      models: ["deepseek/deepseek-v3.2"],
+      source: "default",
+      warning_code: "api_key_required",
+    });
     apiMock.startChannels.mockResolvedValue(channelStatus({ running: true }));
     apiMock.stopChannels.mockResolvedValue(channelStatus());
   });
@@ -141,5 +148,50 @@ describe("Settings IM channels panel", () => {
     expect(screen.getByText("IM Channels")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start channels" })).toBeDisabled();
+  });
+
+  it("renders SDK-managed provider authentication without editable transport fields", async () => {
+    apiMock.getLLMSettings.mockResolvedValue({
+      ...llmSettings(),
+      provider: "copilot",
+      model_name: "claude-sonnet-5",
+      base_url: "https://api.githubcopilot.com",
+      api_key_env: "COPILOT_GITHUB_TOKEN",
+      api_key_required: false,
+      providers: [
+        {
+          name: "copilot",
+          label: "GitHub Copilot SDK",
+          api_key_env: "COPILOT_GITHUB_TOKEN",
+          base_url_env: "COPILOT_BASE_URL",
+          default_model: "claude-sonnet-5",
+          default_base_url: "https://api.githubcopilot.com",
+          api_key_required: false,
+          auth_type: "gh_cli",
+          login_command: "gh auth login",
+        },
+      ],
+    });
+
+    render(<Settings />);
+
+    expect(
+      await screen.findByDisplayValue("https://api.githubcopilot.com"),
+    ).toBeDisabled();
+    const authStatus = screen.getByText(
+      "This provider manages authentication. Run: gh auth login",
+    );
+    expect(authStatus.closest("label")?.querySelector("input")).toBeDisabled();
+  });
+
+  it("translates stable model-discovery warning codes in the frontend", async () => {
+    render(<Settings />);
+    await screen.findByText("LLM Settings");
+
+    fireEvent.click(screen.getByRole("button", { name: "Load models" }));
+
+    expect(await screen.findByText(
+      "Enter or save this provider's API key to load its available models.",
+    )).toBeInTheDocument();
   });
 });

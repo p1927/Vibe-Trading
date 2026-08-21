@@ -21,12 +21,6 @@ from typing import Any, Dict, Iterable, List, Literal, Optional
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
-
 from backtest.loaders.registry import (
     FALLBACK_CHAINS,
     LOADER_REGISTRY,
@@ -77,6 +71,14 @@ class BacktestConfigSchema(BaseModel):
     interval: str = "1D"
     engine: str = "daily"
     position_adjustment: Literal["hold", "rebalance"] = "hold"
+    # Under "rebalance", a resize executes only once the held weight has
+    # drifted further than this fraction of its target -- the tolerance band
+    # practitioners describe as "rebalance when weights move more than X".
+    # 0.0 is the historical behaviour and stays the default: without a band the
+    # resize test is decided by the slippage width alone, which re-pins a
+    # position on a one-basis-point move. A CHANGED target breaches any sane
+    # band on its own, so target changes always execute whatever this is set to.
+    rebalance_tolerance: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
     # Returns divide by initial_cash, so a non-positive value yields inf/NaN
     # metrics (total_return, annual_return, ...). Reject it at the config
     # boundary instead of letting the run produce non-finite results.
@@ -800,6 +802,7 @@ _MARKET_TO_SOURCE = {
     "india_equity": "yahoo",
     "kr_equity": "pykrx",
     "ca_equity": "yahoo",
+    "vietnam_equity": "yahoo",
     "crypto": "okx",
     "futures": "tushare",
     "fund": "tushare",
@@ -1146,6 +1149,19 @@ def main(run_dir: Path) -> None:
             file is read so an arbitrary filesystem location cannot be used
             to source ``code/signal_engine.py``.
     """
+    # Loading `.env` belongs to the process that RUNS a backtest, not to
+    # importing this module. At import time it ran during pytest collection --
+    # before the per-test os.environ snapshot exists -- so a developer's own
+    # LANGCHAIN_MODEL_NAME leaked into every later test and could not be undone
+    # by any fixture, which is how seven redaction tests failed locally while
+    # CI (with no .env checked out) stayed green.
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
+
     # Guard the CLI entry point with the same root whitelist the MCP
     # ``backtest`` tool already uses (src/tools/backtest_tool.py:23). Without
     # this, ``python -m backtest.runner /tmp/attacker_path`` would happily
@@ -1294,6 +1310,13 @@ def _create_market_engine(source: str, config: dict, codes: List[str]):
         from backtest.engines.korea_equity import KoreaEquityEngine
         return KoreaEquityEngine(config)
 
+    # Vietnam equity routing — same reason as India and Korea: its effective
+    # source (``yahoo``) has no Wave-1 branch and would fall through to the
+    # default.
+    if "vietnam_equity" in markets:
+        from backtest.engines.vietnam_equity import VietnamEquityEngine
+        return VietnamEquityEngine(config)
+
     # Original routing (Wave 1)
     if source in ("okx", "ccxt"):
         from backtest.engines.crypto import CryptoEngine
@@ -1379,49 +1402,6 @@ def _fetch_auto(codes: List[str], config: dict, interval: str = "1D") -> dict:
             logger.warning("Fallback chain failed for %s: %s — trying %s", market, exc, legacy_src)
             LoaderCls = _get_loader(legacy_src)
             loader = LoaderCls()
-
-        src_name = getattr(loader, "name", "unknown")
-        normalized_codes = _normalize_codes(market_codes, src_name)
-        fields = config.get("extra_fields") if src_name == "tushare" else None
-        result = loader.fetch(
-            normalized_codes,
-            start_date,
-            end_date,
-            fields=fields,
-            interval=interval,
-        )
-        market_result = _restore_original_codes(
-            result, market_codes, normalized_codes
-        )
-        missing = [code for code in market_codes if code not in market_result]
-
-        # Retry only missing symbols so a partial primary response does not
-        # silently shrink the requested universe or refetch successful data.
-        for fb_name in FALLBACK_CHAINS.get(market, []):
-            if not missing:
-                break
-            if fb_name == src_name or fb_name not in LOADER_REGISTRY:
-                continue
-            fb_loader = LOADER_REGISTRY[fb_name]()
-            if not fb_loader.is_available():
-                continue
-            fb_codes = _normalize_codes(missing, fb_name)
-            fallback_result = fb_loader.fetch(
-                fb_codes, start_date, end_date, interval=interval
-            )
-            mapped = _restore_original_codes(fallback_result, missing, fb_codes)
-            if mapped:
-                market_result.update(mapped)
-                missing = [code for code in missing if code not in mapped]
-                logger.info(
-                    "Runtime fallback: %s -> %s for %s", src_name, fb_name, market
-                )
-
-        if missing:
-            raise NoAvailableSourceError(
-                f"incomplete data for {market}; missing symbols: {missing}"
-            )
-        merged.update(market_result)
 
         src_name = getattr(loader, "name", "unknown")
         normalized_codes = _normalize_codes(market_codes, src_name)
@@ -1576,9 +1556,6 @@ def fetch_data_map(config: dict) -> DataFetchResult:
             )
 
     data_map = _sanitize_data_map(data_map)
-    effective_sources = (
-        sorted(_group_codes_by_source(codes)) if source == "auto" else used_sources
-    )
     return DataFetchResult(
         data_map=data_map,
         codes=codes,

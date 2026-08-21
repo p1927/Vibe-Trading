@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CalendarClock, Loader2, Pause, PauseCircle, Play, Plus, Trash2 } from "lucide-react";
+import { CalendarClock, Loader2, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, ApiError, type ScheduledRun } from "@/lib/api";
 import {
@@ -80,13 +80,6 @@ export function Scheduled() {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
-  const [pausingIds, setPausingIds] = useState<Set<string>>(new Set());
-
-  // Global scheduler dispatch loop: always boots paused (server-side, on
-  // every process start) and only this page's Resume button starts it.
-  const [schedulerStatus, setSchedulerStatus] = useState<{ enabled: boolean; running: boolean } | null>(null);
-  const [schedulerError, setSchedulerError] = useState<string | null>(null);
-  const [schedulerBusy, setSchedulerBusy] = useState(false);
 
   const [prompt, setPrompt] = useState("");
   const [mode, setMode] = useState<ComposerMode>("time");
@@ -94,6 +87,10 @@ export function Scheduled() {
   const [days, setDays] = useState<DaysChoice>("weekdays");
   const [advanced, setAdvanced] = useState("");
   const [timezone, setTimezone] = useState(() => browserTimezone());
+  // Delivery is opt-in: an empty channel is what every monitor had before, and
+  // it means the briefing stays in the app.
+  const [deliveryChannel, setDeliveryChannel] = useState("");
+  const [deliveryTarget, setDeliveryTarget] = useState("");
   const [saving, setSaving] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
 
@@ -134,36 +131,6 @@ export function Scheduled() {
     };
   }, [refresh]);
 
-  const refreshSchedulerStatus = useCallback(async () => {
-    try {
-      const result = await api.getSchedulerStatus();
-      setSchedulerStatus(result);
-      setSchedulerError(null);
-    } catch (error) {
-      setSchedulerError(error instanceof ApiError ? error.message : String(error));
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshSchedulerStatus();
-    const timer = setInterval(() => void refreshSchedulerStatus(), POLL_MS);
-    return () => clearInterval(timer);
-  }, [refreshSchedulerStatus]);
-
-  async function handleToggleScheduler() {
-    if (!schedulerStatus || schedulerBusy) return;
-    setSchedulerBusy(true);
-    try {
-      const result = schedulerStatus.running ? await api.pauseScheduler() : await api.resumeScheduler();
-      setSchedulerStatus((prev) => (prev ? { ...prev, running: result.running } : prev));
-      setSchedulerError(null);
-    } catch (error) {
-      setSchedulerError(error instanceof ApiError ? error.message : String(error));
-    } finally {
-      setSchedulerBusy(false);
-    }
-  }
-
   // Auto-disarm an armed delete after a few seconds (blur is unreliable on
   // Safari/iOS, where buttons do not take focus on click).
   useEffect(() => {
@@ -196,7 +163,19 @@ export function Scheduled() {
     }
     setSaving(true);
     try {
-      await api.createScheduledRun({ prompt: prompt.trim(), schedule, timezone });
+      const channel = deliveryChannel.trim();
+      const target = deliveryTarget.trim();
+      if (channel && !target) {
+        setComposerError(t("scheduled.deliveryTargetRequired"));
+        return;
+      }
+      await api.createScheduledRun({
+        prompt: prompt.trim(),
+        schedule,
+        timezone,
+        delivery_channel: channel || null,
+        delivery_target: channel ? target : null,
+      });
       setPrompt("");
       await refresh();
     } catch (error) {
@@ -213,24 +192,6 @@ export function Scheduled() {
       await refresh();
     } catch (error) {
       setListError(error instanceof ApiError ? error.message : String(error));
-    }
-  }
-
-  async function handleToggleJobPaused(run: ScheduledRun) {
-    if (pausingIds.has(run.id)) return;
-    setPausingIds((prev) => new Set(prev).add(run.id));
-    try {
-      const updated = run.paused ? await api.resumeScheduledRun(run.id) : await api.pauseScheduledRun(run.id);
-      setRuns((prev) => prev.map((r) => (r.id === run.id ? updated : r)));
-      setListError(null);
-    } catch (error) {
-      setListError(error instanceof ApiError ? error.message : String(error));
-    } finally {
-      setPausingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(run.id);
-        return next;
-      });
     }
   }
 
@@ -275,48 +236,6 @@ export function Scheduled() {
           <p className={hintClass}>{t("scheduled.subtitle")}</p>
         </div>
       </header>
-
-      {schedulerStatus && (
-        <div
-          className={cn(
-            "flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4",
-            schedulerStatus.running ? "border-success/30 bg-success/5" : "border-warning/30 bg-warning/5",
-          )}
-        >
-          <div className="space-y-0.5">
-            <p className="text-sm font-medium">
-              {schedulerStatus.running ? t("scheduled.schedulerRunningTitle") : t("scheduled.schedulerPausedTitle")}
-            </p>
-            <p className={hintClass}>
-              {!schedulerStatus.enabled
-                ? t("scheduled.schedulerDisabled")
-                : schedulerStatus.running
-                  ? t("scheduled.schedulerRunningBody")
-                  : t("scheduled.schedulerPausedBody")}
-            </p>
-            {schedulerError && (
-              <p role="alert" className="text-xs text-danger">
-                {schedulerError}
-              </p>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => void handleToggleScheduler()}
-            disabled={schedulerBusy || !schedulerStatus.enabled}
-            className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {schedulerBusy ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            ) : schedulerStatus.running ? (
-              <Pause className="h-4 w-4" aria-hidden />
-            ) : (
-              <Play className="h-4 w-4" aria-hidden />
-            )}
-            {schedulerStatus.running ? t("scheduled.schedulerPause") : t("scheduled.schedulerResume")}
-          </button>
-        </div>
-      )}
 
       <form onSubmit={handleCreate} className="space-y-4 rounded-lg border bg-card p-4">
         <div className="space-y-1.5">
@@ -416,6 +335,34 @@ export function Scheduled() {
           </div>
         </div>
 
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <label htmlFor="scheduled-delivery-channel" className={labelClass}>
+              {t("scheduled.deliveryChannelLabel")}
+            </label>
+            <input
+              id="scheduled-delivery-channel"
+              value={deliveryChannel}
+              onChange={(e) => setDeliveryChannel(e.target.value)}
+              placeholder={t("scheduled.deliveryChannelPlaceholder")}
+              className={fieldClass}
+            />
+            <p className={hintClass}>{t("scheduled.deliveryHint")}</p>
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="scheduled-delivery-target" className={labelClass}>
+              {t("scheduled.deliveryTargetLabel")}
+            </label>
+            <input
+              id="scheduled-delivery-target"
+              value={deliveryTarget}
+              onChange={(e) => setDeliveryTarget(e.target.value)}
+              placeholder={t("scheduled.deliveryTargetPlaceholder")}
+              className={fieldClass}
+            />
+          </div>
+        </div>
+
         {composerError && (
           <p role="alert" className="text-sm text-danger">
             {composerError}
@@ -472,9 +419,6 @@ export function Scheduled() {
                       <span className="font-medium">{cadenceLabel(run)}</span>
                       <span className={hintClass}>{zone}</span>
                       <StatusPill label={status.label} tone={status.tone} />
-                      {run.paused && (
-                        <StatusPill label={t("scheduled.jobPaused")} tone="warning" />
-                      )}
                     </div>
                     <p className="truncate text-sm text-muted-foreground">{run.prompt}</p>
                     <p className={hintClass}>
@@ -485,6 +429,25 @@ export function Scheduled() {
                     {run.last_error && (
                       <p className="break-words text-xs text-danger">
                         {t("scheduled.lastError", { error: run.last_error })}
+                      </p>
+                    )}
+                    {run.delivery_channel && (
+                      <p
+                        className={
+                          run.delivery_status === "failed"
+                            ? "break-words text-xs text-danger"
+                            : hintClass
+                        }
+                      >
+                        {t(`scheduled.delivery_${run.delivery_status}`, {
+                          channel: run.delivery_channel,
+                          defaultValue: t("scheduled.delivery_none", {
+                            channel: run.delivery_channel,
+                          }),
+                        })}
+                        {run.delivery_status === "failed" && run.delivery_error
+                          ? ` — ${run.delivery_error}`
+                          : ""}
                       </p>
                     )}
                   </div>
@@ -510,37 +473,15 @@ export function Scheduled() {
                       </button>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => void handleToggleJobPaused(run)}
-                        disabled={pausingIds.has(run.id)}
-                        aria-label={
-                          run.paused
-                            ? t("scheduled.resumeJobAria", { prompt: run.prompt })
-                            : t("scheduled.pauseJobAria", { prompt: run.prompt })
-                        }
-                        className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {pausingIds.has(run.id) ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                        ) : run.paused ? (
-                          <Play className="h-3.5 w-3.5" aria-hidden />
-                        ) : (
-                          <PauseCircle className="h-3.5 w-3.5" aria-hidden />
-                        )}
-                        {run.paused ? t("scheduled.resumeJob") : t("scheduled.pauseJob")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPendingDelete(run.id)}
-                        aria-label={t("scheduled.deleteAria", { prompt: run.prompt })}
-                        className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                        {t("scheduled.delete")}
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPendingDelete(run.id)}
+                      aria-label={t("scheduled.deleteAria", { prompt: run.prompt })}
+                      className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                      {t("scheduled.delete")}
+                    </button>
                   )}
                 </li>
               );

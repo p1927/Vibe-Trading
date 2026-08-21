@@ -25,6 +25,7 @@ EXPECTED_PROVIDER_DEFAULTS = {
     "nvidia": "nvidia/nemotron-3-ultra-550b-a55b",
     "gemini": "gemini-3.5-flash",
     "groq": "meta-llama/llama-4-maverick-17b-128e-instruct",
+    "novita": "moonshotai/kimi-k3",
     "dashscope": "qwen-plus-latest",
     "qwen": "qwen-plus-latest",
     "zhipu": "glm-5.1",
@@ -34,6 +35,7 @@ EXPECTED_PROVIDER_DEFAULTS = {
     "mimo": "MiMo-72B-A27B",
     "spark": "4.0Ultra",
     "zai": "glm-5.1",
+    "modelscope": "Qwen/Qwen3.5-27B",
 }
 
 
@@ -101,6 +103,7 @@ def test_interactive_onboard_suggests_current_primary_models() -> None:
     assert onboard_defaults["deepseek"] == "deepseek-v4-pro"
     assert onboard_defaults["siliconflow-cn"] == "deepseek-ai/DeepSeek-V3.1-Terminus"
     assert onboard_defaults["siliconflow-global"] == "deepseek-ai/DeepSeek-V3.1-Terminus"
+    assert onboard_defaults["modelscope"] == "Qwen/Qwen3.5-27B"
     assert onboard_defaults["nvidia"] == "nvidia/nemotron-3-ultra-550b-a55b"
 
 

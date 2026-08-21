@@ -12,12 +12,30 @@ import asyncio
 import logging
 import os
 import time
-from datetime import datetime, timedelta, timezone
-from typing import Awaitable, Callable
+from datetime import date, datetime, timedelta, timezone, tzinfo
+from typing import Awaitable, Callable, Optional
+from zoneinfo import ZoneInfo
 
 from src.config.accessor import get_env_config
-from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.models import (
+    CRON_BOUNDS,
+    DeliveryRecord,
+    DeliveryStatus,
+    JobStatus,
+    ScheduledResearchJob,
+    parse_cron_field,
+    validate_schedule,
+    validate_timezone,
+)
 from src.scheduled_research.store import ScheduledResearchJobStore
+from src.scheduled_research.verdict import (
+    VerdictRecord,
+    outcome_of,
+    parse_verdict_section,
+)
+
+from dataclasses import replace as _dc_replace
+from src.tools.redaction import redact_internal_paths, redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -82,15 +100,28 @@ def _autonomous_watch_target_running(job: ScheduledResearchJob) -> bool:
     return bool(agent) and str(agent.get("status") or "") == "running"
 
 
+_MAX_PERSISTED_ERROR_CHARS = 1000
+
+#: A send that has not returned within this long is assumed to belong to a
+#: process that is no longer running.
+DEFAULT_DELIVERY_LEASE_MS = 5 * 60 * 1000
+
 NowFn = Callable[[], int]
-DispatchCallback = Callable[[ScheduledResearchJob], Awaitable[None]]
+# A dispatcher may return the session id it enqueued into. Returning None keeps
+# the pre-delivery contract working unchanged.
+DispatchCallback = Callable[[ScheduledResearchJob], Awaitable[Optional[str]]]
+#: session_id -> (terminal status, briefing text), or None while in flight.
+BriefingReader = Callable[[str], Optional[tuple[str, str]]]
+#: (channel, target, text) -> delivered.
+ChannelSender = Callable[[str, Optional[str], str], Awaitable[None]]
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 # Search by day, not by minute, so an impossible date (e.g. Feb 31) fails fast
 # instead of scanning years of minutes on the event loop. Four years covers any
-# real recurrence, including a Feb-29 leap day.
-_CRON_SEARCH_LIMIT_DAYS = 4 * 366 + 1
-_CRON_BOUNDS = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 6))
+# real recurrence, including a Feb-29 leap day; the extra headroom absorbs a
+# yearly occurrence landing in a DST spring-forward gap (skipped by policy)
+# several years in a row before a real instant exists again.
+_CRON_SEARCH_LIMIT_DAYS = 6 * 366 + 1
 
 
 def _now_ms() -> int:
@@ -291,10 +322,6 @@ def _failure_threshold_for(job: ScheduledResearchJob) -> int:
     return _default_failure_threshold()
 
 
-def _truncate_error(exc: BaseException) -> str:
-    return str(exc)[:500]
-
-
 def scheduler_enabled_from_env(value: str | None = None) -> bool:
     """Return whether the scheduled-research executor should run.
 
@@ -316,68 +343,88 @@ def is_due(job: ScheduledResearchJob, now_ms: int) -> bool:
     recovers stale persisted ``RUNNING`` jobs separately. A paused job is
     skipped without mutating ``next_run_at``, so its original cadence resumes
     unchanged the moment it is unpaused.
+
+    A firing whose outbox row is still PENDING or SENDING is also left alone:
+    dispatch returns once the run is accepted, not once it is delivered, so a
+    schedule shorter than that gap would otherwise re-dispatch onto the same
+    row and overwrite it, orphaning the briefing a sweep still owes.
     """
     if job.paused:
         return False
     if job.status in {JobStatus.CANCELLED, JobStatus.RUNNING, JobStatus.FAILED}:
         return False
+    if job.delivery.status in {DeliveryStatus.PENDING, DeliveryStatus.SENDING}:
+        return False
     return job.next_run_at <= now_ms
 
 
-def next_due(schedule: str, after_ms: int) -> int:
+def _persisted_error(exc: Exception) -> str:
+    """Return a bounded, redaction-safe error for durable job state."""
+    message = f"{type(exc).__name__}: {exc}"
+    safe = redact_text(redact_internal_paths(message)).replace("\x00", "")
+    if len(safe) <= _MAX_PERSISTED_ERROR_CHARS:
+        return safe
+    return f"{safe[: _MAX_PERSISTED_ERROR_CHARS - 3]}..."
+
+
+def next_due(schedule: str, after_ms: int, tz: str | None = None) -> int:
     """Return the first due epoch-ms strictly after ``after_ms``.
 
     Supports the scheduled-research schedule format: a bare positive integer
-    string for interval milliseconds, or a simplified 5-field cron expression
-    interpreted in UTC.
+    string for interval milliseconds, or a simplified 5-field cron expression.
+    Cron is evaluated on the wall clock of *tz* (an IANA timezone key) when
+    one is given, in UTC otherwise — the semantics every job had before the
+    field existed. Interval schedules ignore *tz* entirely.
     """
     validate_schedule(schedule)
     spec = schedule.strip()
     if spec.isdigit():
+        # Before the timezone check: interval schedules must keep advancing
+        # even when the stored key cannot resolve on this host.
         return after_ms + int(spec)
-    return _next_cron_due(spec, after_ms)
+    validate_timezone(tz)
+    return _next_cron_due(spec, after_ms, tz)
 
 
-def _next_cron_due(schedule: str, after_ms: int) -> int:
+def _next_cron_due(schedule: str, after_ms: int, tz: str | None = None) -> int:
     minutes, hours, doms, months, dows = (
-        _parse_cron_field(part, low, high) for part, (low, high) in zip(schedule.split(), _CRON_BOUNDS)
+        parse_cron_field(part, low, high) for part, (low, high) in zip(schedule.split(), CRON_BOUNDS)
     )
-    start = datetime.fromtimestamp(after_ms / 1000.0, timezone.utc) + timedelta(milliseconds=1)
-    # Round up to the next whole minute; cron has minute resolution.
-    if start.second or start.microsecond:
-        start = (start + timedelta(minutes=1)).replace(second=0, microsecond=0)
-
-    day = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    zone = timezone.utc if tz is None else ZoneInfo(tz)
+    # Walk candidates on the *local* calendar of ``zone`` so field matching —
+    # the weekday in particular — follows the authoring wall clock. Ascending
+    # wall order maps to ascending UTC order under a fixed fold policy, so
+    # "strictly after" stays a plain epoch comparison.
+    day = datetime.fromtimestamp(after_ms / 1000.0, zone).date()
     for offset in range(_CRON_SEARCH_LIMIT_DAYS):
         candidate_day = day + timedelta(days=offset)
         if not _day_matches(candidate_day, doms, months, dows):
             continue
         for hour in sorted(hours) if hours is not None else range(24):
             for minute in sorted(minutes) if minutes is not None else range(60):
-                fire = candidate_day.replace(hour=hour, minute=minute)
-                if fire >= start:
-                    return int(fire.timestamp() * 1000)
+                fire_ms = _local_wall_time_to_epoch_ms(candidate_day, hour, minute, zone)
+                if fire_ms is not None and fire_ms > after_ms:
+                    return fire_ms
     raise ValueError(f"cron schedule has no matching time within search window: {schedule!r}")
 
 
-def _parse_cron_field(part: str, low: int, high: int) -> set[int] | None:
-    if part == "*":
-        return None
-    if part.startswith("*/"):
-        step = int(part[2:])
-        return set(range(low, high + 1, step))
-    values: set[int] = set()
-    for segment in part.split(","):
-        if "-" in segment:
-            start_s, end_s = segment.split("-", 1)
-            start, end = int(start_s), int(end_s)
-            values.update(range(start, end + 1))
-        else:
-            values.add(int(segment))
-    return values
+def _local_wall_time_to_epoch_ms(day: date, hour: int, minute: int, zone: tzinfo) -> int | None:
+    """Resolve one local wall time to a UTC epoch-ms instant.
+
+    DST policy (#953): a nonexistent wall time — the spring-forward gap —
+    returns ``None`` so the occurrence is skipped; ``ZoneInfo`` would
+    otherwise silently map it past the transition (PEP 495) and run it. An
+    ambiguous wall time — the fall-back fold — resolves with ``fold=0``, the
+    first occurrence, so it runs exactly once.
+    """
+    local = datetime(day.year, day.month, day.day, hour, minute, tzinfo=zone)
+    as_utc = local.astimezone(timezone.utc)
+    if as_utc.astimezone(zone).replace(tzinfo=None) != local.replace(tzinfo=None):
+        return None  # wall time does not exist in this zone (DST gap)
+    return int(as_utc.timestamp() * 1000)
 
 
-def _day_matches(dt: datetime, doms: set[int] | None, months: set[int] | None, dows: set[int] | None) -> bool:
+def _day_matches(dt: date, doms: set[int] | None, months: set[int] | None, dows: set[int] | None) -> bool:
     if months is not None and dt.month not in months:
         return False
 
@@ -404,6 +451,12 @@ class ScheduledResearchExecutor:
         tick_interval_ms: int = DEFAULT_TICK_INTERVAL_MS,
         now_fn: NowFn = _now_ms,
         enabled: bool = True,
+        max_consecutive_failures: int | None = None,
+        retry_base_delay_ms: int | None = None,
+        retry_max_delay_ms: int | None = None,
+        briefing_reader: "BriefingReader | None" = None,
+        channel_sender: "ChannelSender | None" = None,
+        delivery_lease_ms: int = DEFAULT_DELIVERY_LEASE_MS,
     ) -> None:
         """Initialize the executor.
 
@@ -413,12 +466,56 @@ class ScheduledResearchExecutor:
             tick_interval_ms: Poll interval for the background loop.
             now_fn: Injectable wall-clock source returning epoch milliseconds.
             enabled: When false, :meth:`start` and :meth:`stop` are no-ops.
+            max_consecutive_failures: Dispatch failures allowed before a job
+                becomes terminal. Defaults to environment configuration.
+            retry_base_delay_ms: Base delay for exponential retry backoff.
+            retry_max_delay_ms: Upper bound for exponential retry backoff.
+            briefing_reader: Callable returning ``(terminal_status, text)`` for
+                a session, or ``None`` while its run is still in flight. Both
+                collaborators are injected rather than imported so the outbox
+                can be driven in a test without a session runtime or a network.
+            channel_sender: Async callable delivering one briefing.
+            delivery_lease_ms: How long a claimed row stays claimed before a
+                later sweep may take it over. Too short duplicates a slow
+                send; too long strands a briefing behind a dead process.
+
+        Raises:
+            ValueError: If the retry policy is invalid.
         """
+        tuning = None
+        if None in (max_consecutive_failures, retry_base_delay_ms, retry_max_delay_ms):
+            tuning = get_env_config().agent_tuning
         self._store = store
         self._dispatch = dispatch
+        self._briefing_reader = briefing_reader
+        self._channel_sender = channel_sender
+        self._delivery_lease_ms = delivery_lease_ms
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._sweep_task: asyncio.Task | None = None
         self._tick_interval_ms = tick_interval_ms
         self._now_fn = now_fn
         self._enabled = enabled
+        self._max_consecutive_failures = (
+            max_consecutive_failures
+            if max_consecutive_failures is not None
+            else tuning.vibe_trading_scheduler_max_consecutive_failures
+        )
+        self._retry_base_delay_ms = (
+            retry_base_delay_ms
+            if retry_base_delay_ms is not None
+            else tuning.vibe_trading_scheduler_retry_base_delay_ms
+        )
+        self._retry_max_delay_ms = (
+            retry_max_delay_ms
+            if retry_max_delay_ms is not None
+            else tuning.vibe_trading_scheduler_retry_max_delay_ms
+        )
+        if self._max_consecutive_failures < 1:
+            raise ValueError("max_consecutive_failures must be at least 1")
+        if self._retry_base_delay_ms < 0:
+            raise ValueError("retry_base_delay_ms must be non-negative")
+        if self._retry_max_delay_ms < self._retry_base_delay_ms:
+            raise ValueError("retry_max_delay_ms must be at least retry_base_delay_ms")
         self._task: asyncio.Task | None = None
         self._wakeup: asyncio.Event | None = None
         self._stopping = False
@@ -555,7 +652,20 @@ class ScheduledResearchExecutor:
             key=lambda job: job.next_run_at,
         )
         for job in jobs:
-            await self._run_job(job, now)
+            # One job's unexpected persistence/lifecycle error must not starve
+            # every job sorted after it, tick after tick.
+            try:
+                await self._run_job(job, now)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.error("scheduled research job %s failed its run cycle", job.id, exc_info=True)
+
+        # The sweep is what makes delivery correct; the event hook only makes
+        # it prompt. A briefing whose hook was lost to a restart, a crash
+        # between "run finished" and "message sent", or a transient send error
+        # is picked up here on the next tick.
+        await self.sweep_deliveries()
 
     def recover_stale_running(self, now_ms: int | None = None, *, startup: bool = False) -> int:
         """Reset jobs left ``RUNNING`` after a crash or hung dispatch.
@@ -655,6 +765,10 @@ class ScheduledResearchExecutor:
         return deferred
 
     async def _run(self) -> None:
+        # Captured here rather than at construction: the executor is built
+        # before the server's loop exists, and request_sweep needs a loop that
+        # is actually running to schedule onto.
+        self._loop = asyncio.get_running_loop()
         grace_ms = _startup_grace_ms()
         if grace_ms > 0:
             logger.info(
@@ -717,6 +831,26 @@ class ScheduledResearchExecutor:
             return
         job = current
 
+        # A persisted schedule the current grammar rejects (an older release
+        # accepted a form since narrowed) must surface as a failed job, not as
+        # an exception on the way to dispatch: that would leave the record
+        # PENDING and due, retrying on every tick forever with nothing visible
+        # to the user.
+        try:
+            validate_schedule(job.schedule)
+        except ValueError as exc:
+            logger.error("scheduled research job %s has an invalid schedule", job.id, exc_info=True)
+            job.status = JobStatus.FAILED
+            job.failure_kind = "schedule"
+            job.last_error = _persisted_error(exc)
+            job.last_run_at = now_ms
+            # Not routed through _persist_completion: that guards against a
+            # dispatch racing a concurrent mutation, but nothing has been
+            # dispatched (or awaited) yet here, so no race window exists and
+            # the RUNNING-only guard would just discard this write.
+            self._store.upsert(job, validate=False)
+            return
+
         if job.last_error and any(marker in job.last_error for marker in _RECOVERY_ERROR_MARKERS):
             job.last_error = None
 
@@ -733,10 +867,11 @@ class ScheduledResearchExecutor:
         # leaving ``last_run_at`` frozen at the old timestamp even though the
         # job ran successfully.
         job.last_run_at = now_ms
-        self._store.upsert(job)
+        # Lifecycle writes bypass validation: this record is already persisted,
+        # and a write that cannot land would strand the job mid-flight.
+        self._store.upsert(job, validate=False)
 
         timeout_ms = dispatch_timeout_ms_for(job)
-        final_status = JobStatus.COMPLETED
         job_type = str(job.config.get("job_type") or "unknown")
         from src.api.runtime_activity import finish_named_task, register_named_task
 
@@ -748,8 +883,11 @@ class ScheduledResearchExecutor:
             timeout_ms,
         )
         started = time.monotonic()
+        dispatch_error: Exception | None = None
+        session_id: str | None = None
+        was_cancelled = False
         try:
-            await asyncio.wait_for(self._dispatch(job), timeout=timeout_ms / 1000.0)
+            session_id = await asyncio.wait_for(self._dispatch(job), timeout=timeout_ms / 1000.0)
         except asyncio.TimeoutError:
             logger.error(
                 "scheduled research dispatch timed out for job %s after %sms",
@@ -758,9 +896,8 @@ class ScheduledResearchExecutor:
             )
             _request_pipeline_cancel_on_dispatch_timeout(job.id, job_type)
             job.config["_timed_out"] = True
-            job.last_error = f"dispatch timed out after {timeout_ms}ms"
+            dispatch_error = TimeoutError(f"dispatch timed out after {timeout_ms}ms")
             job.consecutive_failures = int(job.consecutive_failures or 0) + 1
-            final_status = JobStatus.COMPLETED
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -778,39 +915,48 @@ class ScheduledResearchExecutor:
                 )
                 job.last_error = f"cancelled: {exc.reason}"
                 job.consecutive_failures = 0
-                final_status = JobStatus.COMPLETED
+                was_cancelled = True
             else:
                 logger.error("scheduled research dispatch failed for job %s", job.id, exc_info=True)
-                job.last_error = _truncate_error(exc)
+                dispatch_error = exc
                 job.consecutive_failures = int(job.consecutive_failures or 0) + 1
-                threshold = _failure_threshold_for(job)
-                if job.consecutive_failures >= threshold:
-                    final_status = JobStatus.FAILED
-                else:
-                    final_status = JobStatus.COMPLETED
-                    logger.warning(
-                        "scheduled job %s failed (%s/%s); keeping schedule alive",
-                        job.id,
-                        job.consecutive_failures,
-                        threshold,
-                    )
         else:
             job.consecutive_failures = 0
-            job.last_error = None
             job.config.pop("_timed_out", None)
             raw_summary = job.config.pop(LAST_RESULT_CONFIG_KEY, None)
             if isinstance(raw_summary, dict):
                 job.last_result_summary = raw_summary
-            final_status = JobStatus.COMPLETED
+            if isinstance(session_id, str) and session_id:
+                if job.delivery_channel:
+                    # Arm the outbox in the same write that records the firing.
+                    # The row exists before anything can be sent, so a crash can
+                    # only ever lose the *speed* of delivery, never the fact that
+                    # one is owed.
+                    job.delivery = DeliveryRecord(
+                        status=DeliveryStatus.PENDING,
+                        session_id=session_id,
+                        key=f"{job.id}:{session_id}:{job.delivery_channel}",
+                        updated_at=now_ms,
+                    )
+                else:
+                    # No delivery owed, but the verdict sweep still needs the
+                    # link from this job to its run: the session id rides the
+                    # record with an explicit NONE so the outbox never picks it.
+                    job.delivery = DeliveryRecord(
+                        status=DeliveryStatus.NONE,
+                        session_id=session_id,
+                        updated_at=now_ms,
+                    )
 
         finally:
             finish_named_task(task_id)
             elapsed_ms = int((time.monotonic() - started) * 1000)
+            _final_status = JobStatus.COMPLETED if dispatch_error is None else JobStatus.FAILED
             logger.info(
                 "scheduled research dispatch done job=%s type=%s status=%s (%.1fs)",
                 job.id,
                 job_type,
-                final_status.value,
+                _final_status.value,
                 elapsed_ms / 1000.0,
             )
             try:
@@ -819,12 +965,12 @@ class ScheduledResearchExecutor:
 
                 emit_job_rollup(
                     JobRollup(
-                        status=final_status.value,
-                        had_errors=bool(job.last_error),
-                        had_work=final_status != JobStatus.FAILED or bool(job.last_error),
+                        status=_final_status.value,
+                        had_errors=dispatch_error is not None,
+                        had_work=dispatch_error is None or bool(job.last_error),
                         job_type=job_type,
                         job_id=job.id,
-                        detail={"last_error": job.last_error or ""},
+                        detail={"last_error": str(dispatch_error) if dispatch_error else ""},
                     ),
                     module="schedule",
                 )
@@ -833,13 +979,13 @@ class ScheduledResearchExecutor:
                 emit(
                     "schedule",
                     "job_dispatch_done",
-                    level="error" if job.last_error else "info",
+                    level="error" if dispatch_error else "info",
                     job_id=job.id,
                     duration_ms=elapsed_ms,
                     detail={
                         "job_type": job_type,
-                        "final_status": final_status.value,
-                        "last_error": job.last_error or "",
+                        "final_status": _final_status.value,
+                        "last_error": str(dispatch_error) if dispatch_error else "",
                     },
                 )
             except ImportError:
@@ -847,16 +993,269 @@ class ScheduledResearchExecutor:
 
         job.last_run_at = now_ms
         try:
-            job.next_run_at = next_due(job.schedule, now_ms)
+            scheduled_next_run = next_due(job.schedule, now_ms, job.timezone)
         except Exception as exc:
             logger.error("scheduled research schedule advancement failed for job %s", job.id, exc_info=True)
             job.status = JobStatus.FAILED
-            job.last_error = _truncate_error(exc)
+            job.failure_kind = "schedule"
+            job.last_error = _persisted_error(exc)
             self._persist_completion(job)
             return
 
-        job.status = final_status
+        job.next_run_at = scheduled_next_run
+        if dispatch_error is None:
+            job.status = JobStatus.COMPLETED
+            job.failure_kind = None
+            if not was_cancelled:
+                job.last_error = None
+        else:
+            job.failure_kind = "dispatch"
+            job.last_error = _persisted_error(dispatch_error)
+            if job.consecutive_failures >= self._max_consecutive_failures:
+                job.status = JobStatus.FAILED
+            else:
+                job.status = JobStatus.PENDING
+                retry_delay = self._retry_delay_ms(job.consecutive_failures)
+                job.next_run_at = max(scheduled_next_run, now_ms + retry_delay)
+                logger.warning(
+                    "scheduled research job %s will retry after failure %d/%d at %d",
+                    job.id,
+                    job.consecutive_failures,
+                    self._max_consecutive_failures,
+                    job.next_run_at,
+                )
         self._persist_completion(job)
+
+    def _delivery_is_eligible(self, job: ScheduledResearchJob, now_ms: int) -> bool:
+        """Whether this row is a sweep's to take.
+
+        PENDING is owed. SENDING is claimed, and the claim is a lease rather
+        than a lock: a process that died inside the send call would otherwise
+        hold the row forever, so once the lease has expired the row is owed
+        again. The idempotency key remains the backstop for the window that
+        leaves.
+
+        Args:
+            job: The job whose outbox row is being considered.
+            now_ms: Reference time in epoch milliseconds.
+
+        Returns:
+            True when a sweep should attempt this row now.
+        """
+        status = job.delivery.status
+        if status is DeliveryStatus.PENDING:
+            return True
+        if status is not DeliveryStatus.SENDING:
+            return False
+        claimed_at = job.delivery.updated_at
+        return claimed_at is None or now_ms - claimed_at >= self._delivery_lease_ms
+
+    def request_sweep(self) -> None:
+        """Ask for a delivery sweep as soon as the loop is free.
+
+        Called from the session event listener, so it runs on whichever thread
+        published the event and must not block. Sweeps coalesce: one already in
+        flight covers anything that arrived while it was running, and the claim
+        makes an overlap harmless in any case. Without a running loop this is a
+        no-op — the periodic tick is what makes delivery correct, and this only
+        makes it prompt.
+        """
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            return
+        if self._sweep_task is not None and not self._sweep_task.done():
+            return
+
+        def _schedule() -> None:
+            if self._sweep_task is not None and not self._sweep_task.done():
+                return
+            self._sweep_task = loop.create_task(self._sweep_quietly())
+
+        try:
+            loop.call_soon_threadsafe(_schedule)
+        except RuntimeError:
+            # The loop closed between the check and the call; the next tick
+            # picks the row up.
+            pass
+
+    async def _sweep_quietly(self) -> None:
+        """Run a sweep whose failure must not escape into the event path."""
+        try:
+            await self.sweep_deliveries()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error("requested delivery sweep failed", exc_info=True)
+
+    async def sweep_deliveries(self) -> int:
+        """Deliver every briefing whose run has reached a terminal state.
+
+        Idempotent and restart-safe: the outbox row is the only source of
+        truth, a row already ``SENT`` is never re-sent, and a row whose run is
+        still in flight is left for a later sweep.
+
+        Returns:
+            The number of rows whose state changed.
+        """
+        if self._briefing_reader is None:
+            return 0
+
+        changed = 0
+        now = self._now_fn()
+        for job in list(self._store.load().values()):
+            if not job.delivery.session_id:
+                continue
+            if job.delivery.status is DeliveryStatus.NONE:
+                # No briefing is owed to a channel, but this sweep is the only
+                # terminal-observer a channel-less monitor has: read the run's
+                # end state here and persist its verdict once it lands.
+                changed += self._record_verdict_if_terminal(job, now)
+                continue
+            if not job.delivery_channel:
+                continue
+            if not self._delivery_is_eligible(job, now):
+                continue
+            if self._channel_sender is None:
+                continue
+            try:
+                outcome = self._briefing_reader(job.delivery.session_id)
+            except Exception as exc:
+                logger.error("briefing read failed for job %s", job.id, exc_info=True)
+                self._mark_delivery_failed(job, exc, retryable=True)
+                changed += 1
+                continue
+            if outcome is None:
+                continue  # still running; a later sweep will find it
+
+            status, text = outcome
+            if status != "completed":
+                # A failed or cancelled run has no briefing to deliver. Record
+                # why rather than leaving the row pending forever.
+                self._mark_delivery_failed(
+                    job, RuntimeError(f"run {status}"), retryable=False
+                )
+                changed += 1
+                continue
+
+            # Claim the row BEFORE the network call. A re-read alone would not
+            # help: while the first send is in flight the row still reads
+            # PENDING, so a concurrent sweep or the event hook would deliver
+            # the same briefing again.
+            current = self._store.get(job.id)
+            if current is None or current.delivery.key != job.delivery.key:
+                continue
+            if not self._delivery_is_eligible(current, now):
+                continue
+            current.delivery.status = DeliveryStatus.SENDING
+            current.delivery.updated_at = now
+            self._store.upsert(current, validate=False)
+
+            try:
+                await self._channel_sender(job.delivery_channel, job.delivery_target, text)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error("briefing delivery failed for job %s", job.id, exc_info=True)
+                self._mark_delivery_failed(current, exc, retryable=True)
+                changed += 1
+                continue
+
+            current.delivery.status = DeliveryStatus.SENT
+            current.delivery.error = None
+            current.delivery.updated_at = self._now_fn()
+            # The verdict rides the same write as the terminal delivery state,
+            # never a second pass over the job (#1140's clobbering lesson).
+            if (
+                current.last_verdict is None
+                or current.last_verdict.session_id != current.delivery.session_id
+            ):
+                self._record_verdict_on(current, current.delivery.session_id, text, now)
+            self._store.upsert(current, validate=False)
+            changed += 1
+        return changed
+
+    def _record_verdict_on(
+        self, job: ScheduledResearchJob, session_id: str, text: str, now_ms: int
+    ) -> None:
+        """Write the run's verdict record onto ``job``, shifting the prior one.
+
+        The previous record embeds one level only: a verdict chain any deeper
+        is noise for the list view.
+        """
+        parse, items = parse_verdict_section(text)
+        previous = job.last_verdict
+        if previous is not None:
+            previous = _dc_replace(previous, previous=None)
+        job.last_verdict = VerdictRecord(
+            session_id=session_id,
+            recorded_at=now_ms,
+            parse=parse,
+            outcome=outcome_of(items),
+            items=items,
+            previous=previous,
+        )
+
+    def _record_verdict_if_terminal(self, job: ScheduledResearchJob, now_ms: int) -> int:
+        """Persist the run's verdict once its session reaches a terminal state.
+
+        Channel-less jobs have no outbox, so this sweep is the only place their
+        terminal briefing is ever read. In-flight runs return ``None`` from the
+        briefing reader and are left for a later pass; failed or cancelled runs
+        produce no briefing, so the prior verdict simply stays visible as stale.
+
+        Returns:
+            1 when the job record changed, else 0.
+        """
+        session_id = job.delivery.session_id
+        if not session_id:
+            return 0
+        if job.last_verdict is not None and job.last_verdict.session_id == session_id:
+            return 0  # this firing is already recorded
+        try:
+            outcome = self._briefing_reader(session_id) if self._briefing_reader else None
+        except Exception:
+            logger.error("verdict read failed for job %s", job.id, exc_info=True)
+            return 0
+        if outcome is None:
+            return 0
+        status, text = outcome
+        if status != "completed":
+            return 0
+        self._record_verdict_on(job, session_id, text, now_ms)
+        self._store.upsert(job, validate=False)
+        return 1
+
+    def _mark_delivery_failed(
+        self, job: ScheduledResearchJob, exc: Exception, *, retryable: bool
+    ) -> None:
+        """Record a delivery failure without losing which firing it belonged to.
+
+        Args:
+            job: The job whose outbox row failed.
+            exc: The failure, persisted through the same redaction the dispatch
+                path uses.
+            retryable: Whether a later sweep could still succeed. A channel
+                outage is; a run that finished FAILED or CANCELLED is not,
+                because no briefing will ever exist for it.
+        """
+        job.delivery.error = _persisted_error(exc)
+        job.delivery.updated_at = self._now_fn()
+        if retryable:
+            job.delivery.attempts += 1
+            if job.delivery.attempts < self._max_consecutive_failures:
+                job.delivery.status = DeliveryStatus.PENDING
+                self._store.upsert(job, validate=False)
+                return
+        job.delivery.status = DeliveryStatus.FAILED
+        self._store.upsert(job, validate=False)
+
+    def _retry_delay_ms(self, consecutive_failures: int) -> int:
+        """Return bounded exponential backoff for a dispatch failure count."""
+        exponent = max(0, consecutive_failures - 1)
+        if self._retry_base_delay_ms == 0:
+            return 0
+        delay = self._retry_base_delay_ms * (2 ** min(exponent, 62))
+        return min(delay, self._retry_max_delay_ms)
 
     @staticmethod
     def _same_record(current: ScheduledResearchJob, job: ScheduledResearchJob) -> bool:
@@ -897,4 +1296,4 @@ class ScheduledResearchExecutor:
                 current.status.value,
             )
             return
-        self._store.upsert(job)
+        self._store.upsert(job, validate=False)

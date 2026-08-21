@@ -19,8 +19,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from rich.console import Console
 
 from cli._version import __version__ as APP_VERSION
-from src.config.bootstrap import bootstrap_environment
-from src.preflight import _require_prediction_ml_runtime
 from src.ui_services import build_run_analysis, load_run_context  # noqa: F401
 
 # UTF-8 on Windows
@@ -55,6 +53,7 @@ from src.api.security import (  # noqa: F401, E402
     _mint_sse_ticket,
     _origin_matches_request_host,
     _parse_cors_origins,
+    _parse_extra_cors_origins,
     _parse_extra_loopback_hosts,
     _redact_query_secrets,
     _reject_cross_site_browser_request,
@@ -115,166 +114,50 @@ from src.api.state import (  # noqa: F401, E402
 console = Console()
 logger = logging.getLogger(__name__)
 
-# ============================================================================
-# Lifecycle (must be defined before FastAPI app construction)
-# ============================================================================
-
 from src.api.channels_routes import (  # noqa: E402
     _start_channel_runtime,
     _stop_channel_runtime,
 )
-from src.api.runtime_activity import runtime_activity_middleware  # noqa: E402
 from src.api.scheduled_routes import (  # noqa: E402
     _start_scheduled_research_executor,
     _stop_scheduled_research_executor,
 )
 
 
-@asynccontextmanager
-async def _app_lifespan(app: FastAPI):
-    """Startup/shutdown: HTTP gateway, preflight, schedulers, session recovery."""
-    from trade_integrations.http import close_http_gateway, init_http_gateway
-
-    init_http_gateway()
-
+async def _run_startup_preflight() -> None:
+    """Run preflight checks on server startup."""
     from src.preflight import run_preflight
-    import asyncio
 
+    from src.config import migrate as _migrate
+
+    try:
+        _migrate.migrate_legacy_state()  # one-time pre-#904 state move; must never block startup
+    except Exception:  # pragma: no cover — best-effort
+        logging.getLogger(__name__).warning("Legacy state migration failed", exc_info=True)
     run_preflight(console)
-    loop = asyncio.get_running_loop()
-    from src.api.async_bridge import register_main_loop
-
-    register_main_loop(loop)
     _start_scheduled_research_executor()
-
-    try:
-        from src.api.state import _get_session_service
-        from src.session.recovery import recover_stale_running_attempts
-
-        svc = _get_session_service()
-        if svc is not None:
-            if hasattr(svc, "event_bus"):
-                svc.event_bus.set_loop(loop)
-            recovered = recover_stale_running_attempts(svc.store)
-            if recovered:
-                logger.info("Recovered %d stale session attempts", len(recovered))
-            # No autonomous-bootstrap resume here: _start_scheduled_research_executor()
-            # above already boot-paused every previously-"running" agent, so
-            # resuming bootstrap work is now exclusively a user action via
-            # POST /autonomous-agents/{id}/resume.
-    except Exception:
-        logger.exception("Session recovery failed")
-
     from src.config.accessor import get_env_config
-
-    try:
-        from trade_integrations.dataflows.index_research.pipeline_cancel import clear_pipeline_cancel
-
-        clear_pipeline_cancel()
-    except Exception:
-        logger.debug("pipeline cancel clear skipped", exc_info=True)
-
-    try:
-        from src.trade.index_prediction_run_jobs import hydrate_jobs_from_disk
-
-        hydrate_jobs_from_disk()
-    except Exception:
-        logger.debug("index-prediction job hydrate skipped", exc_info=True)
-
-    try:
-        from src.trade.external_predictions_run_jobs import hydrate_jobs_from_disk as hydrate_ext_jobs
-
-        hydrate_ext_jobs()
-    except Exception:
-        logger.debug("external-predictions job hydrate skipped", exc_info=True)
-
-    try:
-        from src.trade.recording_jobs import hydrate_jobs_from_disk as hydrate_recording_jobs
-
-        hydrate_recording_jobs()
-    except Exception:
-        logger.debug("recording job hydrate skipped", exc_info=True)
-
-    try:
-        # `hydrate_recording_jobs` above just reads job.json off disk — it
-        # doesn't check whether the worker PID it names is still alive. A
-        # prior clean shutdown (see the `finally` block below) already
-        # stopped the old worker, so on a normal restart this job.json is
-        # correctly stale; `get_active_job()` does the PID-liveness check
-        # and reconciles (fails) a zombie entry as a side effect, so the
-        # rest of the app doesn't start up believing a dead job is running.
-        from src.trade.recording_jobs import get_active_job
-
-        pre = get_active_job()
-        logger.info(
-            "recording job startup reconcile: active=%s status=%s",
-            pre.get("job_id") if pre else None,
-            pre.get("status") if pre else None,
-        )
-
-        # Auto Record's own re-arm only runs on its 30s poll tick
-        # (`recording_wake_poll_loop`), which would otherwise leave
-        # recording dark for up to 30s after every restart. Running it
-        # once here, synchronously, at startup closes that gap — if Auto
-        # Record is enabled and nothing is genuinely active (per the
-        # reconcile above), this spawns a fresh worker immediately, so a
-        # code change to the recorder takes effect on the very next
-        # restart instead of silently continuing to run under whatever
-        # was loaded into the old worker's memory.
-        from src.trade.recording_wait_scheduler import _maybe_rearm_auto_record
-
-        await _maybe_rearm_auto_record()
-        post = get_active_job()
-        logger.info(
-            "recording job startup re-arm result: active=%s status=%s",
-            post.get("job_id") if post else None,
-            post.get("status") if post else None,
-        )
-    except Exception:
-        logger.exception("recording job startup reconcile/re-arm FAILED")
 
     if get_env_config().agent_tuning.vibe_trading_channels_auto_start:
         await _start_channel_runtime()
 
+
+async def _stop_scheduled_research_on_shutdown() -> None:
+    """Stop the scheduled research executor on server shutdown."""
     try:
+        await _stop_channel_runtime()
+    finally:
+        await _stop_scheduled_research_executor()
+
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Run API startup and guaranteed reverse-order shutdown."""
+    try:
+        await _run_startup_preflight()
         yield
     finally:
-        from src.api.runtime_activity import log_shutdown_wait
-
-        log_shutdown_wait(
-            "lifespan-shutdown",
-            connection_count=0,
-            uvicorn_task_count=0,
-        )
-        try:
-            from trade_integrations.dataflows.index_research.pipeline_cancel import request_pipeline_cancel
-
-            request_pipeline_cancel("server_shutting_down")
-        except Exception:
-            logger.debug("pipeline cancel request skipped", exc_info=True)
-        try:
-            # The recording worker is a *detached* subprocess by design
-            # (`spawn_worker`'s docstring: "survives API hot-reload") so a
-            # code fix like the parallel-fetch change never used to take
-            # effect until someone manually stopped the recording — the
-            # old worker just kept running whatever was loaded into its
-            # memory at spawn time, indefinitely, across any number of
-            # app restarts. Request a cooperative stop here so a restart
-            # actually restarts the recorder too. `request_stop` only
-            # writes a flag file the worker polls each cycle — the worker
-            # notices and exits on its own even after this process has
-            # already gone away, so this doesn't block shutdown waiting
-            # for it. Startup's `_maybe_rearm_auto_record()` above is what
-            # brings recording back once the new process is up.
-            from src.trade.recording_jobs import stop_active_job_cooperatively
-
-            stopped_id = stop_active_job_cooperatively(reason="app_shutdown")
-            logger.info("recording job stop-on-shutdown: stopped=%s", stopped_id)
-        except Exception:
-            logger.exception("recording job stop-on-shutdown FAILED")
-        close_http_gateway()
-        await _stop_channel_runtime()
-        await _stop_scheduled_research_executor()
+        await _stop_scheduled_research_on_shutdown()
 
 
 app = FastAPI(
@@ -284,7 +167,7 @@ app = FastAPI(
     docs_url=None,  # docs/redoc/openapi re-registered behind require_auth
     redoc_url=None,  # in register_system_routes -- see the rationale there
     openapi_url=None,
-    lifespan=_app_lifespan,
+    lifespan=_lifespan,
 )
 
 app.add_middleware(
@@ -298,18 +181,8 @@ app.middleware("http")(_reject_untrusted_loopback_host)
 app.middleware("http")(_spa_html_deep_link_fallback)
 app.middleware("http")(_apply_security_headers)
 
-# Middleware functions are defined in src.api.security / src.api.helpers, so
-# the @app.middleware("http") decorator cannot be used here — register them
-# programmatically instead.
-app.middleware("http")(_reject_untrusted_loopback_host)
-app.middleware("http")(_spa_html_deep_link_fallback)
-app.middleware("http")(_apply_security_headers)
-app.middleware("http")(runtime_activity_middleware)
 
-
-# ============================================================================
 # Route registration + re-exports
-# ============================================================================
 
 # --- Runs ---
 from src.api.runs_routes import register_runs_routes  # noqa: E402
@@ -320,6 +193,8 @@ from src.api.runs_routes import (  # noqa: F401, E402
     _load_csv_to_dict,
     _build_response_from_run_dir,
 )
+from src.api.attribution_routes import register_attribution_routes  # noqa: E402
+register_attribution_routes(app)
 
 # --- Sessions ---
 from src.api.sessions_routes import register_sessions_routes  # noqa: E402
@@ -410,6 +285,10 @@ from src.api.live_routes import (  # noqa: F401, E402
 from src.api.alpha_routes import register_alpha_routes  # noqa: E402
 register_alpha_routes(app)
 
+# --- Options analysis ---
+from src.api.options_routes import register_options_routes  # noqa: E402
+register_options_routes(app)
+
 # --- Auth helpers (SSE tickets) ---
 from src.api.auth_routes import register_auth_routes  # noqa: E402
 register_auth_routes(app)
@@ -419,87 +298,14 @@ register_auth_routes(app)
 from src.openbb_bridge import try_register_openbb_routes  # noqa: E402  # OPENBB-WORKSPACE-INTEGRATION
 try_register_openbb_routes(app)
 
-from src.api.uploads_routes import (  # noqa: F401, E402
-    MAX_UPLOAD_SIZE,
-    _BLOCKED_UPLOAD_EXT,
-    _BLOCKED_UPLOAD_NAMES,
-    _SHADOW_ID_RE,
-    _UPLOAD_CHUNK_SIZE,
-)
-
-# --- Channels ---
-from src.api.channels_routes import register_channels_routes  # noqa: E402
-register_channels_routes(app)
-from src.api.qveris_routes import qveris_router  # noqa: E402  # QVERIS-INTEGRATION
-app.include_router(qveris_router)  # QVERIS-INTEGRATION
-from src.api.trade_routes import trade_router  # noqa: E402
-app.include_router(trade_router)  # Trade-stack widgets + OpenAlgo execute proxy
-from src.api.trading_connector_routes import router as trading_connector_router  # noqa: E402
-app.include_router(trading_connector_router)
-from src.api.autonomous_routes import autonomous_router  # noqa: E402
-app.include_router(autonomous_router)
-from src.api.watch_routes import watch_router  # noqa: E402
-app.include_router(watch_router)
-from src.api.observability_routes import observability_router  # noqa: E402
-app.include_router(observability_router)
-
-from src.api.channels_routes import (  # noqa: F401, E402
-    ChannelPairingCommandRequest,
-)
-
-# --- Swarm ---
-from src.api.swarm_routes import register_swarm_routes  # noqa: E402
-register_swarm_routes(app)
-
-from src.api.swarm_routes import _get_swarm_runtime  # noqa: F401, E402
-
-# --- Live trading ---
-from src.api.live_routes import register_live_routes  # noqa: E402
-register_live_routes(app)
-
-from src.api.live_routes import (  # noqa: F401, E402
-    CommitMandateRequest,
-    LiveHaltRequest,
-    LiveAuthorizeRequest,
-    LiveRunnerControlRequest,
-    BrokerAuthState,
-    MandateLimits,
-    ActiveMandateState,
-    RunnerLivenessState,
-    LiveBrokerStatus,
-    LiveStatusResponse,
-    LiveRunnerUnavailable,
-    _runner_tasks,
-    _runner_factory,
-    _emit_live_event,
-    _fetch_broker_ceilings,
-    _known_live_brokers,
-    _oauth_token_present,
-    _active_mandate_state,
-    _runner_liveness_state,
-    _live_broker_adapter,
-    _build_live_runner,
-    _drive_runner,
-    _connector_verify_cache,
-    _check_connector_status,
-)
-
-# --- Alpha Zoo ---
-from src.api.alpha_routes import register_alpha_routes  # noqa: E402
-register_alpha_routes(app)
-
-# --- Auth helpers (SSE tickets) ---
-from src.api.auth_routes import register_auth_routes  # noqa: E402
-register_auth_routes(app)
-
-
-# Scheduled Research Routes — see src/api/scheduled_routes.py
-
+# --- Scheduled research ---
 from src.api.scheduled_routes import register_scheduled_routes  # noqa: E402
 register_scheduled_routes(app)
 
 from src.api.scheduled_routes import (  # noqa: E402, F401
+    CreateRunFromPlaybookRequest,
     CreateScheduledRunRequest,
+    PlaybookResponse,
     ScheduledRunResponse,
     _dispatch_scheduled_research_job,
     _get_scheduled_research_executor,
@@ -514,12 +320,6 @@ from src.api.scheduled_routes import (  # noqa: E402, F401
 
 def serve_main(argv: list[str] | None = None) -> int:
     """Start the API server from CLI-style arguments."""
-    bootstrap_environment()
-
-    ml_rc = _require_prediction_ml_runtime()
-    if ml_rc is not None:
-        return ml_rc
-
     import argparse
     import subprocess
     import uvicorn
@@ -540,7 +340,6 @@ def serve_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Vibe-Trading Server")
     parser.add_argument("--port", type=int, default=8000, help="Listen port (default 8000)")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address")
-    parser.add_argument("--reload", action="store_true", help="Auto-reload on code changes (dev only)")
     parser.add_argument("--dev", action="store_true", help="Dev mode: spawn Vite on :5173")
     try:
         args = parser.parse_args(argv)
@@ -588,42 +387,7 @@ def serve_main(argv: list[str] | None = None) -> int:
     install_access_log_redaction_filter()
 
     try:
-        reload_dirs: list[str] | None = None
-        app_target: Any = app
-        if args.reload:
-            trade_root = Path(__file__).resolve().parents[2]
-            integrations = trade_root / "integrations"
-            agents = trade_root / "tradingagents"
-            reload_dirs = [str(frontend_root.parent / "agent")]
-            if integrations.is_dir():
-                reload_dirs.append(str(integrations))
-            if agents.is_dir():
-                reload_dirs.append(str(agents))
-            print(f"[dev] API auto-reload watching: {', '.join(reload_dirs)}")
-            # uvicorn requires an import string (not an app instance) for --reload
-            app_target = "api_server:app"
-        # Monkey-patching uvicorn.server.Server breaks reload: the reloader parent
-        # pickles Server.run and spawn compares class identity across processes.
-        if not args.reload:
-            import uvicorn.server
-
-            from src.api.uvicorn_server import TransparentShutdownServer
-
-            uvicorn.server.Server = TransparentShutdownServer
-        uvicorn.run(
-            app_target,
-            host=args.host,
-            port=args.port,
-            log_level="info",
-            reload=args.reload,
-            reload_dirs=reload_dirs,
-            # Open SSE streams (recording/prediction-run/alpha-bench logs) never
-            # close on their own — only when the client disconnects. Without a
-            # bound here, a stale browser tab holding one open makes --reload's
-            # graceful shutdown wait forever (observed as "Waiting for
-            # connections to close..." then nothing). Force-close after 5s.
-            timeout_graceful_shutdown=5,
-        )
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     finally:
         if vite_proc:
             vite_proc.terminate()

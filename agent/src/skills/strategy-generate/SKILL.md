@@ -106,7 +106,7 @@ Self-check after writing `signal_engine.py`:
 | `^[A-Z0-9&.-]+\.(TO\|V)$` | Canadian stocks (TSX / TSXV) | yahoo / yfinance | - |
 | `^[A-Z]+-USDT$` | Cryptocurrency | okx | - |
 
-**`extra_fields` selection logic**: only China A-shares (`tushare`) support daily valuation fields. If the strategy needs `PE/PB/ROE` and similar daily_basic fields, specify them in `config.json.extra_fields` and `DataLoader` will retrieve them automatically. Hong Kong stocks, US stocks, and crypto do not support `extra_fields`.
+**`extra_fields` selection logic**: only China A-shares (`tushare`) support daily valuation fields. If the strategy needs `PE/PB/ROE` and similar daily_basic fields, specify them in `config.json.extra_fields` and `DataLoader` will retrieve them automatically. Hong Kong, US, Canadian stocks, and crypto do not support `extra_fields`.
 
 **`fundamental_fields` selection logic**: use this for China A-share financial statement pre-filters. The runner queries `income`, `balancesheet`, `cashflow`, and/or `fina_indicator` through the Tushare fundamental provider, then merges rows into daily bars only after their announcement/disclosure date. Output columns are prefixed by table name, for example `income_total_revenue`, `income_n_income`, `balancesheet_total_hldr_eqy_exc_min_int`, and `fina_indicator_roe`.
 
@@ -126,6 +126,8 @@ Self-check after writing `signal_engine.py`:
   "optimizer": null,
   "optimizer_params": {},
   "engine": "daily",
+  "position_adjustment": "rebalance",
+  "rebalance_tolerance": 0.05,
   "validation": null
 }
 ```
@@ -141,7 +143,11 @@ Self-check after writing `signal_engine.py`:
 - `optimizer`: optional, one of `"equal_volatility"` / `"risk_parity"` / `"mean_variance"` / `"max_diversification"` / `"turnover_aware"` / `null` (equal-weight by default)
 - `optimizer_params`: optimizer parameters, such as `{"lookback": 60}`. `mean_variance` additionally supports `{"risk_free": 0.0}`; `turnover_aware` supports `{"risk_aversion": 1.0, "turnover_penalty": 0.5}` (L1 penalty on weight changes; tune to data frequency)
 - `engine`: backtest engine, default `"daily"`. For options strategies, set `"options"` (requires `OptionsSignalEngine`)
-- `position_adjustment`: `"hold"` (default) preserves an open same-direction position until close/reversal; opt in to `"rebalance"` to scale or reduce it toward each target weight using market fills and weighted-average entry accounting
+- `position_adjustment`: **always state this explicitly** — the two modes produce different books from the same signals, and neither is right for every strategy.
+  - `"rebalance"` executes every target change with market fills and weighted-average entry accounting. It also re-sizes whenever the held weight has drifted from the target, and a strategy restates its target on every bar, so a constant target means a fill on every bar: measured on a 40-bar rising series, a constant 20% target produced **40 fills instead of 1**, with the fees, slippage and transaction taxes that follow. A strategy that rebalances on its own schedule (e.g. `rebalance_freq=20`) will still trade daily here.
+  - `"hold"` keeps a same-direction position until it exits or reverses, so the weight drifts with price and a requested resize is **not executed**. Dropped requests are counted in the report as `dropped_target_adjustment_count`, with the first twenty listed, so a rebalance count that does not match the trade log is explained rather than silent.
+  - Rule of thumb: `"rebalance"` when the target weight itself carries the strategy (optimizers, risk budgets, continuous scaling); `"hold"` when entries and exits carry it and the weight in between is incidental.
+- `rebalance_tolerance`: drift band around the target, as a fraction of it, used only under `"rebalance"`. A resize executes once the held weight has moved further than this from its target; a **changed** target breaches any sane band on its own, so target changes always execute. Default `0.0` means no band, and then the resize test is decided by the slippage width alone — measured on a constant 20% target over 60 bars, `0.0` produced 60 fills, `0.02` produced 12, and `0.05` produced 5 while the weight never left 0.21. **State it for any strategy with its own rebalance cadence**, otherwise a `rebalance_freq=20` strategy still trades every bar. `0.05` is a reasonable starting point, not a recommendation with evidence behind it — it is your modelling choice and the report records the value the run used.
 - `initial_cash`: default 1,000,000
 - `commission`: default 0.1%
 - `validation`: optional statistical validation after backtest completes. Omit to skip. Example:

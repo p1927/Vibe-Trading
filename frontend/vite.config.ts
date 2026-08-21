@@ -19,6 +19,8 @@ const PROXY_PATHS = [
   "/shadow-reports",
   "/trade",
   "/trading",
+  "/scheduled-runs",
+  "/options",
 ];
 
 export default defineConfig(({ mode }) => {
@@ -58,10 +60,18 @@ export default defineConfig(({ mode }) => {
 
   const proxy = {
     ...Object.fromEntries(PROXY_PATHS.map((p) => [p, apiProxy])),
+    // SPA RunDetail page — only the two-segment ``/runs/{id}``
+    // form should fall back to ``index.html`` on browser navigation.
+    // ``/runs/{id}/code`` and ``/runs/{id}/pine`` are API-only and
+    // must keep proxying to the backend even when Accept is text/html.
     "^/runs/[^/]+/?$": apiProxyWithHtmlFallback,
     "/runs": apiProxy,
     "/correlation": apiProxyWithHtmlFallback,
     "/prediction": apiProxyWithHtmlFallback,
+    // /options is both the SPA Options Lab route and an API prefix
+    // (/options/payoff, /options/chain) — same dual role as /correlation.
+    // Overrides the plain PROXY_PATHS entry above.
+    "/options": apiProxyWithHtmlFallback,
     "^/alpha(?:/|$)": apiProxy,
   };
 
@@ -82,7 +92,7 @@ export default defineConfig(({ mode }) => {
       global: "globalThis",
     },
     resolve: {
-      alias: { "@": path.resolve(__dirname, "./src") },
+      alias: { "@": path.resolve(import.meta.dirname, "./src") },
     },
     optimizeDeps: {
       include: [
@@ -108,9 +118,10 @@ export default defineConfig(({ mode }) => {
     build: {
       rollupOptions: {
         output: {
-          manualChunks: {
-            "vendor-react": ["react", "react-dom", "react-router-dom"],
-            "vendor-charts": ["echarts", "plotly.js", "react-plotly.js"],
+          manualChunks: (id: string) => {
+            if (/node_modules\/(react|react-dom|react-router)\//.test(id)) return "vendor-react";
+            if (/node_modules\/(echarts|plotly\.js|react-plotly\.js|lightweight-charts)\//.test(id)) return "vendor-charts";
+            return undefined;
           },
         },
       },

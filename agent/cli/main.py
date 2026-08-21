@@ -20,7 +20,7 @@ hits :func:`main`.
 from __future__ import annotations
 
 import importlib
-import os
+import logging
 import sys
 import threading
 import time
@@ -171,7 +171,9 @@ def _probe_skill_count() -> int:
 
 def _probe_session_count() -> int:
     """Count recorded sessions from the SQLite store."""
-    db_path = Path.home() / ".vibe-trading" / "sessions.db"
+    from src.config.paths import get_runtime_root
+
+    db_path = get_runtime_root() / "sessions.db"
     if not db_path.exists():
         return 0
     try:
@@ -365,7 +367,7 @@ class InteractiveContext:
 
 
 def _session_store() -> Any:
-    """Return a process-wide :class:`SessionStore` rooted at ``agent/sessions``.
+    """Return a process-wide :class:`SessionStore` rooted at the user-level sessions dir.
 
     Cached on the module so repeat ``_append_message`` / ``_new_session``
     calls don't re-import ``src.session.store`` every turn.
@@ -401,8 +403,8 @@ def _new_session(prompt_preview: str) -> Optional[str]:
     """Create a fresh session record. Returns the id, or None on failure.
 
     Dual-writes to the filesystem :class:`SessionStore` (canonical JSONL
-    log under ``agent/sessions/``) *and* to the SQLite FTS5 search index
-    (``~/.vibe-trading/sessions.db``) so cross-session search via
+    log in the user-level sessions dir) *and* to the SQLite FTS5 search
+    index (``sessions.db`` beside it) so cross-session search via
     :class:`SessionSearchIndex` finds turns recorded from the interactive
     loop. Matches the pattern in :class:`SessionService`.
     """
@@ -773,15 +775,46 @@ def _print_interactive_result(console: Any, result: Dict[str, Any], elapsed: flo
     """Print the assistant answer after the rail without boxed run panels."""
 
     from cli.ui.transcript import render_answer, render_elapsed_status
+    from cli._legacy import _read_metric_values
 
     content = (result.get("content") or "").strip()
     if content:
         console.print(render_answer(content))
         console.print()
-    console.print(render_elapsed_status(elapsed))
     run_id = result.get("run_id")
-    if run_id:
+    run_dir = result.get("run_dir")
+    metrics = (
+        _read_metric_values(Path(run_dir) / "artifacts" / "metrics.csv") if run_dir else {}
+    )
+    if run_id and metrics:
+        console.print("[bold green]✓ Backtest complete[/bold green]")
+        metric_rows = (
+            ("Total return", "total_return", True),
+            ("Annual return", "annual_return", True),
+            ("Sharpe", "sharpe", False),
+            ("Max drawdown", "max_drawdown", True),
+            ("Win rate", "win_rate", True),
+            ("Trades", "trade_count", False),
+        )
+        for label, key, as_percent in metric_rows:
+            value = metrics.get(key)
+            if value is None:
+                continue
+            rendered = f"{value * 100:.1f}%" if as_percent else (
+                f"{int(value)}" if key == "trade_count" else f"{value:.2f}"
+            )
+            console.print(f"  {label:<14} [bold]{rendered}[/bold]")
+        console.print()
+        console.print(f"[bold]Run ID:[/bold] [cyan]{run_id}[/cyan]")
+        # Name the dashboard without starting a server: this is a print path, and
+        # a process spawned here would outlive the command that created it.
+        console.print(
+            f"[dim]Dashboard: run `vibe-trading serve`, then open "
+            f"/runs/{run_id}?view=dashboard[/dim]"
+        )
+    elif run_id:
         console.print(f"[dim]/show {run_id} · {elapsed:.1f}s[/dim]")
+    console.print(render_elapsed_status(elapsed))
 
 
 def _print_recap_if_needed(console: Any, ctx: InteractiveContext) -> None:
@@ -1308,6 +1341,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         Process exit code.
     """
     raw_argv = list(sys.argv[1:] if argv is None else argv)
+
+    # One-time move of pre-#904 code-relative state into the runtime root.
+    # A failed migration must never block the CLI.
+    try:
+        from src.config import migrate as _migrate
+
+        _migrate.migrate_legacy_state()
+    except Exception:  # pragma: no cover — best-effort
+        logging.getLogger(__name__).warning(
+            "Legacy state migration failed", exc_info=True
+        )
+
     interactive = _is_interactive_invocation(raw_argv)
 
     if interactive:

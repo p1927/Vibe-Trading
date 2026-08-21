@@ -33,8 +33,7 @@ import { buildToolTimelineMessages } from "@/pages/agentToolTimeline";
 import type { AgentMessage, SwarmRunStatus, ToolCallEntry } from "@/types/agent";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
 import { WelcomeScreen } from "@/components/chat/WelcomeScreen";
-import { MessageBubble } from "@/components/chat/MessageBubble";
-import { MarkdownContent } from "@/components/chat/MarkdownContent";
+import { MarkdownContent, MessageBubble } from "@/components/chat/MessageBubble";
 import { ThinkingTimeline } from "@/components/chat/ThinkingTimeline";
 import { ConversationTimeline } from "@/components/chat/ConversationTimeline";
 import { ToolProgressIndicator } from "@/components/chat/ToolProgressIndicator";
@@ -564,6 +563,7 @@ export function Agent({
   const [debateRunning, setDebateRunning] = useState(false);
   const [debateError, setDebateError] = useState<string | null>(null);
   const [sessionLoadError, setSessionLoadError] = useState<string | null>(null);
+  const [runtimeIdentity, setRuntimeIdentity] = useState<RuntimeIdentity>({});
 
   const messages = useAgentStore(s => s.messages);
   const streamingText = useAgentStore(s => s.streamingText);
@@ -583,7 +583,6 @@ export function Agent({
   const urlAgentId = searchParams.get("agent");
   const isOrchestratorView = urlAgentId === "orchestrator";
 
-  const [runtimeIdentity, setRuntimeIdentity] = useState<RuntimeIdentity>({});
   const visibleRuntimeIdentity = runtimeIdentity.sessionId === urlSessionId
     ? runtimeIdentity
     : {};
@@ -1834,6 +1833,7 @@ export function Agent({
       const gen = genRef.current + 1;
       genRef.current = gen;
       doDisconnect();
+      setRuntimeIdentity({});
       // Live-channel timeline items are per-session; clear on switch.
       setLiveItems([]);
       setCommittedMandates({});
@@ -1871,6 +1871,7 @@ export function Agent({
     } else if (!urlSessionId && curSid) {
       genRef.current += 1;
       doDisconnect();
+      setRuntimeIdentity({});
       setLiveItems([]);
       setCommittedMandates({});
       setLiveHalted(null);

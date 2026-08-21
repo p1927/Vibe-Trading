@@ -18,6 +18,7 @@ import {
   api,
   type LiveStatus,
   type LiveBrokerStatus,
+  type LiveBrokerAuthStatus,
   type LiveMandateLimits,
   type LiveAuthorizeResponse,
   type TradingConnectorsResponse,
@@ -184,6 +185,42 @@ function SdkProfileRow({
   );
 }
 
+function isSdkBroker(auth: LiveBrokerAuthStatus): boolean {
+  return auth.transport === "broker_sdk";
+}
+
+function isOAuthLiveBroker(auth: LiveBrokerAuthStatus): boolean {
+  return auth.is_live_broker === true && !isSdkBroker(auth);
+}
+
+function isSdkConnectionReady(auth: LiveBrokerAuthStatus): boolean {
+  return auth.connection_state === "connected" || auth.connection_state === "ready";
+}
+
+function isConnectorOperational(auth: LiveBrokerAuthStatus): boolean {
+  if (auth.oauth_token_present) return true;
+  if (isSdkBroker(auth)) return isSdkConnectionReady(auth);
+  return false;
+}
+
+function sdkDiagnosticMessage(auth: LiveBrokerAuthStatus): string {
+  switch (auth.error_code) {
+    case "credentials_missing":
+    case "credentials_partial":
+      return i18n.t("runnerStatus.sdkCredentialsRequired");
+    case "credentials_conflict":
+      return i18n.t("runtime.diagnosticCredentialsConflict");
+    case "sdk_missing":
+      return i18n.t("runtime.diagnosticSdkMissing");
+    case "authentication_failed":
+      return i18n.t("runtime.diagnosticAuthenticationFailed");
+    case "network_unreachable":
+      return i18n.t("runtime.diagnosticNetworkUnreachable");
+    default:
+      return auth.error?.trim() || i18n.t("runnerStatus.sdkConnectionError");
+  }
+}
+
 function BrokerRow({
   broker,
   halted,
@@ -196,8 +233,12 @@ function BrokerRow({
   const [busy, setBusy] = useState(false);
   const [authorizeHint, setAuthorizeHint] = useState<LiveAuthorizeResponse | null>(null);
   const [authorizeFailed, setAuthorizeFailed] = useState(false);
-  const brokerKey = broker.auth.broker;
-  const authorized = broker.auth.oauth_token_present;
+  const auth = broker.auth;
+  const brokerKey = auth.broker;
+  const oauthAuthorized = auth.oauth_token_present;
+  const sdkReady = isSdkBroker(auth) && isSdkConnectionReady(auth);
+  const operational = isConnectorOperational(auth);
+  const showOAuthOnRamp = isOAuthLiveBroker(auth) && !oauthAuthorized;
   const runnerAlive = broker.runner?.alive ?? false;
   const mandate = broker.mandate ?? null;
   const countdown = formatCountdown(mandate?.expires_at);
@@ -209,7 +250,7 @@ function BrokerRow({
     let cancelled = false;
     setAuthorizeHint(null);
     setAuthorizeFailed(false);
-    if (authorized || !brokerKey) return () => { cancelled = true; };
+    if (!showOAuthOnRamp || !brokerKey) return () => { cancelled = true; };
 
     api.authorizeLive(brokerKey)
       .then((response) => {
@@ -220,7 +261,7 @@ function BrokerRow({
       });
 
     return () => { cancelled = true; };
-  }, [authorized, brokerKey]);
+  }, [brokerKey, showOAuthOnRamp]);
 
   const toggleRunner = useCallback(async () => {
     if (busy) return;
@@ -246,13 +287,15 @@ function BrokerRow({
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="truncate text-xs font-semibold capitalize text-foreground">{brokerKey}</span>
-          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-            {i18n.t("runnerStatus.oauthLive")}
-          </span>
-          {authorized ? (
+          {oauthAuthorized ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
               <ShieldCheck className="h-2.5 w-2.5" />
               {i18n.t("runnerStatus.authorized")}
+            </span>
+          ) : sdkReady ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+              <CircleDot className="h-2.5 w-2.5" />
+              {i18n.t("runnerStatus.sdkConnected")}
             </span>
           ) : (
             <span className="inline-flex items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
@@ -263,7 +306,8 @@ function BrokerRow({
         </div>
       </div>
 
-      {!authorized ? (
+      {/* OAuth on-ramp for mandate live brokers only — SDK key brokers use file/env credentials. */}
+      {showOAuthOnRamp ? (
         <div className="grid gap-1.5 rounded-md border border-dashed border-primary/30 bg-primary/5 p-2">
           <div className="flex items-center gap-1.5 text-[11px] font-medium text-primary">
             <PlugZap className="h-3 w-3 shrink-0" />
@@ -278,8 +322,19 @@ function BrokerRow({
             </p>
           )}
         </div>
-      ) : (
+      ) : isSdkBroker(auth) && !operational ? (
+        <div className="grid gap-1.5 rounded-md border border-dashed border-border/60 bg-muted/30 p-2">
+          <p className="text-[10px] leading-relaxed text-muted-foreground">
+            {sdkDiagnosticMessage(auth)}
+          </p>
+        </div>
+      ) : operational ? (
         <>
+          {sdkReady && auth.readonly === true ? (
+            <p className="text-[10px] leading-relaxed text-muted-foreground">
+              {i18n.t("runnerStatus.sdkReadOnlyNote")}
+            </p>
+          ) : null}
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded-md border bg-background/60 p-2">
               <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -363,7 +418,7 @@ function BrokerRow({
             </button>
           </div>
         </>
-      )}
+      ) : null}
     </div>
   );
 }

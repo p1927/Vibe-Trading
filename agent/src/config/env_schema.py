@@ -62,6 +62,16 @@ def _parse_env_bool(v: Any) -> Any:
 EnvBool = Annotated[bool, BeforeValidator(_parse_env_bool)]
 
 
+def _parse_responses_api_bool(v: Any) -> Any:
+    """Enable Responses transport only for the documented literal ``true``."""
+    if isinstance(v, str):
+        return v.strip() == "true"
+    return v
+
+
+ResponsesApiBool = Annotated[bool, BeforeValidator(_parse_responses_api_bool)]
+
+
 # ---------------------------------------------------------------------------
 # Base class
 # ---------------------------------------------------------------------------
@@ -132,6 +142,9 @@ class LLMConfig(_EnvBase):
     timeout_seconds: int = Field(alias="TIMEOUT_SECONDS", default=120)
     max_retries: int = Field(alias="MAX_RETRIES", default=2)
     langchain_reasoning_effort: str = Field(alias="LANGCHAIN_REASONING_EFFORT", default="")
+    langchain_use_responses_api: ResponsesApiBool | None = Field(
+        alias="LANGCHAIN_USE_RESPONSES_API", default=None
+    )
     vibe_trading_deepseek_adapter: str = Field(alias="VIBE_TRADING_DEEPSEEK_ADAPTER", default="auto")
     moonshot_user_agent: str = Field(alias="MOONSHOT_USER_AGENT", default="")
     vibe_trading_disable_http_proxy: EnvBool = Field(
@@ -142,6 +155,9 @@ class LLMConfig(_EnvBase):
         default="https://chatgpt.com/backend-api/codex/responses",
     )
     openai_model: str = Field(alias="OPENAI_MODEL", default="")
+    vibe_trading_disable_http_proxy: EnvBool = Field(
+        alias="VIBE_TRADING_DISABLE_HTTP_PROXY", default=False,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -169,16 +185,34 @@ class DataConfig(_EnvBase):
     fred_api_key: str = Field(alias="FRED_API_KEY", default="")
     vibe_trading_iwencai_key: str = Field(alias="VIBE_TRADING_IWENCAI_KEY", default="")
     vibe_trading_sec_ua: str = Field(alias="VIBE_TRADING_SEC_UA", default="")
+    # 13F scan bounds. No gt=0 constraint: a non-positive override must fall
+    # back to the default like any other bad value, and a constraint would
+    # raise a ValidationError at config load instead.
+    vibe_trading_sec_13f_max_xml_mb: float = Field(
+        alias="VIBE_TRADING_SEC_13F_MAX_XML_MB", default=25.0
+    )
+    vibe_trading_sec_13f_budget_s: float = Field(
+        alias="VIBE_TRADING_SEC_13F_BUDGET_S", default=120.0
+    )
+    vibe_trading_sec_ftd_url: str = Field(alias="VIBE_TRADING_SEC_FTD_URL", default="")
+    vibe_trading_sec_ftd_files: int = Field(alias="VIBE_TRADING_SEC_FTD_FILES", default=1)
+    vibe_trading_openalex_mailto: str = Field(alias="VIBE_TRADING_OPENALEX_MAILTO", default="")
+    vibe_tw_stock_db: str = Field(alias="VIBE_TW_STOCK_DB", default="")
     vibe_trading_data_cache: EnvBool = Field(alias="VIBE_TRADING_DATA_CACHE", default=False)
     vibe_trading_data_cache_root: str = Field(alias="VIBE_TRADING_DATA_CACHE_ROOT", default="")
     aliyun_iqs_api_key: str = Field(alias="ALIYUN_IQS_API_KEY", default="")
     qveris_api_key: str = Field(alias="QVERIS_API_KEY", default="")
     qveris_base_url: str = Field(alias="QVERIS_BASE_URL", default="")
+    tickerall_api_key: str = Field(alias="TICKERALL_API_KEY", default="")
+    tickerall_account_id: str = Field(alias="TICKERALL_ACCOUNT_ID", default="")
+    tickerall_base_url: str = Field(alias="TICKERALL_BASE_URL", default="")
     rsshub_base_url: str = Field(alias="RSSHUB_BASE_URL", default="")
     dashscope_api_key: str = Field(alias="DASHSCOPE_API_KEY", default="")
     longbridge_app_key: str = Field(alias="LONGBRIDGE_APP_KEY", default="")
     longbridge_app_secret: str = Field(alias="LONGBRIDGE_APP_SECRET", default="")
     longbridge_access_token: str = Field(alias="LONGBRIDGE_ACCESS_TOKEN", default="")
+    etoro_api_key: str = Field(alias="ETORO_API_KEY", default="")
+    etoro_user_key: str = Field(alias="ETORO_USER_KEY", default="")
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +281,13 @@ class APIConfig(_EnvBase):
     vibe_trading_trust_docker_loopback: EnvBool = Field(
         alias="VIBE_TRADING_TRUST_DOCKER_LOOPBACK", default=False,
     )
+    # Ship the Content-Security-Policy as Report-Only instead of enforcing it.
+    # The policy is enforced by default; this is a rollback switch for a
+    # deployment that serves extra assets the stock policy does not cover
+    # (a reverse proxy injecting a script, a customized frontend build).
+    vibe_trading_csp_report_only: EnvBool = Field(
+        alias="VIBE_TRADING_CSP_REPORT_ONLY", default=False,
+    )
     vibe_trading_enable_shell_tools: EnvBool = Field(
         alias="VIBE_TRADING_ENABLE_SHELL_TOOLS", default=False,
     )
@@ -309,6 +350,9 @@ class AgentTuningConfig(_EnvBase):
     vibe_trading_tool_timeout_seconds: float = Field(
         alias="VIBE_TRADING_TOOL_TIMEOUT_SECONDS", default=1800.0,
     )
+    vibe_trading_llm_timeout_seconds: float = Field(
+        alias="VIBE_TRADING_LLM_TIMEOUT_SECONDS", default=300.0,
+    )
     vibe_trading_goal_max_continuations: int = Field(
         alias="VIBE_TRADING_GOAL_MAX_CONTINUATIONS", default=3,
     )
@@ -328,6 +372,15 @@ class AgentTuningConfig(_EnvBase):
     index_monitor_enable_scheduler: EnvBool = Field(
         alias="INDEX_MONITOR_ENABLE_SCHEDULER", default=False,
     )
+    vibe_trading_scheduler_max_consecutive_failures: int = Field(
+        alias="VIBE_TRADING_SCHEDULER_MAX_CONSECUTIVE_FAILURES", default=3,
+    )
+    vibe_trading_scheduler_retry_base_delay_ms: int = Field(
+        alias="VIBE_TRADING_SCHEDULER_RETRY_BASE_DELAY_MS", default=60_000,
+    )
+    vibe_trading_scheduler_retry_max_delay_ms: int = Field(
+        alias="VIBE_TRADING_SCHEDULER_RETRY_MAX_DELAY_MS", default=3_600_000,
+    )
     vibe_trading_channels_auto_start: EnvBool = Field(
         alias="VIBE_TRADING_CHANNELS_AUTO_START", default=False,
     )
@@ -336,6 +389,7 @@ class AgentTuningConfig(_EnvBase):
     )
     vibe_trading_bench_workers: int = Field(alias="VIBE_TRADING_BENCH_WORKERS", default=0)
     vibe_trading_search_backends: str = Field(alias="VIBE_TRADING_SEARCH_BACKENDS", default="")
+    vibe_trading_slash_arg_max: int = Field(alias="VIBE_TRADING_SLASH_ARG_MAX", default=600)
     vibe_trading_search_bing_fallback: EnvBool = Field(
         alias="VIBE_TRADING_SEARCH_BING_FALLBACK", default=True,
     )
@@ -358,6 +412,7 @@ class PathConfig(_EnvBase):
 
     vibe_trading_hypotheses_path: str = Field(alias="VIBE_TRADING_HYPOTHESES_PATH", default="")
     vibe_trading_goal_db_path: str = Field(alias="VIBE_TRADING_GOAL_DB_PATH", default="")
+    vibe_trading_playbook_dir: str = Field(alias="VIBE_TRADING_PLAYBOOK_DIR", default="")
     vibe_trading_swarm_agent_config: str = Field(
         alias="VIBE_TRADING_SWARM_AGENT_CONFIG", default="",
     )
@@ -367,6 +422,9 @@ class PathConfig(_EnvBase):
     vibe_trading_strategy_store_db_path: str = Field(
         alias="VIBE_TRADING_STRATEGY_STORE_DB_PATH", default="",
     )
+    vibe_trading_strategy_discovery_db_path: str = Field(
+        alias="VIBE_TRADING_STRATEGY_DISCOVERY_DB_PATH", default="",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -374,9 +432,59 @@ class PathConfig(_EnvBase):
 # ---------------------------------------------------------------------------
 
 
-class MemoryConfig(_EnvBase):
-    """Memory lifecycle feature flags."""
+_PRESET_FLAGS: dict[str, dict[str, bool]] = {
+    "off": {
+        "quality_enabled": False,
+        "gc_enabled": False,
+        "decay_enabled": False,
+        "hierarchy_enabled": False,
+        "links_enabled": False,
+        "compression_enabled": False,
+        "fts_index_enabled": False,
+    },
+    "on": {
+        "quality_enabled": True,
+        "gc_enabled": True,
+        "decay_enabled": True,
+        "hierarchy_enabled": False,
+        "links_enabled": False,
+        "compression_enabled": False,
+        "fts_index_enabled": False,
+    },
+    "full": {
+        "quality_enabled": True,
+        "gc_enabled": True,
+        "decay_enabled": True,
+        "hierarchy_enabled": True,
+        "links_enabled": True,
+        "compression_enabled": True,
+        "fts_index_enabled": True,
+    },
+}
 
+# Mapping from field name to environment variable alias
+_MEMORY_FLAG_ALIASES: dict[str, str] = {
+    "quality_enabled": "VT_MEMORY_QUALITY",
+    "gc_enabled": "VT_MEMORY_GC",
+    "decay_enabled": "VT_MEMORY_DECAY",
+    "hierarchy_enabled": "VT_MEMORY_HIERARCHY",
+    "links_enabled": "VT_MEMORY_LINKS",
+    "compression_enabled": "VT_MEMORY_COMPRESSION",
+    "fts_index_enabled": "VT_MEMORY_FTS_INDEX",
+}
+
+
+class MemoryConfig(_EnvBase):
+    """Memory lifecycle feature flags.
+
+    Use VT_MEMORY=off|on|full as a business-friendly preset.
+    Individual VT_MEMORY_* flags can override the preset baseline.
+    """
+
+    # Preset: business-friendly one-liner
+    preset: str = Field(default="off", alias="VT_MEMORY")
+
+    # Tier 1 flags
     quality_enabled: EnvBool = Field(
         default=False,
         alias="VT_MEMORY_QUALITY",
@@ -392,6 +500,57 @@ class MemoryConfig(_EnvBase):
         alias="VT_MEMORY_DECAY",
         description="Enable importance decay computation",
     )
+
+    # Tier 2 flags
+    hierarchy_enabled: EnvBool = Field(
+        default=False, alias="VT_MEMORY_HIERARCHY",
+        description="Enable hierarchical directory routing",
+    )
+    links_enabled: EnvBool = Field(
+        default=False, alias="VT_MEMORY_LINKS",
+        description="Enable BM25 semantic linking",
+    )
+    compression_enabled: EnvBool = Field(
+        default=False, alias="VT_MEMORY_COMPRESSION",
+        description="Enable auto-compression pipeline",
+    )
+    fts_index_enabled: EnvBool = Field(
+        default=False, alias="VT_MEMORY_FTS_INDEX",
+        description="Enable SQLite FTS5 search index",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_preset(cls, data: Any) -> Any:
+        """Apply VT_MEMORY preset as baseline; explicit flags override."""
+        if not isinstance(data, dict):
+            return data
+
+        # Determine preset value from env or constructor data
+        preset_val = (
+            os.environ.get("VT_MEMORY")
+            or data.get("VT_MEMORY")
+            or data.get("preset")
+            or "off"
+        )
+        preset_val = preset_val.strip().lower()
+        if preset_val not in _PRESET_FLAGS:
+            preset_val = "off"
+
+        baseline = _PRESET_FLAGS[preset_val]
+
+        # For each flag: use explicit env var if set, otherwise apply preset
+        for field_name, env_alias in _MEMORY_FLAG_ALIASES.items():
+            # If user explicitly set this env var, don't override
+            if os.environ.get(env_alias) is not None:
+                continue
+            # If explicitly passed in constructor data, don't override
+            if field_name in data or env_alias in data:
+                continue
+            # Apply preset baseline using field name
+            data[field_name] = baseline[field_name]
+
+        return data
 
 
 # ---------------------------------------------------------------------------

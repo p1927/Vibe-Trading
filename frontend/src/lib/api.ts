@@ -1,6 +1,11 @@
 import { authHeaders, withAuthTicket } from "@/lib/apiAuth";
 import { resolveApiBase } from "@/lib/apiBase";
 import i18n from "@/i18n";
+import type {
+  OptionsChainResponse,
+  OptionsPayoffRequest,
+  OptionsPayoffResponse,
+} from "@/lib/options";
 
 const BASE = resolveApiBase();
 
@@ -90,7 +95,9 @@ async function errorFromResponse(res: Response): Promise<ApiError> {
   let detail: unknown = `HTTP ${res.status}`;
   try {
     const body = await res.json();
-    detail = body.detail ?? body.message ?? detail;
+    // Options endpoints report errors under an `error` key
+    // ({status:"error", error} / {ok:false, error}) rather than detail/message.
+    detail = body.detail || body.message || body.error || detail;
   } catch { /* ignore */ }
   if (res.status === 401 || res.status === 403) {
     return new ApiError(AUTH_REQUIRED_MESSAGE, res.status, detail);
@@ -667,6 +674,8 @@ export const api = {
     return request<RunData>(`/runs/${id}${qs ? `?${qs}` : ""}`);
   },
   getRunCode: (id: string) => request<Record<string, string>>(`/runs/${id}/code`),
+  getRunFactor: (id: string) => request<FactorReportPayload>(`/runs/${id}/factor`),
+  getRunAttribution: (id: string) => request<AttributionResponse>(`/runs/${encodeURIComponent(id)}/attribution`),
   getRunPine: (id: string) => request<PineScriptResult>(`/runs/${id}/pine`),
   listSessions: () => request<SessionItem[]>("/sessions"),
   createSession: (title?: string) => request<SessionItem>("/sessions", { method: "POST", body: JSON.stringify({ title: title || "" }) }),
@@ -750,6 +759,11 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(settings),
     }),
+  listLLMModels: (settings: ListLLMModelsRequest) =>
+    request<LLMModelsResponse>("/settings/llm/models", {
+      method: "POST",
+      body: JSON.stringify(settings),
+    }),
   getDataSourceSettings: () => request<DataSourceSettings>("/settings/data-sources"),
   updateDataSourceSettings: (settings: UpdateDataSourceSettingsRequest) =>
     request<DataSourceSettings>("/settings/data-sources", {
@@ -764,7 +778,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-
   // Alpha Zoo API
   listAlphas: (params: AlphaListParams = {}) => {
     const q = new URLSearchParams();
@@ -791,6 +804,19 @@ export const api = {
     }),
   alphaCompareStreamUrl: (jobId: string) =>
     withAuthTicket(`${BASE}/alpha/compare/${encodeURIComponent(jobId)}/stream`),
+
+  // Options Lab
+  analyzeOptionsPayoff: (body: OptionsPayoffRequest) =>
+    request<OptionsPayoffResponse>("/options/payoff", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getOptionsChain: (ticker: string, expiration?: number) => {
+    const q = new URLSearchParams();
+    q.set("ticker", ticker);
+    if (expiration !== undefined) q.set("expiration", String(expiration));
+    return request<OptionsChainResponse>(`/options/chain?${q.toString()}`);
+  },
 
   // Connector runtime channel — privileged surface actions (NOT agent tools).
   // commit is the ONLY action that writes a mandate; halt trips the kill switch.
@@ -1512,6 +1538,13 @@ export interface ScheduledRun {
   paused: boolean;
   config: Record<string, unknown>;
   timezone: string | null;
+  // Delivery is opt-in per monitor: a null channel means results stay in the
+  // app, which is what every monitor created before this did.
+  delivery_channel: string | null;
+  delivery_target: string | null;
+  delivery_status: string;
+  delivery_error: string | null;
+  delivery_updated_at: number | null;
 }
 
 export interface CreateScheduledRunRequest {
@@ -1520,6 +1553,8 @@ export interface CreateScheduledRunRequest {
   schedule: string;
   timezone?: string | null;
   config?: Record<string, unknown>;
+  delivery_channel?: string | null;
+  delivery_target?: string | null;
 }
 
 // --- Swarm types ---
@@ -1581,6 +1616,23 @@ export interface UpdateLLMSettingsRequest {
   timeout_seconds: number;
   max_retries: number;
   reasoning_effort?: string;
+}
+
+export interface ListLLMModelsRequest {
+  provider: string;
+  base_url?: string;
+  api_key?: string;
+}
+
+export interface LLMModelsResponse {
+  provider: string;
+  models: string[];
+  source: "provider" | "default";
+  warning_code?:
+    | "oauth_discovery_unsupported"
+    | "api_key_required"
+    | "model_list_unavailable"
+    | null;
 }
 
 export interface DataSourceSettings {
@@ -1724,6 +1776,137 @@ export interface ValidationData {
   };
 }
 
+export interface RiskXRayPayload {
+  inputs?: {
+    symbols?: string[];
+    weights?: Record<string, number>;
+    aligned_days?: number;
+    return_observations?: number;
+    first_date?: string;
+    last_date?: string;
+  };
+  concentration?: { hhi?: number; effective_n?: number; top_weight?: number };
+  volatility?: { annualized_vol?: number };
+  drawdown?: { max_drawdown?: number };
+  tail_risk?: Record<string, unknown>;
+  diversification?: Record<string, unknown>;
+  correlation?: Record<string, unknown>;
+  skipped?: string[];
+  warnings?: string[];
+}
+
+export interface RebalanceNotesPayload {
+  rebalances?: Array<{
+    date: string;
+    turnover: number;
+    entries?: Array<{ code: string; to: number }>;
+    exits?: Array<{ code: string; from: number }>;
+    top_moves?: Array<{ code: string; from: number; to: number; delta: number }>;
+  }>;
+  summary?: {
+    rebalance_count: number;
+    turnover_total: number;
+    turnover_mean: number;
+    turnover_max: number;
+    largest_rebalance_date?: string | null;
+  };
+}
+
+export interface FactorIcStats {
+  ic_mean?: number | null;
+  ic_std?: number | null;
+  ir?: number | null;
+  ic_positive_ratio?: number | null;
+  ic_count?: number | null;
+  [key: string]: unknown;
+}
+
+export interface FactorResult {
+  name: string;
+  path: string;
+  ic_series: Array<{ date: string; ic: number }>;
+  ic_stats?: FactorIcStats;
+  group_equity: Array<{ date: string } & Record<string, number | string>>;
+  n_groups: number;
+  long_short_spread: number | null;
+  group_final_equity: Record<string, number>;
+  truncated?: {
+    ic_series?: boolean;
+    ic_stats?: boolean;
+    group_equity?: boolean;
+  };
+}
+
+export interface FactorReportPayload {
+  exists: boolean;
+  factors: FactorResult[];
+  ic_correlation: { labels: string[]; matrix: number[][] } | null;
+}
+
+// --- Attribution types (GET /runs/{runId}/attribution) ---
+
+export interface AttributionBenchmarkInfo {
+  ticker: string | null;
+  mode: "auto_equal_weight" | "explicit";
+}
+
+export interface AttributionRollingPoint {
+  date: string;
+  beta: number;
+  alpha_annualized: number;
+}
+
+export interface AttributionCumulativePoint {
+  date: string;
+  portfolio: number;
+  benchmark: number;
+  /** Portfolio-minus-benchmark cumulative return; plotted as the active line. */
+  active: number;
+}
+
+export interface AttributionFactor {
+  beta: number;
+  alpha_per_period: number;
+  alpha_annualized: number;
+  alpha_t_stat: number;
+  r_squared: number;
+  n_obs: number;
+  rolling_window: number;
+  rolling: AttributionRollingPoint[] | null;
+  cumulative: AttributionCumulativePoint[];
+}
+
+export interface AttributionSectorEntry {
+  sector: string;
+  portfolio_weight: number;
+  benchmark_weight: number;
+  portfolio_return: number;
+  benchmark_return: number;
+  allocation: number;
+  selection: number;
+  interaction: number;
+  total: number;
+}
+
+export interface AttributionBrinson {
+  mode: "symbol" | "asset_class" | "invested_cash";
+  portfolio_return: number;
+  benchmark_return: number;
+  active_return: number;
+  allocation: number;
+  selection: number;
+  interaction: number;
+  sectors: AttributionSectorEntry[];
+}
+
+export interface AttributionResponse {
+  exists: boolean;
+  benchmark: AttributionBenchmarkInfo | null;
+  factor: AttributionFactor | null;
+  brinson: AttributionBrinson | null;
+  notes: string[];
+}
+
 export interface RunData {
   status: string;
   run_id: string;
@@ -1736,7 +1919,10 @@ export interface RunData {
   metrics?: BacktestMetrics;
   artifacts?: ArtifactInfo[];
   run_card?: RunCard;
+  risk_xray?: RiskXRayPayload;
+  rebalance_notes?: RebalanceNotesPayload;
   validation?: ValidationData;
+  has_factor_artifacts?: boolean;
 
   chart_symbols?: string[];
   price_series?: Record<string, PriceBar[]>;
@@ -1744,7 +1930,62 @@ export interface RunData {
   trade_markers?: TradeMarker[];
   equity_curve?: EquityPoint[];
   trade_log?: Array<Record<string, string>>;
+  /** Full equity.csv rows (timestamp/equity/drawdown as strings); not capped like equity_curve. */
+  artifacts_equity_csv?: Array<Record<string, string>>;
+  artifacts_metrics_csv?: Array<Record<string, string>>;
+  artifacts_trades_csv?: Array<Record<string, string>>;
+  /** Filled portfolio weights per date (rows: {timestamp, <symbol>: weight-string}). */
+  artifacts_positions_csv?: Array<Record<string, string>>;
+  /** Requested target weights per date, same row shape as artifacts_positions_csv. */
+  artifacts_target_positions_csv?: Array<Record<string, string>>;
   run_logs?: Array<{ source?: string; line_number?: number; message?: string }>;
+}
+
+// --- Positions sector-map types (GET /runs/{runId}/positions/sectors) ---
+
+/** Asset classes reported by the backend sector-map endpoint. */
+export type SectorAssetClass =
+  | "a_share"
+  | "us_equity"
+  | "hk_equity"
+  | "india_equity"
+  | "kr_equity"
+  | "ca_equity"
+  | "crypto"
+  | "futures"
+  | "forex";
+
+export interface SectorInfo {
+  asset_class: SectorAssetClass;
+  /** Resolved industry name, or null when unresolved / not applicable. */
+  industry: string | null;
+  /** Provenance of `industry` (e.g. "eastmoney"), null when unresolved. */
+  industry_source: string | null;
+}
+
+export interface SectorMapResponse {
+  ok: boolean;
+  run_id?: string;
+  resolved_at?: string;
+  cached?: boolean;
+  symbols: Record<string, SectorInfo>;
+  unresolved?: string[];
+  /** Total symbol columns in positions.csv (may exceed `symbol_limit`). */
+  total_symbols?: number;
+  /** Max symbols that receive a network industry lookup per resolve. */
+  symbol_limit?: number;
+  /** Present when the run has no positions artifact. */
+  note?: string;
+}
+
+/**
+ * Fetch the resolved sector map for one run's positions artifact.
+ * Uses the same auth-header + error-envelope conventions as every other
+ * fetcher in this module (via the shared `request` helper).
+ */
+export function fetchRunSectorMap(runId: string, refresh?: boolean): Promise<SectorMapResponse> {
+  const qs = refresh ? "?refresh=1" : "";
+  return request<SectorMapResponse>(`/runs/${encodeURIComponent(runId)}/positions/sectors${qs}`);
 }
 
 export interface RunCard {

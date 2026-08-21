@@ -53,6 +53,7 @@ VALID_SOURCES: set[str] = {
     "india_broker",
     "longbridge",
     "mt5",
+    "tickerall",
     "local",
     "auto",
 }
@@ -102,6 +103,7 @@ def _ensure_registered() -> None:
         "backtest.loaders.india_broker_loader",
         "backtest.loaders.longbridge",
         "backtest.loaders.mt5_loader",
+        "backtest.loaders.tickerall_loader",
         "backtest.loaders.local_loader",
     ]
     import importlib
@@ -119,7 +121,8 @@ def _ensure_registered() -> None:
 # unavailable ``local`` request can degrade into an unrelated network source.
 # An explicit ``local`` request that is unavailable is a config problem the user
 # must see, not something to paper over with a Yahoo/Tencent fetch.
-_NO_NETWORK_FALLBACK_SOURCES: frozenset[str] = frozenset({"local", "qveris"})  # QVERIS-INTEGRATION
+# ``tickerall`` joins for the same reason (explicit-only, the user's own broker key).
+_NO_NETWORK_FALLBACK_SOURCES: frozenset[str] = frozenset({"local", "qveris", "tickerall"})  # QVERIS-INTEGRATION
 
 
 def _effective_fallback_chain(market: str) -> list[str]:
@@ -144,8 +147,17 @@ def _effective_fallback_chain(market: str) -> list[str]:
 FALLBACK_CHAINS: dict[str, list[str]] = {
     "a_share":   ["tencent", "mootdx", "eastmoney", "baostock", "akshare", "tushare", "local"],
     "us_equity": ["yahoo", "stooq", "sina", "eastmoney", "yfinance", "tiingo", "fmp", "finnhub", "alphavantage", "longbridge", "akshare", "local"],
-    "hk_equity": ["eastmoney", "yahoo", "futu", "yfinance", "akshare", "longbridge", "local"],
+    # HK: tencent leads (no observed IP ban); akshare (Eastmoney-backed)
+    # precedes the Yahoo-SDK family, which is blocked from mainland IPs;
+    # tushare hk_daily is key-gated.
+    "hk_equity": ["tencent", "eastmoney", "yahoo", "futu", "akshare", "yfinance", "tushare", "longbridge", "local"],
     "india_equity": ["yahoo", "yfinance", "india_broker", "local"],
+    "kr_equity":   ["pykrx", "yahoo", "yfinance", "local"],
+    # TSX (.TO) / TSX Venture (.V): direct Yahoo first, SDK fallback second.
+    "ca_equity":   ["yahoo", "yfinance", "local"],
+    # Vietnam (.VN): Yahoo lists HOSE only — HNX and UPCOM are unsupported,
+    # so those two are reachable only through the user's local files.
+    "vietnam_equity": ["yahoo", "yfinance", "local"],
     # OKX first (native), then dedicated Binance, then generic CCXT / Yahoo.
     "crypto":    ["okx", "binance", "ccxt", "yfinance", "local"],
     "futures":   ["tushare", "akshare", "local"],
@@ -226,11 +238,15 @@ def get_loader_cls_with_fallback(source: str) -> Type[Any]:
     # auto-resolver, so falling back through it would fetch network data the
     # user never asked for and mask a Data Bridge config problem. Fail loudly.
     if source in _NO_NETWORK_FALLBACK_SOURCES:
+        hint = {
+            "local": "Check your Data Bridge config "
+                     "(~/.vibe-trading/data-bridge/config.yaml) — it must exist and "
+                     "list at least one source.",
+            "tickerall": "Set TICKERALL_API_KEY and TICKERALL_ACCOUNT_ID.",
+        }.get(source, "")
         raise NoAvailableSourceError(
             f"Data source '{source}' is unavailable and does not fall back to a "
-            f"network source. Check your local Data Bridge config "
-            f"(~/.vibe-trading/data-bridge/config.yaml) — it must exist and list "
-            f"at least one source."
+            f"network source. {hint}".rstrip()
         )
 
     # Source unavailable — try same-market fallback

@@ -9,6 +9,7 @@ import re
 import tempfile
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -148,6 +149,30 @@ def is_qveris_configured(config: QVerisConfig | None = None) -> bool:
 def _json_response(payload: dict[str, Any]) -> str:
     """Serialize a tool response."""
     return json.dumps(payload, ensure_ascii=False, default=str)
+
+
+def _unconfigured_message(config: QVerisConfig | None = None) -> str:
+    """Build an actionable error message when QVeris routing is unavailable.
+
+    Args:
+        config: Optional pre-loaded configuration; defaults to
+            :func:`load_qveris_config`.
+
+    Returns:
+        Operator-facing error text. When no API key is saved it names
+        ``QVERIS_API_KEY`` and the paid-mode switch; when a key exists but
+        paid routing is off it points at the paid-mode toggle only.
+    """
+    cfg = config or load_qveris_config()
+    if not has_qveris_credentials(cfg):
+        return (
+            "QVeris is not configured; set QVERIS_API_KEY and enable paid mode "
+            "(`vibe-trading data mode paid` or Settings -> QVeris) to use QVeris tools"
+        )
+    return (
+        "QVeris paid mode is off; enable it with `vibe-trading data mode paid` "
+        "or Settings -> QVeris to use QVeris tools"
+    )
 
 
 def _parse_expected_cost(value: Any) -> float | None:
@@ -327,6 +352,33 @@ class QVerisClient:
         return self._request("GET", "/auth/credits/ledger", params=params)
 
 
+def _positive_int(value: Any, field: str, default: int) -> int:
+    """Resolve an optional positive-integer option from tool kwargs.
+
+    Args:
+        value: Raw argument value; ``None`` and ``""`` mean "not supplied".
+        field: Argument name, used in the error message.
+        default: Value to use when the argument was not supplied.
+
+    Returns:
+        The requested integer, or ``default`` when the argument was absent.
+
+    Raises:
+        ValueError: If the value is present but not a finite positive integer.
+            QVeris calls are billable, so an explicitly malformed option is
+            rejected instead of being replaced by a default.
+    """
+    if value is None or value == "":
+        return default
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{field} must be a positive integer, got {value!r}") from None
+    if not math.isfinite(number) or number != int(number) or int(number) < 1:
+        raise ValueError(f"{field} must be a positive integer, got {value!r}")
+    return int(number)
+
+
 class _QVerisBaseTool(BaseTool):
     """Shared availability and client helpers for QVeris tools."""
 
@@ -363,11 +415,25 @@ class QVerisSearchTool(_QVerisBaseTool):
     }
 
     def execute(self, **kwargs: Any) -> str:
+        """Search QVeris capabilities after validating the request schema.
+
+        A missing ``query`` is a schema-invalid request, not an empty search:
+        it is rejected rather than sent to the marketplace as ``""``.
+        """
         if not is_qveris_configured():
-            return _json_response({"ok": False, "error": "QVeris is not configured"})
+            return _json_response({"ok": False, "error": _unconfigured_message()})
+        query = kwargs.get("query")
+        if not isinstance(query, str) or not query.strip():
+            return _json_response(
+                {"ok": False, "error": "query is required (non-empty string)"}
+            )
+        try:
+            limit = _positive_int(kwargs.get("limit"), "limit", 20)
+        except ValueError as exc:
+            return _json_response({"ok": False, "error": str(exc)})
         payload = self._client().search(
-            str(kwargs["query"]),
-            limit=int(kwargs.get("limit", 20)),
+            query.strip(),
+            limit=limit,
             session_id=kwargs.get("session_id"),
         )
         return _json_response({"ok": True, **payload})
@@ -394,7 +460,7 @@ class QVerisInspectTool(_QVerisBaseTool):
 
     def execute(self, **kwargs: Any) -> str:
         if not is_qveris_configured():
-            return _json_response({"ok": False, "error": "QVeris is not configured"})
+            return _json_response({"ok": False, "error": _unconfigured_message()})
         payload = self._client().inspect(
             list(kwargs["tool_ids"]),
             search_id=kwargs.get("search_id"),
@@ -432,28 +498,101 @@ class QVerisExecuteTool(_QVerisBaseTool):
     def _quote(
         self, client: QVerisClient, tool_id: str, kwargs: dict[str, Any]
     ) -> dict[str, Any]:
-        quote = {
-            "tool_id": tool_id,
-            "expected_cost": kwargs.get("expected_cost"),
-            "billing_rule": kwargs.get("billing_rule"),
-        }
-        if quote["expected_cost"] is not None or quote["billing_rule"] is not None:
-            return quote
-        inspected = client.inspect(
-            [tool_id],
-            search_id=kwargs.get("search_id"),
-            session_id=kwargs.get("session_id"),
+        """Return the quote the budget reservation is computed from.
+
+        A caller-supplied quote is a hint, never the authority. ``expected_cost``
+        and ``billing_rule`` are ordinary tool arguments, so they are written by
+        whatever drives the tool — an LLM on the agent path, an arbitrary client
+        over MCP. Previously either one short-circuited the server lookup and
+        was adopted verbatim, so ``expected_cost=0`` reserved nothing and every
+        call cleared the pre-check regardless of the real price.
+
+        The server is consulted and the reservation takes the LARGER of the two
+        figures, so an honest caller is unaffected and an understating one
+        cannot buy a free pass. A non-positive cost is treated as "unknown"
+        rather than "free" unless the server itself attested it, because a
+        caller can always write zero.
+
+        Args:
+            client: Marketplace client used for the authoritative lookup.
+            tool_id: Capability being priced.
+            kwargs: Raw tool arguments, possibly carrying a caller quote.
+
+        Returns:
+            Quote dict whose ``expected_cost`` is the effective figure, plus
+            ``quote_source`` and ``server_attested`` for the audit trail.
+        """
+        supplied = _parse_expected_cost(kwargs.get("expected_cost"))
+        server_quote: dict[str, Any] = {}
+        server_cost: float | None = None
+        try:
+            inspected = client.inspect(
+                [tool_id],
+                search_id=kwargs.get("search_id"),
+                session_id=kwargs.get("session_id"),
+            )
+        except Exception:  # noqa: BLE001 - an unreachable marketplace must not
+            inspected = None  # crash the caller; it degrades to the hint below.
+        if isinstance(inspected, dict):
+            results = inspected.get("results")
+            first = results[0] if isinstance(results, list) and results else None
+            server_quote = _quote_from_tool(first)
+            server_cost = _parse_expected_cost(server_quote.get("expected_cost"))
+
+        candidates = [cost for cost in (supplied, server_cost) if cost is not None]
+        effective = max(candidates) if candidates else None
+
+        quote = dict(server_quote)
+        quote["tool_id"] = tool_id
+        quote["expected_cost"] = effective
+        quote["billing_rule"] = server_quote.get("billing_rule") or kwargs.get(
+            "billing_rule"
         )
-        results = inspected.get("results") if isinstance(inspected, dict) else None
-        first = results[0] if isinstance(results, list) and results else None
-        return _quote_from_tool(first)
+        quote["server_attested"] = server_cost is not None
+        quote["caller_supplied_cost"] = supplied
+        if server_cost is not None and supplied is not None and supplied < server_cost:
+            quote["quote_source"] = "server_overrode_lower_caller_quote"
+        elif server_cost is not None:
+            quote["quote_source"] = "server"
+        elif supplied is not None:
+            quote["quote_source"] = "caller_hint_unverified"
+        else:
+            quote["quote_source"] = "unavailable"
+        return quote
 
     def execute(self, **kwargs: Any) -> str:
+        """Execute a QVeris capability behind the per-session credit budget.
+
+        The request schema is validated FIRST — before the quote lookup, before
+        the budget reservation, and before ``client.execute`` — because this
+        tool is not read-only and every call spends real credits. A missing
+        ``tool_id``/``parameters`` is a schema-invalid request, so it must never
+        be normalised into an empty-parameter call to the marketplace.
+        """
         cfg = load_qveris_config()
         if not is_qveris_configured(cfg):
-            return _json_response({"ok": False, "error": "QVeris is not configured"})
+            return _json_response({"ok": False, "error": _unconfigured_message(cfg)})
+        raw_tool_id = kwargs.get("tool_id")
+        if not isinstance(raw_tool_id, str) or not raw_tool_id.strip():
+            return _json_response(
+                {"ok": False, "error": "tool_id is required (non-empty string)"}
+            )
+        if "parameters" not in kwargs or not isinstance(kwargs["parameters"], Mapping):
+            return _json_response(
+                {
+                    "ok": False,
+                    "error": "parameters is required and must be an object; refusing a billable call with an unvalidated request",
+                }
+            )
+        try:
+            max_response_size = _positive_int(
+                kwargs.get("max_response_size"), "max_response_size", 20480
+            )
+        except ValueError as exc:
+            return _json_response({"ok": False, "error": str(exc)})
+        parameters = dict(kwargs["parameters"])
         client = self._client()
-        tool_id = str(kwargs["tool_id"])
+        tool_id = raw_tool_id.strip()
         quote = self._quote(client, tool_id, kwargs)
         session_id = str(kwargs.get("session_id") or "default")
         budget = max(float(cfg.budget_credits_per_session), 0.0)
@@ -461,8 +600,13 @@ class QVerisExecuteTool(_QVerisBaseTool):
         with _SESSION_BUDGET_LOCK:
             spent = _SESSION_SPEND.get(session_id, 0.0)
             reserved = _SESSION_RESERVED.get(session_id, 0.0)
+            # A zero reservation is only trustworthy when the marketplace itself
+            # quoted it. A caller can always write zero, and that used to clear
+            # the pre-check while reserving nothing.
             valid_quote = (
-                expected is not None and math.isfinite(expected) and expected >= 0.0
+                expected is not None
+                and math.isfinite(expected)
+                and (expected > 0.0 or (expected == 0.0 and quote.get("server_attested")))
             )
             if (
                 not valid_quote
@@ -483,11 +627,11 @@ class QVerisExecuteTool(_QVerisBaseTool):
         try:
             payload = client.execute(
                 tool_id,
-                parameters=dict(kwargs["parameters"]),
+                parameters=parameters,
                 search_id=kwargs.get("search_id"),
                 session_id=kwargs.get("session_id"),
                 model=kwargs.get("model"),
-                max_response_size=int(kwargs.get("max_response_size", 20480)),
+                max_response_size=max_response_size,
             )
         except Exception:
             with _SESSION_BUDGET_LOCK:

@@ -9,10 +9,12 @@ import logging
 import os
 import re
 import threading
+from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass
 from typing import Any, Awaitable, Callable, Coroutine, Iterable, Protocol, TypeVar
 
+import httpx
 from fastmcp.client import Client
 from fastmcp.client.auth import OAuth
 from fastmcp.client.client import CallToolResult
@@ -29,10 +31,12 @@ except ModuleNotFoundError:
 from fastmcp.exceptions import McpError, ToolError
 from key_value.aio.stores.filetree import FileTreeStore, FileTreeV1KeySanitizationStrategy
 from mcp import types as mcp_types
+from pydantic_core import PydanticSerializationError, to_jsonable_python
 
 from src.agent.tools import BaseTool
 from src.config.schema import (
     ROBINHOOD_AGENT_CONFIG_PATH,
+    MCPOAuthConfig,
     MCPServerConfig,
     live_broker_key_for_entry,
     robinhood_readonly_enabled_tools,
@@ -61,14 +65,56 @@ _MCP_SPECS_CACHE: dict[tuple[str, ...], list["MCPRemoteToolSpec"]] = {}
 _MCP_SPECS_LOCK = threading.Lock()
 
 
+def _fingerprint(text: str) -> str:
+    """One-way fingerprint for a cache-key component that may carry secrets."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _fingerprint_auth(auth: MCPOAuthConfig | None) -> str:
+    """Fingerprint an MCP server's OAuth config, never storing it raw.
+
+    ``MCPOAuthConfig.client_secret`` is a real credential, so the whole
+    config is hashed as one unit rather than spread across raw tuple
+    elements.
+    """
+    if auth is None:
+        return _fingerprint("")
+    canonical = "|".join(
+        [
+            auth.type,
+            str(sorted(auth.scopes)),
+            auth.client_name,
+            auth.cache_dir,
+            str(auth.callback_port),
+            auth.client_id or "",
+            auth.client_secret or "",
+            auth.client_metadata_url or "",
+        ]
+    )
+    return _fingerprint(canonical)
+
+
 def _make_cache_key(server_name: str, server_config: "MCPServerConfig") -> tuple[str, ...]:
-    """Build a content-based cache key for MCP tool discovery results."""
+    """Build a content-based cache key for MCP tool discovery results.
+
+    Every field that can change the tool specs a server returns must
+    participate in cache identity (mirrors the enabled_tools fix this cache
+    key already went through once). ``url``, ``headers``, and ``auth`` are
+    fingerprinted rather than stored raw: a URL can carry a credential in
+    its query string, a header can carry a static bearer token, and
+    ``auth`` can carry an OAuth client secret. None of those should sit as
+    plaintext in a process-wide in-memory cache key.
+    """
     return (
         server_name,
+        str(server_config.type),
         server_config.command,
         str(server_config.args or []),
         str(sorted((server_config.env or {}).items())),
         str(sorted(server_config.enabled_tools or [])),
+        _fingerprint(server_config.url or ""),
+        _fingerprint(str(sorted((server_config.headers or {}).items()))),
+        _fingerprint_auth(server_config.auth),
     )
 
 
@@ -405,7 +451,18 @@ class MCPServerAdapter:
         Raises:
             Exception: Propagates discovery failures after retry exhaustion.
         """
-        tools = _run_sync(self._list_tools)
+        try:
+            tools = _run_sync(self._list_tools)
+        except httpx.HTTPStatusError as exc:
+            # Same reason as _http_error_body: discovery propagates raw, so the
+            # traceback the user sees would otherwise carry no server detail.
+            if body := _http_error_body(exc):
+                raise httpx.HTTPStatusError(
+                    f"{exc} - server said: {body}",
+                    request=exc.request,
+                    response=exc.response,
+                ) from exc
+            raise
         seen_names: dict[str, str] = {}
         specs: list[MCPRemoteToolSpec] = []
 
@@ -660,7 +717,7 @@ class MCPRemoteTool(BaseTool):
             self._filter_arguments(kwargs),
             local_name=self.name,
         )
-        return _safe_json_dumps(payload)
+        return json.dumps(payload, ensure_ascii=False, default=_json_default)
 
     def _filter_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Drop local-only arguments before forwarding to the remote tool.
@@ -970,8 +1027,19 @@ def _normalize_call_tool_result(result: CallToolResult) -> dict[str, Any]:
 
     payload: dict[str, Any] = {"status": "ok"}
     if result.structured_content is not None:
-        payload["structured_content"] = _make_jsonable(result.structured_content)
+        # ``structured_content`` is the canonical JSON value received over
+        # MCP. FastMCP's ``data`` is a convenience view hydrated from that
+        # value into dataclasses, datetime objects, UUIDs, and other Python
+        # types. Prefer the wire value whenever hydration made ``data`` cease
+        # to be natively JSON-serializable; serializing the hydrated copy is
+        # both redundant and the source of #922's false circular-reference
+        # failure.
+        structured = result.structured_content
+        payload["data"] = _select_result_data(result, structured)
+        payload["structured_content"] = structured
     elif result.data is not None:
+        # Compatibility fallback for injected/legacy clients that provide a
+        # parsed value without standard MCP structured content.
         payload["data"] = _make_jsonable(result.data)
     if result.content:
         payload["content"] = [_make_jsonable(block) for block in result.content]
@@ -979,6 +1047,54 @@ def _normalize_call_tool_result(result: CallToolResult) -> dict[str, Any]:
         if text:
             payload["text"] = text
     return payload
+
+
+def _select_result_data(result: CallToolResult, structured: dict[str, Any]) -> Any:
+    """Choose a JSON-safe local ``data`` view for a structured MCP result.
+
+    FastMCP unwraps primitive return values from ``{"result": value}`` and
+    exposes the unwrapped value through ``CallToolResult.data``. Mirror only
+    that wire-format convention; otherwise use the canonical structured JSON
+    instead of re-serializing FastMCP's hydrated Python copy.
+
+    Args:
+        result: Parsed FastMCP result.
+        structured: Canonical structured JSON received over MCP.
+
+    Returns:
+        JSON-compatible value for the local ``data`` field.
+    """
+    if _is_wrapped_fastmcp_result(result, structured):
+        return structured["result"]
+
+    return structured
+
+
+def _is_wrapped_fastmcp_result(
+    result: CallToolResult,
+    structured: dict[str, Any],
+) -> bool:
+    """Detect FastMCP's wrapper for non-object tool return values.
+
+    Modern FastMCP marks the wrapper in result metadata. FastMCP 2.14, the
+    project's minimum supported version, only exposed the marker through the
+    output schema. The narrow fallback below handles its hydrated non-object
+    values without mistaking an ordinary object-schema dataclass for a wrapper.
+    """
+    if set(structured) != {"result"}:
+        return False
+
+    fastmcp_meta = (result.meta or {}).get("fastmcp")
+    if isinstance(fastmcp_meta, dict) and fastmcp_meta.get("wrap_result") is True:
+        return True
+
+    data = result.data
+    return (
+        data is not None
+        and not isinstance(data, Mapping)
+        and not (is_dataclass(data) and not isinstance(data, type))
+        and not callable(getattr(data, "model_dump", None))
+    )
 
 
 def _extract_result_error(result: CallToolResult) -> str:
@@ -1057,6 +1173,41 @@ def _message_looks_transient(message: str) -> bool:
     return any(token in lowered for token in _TRANSIENT_ERROR_TOKENS)
 
 
+#: Cap on the remote error body echoed back to the user. Enough for a JSON
+#: error envelope, short enough that a stray HTML page does not fill the log.
+_HTTP_ERROR_BODY_LIMIT = 300
+
+
+def _http_error_body(exc: BaseException) -> str:
+    """Return the response body of an HTTP status error, if there is one.
+
+    ``httpx.HTTPStatusError`` stringifies to the status and URL only, so the
+    server's own explanation is dropped — which turns an auth rejection into an
+    unreadable "Client error 400". IBKR, for one, answers a token it will not
+    accept with ``{"error":"Status failed 500","statusCode":400}`` and a 400,
+    while an unauthenticated request gets a 401 (issue #1126); without the body
+    those two are indistinguishable to the user.
+
+    Args:
+        exc: Exception that may carry an HTTP response.
+
+    Returns:
+        The trimmed body, or ``""`` when there is none to report.
+    """
+    response = getattr(exc, "response", None)
+    if response is None:
+        return ""
+    try:
+        body = (response.text or "").strip()
+    except Exception:  # noqa: BLE001 - a body we cannot read is not reportable
+        return ""
+    if not body:
+        return ""
+    if len(body) > _HTTP_ERROR_BODY_LIMIT:
+        body = body[:_HTTP_ERROR_BODY_LIMIT] + "..."
+    return " ".join(body.split())
+
+
 def _format_exception_message(exc: Exception) -> str:
     """Render an exception into a user-facing error string.
 
@@ -1068,65 +1219,42 @@ def _format_exception_message(exc: Exception) -> str:
     """
     if isinstance(exc, McpError) and getattr(exc, "error", None) is not None:
         return getattr(exc.error, "message", str(exc))
-    return str(exc) or type(exc).__name__
+    message = str(exc) or type(exc).__name__
+    if isinstance(exc, httpx.HTTPStatusError) and (body := _http_error_body(exc)):
+        return f"{message} - server said: {body}"
+    return message
 
 
-def _make_jsonable(value: Any, *, _seen: set[int] | None = None) -> Any:
-    """Convert FastMCP response payloads into JSON-serializable objects.
+def _make_jsonable(value: Any) -> Any:
+    """Convert a fallback MCP value with Pydantic's JSON serializer.
+
+    FastMCP uses the same public ``pydantic_core`` primitive when producing
+    structured tool results. Normal structured responses bypass this helper;
+    it exists for content blocks and legacy/data-only client results.
 
     Args:
         value: Arbitrary response value.
-        _seen: Object ids already being serialized (cycle guard).
 
     Returns:
         JSON-serializable equivalent.
+
+    Raises:
+        TypeError: If the value is cyclic or unsupported. The error reports
+            only type names, never the value or the underlying exception text.
     """
-    if _seen is None:
-        _seen = set()
-
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-
-    oid = id(value)
-    if oid in _seen:
-        return "<circular>"
-
-    if hasattr(value, "model_dump"):
-        _seen.add(oid)
-        try:
-            return _make_jsonable(
-                value.model_dump(mode="json", by_alias=True, exclude_none=True),
-                _seen=_seen,
-            )
-        finally:
-            _seen.discard(oid)
-
-    if isinstance(value, dict):
-        _seen.add(oid)
-        try:
-            return {str(key): _make_jsonable(item, _seen=_seen) for key, item in value.items()}
-        finally:
-            _seen.discard(oid)
-
-    if isinstance(value, list):
-        _seen.add(oid)
-        try:
-            return [_make_jsonable(item, _seen=_seen) for item in value]
-        finally:
-            _seen.discard(oid)
-
-    if hasattr(value, "item") and callable(value.item):
-        try:
-            return _make_jsonable(value.item(), _seen=_seen)
-        except Exception:
-            pass
-
-    return str(value)
+    try:
+        return to_jsonable_python(value, by_alias=True, exclude_none=True)
+    except (PydanticSerializationError, TypeError, ValueError, UnicodeDecodeError) as exc:
+        raise TypeError(
+            f"Unable to serialize MCP result type {_qualified_type_name(value)}: "
+            f"{type(exc).__name__}"
+        ) from None
 
 
-def _safe_json_dumps(value: Any) -> str:
-    """Serialize a payload without circular-reference failures."""
-    return json.dumps(_make_jsonable(value), ensure_ascii=False)
+def _qualified_type_name(value: Any) -> str:
+    """Return a stable type name without calling the value's representation."""
+    value_type = type(value)
+    return f"{value_type.__module__}.{value_type.__qualname__}"
 
 
 def _json_default(value: Any) -> Any:
@@ -1137,6 +1265,9 @@ def _json_default(value: Any) -> Any:
 
     Returns:
         JSON-serializable representation.
+
+    Raises:
+        TypeError: If the value has no safe serialization contract.
     """
     return _make_jsonable(value)
 

@@ -99,6 +99,54 @@ def test_backtest_runtime_env_prepends_runtime_pythonpath(
     assert env["PYTHONPATH"] == f"{pythonpath_extra}{os.pathsep}existing-path"
 
 
+def test_backtest_runtime_env_adds_exact_current_run_root(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    configured_root = tmp_path / "configured-runs"
+    run_dir = tmp_path / "state-root" / "runs" / "run-1"
+    monkeypatch.setenv("VIBE_TRADING_ALLOWED_RUN_ROOTS", str(configured_root))
+
+    env = Runner(timeout=1)._build_runtime_env(run_dir)
+
+    assert env["VIBE_TRADING_ALLOWED_RUN_ROOTS"].split(",") == [
+        str(configured_root),
+        str(run_dir.resolve()),
+    ]
+
+
+@pytest.mark.parametrize("run_bucket", ("runs", "shadow_runs"))
+def test_execute_keeps_runtime_run_valid_after_home_is_sandboxed(
+    monkeypatch,
+    tmp_path: Path,
+    run_bucket: str,
+) -> None:
+    real_home = tmp_path / "real-home"
+    run_dir = real_home / ".vibe-trading" / run_bucket / "run-1"
+    run_dir.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(real_home))
+    monkeypatch.delenv("VIBE_TRADING_HOME", raising=False)
+    monkeypatch.delenv("VIBE_TRADING_ALLOWED_RUN_ROOTS", raising=False)
+
+    entry = _probe_entry(
+        tmp_path,
+        "import sys\n"
+        "from src.tools.path_utils import safe_run_dir\n"
+        "print(safe_run_dir(sys.argv[1]))\n",
+    )
+    agent_root = Path(runner_mod.__file__).resolve().parents[2]
+
+    result = Runner(timeout=60).execute(
+        entry,
+        run_dir,
+        cwd=agent_root,
+        cli_args=[str(run_dir)],
+    )
+
+    assert result.success, result.stderr
+    assert str(run_dir.resolve()) in result.stdout
+
+
 # --------------------------------------------------------------------------- #
 # VT-001 runtime defense-in-depth: ephemeral HOME, UID-drop fallback, rlimits.
 # --------------------------------------------------------------------------- #
@@ -135,6 +183,61 @@ def test_prepare_sandbox_home_reexposes_only_loader_paths(tmp_path: Path) -> Non
     # Cleanup removes the ephemeral home; symlink targets (real cache) survive.
     assert not sandbox.exists()
     assert (vt / "cache").exists()
+
+
+def test_prepare_sandbox_home_copy_fallback_when_symlink_privileges_missing(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Windows cannot always create symlinks; the copy fallback must still work.
+
+    On Windows, ``symlink_to`` can raise OSError 1314 (privilege not held) even
+    in an otherwise healthy environment. ``_prepare_sandbox_home`` must then copy
+    the loader-owned paths so the subprocess still sees them, and must still keep
+    persistent secrets/state out of the ephemeral home.
+    """
+    real_home = tmp_path / "home"
+    vt = real_home / ".vibe-trading"
+    (vt / "cache").mkdir(parents=True)
+    (vt / "data-bridge").mkdir(parents=True)
+    (vt / "qveris.json").write_text("{}", encoding="utf-8")
+
+    def _deny_symlink(*args, **kwargs):
+        raise OSError(1314, "A required privilege is not held by the client")
+
+    monkeypatch.setattr(Path, "symlink_to", _deny_symlink)
+
+    sandbox = _prepare_sandbox_home(real_home)
+    try:
+        dst_vt = sandbox / ".vibe-trading"
+        # Symlinks were impossible, yet the loader paths are still present...
+        assert (dst_vt / "cache").is_dir()
+        assert (dst_vt / "data-bridge").is_dir()
+        assert (dst_vt / "qveris.json").is_file()
+        # ...and the persistent secrets/state are still NOT re-exposed.
+        assert not (dst_vt / ".env").exists()
+        assert not (dst_vt / "memory").exists()
+    finally:
+        import shutil
+
+        shutil.rmtree(sandbox, ignore_errors=True)
+    assert not sandbox.exists()
+
+
+def test_prepare_sandbox_home_preseeds_mootdx_config(tmp_path: Path) -> None:
+    sandbox = _prepare_sandbox_home(tmp_path)
+    try:
+        cfg = sandbox / ".mootdx" / "config.json"
+        # mootdx's setup() runs `finally: load_config()`, re-reading the file
+        # even after bestip(sync=False) fails to write it — the sandbox HOME
+        # must ship a valid config or mootdx raises an uncaught FileNotFoundError.
+        assert cfg.exists()
+        import json
+
+        assert isinstance(json.loads(cfg.read_text(encoding="utf-8")), dict)
+    finally:
+        import shutil
+
+        shutil.rmtree(sandbox, ignore_errors=True)
 
 
 def test_make_rlimit_preexec_returns_callable_on_posix() -> None:

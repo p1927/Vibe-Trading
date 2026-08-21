@@ -37,13 +37,16 @@ from src.market_data import (
         ("000001.SZ", "tencent"),
         ("430139.BJ", "tencent"),
         ("AAPL.US", "yahoo"),
-        ("700.HK", "yahoo"),
-        ("00700.HK", "yahoo"),
+        ("700.HK", "tencent"),
+        ("00700.HK", "tencent"),
         ("RELIANCE.NS", "yahoo"),  # India NSE
         ("TCS.NS", "yahoo"),
         ("M&M.NS", "yahoo"),  # ampersand in ticker
         ("BAJAJ-AUTO.NS", "yahoo"),  # hyphen in ticker
         ("500325.BO", "yahoo"),  # India BSE (numeric scrip code)
+        ("TD.TO", "yahoo"),  # Canada TSX
+        ("BBD-B.TO", "yahoo"),  # hyphenated TSX class symbol
+        ("PNG.V", "yahoo"),  # Canada TSX Venture
         ("BTC-USDT", "okx"),
         ("ETH/USDT", "ccxt"),
         ("EUR/USD", "mt5"),  # forex pair → mt5 chain head (registry fallback)
@@ -71,6 +74,8 @@ def test_yahoo_loader_accepts_futures_and_forex_suffixes() -> None:
     assert _is_supported("GC=F") is True
     assert _is_supported("EURUSD=X") is True
     assert _is_supported("AAPL.US") is True  # unchanged
+    assert _is_supported("TD.TO") is True
+    assert _is_supported("PNG.V") is True
     assert _is_supported("600519.SH") is False  # A-share still not yahoo
 
 
@@ -94,7 +99,7 @@ def test_fetch_market_data_auto_routes_yahoo_suffix_symbols() -> None:
         return _StubLoader
 
     out = fetch_market_data(
-        codes=["GC=F", "EURUSD=X"],
+        codes=["GC=F", "EURUSD=X", "TD.TO", "PNG.V"],
         start_date="2024-01-01",
         end_date="2024-01-03",
         source="auto",
@@ -102,7 +107,7 @@ def test_fetch_market_data_auto_routes_yahoo_suffix_symbols() -> None:
     )
 
     assert "_unresolved" not in out
-    assert "GC=F" in out and "EURUSD=X" in out
+    assert all(code in out for code in ("GC=F", "EURUSD=X", "TD.TO", "PNG.V"))
     # First source tried must be yahoo (not tushare/akshare from the China chain).
     assert seen_sources and seen_sources[0] == "yahoo"
 
@@ -218,6 +223,37 @@ class _LocalAliasLoader:
         return {clean: pd.DataFrame({"close": [1.0]}, index=idx)}
 
 
+class _TorontoOnlyLoader:
+    """Serves only ``.TO`` symbols — mimics Yahoo after a listing moved
+    TSX Venture -> TSX main (HIVE.V 404s, HIVE.TO resolves)."""
+
+    def fetch(self, codes, start_date, end_date, interval="1D"):
+        idx = pd.to_datetime(["2026-01-01", "2026-01-02"])
+        idx.name = "trade_date"
+        out = {}
+        for code in codes:
+            if code.upper().endswith(".TO"):
+                out[code] = pd.DataFrame(
+                    {"close": [4.24, 4.30], "volume": [100, 200]}, index=idx
+                )
+        return out
+
+
+class _VentureOnlyLoader:
+    """Serves only ``.V`` symbols — the reverse (TSX -> TSX Venture move)."""
+
+    def fetch(self, codes, start_date, end_date, interval="1D"):
+        idx = pd.to_datetime(["2026-01-01", "2026-01-02"])
+        idx.name = "trade_date"
+        out = {}
+        for code in codes:
+            if code.upper().endswith(".V"):
+                out[code] = pd.DataFrame(
+                    {"close": [0.55, 0.60], "volume": [300, 400]}, index=idx
+                )
+        return out
+
+
 def test_fetch_explicit_source_normalizes_rows() -> None:
     out = fetch_market_data(
         codes=["AAPL.US"],
@@ -249,6 +285,111 @@ def test_fetch_auto_groups_by_detected_source() -> None:
     # AAPL.US -> yahoo, BTC-USDT -> okx: two distinct loader groups resolved.
     assert set(seen) == {"yahoo", "okx"}
     assert "AAPL.US" in out and "BTC-USDT" in out
+
+
+def test_fetch_auto_hk_walks_hk_chain_not_us_chain() -> None:
+    """HK symbols must degrade through the hk_equity chain, not the US one.
+
+    A source-name-only chain lookup would match HK's yahoo membership against
+    the us_equity chain first, where the attempt budget exhausts on the
+    US-only stooq/sina loaders and never reaches eastmoney/akshare.
+    """
+    from backtest.loaders.base import NoAvailableSourceError
+
+    attempts: list[str] = []
+
+    def resolver(src: str):
+        attempts.append(src)
+        if src == "eastmoney":
+            return _StubLoader
+        raise NoAvailableSourceError(f"{src} unavailable in test")
+
+    out = fetch_market_data(
+        codes=["00700.HK"],
+        start_date="2026-01-01",
+        end_date="2026-01-02",
+        source="auto",
+        loader_resolver=resolver,
+    )
+    assert attempts[:2] == ["tencent", "eastmoney"]
+    assert "stooq" not in attempts and "sina" not in attempts
+    assert "_unresolved" not in out
+    assert "00700.HK" in out
+
+
+def test_fetch_auto_hk_akshare_reachable_within_default_budget() -> None:
+    """akshare (Eastmoney-backed HK daily) must be reachable within the
+    default ``max_fallback_attempts`` when every earlier HK source is down."""
+    from backtest.loaders.base import NoAvailableSourceError
+
+    attempts: list[str] = []
+
+    def resolver(src: str):
+        attempts.append(src)
+        if src == "akshare":
+            return _StubLoader
+        raise NoAvailableSourceError(f"{src} unavailable in test")
+
+    out = fetch_market_data(
+        codes=["09988.HK"],
+        start_date="2026-01-01",
+        end_date="2026-01-02",
+        source="auto",
+        loader_resolver=resolver,
+    )
+    assert "_unresolved" not in out
+    assert "09988.HK" in out
+    assert attempts[-1] == "akshare"
+    assert len(attempts) <= 5
+
+
+def test_fetch_auto_india_walks_india_chain() -> None:
+    """India symbols must degrade through the india_equity chain (chain
+    selection is market-aware for every market, not just HK)."""
+    from backtest.loaders.base import NoAvailableSourceError
+
+    attempts: list[str] = []
+
+    def resolver(src: str):
+        attempts.append(src)
+        if src == "yfinance":
+            return _StubLoader
+        raise NoAvailableSourceError(f"{src} unavailable in test")
+
+    out = fetch_market_data(
+        codes=["RELIANCE.NS"],
+        start_date="2026-01-01",
+        end_date="2026-01-02",
+        source="auto",
+        loader_resolver=resolver,
+    )
+    assert attempts == ["yahoo", "yfinance"]
+    assert "_unresolved" not in out
+    assert "RELIANCE.NS" in out
+
+
+def test_fetch_auto_us_still_walks_us_chain() -> None:
+    """US routing is unchanged by the market-aware chain selection."""
+    from backtest.loaders.base import NoAvailableSourceError
+
+    attempts: list[str] = []
+
+    def resolver(src: str):
+        attempts.append(src)
+        if src == "stooq":
+            return _StubLoader
+        raise NoAvailableSourceError(f"{src} unavailable in test")
+
+    out = fetch_market_data(
+        codes=["AAPL.US"],
+        start_date="2026-01-01",
+        end_date="2026-01-02",
+        source="auto",
+        loader_resolver=resolver,
+    )
+    assert attempts[:2] == ["yahoo", "stooq"]
+    assert "_unresolved" not in out
+    assert "AAPL.US" in out
 
 
 def test_fetch_loader_error_falls_through_to_unresolved() -> None:
@@ -285,6 +426,112 @@ def test_fetch_local_result_alias_is_not_unresolved() -> None:
 
     assert "AAPL.US" in out
     assert "_unresolved" not in out
+
+
+# --------------------------------------------------------------------------
+# Canadian venue-alias fallback (.V <-> .TO) — moved listings resolve via the
+# sibling venue's symbol instead of landing in _unresolved.
+# --------------------------------------------------------------------------
+
+
+def test_fetch_canadian_v_falls_back_to_to_sibling() -> None:
+    """HIVE.V 404s (listing moved to TSX) -> HIVE.TO served under HIVE.V."""
+    out = fetch_market_data(
+        codes=["HIVE.V"],
+        start_date="2026-01-01",
+        end_date="2026-01-02",
+        source="auto",
+        loader_resolver=lambda src: _TorontoOnlyLoader,
+        include_provenance=True,
+    )
+    assert "_unresolved" not in out
+    assert "HIVE.V" in out
+    assert out["HIVE.V"][0]["close"] == 4.24
+    prov = out["_provenance"]["HIVE.V"]
+    assert prov["venue_fallback"] is True
+    assert prov["resolved_symbol"] == "HIVE.TO"
+
+
+def test_fetch_canadian_to_falls_back_to_v_sibling() -> None:
+    """Reverse direction: a .TO symbol whose only live venue is .V."""
+    out = fetch_market_data(
+        codes=["HIVE.TO"],
+        start_date="2026-01-01",
+        end_date="2026-01-02",
+        source="auto",
+        loader_resolver=lambda src: _VentureOnlyLoader,
+        include_provenance=True,
+    )
+    assert "_unresolved" not in out
+    assert "HIVE.TO" in out
+    assert out["HIVE.TO"][0]["close"] == 0.55
+    prov = out["_provenance"]["HIVE.TO"]
+    assert prov["venue_fallback"] is True
+    assert prov["resolved_symbol"] == "HIVE.V"
+
+
+def test_fetch_canadian_aliases_sibling_already_resolved() -> None:
+    """When both venues are requested and only the sibling resolves, the
+    missing one is aliased to the resolved sibling's bars with no extra fetch."""
+    calls: list[list[str]] = []
+
+    class _RecordingTorontoLoader:
+        def fetch(self, codes, start_date, end_date, interval="1D"):
+            calls.append(list(codes))
+            idx = pd.to_datetime(["2026-01-01", "2026-01-02"])
+            idx.name = "trade_date"
+            return {
+                code: pd.DataFrame(
+                    {"close": [4.24, 4.30], "volume": [100, 200]}, index=idx
+                )
+                for code in codes
+                if code.upper().endswith(".TO")
+            }
+
+    out = fetch_market_data(
+        codes=["HIVE.V", "HIVE.TO"],
+        start_date="2026-01-01",
+        end_date="2026-01-02",
+        source="auto",
+        loader_resolver=lambda src: _RecordingTorontoLoader,
+        include_provenance=True,
+    )
+    assert "_unresolved" not in out
+    assert "HIVE.V" in out and "HIVE.TO" in out
+    assert out["HIVE.V"] == out["HIVE.TO"]  # aliased — identical bars
+    # The .V symbol must be aliased from the already-resolved .TO sibling:
+    # exactly one group fetch (both codes together), no separate re-fetch of
+    # the sibling after the fact.
+    assert len(calls) == 1
+    assert set(calls[0]) == {"HIVE.V", "HIVE.TO"}
+    assert out["_provenance"]["HIVE.V"]["resolved_symbol"] == "HIVE.TO"
+    assert out["_provenance"]["HIVE.V"]["venue_fallback"] is True
+
+
+def test_fetch_non_canadian_symbol_unaffected_by_venue_fallback() -> None:
+    """A non-Canadian symbol that fails must stay _unresolved — the sibling
+    fallback only ever fires for .TO/.V symbols."""
+    out = fetch_market_data(
+        codes=["AAPL.US"],
+        start_date="2026-01-01",
+        end_date="2026-01-02",
+        source="auto",
+        loader_resolver=lambda src: _TorontoOnlyLoader,
+    )
+    assert out["_unresolved"] == ["AAPL.US"]
+
+
+def test_ca_venue_sibling_swaps_suffix_only() -> None:
+    """Unit check for the sibling helper, incl. hyphenated class bases."""
+    from src.market_data import _ca_venue_sibling
+
+    assert _ca_venue_sibling("HIVE.V") == "HIVE.TO"
+    assert _ca_venue_sibling("HIVE.TO") == "HIVE.V"
+    assert _ca_venue_sibling("BBD-B.TO") == "BBD-B.V"
+    assert _ca_venue_sibling("PNG.V") == "PNG.TO"
+    assert _ca_venue_sibling("AAPL.US") is None
+    assert _ca_venue_sibling("local:HIVE.V") is None
+    assert _ca_venue_sibling("BTC-USDT") is None
 
 
 # --------------------------------------------------------------------------
