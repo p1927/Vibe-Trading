@@ -64,7 +64,17 @@ def _discover_subclasses() -> list[type[BaseTool]]:
     queue = deque(BaseTool.__subclasses__())
     while queue:
         cls = queue.popleft()
-        if cls.name:
+        # ``BaseTool.__subclasses__()`` walks every subclass ever defined in
+        # the process, not just this package's modules — a test file that
+        # defines a throwaway ``class _FakeTool(BaseTool)`` at module scope
+        # (common for exercising ``ToolRegistry`` in isolation) leaves that
+        # class permanently reachable here for the rest of the pytest
+        # session once its module has been imported, silently polluting the
+        # production registry other, unrelated tests build. Restrict
+        # discovery to classes actually defined under this package — the
+        # only place a real tool is ever meant to live per this module's own
+        # docstring ("Create a file in src/tools/...").
+        if cls.name and cls.__module__.startswith(f"{__name__}."):
             classes.append(cls)
         queue.extend(cls.__subclasses__())
 

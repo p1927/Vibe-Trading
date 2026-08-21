@@ -1,9 +1,11 @@
-"""Tests for the VibeTrading -> OpenAlgo replay-control proxy routes.
+"""Tests for VibeTrading's replay-control routes, now thin clients of the
+standalone stock_simulator service instead of proxying through OpenAlgo.
 
-Covers the start_replay proxy's end_date forwarding (range replay) and the
-fail-closed 503 when OPENALGO_SIMULATOR_CONTROL_TOKEN isn't configured.
-No network: ``requests.post``/``.get`` are stubbed, matching the loopback
-``TestClient`` convention in ``test_alpha_compare_api.py``.
+Covers the start_replay call's end_date forwarding (range replay), the
+fail-closed 503 when SIMULATOR_CONTROL_TOKEN isn't configured, and error
+propagation. No network: `StockSimulatorClient`'s underlying `requests.request`
+call is stubbed, matching the loopback `TestClient` convention in
+`test_alpha_compare_api.py`.
 """
 
 from __future__ import annotations
@@ -33,34 +35,37 @@ class _FakeResponse:
 
 @pytest.fixture(autouse=True)
 def _token(monkeypatch):
-    monkeypatch.setenv("OPENALGO_SIMULATOR_CONTROL_TOKEN", "test-shared-secret")
+    monkeypatch.setenv("SIMULATOR_CONTROL_TOKEN", "test-shared-secret")
+    monkeypatch.setenv("STOCK_SIMULATOR_URL", "http://127.0.0.1:8902")
     yield
 
 
 def test_start_replay_returns_503_without_token(monkeypatch) -> None:
-    monkeypatch.delenv("OPENALGO_SIMULATOR_CONTROL_TOKEN", raising=False)
+    monkeypatch.delenv("SIMULATOR_CONTROL_TOKEN", raising=False)
     res = _client().post("/trade/recording/2024-04-15/replay", json={})
     assert res.status_code == 503
-    assert "OPENALGO_SIMULATOR_CONTROL_TOKEN" in res.json()["detail"]
+    assert "SIMULATOR_CONTROL_TOKEN" in res.json()["detail"]
 
 
 def test_start_replay_forwards_end_date_speed_and_loop() -> None:
     captured: dict[str, Any] = {}
 
-    def fake_post(url, json=None, headers=None, timeout=None):
+    def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
+        captured["method"] = method
         captured["url"] = url
         captured["json"] = json
         captured["headers"] = headers
         return _FakeResponse(200, {"mode": "replay", "clock": {"replay_date": "2024-04-15"}})
 
-    with patch("requests.post", side_effect=fake_post):
+    with patch("requests.request", side_effect=fake_request):
         res = _client().post(
             "/trade/recording/2024-04-15/replay",
             json={"end_date": "2024-04-19", "speed": 10, "loop": True},
         )
 
     assert res.status_code == 200
-    assert captured["url"].endswith("/stock_simulator/control/replay/start")
+    assert captured["method"] == "POST"
+    assert captured["url"].endswith("/control/replay/start")
     assert captured["json"] == {
         "date": "2024-04-15",
         "end_date": "2024-04-19",
@@ -73,72 +78,67 @@ def test_start_replay_forwards_end_date_speed_and_loop() -> None:
 def test_start_replay_omits_end_date_when_not_given() -> None:
     captured: dict[str, Any] = {}
 
-    def fake_post(url, json=None, headers=None, timeout=None):
+    def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         captured["json"] = json
         return _FakeResponse(200, {"mode": "replay"})
 
-    with patch("requests.post", side_effect=fake_post):
+    with patch("requests.request", side_effect=fake_request):
         res = _client().post("/trade/recording/2024-04-15/replay", json={})
 
     assert res.status_code == 200
     assert "end_date" not in captured["json"]
 
 
-def test_start_replay_propagates_openalgo_error() -> None:
-    def fake_post(url, json=None, headers=None, timeout=None):
-        return _FakeResponse(400, {"status": "error", "message": "date must be YYYY-MM-DD"})
+def test_start_replay_propagates_service_error() -> None:
+    def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
+        return _FakeResponse(400, {"detail": "date must be YYYY-MM-DD"})
 
-    with patch("requests.post", side_effect=fake_post):
+    with patch("requests.request", side_effect=fake_request):
         res = _client().post("/trade/recording/not-a-date/replay", json={})
 
-    assert res.status_code == 502
+    assert res.status_code == 400
 
 
 def test_seek_replay_returns_503_without_token(monkeypatch) -> None:
-    monkeypatch.delenv("OPENALGO_SIMULATOR_CONTROL_TOKEN", raising=False)
+    monkeypatch.delenv("SIMULATOR_CONTROL_TOKEN", raising=False)
     res = _client().post("/trade/recording/replay/seek", json={"time": "11:30"})
     assert res.status_code == 503
-    assert "OPENALGO_SIMULATOR_CONTROL_TOKEN" in res.json()["detail"]
+    assert "SIMULATOR_CONTROL_TOKEN" in res.json()["detail"]
 
 
-def test_seek_replay_forwards_time_to_openalgo() -> None:
+def test_seek_replay_forwards_time_to_service() -> None:
     captured: dict[str, Any] = {}
 
-    def fake_post(url, json=None, headers=None, timeout=None):
+    def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         captured["url"] = url
         captured["json"] = json
         return _FakeResponse(200, {"clock": {"sim_now": "2024-04-15T11:30:00+05:30"}})
 
-    with patch("requests.post", side_effect=fake_post):
+    with patch("requests.request", side_effect=fake_request):
         res = _client().post("/trade/recording/replay/seek", json={"time": "11:30"})
 
     assert res.status_code == 200
-    assert captured["url"].endswith("/stock_simulator/control/replay/seek")
+    assert captured["url"].endswith("/control/replay/seek")
     assert captured["json"] == {"time": "11:30"}
     assert res.json()["replay"]["clock"]["sim_now"] == "2024-04-15T11:30:00+05:30"
 
 
-def test_seek_replay_propagates_openalgo_error() -> None:
-    def fake_post(url, json=None, headers=None, timeout=None):
-        return _FakeResponse(400, {"status": "error", "message": "time must be HH:MM[:SS]"})
+def test_seek_replay_propagates_service_error() -> None:
+    def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
+        return _FakeResponse(400, {"detail": "time must be HH:MM[:SS]"})
 
-    with patch("requests.post", side_effect=fake_post):
+    with patch("requests.request", side_effect=fake_request):
         res = _client().post("/trade/recording/replay/seek", json={"time": "not-a-time"})
 
-    assert res.status_code == 502
+    assert res.status_code == 400
 
 
-def test_replay_status_mirrors_env_when_process_missed_the_arm(monkeypatch) -> None:
-    """A VibeTrading process that never witnessed the original arm (restarted,
-    or armed from another tab) must still pick up OpenAlgo's replay state on
-    the next status poll — otherwise the chart/option-chain endpoints, which
-    read STOCK_SIMULATOR_MODE/NSE_REPLAY_* from *this* process, stay dark even
-    though the sim clock is visibly running."""
-    monkeypatch.delenv("STOCK_SIMULATOR_MODE", raising=False)
-    monkeypatch.delenv("NSE_REPLAY_DATE", raising=False)
-    monkeypatch.delenv("NSE_REPLAY_END_DATE", raising=False)
+def test_replay_status_reads_directly_from_the_service() -> None:
+    """No more env mirroring: VibeTrading talks to the one shared clock
+    directly, so a status poll just returns whatever the service reports —
+    there's no local `ReplayService` to hard-sync any more."""
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(
             200,
             {
@@ -153,29 +153,17 @@ def test_replay_status_mirrors_env_when_process_missed_the_arm(monkeypatch) -> N
             },
         )
 
-    with patch("requests.get", side_effect=fake_get):
+    with patch("requests.request", side_effect=fake_request):
         res = _client().get("/trade/recording/replay/status")
 
     assert res.status_code == 200
-    import os
-
-    assert os.environ["STOCK_SIMULATOR_MODE"] == "replay"
-    assert os.environ["NSE_REPLAY_DATE"] == "2024-04-15"
-    assert os.environ["NSE_REPLAY_END_DATE"] == "2024-04-16"
-    assert os.environ["NSE_REPLAY_SPEED"] == "2.0"
-    assert os.environ["NSE_REPLAY_LOOP"] == "0"
+    assert res.json()["replay"]["clock"]["replay_date"] == "2024-04-15"
 
 
-def test_replay_status_clears_env_when_openalgo_reports_not_armed(monkeypatch) -> None:
-    monkeypatch.setenv("STOCK_SIMULATOR_MODE", "replay")
-
-    def fake_get(url, headers=None, timeout=None):
-        return _FakeResponse(200, {"mode": "", "clock": {}})
-
-    with patch("requests.get", side_effect=fake_get):
-        res = _client().get("/trade/recording/replay/status")
-
+def test_replay_calendar_reports_unconfigured_without_token(monkeypatch) -> None:
+    monkeypatch.delenv("SIMULATOR_CONTROL_TOKEN", raising=False)
+    res = _client().get("/trade/recording/replay/calendar")
     assert res.status_code == 200
-    import os
-
-    assert "STOCK_SIMULATOR_MODE" not in os.environ
+    body = res.json()
+    assert body["configured"] is False
+    assert body["days"] == []

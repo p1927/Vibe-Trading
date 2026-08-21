@@ -363,7 +363,9 @@ def test_fetch_auto_india_walks_india_chain() -> None:
         source="auto",
         loader_resolver=resolver,
     )
-    assert attempts == ["yahoo", "yfinance"]
+    # stock_simulator (recorded NSE data) leads india_equity as the default
+    # source, not a fallback — see registry.FALLBACK_CHAINS.
+    assert attempts == ["stock_simulator", "yahoo", "yfinance"]
     assert "_unresolved" not in out
     assert "RELIANCE.NS" in out
 

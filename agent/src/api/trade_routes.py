@@ -3500,108 +3500,38 @@ def get_recording_constituents(
     )
 
 
-def _openalgo_control_headers() -> dict[str, str] | None:
-    """Return the control-token header, or None if the token isn't configured.
+def _simulator_client() -> "StockSimulatorClient":
+    from trade_integrations.stock_simulator.client import StockSimulatorClient
 
-    Fails closed, mirroring the OpenAlgo side: if VibeTrading's half of the
-    shared secret isn't set, callers get a clear 503 rather than a request
-    that silently reaches OpenAlgo with no token and gets rejected there.
+    return StockSimulatorClient()
+
+
+def _simulator_not_configured() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail="SIMULATOR_CONTROL_TOKEN is not configured — set it to match the "
+        "stock_simulator service's token to enable replay control.",
+    )
+
+
+def _run_control(fn):
+    """Call a `StockSimulatorClient` control method, mapping its errors to HTTPException.
+
+    The client talks directly to the standalone `stock_simulator` service now —
+    OpenAlgo is no longer in this path at all, so there's no clock to mirror
+    into this process's env afterward (see the backlog item's Phase 1-3 plan:
+    `.claude/backlog/items/2026-08-21-stock-simulator-single-clock-source-of-truth.md`).
     """
-    token = (os.getenv("OPENALGO_SIMULATOR_CONTROL_TOKEN") or "").strip()
-    if not token:
-        return None
-    return {"X-Simulator-Control-Token": token}
+    from trade_integrations.stock_simulator.client import StockSimulatorClientError
 
-
-def _openalgo_host() -> str:
-    return (os.getenv("OPENALGO_HOST") or "http://127.0.0.1:5001").rstrip("/")
-
-
-def _openalgo_json(res: "requests.Response") -> Any:
-    """Parse an OpenAlgo control-endpoint response as JSON, or raise a clean 502.
-
-    OpenAlgo returns HTML (its SPA shell) instead of JSON when the request
-    never reaches the simulator_control blueprint — e.g. a stale/mismatched
-    control token, or a mid-restart window. Without this guard that surfaces
-    to callers as an unhandled JSONDecodeError (raw "Internal Server Error",
-    no detail) instead of a diagnosable error.
-    """
+    client = _simulator_client()
+    if not client.is_configured:
+        raise _simulator_not_configured()
     try:
-        return res.json()
-    except ValueError as exc:
-        preview = res.text[:200].replace("\n", " ")
-        raise HTTPException(
-            status_code=502,
-            detail=f"OpenAlgo returned non-JSON from {res.url}: {preview}",
-        ) from exc
-
-
-def _mirror_replay_env(status_payload: Any) -> None:
-    """Mirror OpenAlgo's replay-clock state into this process's env.
-
-    OpenAlgo and VibeTrading run as separate processes with independent
-    ``os.environ``. The in-process replay bridge (``get_replay_market_ticks``
-    / ``get_replay_spot_quote`` / ``get_replay_option_chain``, used by the
-    chart and option-chain endpoints) reads ``STOCK_SIMULATOR_MODE`` /
-    ``NSE_REPLAY_*`` from *this* process, not from OpenAlgo's — so any
-    handler that learns OpenAlgo's replay state (arm, status poll, pause,
-    resume, seek) needs to mirror it here too, not just the initial arm.
-    Without this, a VibeTrading process that didn't witness the original arm
-    (restarted, or the arm happened from another tab/session) shows a
-    correctly-running sim clock while the chart stays blank and the option
-    chain reports "simulator not running".
-
-    Config fields (date/speed/loop/etc.) are mirrored via env vars, which
-    ``get_replay_service`` only reloads on when they change — a seek or a
-    pause/resume touches none of them, so it would otherwise never propagate
-    to this process's clock. To keep the two clocks from drifting apart (or
-    ignoring OpenAlgo's seeks/pauses entirely), also force this process's
-    ``ReplayService`` to hard-sync to OpenAlgo's actual ``sim_now``/``paused``
-    after every control round-trip, rather than relying on config-hash
-    comparison alone.
-    """
-    if not isinstance(status_payload, dict):
-        return
-    mode = str(status_payload.get("mode") or "").strip().lower()
-    if mode != "replay":
-        os.environ.pop("STOCK_SIMULATOR_MODE", None)
-        return
-    clock = status_payload.get("clock")
-    clock = clock if isinstance(clock, dict) else {}
-    replay_date = str(clock.get("replay_date") or "").strip()[:10]
-    if not replay_date:
-        return
-    os.environ["STOCK_SIMULATOR_MODE"] = "replay"
-    os.environ["NSE_REPLAY_DATE"] = replay_date
-    week_dates = status_payload.get("week_dates")
-    if isinstance(week_dates, list) and len(week_dates) > 1:
-        os.environ["NSE_REPLAY_END_DATE"] = str(week_dates[-1])[:10]
-    else:
-        os.environ.pop("NSE_REPLAY_END_DATE", None)
-    speed = clock.get("speed")
-    if speed is not None:
-        os.environ["NSE_REPLAY_SPEED"] = str(speed)
-    loop = clock.get("loop")
-    if loop is not None:
-        os.environ["NSE_REPLAY_LOOP"] = "1" if loop else "0"
-
-    sim_now_str = clock.get("sim_now")
-    if not sim_now_str:
-        return
-    try:
-        from datetime import datetime
-
-        from trade_integrations.stock_simulator.replay import get_replay_service
-
-        target = datetime.fromisoformat(str(sim_now_str))
-        service = get_replay_service()
-        service.seek(target)
-        if bool(clock.get("paused")):
-            service.pause()
-        else:
-            service.resume()
-    except Exception:
-        logger.debug("failed to hard-sync local replay clock to OpenAlgo's", exc_info=True)
+        return fn(client)
+    except StockSimulatorClientError as exc:
+        status = exc.status_code if exc.status_code and exc.status_code >= 400 else 502
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
 
 
 @trade_router.post("/recording/{day}/replay", response_model=ReplayStatusResponse)
@@ -3610,49 +3540,10 @@ def start_replay(
     body: StartReplayRequest,
     _auth: None = Depends(require_local_or_auth),
 ) -> ReplayStatusResponse:
-    """Arm OpenAlgo's stock simulator to replay a previously recorded day."""
-    import requests
-
-    headers = _openalgo_control_headers()
-    if headers is None:
-        raise HTTPException(
-            status_code=503,
-            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
-            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
-        )
-    payload: dict[str, Any] = {"date": day}
-    if body.end_date:
-        payload["end_date"] = body.end_date
-    if body.speed is not None:
-        payload["speed"] = body.speed
-    if body.loop is not None:
-        payload["loop"] = body.loop
-    try:
-        res = requests.post(
-            f"{_openalgo_host()}/stock_simulator/control/replay/start",
-            json=payload,
-            headers=headers,
-            timeout=15.0,
-        )
-    except requests.RequestException as exc:
-        raise HTTPException(
-            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
-        ) from exc
-    if res.status_code >= 400:
-        raise HTTPException(status_code=502, detail=res.text[:500])
-    # Mirror the arm into *this* process too: OpenAlgo sets
-    # ``STOCK_SIMULATOR_MODE=replay`` on its own gunicorn worker, but VibeTrading
-    # runs in a separate process. Without mirroring, the in-process replay
-    # helpers (``get_replay_market_ticks`` / ``get_replay_spot_quote``) keep
-    # seeing ``is_replay=False`` and return empty lists even when the user has
-    # explicitly armed — leaving the Simulator chart blank after "Replay
-    # {date}" until the user reloads the OpenAlgo worker. Also clear a
-    # previous range-arm's end_date so a plain single-day arm doesn't
-    # silently inherit the old range before `_mirror_replay_env` runs.
-    if not body.end_date:
-        os.environ.pop("NSE_REPLAY_END_DATE", None)
-    payload = _openalgo_json(res)
-    _mirror_replay_env(payload)
+    """Arm the stock_simulator service to replay a previously recorded day."""
+    payload = _run_control(
+        lambda c: c.start_replay(day, end_date=body.end_date, speed=body.speed, loop=body.loop)
+    )
     return ReplayStatusResponse(status="ok", replay=payload)
 
 
@@ -3661,29 +3552,7 @@ def get_replay_status(
     _auth: None = Depends(require_local_or_auth),
 ) -> ReplayStatusResponse:
     """Current simulator replay clock state, without arming a new day."""
-    import requests
-
-    headers = _openalgo_control_headers()
-    if headers is None:
-        raise HTTPException(
-            status_code=503,
-            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
-            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
-        )
-    try:
-        res = requests.get(
-            f"{_openalgo_host()}/stock_simulator/control/replay/status",
-            headers=headers,
-            timeout=15.0,
-        )
-    except requests.RequestException as exc:
-        raise HTTPException(
-            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
-        ) from exc
-    if res.status_code >= 400:
-        raise HTTPException(status_code=502, detail=res.text[:500])
-    payload = _openalgo_json(res)
-    _mirror_replay_env(payload)
+    payload = _run_control(lambda c: c.status())
     return ReplayStatusResponse(status="ok", replay=payload)
 
 
@@ -3692,29 +3561,7 @@ def pause_replay(
     _auth: None = Depends(require_local_or_auth),
 ) -> ReplayStatusResponse:
     """Pause the simulator clock (does not unload it)."""
-    import requests
-
-    headers = _openalgo_control_headers()
-    if headers is None:
-        raise HTTPException(
-            status_code=503,
-            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
-            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
-        )
-    try:
-        res = requests.post(
-            f"{_openalgo_host()}/stock_simulator/control/replay/pause",
-            headers=headers,
-            timeout=15.0,
-        )
-    except requests.RequestException as exc:
-        raise HTTPException(
-            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
-        ) from exc
-    if res.status_code >= 400:
-        raise HTTPException(status_code=502, detail=res.text[:500])
-    payload = _openalgo_json(res)
-    _mirror_replay_env(payload)
+    payload = _run_control(lambda c: c.pause())
     return ReplayStatusResponse(status="ok", replay=payload)
 
 
@@ -3723,29 +3570,7 @@ def resume_replay(
     _auth: None = Depends(require_local_or_auth),
 ) -> ReplayStatusResponse:
     """Resume a paused simulator clock."""
-    import requests
-
-    headers = _openalgo_control_headers()
-    if headers is None:
-        raise HTTPException(
-            status_code=503,
-            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
-            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
-        )
-    try:
-        res = requests.post(
-            f"{_openalgo_host()}/stock_simulator/control/replay/resume",
-            headers=headers,
-            timeout=15.0,
-        )
-    except requests.RequestException as exc:
-        raise HTTPException(
-            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
-        ) from exc
-    if res.status_code >= 400:
-        raise HTTPException(status_code=502, detail=res.text[:500])
-    payload = _openalgo_json(res)
-    _mirror_replay_env(payload)
+    payload = _run_control(lambda c: c.resume())
     return ReplayStatusResponse(status="ok", replay=payload)
 
 
@@ -3759,30 +3584,7 @@ def seek_replay(
     ``body.time`` is either ``HH:MM[:SS]`` (applied to the currently armed
     replay date) or a full ISO datetime.
     """
-    import requests
-
-    headers = _openalgo_control_headers()
-    if headers is None:
-        raise HTTPException(
-            status_code=503,
-            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
-            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
-        )
-    try:
-        res = requests.post(
-            f"{_openalgo_host()}/stock_simulator/control/replay/seek",
-            json={"time": body.time},
-            headers=headers,
-            timeout=15.0,
-        )
-    except requests.RequestException as exc:
-        raise HTTPException(
-            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
-        ) from exc
-    if res.status_code >= 400:
-        raise HTTPException(status_code=502, detail=res.text[:500])
-    payload = _openalgo_json(res)
-    _mirror_replay_env(payload)
+    payload = _run_control(lambda c: c.seek(body.time))
     return ReplayStatusResponse(status="ok", replay=payload)
 
 
@@ -3792,30 +3594,7 @@ def set_replay_speed(
     _auth: None = Depends(require_local_or_auth),
 ) -> ReplayStatusResponse:
     """Change the simulator clock's replay rate live, without re-arming it."""
-    import requests
-
-    headers = _openalgo_control_headers()
-    if headers is None:
-        raise HTTPException(
-            status_code=503,
-            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
-            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
-        )
-    try:
-        res = requests.post(
-            f"{_openalgo_host()}/stock_simulator/control/replay/speed",
-            json={"speed": body.speed},
-            headers=headers,
-            timeout=15.0,
-        )
-    except requests.RequestException as exc:
-        raise HTTPException(
-            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
-        ) from exc
-    if res.status_code >= 400:
-        raise HTTPException(status_code=502, detail=res.text[:500])
-    payload = _openalgo_json(res)
-    _mirror_replay_env(payload)
+    payload = _run_control(lambda c: c.set_speed(body.speed))
     return ReplayStatusResponse(status="ok", replay=payload)
 
 
@@ -3823,36 +3602,9 @@ def set_replay_speed(
 def stop_replay(
     _auth: None = Depends(require_local_or_auth),
 ) -> ReplayStatusResponse:
-    """Tear down the simulator so OpenAlgo falls back to its real broker."""
-    import requests
-
-    headers = _openalgo_control_headers()
-    if headers is None:
-        raise HTTPException(
-            status_code=503,
-            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
-            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
-        )
-    try:
-        res = requests.post(
-            f"{_openalgo_host()}/stock_simulator/control/replay/stop",
-            headers=headers,
-            timeout=15.0,
-        )
-    except requests.RequestException as exc:
-        raise HTTPException(
-            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
-        ) from exc
-    if res.status_code >= 400:
-        raise HTTPException(status_code=502, detail=res.text[:500])
-    # Clear the mirrored replay env on this side too, matching the start
-    # arm — otherwise the next reload of the page still sees ``STOCK_SIMULATOR_MODE=replay``
-    # locally even after the user pressed Stop, and Vibe's replay helpers would
-    # keep returning data against a torn-down OpenAlgo side.
-    os.environ.pop("STOCK_SIMULATOR_MODE", None)
-    os.environ.pop("NSE_REPLAY_DATE", None)
-    os.environ.pop("NSE_REPLAY_END_DATE", None)
-    return ReplayStatusResponse(status="ok", replay=_openalgo_json(res))
+    """Tear down the simulator so consumers fall back to live."""
+    payload = _run_control(lambda c: c.stop())
+    return ReplayStatusResponse(status="ok", replay=payload)
 
 
 @trade_router.get("/recording/replay/calendar")
@@ -3868,31 +3620,24 @@ def get_replay_calendar(
     generic "calendar failed to load" error with a Retry button that can
     never succeed.
     """
-    import requests
-
-    headers = _openalgo_control_headers()
-    if headers is None:
+    client = _simulator_client()
+    if not client.is_configured:
         return {
             "status": "ok",
             "configured": False,
             "days": [],
             "underlyings": [],
-            "message": "OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
-            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
+            "message": "SIMULATOR_CONTROL_TOKEN is not configured — set it to match the "
+            "stock_simulator service's token to enable replay control.",
         }
+    from trade_integrations.stock_simulator.client import StockSimulatorClientError
+
     try:
-        res = requests.get(
-            f"{_openalgo_host()}/stock_simulator/control/replay/calendar",
-            headers=headers,
-            timeout=30.0,
-        )
-    except requests.RequestException as exc:
-        raise HTTPException(
-            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
-        ) from exc
-    if res.status_code >= 400:
-        raise HTTPException(status_code=502, detail=res.text[:500])
-    return {"configured": True, **_openalgo_json(res)}
+        payload = client.calendar()
+    except StockSimulatorClientError as exc:
+        status = exc.status_code if exc.status_code and exc.status_code >= 400 else 502
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    return {"configured": True, **payload}
 
 
 @trade_router.post("/recording/auto-record", response_model=AutoRecordStatusResponse)
