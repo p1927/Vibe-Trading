@@ -571,6 +571,7 @@ export function Simulator() {
             exchange={primarySymbol.exchange}
             isRecordingActive={isActive}
             isReplayArmed={Boolean(armedRange)}
+            replaySpeed={replaySpeed}
             height={240}
             onSessionOpenChange={setMarketOpen}
           />
@@ -593,6 +594,7 @@ export function Simulator() {
         onClose={() => setShowChain(false)}
         recordingActive={isActive}
         isReplayArmed={Boolean(armedRange)}
+        replaySpeed={replaySpeed}
       />
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
