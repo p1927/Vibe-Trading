@@ -9,11 +9,11 @@ from unittest.mock import MagicMock
 import pytest
 
 import src.agent.loop as loop_mod
+from src.agent.compaction_policy import adjust_cut_idx_for_tool_batches
 from src.agent.loop import (
     COMPACT_POLICY_DEFER,
     COMPACT_POLICY_NORMAL,
     AgentLoop,
-    _adjust_cut_idx_for_tool_batches,
     _resolve_compact_policy,
 )
 from src.agent.trace import TraceWriter
@@ -57,7 +57,7 @@ def test_adjust_cut_idx_keeps_tool_batch_in_tail() -> None:
         {"role": "tool", "tool_call_id": "c2", "content": '{"status":"ok"}'},
     ]
     # Cut between assistant and first tool result would orphan tools
-    assert _adjust_cut_idx_for_tool_batches(body, 2) == 1
+    assert adjust_cut_idx_for_tool_batches(body, 2) == 1
 
 
 def test_scheduler_turn_defers_auto_compact_below_hard_cap(

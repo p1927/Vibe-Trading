@@ -27,6 +27,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from src.agent.compaction_policy import (
+    COMPACT_POLICY_DEFER,
+    COMPACT_POLICY_NORMAL,
+    adjust_cut_idx_for_tool_batches,
+    is_protected_tool,
+)
 from src.agent.context import ContextBuilder
 from src.agent.grounding import GroundingLedger
 from src.agent.memory import WorkspaceMemory
@@ -41,6 +47,7 @@ from src.goal.context import (
     goal_progress_tuple,
 )
 from src.providers.chat import ChatLLM, LLMRuntimeSnapshot, ProviderStreamError
+from src.session.news_scenario_profile import inject_news_scenario_session_context
 from src.providers.content_filter import (
     CONTENT_FILTER_SKIP_MESSAGE,
     MAX_CONSECUTIVE_CONTENT_FILTER_SKIPS,
@@ -56,22 +63,6 @@ from src.tools.redaction import redact_payload, redact_tool_result
 RUNS_DIR = get_runs_dir()
 SESSIONS_DIR = get_sessions_dir()
 KEEP_RECENT = 3
-_PROTECTED_TOOL_NAMES = frozenset(
-    {
-        "get_autonomous_agent_status",
-        "get_autonomous_market_feedback",
-        "get_research_status",
-        "get_options_trade_widget",
-        "get_stock_trade_widget",
-        "record_autonomous_decision",
-        "execute_autonomous_basket",
-        "stop_autonomous_agents",
-        "get_us_quote",
-        "get_stock_browse",
-        "place_order",
-        "set_agent_watch_spec",
-    }
-)
 LLM_USAGE_ARTIFACT = "llm_usage.json"
 
 COLLAPSE_PRESERVE_RECENT = 6
@@ -108,10 +99,6 @@ def _compact_hard_cap() -> int:
     if ov is not None:
         return int(ov)
     return max(int(_token_threshold() * 2.5), 100_000)
-
-
-COMPACT_POLICY_NORMAL = "normal"
-COMPACT_POLICY_DEFER = "defer"
 
 
 def _resolve_compact_policy(user_message: str, session_config: dict[str, Any] | None) -> str:
@@ -320,14 +307,6 @@ def estimate_tokens(messages: list) -> int:
     return len(json.dumps(messages, default=str, ensure_ascii=False)) // 4
 
 
-def _is_protected_tool(name: str | None) -> bool:
-    if not name:
-        return False
-    if name in _PROTECTED_TOOL_NAMES:
-        return True
-    return any(name.endswith(f"_{protected}") or name == protected for protected in _PROTECTED_TOOL_NAMES)
-
-
 def _summary_chunks(msgs: list, limit: int = SUMMARY_CHUNK_CHARS) -> list[str]:
     """Serialize messages into bounded chunks for lossless summary folding.
 
@@ -477,7 +456,7 @@ def _microcompact(messages: list) -> None:
     if len(tool_msgs) <= KEEP_RECENT:
         return
     for msg in tool_msgs[:-KEEP_RECENT]:
-        if _is_protected_tool(msg.get("name")):
+        if is_protected_tool(msg.get("name")):
             continue
         content = msg.get("content", "")
         if isinstance(content, str) and len(content) > 100:
@@ -506,47 +485,6 @@ def _context_collapse(messages: list) -> None:
         trimmed = len(content) - COLLAPSE_HEAD - COLLAPSE_TAIL
         msg["content"] = f"{head}\n\n...[{trimmed} chars collapsed]...\n\n{tail}"
 
-
-def _assistant_tool_batch_end(body: list, assistant_idx: int) -> int:
-    """Return index after the last tool result following an assistant tool_call message."""
-    j = assistant_idx + 1
-    while j < len(body) and body[j].get("role") == "tool":
-        j += 1
-    return j
-
-
-def _adjust_cut_idx_for_tool_batches(body: list, cut_idx: int) -> int:
-    """Keep assistant tool_call batches intact in the preserved tail when compacting."""
-    if not body:
-        return cut_idx
-    cut_idx = max(0, min(cut_idx, len(body)))
-    for i in range(cut_idx - 1, -1, -1):
-        msg = body[i]
-        if msg.get("role") == "assistant" and msg.get("tool_calls"):
-            batch_end = _assistant_tool_batch_end(body, i)
-            if i < cut_idx < batch_end:
-                cut_idx = i
-            break
-        if msg.get("role") != "tool":
-            break
-    while 0 < cut_idx < len(body) and body[cut_idx].get("role") == "tool":
-        cut_idx += 1
-    return cut_idx
-
-
-def _compute_tail_cut_idx(body: list, tail_budget: int) -> int:
-    """Choose head/tail split index honoring a token budget on the preserved tail."""
-    accumulated = 0
-    cut_idx = len(body)
-    for i in range(len(body) - 1, -1, -1):
-        content = body[i].get("content", "")
-        msg_tokens = (len(str(content)) // 4) + 10
-        if accumulated + msg_tokens > tail_budget:
-            cut_idx = i + 1
-            break
-        accumulated += msg_tokens
-        cut_idx = i
-    return _adjust_cut_idx_for_tool_batches(body, cut_idx)
 
 
 def _shrink_tail_to_threshold(messages: list, threshold: int) -> None:
@@ -865,35 +803,6 @@ def _normalize_tool_run_dir(args: dict[str, Any], memory_run_dir: str | None) ->
     candidate = Path(run_dir_value)
     if not candidate.is_absolute():
         normalized["run_dir"] = str((Path(memory_run_dir) / candidate).resolve())
-    return normalized
-
-
-def _inject_news_scenario_session_context(
-    args: dict[str, Any],
-    *,
-    session_id: str,
-    tool_name: str,
-    session_config: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """Inject bound pipeline_as_of / session_id into news-scenario MCP tools."""
-    from src.session.news_scenario_profile import (
-        SESSION_KIND_NEWS_SCENARIO,
-        is_news_scenario_pipeline_tool,
-    )
-
-    if not session_config or session_config.get("session_kind") != SESSION_KIND_NEWS_SCENARIO:
-        return args
-    if not is_news_scenario_pipeline_tool(tool_name):
-        return args
-    normalized = dict(args)
-    if not normalized.get("pipeline_as_of"):
-        bound = session_config.get("pipeline_as_of")
-        if bound:
-            normalized["pipeline_as_of"] = bound
-    if not normalized.get("ticker"):
-        normalized["ticker"] = session_config.get("pipeline_ticker") or "NIFTY"
-    if "run_news_event_scenario" in tool_name and session_id and not normalized.get("session_id"):
-        normalized["session_id"] = session_id
     return normalized
 
 
@@ -2298,7 +2207,7 @@ class AgentLoop:
         runnable: list[tuple] = []
         for tc in tool_calls:
             args = _normalize_tool_run_dir(tc.arguments, self.memory.run_dir)
-            args = _inject_news_scenario_session_context(
+            args = inject_news_scenario_session_context(
                 args,
                 session_id=self._session_id,
                 tool_name=tc.name,
@@ -2351,7 +2260,7 @@ class AgentLoop:
             iteration: Current iteration.
         """
         args = _normalize_tool_run_dir(tc.arguments, self.memory.run_dir)
-        args = _inject_news_scenario_session_context(
+        args = inject_news_scenario_session_context(
             args,
             session_id=self._session_id,
             tool_name=tc.name,
@@ -2880,7 +2789,7 @@ class AgentLoop:
             # All body fits in tail budget — force a split to avoid infinite loop
             if len(body) > 2:
                 cut_idx = max(1, len(body) // 2)
-                cut_idx = _adjust_cut_idx_for_tool_batches(body, cut_idx)
+                cut_idx = adjust_cut_idx_for_tool_batches(body, cut_idx)
                 head = body[:cut_idx]
                 tail = body[cut_idx:]
             else:

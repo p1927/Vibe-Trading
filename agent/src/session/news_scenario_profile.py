@@ -58,3 +58,27 @@ def filter_registry_for_news_scenario(registry: ToolRegistry) -> ToolRegistry:
         if any(sub in name for sub in _NEWS_SCENARIO_MCP_TOOL_SUBSTRINGS):
             filtered.register(tool)
     return filtered
+
+
+def inject_news_scenario_session_context(
+    args: dict[str, Any],
+    *,
+    session_id: str,
+    tool_name: str,
+    session_config: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Inject bound pipeline_as_of / session_id into news-scenario MCP tools."""
+    if not session_config or session_config.get("session_kind") != SESSION_KIND_NEWS_SCENARIO:
+        return args
+    if not is_news_scenario_pipeline_tool(tool_name):
+        return args
+    normalized = dict(args)
+    if not normalized.get("pipeline_as_of"):
+        bound = session_config.get("pipeline_as_of")
+        if bound:
+            normalized["pipeline_as_of"] = bound
+    if not normalized.get("ticker"):
+        normalized["ticker"] = session_config.get("pipeline_ticker") or "NIFTY"
+    if "run_news_event_scenario" in tool_name and session_id and not normalized.get("session_id"):
+        normalized["session_id"] = session_id
+    return normalized
