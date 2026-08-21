@@ -2,6 +2,8 @@ import { authHeaders, withAuthTicket } from "@/lib/apiAuth";
 import { resolveApiBase } from "@/lib/apiBase";
 import i18n from "@/i18n";
 import type {
+  IndiaOptionsResearchResponse,
+  IndiaOptionsSource,
   OptionsChainResponse,
   OptionsPayoffRequest,
   OptionsPayoffResponse,
@@ -811,11 +813,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  getOptionsChain: (ticker: string, expiration?: number) => {
+  getOptionsChain: (
+    ticker: string,
+    expiration?: number,
+    opts?: { market?: string; source?: IndiaOptionsSource },
+  ) => {
     const q = new URLSearchParams();
     q.set("ticker", ticker);
     if (expiration !== undefined) q.set("expiration", String(expiration));
+    if (opts?.market) q.set("market", opts.market);
+    if (opts?.source) q.set("source", opts.source);
     return request<OptionsChainResponse>(`/options/chain?${q.toString()}`);
+  },
+  getIndiaOptionsResearch: (ticker: string, expiryDate?: string) => {
+    const q = new URLSearchParams();
+    q.set("ticker", ticker);
+    if (expiryDate) q.set("expiry_date", expiryDate);
+    return request<IndiaOptionsResearchResponse>(`/options/research?${q.toString()}`);
   },
 
   // Connector runtime channel — privileged surface actions (NOT agent tools).

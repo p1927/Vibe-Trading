@@ -7,11 +7,16 @@ the ``alpha_routes.py`` slice pattern.
 Routes (auth via the caller-supplied ``require_auth`` dependency):
 
 - ``POST /options/payoff``  — multi-leg expiry payoff + spot/IV scenario analysis
-- ``GET  /options/chain``   — US-listed options chain for one expiration (Yahoo)
+- ``GET  /options/chain``   — options chain for one expiration; ``market="us"``
+  (default, Yahoo) or ``market="india_equity"`` (``source="stock_simulator"``
+  recorded/replay data, default, or ``source="openalgo"`` live broker feed)
+- ``GET  /options/research`` — India-only auto-ranked multi-leg strategy
+  suggestions for one underlying (wraps the ``options_research`` pipeline)
 
 Both routes are thin HTTP wrappers around the existing agent tools
-(``OptionsPayoffTool`` / ``OptionsChainTool``) so validation and math stay
-identical to the MCP surface — no formula is reimplemented here.
+(``OptionsPayoffTool`` / ``OptionsChainTool`` / ``IndiaOptionsChainTool``) so
+validation and math stay identical to the MCP surface — no formula is
+reimplemented here.
 
 ``POST /options/payoff`` returns the tool's envelope verbatim plus one additive
 top-level ``greeks`` object: portfolio Greeks at entry (sum of ``qty * greek``
@@ -39,6 +44,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Annotated, Any, Awaitable, Callable, Literal
 
 from fastapi import Depends, FastAPI, Query
@@ -46,6 +52,8 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
 from src.quantlib.options import bs_greeks
+from src.tools.india_options_chain_tool import IndiaOptionsChainTool
+from src.tools.india_options_research_tool import IndiaOptionsResearchTool
 from src.tools.options_chain_tool import OptionsChainTool
 from src.tools.options_payoff_tool import OptionsPayoffTool, _coerce_legs
 
@@ -219,24 +227,76 @@ def register_options_routes(
     async def options_chain(
         ticker: str | None = Query(None, max_length=64),
         expiration: int | None = Query(None),
+        market: str = Query("us"),
+        source: str | None = Query(None, max_length=32),
     ) -> Response:
-        """Wrap ``OptionsChainTool`` (Yahoo network I/O, run in a thread)."""
+        """Wrap ``OptionsChainTool``/``IndiaOptionsChainTool`` (network I/O, run in a thread).
+
+        ``market="us"`` (default) is the original Yahoo-backed chain. ``market=
+        "india_equity"`` dispatches to ``IndiaOptionsChainTool``, optionally
+        pinned to one ``source`` ('stock_simulator' default, or 'openalgo').
+        """
+        if ticker is None or not ticker.strip():
+            return JSONResponse(
+                status_code=400, content={"ok": False, "error": "ticker is required"}
+            )
+
+        if market == "india_equity":
+            kwargs: dict[str, Any] = {"ticker": ticker}
+            if expiration is not None:
+                kwargs["expiry_date"] = datetime.fromtimestamp(
+                    expiration, tz=timezone.utc
+                ).strftime("%Y-%m-%d")
+            if source:
+                kwargs["source"] = source
+            tool: OptionsChainTool | IndiaOptionsChainTool = IndiaOptionsChainTool()
+        else:
+            kwargs = {"ticker": ticker}
+            if expiration is not None:
+                kwargs["expiration"] = expiration
+            tool = OptionsChainTool()
+
+        try:
+            raw = await asyncio.to_thread(tool.execute, **kwargs)
+            envelope = json.loads(raw)
+        except Exception:  # noqa: BLE001 — never leak a stack frame to clients
+            logger.exception(
+                "options chain tool call failed (ticker=%s market=%s)", ticker, market
+            )
+            return JSONResponse(
+                status_code=502,
+                content={"ok": False, "error": "options chain request failed"},
+            )
+        if not envelope.get("ok"):
+            return JSONResponse(status_code=502, content=envelope)
+        return envelope
+
+    # -----------------------------------------------------------------------
+    # GET /options/research (India only — auto-ranked strategy suggestions)
+    # -----------------------------------------------------------------------
+
+    @app.get("/options/research", dependencies=[Depends(require_auth)])
+    async def options_research(
+        ticker: str | None = Query(None, max_length=64),
+        expiry_date: str | None = Query(None, max_length=16),
+    ) -> Response:
+        """Wrap ``IndiaOptionsResearchTool`` (network I/O, run in a thread)."""
         if ticker is None or not ticker.strip():
             return JSONResponse(
                 status_code=400, content={"ok": False, "error": "ticker is required"}
             )
         kwargs: dict[str, Any] = {"ticker": ticker}
-        if expiration is not None:
-            kwargs["expiration"] = expiration
-        tool = OptionsChainTool()
+        if expiry_date:
+            kwargs["expiry_date"] = expiry_date
+        tool = IndiaOptionsResearchTool()
         try:
             raw = await asyncio.to_thread(tool.execute, **kwargs)
             envelope = json.loads(raw)
         except Exception:  # noqa: BLE001 — never leak a stack frame to clients
-            logger.exception("options chain tool call failed (ticker=%s)", ticker)
+            logger.exception("options research tool call failed (ticker=%s)", ticker)
             return JSONResponse(
                 status_code=502,
-                content={"ok": False, "error": "options chain request failed"},
+                content={"ok": False, "error": "options research request failed"},
             )
         if not envelope.get("ok"):
             return JSONResponse(status_code=502, content=envelope)

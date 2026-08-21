@@ -7,11 +7,15 @@ import {
   bidAskSpreadPct,
   expirationLabel,
   nearestStrikeIndex,
+  type IndiaOptionsSource,
   type OptionsChainData,
   type OptionsContractRow,
 } from "@/lib/options";
 
 const DEFAULT_TICKER = "AAPL";
+const DEFAULT_INDIA_TICKER = "NIFTY";
+
+type ChainMarket = "us" | "india_equity";
 
 function fmt(v: number | null, maxDigits = 2): string {
   if (v === null || !Number.isFinite(v)) return "–";
@@ -137,43 +141,65 @@ interface Props {
 
 export function OptionsChainTable({ referenceSpot }: Props) {
   const { t } = useTranslation();
+  const [market, setMarket] = useState<ChainMarket>("us");
+  const [source, setSource] = useState<IndiaOptionsSource>("stock_simulator");
   const [tickerInput, setTickerInput] = useState(DEFAULT_TICKER);
   const [data, setData] = useState<OptionsChainData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
 
-  const load = useCallback(async (ticker: string, expiration?: number) => {
-    const gen = ++generation.current;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await api.getOptionsChain(ticker, expiration);
-      if (generation.current !== gen) return;
-      if (!res.ok || !res.data) {
-        setError(res.error || t("options.chain.errorTitle"));
+  const load = useCallback(
+    async (ticker: string, expiration?: number, forMarket: ChainMarket = market, forSource: IndiaOptionsSource = source) => {
+      const gen = ++generation.current;
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await api.getOptionsChain(ticker, expiration, {
+          market: forMarket,
+          source: forMarket === "india_equity" ? forSource : undefined,
+        });
+        if (generation.current !== gen) return;
+        if (!res.ok || !res.data) {
+          setError(res.error || t("options.chain.errorTitle"));
+          setData(null);
+          return;
+        }
+        setData(res.data);
+      } catch (e) {
+        if (generation.current !== gen) return;
+        setError(e instanceof Error ? e.message : t("options.chain.errorTitle"));
         setData(null);
-        return;
+      } finally {
+        if (generation.current === gen) setLoading(false);
       }
-      setData(res.data);
-    } catch (e) {
-      if (generation.current !== gen) return;
-      setError(e instanceof Error ? e.message : t("options.chain.errorTitle"));
-      setData(null);
-    } finally {
-      if (generation.current === gen) setLoading(false);
-    }
-  }, [t]);
+    },
+    [t, market, source],
+  );
 
   useEffect(() => {
-    void load(DEFAULT_TICKER);
-  }, [load]);
+    void load(DEFAULT_TICKER, undefined, "us", source);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onMarketChange = (next: ChainMarket) => {
+    setMarket(next);
+    setData(null);
+    const ticker = next === "india_equity" ? DEFAULT_INDIA_TICKER : DEFAULT_TICKER;
+    setTickerInput(ticker);
+    void load(ticker, undefined, next, source);
+  };
+
+  const onSourceChange = (next: IndiaOptionsSource) => {
+    setSource(next);
+    if (market === "india_equity" && data) void load(data.ticker, undefined, market, next);
+  };
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     const ticker = tickerInput.trim().toUpperCase();
     if (!ticker) return;
-    void load(ticker);
+    void load(ticker, undefined, market, source);
   };
 
   const atmStrike = useMemo(() => {
@@ -192,11 +218,37 @@ export function OptionsChainTable({ referenceSpot }: Props) {
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="text-sm font-semibold">{t("options.chain.title")}</div>
         <form onSubmit={onSubmit} className="flex flex-wrap items-center gap-2">
+          <select
+            value={market}
+            onChange={(e) => onMarketChange(e.target.value as ChainMarket)}
+            aria-label={t("options.chain.market", { defaultValue: "Market" })}
+            className="rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+          >
+            <option value="us">{t("options.chain.marketUs", { defaultValue: "US" })}</option>
+            <option value="india_equity">
+              {t("options.chain.marketIndia", { defaultValue: "India" })}
+            </option>
+          </select>
+          {market === "india_equity" && (
+            <select
+              value={source}
+              onChange={(e) => onSourceChange(e.target.value as IndiaOptionsSource)}
+              aria-label={t("options.chain.source", { defaultValue: "Data source" })}
+              className="rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+            >
+              <option value="stock_simulator">
+                {t("options.chain.sourceStockSimulator", { defaultValue: "Stock Simulator" })}
+              </option>
+              <option value="openalgo">
+                {t("options.chain.sourceOpenalgo", { defaultValue: "OpenAlgo (live)" })}
+              </option>
+            </select>
+          )}
           <input
             type="text"
             value={tickerInput}
             onChange={(e) => setTickerInput(e.target.value)}
-            placeholder={DEFAULT_TICKER}
+            placeholder={market === "india_equity" ? DEFAULT_INDIA_TICKER : DEFAULT_TICKER}
             aria-label={t("options.chain.ticker")}
             className="w-24 rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm uppercase outline-none focus:ring-2 focus:ring-primary/40"
           />

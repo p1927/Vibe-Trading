@@ -15,6 +15,7 @@ import {
 import { StrategyBuilder } from "@/components/options/StrategyBuilder";
 import { GreeksCards } from "@/components/options/GreeksCards";
 import { OptionsChainTable } from "@/components/options/OptionsChainTable";
+import { IndiaStrategyPanel } from "@/components/options/IndiaStrategyPanel";
 import { OptionsPayoffChart } from "@/components/charts/OptionsPayoffChart";
 import { OptionsScenarioMatrix } from "@/components/charts/OptionsScenarioMatrix";
 
@@ -225,8 +226,10 @@ export function OptionsLab() {
         )}
       </section>
 
-      {/* Live US options chain */}
+      {/* Live options chain — market/source selectable, US or India */}
       <OptionsChainTable referenceSpot={params.entry_spot} />
+
+      <IndiaStrategyPanel />
 
       <p className="pb-2 text-xs text-muted-foreground">{t("options.disclaimer")}</p>
     </div>

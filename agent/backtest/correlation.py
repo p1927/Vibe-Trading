@@ -16,6 +16,26 @@ from scipy.stats import spearmanr
 logger = logging.getLogger(__name__)
 
 
+def _is_india_equity(code: str) -> bool:
+    """Delegate India ticker-suffix inference to the fork-owned sidecar.
+
+    Deferred and defensive: a standalone Vibe-Trading checkout not co-located
+    with the trade monorepo (and without ``TRADE_STACK_ROOT`` set) simply
+    reports no match here, falling through to the rest of ``infer_market``,
+    rather than crashing.
+    """
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.data_router.callers import infer_equity_market
+
+        return infer_equity_market(code) == "india_equity"
+    except Exception as exc:  # noqa: BLE001 — optional cross-repo dependency
+        logger.debug("trade_integrations bridge unavailable: %s", exc)
+        return False
+
+
 def infer_market(code: str) -> str:
     """Infer market key from a ticker symbol.
 
@@ -23,9 +43,9 @@ def infer_market(code: str) -> str:
 
     1. Crypto pair spellings (``BTC-USDT``, ``ETH/USD`` …).
     2. Explicit exchange suffix — always authoritative (``.HK``, ``.SH``/
-       ``.SZ``/``.BJ``, ``.TO``/``.V``, ``.US``). Bare HK and A-share codes
-       are both purely numeric, so the suffix is the only reliable
-       disambiguator.
+       ``.SZ``/``.BJ``, ``.TO``/``.V``, ``.US``, ``.NS``/``.BO``). Bare HK
+       and A-share codes are both purely numeric, so the suffix is the only
+       reliable disambiguator.
     3. Bare numeric codes by digit length: A-share codes are exactly 6 digits
        (600000, 000001, 300750, 688981, 830799); HK codes are at most 5
        (700, 0700, 9988, 3690). Prefix alone cannot tell them apart — both
@@ -46,6 +66,8 @@ def infer_market(code: str) -> str:
         return "ca_equity"
     if code_upper.endswith(".US"):
         return "us_equity"
+    if _is_india_equity(code_upper):
+        return "india_equity"
     if code_upper.isdigit():
         if len(code_upper) == 6:
             return "a_share"

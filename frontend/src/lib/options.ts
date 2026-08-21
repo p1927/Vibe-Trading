@@ -130,6 +130,46 @@ export interface OptionsChainResponse {
   error?: string;
 }
 
+/** Which connector serves India options data — the only market with more than one today. */
+export type IndiaOptionsSource = "stock_simulator" | "openalgo";
+
+// ---------------------------------------------------------------------------
+// API contract — GET /options/research (India-only ranked strategies)
+// ---------------------------------------------------------------------------
+
+/** One auto-ranked candidate strategy; leg/scoring field shapes come straight
+ * from the options_research pipeline and are rendered generically. */
+export interface RankedOptionStrategy {
+  name?: string;
+  tier?: string;
+  score?: number;
+  pop?: number;
+  max_profit?: number | null;
+  max_loss?: number | null;
+  breakevens?: number[];
+  legs?: Array<Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
+export interface IndiaOptionsResearchData {
+  underlying: string;
+  as_of: string;
+  instrument_type: string;
+  expiry: string;
+  spot: number | null;
+  atm_strike: number | null;
+  pcr: number | null;
+  ranked_strategies: RankedOptionStrategy[];
+  recommended: Record<string, unknown>;
+  charges: Record<string, unknown>;
+}
+
+export interface IndiaOptionsResearchResponse {
+  ok: boolean;
+  data: IndiaOptionsResearchData;
+  error?: string;
+}
+
 // ---------------------------------------------------------------------------
 // UI parameter model (percent convention)
 // ---------------------------------------------------------------------------

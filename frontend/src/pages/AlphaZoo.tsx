@@ -98,20 +98,36 @@ const ZOO_CARDS: ZooCard[] = [
 ];
 
 // Benchmarkable data universes (bench + compare): each one needs a panel loader
-// on the backend, so there is no Korea/India entry — the KRX factor capability
-// is a metadata universe, not a benchmark universe.
+// on the backend, so there is no Korea entry — the KRX factor capability is a
+// metadata universe, not a benchmark universe.
 const UNIVERSE_OPTIONS = [
   { value: "csi300", label: "CSI 300 (China A)" },
   { value: "sp500", label: "S&P 500 (US)" },
   { value: "btc-usdt", label: "BTC-USDT (Crypto)" },
+  { value: "nifty50", label: "NIFTY 50 (India)" },
+  { value: "niftyauto", label: "NIFTY AUTO (India)" },
+  { value: "niftybank", label: "NIFTY BANK (India)" },
+  { value: "niftyfinancialservices", label: "NIFTY FINANCIAL SERVICES (India)" },
+  { value: "niftyfmcg", label: "NIFTY FMCG (India)" },
+  { value: "niftyit", label: "NIFTY IT (India)" },
+  { value: "niftymedia", label: "NIFTY MEDIA (India)" },
+  { value: "niftymetal", label: "NIFTY METAL (India)" },
+  { value: "niftypharma", label: "NIFTY PHARMA (India)" },
+  { value: "niftypsubank", label: "NIFTY PSU BANK (India)" },
+  { value: "niftyprivatebank", label: "NIFTY PRIVATE BANK (India)" },
+  { value: "niftyrealty", label: "NIFTY REALTY (India)" },
+  { value: "niftyhealthcare", label: "NIFTY HEALTHCARE (India)" },
+  { value: "niftyconsumerdurables", label: "NIFTY CONSUMER DURABLES (India)" },
+  { value: "niftyoilgas", label: "NIFTY OIL & GAS (India)" },
 ];
 
 // Metadata universe -> the benchmark universe whose panel represents it. Markets
-// without a panel (equity_in, equity_kr, futures) are intentionally absent.
+// without a panel (equity_kr, futures) are intentionally absent.
 const BENCH_UNIVERSE_FOR_METADATA: Record<string, string> = {
   equity_cn: "csi300",
   equity_us: "sp500",
   crypto: "btc-usdt",
+  equity_in: "nifty50",
 };
 
 // Factor-metadata universes for the browse filter; GET /alpha/list filters on

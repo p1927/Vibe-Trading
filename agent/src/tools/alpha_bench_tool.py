@@ -26,6 +26,7 @@ local-write RCE via ``pickle.loads``, not merely a corruption check.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import hmac
 import html
@@ -35,9 +36,10 @@ import os
 import re
 import secrets
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -68,14 +70,36 @@ _CSI300_FETCH_WORKERS = 4
 _PERIOD_YEAR = re.compile(r"^(\d{4})-(\d{4})$")
 _PERIOD_DATE = re.compile(r"^(\d{4}-\d{2}-\d{2})/(\d{4}-\d{2}-\d{2})$")
 
-# Universe → (market_key, universe_meta_tag). Only the listed universes have a
-# defined contract; everything else returns "not yet implemented".
-_UNIVERSE_TAG = {
-    "csi300": "equity_cn",
-    "sp500": "equity_us",
-    "btc-usdt": "crypto",
-    "nifty50": "equity_in",
-}
+@dataclass(frozen=True)
+class UniverseSpec:
+    """Registry entry for one benchable universe.
+
+    ``panel_loader`` is the existing per-universe function — it fetches
+    constituents AND builds the OHLCV(+vwap) panel in a single call. All four
+    universes migrated here fuse constituent discovery with price fetching
+    (there is no standalone "give me the constituent list" step that doesn't
+    also hit the network for prices), so ``constituents_loader`` is None for
+    all of them; it exists so a future universe with a genuinely separate
+    constituents step doesn't need another registry shape.
+
+    ``constituent_source`` / ``survivorship_bias`` describe the *primary*
+    (non-degraded) path — each loader still computes and returns its own
+    per-run ``_meta`` dict (which flips these when it falls back to a
+    hand-picked list), unchanged by this registry.
+    """
+
+    id: str
+    market: str  # e.g. equity_cn, equity_us, crypto, equity_in
+    panel_loader: Callable[[str, str], dict[str, pd.DataFrame]]
+    constituent_source: str
+    survivorship_bias: bool
+    constituents_loader: Callable[[], Any] | None = None
+
+
+# Populated after the loader functions below are defined; see bottom of the
+# "Universe loaders" section. Single source of truth for which universes are
+# benchable — ``alpha_routes._BENCH_UNIVERSES`` derives from this too.
+UNIVERSE_REGISTRY: dict[str, "UniverseSpec"] = {}
 
 # Hand-picked Nifty 50 representatives when nselib constituent list is unavailable.
 _NIFTY50_FALLBACK_CODES = [
@@ -120,7 +144,9 @@ def _load_universe_panel(
     with one column per instrument.
 
     Args:
-        universe: ``csi300`` | ``sp500`` | ``btc-usdt`` | ``nifty50``.
+        universe: ``csi300`` | ``sp500`` | ``btc-usdt`` | ``nifty50`` | an NSE
+            sectoral index (``niftybank``, ``niftyit``, ...) — see
+            ``UNIVERSE_REGISTRY`` for the full list.
         period: ``YYYY-YYYY`` or ``YYYY-MM-DD/YYYY-MM-DD``.
         use_cache: When True (default) reuse a pickle in
             ``~/.vibe-trading/cache/`` if the same universe+period was fetched
@@ -130,9 +156,9 @@ def _load_universe_panel(
         ValueError: unknown universe or bad period.
         RuntimeError: ``TUSHARE_TOKEN`` unset when csi300 is requested.
     """
-    if universe not in _UNIVERSE_TAG:
+    if universe not in UNIVERSE_REGISTRY:
         raise ValueError(
-            f"universe {universe!r} not recognized; expected one of {sorted(_UNIVERSE_TAG)}"
+            f"universe {universe!r} not recognized; expected one of {sorted(UNIVERSE_REGISTRY)}"
         )
     start, end = _parse_period(period)
 
@@ -144,16 +170,7 @@ def _load_universe_panel(
             logger.info("universe %s: loaded from cache %s", universe, cache_path)
             return cached
 
-    if universe == "csi300":
-        panel = _load_csi300_panel(start, end)
-    elif universe == "sp500":
-        panel = _load_sp500_panel(start, end)
-    elif universe == "btc-usdt":
-        panel = _load_btc_panel(start, end)
-    elif universe == "nifty50":
-        panel = _load_nifty50_panel(start, end)
-    else:  # pragma: no cover — guarded above
-        raise ValueError(f"unhandled universe {universe!r}")
+    panel = UNIVERSE_REGISTRY[universe].panel_loader(start, end)
 
     if not panel or "close" not in panel or panel["close"].empty:
         raise RuntimeError(
@@ -672,6 +689,94 @@ def _load_nifty50_panel(start: str, end: str) -> dict[str, pd.DataFrame]:
     return panel
 
 
+# NSE sectoral indices, benchable via the same shape as nifty50: universe id ->
+# the `bulk_history_persist._NIFTYINDICES_CSV` method_name key that resolves its
+# constituent CSV. Verified live against niftyindices.com/IndexConstituent/ on
+# 2026-08-21 (see load_nse_sector_index_constituents). NIFTY FINANCIAL SERVICES
+# and NIFTY PRIVATE BANK use irregular file-name slugs (ind_niftyfinancelist.csv,
+# ind_nifty_privatebanklist.csv) that don't follow the other indices' plain
+# ``ind_nifty<sector>list.csv`` pattern.
+_NSE_SECTOR_INDICES: dict[str, str] = {
+    "niftyauto": "niftyauto_equity_list",
+    "niftybank": "niftybank_equity_list",
+    "niftyfinancialservices": "niftyfinancialservices_equity_list",
+    "niftyfmcg": "niftyfmcg_equity_list",
+    "niftyit": "niftyit_equity_list",
+    "niftymedia": "niftymedia_equity_list",
+    "niftymetal": "niftymetal_equity_list",
+    "niftypharma": "niftypharma_equity_list",
+    "niftypsubank": "niftypsubank_equity_list",
+    "niftyprivatebank": "niftyprivatebank_equity_list",
+    "niftyrealty": "niftyrealty_equity_list",
+    "niftyhealthcare": "niftyhealthcare_equity_list",
+    "niftyconsumerdurables": "niftyconsumerdurables_equity_list",
+    "niftyoilgas": "niftyoilgas_equity_list",
+}
+
+
+def _load_nse_sector_panel(
+    index_id: str, method_name: str, start: str, end: str
+) -> dict[str, pd.DataFrame]:
+    """Generic NSE sectoral-index panel: niftyindices.com constituents + per-symbol OHLCV.
+
+    Mirrors ``_load_nifty50_panel``'s shape, parameterized by index. There is
+    no hand-picked fallback roster here (unlike nifty50) — these indices don't
+    have a hardcoded survivor list, so a fetch failure degrades to an empty
+    panel and ``_load_universe_panel`` raises rather than silently benching a
+    fabricated basket.
+    """
+    from trade_integrations.dataflows.index_research.constituents import (
+        load_nse_sector_index_constituents,
+    )
+
+    try:
+        rows = load_nse_sector_index_constituents(method_name)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("%s constituent load failed: %s", index_id, exc)
+        rows = []
+    symbols = [row.symbol.upper().strip() for row in rows if row.symbol]
+
+    from trade_integrations.dataflows.index_research.alpha_bridge.india_ohlcv import (
+        load_symbol_ohlcv,
+    )
+
+    fetched: dict[str, pd.DataFrame] = {}
+    for code in symbols:
+        try:
+            frame = load_symbol_ohlcv(code, start_date=start, end_date=end)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("%s fetch failed for %s: %s", index_id, code, exc)
+            continue
+        if frame is None or frame.empty or "close" not in frame.columns:
+            continue
+        df = frame.copy()
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+        mask = (df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))
+        df = df.loc[mask]
+        if df.empty:
+            continue
+        for col in ("open", "high", "low", "close", "volume"):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        keep = [c for c in ("open", "high", "low", "close", "volume") if c in df.columns]
+        trimmed = df[keep].dropna(subset=["close"])
+        if not trimmed.empty:
+            fetched[code] = trimmed
+
+    panel = _wide_from_fetched(fetched, include_amount=False)
+    if all(k in panel for k in ("open", "high", "low", "close")):
+        panel["vwap"] = (panel["open"] + panel["high"] + panel["low"] + panel["close"]) / 4.0
+
+    panel["_meta"] = {
+        "universe": index_id,
+        "survivorship_bias": True,
+        "constituent_source": "niftyindices_constituents",
+        "constituent_count": len(fetched),
+    }
+    return panel
+
+
 def _load_btc_panel(start: str, end: str) -> dict[str, pd.DataFrame]:
     """Single-instrument BTC-USDT panel via OKX. Adds vwap = typical price."""
     from backtest.loaders.registry import resolve_loader
@@ -682,6 +787,53 @@ def _load_btc_panel(start: str, end: str) -> dict[str, pd.DataFrame]:
     if all(k in panel for k in ("open", "high", "low", "close")):
         panel["vwap"] = (panel["open"] + panel["high"] + panel["low"] + panel["close"]) / 4.0
     return panel
+
+
+UNIVERSE_REGISTRY.update(
+    {
+        "csi300": UniverseSpec(
+            id="csi300",
+            market="equity_cn",
+            panel_loader=_load_csi300_panel,
+            constituent_source="tushare index_weight",
+            survivorship_bias=False,
+        ),
+        "sp500": UniverseSpec(
+            id="sp500",
+            market="equity_us",
+            panel_loader=_load_sp500_panel,
+            constituent_source="wikipedia",
+            survivorship_bias=True,
+        ),
+        "btc-usdt": UniverseSpec(
+            id="btc-usdt",
+            market="crypto",
+            panel_loader=_load_btc_panel,
+            constituent_source="single-instrument (OKX BTC-USDT)",
+            survivorship_bias=False,
+        ),
+        "nifty50": UniverseSpec(
+            id="nifty50",
+            market="equity_in",
+            panel_loader=_load_nifty50_panel,
+            constituent_source="nifty50_constituents",
+            survivorship_bias=True,
+        ),
+    }
+)
+
+UNIVERSE_REGISTRY.update(
+    {
+        index_id: UniverseSpec(
+            id=index_id,
+            market="equity_in",
+            panel_loader=functools.partial(_load_nse_sector_panel, index_id, method_name),
+            constituent_source="niftyindices_constituents",
+            survivorship_bias=True,
+        )
+        for index_id, method_name in _NSE_SECTOR_INDICES.items()
+    }
+)
 
 
 def _wide_from_fetched(
@@ -1134,7 +1286,11 @@ class AlphaBenchTool(BaseTool):
             },
             "universe": {
                 "type": "string",
-                "description": "csi300 | sp500 | btc-usdt | nifty50 (resolved via existing data tools).",
+                "description": (
+                    "csi300 | sp500 | btc-usdt | nifty50 | an NSE sectoral index "
+                    "(niftybank, niftyit, niftyfmcg, ...) — see UNIVERSE_REGISTRY "
+                    "for the full list (resolved via existing data tools)."
+                ),
             },
             "period": {
                 "type": "string",

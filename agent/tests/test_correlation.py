@@ -65,6 +65,12 @@ class TestInferMarket:
         assert infer_market("TD.TO") == "ca_equity"
         assert infer_market("PNG.V") == "ca_equity"
 
+    def test_india_equity_suffixes(self):
+        # Regression: infer_market() had zero India support, so the
+        # Correlation Matrix could never recognize Indian tickers.
+        assert infer_market("RELIANCE.NS") == "india_equity"
+        assert infer_market("TCS.BO") == "india_equity"
+
 
 class TestNormalizeSymbol:
     def test_bare_us_equity_gets_us_suffix(self):

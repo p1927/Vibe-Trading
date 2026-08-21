@@ -191,6 +191,13 @@ class TestFallbackChains:
         # the previous chain unchanged.
         assert FALLBACK_CHAINS["forex"] == ["mt5", "akshare", "yfinance", "local"]
 
+    def test_india_equity_chain_leads_with_stock_simulator(self) -> None:
+        """Recorded stock_simulator data is the default India source, not a
+        last-resort fallback — Yahoo/yfinance/broker trail it."""
+        assert FALLBACK_CHAINS["india_equity"] == [
+            "stock_simulator", "yahoo", "yfinance", "india_broker", "local",
+        ]
+
     def test_tickerall_is_explicit_only_never_a_fallback(self) -> None:
         """TickerAll is a valid explicit source but must NEVER join an automatic
         fallback chain. It reads a user's own broker account over a hosted API, so

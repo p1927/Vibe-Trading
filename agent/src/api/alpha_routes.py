@@ -113,7 +113,14 @@ _VALID_UNIVERSES = {
 # Ranking metrics for /alpha/compare — keep in sync with
 # ``src.factors.compare_runner.SORT_KEYS`` (kept local to avoid a heavy import).
 _VALID_SORTS = {"ir", "ic_mean", "ic_positive_ratio", "ic_count"}
-_BENCH_UNIVERSES = {"csi300", "sp500", "btc-usdt", "nifty50"}
+
+# Benchable universe ids — single source of truth is the tool's registry
+# (``src.tools.alpha_bench_tool.UNIVERSE_REGISTRY``); kept as a module-level
+# set here (rather than re-imported per validation call) to match how
+# ``_VALID_UNIVERSES``/``_VALID_ZOOS`` etc. are used elsewhere in this file.
+from src.tools.alpha_bench_tool import UNIVERSE_REGISTRY as _UNIVERSE_REGISTRY  # noqa: E402
+
+_BENCH_UNIVERSES = set(_UNIVERSE_REGISTRY.keys())
 
 
 def _now_iso() -> str:

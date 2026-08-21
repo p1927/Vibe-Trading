@@ -6,6 +6,7 @@ data given a set of strategy codes and a data source.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -13,6 +14,8 @@ import pandas as pd
 
 from backtest.loaders.yfinance_loader import DataLoader as YfinanceLoader
 from backtest.metrics import bar_returns, buy_and_hold_return
+
+logger = logging.getLogger(__name__)
 
 
 # -------------------------------------------------------------------
@@ -129,6 +132,26 @@ def _resolve_ticker(
     return ticker
 
 
+def _is_india_equity(code: str) -> bool:
+    """Delegate India ticker-suffix inference to the fork-owned sidecar.
+
+    Deferred and defensive: a standalone Vibe-Trading checkout not co-located
+    with the trade monorepo (and without ``TRADE_STACK_ROOT`` set) simply
+    reports no match here, falling through to the rest of ``_infer_market``,
+    rather than crashing.
+    """
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.data_router.callers import infer_equity_market
+
+        return infer_equity_market(code) == "india_equity"
+    except Exception as exc:  # noqa: BLE001 — optional cross-repo dependency
+        logger.debug("trade_integrations bridge unavailable: %s", exc)
+        return False
+
+
 def _infer_market(codes: list[str], source: str) -> str:
     """Rough market inference from symbol patterns and source."""
     if not codes:
@@ -142,7 +165,7 @@ def _infer_market(codes: list[str], source: str) -> str:
         return "hk_equity"
     if first.endswith((".TO", ".V")):
         return "ca_equity"
-    if first.endswith((".NS", ".BO")):
+    if _is_india_equity(first):
         return "india_equity"
     if first.endswith((".KS", ".KQ")):
         return "kr_equity"
