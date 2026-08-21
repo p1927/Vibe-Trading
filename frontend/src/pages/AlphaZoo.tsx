@@ -40,7 +40,7 @@ import {
 } from "@/lib/api";
 import { echarts } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
-import { useDarkMode } from "@/hooks/useDarkMode";
+import { useThemeDark } from "@/lib/theme-store";
 
 /* ---------- Constants ---------- */
 
@@ -97,10 +97,33 @@ const ZOO_CARDS: ZooCard[] = [
   },
 ];
 
+// Benchmarkable data universes (bench + compare): each one needs a panel loader
+// on the backend, so there is no Korea/India entry — the KRX factor capability
+// is a metadata universe, not a benchmark universe.
 const UNIVERSE_OPTIONS = [
   { value: "csi300", label: "CSI 300 (China A)" },
   { value: "sp500", label: "S&P 500 (US)" },
   { value: "btc-usdt", label: "BTC-USDT (Crypto)" },
+];
+
+// Metadata universe -> the benchmark universe whose panel represents it. Markets
+// without a panel (equity_in, equity_kr, futures) are intentionally absent.
+const BENCH_UNIVERSE_FOR_METADATA: Record<string, string> = {
+  equity_cn: "csi300",
+  equity_us: "sp500",
+  crypto: "btc-usdt",
+};
+
+// Factor-metadata universes for the browse filter; GET /alpha/list filters on
+// these directly (they are the values shown in each alpha's "universe" column).
+const FILTER_UNIVERSE_OPTIONS = [
+  { value: "equity_us", label: "US Equities" },
+  { value: "equity_cn", label: "China A-Shares" },
+  { value: "equity_hk", label: "HK Equities" },
+  { value: "equity_in", label: "India Equities" },
+  { value: "equity_kr", label: "Korea Equities" },
+  { value: "crypto", label: "Crypto" },
+  { value: "futures", label: "Futures" },
 ];
 
 const PAGE_SIZE = 50;
@@ -184,7 +207,7 @@ function BrowseView() {
       })
       .catch((err: unknown) => {
         if (!alive) return;
-        const msg = err instanceof Error ? err.message : "Failed to load alphas";
+        const msg = err instanceof Error ? err.message : i18n.t("alphaZoo.failedToLoadAlphas" as any);
         toast.error(msg);
         setAlphas([]);
         setTotal(0);
@@ -331,7 +354,7 @@ function BrowseView() {
             className="w-full px-3 py-2 rounded-lg border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
           >
             <option value="">{i18n.t("alphaZoo.allUniverses")}</option>
-            {UNIVERSE_OPTIONS.map((u) => (
+            {FILTER_UNIVERSE_OPTIONS.map((u) => (
               <option key={u.value} value={u.value}>
                 {i18n.t("alphaZoo.universeOption." + u.value as any, { defaultValue: u.label })}
               </option>
@@ -410,7 +433,7 @@ function BrowseView() {
                         type="checkbox"
                         checked={selected.has(a.id)}
                         onChange={() => toggleSelected(a.id)}
-                        aria-label={`Select ${a.id} for compare`}
+                        aria-label={i18n.t("alphaZoo.selectAlphaForCompare" as any, { id: a.id })}
                         className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
                       />
                     </td>
@@ -485,7 +508,7 @@ function DetailView({ alphaId }: DetailProps) {
       })
       .catch((err: unknown) => {
         if (!alive) return;
-        const msg = err instanceof Error ? err.message : "Failed to load alpha";
+        const msg = err instanceof Error ? err.message : i18n.t("alphaZoo.failedToLoadAlpha" as any);
         setError(msg);
       })
       .finally(() => {
@@ -524,12 +547,18 @@ function DetailView({ alphaId }: DetailProps) {
   const meta = a.meta || {};
   const formulaLatex = (meta["formula_latex"] as string | undefined) || "";
   const nickname = (meta["nickname"] as string | undefined) || "";
-  const firstUniverse = ((meta["universe"] as string[] | undefined) || [])[0] || "";
+  // An alpha's metadata universes (equity_us, equity_kr, ...) are not bench
+  // universes; only the three names with panel loaders are. Translate, and drop
+  // the prefill when the alpha's markets have no benchmark panel (Korea, India)
+  // rather than handing BenchView a value its selector cannot hold.
+  const benchUniverse = (((meta["universe"] as string[] | undefined) || [])
+    .map((u) => BENCH_UNIVERSE_FOR_METADATA[u])
+    .find(Boolean)) || "";
 
   // Keep period in sync with the BenchView form default so the prefilled
   // form values match what users see if they click "Run bench" from here.
-  const benchHref = firstUniverse
-    ? `/alpha-zoo/bench?zoo=${encodeURIComponent(a.zoo)}&universe=${encodeURIComponent(firstUniverse)}&period=2020-2025`
+  const benchHref = benchUniverse
+    ? `/alpha-zoo/bench?zoo=${encodeURIComponent(a.zoo)}&universe=${encodeURIComponent(benchUniverse)}&period=2020-2025`
     : `/alpha-zoo/bench?zoo=${encodeURIComponent(a.zoo)}&period=2020-2025`;
 
   return (
@@ -700,14 +729,12 @@ function BenchView() {
       setJobId(res.job_id);
       await attachStream(res.job_id);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to start bench";
+      const msg = err instanceof Error ? err.message : i18n.t("alphaZoo.failedToStartBench" as any);
       // BTC-USDT is single-asset — surface inline rather than as a toast,
       // because the form is the action context and the message includes a
       // concrete suggestion for the user's next step.
       if (msg.toLowerCase().includes("single-asset")) {
-        setFormError(
-          `${msg} Try \`sp500\` or \`csi300\` for a meaningful cross-sectional IC.`,
-        );
+        setFormError(i18n.t("alphaZoo.singleAssetHint" as any, { message: msg }));
       } else {
         toast.error(msg);
       }
@@ -758,7 +785,7 @@ function BenchView() {
         sourceRef.current = null;
         return;
       }
-      let msg = "Bench stream error";
+      let msg = i18n.t("alphaZoo.benchStreamError" as any);
       try {
         const data = JSON.parse((e as MessageEvent).data || "{}");
         if (typeof data.message === "string") msg = data.message;
@@ -913,7 +940,9 @@ function ProgressPanel({
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5">
           <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-          {jobId ? `Job ${jobId.slice(0, 12)}…` : "Submitting…"}
+          {jobId
+            ? i18n.t("alphaZoo.job" as any, { id: jobId.slice(0, 12) })
+            : i18n.t("alphaZoo.submitting")}
         </span>
         {progress && (
           <span className="font-mono tabular-nums">
@@ -937,7 +966,7 @@ function ProgressPanel({
 }
 
 function ResultPanel({ result }: { result: AlphaBenchResult }) {
-  const { dark } = useDarkMode();
+  const dark = useThemeDark();
   const chartRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -977,10 +1006,18 @@ function ResultPanel({ result }: { result: AlphaBenchResult }) {
       ],
     });
 
-    const ro = new ResizeObserver(() => chart.resize());
+    let resizeFrame: number | null = null;
+    const ro = new ResizeObserver(() => {
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null;
+        chart.resize();
+      });
+    });
     ro.observe(chartRef.current);
     return () => {
       ro.disconnect();
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
       chart.dispose();
     };
   }, [result, dark]);
@@ -1194,7 +1231,7 @@ function CompareView() {
         sourceRef.current = null;
         return;
       }
-      let msg = "Compare stream error";
+      let msg = i18n.t("alphaZoo.compareStreamError" as any);
       try {
         const data = JSON.parse((e as MessageEvent).data || "{}");
         if (typeof data.message === "string") msg = data.message;
@@ -1212,7 +1249,7 @@ function CompareView() {
     e.preventDefault();
     if (status === "submitting" || status === "streaming") return;
     if (ids.length < 2) {
-      setFormError("Enter at least 2 distinct alpha ids to compare.");
+      setFormError(i18n.t("alphaZoo.enterAtLeast2"));
       return;
     }
     setStatus("submitting");
@@ -1232,7 +1269,7 @@ function CompareView() {
       await attachStream(res.job_id);
     } catch (err: unknown) {
       const msg =
-        err instanceof Error ? err.message : "Failed to start comparison";
+        err instanceof Error ? err.message : i18n.t("alphaZoo.failedToStartComparison" as any);
       toast.error(msg);
       setStatus("error");
     }

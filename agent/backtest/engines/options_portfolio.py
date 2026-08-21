@@ -98,32 +98,6 @@ def leg_iv(S: float, K: float, base_iv: float, skew: float, curvature: float) ->
     return iv_smile_adjustment(S, K, base_iv, skew, curvature)
 
 
-# --- IV Smile model (v2) ---
-
-
-def iv_smile_adjustment(S: float, K: float, base_iv: float,
-                        skew: float = -0.15, curvature: float = 0.05) -> float:
-    """Adjust IV for moneyness using a quadratic smile model.
-
-    IV(K) = base_iv + skew * log(K/S) + curvature * log(K/S)^2
-
-    Args:
-        S: Spot price.
-        K: Strike price.
-        base_iv: At-the-money implied volatility.
-        skew: Slope of the smile (negative = put skew). Default -0.15.
-        curvature: Curvature of the smile (always positive). Default 0.05.
-
-    Returns:
-        Adjusted implied volatility, floored at 0.01.
-    """
-    if S <= 0 or K <= 0:
-        return max(base_iv, 0.01)
-    log_moneyness = np.log(K / S)
-    adj = base_iv + skew * log_moneyness + curvature * log_moneyness ** 2
-    return max(adj, 0.01)
-
-
 # --- Option positions ---
 
 

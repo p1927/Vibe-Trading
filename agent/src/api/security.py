@@ -21,17 +21,11 @@ from src.session.models import AuthMethod, Principal
 
 from src.api._compat import host_attr as _host_attr
 from src.config.accessor import get_env_config
-from src.session.models import AuthMethod, Principal
 
 
 # ============================================================================
 # Constants
 # ============================================================================
-
-#: Sentinel subjects for auth methods that authorise a request without naming
-#: a person. Never a real user identifier -- see Principal.attributable.
-SHARED_KEY_SUBJECT = "system:shared-api-key"
-LOOPBACK_SUBJECT = "system:loopback"
 
 _DEFAULT_CORS_ORIGINS: tuple[str, ...] = (
     "http://localhost:3000",

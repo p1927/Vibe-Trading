@@ -356,6 +356,11 @@ class ScheduledResearchJob:
         paused: When ``True``, this job is skipped by the executor's due-check
             without mutating ``next_run_at``, so its original cadence resumes
             unchanged the moment it is unpaused.
+        last_result_summary: Opaque dict summarizing the most recent
+            successful dispatch's outcome, or ``None`` when no completed run
+            has produced one yet. Populated by the executor from the job's
+            ``config["_last_result_summary"]`` scratch key after a successful
+            dispatch.
     """
 
     id: str
@@ -375,6 +380,7 @@ class ScheduledResearchJob:
     delivery: DeliveryRecord = field(default_factory=DeliveryRecord)
     last_verdict: Optional[VerdictRecord] = None
     paused: bool = False
+    last_result_summary: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to a plain JSON-serializable dict.
@@ -401,6 +407,7 @@ class ScheduledResearchJob:
             "delivery": self.delivery.to_dict(),
             "last_verdict": self.last_verdict.to_dict() if self.last_verdict else None,
             "paused": self.paused,
+            "last_result_summary": self.last_result_summary,
         }
 
     @classmethod
@@ -471,6 +478,10 @@ class ScheduledResearchJob:
         paused = data.get("paused", False)
         if not isinstance(paused, bool):
             raise TypeError("'paused' must be a boolean")
+        raw_last_result_summary = data.get("last_result_summary")
+        last_result_summary = (
+            raw_last_result_summary if isinstance(raw_last_result_summary, dict) else None
+        )
         return cls(
             id=job_id,
             prompt=prompt,
@@ -489,4 +500,5 @@ class ScheduledResearchJob:
             delivery=DeliveryRecord.from_dict(data.get("delivery")),
             last_verdict=_verdict_record_or_none(data.get("last_verdict"), job_id),
             paused=paused,
+            last_result_summary=last_result_summary,
         )

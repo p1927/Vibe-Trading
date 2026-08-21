@@ -2461,6 +2461,21 @@ export function Agent({
     mountRowCountRef.current = timelineRows.length;
   }
 
+  const handleLoadEarlier = useCallback(() => {
+    const container = listRef.current;
+    const previousScrollHeight = container?.scrollHeight ?? 0;
+    setVisibleRowCount((count) => Math.min(
+      timelineRows.length,
+      count + TIMELINE_WINDOW_SIZE,
+    ));
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!container) return;
+        container.scrollTop += container.scrollHeight - previousScrollHeight;
+      });
+    });
+  }, [timelineRows.length]);
+
   /* Whether connector runtime activity could be active *anywhere* — the global kill switch must be
    * available whenever it could (audit M2 / SPEC Consent §4). Driven off both
    * in-session SSE artifacts AND the shared `/live/status` snapshot, so a runner
@@ -2571,6 +2586,16 @@ export function Agent({
                 Ask to create the card
               </button>
             </div>
+          )}
+
+          {visibleTimelineStart > 0 && (
+            <button
+              type="button"
+              onClick={handleLoadEarlier}
+              className="mx-auto block rounded-full border border-border/60 bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              {t("agent.loadEarlier" as never)}
+            </button>
           )}
 
           {visibleTimelineRows.map((row, visibleRowIdx) => {

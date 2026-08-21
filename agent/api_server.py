@@ -253,7 +253,7 @@ from src.api.swarm_routes import _get_swarm_runtime  # noqa: F401, E402
 # --- Live trading ---
 from src.api.live_routes import register_live_routes  # noqa: E402
 register_live_routes(app)
-import src.api.trading_connector_routes as _tcr, src.api.trade_routes as _tr; app.include_router(_tcr.router); app.include_router(_tr.trade_router)  # noqa: E401,E402,E702
+from src.api.trade_routes import register_trade_and_watch_routes as _register_trade_and_watch_routes; _register_trade_and_watch_routes(app)  # noqa: E402,E702
 from src.api.live_routes import (  # noqa: F401, E402
     CommitMandateRequest,
     LiveHaltRequest,
@@ -323,19 +323,7 @@ def serve_main(argv: list[str] | None = None) -> int:
     import argparse
     import subprocess
     import uvicorn
-    from fastapi.staticfiles import StaticFiles
-    from starlette.exceptions import HTTPException as StarletteHTTPException
-
-    class SPAStaticFiles(StaticFiles):
-        """Serve index.html for browser refreshes on client-side routes."""
-
-        async def get_response(self, path: str, scope: Dict[str, Any]):
-            try:
-                return await super().get_response(path, scope)
-            except StarletteHTTPException as exc:
-                if exc.status_code != status.HTTP_404_NOT_FOUND:
-                    raise
-                return await super().get_response("index.html", scope)
+    from src.api.helpers import SPAStaticFiles
 
     parser = argparse.ArgumentParser(description="Vibe-Trading Server")
     parser.add_argument("--port", type=int, default=8000, help="Listen port (default 8000)")

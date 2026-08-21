@@ -51,9 +51,6 @@
     --card: 220 18% 10%;            /* surface-1 */
     --card-foreground: 220 10% 93%;
 
-    --popover: 220 18% 12%;         /* surface-1.5 (slightly lighter than card) */
-    --popover-foreground: 220 10% 93%;
-
     --popover: 220 20% 9%;          /* surface-1.5 (slightly lighter than card) */
     --popover-foreground: 220 10% 92%;
 
@@ -100,6 +97,25 @@
   0%   { transform: translateX(-100%); }
   50%  { transform: translateX(200%); }
   100% { transform: translateX(-100%); }
+}
+
+.chat-scroll-container[data-streaming="true"] {
+  overflow-anchor: none;
+}
+
+.katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* Message/hero entrance — one subtle rise per mount; removed under reduced motion */
+@keyframes msg-enter {
+  from { opacity: 0; transform: translateY(10px); }
+}
+.msg-enter { animation: msg-enter 300ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .msg-enter { animation: none; }
 }
 
 /* RTL: mirror directional icons (chevrons, arrows) automatically */

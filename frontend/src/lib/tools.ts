@@ -1,3 +1,5 @@
+import i18n from "@/i18n";
+
 /**
  * Single source of truth for tool name → user-facing label.
  */
@@ -6,7 +8,7 @@ export const TOOL_LABELS: Record<string, string> = {
   write_file: "Generate code",
   edit_file: "Edit code",
   read_file: "Read file",
-  run_backtest: "Run backtest",
+  backtest: "Run backtest",
   bash: "Run command",
   read_url: "Read webpage",
   read_document: "Read document",
@@ -33,12 +35,12 @@ export const TOOL_LABELS: Record<string, string> = {
   spawn_subagent: "Spawn sub-agent",
 };
 
+function humanizeToolName(tool: string): string {
+  const humanized = tool.replace(/_/g, " ");
+  return humanized.charAt(0).toUpperCase() + humanized.slice(1);
+}
+
 export function localizeToolName(tool: string, fallback?: string): string {
-  if (tool in TOOL_LABELS) {
-    return TOOL_LABELS[tool];
-  }
-  if (fallback !== undefined) {
-    return fallback;
-  }
-  return tool;
+  const defaultValue = TOOL_LABELS[tool] ?? fallback ?? humanizeToolName(tool);
+  return i18n.t(`tools.${tool}` as never, { defaultValue });
 }

@@ -8,6 +8,11 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <!-- Fonts are self-hosted via @fontsource (imported in src/main.tsx) so no
          external font CDN is contacted — see VT-006 / the CSP font-src policy. -->
+    <style>
+      html { background-color: hsl(220 20% 98%); }
+      html.dark { background-color: hsl(220 20% 5%); }
+    </style>
+    <script src="/theme-boot.js"></script>
     <meta name="description" content="Vibe-Trading — vibe trading with your professional financial agent team. Natural-language finance research, backtesting, swarm workflows, document reading, and multi-market analysis." />
   </head>
   <body class="min-h-screen bg-background text-foreground antialiased">

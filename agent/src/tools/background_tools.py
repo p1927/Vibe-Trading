@@ -173,9 +173,7 @@ class BackgroundManager:
                 status = "timeout"
         except Exception as e:
             output, status = str(e), "error"
-        self.tasks[task_id]["status"] = status
-        self.tasks[task_id]["result"] = output or "(no output)"
-        self.tasks[task_id]["exit_code"] = exit_code
+
         with self._lock:
             task = self.tasks.get(task_id)
             if task is None:

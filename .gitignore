@@ -104,6 +104,7 @@ agent/tests/test_e2e_*.py
 
 # Local working notes
 NOTES.md
+.workbuddy/
 
 # Agent tool aliases (auto-generated mirror of CLAUDE.md)
 AGENTS.md

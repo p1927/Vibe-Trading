@@ -5058,3 +5058,13 @@ def _safe_float(v: Any) -> float | None:
         return float(v) if v is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def register_trade_and_watch_routes(app) -> None:
+    """Mount the trade, trading-connector, and watch routers onto ``app``."""
+    from src.api.trading_connector_routes import router as trading_connector_router
+    from src.api.watch_routes import watch_router
+
+    app.include_router(trade_router)
+    app.include_router(trading_connector_router)
+    app.include_router(watch_router)

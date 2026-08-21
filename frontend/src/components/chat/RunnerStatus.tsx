@@ -373,7 +373,7 @@ function BrokerRow({
                           ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
                           : "bg-muted text-muted-foreground",
                     ].join(" ")}
-                    title={`Expires ${new Date(mandate.expires_at).toLocaleString()}`}
+                    title={i18n.t("runnerStatus.expiresAt", { time: new Date(mandate.expires_at).toLocaleString() })}
                   >
                     <Clock className="h-2.5 w-2.5" />
                     {countdown.expired ? i18n.t("runnerStatus.expired") : i18n.t("runnerStatus.expiresIn", { time: countdown.label })}
@@ -411,7 +411,7 @@ function BrokerRow({
                   ? "border-destructive/40 text-destructive hover:bg-destructive/10"
                   : "border-primary/40 text-primary hover:bg-primary/10",
               ].join(" ")}
-              title={runnerAlive ? "Stop the persistent runner" : "Start the persistent runner"}
+              title={runnerAlive ? i18n.t("runnerStatus.stopRunnerTitle") : i18n.t("runnerStatus.startRunnerTitle")}
             >
               {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Power className="h-3 w-3" />}
               {runnerAlive ? i18n.t("runnerStatus.stopRunner") : i18n.t("runnerStatus.startRunner")}

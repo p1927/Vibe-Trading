@@ -1210,7 +1210,8 @@ class AgentLoop:
         )
 
         context = ContextBuilder(self.registry, self.memory,
-                                  persistent_memory=self._persistent_memory)
+                                  persistent_memory=self._persistent_memory,
+                                  session_config=self._session_config)
         goal_context, active_goal_id = get_current_goal_context(session_id) if session_id else ("", None)
         llm_user_message = user_message
         if goal_context:
@@ -1288,7 +1289,7 @@ class AgentLoop:
                     emit_react_iteration(
                         iteration=iteration,
                         max_iterations=self.max_iterations,
-                        session_id=str(getattr(self, "session_id", "") or ""),
+                        session_id=str(getattr(self, "_session_id", "") or ""),
                     )
                 except ImportError:
                     pass

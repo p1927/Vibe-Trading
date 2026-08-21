@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useSearchParams } from "react-router";
-import { Activity, BarChart3, Bot, CalendarClock, CandlestickChart, Check, ChevronDown, FileText, Languages, Moon, Sun, Plus, Trash2, Pencil, MessageSquare, ChevronsLeft, ChevronsRight, Settings, Layers, Loader2 } from "lucide-react";
+import { Activity, BarChart3, Bot, CalendarClock, CandlestickChart, Check, ChevronDown, Database, Disc, FileText, Languages, Moon, Sun, Plus, Trash2, Pencil, MessageSquare, ChevronsLeft, ChevronsRight, Settings, Layers, Loader2, TrendingUp, Radio } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { api, type SessionItem } from "@/lib/api";
@@ -10,6 +10,9 @@ import { useAgentStore } from "@/stores/agent";
 import { BrandMark } from "@/components/common/BrandMark";
 import { ConnectionBanner } from "@/components/layout/ConnectionBanner";
 import { SUPPORTED_LANGUAGES } from "@/i18n";
+import { usePredictionRunCoordinator } from "@/hooks/usePredictionRunCoordinator";
+import { PredictionRunningBanner } from "@/components/layout/PredictionRunningBanner";
+import { usePredictionRunStore } from "@/stores/predictionRun";
 
 // APP_VERSION is sourced from i18n locale files (app.version key) to keep a
 // single source of truth across the footer and every localised README.
@@ -21,6 +24,10 @@ export function Layout() {
   // matches both "/" and legacy "/agent" deep links.
   const NAV = [
     { to: "/", icon: Bot, label: t('layout.agent') },
+    { to: "/autonomous", icon: Radio, label: t('layout.autonomous') },
+    { to: "/prediction", icon: TrendingUp, label: "Prediction" },
+    { to: "/hub", icon: Database, label: "Hub" },
+    { to: "/simulator", icon: Disc, label: "Stock Simulator" },
     { to: "/runtime", icon: Activity, label: t('layout.runtime') },
     { to: "/scheduled", icon: CalendarClock, label: t('layout.scheduled') },
     { to: "/reports", icon: FileText, label: t('layout.reports') },
@@ -40,6 +47,8 @@ export function Layout() {
 
   const activeSessionId = searchParams.get("session");
   const streamingSessionId = useAgentStore(s => s.streamingSessionId);
+  usePredictionRunStore(s => s.running);
+  usePredictionRunCoordinator("NIFTY");
 
   useEffect(() => {
     safeSet("qa-sidebar", collapsed ? "collapsed" : "expanded");
@@ -63,8 +72,8 @@ export function Layout() {
 
   // Load sessions on mount. Also refresh when navigating TO /agent or when
   // the active session changes (covers new session creation from Agent).
-  const isAgentPage = pathname.startsWith("/agent");
-  useEffect(() => { loadSessions(); }, [isAgentPage, activeSessionId]);
+  const isChatPage = pathname.startsWith("/agent") || pathname.startsWith("/autonomous");
+  useEffect(() => { loadSessions(); }, [isChatPage, activeSessionId]);
 
   // Re-list after out-of-band title changes (e.g. LLM auto-titling on the
   // first completed exchange).
@@ -307,6 +316,7 @@ export function Layout() {
       {/* Main */}
       <div className="relative flex-1 flex flex-col overflow-hidden">
         <ConnectionBanner status={sseStatus} retryAttempt={sseRetryAttempt} />
+        <PredictionRunningBanner pathname={pathname} />
         <main id="main" className="flex-1 overflow-auto">
           <Outlet />
         </main>

@@ -317,7 +317,11 @@ export const MandateProposalCard = memo(function MandateProposalCard({ proposal,
               onAdjustCancel={() => setAdjustingOrdinal(null)}
               onAdjustSubmit={(text) => {
                 setAdjustingOrdinal(null);
-                onAdjust(`For mandate proposal "${profile.label}" (option ${profile.ordinal}): ${text}`);
+                onAdjust(translateManifestKey("mandate.adjustRequestMessage", {
+                  label: profile.label,
+                  ordinal: profile.ordinal,
+                  text,
+                }));
               }}
             />
           ))}

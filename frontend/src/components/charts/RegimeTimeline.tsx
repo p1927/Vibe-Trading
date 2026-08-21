@@ -123,9 +123,20 @@ export function RegimeTimeline({ data, height = 260 }: Props) {
       ],
     });
 
-    const ro = new ResizeObserver(() => chart.resize());
+    let resizeFrame: number | null = null;
+    const ro = new ResizeObserver(() => {
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null;
+        chart.resize();
+      });
+    });
     ro.observe(ref.current!);
-    return () => { ro.disconnect(); chart.dispose(); };
+    return () => {
+      ro.disconnect();
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+      chart.dispose();
+    };
   }, [data, dark]);
 
   if (data.dates.length === 0) return null;
