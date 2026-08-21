@@ -243,7 +243,7 @@ prediction-ml = [
     "lightgbm>=4.0",
     "xgboost>=2.0",
     "statsmodels>=0.14",
-    "pandas-ta>=0.3",
+    "pandas-ta>=0.3; python_version>='3.12'",
     "darts>=0.30",
 ]
 prediction-ml-heavy = [
@@ -253,6 +253,18 @@ prediction-ml-heavy = [
 prediction-exec = [
     "vectorbt>=0.26",
     "backtrader>=1.9",
+]
+
+[tool.uv]
+# pandas-ta (prediction-ml) requires numpy>=2.2.6; pycaret (prediction-ml-heavy)
+# caps numpy<1.27. Neither extra is meant to be installed together with the
+# other, but uv's default universal resolution still requires a single lock
+# that satisfies both simultaneously unless told they conflict.
+conflicts = [
+    [
+        { extra = "prediction-ml" },
+        { extra = "prediction-ml-heavy" },
+    ],
 ]
 
 [tool.pytest.ini_options]
