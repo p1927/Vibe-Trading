@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -63,13 +63,25 @@ function StrategyCard({ strategy }: { strategy: RankedOptionStrategy }) {
  * chart: a ranked strategy is a different product from a user-built payoff
  * (auto-selected, possibly multi-leg, scored) — see the backend tool's docs.
  */
-export function IndiaStrategyPanel() {
+interface Props {
+  /** Underlying picked from the page-level India picker — seeds the ticker
+   * input as a convenience default. Does NOT auto-trigger a fetch: a real
+   * run takes ~156s end to end, so switching the page-level underlying
+   * shouldn't fire an expensive request the user didn't explicitly ask for. */
+  underlying?: string;
+}
+
+export function IndiaStrategyPanel({ underlying }: Props) {
   const { t } = useTranslation();
-  const [tickerInput, setTickerInput] = useState(DEFAULT_TICKER);
+  const [tickerInput, setTickerInput] = useState(underlying || DEFAULT_TICKER);
   const [data, setData] = useState<IndiaOptionsResearchData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
+
+  useEffect(() => {
+    if (underlying) setTickerInput(underlying);
+  }, [underlying]);
 
   const load = useCallback(async (ticker: string) => {
     const gen = ++generation.current;

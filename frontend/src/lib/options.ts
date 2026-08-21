@@ -132,9 +132,19 @@ export interface OptionsChainResponse {
 
 /** Which connector serves India options data — no automatic fallback between
  * them; an unavailable source errors rather than silently trying another.
- * `stock_simulator`/`indmoney`/`openalgo` are live (real top-of-book bid/ask);
- * `stock_history` is the recorded/replay archive (no bid/ask in its fields). */
-export type IndiaOptionsSource = "stock_simulator" | "indmoney" | "openalgo" | "stock_history";
+ * `stock_simulator` (default) goes through stock_history API directly — the
+ * recorded/replay archive, no bid/ask in its fields. `indmoney`/`openalgo`
+ * are live, pinned to one named broker, with real top-of-book bid/ask. */
+export type IndiaOptionsSource = "stock_simulator" | "indmoney" | "openalgo";
+
+/** GET /options/india/underlyings response — known indexes always;
+ * `equities` is `null` for live vendor sources (not offered, vs. genuinely
+ * empty), populated only for `stock_simulator` (a cheap local listing). */
+export interface IndiaUnderlyingsResponse {
+  ok: boolean;
+  data: { indexes: string[]; equities: string[] | null };
+  error?: string;
+}
 
 // ---------------------------------------------------------------------------
 // API contract — GET /options/research (India-only ranked strategies)

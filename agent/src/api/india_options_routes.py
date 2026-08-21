@@ -28,7 +28,7 @@ from typing import Any, Awaitable, Callable
 from fastapi import Depends, FastAPI, Query
 from fastapi.responses import JSONResponse, Response
 
-from src.tools.india_options_chain_tool import IndiaOptionsChainTool
+from src.tools.india_options_chain_tool import IndiaOptionsChainTool, list_india_underlyings
 from src.tools.india_options_research_tool import IndiaOptionsResearchTool
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,22 @@ async def fetch_india_chain(
 
 
 def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
-    """Mount ``GET /options/research`` (India-only ranked strategy suggestions)."""
+    """Mount ``GET /options/research`` and ``GET /options/india/underlyings``."""
+
+    @app.get("/options/india/underlyings", dependencies=[Depends(require_auth)])
+    async def india_underlyings(source: str = Query("stock_simulator")) -> Response:
+        """Known indexes (always) + recorded equities (``stock_history`` only,
+        ``null`` for live sources — enumerating those would need an ~80k-row
+        scrip-master download per request, not something to do per keystroke)."""
+        try:
+            data = await asyncio.to_thread(list_india_underlyings, source)
+        except Exception:  # noqa: BLE001 — never leak a stack frame to clients
+            logger.exception("india underlyings lookup failed (source=%s)", source)
+            return JSONResponse(
+                status_code=502,
+                content={"ok": False, "error": "underlyings lookup failed"},
+            )
+        return {"ok": True, "data": data}
 
     @app.get("/options/research", dependencies=[Depends(require_auth)])
     async def options_research(

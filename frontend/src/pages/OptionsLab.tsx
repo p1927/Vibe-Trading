@@ -17,6 +17,7 @@ import { StrategyBuilder } from "@/components/options/StrategyBuilder";
 import { GreeksCards } from "@/components/options/GreeksCards";
 import { OptionsChainTable } from "@/components/options/OptionsChainTable";
 import { IndiaStrategyPanel } from "@/components/options/IndiaStrategyPanel";
+import { IndiaUnderlyingSelect } from "@/components/options/IndiaUnderlyingSelect";
 import { OptionsPayoffChart } from "@/components/charts/OptionsPayoffChart";
 import { OptionsScenarioMatrix } from "@/components/charts/OptionsScenarioMatrix";
 
@@ -66,6 +67,7 @@ export function OptionsLab() {
   // whole page toward India instead of a control buried in a sub-panel.
   const [market, setMarket] = useState<OptionsLabMarket>("us");
   const [source, setSource] = useState<IndiaOptionsSource>("stock_simulator");
+  const [underlying, setUnderlying] = useState("NIFTY");
 
   const [params, setParams] = useState<OptionsLabParams>(DEFAULT_PARAMS);
   const [legs, setLegs] = useState<OptionLeg[]>(
@@ -174,7 +176,7 @@ export function OptionsLab() {
               className="rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary/40"
             >
               <option value="stock_simulator">
-                {t("options.chain.sourceStockSimulator", { defaultValue: "Live (Stock Simulator)" })}
+                {t("options.chain.sourceStockSimulator", { defaultValue: "Stock Simulator" })}
               </option>
               <option value="indmoney">
                 {t("options.chain.sourceIndmoney", { defaultValue: "Live (INDmoney)" })}
@@ -182,10 +184,10 @@ export function OptionsLab() {
               <option value="openalgo">
                 {t("options.chain.sourceOpenalgo", { defaultValue: "Live (OpenAlgo)" })}
               </option>
-              <option value="stock_history">
-                {t("options.chain.sourceStockHistory", { defaultValue: "Historical (recorded)" })}
-              </option>
             </select>
+          )}
+          {market === "india_equity" && (
+            <IndiaUnderlyingSelect source={source} value={underlying} onChange={setUnderlying} />
           )}
         </div>
       </div>
@@ -275,9 +277,14 @@ export function OptionsLab() {
       </section>
 
       {/* Live options chain — market/source come from the page-level selector */}
-      <OptionsChainTable referenceSpot={params.entry_spot} market={market} source={source} />
+      <OptionsChainTable
+        referenceSpot={params.entry_spot}
+        market={market}
+        source={source}
+        underlying={market === "india_equity" ? underlying : undefined}
+      />
 
-      {market === "india_equity" && <IndiaStrategyPanel />}
+      {market === "india_equity" && <IndiaStrategyPanel underlying={underlying} />}
 
       <p className="pb-2 text-xs text-muted-foreground">{t("options.disclaimer")}</p>
     </div>

@@ -4,6 +4,7 @@ import i18n from "@/i18n";
 import type {
   IndiaOptionsResearchResponse,
   IndiaOptionsSource,
+  IndiaUnderlyingsResponse,
   OptionsChainResponse,
   OptionsPayoffRequest,
   OptionsPayoffResponse,
@@ -825,6 +826,10 @@ export const api = {
     if (opts?.source) q.set("source", opts.source);
     return request<OptionsChainResponse>(`/options/chain?${q.toString()}`);
   },
+  getIndiaUnderlyings: (source: IndiaOptionsSource) =>
+    request<IndiaUnderlyingsResponse>(
+      `/options/india/underlyings?source=${encodeURIComponent(source)}`,
+    ),
   getIndiaOptionsResearch: (ticker: string, expiryDate?: string) => {
     const q = new URLSearchParams();
     q.set("ticker", ticker);

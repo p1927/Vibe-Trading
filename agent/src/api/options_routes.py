@@ -9,9 +9,9 @@ Routes (auth via the caller-supplied ``require_auth`` dependency):
 - ``POST /options/payoff``  — multi-leg expiry payoff + spot/IV scenario analysis
 - ``GET  /options/chain``   — options chain for one expiration; ``market="us"``
   (default, Yahoo) or ``market="india_equity"`` (``source="stock_simulator"``
-  live, default; ``"indmoney"``/``"openalgo"`` live pinned to one vendor; or
-  ``"stock_history"`` recorded/replay archive — no fallback between sources,
-  an unavailable source errors)
+  default — recorded/replay archive via stock_history API; or
+  ``"indmoney"``/``"openalgo"`` live, pinned to one broker — no fallback
+  between sources, an unavailable source errors)
 - ``GET  /options/research`` — India-only auto-ranked multi-leg strategy
   suggestions for one underlying (wraps the ``options_research`` pipeline)
 
@@ -238,8 +238,8 @@ def register_options_routes(
 
         ``market="us"`` (default) is the original Yahoo-backed chain. ``market=
         "india_equity"`` dispatches to ``IndiaOptionsChainTool``, optionally
-        pinned to one ``source`` ('stock_simulator' default, 'indmoney',
-        'openalgo', or 'stock_history').
+        pinned to one ``source`` ('stock_simulator' default — via
+        stock_history API — or 'indmoney'/'openalgo' live).
         """
         if ticker is None or not ticker.strip():
             return JSONResponse(

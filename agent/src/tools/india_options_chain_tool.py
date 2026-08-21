@@ -15,24 +15,19 @@ cross-source fallback. If the selected source has no data, the tool returns
 an error envelope; it never silently degrades to a different vendor or
 quality tier:
 
-- ``stock_simulator`` (default): live chain via
-  ``stock_history_bridge.get_live_option_chain`` — the same call the
-  stock_simulator UI's own live chain sidebar uses. That function has its
-  OWN pre-existing internal INDmoney-then-OpenAlgo redundancy (unchanged
-  here, treated as one source since both vendors answer with live data of
-  equal standing) — if both fail, it returns ``None`` and this tool fails
-  loud rather than trying anything else.
-- ``indmoney``: the same live path, but pinned to INDmoney only — bypasses
-  ``get_live_option_chain``'s internal OpenAlgo fallback for callers who
-  want to force one named vendor.
-- ``openalgo``: live chain from OpenAlgo only, same pin-to-one-vendor intent.
-- ``stock_history``: the recorded/replay archive
-  (``StockHistory.option_chain_at``, most recently recorded session) — for
-  looking at what was actually recorded, not "right now". No bid/ask in this
-  tier's source fields (only LTP/OI/volume/greeks); ``bid``/``ask`` are left
-  ``null`` here rather than approximated, so the UI renders "–" instead of a
-  fabricated spread. The three live sources above do carry real top-of-book
-  bid/ask.
+- ``stock_simulator`` (default): goes straight through ``stock_history``
+  API — ``StockHistory.option_chain_at``, most recently recorded session.
+  ``stock_history`` is this project's own public distribution layer for
+  India data (it already wraps INDmoney/nselib internally on the recorder
+  side); "stock_simulator" as a *source choice* means exactly this, not a
+  separate live vendor bridge. No bid/ask in this tier's source fields
+  (only LTP/OI/volume/greeks); ``bid``/``ask`` are left ``null`` here rather
+  than approximated, so the UI renders "–" instead of a fabricated spread.
+- ``indmoney`` / ``openalgo``: live chain pinned to one named broker,
+  bypassing ``stock_history`` entirely — for a caller that specifically
+  wants a live quote instead of the recorded archive. Both carry real
+  top-of-book bid/ask. No fallback between the two, or to ``stock_simulator``,
+  if the pinned vendor has nothing.
 """
 
 from __future__ import annotations
@@ -44,8 +39,8 @@ from typing import Any, Dict, List, Optional
 from src.agent.tools import BaseTool
 
 _DEFAULT_STRIKE_COUNT = 10
-_LIVE_SOURCES = ("stock_simulator", "indmoney", "openalgo")
-_VALID_SOURCES = _LIVE_SOURCES + ("stock_history",)
+_LIVE_VENDOR_SOURCES = ("indmoney", "openalgo")
+_VALID_SOURCES = ("stock_simulator",) + _LIVE_VENDOR_SOURCES
 
 
 class IndiaOptionsChainTool(BaseTool):
@@ -57,9 +52,9 @@ class IndiaOptionsChainTool(BaseTool):
         "underlying, e.g. NIFTY, BANKNIFTY, or an NSE stock like RELIANCE.NS: "
         "per-strike LTP, bid/ask, volume, open interest, implied volatility, "
         "greeks, and the in-the-money flag. Source-selectable, no automatic "
-        "fallback between sources — 'stock_simulator' (live, default), "
-        "'indmoney' or 'openalgo' (live, pinned to one vendor), or "
-        "'stock_history' (recorded/replay archive, no bid/ask). "
+        "fallback between sources — 'stock_simulator' (default: recorded/"
+        "replay archive via stock_history API, no bid/ask), or 'indmoney'/"
+        "'openalgo' (live, pinned to one broker). "
         'Example: get_india_options_chain(ticker="NIFTY").'
     )
     parameters = {
@@ -82,9 +77,9 @@ class IndiaOptionsChainTool(BaseTool):
                 "enum": list(_VALID_SOURCES),
                 "description": (
                     "Which connector serves the chain, no automatic fallback "
-                    "between them: 'stock_simulator' (live, default), "
-                    "'indmoney'/'openalgo' (live, pinned to one vendor), or "
-                    "'stock_history' (recorded/replay archive)."
+                    "between them: 'stock_simulator' (default, via "
+                    "stock_history API) or 'indmoney'/'openalgo' (live, "
+                    "pinned to one broker)."
                 ),
             },
         },
@@ -128,7 +123,15 @@ class IndiaOptionsChainTool(BaseTool):
                 f"({'nearest expiry' if expiry_date is None else expiry_date})"
             )
 
-        return _success(ticker, source, chain)
+        # Best-effort — a listing failure shouldn't fail a chain that
+        # already loaded successfully; the dropdown just falls back to the
+        # single expiry the chain itself carries.
+        try:
+            expiries = _fetch_expiries(source, underlying, exchange)
+        except Exception:  # noqa: BLE001
+            expiries = []
+
+        return _success(ticker, source, chain, expiries)
 
 
 def _resolve_india_symbol(ticker: str) -> tuple[str, str]:
@@ -146,7 +149,7 @@ def _fetch_chain(
     source: str, underlying: str, exchange: str, expiry_date: Optional[str]
 ) -> Optional[Dict[str, Any]]:
     """Dispatch to exactly one connector — never tries a second on failure."""
-    if source == "stock_history":
+    if source == "stock_simulator":
         from backtest.loaders.stock_simulator_loader import fetch_latest_option_chain
 
         return fetch_latest_option_chain(
@@ -156,14 +159,7 @@ def _fetch_chain(
             strike_count=_DEFAULT_STRIKE_COUNT,
         )
 
-    if source == "stock_simulator":
-        from trade_integrations.dataflows.stock_history_bridge import get_live_option_chain
-
-        result = get_live_option_chain(
-            underlying=underlying, exchange=exchange,
-            strike_count=_DEFAULT_STRIKE_COUNT, expiry_date=expiry_date,
-        )
-    elif source == "indmoney":
+    if source == "indmoney":
         from trade_integrations.dataflows.stock_history_bridge._market_data import (
             _get_live_option_chain_from_indmoney,
         )
@@ -172,7 +168,7 @@ def _fetch_chain(
             underlying=underlying, exchange=exchange,
             strike_count=_DEFAULT_STRIKE_COUNT, expiry_date=expiry_date,
         )
-    else:  # "openalgo" — pinned, bypasses get_live_option_chain's INDmoney-first order
+    else:  # "openalgo" — pinned, live broker only
         from trade_integrations.dataflows.stock_history_bridge._market_data import (
             _normalize_openalgo_chain,
         )
@@ -191,6 +187,49 @@ def _fetch_chain(
         result = _normalize_openalgo_chain(body)
 
     return result if result and result.get("strikes") else None
+
+
+def _options_exchange(underlying: str, exchange: str) -> str:
+    """NFO/BFO for OpenAlgo's expiry endpoint, derived from the same
+    underlying/exchange metadata the recorded universe uses where known,
+    else the standard NSE->NFO / BSE->BFO convention."""
+    from trade_integrations.stock_simulator.master_contract import UNDERLYING_META
+
+    meta = UNDERLYING_META.get(underlying.upper())
+    if meta:
+        return meta["options_exchange"]
+    return "BFO" if exchange.upper().startswith("BSE") else "NFO"
+
+
+def _fetch_expiries(source: str, underlying: str, exchange: str) -> List[str]:
+    """All available expiry dates (``YYYY-MM-DD``, ascending) for the
+    dropdown — best-effort, separate from the single expiry a chain fetch
+    resolves on its own. Not every source can list every expiry equally
+    cheaply/reliably, so each has its own path rather than one shared call."""
+    if source == "stock_simulator":
+        from trade_integrations.stock_history.api import StockHistory
+
+        # The archive can hold years of expiries (every weekly/monthly ever
+        # recorded) — real data, but unusable as a flat dropdown list. Keep
+        # only the most recent ones, same intent as list_expiries' max_count
+        # for the live vendor sources.
+        all_recorded = sorted(
+            StockHistory().recorded_option_expiries(symbol=underlying, exchange=exchange)
+        )
+        return all_recorded[-24:]
+
+    if source == "indmoney":
+        from trade_integrations.stock_simulator.recorder.ind_client import IndClient
+
+        return IndClient().list_expiries(underlying, max_count=6)
+
+    from trade_integrations.openalgo.market_data import fetch_option_expiry_dates
+
+    return list(
+        fetch_option_expiry_dates(
+            underlying, _options_exchange(underlying, exchange), instrument_type="options"
+        )
+    )
 
 
 def _expiry_epoch(expiry_date: Optional[str]) -> Optional[int]:
@@ -246,8 +285,9 @@ def _leg_row_history(
     strike: float, leg: Dict[str, Any], option_type: str,
     underlying_ltp: Optional[float], expiration: Optional[int],
 ) -> Dict[str, Any]:
-    """Leg row from ``stock_history`` (recorded archive) — no bid/ask field
-    in the source data, left ``null`` rather than approximated from LTP."""
+    """Leg row from ``stock_simulator`` (via ``stock_history`` API, recorded
+    archive) — no bid/ask field in the source data, left ``null`` rather
+    than approximated from LTP."""
     itm = None
     if underlying_ltp is not None:
         itm = strike < underlying_ltp if option_type == "call" else strike > underlying_ltp
@@ -265,15 +305,17 @@ def _leg_row_history(
     }
 
 
-def _success(ticker: str, source: str, chain: Dict[str, Any]) -> str:
+def _success(
+    ticker: str, source: str, chain: Dict[str, Any], expiries: List[str] | None = None,
+) -> str:
     underlying_ltp = chain.get("underlying_ltp")
     expiration = _expiry_epoch(chain.get("expiry_date"))
     calls: List[Dict[str, Any]] = []
     puts: List[Dict[str, Any]] = []
 
-    if source in _LIVE_SOURCES:
+    if source in _LIVE_VENDOR_SOURCES:
         rows, leg_row = chain.get("strikes") or [], _leg_row_live
-    else:
+    else:  # "stock_simulator" — recorded/replay archive shape
         rows, leg_row = chain.get("chain") or [], _leg_row_history
 
     for row in rows:
@@ -284,10 +326,18 @@ def _success(ticker: str, source: str, chain: Dict[str, Any]) -> str:
         calls.append(leg_row(strike, ce, "call", underlying_ltp, expiration))
         puts.append(leg_row(strike, pe, "put", underlying_ltp, expiration))
 
+    all_expiries = sorted({e for e in (expiries or []) if e})
+    if chain.get("expiry_date") and chain["expiry_date"] not in all_expiries:
+        all_expiries.append(chain["expiry_date"])
+        all_expiries.sort()
+    expirations = [e for e in (_expiry_epoch(d) for d in all_expiries) if e is not None]
+    if not expirations and expiration is not None:
+        expirations = [expiration]
+
     data = {
         "ticker": ticker,
         "expiration": expiration,
-        "expirations": [expiration] if expiration is not None else [],
+        "expirations": expirations,
         "calls_count": len(calls),
         "puts_count": len(puts),
         "calls": calls,
@@ -301,3 +351,26 @@ def _success(ticker: str, source: str, chain: Dict[str, Any]) -> str:
 
 def _error(message: str) -> str:
     return json.dumps({"ok": False, "error": message}, ensure_ascii=False)
+
+
+# The only underlyings this codebase actually knows lot sizes/options-exchange
+# metadata for (`master_contract.UNDERLYING_META`) — the same set every India
+# source here resolves without a suffix. Individual equities are picked via
+# free-text `.NS`/`.BO` entry; only `stock_simulator` (stock_history's local
+# archive) can cheaply enumerate which ones have recorded chain data (a
+# metadata-only parquet listing — the live vendor sources would need an
+# ~80k-row scrip-master download per request).
+_KNOWN_INDEXES = ("NIFTY", "BANKNIFTY", "SENSEX")
+
+
+def list_india_underlyings(source: str) -> Dict[str, Any]:
+    """Available underlyings for the picker: known indexes always, plus
+    recorded equities when ``source == "stock_simulator"`` (``None`` — not
+    an empty list — for the live vendor sources, so the UI can tell "not
+    offered here" apart from "genuinely nothing recorded")."""
+    equities: Optional[List[str]] = None
+    if source == "stock_simulator":
+        from trade_integrations.stock_history.api import StockHistory
+
+        equities = sorted(StockHistory().recorded_equities())
+    return {"indexes": list(_KNOWN_INDEXES), "equities": equities}

@@ -140,9 +140,11 @@ interface Props {
   /** Market/source are controlled from the page-level selector (OptionsLab). */
   market: ChainMarket;
   source: IndiaOptionsSource;
+  /** Underlying picked from the page-level India picker; ignored for `market === "us"`. */
+  underlying?: string;
 }
 
-export function OptionsChainTable({ referenceSpot, market, source }: Props) {
+export function OptionsChainTable({ referenceSpot, market, source, underlying }: Props) {
   const { t } = useTranslation();
   const [tickerInput, setTickerInput] = useState(DEFAULT_TICKER);
   const [data, setData] = useState<OptionsChainData | null>(null);
@@ -178,16 +180,17 @@ export function OptionsChainTable({ referenceSpot, market, source }: Props) {
     [t, market, source],
   );
 
-  // Re-fetch whenever the page-level market or source selection changes —
-  // reset the ticker to that market's default rather than re-querying the
-  // previous market's symbol against the new one.
+  // Re-fetch whenever the page-level market/source/underlying selection
+  // changes — reset the ticker to the selected one rather than re-querying
+  // the previous market's symbol against the new one.
   useEffect(() => {
-    const ticker = market === "india_equity" ? DEFAULT_INDIA_TICKER : DEFAULT_TICKER;
+    const ticker =
+      market === "india_equity" ? underlying || DEFAULT_INDIA_TICKER : DEFAULT_TICKER;
     setTickerInput(ticker);
     setData(null);
     void load(ticker);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [market, source]);
+  }, [market, source, underlying]);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
