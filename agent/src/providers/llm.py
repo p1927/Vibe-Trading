@@ -1425,19 +1425,14 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
         api_key,
         source=_credential_env_source(caps.api_key_env),
     )
-    extra_body: dict[str, Any] | None = (
-        {"reasoning": {"effort": effort}}
-        if effort and not use_responses_api and caps.openrouter_reasoning_body
-        else None
+    from src.providers.minimax_ext import resolve_extra_body
+
+    extra_body = resolve_extra_body(
+        effort=effort,
+        use_responses_api=use_responses_api,
+        openrouter_reasoning_body=caps.openrouter_reasoning_body,
+        minimax_reasoning_split=caps.minimax_reasoning_split,
     )
-    if caps.minimax_reasoning_split:
-        # MiniMax M3 emits chain-of-thought inline in ``content`` unless asked
-        # to split it into a separate reasoning channel via these fields.
-        extra_body = {
-            **(extra_body or {}),
-            "reasoning_split": True,
-            "thinking": {"type": "adaptive"},
-        }
     kwargs: dict[str, Any] = {
         "model": name,
         "api_key": api_key or None,
