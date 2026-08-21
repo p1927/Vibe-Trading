@@ -29,12 +29,17 @@ import { createLightweightChart } from "@/lib/lightweightChartOptions";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { api } from "@/lib/api";
+import { replayPollMs } from "@/lib/simSpeed";
 
 interface Props {
   symbol: string;
   exchange?: string;
   isRecordingActive?: boolean;
   isReplayArmed?: boolean;
+  /** Current replay speed, while armed — drives the poll cadence up to a
+   *  4/sec cap instead of the fixed 2s/5s idle/recording cadence. Ignored
+   *  when `isReplayArmed` is false. */
+  replaySpeed?: number;
   height?: number;
   /** Reports the backend's `session_open` read on every non-replay poll, so
    *  a parent can show a page-level "market closed" state. `null` means the
@@ -86,6 +91,7 @@ export function SimulatorLiveIndexPanel({
   exchange = "NSE_INDEX",
   isRecordingActive = false,
   isReplayArmed = false,
+  replaySpeed,
   height = 200,
   onSessionOpenChange,
 }: Props) {
@@ -110,8 +116,13 @@ export function SimulatorLiveIndexPanel({
   const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const { dark } = useDarkMode();
 
-  // Poll cadence: 2 s while recording, 5 s otherwise.
-  const pollMs = isRecordingActive ? 2000 : 5000;
+  // Poll cadence: while armed for replay, scales with replay speed (capped
+  // at 4/sec, see replayPollMs); otherwise 2s while recording, 5s idle.
+  const pollMs = isReplayArmed
+    ? replayPollMs(replaySpeed)
+    : isRecordingActive
+      ? 2000
+      : 5000;
   const prevCloseRef = useRef<number | null>(null);
 
   // Reset chart when symbol changes, or when switching into/out of replay

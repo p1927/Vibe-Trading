@@ -3,6 +3,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { Pause, Play, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { replayPollMs } from "@/lib/simSpeed";
 import type { ReplayRange } from "@/components/simulator/SimulatorReplayCalendar";
 
 function parseSimNow(value: unknown): Date | null {
@@ -135,7 +136,10 @@ export function SimulatorReplayClock({
   const trackRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
 
-  // Poll status every second while armed
+  // Poll status while armed, at a cadence that scales with replay speed
+  // (capped at 4/sec) — a self-rescheduling loop rather than a fixed
+  // setInterval, since the right delay depends on the speed the previous
+  // response just reported and can change live (see replayPollMs).
   useEffect(() => {
     if (!armedRange) {
       setStatus(null);
@@ -144,14 +148,24 @@ export function SimulatorReplayClock({
     const controller = new AbortController();
     abortRef.current = controller;
     let inFlight = false;
+    let timeoutId: number | undefined;
+    const scheduleNext = (delayMs: number) => {
+      if (controller.signal.aborted) return;
+      timeoutId = window.setTimeout(tick, delayMs);
+    };
     const tick = async () => {
       if (inFlight) return;
       inFlight = true;
+      let nextDelayMs = 1000;
       try {
         const res = await api.getReplayStatus();
         if (!controller.signal.aborted) {
           setStatus(res.replay ?? null);
           setError(null);
+          const clockInfo = res.replay?.clock as Record<string, unknown> | undefined;
+          nextDelayMs = replayPollMs(
+            typeof clockInfo?.speed === "number" ? clockInfo.speed : undefined,
+          );
         }
       } catch (err) {
         if (!controller.signal.aborted) {
@@ -159,13 +173,13 @@ export function SimulatorReplayClock({
         }
       } finally {
         inFlight = false;
+        scheduleNext(nextDelayMs);
       }
     };
     tick();
-    const id = window.setInterval(tick, 1000);
     return () => {
       controller.abort();
-      window.clearInterval(id);
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
     };
   }, [armedRange]);
 
