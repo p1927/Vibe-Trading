@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import type { IndiaOptionsResearchData, RankedOptionStrategy } from "@/lib/options";
+import { formatCurrency } from "@/lib/marketConfig";
 
 const DEFAULT_TICKER = "NIFTY";
 
@@ -13,11 +14,14 @@ function fmtNum(v: number | null | undefined, digits = 2): string {
 }
 
 function StrategyCard({ strategy }: { strategy: RankedOptionStrategy }) {
+  const { t } = useTranslation();
   const legs = Array.isArray(strategy.legs) ? strategy.legs : [];
   return (
     <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
       <div className="mb-1.5 flex items-center justify-between gap-2">
-        <div className="text-sm font-semibold">{strategy.name ?? "Strategy"}</div>
+        <div className="text-sm font-semibold">
+          {strategy.name ?? t("options.india.strategyFallbackName", { defaultValue: "Strategy" })}
+        </div>
         {strategy.tier && (
           <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
             {strategy.tier}
@@ -26,20 +30,26 @@ function StrategyCard({ strategy }: { strategy: RankedOptionStrategy }) {
       </div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground sm:grid-cols-4">
         <div>
-          Score <span className="font-medium text-foreground">{fmtNum(strategy.score)}</span>
+          {t("options.india.score", { defaultValue: "Score" })}{" "}
+          <span className="font-medium text-foreground">{fmtNum(strategy.score)}</span>
         </div>
         <div>
-          PoP{" "}
+          {t("options.india.pop", { defaultValue: "PoP" })}{" "}
           <span className="font-medium text-foreground">
             {strategy.pop !== undefined ? `${fmtNum((strategy.pop ?? 0) * 100, 0)}%` : "–"}
           </span>
         </div>
         <div>
-          Max profit{" "}
-          <span className="font-medium text-foreground">{fmtNum(strategy.max_profit)}</span>
+          {t("options.metrics.maxProfit")}{" "}
+          <span className="font-medium text-foreground">
+            {formatCurrency("india_equity", strategy.max_profit ?? null)}
+          </span>
         </div>
         <div>
-          Max loss <span className="font-medium text-foreground">{fmtNum(strategy.max_loss)}</span>
+          {t("options.metrics.maxLoss")}{" "}
+          <span className="font-medium text-foreground">
+            {formatCurrency("india_equity", strategy.max_loss ?? null)}
+          </span>
         </div>
       </div>
       {legs.length > 0 && (
@@ -91,19 +101,23 @@ export function IndiaStrategyPanel({ underlying }: Props) {
       const res = await api.getIndiaOptionsResearch(ticker);
       if (generation.current !== gen) return;
       if (!res.ok || !res.data) {
-        setError(res.error || "Request failed");
+        setError(res.error || t("options.india.requestFailed", { defaultValue: "Request failed" }));
         setData(null);
         return;
       }
       setData(res.data);
     } catch (e) {
       if (generation.current !== gen) return;
-      setError(e instanceof Error ? e.message : "Request failed");
+      setError(
+        e instanceof Error
+          ? e.message
+          : t("options.india.requestFailed", { defaultValue: "Request failed" }),
+      );
       setData(null);
     } finally {
       if (generation.current === gen) setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -116,10 +130,18 @@ export function IndiaStrategyPanel({ underlying }: Props) {
     <section className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold">India: Ranked Strategy Suggestions</div>
+          <div className="text-sm font-semibold">
+            {t("options.india.title", { defaultValue: "India: Ranked Strategy Suggestions" })}
+          </div>
           <div className="text-xs text-muted-foreground">
-            Auto-generated and scored — not a substitute for the manual payoff builder above.
-            {loading && " Fetching live data across several sources can take up to ~3 minutes."}
+            {t("options.india.disclaimer", {
+              defaultValue:
+                "Auto-generated and scored — not a substitute for the manual payoff builder above.",
+            })}
+            {loading &&
+              ` ${t("options.india.latencyNote", {
+                defaultValue: "Fetching live data across several sources can take up to ~3 minutes.",
+              })}`}
           </div>
         </div>
         <form onSubmit={onSubmit} className="flex items-center gap-2">
@@ -135,7 +157,7 @@ export function IndiaStrategyPanel({ underlying }: Props) {
             disabled={loading}
             className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
           >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : t("options.chain.load")}
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : t("options.india.load", { defaultValue: "Load" })}
           </button>
         </form>
       </div>
@@ -150,20 +172,30 @@ export function IndiaStrategyPanel({ underlying }: Props) {
         <>
           <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>
-              Spot <span className="font-medium text-foreground">{fmtNum(data.spot)}</span>
+              {t("options.india.spot", { defaultValue: "Spot" })}{" "}
+              <span className="font-medium text-foreground">
+                {formatCurrency("india_equity", data.spot)}
+              </span>
             </span>
             <span>
-              ATM <span className="font-medium text-foreground">{fmtNum(data.atm_strike)}</span>
+              {t("options.chain.atm")}{" "}
+              <span className="font-medium text-foreground">
+                {formatCurrency("india_equity", data.atm_strike)}
+              </span>
             </span>
             <span>
-              PCR <span className="font-medium text-foreground">{fmtNum(data.pcr)}</span>
+              {t("options.india.pcr", { defaultValue: "PCR" })}{" "}
+              <span className="font-medium text-foreground">{fmtNum(data.pcr)}</span>
             </span>
             <span>
-              Expiry <span className="font-medium text-foreground">{data.expiry || "–"}</span>
+              {t("options.chain.expiration")}{" "}
+              <span className="font-medium text-foreground">{data.expiry || "–"}</span>
             </span>
           </div>
           {data.ranked_strategies.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No ranked strategies returned.</p>
+            <p className="text-sm text-muted-foreground">
+              {t("options.india.noStrategies", { defaultValue: "No ranked strategies returned." })}
+            </p>
           ) : (
             <div className={cn("grid gap-2", "sm:grid-cols-2 lg:grid-cols-3")}>
               {data.ranked_strategies.map((strategy, i) => (

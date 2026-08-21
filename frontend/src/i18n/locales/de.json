@@ -837,7 +837,7 @@
   },
   "options": {
     "title": "Options-Labor",
-    "subtitle": "Strategie-Builder, Verfalls-Payoff, Spot x IV-Szenarien, Portfolio-Griechen und eine Live-US-Options-Kette.",
+    "subtitle": "Strategie-Builder, Verfalls-Payoff, Spot x IV-Szenarien, Portfolio-Griechen und eine Live-Options-Kette.",
     "disclaimer": "Nur Forschung. Theoretische Preis- und Szenarioausgaben sind Modellschätzungen, keine Anlageberatung.",
     "errorGeneric": "Analyse fehlgeschlagen",
     "presets": {
@@ -874,7 +874,9 @@
       "volatility": "Volatilität (%)",
       "riskFreeRate": "Risikofreier Zins (%)",
       "multiplier": "Multiplikator",
-      "multiplierHint": "100 = Standard-US-Aktienkontrakt",
+      "multiplierHint": "Kontrakt-/Lotgröße — bearbeitbar",
+      "multiplierHint_us": "100 = Standard-US-Aktienkontrakt",
+      "multiplierHint_india": "Wird beim Laden der Kette automatisch mit der Börsen-Lotgröße befüllt — bearbeitbar",
       "commissionRate": "Provisionssatz (%)",
       "invalidHint": "Eingaben prüfen: positiver Spot und Strikes, von null verschiedene ganzzahlige Mengen, positive Volatilität.",
       "analyzing": "Wird analysiert…"
@@ -903,13 +905,13 @@
       "delta": "Delta",
       "deltaDesc": "Richtungs-Exposure, in äquivalenten Aktien des Basiswerts.",
       "gamma": "Gamma",
-      "gammaDesc": "Wie stark sich Delta pro 1 $-Bewegung des Basiswerts ändert.",
+      "gammaDesc": "Wie stark sich Delta pro 1-Punkt-Bewegung des Basiswerts ändert.",
       "theta": "Theta",
-      "thetaDesc": "Täglicher Zeitwertverlust in Dollar. Negativ bedeutet, die Position verliert täglich an Wert.",
+      "thetaDesc": "Täglicher Zeitwertverlust. Negativ bedeutet, die Position verliert täglich an Wert.",
       "vega": "Vega",
-      "vegaDesc": "Dollar-P&L für eine +1 %-Bewegung der impliziten Volatilität.",
+      "vegaDesc": "P&L für eine +1 %-Bewegung der impliziten Volatilität.",
       "rho": "Rho",
-      "rhoDesc": "Dollar-P&L für eine +1 %-Bewegung der Zinssätze."
+      "rhoDesc": "P&L für eine +1 %-Bewegung der Zinssätze."
     },
     "scenario": {
       "title": "Spot x IV-Szenariomatrix",
@@ -919,7 +921,14 @@
       "noData": "Keine Szenariomatrix zurückgegeben."
     },
     "chain": {
-      "title": "US-Options-Kette",
+      "title": "{{market}}-Options-Kette",
+      "market": "Markt",
+      "marketUs": "USA",
+      "marketIndia": "Indien",
+      "source": "Datenquelle",
+      "sourceStockSimulator": "Stock Simulator",
+      "sourceIndmoney": "Live (INDmoney)",
+      "sourceOpenalgo": "Live (OpenAlgo)",
       "ticker": "Ticker",
       "expiration": "Verfall",
       "load": "Laden",
@@ -939,6 +948,21 @@
       "noData": "Keine Kontrakte für diese Auswahl zurückgegeben.",
       "errorTitle": "Options-Kette nicht verfügbar",
       "retry": "Erneut versuchen"
+    },
+    "india": {
+      "underlyingLabel": "Basiswert",
+      "otherUnderlying": "Andere…",
+      "title": "Indien: Bewertete Strategievorschläge",
+      "disclaimer": "Automatisch generiert und bewertet — kein Ersatz für den manuellen Payoff-Builder oben.",
+      "latencyNote": "Das Abrufen von Live-Daten aus mehreren Quellen kann bis zu ~3 Minuten dauern.",
+      "load": "Laden",
+      "requestFailed": "Anfrage fehlgeschlagen",
+      "strategyFallbackName": "Strategie",
+      "score": "Score",
+      "pop": "PoP",
+      "spot": "Spot",
+      "pcr": "PCR",
+      "noStrategies": "Keine bewerteten Strategien zurückgegeben."
     }
   },
   "alphaZoo": {

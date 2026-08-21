@@ -837,7 +837,7 @@
   },
   "options": {
     "title": "期权实验室",
-    "subtitle": "策略构建器、到期损益、标的价 × 隐含波动率情景、组合希腊值与美股实时期权链。",
+    "subtitle": "策略构建器、到期损益、标的价 × 隐含波动率情景、组合希腊值与实时期权链。",
     "disclaimer": "仅供研究参考。理论定价与情景结果为模型估算，不构成投资建议。",
     "errorGeneric": "分析失败",
     "presets": {
@@ -874,7 +874,9 @@
       "volatility": "波动率（%）",
       "riskFreeRate": "无风险利率（%）",
       "multiplier": "合约乘数",
-      "multiplierHint": "100 = 美股标准合约",
+      "multiplierHint": "合约/手数大小 — 可编辑",
+      "multiplierHint_us": "100 = 美股标准合约",
+      "multiplierHint_india": "加载期权链时自动填入交易所手数 — 可编辑",
       "commissionRate": "佣金率（%）",
       "invalidHint": "请检查输入：标的价与行权价需为正数，数量需为非零整数，波动率需为正数。",
       "analyzing": "分析中…"
@@ -903,13 +905,13 @@
       "delta": "Delta",
       "deltaDesc": "方向性敞口，相当于持有标的资产的股数。",
       "gamma": "Gamma",
-      "gammaDesc": "标的资产每变动 1 美元，Delta 的变化量。",
+      "gammaDesc": "标的资产每变动 1 点，Delta 的变化量。",
       "theta": "Theta",
-      "thetaDesc": "每日时间衰减（美元）。为负表示持仓每天流失价值。",
+      "thetaDesc": "每日时间衰减。为负表示持仓每天流失价值。",
       "vega": "Vega",
-      "vegaDesc": "隐含波动率每上升 1%，损益的变化（美元）。",
+      "vegaDesc": "隐含波动率每上升 1%，损益的变化。",
       "rho": "Rho",
-      "rhoDesc": "利率每上升 1%，损益的变化（美元）。"
+      "rhoDesc": "利率每上升 1%，损益的变化。"
     },
     "scenario": {
       "title": "标的价 × 隐含波动率情景矩阵",
@@ -919,7 +921,14 @@
       "noData": "未返回情景矩阵数据。"
     },
     "chain": {
-      "title": "美股期权链",
+      "title": "{{market}} 期权链",
+      "market": "市场",
+      "marketUs": "美国",
+      "marketIndia": "印度",
+      "source": "数据来源",
+      "sourceStockSimulator": "Stock Simulator",
+      "sourceIndmoney": "实时（INDmoney）",
+      "sourceOpenalgo": "实时（OpenAlgo）",
       "ticker": "代码",
       "expiration": "到期日",
       "load": "加载",
@@ -939,6 +948,21 @@
       "noData": "该选择下未返回合约。",
       "errorTitle": "期权链不可用",
       "retry": "重试"
+    },
+    "india": {
+      "underlyingLabel": "标的资产",
+      "otherUnderlying": "其他…",
+      "title": "印度：策略排名建议",
+      "disclaimer": "自动生成并评分——不能替代上方的手动损益构建器。",
+      "latencyNote": "从多个来源获取实时数据最长可能需要约 3 分钟。",
+      "load": "加载",
+      "requestFailed": "请求失败",
+      "strategyFallbackName": "策略",
+      "score": "评分",
+      "pop": "PoP",
+      "spot": "现价",
+      "pcr": "PCR",
+      "noStrategies": "未返回任何排名策略。"
     }
   },
   "alphaZoo": {

@@ -837,7 +837,7 @@
   },
   "options": {
     "title": "옵션 랩",
-    "subtitle": "전략 빌더, 만기 손익, 현물가 × IV 시나리오, 포트폴리오 그리스, 미국 실시간 옵션 체인.",
+    "subtitle": "전략 빌더, 만기 손익, 현물가 × IV 시나리오, 포트폴리오 그리스, 실시간 옵션 체인.",
     "disclaimer": "연구 목적 전용입니다. 이론 가격과 시나리오 결과는 모델 추정치이며 투자 조언이 아닙니다.",
     "errorGeneric": "분석에 실패했습니다",
     "presets": {
@@ -874,7 +874,9 @@
       "volatility": "변동성 (%)",
       "riskFreeRate": "무위험 금리 (%)",
       "multiplier": "승수",
-      "multiplierHint": "100 = 미국 주식 표준 계약",
+      "multiplierHint": "계약/랏 크기 — 편집 가능",
+      "multiplierHint_us": "100 = 미국 주식 표준 계약",
+      "multiplierHint_india": "체인 로드 시 거래소 랏 크기로 자동 입력됨 — 편집 가능",
       "commissionRate": "수수료율 (%)",
       "invalidHint": "입력을 확인하세요: 현물가/행사가는 양수, 수량은 0이 아닌 정수, 변동성은 양수여야 합니다.",
       "analyzing": "분석 중…"
@@ -903,13 +905,13 @@
       "delta": "델타",
       "deltaDesc": "기초자산 환산 주식 수로 나타낸 방향성 익스포저.",
       "gamma": "감마",
-      "gammaDesc": "기초자산이 1달러 움직일 때 델타의 변화량.",
+      "gammaDesc": "기초자산이 1포인트 움직일 때 델타의 변화량.",
       "theta": "세타",
-      "thetaDesc": "일 단위 시간 가치 감소(달러). 음수면 매일 가치가 줄어듭니다.",
+      "thetaDesc": "일 단위 시간 가치 감소. 음수면 매일 가치가 줄어듭니다.",
       "vega": "베가",
-      "vegaDesc": "내재 변동성이 +1% 변동할 때 손익(달러).",
+      "vegaDesc": "내재 변동성이 +1% 변동할 때 손익.",
       "rho": "로",
-      "rhoDesc": "금리가 +1% 변동할 때 손익(달러)."
+      "rhoDesc": "금리가 +1% 변동할 때 손익."
     },
     "scenario": {
       "title": "현물가 × IV 시나리오 행렬",
@@ -919,7 +921,14 @@
       "noData": "시나리오 그리드가 반환되지 않았습니다."
     },
     "chain": {
-      "title": "미국 옵션 체인",
+      "title": "{{market}} 옵션 체인",
+      "market": "시장",
+      "marketUs": "미국",
+      "marketIndia": "인도",
+      "source": "데이터 소스",
+      "sourceStockSimulator": "Stock Simulator",
+      "sourceIndmoney": "실시간 (INDmoney)",
+      "sourceOpenalgo": "실시간 (OpenAlgo)",
       "ticker": "티커",
       "expiration": "만기일",
       "load": "불러오기",
@@ -939,6 +948,21 @@
       "noData": "이 선택에 대한 계약이 반환되지 않았습니다.",
       "errorTitle": "옵션 체인을 사용할 수 없습니다",
       "retry": "재시도"
+    },
+    "india": {
+      "underlyingLabel": "기초자산",
+      "otherUnderlying": "기타…",
+      "title": "인도: 순위별 전략 제안",
+      "disclaimer": "자동 생성 및 점수화된 결과입니다 — 위의 수동 손익 빌더를 대체하지 않습니다.",
+      "latencyNote": "여러 소스에서 실시간 데이터를 가져오는 데 최대 약 3분이 걸릴 수 있습니다.",
+      "load": "불러오기",
+      "requestFailed": "요청 실패",
+      "strategyFallbackName": "전략",
+      "score": "점수",
+      "pop": "PoP",
+      "spot": "현물",
+      "pcr": "PCR",
+      "noStrategies": "순위별 전략이 반환되지 않았습니다."
     }
   },
   "alphaZoo": {

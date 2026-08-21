@@ -837,7 +837,7 @@
   },
   "options": {
     "title": "Laboratorio de Opciones",
-    "subtitle": "Constructor de estrategias, perfil de vencimiento, escenarios spot × IV, griegas de cartera y cadena de opciones de EE. UU. en vivo.",
+    "subtitle": "Constructor de estrategias, perfil de vencimiento, escenarios spot × IV, griegas de cartera y cadena de opciones en vivo.",
     "disclaimer": "Solo para investigación. Los precios teóricos y los escenarios son estimaciones de modelos, no asesoramiento de inversión.",
     "errorGeneric": "Error en el análisis",
     "presets": {
@@ -874,7 +874,9 @@
       "volatility": "Volatilidad (%)",
       "riskFreeRate": "Tasa libre de riesgo (%)",
       "multiplier": "Multiplicador",
-      "multiplierHint": "100 = contrato estándar de acciones de EE. UU.",
+      "multiplierHint": "Tamaño del contrato/lote — editable",
+      "multiplierHint_us": "100 = contrato estándar de acciones de EE. UU.",
+      "multiplierHint_india": "Se completa automáticamente con el tamaño de lote de la bolsa al cargar la cadena — editable",
       "commissionRate": "Tasa de comisión (%)",
       "invalidHint": "Revisa las entradas: spot y strikes positivos, cantidades enteras distintas de cero, volatilidad positiva.",
       "analyzing": "Analizando…"
@@ -903,13 +905,13 @@
       "delta": "Delta",
       "deltaDesc": "Exposición direccional, en acciones equivalentes del subyacente.",
       "gamma": "Gamma",
-      "gammaDesc": "Cuánto cambia delta por cada $1 de movimiento del subyacente.",
+      "gammaDesc": "Cuánto cambia delta por cada punto de movimiento del subyacente.",
       "theta": "Theta",
-      "thetaDesc": "Decaimiento temporal diario en dólares. Negativo significa pérdida de valor cada día.",
+      "thetaDesc": "Decaimiento temporal diario. Negativo significa pérdida de valor cada día.",
       "vega": "Vega",
-      "vegaDesc": "P&G en dólares ante un +1% de volatilidad implícita.",
+      "vegaDesc": "P&G ante un +1% de volatilidad implícita.",
       "rho": "Rho",
-      "rhoDesc": "P&G en dólares ante un +1% de las tasas de interés."
+      "rhoDesc": "P&G ante un +1% de las tasas de interés."
     },
     "scenario": {
       "title": "Matriz de escenarios spot × IV",
@@ -919,7 +921,14 @@
       "noData": "No se devolvió la cuadrícula de escenarios."
     },
     "chain": {
-      "title": "Cadena de opciones de EE. UU.",
+      "title": "Cadena de opciones de {{market}}",
+      "market": "Mercado",
+      "marketUs": "EE. UU.",
+      "marketIndia": "India",
+      "source": "Fuente de datos",
+      "sourceStockSimulator": "Stock Simulator",
+      "sourceIndmoney": "En vivo (INDmoney)",
+      "sourceOpenalgo": "En vivo (OpenAlgo)",
       "ticker": "Símbolo",
       "expiration": "Vencimiento",
       "load": "Cargar",
@@ -939,6 +948,21 @@
       "noData": "No se devolvieron contratos para esta selección.",
       "errorTitle": "Cadena de opciones no disponible",
       "retry": "Reintentar"
+    },
+    "india": {
+      "underlyingLabel": "Subyacente",
+      "otherUnderlying": "Otro…",
+      "title": "India: Sugerencias de estrategias clasificadas",
+      "disclaimer": "Generado y puntuado automáticamente — no sustituye al constructor de perfil manual de arriba.",
+      "latencyNote": "Obtener datos en vivo de varias fuentes puede tardar hasta ~3 minutos.",
+      "load": "Cargar",
+      "requestFailed": "Error en la solicitud",
+      "strategyFallbackName": "Estrategia",
+      "score": "Puntuación",
+      "pop": "PoP",
+      "spot": "Spot",
+      "pcr": "PCR",
+      "noStrategies": "No se devolvieron estrategias clasificadas."
     }
   },
   "alphaZoo": {

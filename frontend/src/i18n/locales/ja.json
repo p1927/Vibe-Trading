@@ -837,7 +837,7 @@
   },
   "options": {
     "title": "オプションラボ",
-    "subtitle": "ストラテジービルダー、満期ペイオフ、原資産価格×IVシナリオ、ポートフォリオ・グリークス、米国オプションチェーン。",
+    "subtitle": "ストラテジービルダー、満期ペイオフ、原資産価格×IVシナリオ、ポートフォリオ・グリークス、オプションチェーン。",
     "disclaimer": "研究目的のみ。理論価格とシナリオ結果はモデルによる推定値であり、投資助言ではありません。",
     "errorGeneric": "分析に失敗しました",
     "presets": {
@@ -874,7 +874,9 @@
       "volatility": "ボラティリティ（%）",
       "riskFreeRate": "リスクフリー金利（%）",
       "multiplier": "乗数",
-      "multiplierHint": "100 = 米国株式標準契約",
+      "multiplierHint": "契約/ロットサイズ — 編集可能",
+      "multiplierHint_us": "100 = 米国株式標準契約",
+      "multiplierHint_india": "チェーン読み込み時に取引所のロットサイズが自動入力されます — 編集可能",
       "commissionRate": "手数料率（%）",
       "invalidHint": "入力を確認してください：原資産価格と行使価格は正、数量は非ゼロの整数、ボラティリティは正である必要があります。",
       "analyzing": "分析中…"
@@ -903,13 +905,13 @@
       "delta": "デルタ",
       "deltaDesc": "原資産の相当株数で表した方向性エクスポージャー。",
       "gamma": "ガンマ",
-      "gammaDesc": "原資産が1ドル動くときのデルタの変化量。",
+      "gammaDesc": "原資産が1ポイント動くときのデルタの変化量。",
       "theta": "シータ",
-      "thetaDesc": "1日あたりのタイム・ディケイ（ドル）。負の値は毎日価値が目減りすることを意味します。",
+      "thetaDesc": "1日あたりのタイム・ディケイ。負の値は毎日価値が目減りすることを意味します。",
       "vega": "ベガ",
-      "vegaDesc": "想定ボラティリティが+1%動いたときの損益（ドル）。",
+      "vegaDesc": "想定ボラティリティが+1%動いたときの損益。",
       "rho": "ロー",
-      "rhoDesc": "金利が+1%動いたときの損益（ドル）。"
+      "rhoDesc": "金利が+1%動いたときの損益。"
     },
     "scenario": {
       "title": "原資産価格 × IV シナリオマトリクス",
@@ -919,7 +921,14 @@
       "noData": "シナリオグリッドは返されませんでした。"
     },
     "chain": {
-      "title": "米国オプションチェーン",
+      "title": "{{market}}オプションチェーン",
+      "market": "市場",
+      "marketUs": "米国",
+      "marketIndia": "インド",
+      "source": "データソース",
+      "sourceStockSimulator": "Stock Simulator",
+      "sourceIndmoney": "ライブ（INDmoney）",
+      "sourceOpenalgo": "ライブ（OpenAlgo）",
       "ticker": "ティッカー",
       "expiration": "満期日",
       "load": "読み込み",
@@ -939,6 +948,21 @@
       "noData": "この選択に対するコントラクトは返されませんでした。",
       "errorTitle": "オプションチェーンを利用できません",
       "retry": "再試行"
+    },
+    "india": {
+      "underlyingLabel": "原資産",
+      "otherUnderlying": "その他…",
+      "title": "インド：ランク付き戦略提案",
+      "disclaimer": "自動生成・スコアリングされたものです — 上記の手動ペイオフビルダーの代わりにはなりません。",
+      "latencyNote": "複数のソースからライブデータを取得するには最大約3分かかることがあります。",
+      "load": "読み込み",
+      "requestFailed": "リクエストに失敗しました",
+      "strategyFallbackName": "戦略",
+      "score": "スコア",
+      "pop": "PoP",
+      "spot": "スポット",
+      "pcr": "PCR",
+      "noStrategies": "ランク付き戦略は返されませんでした。"
     }
   },
   "alphaZoo": {

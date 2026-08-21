@@ -11,15 +11,10 @@ import {
   type OptionsChainData,
   type OptionsContractRow,
 } from "@/lib/options";
+import { formatCurrency, MARKETS, type MarketId } from "@/lib/marketConfig";
 
-const DEFAULT_TICKER = "AAPL";
-const DEFAULT_INDIA_TICKER = "NIFTY";
-
-type ChainMarket = "us" | "india_equity";
-
-function fmt(v: number | null, maxDigits = 2): string {
-  if (v === null || !Number.isFinite(v)) return "–";
-  return v.toLocaleString(undefined, { maximumFractionDigits: maxDigits });
+function fmt(market: MarketId, v: number | null, maxDigits = 2): string {
+  return formatCurrency(market, v, { maximumFractionDigits: maxDigits });
 }
 
 function fmtInt(v: number | null): string {
@@ -41,9 +36,10 @@ interface WingTableProps {
   title: string;
   rows: OptionsContractRow[];
   atmStrike: number | null;
+  market: MarketId;
 }
 
-function WingTable({ title, rows, atmStrike }: WingTableProps) {
+function WingTable({ title, rows, atmStrike, market }: WingTableProps) {
   const { t } = useTranslation();
   const sorted = useMemo(() => [...rows].sort((a, b) => a.strike - b.strike), [rows]);
 
@@ -91,16 +87,16 @@ function WingTable({ title, rows, atmStrike }: WingTableProps) {
                   )}
                 >
                   <td className="py-1.5 pe-3 text-start font-medium tabular-nums whitespace-nowrap">
-                    {fmt(row.strike)}
+                    {row.strike.toLocaleString(MARKETS[market].locale, { maximumFractionDigits: 2 })}
                     {isAtm && (
                       <span className="ms-1.5 rounded bg-primary/15 px-1 py-0.5 text-[10px] font-medium text-primary">
                         {t("options.chain.atm")}
                       </span>
                     )}
                   </td>
-                  <td className="py-1.5 pe-3 text-end tabular-nums">{fmt(row.last_price)}</td>
-                  <td className="py-1.5 pe-3 text-end tabular-nums">{fmt(row.bid)}</td>
-                  <td className="py-1.5 pe-3 text-end tabular-nums">{fmt(row.ask)}</td>
+                  <td className="py-1.5 pe-3 text-end tabular-nums">{fmt(market, row.last_price)}</td>
+                  <td className="py-1.5 pe-3 text-end tabular-nums">{fmt(market, row.bid)}</td>
+                  <td className="py-1.5 pe-3 text-end tabular-nums">{fmt(market, row.ask)}</td>
                   <td className="py-1.5 pe-3 text-end tabular-nums text-muted-foreground">
                     {fmtSpread(row.bid, row.ask)}
                   </td>
@@ -138,22 +134,24 @@ interface Props {
   /** Entry spot from the builder — anchors the ATM highlight when available. */
   referenceSpot?: number;
   /** Market/source are controlled from the page-level selector (OptionsLab). */
-  market: ChainMarket;
+  market: MarketId;
   source: IndiaOptionsSource;
   /** Underlying picked from the page-level India picker; ignored for `market === "us"`. */
   underlying?: string;
-  /** Fired with the real underlying spot once a chain successfully loads —
-   * lets the page align the payoff builder's entry_spot/strikes to the
-   * actual market instead of leaving them at whatever scale the previous
-   * market's defaults were (e.g. ~100 for a US preset vs ~24000 for NIFTY). */
-  onUnderlyingLtp?: (spot: number) => void;
+  /** Fired once a chain successfully loads, with whatever the source
+   * carries — lets the page align the payoff builder's entry_spot/strikes
+   * and contract multiplier to the actual market instead of leaving them at
+   * whatever scale the previous market's defaults were (e.g. ~100/100 for a
+   * US preset vs ~24000/25 for NIFTY). Either field may be absent (US/Yahoo
+   * carries neither; some India sources don't carry lot_size yet). */
+  onChainMeta?: (meta: { spot?: number; lotSize?: number }) => void;
 }
 
 export function OptionsChainTable({
-  referenceSpot, market, source, underlying, onUnderlyingLtp,
+  referenceSpot, market, source, underlying, onChainMeta,
 }: Props) {
   const { t } = useTranslation();
-  const [tickerInput, setTickerInput] = useState(DEFAULT_TICKER);
+  const [tickerInput, setTickerInput] = useState(MARKETS[market].defaultTicker);
   const [data, setData] = useState<OptionsChainData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -177,9 +175,13 @@ export function OptionsChainTable({
         }
         setData(res.data);
         const ltp = res.data.underlying_ltp;
-        if (ltp !== null && ltp !== undefined && Number.isFinite(ltp) && ltp > 0) {
-          onUnderlyingLtp?.(ltp);
+        const lotSize = res.data.lot_size;
+        const meta: { spot?: number; lotSize?: number } = {};
+        if (ltp !== null && ltp !== undefined && Number.isFinite(ltp) && ltp > 0) meta.spot = ltp;
+        if (lotSize !== null && lotSize !== undefined && Number.isFinite(lotSize) && lotSize > 0) {
+          meta.lotSize = lotSize;
         }
+        if (meta.spot !== undefined || meta.lotSize !== undefined) onChainMeta?.(meta);
       } catch (e) {
         if (generation.current !== gen) return;
         setError(e instanceof Error ? e.message : t("options.chain.errorTitle"));
@@ -188,7 +190,7 @@ export function OptionsChainTable({
         if (generation.current === gen) setLoading(false);
       }
     },
-    [t, market, source, onUnderlyingLtp],
+    [t, market, source, onChainMeta],
   );
 
   // Re-fetch whenever the page-level market/source/underlying selection
@@ -196,7 +198,7 @@ export function OptionsChainTable({
   // the previous market's symbol against the new one.
   useEffect(() => {
     const ticker =
-      market === "india_equity" ? underlying || DEFAULT_INDIA_TICKER : DEFAULT_TICKER;
+      market === "india_equity" ? underlying || MARKETS.india_equity.defaultTicker : MARKETS.us.defaultTicker;
     setTickerInput(ticker);
     setData(null);
     void load(ticker);
@@ -224,13 +226,15 @@ export function OptionsChainTable({
   return (
     <section className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="text-sm font-semibold">{t("options.chain.title")}</div>
+        <div className="text-sm font-semibold">
+          {t("options.chain.title", { market: t(MARKETS[market].labelKey as never) })}
+        </div>
         <form onSubmit={onSubmit} className="flex flex-wrap items-center gap-2">
           <input
             type="text"
             value={tickerInput}
             onChange={(e) => setTickerInput(e.target.value)}
-            placeholder={market === "india_equity" ? DEFAULT_INDIA_TICKER : DEFAULT_TICKER}
+            placeholder={MARKETS[market].defaultTicker}
             aria-label={t("options.chain.ticker")}
             className="w-24 rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm uppercase outline-none focus:ring-2 focus:ring-primary/40"
           />
@@ -267,7 +271,9 @@ export function OptionsChainTable({
           </span>
           <button
             type="button"
-            onClick={() => void load(data?.ticker ?? tickerInput.trim().toUpperCase() ?? DEFAULT_TICKER, data?.expiration)}
+            onClick={() =>
+              void load(data?.ticker ?? tickerInput.trim().toUpperCase() ?? MARKETS[market].defaultTicker, data?.expiration)
+            }
             className="shrink-0 rounded border border-danger/40 px-2.5 py-1 text-xs font-medium transition-colors hover:bg-danger/10"
           >
             {t("options.chain.retry")}
@@ -289,10 +295,10 @@ export function OptionsChainTable({
         ) : (
           <div className="flex flex-col gap-5">
             {data.calls.length > 0 && (
-              <WingTable title={t("options.chain.calls")} rows={data.calls} atmStrike={atmStrike} />
+              <WingTable title={t("options.chain.calls")} rows={data.calls} atmStrike={atmStrike} market={market} />
             )}
             {data.puts.length > 0 && (
-              <WingTable title={t("options.chain.puts")} rows={data.puts} atmStrike={atmStrike} />
+              <WingTable title={t("options.chain.puts")} rows={data.puts} atmStrike={atmStrike} market={market} />
             )}
           </div>
         )

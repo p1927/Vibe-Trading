@@ -8,10 +8,12 @@ import {
   type OptionLeg,
   type OptionsLabParams,
 } from "@/lib/options";
+import type { MarketId } from "@/lib/marketConfig";
 
 interface Props {
   legs: OptionLeg[];
   params: OptionsLabParams;
+  market: MarketId;
   activePresetId: string | null;
   onApplyPreset: (presetId: string) => void;
   onLegsChange: (legs: OptionLeg[]) => void;
@@ -24,6 +26,7 @@ const INPUT_CLS =
 export function StrategyBuilder({
   legs,
   params,
+  market,
   activePresetId,
   onApplyPreset,
   onLegsChange,
@@ -232,7 +235,11 @@ export function StrategyBuilder({
             onChange={(e) => setParam({ multiplier: parseFloat(e.target.value) })}
             className={cn(INPUT_CLS, "tabular-nums")}
           />
-          <span className="text-[10px] text-muted-foreground/70">{t("options.builder.multiplierHint")}</span>
+          <span className="text-[10px] text-muted-foreground/70">
+            {t("options.builder.multiplierHint", {
+              context: market === "india_equity" ? "india" : "us",
+            })}
+          </span>
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-[11px] text-muted-foreground">{t("options.builder.commissionRate")}</label>

@@ -837,7 +837,7 @@
   },
   "options": {
     "title": "Options Lab",
-    "subtitle": "Strategy builder, expiry payoff, spot x IV scenarios, portfolio Greeks and a live US options chain.",
+    "subtitle": "Strategy builder, expiry payoff, spot x IV scenarios, portfolio Greeks and a live options chain.",
     "disclaimer": "Research only. Theoretical pricing and scenario outputs are model estimates, not investment advice.",
     "errorGeneric": "Analysis failed",
     "presets": {
@@ -874,7 +874,9 @@
       "volatility": "Volatility (%)",
       "riskFreeRate": "Risk-free rate (%)",
       "multiplier": "Multiplier",
-      "multiplierHint": "100 = standard US equity contract",
+      "multiplierHint": "Contract/lot size — editable",
+      "multiplierHint_us": "100 = standard US equity contract",
+      "multiplierHint_india": "Auto-filled from the exchange lot size when the chain loads — editable",
       "commissionRate": "Commission rate (%)",
       "invalidHint": "Check inputs: positive spot and strikes, non-zero integer quantities, positive volatility.",
       "analyzing": "Analyzing…"
@@ -903,13 +905,13 @@
       "delta": "Delta",
       "deltaDesc": "Directional exposure, in equivalent shares of the underlying.",
       "gamma": "Gamma",
-      "gammaDesc": "How much delta changes per $1 move in the underlying.",
+      "gammaDesc": "How much delta changes per 1-point move in the underlying.",
       "theta": "Theta",
-      "thetaDesc": "Daily time decay in dollars. Negative means the position bleeds value each day.",
+      "thetaDesc": "Daily time decay. Negative means the position bleeds value each day.",
       "vega": "Vega",
-      "vegaDesc": "Dollar P&L for a +1% move in implied volatility.",
+      "vegaDesc": "P&L for a +1% move in implied volatility.",
       "rho": "Rho",
-      "rhoDesc": "Dollar P&L for a +1% move in interest rates."
+      "rhoDesc": "P&L for a +1% move in interest rates."
     },
     "scenario": {
       "title": "Spot x IV Scenario Matrix",
@@ -919,7 +921,14 @@
       "noData": "No scenario grid returned."
     },
     "chain": {
-      "title": "US Options Chain",
+      "title": "{{market}} Options Chain",
+      "market": "Market",
+      "marketUs": "US",
+      "marketIndia": "India",
+      "source": "Data source",
+      "sourceStockSimulator": "Stock Simulator",
+      "sourceIndmoney": "Live (INDmoney)",
+      "sourceOpenalgo": "Live (OpenAlgo)",
       "ticker": "Ticker",
       "expiration": "Expiration",
       "load": "Load",
@@ -939,6 +948,21 @@
       "noData": "No contracts returned for this selection.",
       "errorTitle": "Options chain unavailable",
       "retry": "Retry"
+    },
+    "india": {
+      "underlyingLabel": "Underlying",
+      "otherUnderlying": "Other…",
+      "title": "India: Ranked Strategy Suggestions",
+      "disclaimer": "Auto-generated and scored — not a substitute for the manual payoff builder above.",
+      "latencyNote": "Fetching live data across several sources can take up to ~3 minutes.",
+      "load": "Load",
+      "requestFailed": "Request failed",
+      "strategyFallbackName": "Strategy",
+      "score": "Score",
+      "pop": "PoP",
+      "spot": "Spot",
+      "pcr": "PCR",
+      "noStrategies": "No ranked strategies returned."
     }
   },
   "alphaZoo": {

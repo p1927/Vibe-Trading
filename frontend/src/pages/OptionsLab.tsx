@@ -20,6 +20,7 @@ import { IndiaStrategyPanel } from "@/components/options/IndiaStrategyPanel";
 import { IndiaUnderlyingSelect } from "@/components/options/IndiaUnderlyingSelect";
 import { OptionsPayoffChart } from "@/components/charts/OptionsPayoffChart";
 import { OptionsScenarioMatrix } from "@/components/charts/OptionsScenarioMatrix";
+import { formatCurrency, MARKETS, type MarketId } from "@/lib/marketConfig";
 
 const ANALYZE_DEBOUNCE_MS = 500;
 
@@ -57,15 +58,13 @@ function MetricCard({
   );
 }
 
-type OptionsLabMarket = "us" | "india_equity";
-
 export function OptionsLab() {
   const { t } = useTranslation();
 
   // Page-level market/source — governs both the live chain browser and the
   // India ranked-strategies panel below, so there's one place to switch the
   // whole page toward India instead of a control buried in a sub-panel.
-  const [market, setMarket] = useState<OptionsLabMarket>("us");
+  const [market, setMarket] = useState<MarketId>("us");
   const [source, setSource] = useState<IndiaOptionsSource>("stock_simulator");
   const [underlying, setUnderlying] = useState("NIFTY");
 
@@ -117,11 +116,6 @@ export function OptionsLab() {
     setLegs(presetLegs);
   };
 
-  // Rough placeholder until a real chain loads — NIFTY trades around 24000,
-  // a US-scale default (~100) would make the payoff builder's strikes
-  // nonsensical the instant India is selected.
-  const DEFAULT_INDIA_SPOT_GUESS = 24000;
-
   const applySpot = useCallback((spot: number) => {
     if (!Number.isFinite(spot) || spot <= 0) return;
     setParams((prev) => ({ ...prev, entry_spot: spot }));
@@ -129,13 +123,29 @@ export function OptionsLab() {
     if (presetLegs) setLegs(presetLegs);
   }, []);
 
-  // Snap entry_spot/strikes to a market-appropriate scale immediately on
-  // switch — OptionsChainTable's onUnderlyingLtp callback (below) then
-  // refines this to the real spot once its chain loads.
+  // Snap entry_spot/strikes and the contract multiplier to a market-
+  // appropriate scale immediately on switch — OptionsChainTable's
+  // onChainMeta callback (below) then refines both to the real spot/lot
+  // size once its chain loads.
   useEffect(() => {
-    applySpot(market === "india_equity" ? DEFAULT_INDIA_SPOT_GUESS : DEFAULT_PARAMS.entry_spot);
+    applySpot(MARKETS[market].defaultSpotGuess);
+    setParams((prev) => ({ ...prev, multiplier: DEFAULT_PARAMS.multiplier }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [market]);
+
+  // Fired by OptionsChainTable once a chain loads — aligns entry_spot/
+  // strikes to the real underlying spot and the multiplier to the real
+  // exchange lot size (India only; US/Yahoo carries neither field, and not
+  // every India source carries lot_size yet — see OptionsChainTable).
+  const handleChainMeta = useCallback(
+    (meta: { spot?: number; lotSize?: number }) => {
+      if (meta.spot !== undefined) applySpot(meta.spot);
+      if (meta.lotSize !== undefined) {
+        setParams((prev) => ({ ...prev, multiplier: meta.lotSize as number }));
+      }
+    },
+    [applySpot],
+  );
 
   const handleLegsChange = (next: OptionLeg[]) => {
     setActivePresetId(null);
@@ -147,7 +157,7 @@ export function OptionsLab() {
 
   const breakevensText = summary
     ? summary.breakevens.length > 0
-      ? summary.breakevens.map((be) => be.toLocaleString()).join(", ")
+      ? summary.breakevens.map((be) => formatCurrency(market, be)).join(", ")
       : t("options.metrics.none")
     : dash;
 
@@ -155,7 +165,7 @@ export function OptionsLab() {
     ? summary.profit_unbounded
       ? t("options.metrics.unlimited")
       : summary.max_profit !== null
-        ? summary.max_profit.toLocaleString(undefined, { maximumFractionDigits: 2 })
+        ? formatCurrency(market, summary.max_profit)
         : t("options.metrics.none")
     : dash;
 
@@ -163,7 +173,7 @@ export function OptionsLab() {
     ? summary.loss_unbounded
       ? t("options.metrics.unlimited")
       : summary.max_loss !== null
-        ? summary.max_loss.toLocaleString(undefined, { maximumFractionDigits: 2 })
+        ? formatCurrency(market, summary.max_loss)
         : t("options.metrics.none")
     : dash;
 
@@ -184,7 +194,7 @@ export function OptionsLab() {
         <div className="flex items-center gap-2">
           <select
             value={market}
-            onChange={(e) => setMarket(e.target.value as OptionsLabMarket)}
+            onChange={(e) => setMarket(e.target.value as MarketId)}
             aria-label={t("options.chain.market", { defaultValue: "Market" })}
             className="rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary/40"
           >
@@ -223,6 +233,7 @@ export function OptionsLab() {
           <StrategyBuilder
             legs={legs}
             params={params}
+            market={market}
             activePresetId={activePresetId}
             onApplyPreset={applyPreset}
             onLegsChange={handleLegsChange}
@@ -235,11 +246,7 @@ export function OptionsLab() {
           <div className={cn("grid grid-cols-2 gap-3 lg:grid-cols-4", loading && "opacity-60")}>
             <MetricCard
               label={t("options.metrics.entryCost")}
-              value={
-                summary
-                  ? summary.entry_cost.toLocaleString(undefined, { maximumFractionDigits: 2 })
-                  : dash
-              }
+              value={summary ? formatCurrency(market, summary.entry_cost) : dash}
               badge={summary ? t(`options.metrics.${summary.entry_side}`) : undefined}
               badgeTone={
                 summary ? (summary.entry_side === "flat" ? "neutral" : summary.entry_side) : "neutral"
@@ -307,7 +314,7 @@ export function OptionsLab() {
         market={market}
         source={source}
         underlying={market === "india_equity" ? underlying : undefined}
-        onUnderlyingLtp={applySpot}
+        onChainMeta={handleChainMeta}
       />
 
       {market === "india_equity" && <IndiaStrategyPanel underlying={underlying} />}

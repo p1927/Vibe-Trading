@@ -131,7 +131,7 @@ class IndiaOptionsChainTool(BaseTool):
         except Exception:  # noqa: BLE001
             expiries = []
 
-        return _success(ticker, source, chain, expiries)
+        return _success(ticker, source, chain, expiries, underlying=underlying)
 
 
 def _resolve_india_symbol(ticker: str) -> tuple[str, str]:
@@ -305,8 +305,24 @@ def _leg_row_history(
     }
 
 
+def _lot_size_for(underlying: str) -> int:
+    """Exchange lot size for the contract multiplier — ``UNDERLYING_META`` for
+    the known indexes (NIFTY=25, BANKNIFTY=15, SENSEX=10), else ``1`` for
+    individual equities (cash-market convention, same fallback
+    ``master_contract._equity_row`` already uses)."""
+    from trade_integrations.stock_simulator.master_contract import UNDERLYING_META
+
+    meta = UNDERLYING_META.get(underlying.upper())
+    return meta["lotsize"] if meta else 1
+
+
 def _success(
-    ticker: str, source: str, chain: Dict[str, Any], expiries: List[str] | None = None,
+    ticker: str,
+    source: str,
+    chain: Dict[str, Any],
+    expiries: List[str] | None = None,
+    *,
+    underlying: str,
 ) -> str:
     underlying_ltp = chain.get("underlying_ltp")
     expiration = _expiry_epoch(chain.get("expiry_date"))
@@ -339,6 +355,7 @@ def _success(
         "expiration": expiration,
         "expirations": expirations,
         "underlying_ltp": underlying_ltp,
+        "lot_size": _lot_size_for(underlying),
         "calls_count": len(calls),
         "puts_count": len(puts),
         "calls": calls,
@@ -374,4 +391,8 @@ def list_india_underlyings(source: str) -> Dict[str, Any]:
         from trade_integrations.stock_history.api import StockHistory
 
         equities = sorted(StockHistory().recorded_equities())
-    return {"indexes": list(_KNOWN_INDEXES), "equities": equities}
+    return {
+        "indexes": list(_KNOWN_INDEXES),
+        "equities": equities,
+        "lot_sizes": {name: _lot_size_for(name) for name in _KNOWN_INDEXES},
+    }

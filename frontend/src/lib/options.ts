@@ -118,6 +118,11 @@ export interface OptionsChainData {
   /** Underlying spot at fetch time — only India rows carry this today (the
    * US/Yahoo tool doesn't surface it); `undefined` there, not `null`. */
   underlying_ltp?: number | null;
+  /** Exchange lot size / contract multiplier — India only, sourced from
+   * `stock_simulator`'s `UNDERLYING_META` (`null` for sources/underlyings
+   * that don't carry it yet, e.g. indmoney/openalgo or unlisted equities);
+   * `undefined` for the US/Yahoo tool, which has no such concept. */
+  lot_size?: number | null;
   calls_count: number;
   puts_count: number;
   calls: OptionsContractRow[];
@@ -145,7 +150,13 @@ export type IndiaOptionsSource = "stock_simulator" | "indmoney" | "openalgo";
  * empty), populated only for `stock_simulator` (a cheap local listing). */
 export interface IndiaUnderlyingsResponse {
   ok: boolean;
-  data: { indexes: string[]; equities: string[] | null };
+  data: {
+    indexes: string[];
+    equities: string[] | null;
+    /** Lot size per known index (NIFTY/BANKNIFTY/SENSEX), from
+     * `stock_simulator`'s `UNDERLYING_META` — not populated per equity. */
+    lot_sizes?: Record<string, number>;
+  };
   error?: string;
 }
 
