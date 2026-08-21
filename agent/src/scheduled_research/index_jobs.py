@@ -35,6 +35,7 @@ JOB_TYPE_INDEX_PREDICTION_POST_CLOSE = "index_prediction_post_close"
 JOB_TYPE_HUB_NEWS_ENTITY = "hub_news_entity"
 JOB_TYPE_HUB_NEWS_INGEST = "hub_news_ingest"
 JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP = "stock_history_coverage_sweep"
+JOB_TYPE_NEWS_QUALITY_EVAL = "news_quality_eval"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -46,7 +47,11 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_HUB_NEWS_ENTITY,
     JOB_TYPE_HUB_NEWS_INGEST,
     JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP,
+    JOB_TYPE_NEWS_QUALITY_EVAL,
 })
+
+NEWS_QUALITY_EVAL_CRON_ENV = "NEWS_QUALITY_EVAL_CRON"
+DEFAULT_NEWS_QUALITY_EVAL_CRON = "0 2 * * *"
 
 LAST_RESULT_CONFIG_KEY = "_last_result_summary"
 
@@ -557,6 +562,26 @@ def run_hub_news_ingest_job(config: dict[str, Any] | None = None) -> dict[str, A
         return {"status": "error", "error": str(exc), "mode": mode, "had_errors": True}
 
 
+def run_news_quality_eval_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Run the hub-news golden-dataset eval (real step_04/step_06 LLM calls,
+    scored via MLflow Correctness + DeepEval) and log a trend metric.
+
+    Non-blocking: this never fails the scheduler even on eval error, matching
+    the ``continue-on-error`` behavior of the same eval in nightly CI.
+    """
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.dataflows.index_research.hub_news_pipeline.news_golden_eval import (
+        run_news_golden_eval,
+    )
+
+    try:
+        summary = run_news_golden_eval()
+        return summary
+    except Exception as exc:
+        logger.exception("news quality golden eval failed")
+        return {"status": "error", "error": str(exc), "had_errors": True}
+
+
 def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
     """Execute one index scheduled job synchronously."""
     try:
@@ -607,6 +632,11 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         _attach_job_result_summary(job, summary)
         logger.info("stock_history coverage sweep completed for job %s: %s", job.id, summary)
         return
+    if job_type == JOB_TYPE_NEWS_QUALITY_EVAL:
+        summary = run_news_quality_eval_job(job.config)
+        _attach_job_result_summary(job, summary)
+        logger.info("news quality golden eval completed for job %s: %s", job.id, summary)
+        return
     raise ValueError(f"unsupported index job_type: {job_type!r}")
 
 
@@ -622,9 +652,13 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     coverage_sweep_cron = os.getenv(
         STOCK_HISTORY_COVERAGE_SWEEP_CRON_ENV, DEFAULT_STOCK_HISTORY_COVERAGE_SWEEP_CRON
     ).strip()
+    news_quality_eval_cron = os.getenv(
+        NEWS_QUALITY_EVAL_CRON_ENV, DEFAULT_NEWS_QUALITY_EVAL_CRON
+    ).strip()
     validate_schedule(snapshot_cron)
     validate_schedule(full_cron)
     validate_schedule(coverage_sweep_cron)
+    validate_schedule(news_quality_eval_cron)
 
     skip_unified_duplicates = False
     try:
@@ -768,6 +802,19 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "enrich_days": _POST_CLOSE_LIGHT_ENRICH_DAYS,
                 "horizon_days": 14,
                 "include_bottom_up": True,
+            },
+        ),
+        ScheduledResearchJob(
+            id="nifty-news-quality-eval",
+            prompt="Score hub news enrichment quality against the golden dataset (MLflow + DeepEval)",
+            schedule=news_quality_eval_cron,
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_NEWS_QUALITY_EVAL,
+                "ticker": "NIFTY",
+                "dispatch_timeout_ms": 1_800_000,
             },
         ),
         ScheduledResearchJob(

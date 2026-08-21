@@ -24,6 +24,7 @@ JOB_LABELS: dict[str, str] = {
     "index_prediction_post_close": "Post-close prediction refresh",
     "hub_news_entity": "Hub news entity pipeline",
     "hub_news_ingest": "Hub news ingest",
+    "news_quality_eval": "Hub news quality eval",
 }
 
 JOB_DESCRIPTIONS: dict[str, str] = {
@@ -35,6 +36,7 @@ JOB_DESCRIPTIONS: dict[str, str] = {
     "index_prediction_post_close": "Weekly flows, backtest, counterfactual, and data audit refresh.",
     "hub_news_entity": "Drains staging refs into distilled events; maintenance mode compacts and repairs.",
     "hub_news_ingest": "Fetches RSS, SearXNG, and watcher headlines into the staging queue.",
+    "news_quality_eval": "Scores news enrichment quality against the golden dataset via MLflow + DeepEval (default nightly, 02:00 UTC).",
 }
 
 
