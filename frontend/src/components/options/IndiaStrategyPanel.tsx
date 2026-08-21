@@ -107,6 +107,7 @@ export function IndiaStrategyPanel() {
           <div className="text-sm font-semibold">India: Ranked Strategy Suggestions</div>
           <div className="text-xs text-muted-foreground">
             Auto-generated and scored — not a substitute for the manual payoff builder above.
+            {loading && " Fetching live data across several sources can take up to ~3 minutes."}
           </div>
         </div>
         <form onSubmit={onSubmit} className="flex items-center gap-2">

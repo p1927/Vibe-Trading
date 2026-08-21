@@ -7,6 +7,7 @@ import {
   buildPayoffRequest,
   buildPresetLegs,
   DEFAULT_PARAMS,
+  type IndiaOptionsSource,
   type OptionLeg,
   type OptionsLabParams,
   type OptionsPayoffRequest,
@@ -55,8 +56,16 @@ function MetricCard({
   );
 }
 
+type OptionsLabMarket = "us" | "india_equity";
+
 export function OptionsLab() {
   const { t } = useTranslation();
+
+  // Page-level market/source — governs both the live chain browser and the
+  // India ranked-strategies panel below, so there's one place to switch the
+  // whole page toward India instead of a control buried in a sub-panel.
+  const [market, setMarket] = useState<OptionsLabMarket>("us");
+  const [source, setSource] = useState<IndiaOptionsSource>("stock_simulator");
 
   const [params, setParams] = useState<OptionsLabParams>(DEFAULT_PARAMS);
   const [legs, setLegs] = useState<OptionLeg[]>(
@@ -134,12 +143,51 @@ export function OptionsLab() {
   return (
     <div className="flex w-full flex-col gap-4 p-6">
       {/* Header */}
-      <div>
-        <div className="flex items-center gap-3">
-          <CandlestickChart className="h-6 w-6 text-primary" />
-          <h1 className="text-2xl font-bold">{t("options.title")}</h1>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-3">
+            <CandlestickChart className="h-6 w-6 text-primary" />
+            <h1 className="text-2xl font-bold">{t("options.title")}</h1>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">{t("options.subtitle")}</p>
         </div>
-        <p className="mt-1 text-sm text-muted-foreground">{t("options.subtitle")}</p>
+
+        {/* Market/source selector — drives the live chain browser and the
+            India ranked-strategies panel further down the page. */}
+        <div className="flex items-center gap-2">
+          <select
+            value={market}
+            onChange={(e) => setMarket(e.target.value as OptionsLabMarket)}
+            aria-label={t("options.chain.market", { defaultValue: "Market" })}
+            className="rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+          >
+            <option value="us">{t("options.chain.marketUs", { defaultValue: "US" })}</option>
+            <option value="india_equity">
+              {t("options.chain.marketIndia", { defaultValue: "India" })}
+            </option>
+          </select>
+          {market === "india_equity" && (
+            <select
+              value={source}
+              onChange={(e) => setSource(e.target.value as IndiaOptionsSource)}
+              aria-label={t("options.chain.source", { defaultValue: "Data source" })}
+              className="rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+            >
+              <option value="stock_simulator">
+                {t("options.chain.sourceStockSimulator", { defaultValue: "Live (Stock Simulator)" })}
+              </option>
+              <option value="indmoney">
+                {t("options.chain.sourceIndmoney", { defaultValue: "Live (INDmoney)" })}
+              </option>
+              <option value="openalgo">
+                {t("options.chain.sourceOpenalgo", { defaultValue: "Live (OpenAlgo)" })}
+              </option>
+              <option value="stock_history">
+                {t("options.chain.sourceStockHistory", { defaultValue: "Historical (recorded)" })}
+              </option>
+            </select>
+          )}
+        </div>
       </div>
 
       {/* Builder + results */}
@@ -226,10 +274,10 @@ export function OptionsLab() {
         )}
       </section>
 
-      {/* Live options chain — market/source selectable, US or India */}
-      <OptionsChainTable referenceSpot={params.entry_spot} />
+      {/* Live options chain — market/source come from the page-level selector */}
+      <OptionsChainTable referenceSpot={params.entry_spot} market={market} source={source} />
 
-      <IndiaStrategyPanel />
+      {market === "india_equity" && <IndiaStrategyPanel />}
 
       <p className="pb-2 text-xs text-muted-foreground">{t("options.disclaimer")}</p>
     </div>

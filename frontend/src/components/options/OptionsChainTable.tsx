@@ -137,12 +137,13 @@ function SkeletonRows() {
 interface Props {
   /** Entry spot from the builder — anchors the ATM highlight when available. */
   referenceSpot?: number;
+  /** Market/source are controlled from the page-level selector (OptionsLab). */
+  market: ChainMarket;
+  source: IndiaOptionsSource;
 }
 
-export function OptionsChainTable({ referenceSpot }: Props) {
+export function OptionsChainTable({ referenceSpot, market, source }: Props) {
   const { t } = useTranslation();
-  const [market, setMarket] = useState<ChainMarket>("us");
-  const [source, setSource] = useState<IndiaOptionsSource>("stock_simulator");
   const [tickerInput, setTickerInput] = useState(DEFAULT_TICKER);
   const [data, setData] = useState<OptionsChainData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -150,14 +151,14 @@ export function OptionsChainTable({ referenceSpot }: Props) {
   const generation = useRef(0);
 
   const load = useCallback(
-    async (ticker: string, expiration?: number, forMarket: ChainMarket = market, forSource: IndiaOptionsSource = source) => {
+    async (ticker: string, expiration?: number) => {
       const gen = ++generation.current;
       setLoading(true);
       setError(null);
       try {
         const res = await api.getOptionsChain(ticker, expiration, {
-          market: forMarket,
-          source: forMarket === "india_equity" ? forSource : undefined,
+          market,
+          source: market === "india_equity" ? source : undefined,
         });
         if (generation.current !== gen) return;
         if (!res.ok || !res.data) {
@@ -177,29 +178,22 @@ export function OptionsChainTable({ referenceSpot }: Props) {
     [t, market, source],
   );
 
+  // Re-fetch whenever the page-level market or source selection changes —
+  // reset the ticker to that market's default rather than re-querying the
+  // previous market's symbol against the new one.
   useEffect(() => {
-    void load(DEFAULT_TICKER, undefined, "us", source);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const onMarketChange = (next: ChainMarket) => {
-    setMarket(next);
-    setData(null);
-    const ticker = next === "india_equity" ? DEFAULT_INDIA_TICKER : DEFAULT_TICKER;
+    const ticker = market === "india_equity" ? DEFAULT_INDIA_TICKER : DEFAULT_TICKER;
     setTickerInput(ticker);
-    void load(ticker, undefined, next, source);
-  };
-
-  const onSourceChange = (next: IndiaOptionsSource) => {
-    setSource(next);
-    if (market === "india_equity" && data) void load(data.ticker, undefined, market, next);
-  };
+    setData(null);
+    void load(ticker);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [market, source]);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     const ticker = tickerInput.trim().toUpperCase();
     if (!ticker) return;
-    void load(ticker, undefined, market, source);
+    void load(ticker);
   };
 
   const atmStrike = useMemo(() => {
@@ -218,38 +212,6 @@ export function OptionsChainTable({ referenceSpot }: Props) {
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="text-sm font-semibold">{t("options.chain.title")}</div>
         <form onSubmit={onSubmit} className="flex flex-wrap items-center gap-2">
-          <select
-            value={market}
-            onChange={(e) => onMarketChange(e.target.value as ChainMarket)}
-            aria-label={t("options.chain.market", { defaultValue: "Market" })}
-            className="rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary/40"
-          >
-            <option value="us">{t("options.chain.marketUs", { defaultValue: "US" })}</option>
-            <option value="india_equity">
-              {t("options.chain.marketIndia", { defaultValue: "India" })}
-            </option>
-          </select>
-          {market === "india_equity" && (
-            <select
-              value={source}
-              onChange={(e) => onSourceChange(e.target.value as IndiaOptionsSource)}
-              aria-label={t("options.chain.source", { defaultValue: "Data source" })}
-              className="rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary/40"
-            >
-              <option value="stock_simulator">
-                {t("options.chain.sourceStockSimulator", { defaultValue: "Live (Stock Simulator)" })}
-              </option>
-              <option value="indmoney">
-                {t("options.chain.sourceIndmoney", { defaultValue: "Live (INDmoney)" })}
-              </option>
-              <option value="openalgo">
-                {t("options.chain.sourceOpenalgo", { defaultValue: "Live (OpenAlgo)" })}
-              </option>
-              <option value="stock_history">
-                {t("options.chain.sourceStockHistory", { defaultValue: "Historical (recorded)" })}
-              </option>
-            </select>
-          )}
           <input
             type="text"
             value={tickerInput}

@@ -829,7 +829,13 @@ export const api = {
     const q = new URLSearchParams();
     q.set("ticker", ticker);
     if (expiryDate) q.set("expiry_date", expiryDate);
-    return request<IndiaOptionsResearchResponse>(`/options/research?${q.toString()}`);
+    // The backend pipeline runs several sequential external-data stages and
+    // a real successful run measures ~156s end to end (server-side ceiling
+    // is 180s) — the 20s default client timeout would abort every request,
+    // successful or not, well before the server could ever answer.
+    return request<IndiaOptionsResearchResponse>(`/options/research?${q.toString()}`, {
+      timeoutMs: 190_000,
+    });
   },
 
   // Connector runtime channel — privileged surface actions (NOT agent tools).
