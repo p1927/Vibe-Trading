@@ -82,6 +82,7 @@ data/test_write.txt
 # recording_jobs.py::spawn_worker. Ignored defensively so that class of
 # bug can't silently get committed again.
 agent/data/
+agent/src/data/
 agent/.pytest_tmp/
 agent/.pytest-tmp/
 agent/vibe_trading.egg-info/

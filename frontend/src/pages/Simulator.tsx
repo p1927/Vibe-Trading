@@ -166,6 +166,7 @@ export function Simulator() {
   const [replayRange, setReplayRange] = useState<ReplayRange | null>(null);
   const [armedRange, setArmedRange] = useState<ReplayRange | null>(null);
   const [replaySpeed, setReplaySpeed] = useState<number>(1);
+  const [speedUpdating, setSpeedUpdating] = useState(false);
   const [replayLoop, setReplayLoop] = useState<boolean>(true);
   const [armingDay, setArmingDay] = useState<string | null>(null);
   const [replayError, setReplayError] = useState<string | null>(null);
@@ -476,6 +477,21 @@ export function Simulator() {
   const handleSimulatorStopped = useCallback(() => {
     setArmedRange(null);
   }, []);
+
+  const handleSpeedChange = async (value: number) => {
+    setReplaySpeed(value);
+    if (!armedRange) return;
+    // Live rate change on the already-armed clock (SimClock.set_speed) — no
+    // re-arm, so it doesn't disturb the running replay or its sim_now.
+    setSpeedUpdating(true);
+    try {
+      await api.setReplaySpeed(value);
+    } catch (err) {
+      setReplayError(err instanceof Error ? err.message : "Failed to change replay speed");
+    } finally {
+      setSpeedUpdating(false);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-6">
@@ -793,8 +809,8 @@ export function Simulator() {
                 Speed
                 <select
                   value={replaySpeed}
-                  onChange={(e) => setReplaySpeed(Number(e.target.value))}
-                  disabled={Boolean(armedRange)}
+                  onChange={(e) => handleSpeedChange(Number(e.target.value))}
+                  disabled={speedUpdating}
                   className="rounded border bg-background px-1.5 py-0.5 text-xs"
                   data-testid="simulator-speed"
                 >

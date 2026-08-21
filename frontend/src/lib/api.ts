@@ -1072,6 +1072,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ time }),
     }),
+  /** Change the replay rate live, without unloading/re-arming the clock. */
+  setReplaySpeed: (speed: number) =>
+    request<ReplayStatusResponse>("/trade/recording/replay/speed", {
+      method: "POST",
+      body: JSON.stringify({ speed }),
+    }),
   stopReplay: () =>
     request<ReplayStatusResponse>("/trade/recording/replay/stop", { method: "POST" }),
   getReplayCalendar: () => request<ReplayCalendarResponse>("/trade/recording/replay/calendar"),

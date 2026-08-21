@@ -610,10 +610,17 @@ else:
 
 AGENT_DIR = Path(__file__).resolve().parents[2]
 
-# .env search order: ~/.vibe-trading/.env → agent/.env → $CWD/.env
+# .env search order: ~/.vibe-trading/.env → agent/.env → Trade/.env (repo root) → $CWD/.env
+#
+# This is a legacy fallback for callers that reach here before
+# src.config.bootstrap.bootstrap_environment() has run (see _ensure_dotenv below) —
+# the primary bootstrap path already layers root Trade/.env under agent/.env
+# correctly. The repo-root entry here exists so single-sourced settings (e.g.
+# NSE_REPLAY_DATA_ROOT) are still reachable even via this fallback.
 _ENV_CANDIDATES = [
     Path.home() / ".vibe-trading" / ".env",
     AGENT_DIR / ".env",
+    AGENT_DIR.parents[1] / ".env",
     Path.cwd() / ".env",
 ]
 

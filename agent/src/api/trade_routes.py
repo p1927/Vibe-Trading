@@ -735,6 +735,10 @@ class SeekReplayRequest(BaseModel):
     time: str
 
 
+class SetReplaySpeedRequest(BaseModel):
+    speed: float
+
+
 class RefreshIndexPredictionRequest(BaseModel):
     ticker: str = "NIFTY"
     horizon_days: int | None = None
@@ -3456,24 +3460,19 @@ def list_recording_sessions(
     _auth: None = Depends(require_local_or_auth),
 ) -> RecordingSessionsResponse:
     """Days available to replay — scans the exported index + equity parquet files."""
-    from trade_integrations.stock_simulator.catalog import ReplayCatalog
-    from trade_integrations.stock_simulator.config import load_sim_config
-    from trade_integrations.stock_simulator.hf_paths import equities_dir
+    from trade_integrations.stock_history.api import StockHistory
 
-    data_root = load_sim_config().data_root
-    catalog = ReplayCatalog(data_root)
+    history = StockHistory()
     days: set[str] = set()
     for symbol, exchange in (
         ("NIFTY", "NSE_INDEX"),
         ("BANKNIFTY", "NSE_INDEX"),
         ("SENSEX", "BSE_INDEX"),
     ):
-        days.update(catalog.available_dates(symbol, exchange))
+        days.update(history.recorded_index_days(symbol=symbol, exchange=exchange))
 
-    eq_dir = equities_dir(data_root)
-    if eq_dir.is_dir():
-        for path in eq_dir.glob("*.parquet"):
-            days.update(catalog.available_dates(path.stem.upper(), "NSE"))
+    for symbol in history.recorded_equities():
+        days.update(history.recorded_index_days(symbol=symbol, exchange="NSE"))
 
     return RecordingSessionsResponse(sessions=sorted(days, reverse=True))
 
@@ -3773,6 +3772,39 @@ def seek_replay(
         res = requests.post(
             f"{_openalgo_host()}/stock_simulator/control/replay/seek",
             json={"time": body.time},
+            headers=headers,
+            timeout=15.0,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=502, detail=f"could not reach OpenAlgo at {_openalgo_host()}: {exc}"
+        ) from exc
+    if res.status_code >= 400:
+        raise HTTPException(status_code=502, detail=res.text[:500])
+    payload = _openalgo_json(res)
+    _mirror_replay_env(payload)
+    return ReplayStatusResponse(status="ok", replay=payload)
+
+
+@trade_router.post("/recording/replay/speed", response_model=ReplayStatusResponse)
+def set_replay_speed(
+    body: SetReplaySpeedRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> ReplayStatusResponse:
+    """Change the simulator clock's replay rate live, without re-arming it."""
+    import requests
+
+    headers = _openalgo_control_headers()
+    if headers is None:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENALGO_SIMULATOR_CONTROL_TOKEN is not configured — set it to match "
+            "OpenAlgo's SIMULATOR_CONTROL_TOKEN to enable replay control.",
+        )
+    try:
+        res = requests.post(
+            f"{_openalgo_host()}/stock_simulator/control/replay/speed",
+            json={"speed": body.speed},
             headers=headers,
             timeout=15.0,
         )
