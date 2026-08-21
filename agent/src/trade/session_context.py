@@ -63,13 +63,9 @@ def is_autonomous_us_equity_session(session_config: dict[str, Any] | None) -> bo
     if session_execution_market(cfg) != "US":
         return False
     try:
-        import sys
-        from pathlib import Path
+        from src.trade.hub_bridge import ensure_trade_stack_path
 
-        trade_root = Path(__file__).resolve().parents[4]
-        integrations = trade_root / "integrations"
-        if integrations.is_dir() and str(integrations) not in sys.path:
-            sys.path.insert(0, str(integrations))
+        ensure_trade_stack_path()
         from trade_integrations.autonomous_agents.intent_capabilities import resolve_capabilities
 
         caps = resolve_capabilities(session_config=cfg)
@@ -146,13 +142,9 @@ def classify_prefetch_widget_intent(
     cfg = session_config or {}
     if is_autonomous_agent_session(cfg):
         try:
-            import sys
-            from pathlib import Path
+            from src.trade.hub_bridge import ensure_trade_stack_path
 
-            trade_root = Path(__file__).resolve().parents[4]
-            integrations = trade_root / "integrations"
-            if integrations.is_dir() and str(integrations) not in sys.path:
-                sys.path.insert(0, str(integrations))
+            ensure_trade_stack_path()
             from trade_integrations.autonomous_agents.intent_capabilities import (
                 classify_prefetch_intent_from_capabilities,
                 resolve_capabilities,
