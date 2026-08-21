@@ -270,24 +270,6 @@ def _record_llm_usage(
     return normalized
 
 
-def _redact_trace_result(result: str) -> str:
-    """Redact structured sensitive fields before persisting trace/event previews.
-
-    Args:
-        result: Raw tool result string.
-
-    Returns:
-        Redacted JSON string when ``result`` is JSON, otherwise the original
-        text. Plain text is left unchanged because reliable free-text secret
-        scrubbing would be more error-prone than helpful here.
-    """
-    try:
-        payload = json.loads(result)
-    except (TypeError, json.JSONDecodeError):
-        return result
-    return json.dumps(redact_payload(payload), ensure_ascii=False)
-
-
 def _format_timeout(seconds: float) -> str:
     """Return a human-readable timeout label."""
     if seconds < 1:
