@@ -306,10 +306,14 @@ def _leg_row_history(
 
 
 def _lot_size_for(underlying: str) -> int:
-    """Exchange lot size for the contract multiplier — ``UNDERLYING_META`` for
-    the known indexes (NIFTY=25, BANKNIFTY=15, SENSEX=10), else ``1`` for
-    individual equities (cash-market convention, same fallback
-    ``master_contract._equity_row`` already uses)."""
+    """Exchange lot size for the contract multiplier — read from
+    ``UNDERLYING_META`` for the known indexes (values change on exchange
+    revision; see that dict's own comment for the last-verified numbers and
+    where to confirm them), else ``1`` for individual equities (cash-market
+    convention, same fallback ``master_contract._equity_row`` already uses).
+    Never hardcode the actual numbers here — this function must stay the
+    only place that resolves them, so a future revision only needs updating
+    in ``UNDERLYING_META``."""
     from trade_integrations.stock_simulator.master_contract import UNDERLYING_META
 
     meta = UNDERLYING_META.get(underlying.upper())
