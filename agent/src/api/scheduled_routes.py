@@ -6,7 +6,6 @@ Mounted by ``agent/api_server.py`` via ``register_scheduled_routes(app, ...)``.
 from __future__ import annotations
 
 import logging
-import os
 import re
 import sys as _sys
 import time
@@ -170,166 +169,22 @@ def _get_scheduled_research_executor():
     return _scheduled_research_executor
 
 
-def _register_persisted_autonomous_agent_jobs() -> None:
-    """Re-register scheduler jobs for running autonomous agents after API restart."""
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-
-        ensure_trade_stack_path()
-        from trade_integrations.autonomous_agents.store import list_agents
-        from src.scheduled_research.autonomous_agent_jobs import register_agent_jobs
-
-        for agent in list_agents():
-            if str(agent.get("status")) == "running":
-                register_agent_jobs(agent)
-    except Exception:
-        logger.exception("failed to register persisted autonomous agent jobs")
-
-
 def _start_scheduled_research_executor() -> None:
     """Start scheduled research execution when explicitly enabled."""
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
+    from src.api.scheduled_startup import boot_scheduled_research_stack
 
-        ensure_trade_stack_path()
-        from trade_integrations.autonomous_agents.proposals import pause_running_agents_on_boot
-
-        # A process start/restart (crash, deploy, or dev uvicorn --reload
-        # respawn) is indistinguishable on disk from an agent that was
-        # legitimately left running. Force every "running" agent to
-        # "paused" before any resume/bootstrap sweep below can see it, so
-        # nothing auto-fires LLM work until a user explicitly resumes it.
-        pause_running_agents_on_boot()
-    except Exception:
-        logger.exception("failed to boot-pause running autonomous agents")
-    try:
-        from src.scheduled_research.lifecycle import recover_scheduler_jobs_on_stack_boot
-
-        recover_scheduler_jobs_on_stack_boot(_get_scheduled_research_store())
-    except Exception:
-        logger.exception("failed to recover stale scheduler jobs on API startup")
-    from src.scheduled_research.index_jobs import (
-        is_index_scheduler_enabled,
-        register_default_index_jobs,
-    )
-    from src.scheduled_research.options_jobs import (
-        is_options_scheduler_enabled,
-        register_default_options_jobs,
-    )
-    from src.scheduled_research.trade_data_jobs import (
-        is_trade_data_scheduler_enabled,
-        register_default_trade_data_jobs,
-    )
-    from src.scheduled_research.hub_calibration_jobs import (
-        is_hub_calibration_scheduler_enabled,
-        register_default_hub_calibration_jobs,
-    )
-    from src.scheduled_research.capture_jobs import (
-        is_hub_capture_scheduler_enabled,
-        register_default_hub_capture_jobs,
-    )
-
-    if is_index_scheduler_enabled():
-        register_default_index_jobs(_get_scheduled_research_store())
-    if is_options_scheduler_enabled():
-        register_default_options_jobs(_get_scheduled_research_store())
-    if is_hub_calibration_scheduler_enabled():
-        register_default_hub_calibration_jobs(_get_scheduled_research_store())
-    elif is_trade_data_scheduler_enabled():
-        register_default_trade_data_jobs(_get_scheduled_research_store())
-    if is_hub_capture_scheduler_enabled():
-        register_default_hub_capture_jobs(_get_scheduled_research_store())
-    _register_persisted_autonomous_agent_jobs()
-    # Recording-wake poller: unlike the general executor below, this starts
-    # unconditionally (not gated by the scheduler enable/resume flag) — see
-    # ``src.trade.recording_wait_scheduler`` module docstring for why a
-    # ``wait_for_open`` recording must not depend on that LLM-cost gate.
-    try:
-        from src.trade.recording_wait_scheduler import start_recording_wake_poller
-
-        start_recording_wake_poller(_get_scheduled_research_store())
-    except Exception:
-        logger.exception("failed to start recording-wake poller on startup")
-    # Hot-reload safety: every ``register_default_*`` helper stamps
-    # ``next_run_at=now_ms`` so a fresh job fires immediately. On uvicorn
-    # --reload this means every code save re-stamps every default job and the
-    # first executor tick dispatches them all, cascading LLM calls and IO
-    # before the user types anything. Push never-executed PENDING jobs forward
-    # by ``SCHEDULED_RESEARCH_FRESH_DEFER_MS`` (default 30 min) so the
-    # scheduler only fires on the persisted cron schedule, not on every reload.
-    try:
-        from src.scheduled_research.executor import defer_fresh_registrations
-
-        deferred = defer_fresh_registrations(_get_scheduled_research_store())
-        if deferred:
-            logger.info(
-                "deferred %d fresh scheduled job(s) on startup to avoid hot-reload cascade",
-                deferred,
-            )
-    except Exception:
-        logger.exception("defer_fresh_registrations failed on startup")
-    # Note: no bootstrap-resume sweep runs here anymore. Every agent that
-    # was "running" was just boot-paused above, so resuming bootstrap work
-    # is now exclusively a user action via POST /autonomous-agents/{id}/resume
-    # (see autonomous_routes.resume_agent, which re-fires a stuck bootstrap
-    # when appropriate).
-    try:
-        from trade_integrations.autonomous_agents.recovery import run_autonomous_agent_recovery
-
-        recovery = run_autonomous_agent_recovery()
-        if any(recovery.values()):
-            logger.info("autonomous agent recovery: %s", recovery)
-    except Exception:
-        logger.debug("autonomous agent recovery on startup failed", exc_info=True)
-    try:
-        if os.getenv("STACK_DEV", "").strip().lower() in {"1", "true", "yes", "on"}:
-            logger.debug("skipping Nautilus watch ensure in dev mode (use: trade reload nautilus)")
-        else:
-            from src.trade.hub_bridge import ensure_trade_stack_path
-
-            ensure_trade_stack_path()
-            from trade_integrations.autonomous_agents.nautilus_watch import (
-                ensure_nautilus_watch_for_running_agents,
-                get_watch_process_status,
-            )
-
-            status = get_watch_process_status(reconcile=True)
-            if status.get("alive") and status.get("registry_agent_ids"):
-                logger.debug("Nautilus watch already alive with registry — skipping startup ensure")
-            elif ensure_nautilus_watch_for_running_agents():
-                logger.info("ensured Nautilus watch for running India bridge agent(s)")
-    except Exception:
-        logger.exception("failed to ensure Nautilus watch on startup")
-    # Global scheduled-research jobs (index/options/hub-calibration/trade-data/
-    # hub-capture) default to paused on every boot, the same "always ephemeral,
-    # resume via UI" model used for autonomous agents. Jobs were registered
-    # above so they're visible in the Scheduled UI with their real cadence,
-    # but the executor's dispatch loop is intentionally NOT started here —
-    # only POST /scheduled-runs/scheduler/resume starts it, and every fresh
-    # process start (clean shutdown, crash, or dev --reload) requires that
-    # click again rather than remembering the prior running state.
+    boot_scheduled_research_stack(_get_scheduled_research_store)
 
 
 async def _stop_scheduled_research_executor() -> None:
     """Stop scheduled research execution if it was started."""
     global _scheduled_research_executor
-    logger.info("scheduled research shutdown: recovering jobs and stopping executor")
-    try:
-        from src.scheduled_research.lifecycle import recover_scheduler_jobs_on_stack_shutdown
+    from src.api.scheduled_startup import shutdown_scheduled_research_stack
 
-        recover_scheduler_jobs_on_stack_shutdown(_get_scheduled_research_store())
-    except Exception:
-        logger.exception("failed to recover scheduler jobs on API shutdown")
-    executor = _scheduled_research_executor
-    if executor is not None:
-        await executor.stop()
+    await shutdown_scheduled_research_stack(
+        _get_scheduled_research_store, _scheduled_research_executor
+    )
     _scheduled_research_executor = None
-    try:
-        from src.trade.recording_wait_scheduler import stop_recording_wake_poller
-
-        await stop_recording_wake_poller()
-    except Exception:
-        logger.exception("failed to stop recording-wake poller on shutdown")
 
 
 # ---------------------------------------------------------------------------
