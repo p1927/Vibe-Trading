@@ -633,8 +633,36 @@ def _fetch_sp500_constituents() -> tuple[list[str], dict[str, str]]:
     return [], {}
 
 
+def _load_nifty50_stock_simulator(code: str, start: str, end: str) -> "pd.DataFrame | None":
+    """Recorded OHLCV for one NIFTY 50 constituent via the same
+    stock_simulator loader the OHLCV registry chain uses (``FALLBACK_CHAINS
+    ["india_equity"]`` — stock_simulator is tried first there too), so this
+    bench panel and every other India-equity consumer agree on one recorded
+    source instead of each hitting stock_history a different way.
+
+    Same full-range-or-omit coverage policy as that loader (see its own
+    docstring): returns ``None`` — not a partial frame — unless every
+    requested trading day is actually recorded, letting the caller fall
+    through to the existing hub+yfinance path exactly as it already does for
+    a source-unavailable/no-data result.
+    """
+    try:
+        from backtest.loaders.stock_simulator_loader import DataLoader as _StockSimLoader
+
+        result = _StockSimLoader().fetch([f"{code}.NS"], start, end)
+    except Exception as exc:  # noqa: BLE001 — degrade to the existing fallback
+        logger.debug("nifty50 stock_simulator fetch failed for %s: %s", code, exc)
+        return None
+    frame = result.get(f"{code}.NS")
+    if frame is None or frame.empty:
+        return None
+    return frame.reset_index().rename(columns={"trade_date": "date"})
+
+
 def _load_nifty50_panel(start: str, end: str) -> dict[str, pd.DataFrame]:
-    """Nifty 50 panel via trade_integrations OpenAlgo/yfinance history."""
+    """Nifty 50 panel: recorded stock_simulator data first (per constituent,
+    full-range-or-omit), OpenAlgo/yfinance history for whatever it can't
+    fully cover yet."""
     symbols: list[str] = []
     constituent_source = "nifty50_constituents"
     try:
@@ -657,12 +685,17 @@ def _load_nifty50_panel(start: str, end: str) -> dict[str, pd.DataFrame]:
     )
 
     fetched: dict[str, pd.DataFrame] = {}
+    stock_simulator_hits = 0
     for code in symbols:
-        try:
-            frame = load_symbol_ohlcv(code, start_date=start, end_date=end)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("nifty50 fetch failed for %s: %s", code, exc)
-            continue
+        frame = _load_nifty50_stock_simulator(code, start, end)
+        if frame is not None:
+            stock_simulator_hits += 1
+        else:
+            try:
+                frame = load_symbol_ohlcv(code, start_date=start, end_date=end)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("nifty50 fetch failed for %s: %s", code, exc)
+                continue
         if frame is None or frame.empty or "close" not in frame.columns:
             continue
         df = frame.copy()
@@ -689,6 +722,7 @@ def _load_nifty50_panel(start: str, end: str) -> dict[str, pd.DataFrame]:
         "survivorship_bias": True,
         "constituent_source": constituent_source,
         "constituent_count": len(fetched),
+        "stock_simulator_hits": stock_simulator_hits,
     }
     return panel
 
