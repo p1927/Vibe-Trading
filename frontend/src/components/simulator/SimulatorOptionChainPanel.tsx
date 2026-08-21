@@ -14,6 +14,7 @@ import { createPortal } from "react-dom";
 import { X, RefreshCw } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { replayPollMs } from "@/lib/simSpeed";
 
 interface Props {
   symbol: string;
@@ -22,6 +23,9 @@ interface Props {
   onClose: () => void;
   recordingActive?: boolean;
   isReplayArmed?: boolean;
+  /** Current replay speed, while armed — drives the poll cadence up to a
+   *  4/sec cap instead of the fixed 5s cadence. Ignored otherwise. */
+  replaySpeed?: number;
   strikeCount?: number;
 }
 
@@ -95,6 +99,7 @@ export function SimulatorOptionChainPanel({
   open,
   onClose,
   isReplayArmed = false,
+  replaySpeed,
   strikeCount = 10,
 }: Props) {
   const [strikes, setStrikes] = useState<StrikeRow[]>([]);
@@ -178,13 +183,17 @@ export function SimulatorOptionChainPanel({
     }
   };
 
+  // While armed for replay, poll cadence scales with replay speed (capped
+  // at 4/sec, see replayPollMs); otherwise the fixed 5s default.
+  const pollMs = isReplayArmed ? replayPollMs(replaySpeed) : 5000;
+
   useEffect(() => {
     if (!open) return;
     fetchChain();
-    const handle = window.setInterval(fetchChain, 5000);
+    const handle = window.setInterval(fetchChain, pollMs);
     return () => window.clearInterval(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, symbol, exchange, strikeCount, isReplayArmed, selectedExpiry]);
+  }, [open, symbol, exchange, strikeCount, isReplayArmed, selectedExpiry, pollMs]);
 
   const change = useMemo(() => {
     if (spot == null || prevClose == null) return null;
