@@ -410,6 +410,7 @@ def _index_doc_to_panel(doc) -> dict[str, Any]:
         "underlying": doc.ticker,
         "asset_type": "index",
         "as_of": doc.as_of.isoformat() if hasattr(doc.as_of, "isoformat") else str(doc.as_of),
+        "constituents_as_of": getattr(doc, "constituents_as_of", None),
         "horizon": doc.horizon or {},
         "spot": doc.spot,
         "spot_source": getattr(doc, "spot_source", None),

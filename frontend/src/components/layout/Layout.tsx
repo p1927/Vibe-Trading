@@ -315,7 +315,7 @@ export function Layout() {
       {/* Main */}
       <div className="relative flex-1 flex flex-col overflow-hidden">
         <ConnectionBanner status={sseStatus} retryAttempt={sseRetryAttempt} />
-        <PredictionRunningBanner />
+        <PredictionRunningBanner pathname={pathname} />
         <main id="main" className="flex-1 overflow-auto">
           <Outlet />
         </main>

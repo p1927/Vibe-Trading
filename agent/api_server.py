@@ -195,6 +195,44 @@ async def _app_lifespan(app: FastAPI):
     except Exception:
         logger.debug("recording job hydrate skipped", exc_info=True)
 
+    try:
+        # `hydrate_recording_jobs` above just reads job.json off disk — it
+        # doesn't check whether the worker PID it names is still alive. A
+        # prior clean shutdown (see the `finally` block below) already
+        # stopped the old worker, so on a normal restart this job.json is
+        # correctly stale; `get_active_job()` does the PID-liveness check
+        # and reconciles (fails) a zombie entry as a side effect, so the
+        # rest of the app doesn't start up believing a dead job is running.
+        from src.trade.recording_jobs import get_active_job
+
+        pre = get_active_job()
+        logger.info(
+            "recording job startup reconcile: active=%s status=%s",
+            pre.get("job_id") if pre else None,
+            pre.get("status") if pre else None,
+        )
+
+        # Auto Record's own re-arm only runs on its 30s poll tick
+        # (`recording_wake_poll_loop`), which would otherwise leave
+        # recording dark for up to 30s after every restart. Running it
+        # once here, synchronously, at startup closes that gap — if Auto
+        # Record is enabled and nothing is genuinely active (per the
+        # reconcile above), this spawns a fresh worker immediately, so a
+        # code change to the recorder takes effect on the very next
+        # restart instead of silently continuing to run under whatever
+        # was loaded into the old worker's memory.
+        from src.trade.recording_wait_scheduler import _maybe_rearm_auto_record
+
+        await _maybe_rearm_auto_record()
+        post = get_active_job()
+        logger.info(
+            "recording job startup re-arm result: active=%s status=%s",
+            post.get("job_id") if post else None,
+            post.get("status") if post else None,
+        )
+    except Exception:
+        logger.exception("recording job startup reconcile/re-arm FAILED")
+
     if get_env_config().agent_tuning.vibe_trading_channels_auto_start:
         await _start_channel_runtime()
 
@@ -214,6 +252,26 @@ async def _app_lifespan(app: FastAPI):
             request_pipeline_cancel("server_shutting_down")
         except Exception:
             logger.debug("pipeline cancel request skipped", exc_info=True)
+        try:
+            # The recording worker is a *detached* subprocess by design
+            # (`spawn_worker`'s docstring: "survives API hot-reload") so a
+            # code fix like the parallel-fetch change never used to take
+            # effect until someone manually stopped the recording — the
+            # old worker just kept running whatever was loaded into its
+            # memory at spawn time, indefinitely, across any number of
+            # app restarts. Request a cooperative stop here so a restart
+            # actually restarts the recorder too. `request_stop` only
+            # writes a flag file the worker polls each cycle — the worker
+            # notices and exits on its own even after this process has
+            # already gone away, so this doesn't block shutdown waiting
+            # for it. Startup's `_maybe_rearm_auto_record()` above is what
+            # brings recording back once the new process is up.
+            from src.trade.recording_jobs import stop_active_job_cooperatively
+
+            stopped_id = stop_active_job_cooperatively(reason="app_shutdown")
+            logger.info("recording job stop-on-shutdown: stopped=%s", stopped_id)
+        except Exception:
+            logger.exception("recording job stop-on-shutdown FAILED")
         close_http_gateway()
         await _stop_channel_runtime()
         await _stop_scheduled_research_executor()

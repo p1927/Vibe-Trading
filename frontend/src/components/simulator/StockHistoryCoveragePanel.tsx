@@ -204,6 +204,10 @@ export function StockHistoryCoveragePanel({
   // only when every selected bucket is present on that day. The same
   // filter applies to both week and year views.
   const [bucketFilter, setBucketFilter] = useState<Set<string> | null>(null);
+  // Tracks whether the default-preset effect below has already run once,
+  // so it doesn't fire again every time the user explicitly picks "All"
+  // (which also sets bucketFilter to null).
+  const [filterInitialized, setFilterInitialized] = useState(false);
 
   const weekStartIso = isoDate(weekStart);
 
@@ -322,14 +326,15 @@ export function StockHistoryCoveragePanel({
   const totalBuckets = allBuckets.length;
 
   useEffect(() => {
-    if (bucketFilter !== null) return;
+    if (filterInitialized) return;
     if (totalBuckets === 0) return;
     const defaults = allBuckets.filter((b) => DEFAULT_VISIBLE_PRESET.has(b));
     // Fall back to "everything" if none of the default pillars exist in
     // this deployment's bucket registry yet, so the panel never opens
     // to an empty grid.
     setBucketFilter(new Set(defaults.length > 0 ? defaults : allBuckets));
-  }, [allBuckets, totalBuckets, bucketFilter]);
+    setFilterInitialized(true);
+  }, [allBuckets, totalBuckets, filterInitialized]);
 
   const selectedBucketsList = useMemo(() => {
     if (bucketFilter === null) return allBuckets;

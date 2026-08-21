@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Disc, ListOrdered, PlayCircle, Square } from "lucide-react";
+import { Disc, ListOrdered, PlayCircle, Square, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   api,
@@ -689,23 +689,50 @@ export function Simulator() {
             </div>
             <ProgressBar pct={job.session_pct_complete} />
 
-            <div
-              ref={logRef}
-              className="h-56 overflow-auto rounded-lg border bg-background/60 p-3 font-mono text-[11px] leading-relaxed"
+            <details
+              className="group rounded-lg border bg-background/60"
+              data-testid="simulator-recording-logs"
+              onToggle={(e) => {
+                // When the user expands the logs, jump them to the
+                // latest entry — the auto-scroll effect above only
+                // fires on log *changes*, not on panel reveal.
+                if ((e.currentTarget as HTMLDetailsElement).open) {
+                  requestAnimationFrame(() => {
+                    logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
+                  });
+                }
+              }}
             >
-              {logs.length === 0 ? (
-                <p className="text-muted-foreground">No log entries yet.</p>
-              ) : (
-                logs.map((entry, i) => (
-                  <div key={i} className={cn("flex gap-2", logLevelColor(entry.level))}>
-                    <span className="shrink-0 text-muted-foreground/60">
-                      {entry.at ? new Date(entry.at).toLocaleTimeString() : ""}
-                    </span>
-                    <span>{entry.message}</span>
-                  </div>
-                ))
-              )}
-            </div>
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-[11px] font-medium text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden">
+                <span className="flex items-center gap-1.5">
+                  <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+                  Recording logs
+                  <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
+                    {logs.length}
+                  </span>
+                </span>
+                <span className="font-normal text-muted-foreground/70 group-open:hidden">
+                  Click to expand
+                </span>
+              </summary>
+              <div
+                ref={logRef}
+                className="h-56 overflow-auto rounded-b-lg border-t bg-background/60 p-3 font-mono text-[11px] leading-relaxed"
+              >
+                {logs.length === 0 ? (
+                  <p className="text-muted-foreground">No log entries yet.</p>
+                ) : (
+                  logs.map((entry, i) => (
+                    <div key={i} className={cn("flex gap-2", logLevelColor(entry.level))}>
+                      <span className="shrink-0 text-muted-foreground/60">
+                        {entry.at ? new Date(entry.at).toLocaleTimeString() : ""}
+                      </span>
+                      <span>{entry.message}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </details>
 
             {job.status === "error" && job.error ? (
               <p className="text-sm text-destructive">{job.error}</p>

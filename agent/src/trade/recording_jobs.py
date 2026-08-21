@@ -793,6 +793,42 @@ def request_stop(job_id: str) -> None:
     )
 
 
+def stop_active_job_cooperatively(*, reason: str = "stopped") -> str | None:
+    """Stop whatever recording job is currently active, however it's active.
+
+    Shared by the manual ``POST /trade/recording/{job_id}/stop`` route and
+    the API process's own shutdown hook, so both paths handle the same two
+    cases identically:
+
+    - ``waiting_for_open``: no worker subprocess exists yet to poll the
+      cooperative stop flag (Phase C — the recorder never spawns during
+      the wait), so cancel the scheduled wake and end the job directly.
+    - ``queued``/``running``: write the cooperative stop flag. The worker
+      is a detached subprocess (survives API restarts by design — see
+      ``spawn_worker``'s docstring), so it keeps polling that flag and
+      exits on its own even after this API process has already gone away;
+      the caller does not need to wait for it here.
+
+    Returns the job id that was stopped, or ``None`` if nothing was active.
+    """
+    job = get_active_job()
+    if job is None:
+        return None
+    job_id = str(job["job_id"])
+    status = str(job.get("status") or "")
+    if status == "waiting_for_open":
+        try:
+            from src.trade.recording_wait_scheduler import cancel_recording_wake
+
+            cancel_recording_wake(recording_job_id=job_id)
+        except Exception:
+            logger.exception("failed to cancel recording wake for %s on stop", job_id)
+        fail_job(job_id, reason)
+        return job_id
+    request_stop(job_id)
+    return job_id
+
+
 def _terminate_worker(job: dict[str, Any] | None) -> None:
     if job is None:
         return

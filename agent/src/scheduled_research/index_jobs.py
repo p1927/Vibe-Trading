@@ -280,63 +280,70 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
     return summary
 
 
-def run_index_research_job(config: dict[str, Any] | None = None) -> None:
-    """Run full index research pipeline and persist to hub."""
-    _ensure_trade_integrations_on_path()
-    from trade_integrations.context.hub import save_index_research
-    from trade_integrations.dataflows.index_research.aggregator import run_index_research
-    from trade_integrations.dataflows.index_research.pipeline_log import PipelineLogger
+def run_index_research_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Run full index research pipeline and persist to hub.
 
+    Registers in the same job store as manual "Run analysis" (via
+    ``start_job``/``run_worker``) instead of running the pipeline directly, so
+    a manual run and this weekly full-refresh cannot race each other's writes
+    to the same hub document, and this run is visible (with live logs) in the
+    Prediction page like any other job.
+    """
+    _ensure_trade_integrations_on_path()
     cfg = config or {}
     ticker = str(cfg.get("ticker") or "NIFTY").strip().upper()
-    job_id = str(cfg.get("job_id") or f"scheduled:{ticker}:index_research")
     if cfg.get("run_snapshot_first"):
         run_index_factor_snapshot_job(cfg)
-    try:
-        from trade_integrations.observability.hooks import bridge_pipeline_entry
 
-        plog = PipelineLogger(on_entry=bridge_pipeline_entry)
-    except ImportError:
-        plog = PipelineLogger()
+    from src.trade.index_prediction_run_jobs import (
+        get_active_job,
+        get_job,
+        mark_worker_pid,
+        run_worker,
+        start_job,
+    )
+
     try:
-        doc = run_index_research(
-            ticker,
-            horizon_days=cfg.get("horizon_days"),
-            refresh_constituents=bool(cfg.get("refresh_constituents")),
-            pipeline=plog,
-        )
-        save_index_research(doc)
+        active = get_active_job(ticker)
+        if active and str(active.get("status") or "") in {"queued", "running"}:
+            logger.info(
+                "index research (scheduled) skipped: another run active for %s (job=%s)",
+                ticker,
+                active.get("job_id"),
+            )
+            return {
+                "skipped": True,
+                "reason": "run_active",
+                "ticker": ticker,
+                "active_job_id": active.get("job_id"),
+            }
     except Exception as exc:
-        try:
-            from trade_integrations.observability.hooks import emit_pipeline_job_done
+        logger.debug("active-run check skipped: %s", exc)
 
-            emit_pipeline_job_done(
-                job_type="index_research_scheduled",
-                job_id=job_id,
-                ticker=ticker,
-                status="error",
-                had_errors=True,
-                detail={"error": str(exc)[:400]},
-            )
-        except ImportError:
-            pass
-        raise
+    job_id, reused = start_job(
+        ticker=ticker,
+        horizon_days=cfg.get("horizon_days"),
+        refresh_constituents=bool(cfg.get("refresh_constituents")),
+        run_forecast_lab=True,
+    )
+    if not reused:
+        mark_worker_pid(job_id, os.getpid())
+        run_worker(job_id)  # blocking; dispatch_index_job already runs off the event loop
     else:
-        had_pipeline_errors = any(
-            str(getattr(entry, "level", "") or "").lower() == "error" for entry in plog.entries
-        )
-        try:
-            from trade_integrations.observability.hooks import emit_pipeline_job_done
+        from src.trade.index_prediction_run_jobs import _get_job_record, worker_alive
 
-            emit_pipeline_job_done(
-                job_type="index_research_scheduled",
-                job_id=job_id,
-                ticker=ticker,
-                status="partial" if had_pipeline_errors else "ok",
-                had_errors=had_pipeline_errors,
-            )
-        except ImportError:
-            pass
+        existing = _get_job_record(job_id)
+        if existing is not None and not worker_alive(existing):
+            mark_worker_pid(job_id, os.getpid())
+            run_worker(job_id)
+    final = get_job(job_id) or {}
+    return {
+        "skipped": False,
+        "ticker": ticker,
+        "job_id": job_id,
+        "reused": reused,
+        "status": final.get("status"),
+    }
 
 
 def run_index_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -558,8 +565,9 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         logger.info("index factor snapshot completed for job %s: %s", job.id, summary)
         return
     if job_type == JOB_TYPE_INDEX_RESEARCH:
-        run_index_research_job(job.config)
-        logger.info("index research completed for job %s", job.id)
+        summary = run_index_research_job(job.config)
+        _attach_job_result_summary(job, summary)
+        logger.info("index research completed for job %s: %s", job.id, summary)
         return
     if job_type == JOB_TYPE_INDEX_PLAN_REFRESH:
         summary = run_index_plan_refresh_job(job.config)

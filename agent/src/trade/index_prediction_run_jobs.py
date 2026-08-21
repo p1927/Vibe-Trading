@@ -39,8 +39,12 @@ _JOBS_LOCK = threading.RLock()
 _JOB_TTL_SECONDS = 60 * 60
 _JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 _ACTIVE_STATUSES = frozenset({"queued", "running"})
+_TERMINAL_STATUSES = frozenset({"done", "done_with_warnings", "error"})
 _STALE_LOG_SECONDS = int(os.getenv("INDEX_PREDICTION_STALE_LOG_SECONDS", "1800"))
 _WALL_CLOCK_SECONDS = int(os.getenv("INDEX_PREDICTION_RUN_WALL_CLOCK_SECONDS", "2700"))
+_REFRESH_WALL_CLOCK_SECONDS = int(
+    os.getenv("INDEX_PREDICTION_REFRESH_WALL_CLOCK_SECONDS", "5400")
+)
 _QUEUED_NO_PID_SECONDS = int(os.getenv("INDEX_PREDICTION_QUEUED_NO_PID_SECONDS", "60"))
 
 
@@ -125,10 +129,11 @@ def reconcile_stale_job(job_id: str) -> bool:
     if not worker_alive(job):
         return False
     wall_age = _job_age_seconds(job)
-    if wall_age > _WALL_CLOCK_SECONDS:
+    budget = _REFRESH_WALL_CLOCK_SECONDS if job.get("refresh_constituents") else _WALL_CLOCK_SECONDS
+    if wall_age > budget:
         fail_job(
             job_id,
-            f"run exceeded wall-clock budget ({int(wall_age)}s > {_WALL_CLOCK_SECONDS}s)",
+            f"run exceeded wall-clock budget ({int(wall_age)}s > {budget}s)",
             terminate_worker=True,
         )
         return True
@@ -340,7 +345,7 @@ def _prune_old_jobs() -> None:
     with _JOBS_LOCK:
         stale: list[str] = []
         for job_id, job in INDEX_PREDICTION_RUN_JOBS.items():
-            if job.get("status") in ("done", "error") and job.get("_finished_at", 0) < cutoff:
+            if job.get("status") in _TERMINAL_STATUSES and job.get("_finished_at", 0) < cutoff:
                 stale.append(job_id)
         for job_id in stale:
             job = INDEX_PREDICTION_RUN_JOBS.pop(job_id, None)
@@ -383,11 +388,12 @@ def _job_snapshot(job: dict[str, Any], *, include_logs: bool = True) -> dict[str
         "run_forecast_lab": bool(job.get("run_forecast_lab")),
         "created_at": job.get("created_at"),
         "error": job.get("error"),
+        "warnings": job.get("warnings") or [],
     }
     out.update(_job_progress_from_logs(logs))
     if include_logs:
         out["logs"] = logs
-    if job.get("status") == "done" and job.get("artifact") is not None:
+    if job.get("status") in ("done", "done_with_warnings") and job.get("artifact") is not None:
         out["artifact"] = job["artifact"]
     return out
 
@@ -506,6 +512,23 @@ def mark_running(job_id: str) -> None:
         INDEX_PREDICTION_RUN_JOBS[job_id] = job
 
 
+def mark_worker_pid(job_id: str, pid: int) -> None:
+    """Record the PID actually executing this job, so ``worker_alive`` can tell
+    a genuinely in-progress run (in-process or subprocess) from an abandoned one —
+    used by callers that run the pipeline inline (e.g. the scheduler) rather than
+    via ``spawn_worker``'s detached subprocess."""
+
+    def mutator(job: dict[str, Any]) -> bool:
+        job["worker_pid"] = pid
+        return True
+
+    job = _mutate_job_on_disk(job_id, mutator)
+    if job is None:
+        return
+    with _JOBS_LOCK:
+        INDEX_PREDICTION_RUN_JOBS[job_id] = job
+
+
 def append_log(job_id: str, entry: dict[str, Any]) -> None:
     def mutator(job: dict[str, Any]) -> bool:
         if str(job.get("status") or "") not in _ACTIVE_STATUSES:
@@ -522,7 +545,13 @@ def append_log(job_id: str, entry: dict[str, Any]) -> None:
         INDEX_PREDICTION_RUN_JOBS[job_id] = job
 
 
-def complete_job(job_id: str, *, ticker: str, artifact: dict[str, Any]) -> None:
+def complete_job(
+    job_id: str,
+    *,
+    ticker: str,
+    artifact: dict[str, Any],
+    warnings: list[str] | None = None,
+) -> None:
     key_holder: dict[str, str] = {}
 
     def mutator(job: dict[str, Any]) -> bool:
@@ -533,8 +562,9 @@ def complete_job(job_id: str, *, ticker: str, artifact: dict[str, Any]) -> None:
                 job.get("status"),
             )
             return False
-        job["status"] = "done"
+        job["status"] = "done_with_warnings" if warnings else "done"
         job["artifact"] = artifact
+        job["warnings"] = list(warnings or [])
         job["_finished_at"] = time.time()
         key_holder["key"] = str(job.get("ticker") or ticker).upper()
         return True
@@ -639,12 +669,18 @@ def run_worker(job_id: str) -> None:
         ensure_trade_stack_path()
         plog = PipelineLogger(on_entry=on_log)
         pipeline_logger = plog
+        refresh_budget = None
+        if refresh_constituents:
+            # Leave a safety margin so the batch itself yields control before
+            # reconcile_stale_job's wall-clock kill fires.
+            refresh_budget = max(60.0, _REFRESH_WALL_CLOCK_SECONDS - 120.0)
         doc = run_index_research(
             key,
             horizon_days=horizon_days,
             refresh_constituents=refresh_constituents,
             run_forecast_lab=run_forecast_lab,
             pipeline=plog,
+            refresh_time_budget_seconds=refresh_budget,
         )
         with plog.stage_timer("persist", "Save hub artifact"):
             save_index_research(doc)
@@ -661,7 +697,7 @@ def run_worker(job_id: str) -> None:
             logger.debug("playground context cache write skipped (job=%s)", job_id, exc_info=True)
         artifact = _index_doc_to_panel(doc)
         artifact["asset_type"] = "index"
-        complete_job(job_id, ticker=key, artifact=artifact)
+        complete_job(job_id, ticker=key, artifact=artifact, warnings=artifact.get("data_warnings") or [])
     except PipelineCancelledError as exc:
         message = f"Pipeline cancelled: {exc.reason}"
         logger.info("index-prediction run cancelled (job=%s ticker=%s reason=%s)", job_id, key, exc.reason)

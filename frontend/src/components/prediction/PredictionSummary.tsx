@@ -104,6 +104,11 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
     momentumCov.total > 0 &&
     (momentumCov.coverage_pct ?? 0) < 50;
 
+  const constituentsAgeDays = artifact.constituents_as_of
+    ? (Date.now() - new Date(artifact.constituents_as_of).getTime()) / (24 * 60 * 60 * 1000)
+    : null;
+  const constituentsStale = constituentsAgeDays != null && constituentsAgeDays > 3;
+
   return (
     <div className="space-y-2">
       {artifact.spot_error ? (
@@ -120,10 +125,29 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
           then run analysis again.
         </div>
       ) : null}
+      {artifact.warnings?.length ? (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200">
+          <p className="font-semibold">Run completed with warnings:</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4">
+            {artifact.warnings.map((warning, idx) => (
+              <li key={idx}>{warning}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {artifact.as_of ? (
         <p className="text-[10px] text-muted-foreground">
           Pipeline snapshot {new Date(artifact.as_of).toLocaleString()}
           {artifact.spot_source ? ` · spot source: ${artifact.spot_source}` : ""}
+          {artifact.constituents_as_of ? (
+            <span className={constituentsStale ? "text-amber-700 dark:text-amber-400" : undefined}>
+              {" · constituents as of "}
+              {new Date(artifact.constituents_as_of).toLocaleString()}
+              {constituentsStale
+                ? ` (${Math.floor(constituentsAgeDays!)}d old — refresh for current signals)`
+                : ""}
+            </span>
+          ) : null}
         </p>
       ) : null}
       {pred.reconciled_with_scenarios &&

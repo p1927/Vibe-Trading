@@ -348,7 +348,11 @@ async function consumeIndexPredictionSse(
       }
       if (eventType === "done" && data.artifact) {
         gotDone = true;
-        handlers.onDone?.(data.artifact as IndexPredictionArtifact);
+        const artifact = data.artifact as IndexPredictionArtifact;
+        if (Array.isArray(data.warnings) && data.warnings.length) {
+          artifact.warnings = data.warnings as string[];
+        }
+        handlers.onDone?.(artifact);
         return;
       }
       if (eventType === "error") {
@@ -419,7 +423,8 @@ async function pollIndexPredictionJobUntilDone(
         }
         lastLogCount = job.logs.length;
       }
-      if (job?.status === "done" && job.artifact) {
+      if ((job?.status === "done" || job?.status === "done_with_warnings") && job.artifact) {
+        if (job.warnings?.length) job.artifact.warnings = job.warnings;
         handlers.onDone?.(job.artifact);
         return;
       }
@@ -448,7 +453,8 @@ async function recoverIndexPredictionJobFromPoll(
 ): Promise<boolean> {
   const job = await fetchIndexPredictionRunJobSnapshot(jobId);
   if (!job) return false;
-  if (job.status === "done" && job.artifact) {
+  if ((job.status === "done" || job.status === "done_with_warnings") && job.artifact) {
+    if (job.warnings?.length) job.artifact.warnings = job.warnings;
     handlers.onDone?.(job.artifact);
     return true;
   }
@@ -2722,6 +2728,7 @@ export interface IndexPredictionArtifact extends Omit<HubPlanArtifact, "regime" 
   asset_type?: "index";
   spot_source?: string | null;
   spot_error?: string | null;
+  constituents_as_of?: string | null;
   horizon?: { name?: string; days?: number };
   regime?: IndexRegime;
   global_factors?: IndexGlobalFactor[];
@@ -2770,6 +2777,7 @@ export interface IndexPredictionArtifact extends Omit<HubPlanArtifact, "regime" 
   };
   stage_errors?: string[];
   pipeline_log?: PipelineLogEntry[];
+  warnings?: string[];
 }
 
 export interface PipelineLogEntry {
@@ -2841,6 +2849,7 @@ export interface IndexPredictionRunJobSnapshot {
   run_forecast_lab?: boolean;
   created_at?: string | null;
   error?: string | null;
+  warnings?: string[];
   logs?: PipelineLogEntry[];
   artifact?: IndexPredictionArtifact | null;
   current_stage?: string | null;

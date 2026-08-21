@@ -115,8 +115,11 @@ export function usePredictionRunCoordinator(ticker = "NIFTY") {
       const skipLogsBefore = usePredictionRunStore.getState().getLogCount();
 
       if (snapshot && !ACTIVE_JOB_STATUSES.has(snapshot.status)) {
-        if (snapshot.status === "done" && snapshot.artifact) {
+        if ((snapshot.status === "done" || snapshot.status === "done_with_warnings") && snapshot.artifact) {
           const s = usePredictionRunStore.getState();
+          if (snapshot.warnings?.length) {
+            snapshot.artifact.warnings = snapshot.warnings;
+          }
           s.setRunArtifact(snapshot.artifact);
           s.setPipelineLogs((prev) => mergePipelineLogs(prev, snapshot.artifact?.pipeline_log));
           finishRunLocal(tickerKey);

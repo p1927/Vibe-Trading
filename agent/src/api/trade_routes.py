@@ -8,7 +8,7 @@ import os
 import re
 import threading
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -1356,7 +1356,13 @@ def get_hub_status(
         # The feed pool has to cover every page the client can ask for, so the
         # inventory load scales with the requested page rather than the old 50.
         pool_size = max(50, min(current_page * size + size, 400))
-        hub = build_hub_status(entity_id=key, news_limit=pool_size)
+        news_since: str | None = None
+        if window_hours is not None and int(window_hours) > 0:
+            # A window is filtered at the source (parquet/JSONL scan), not by
+            # truncating an already-capped pool, so it isn't limited to the
+            # page-scaled pool_size above.
+            news_since = (datetime.now(timezone.utc) - timedelta(hours=int(window_hours))).isoformat()
+        hub = build_hub_status(entity_id=key, news_limit=pool_size, news_since=news_since)
         gates = hub.get("gates") or {}
         if not gates.get("hub_ready", True):
             blocking = list(gates.get("blocking") or [])
@@ -3095,11 +3101,15 @@ async def _index_prediction_run_event_stream(job_id: str, request: Request):
             last_log_idx += 1
             last_emit = time_mod.monotonic()
 
-        if status == "done":
+        if status in ("done", "done_with_warnings"):
             if artifact is not None:
                 yield _index_prediction_run_sse_frame(
                     "done",
-                    {"ticker": ticker, "artifact": artifact},
+                    {
+                        "ticker": ticker,
+                        "artifact": artifact,
+                        "warnings": job.get("warnings") or [],
+                    },
                 )
             else:
                 yield _index_prediction_run_sse_frame(
@@ -4766,9 +4776,24 @@ def hub_market_data_option_expiries(
     from trade_integrations.dataflows.stock_history_bridge import list_recorded_option_expiries
 
     try:
+        all_expiries = list_recorded_option_expiries(symbol=symbol, exchange=exchange)
+        # `all_expiries` holds every expiry the recorder has ever captured,
+        # sorted ascending — over weeks of recording that includes long-
+        # expired chains, and the dropdown defaults to index 0, so without
+        # this filter it silently opens on the oldest expiry ever recorded
+        # instead of the current one. Mirrors the replay path's `e >=
+        # replay_date` filter (see `get_replay_option_expiries`), scoped to
+        # today since live mode has no replay day to anchor to. Anchored to
+        # IST (not UTC) since expiry dates are NSE trading days — using UTC
+        # would misfire for ~5.5h/day when the UTC and IST calendar dates
+        # differ.
+        from zoneinfo import ZoneInfo
+
+        today = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+        upcoming = sorted(e for e in all_expiries if e >= today)
         return HubMarketDataOptionExpiriesResponse(
             status="ok", underlying=symbol.upper(), exchange=exchange.upper(),
-            expiries=list_recorded_option_expiries(symbol=symbol, exchange=exchange),
+            expiries=upcoming or all_expiries,
         )
     except Exception as exc:
         logger.exception("hub market-data option-expiries failed for %s/%s", symbol, exchange)
