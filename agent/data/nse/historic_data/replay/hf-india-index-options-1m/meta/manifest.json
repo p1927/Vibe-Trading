@@ -3,68 +3,68 @@
     {
       "dataset": "index_tape_banknifty",
       "path": "replay/hf-india-index-options-1m/index/BANKNIFTY.parquet",
-      "rows": 391,
+      "rows": 392,
       "date_range": {
         "start": "2026-08-18 14:03:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "4c7efc2318020bc511cd4bb41f1b181813b545d03c42e932779df75b767c9f01",
-      "updated_at": "2026-08-21T07:21:47.896822+00:00"
+      "sha256": "a6d41588e9fea12375f8cc1e6bee2979a8b38938f126870398c52da692ac93d5",
+      "updated_at": "2026-08-21T07:23:52.574407+00:00"
     },
     {
       "dataset": "index_tape_nifty",
       "path": "replay/hf-india-index-options-1m/index/NIFTY.parquet",
-      "rows": 779,
+      "rows": 780,
       "date_range": {
         "start": "2026-08-17 03:45:00+00:00",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "c2faa725180b2e0f3b39a3e56258f8b11beec7510e4f2e75acb963fcdf78524e",
-      "updated_at": "2026-08-21T07:21:47.871118+00:00"
+      "sha256": "59f1f66800929d8f2a79a28c43d88242edfb56d626371ef81098744c95a63cd0",
+      "updated_at": "2026-08-21T07:23:52.552943+00:00"
     },
     {
       "dataset": "index_tape_sensex",
       "path": "replay/hf-india-index-options-1m/index/SENSEX.parquet",
-      "rows": 393,
+      "rows": 394,
       "date_range": {
         "start": "2026-08-18 14:03:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "48f756e045572b889bd189e4efe961e79c4a030aeb5f254c142cde20f22b3d2a",
-      "updated_at": "2026-08-21T07:21:47.914220+00:00"
+      "sha256": "18157655c090b3ff72188d3c680169c4c7d45fe0ee6b94e3e9c7f48f83a3b3f0",
+      "updated_at": "2026-08-21T07:23:52.594759+00:00"
     },
     {
       "dataset": "option_chain_banknifty_2026-08-25",
       "path": "replay/hf-india-index-options-1m/options/BANKNIFTY/2026-08-25.parquet",
-      "rows": 16585,
+      "rows": 16627,
       "date_range": {
         "start": "2026-08-18 14:03:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "b23115b5407ee859a087fedb7f4a49c6101d46b779b6cfef712e1a165a607ac9",
-      "updated_at": "2026-08-21T07:21:50.649690+00:00"
+      "sha256": "e99fee3da1f576d554b2f1287a28c0e7c1f65c5e1b2985f3f20a0b3b4dd89208",
+      "updated_at": "2026-08-21T07:23:54.175685+00:00"
     },
     {
       "dataset": "option_chain_banknifty_2026-09-29",
       "path": "replay/hf-india-index-options-1m/options/BANKNIFTY/2026-09-29.parquet",
-      "rows": 14256,
+      "rows": 14298,
       "date_range": {
         "start": "2026-08-19 13:57:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "583096f1a97ef767243d227a1111d2fd8940d432a9e680c309b29c783485e270",
-      "updated_at": "2026-08-21T07:21:52.351479+00:00"
+      "sha256": "fd7334ac4cf0cabbc7452a955ff3c06bf18348db7dedc9ecb168e16db75349c3",
+      "updated_at": "2026-08-21T07:23:54.787974+00:00"
     },
     {
       "dataset": "option_chain_banknifty_2026-10-27",
       "path": "replay/hf-india-index-options-1m/options/BANKNIFTY/2026-10-27.parquet",
-      "rows": 14252,
+      "rows": 14294,
       "date_range": {
         "start": "2026-08-19 13:57:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "5ee6ae74f8277d9ebc417b827b5fb8469ebf2b2d2ac3598865dfc02998185ced",
-      "updated_at": "2026-08-21T07:21:54.108987+00:00"
+      "sha256": "05f8c6c22270a918754ba20d737989d1f033a404812fd7c4cfd60c729200c5b1",
+      "updated_at": "2026-08-21T07:23:55.333245+00:00"
     },
     {
       "dataset": "option_chain_nifty_2026-08-18",
@@ -80,79 +80,79 @@
     {
       "dataset": "option_chain_nifty_2026-08-25",
       "path": "replay/hf-india-index-options-1m/options/NIFTY/2026-08-25.parquet",
-      "rows": 14516,
+      "rows": 14558,
       "date_range": {
         "start": "2026-08-19 13:57:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "c0b067dd877bcdcb84c1e5bc5b63ee0db5e2e9649fb928e02209e9e88e98232c",
-      "updated_at": "2026-08-21T07:21:56.679868+00:00"
+      "sha256": "94ce162b2f246fc20e6f59f36422fad12e624f594f66278446e440e61966072f",
+      "updated_at": "2026-08-21T07:23:56.538632+00:00"
     },
     {
       "dataset": "option_chain_nifty_2026-09-01",
       "path": "replay/hf-india-index-options-1m/options/NIFTY/2026-09-01.parquet",
-      "rows": 14644,
+      "rows": 14686,
       "date_range": {
         "start": "2026-08-19 13:47:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "346dd804899f5a17978e7fcad74d41d386883f2252ad24e273f3b8cb080ad365",
-      "updated_at": "2026-08-21T07:21:58.284352+00:00"
+      "sha256": "d409ad346c55d69911317c3095ca30eafdc69a1f2e73d3749b5ee613079c5773",
+      "updated_at": "2026-08-21T07:23:57.037882+00:00"
     },
     {
       "dataset": "option_chain_nifty_2026-09-08",
       "path": "replay/hf-india-index-options-1m/options/NIFTY/2026-09-08.parquet",
-      "rows": 14200,
+      "rows": 14242,
       "date_range": {
         "start": "2026-08-19 13:57:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "400609f9a71c58a47334bd698e8dfcd30397f875823593bae754bbe5925d481e",
-      "updated_at": "2026-08-21T07:21:59.327079+00:00"
+      "sha256": "217fc7eed38a4ab578fc5a16b5dbeb7a3adb5213ef8da2a7ab3cf90a1632b80a",
+      "updated_at": "2026-08-21T07:23:57.434666+00:00"
     },
     {
       "dataset": "option_chain_nifty_2026-09-15",
       "path": "replay/hf-india-index-options-1m/options/NIFTY/2026-09-15.parquet",
-      "rows": 210,
+      "rows": 252,
       "date_range": {
         "start": "2026-08-21 12:47:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "6252e78c2d1d96f7b21d5d28469d063df18a4cd297273f5120065831a06cd0ab",
-      "updated_at": "2026-08-21T07:21:59.540657+00:00"
+      "sha256": "e82019479e4ee19a4e1e8dd0c8f6e52407d63b7bfb27a06683cdc16bb3018d82",
+      "updated_at": "2026-08-21T07:23:57.735669+00:00"
     },
     {
       "dataset": "option_chain_nifty_2026-09-22",
       "path": "replay/hf-india-index-options-1m/options/NIFTY/2026-09-22.parquet",
-      "rows": 210,
+      "rows": 252,
       "date_range": {
         "start": "2026-08-21 12:47:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "a90fae2bc762309b5d4df2241cf72caf64c530aecfcc09894f97b376f3b29f69",
-      "updated_at": "2026-08-21T07:21:59.671356+00:00"
+      "sha256": "0d390b1fb1770e813f6ad96f128d230e0d79a301713c4a64ea5e87bbeb4c0eb3",
+      "updated_at": "2026-08-21T07:23:57.798063+00:00"
     },
     {
       "dataset": "option_chain_nifty_2026-09-29",
       "path": "replay/hf-india-index-options-1m/options/NIFTY/2026-09-29.parquet",
-      "rows": 210,
+      "rows": 252,
       "date_range": {
         "start": "2026-08-21 12:47:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "1626204a9cb952fd5938c4db7a6fdd4e81b04436b1dce92f3fd0ba6f043248f7",
-      "updated_at": "2026-08-21T07:21:59.739433+00:00"
+      "sha256": "58ede0cb42454d1743f0d656e4296275626c2a90dfc4394ffab4303c28516e89",
+      "updated_at": "2026-08-21T07:23:57.855782+00:00"
     },
     {
       "dataset": "option_chain_nifty_2026-10-27",
       "path": "replay/hf-india-index-options-1m/options/NIFTY/2026-10-27.parquet",
-      "rows": 210,
+      "rows": 252,
       "date_range": {
         "start": "2026-08-21 12:47:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "284032f6fa2ca15bccb154d5b03afced183bffa9f2ed91de68db82a53f87d048",
-      "updated_at": "2026-08-21T07:21:59.792167+00:00"
+      "sha256": "9e4d3b71e4cd7d878e14d7ad7418f3b862f386eaffe769849c3e427d677ae04d",
+      "updated_at": "2026-08-21T07:23:57.979178+00:00"
     },
     {
       "dataset": "option_chain_sensex_2026-08-20",
@@ -168,91 +168,91 @@
     {
       "dataset": "option_chain_sensex_2026-08-27",
       "path": "replay/hf-india-index-options-1m/options/SENSEX/2026-08-27.parquet",
-      "rows": 14284,
+      "rows": 14326,
       "date_range": {
         "start": "2026-08-19 13:57:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "68009d7f23e920e04a936a96b6def9161f2106c7eca9e57c2c810c16682ddcad",
-      "updated_at": "2026-08-21T07:22:00.979029+00:00"
+      "sha256": "54c79442d02b449b39ea42cf5141aa04a3aece6a387218e90a13a4c136146d71",
+      "updated_at": "2026-08-21T07:23:58.519025+00:00"
     },
     {
       "dataset": "option_chain_sensex_2026-09-03",
       "path": "replay/hf-india-index-options-1m/options/SENSEX/2026-09-03.parquet",
-      "rows": 14318,
+      "rows": 14360,
       "date_range": {
         "start": "2026-08-19 13:57:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "48b19aa528ab32fba477b61217937f08239aa78ead9079dda2087a63d35c0296",
-      "updated_at": "2026-08-21T07:22:02.010527+00:00"
+      "sha256": "6d59b3fb83f2271a654b21eae6c1c41001d15b401671c5f062d930b38e265ed8",
+      "updated_at": "2026-08-21T07:23:59.528031+00:00"
     },
     {
       "dataset": "option_chain_sensex_2026-09-10",
       "path": "replay/hf-india-index-options-1m/options/SENSEX/2026-09-10.parquet",
-      "rows": 8936,
+      "rows": 8978,
       "date_range": {
         "start": "2026-08-21 09:15:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "4c5579ca087338626e32bf476c9b4c26f7d8d7f1213900fd16a676ad840dbfda",
-      "updated_at": "2026-08-21T07:22:02.870746+00:00"
+      "sha256": "d42f682055b8b60088fd34d463695ee3026db8fe44684db6bcd9747e709df501",
+      "updated_at": "2026-08-21T07:24:00.152261+00:00"
     },
     {
       "dataset": "option_chain_sensex_2026-09-17",
       "path": "replay/hf-india-index-options-1m/options/SENSEX/2026-09-17.parquet",
-      "rows": 214,
+      "rows": 256,
       "date_range": {
         "start": "2026-08-21 12:47:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "b921a030f3881d02ba7debbec25967e8c58b1340b028bad5cc92621d92d41f61",
-      "updated_at": "2026-08-21T07:22:03.051664+00:00"
+      "sha256": "61fefbd6445c4a87377cd716a0961c4b71dc67e8973863b3f2b81310236ab9a2",
+      "updated_at": "2026-08-21T07:24:00.342094+00:00"
     },
     {
       "dataset": "option_chain_sensex_2026-09-24",
       "path": "replay/hf-india-index-options-1m/options/SENSEX/2026-09-24.parquet",
-      "rows": 214,
+      "rows": 256,
       "date_range": {
         "start": "2026-08-21 12:47:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "1ce802c14c0e46828b182a2bf658259d10bd9a0ca13e5195ba69b9026055a88f",
-      "updated_at": "2026-08-21T07:22:03.234888+00:00"
+      "sha256": "c8e0f540178435ec5fb77e1eb116bcdf9ee06d3ce6e352add88d1c46bfe05849",
+      "updated_at": "2026-08-21T07:24:00.434071+00:00"
     },
     {
       "dataset": "option_chain_sensex_2026-10-01",
       "path": "replay/hf-india-index-options-1m/options/SENSEX/2026-10-01.parquet",
-      "rows": 212,
+      "rows": 254,
       "date_range": {
         "start": "2026-08-21 12:47:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "61ea0c7f59278e7ccc4102bc712415102cd2b3efd1fb71045e80020d1064ab18",
-      "updated_at": "2026-08-21T07:22:03.677134+00:00"
+      "sha256": "5fcb3d4368d2c3f4ce945d9772937723dead3ddddf5d20e82f230473587bece1",
+      "updated_at": "2026-08-21T07:24:00.496204+00:00"
     },
     {
       "dataset": "option_chain_sensex_2026-10-08",
       "path": "replay/hf-india-index-options-1m/options/SENSEX/2026-10-08.parquet",
-      "rows": 210,
+      "rows": 252,
       "date_range": {
         "start": "2026-08-21 12:47:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "c9977f74cee264f96f208d00a1f363652e7b47303533ad15df7b8c733fec155f",
-      "updated_at": "2026-08-21T07:22:04.113615+00:00"
+      "sha256": "4f8f43a6927e3e429490b6186d27cd0d9f8f6724dbcbfd1d85e5014b9abbf5b7",
+      "updated_at": "2026-08-21T07:24:00.548858+00:00"
     },
     {
       "dataset": "option_chain_sensex_2026-10-29",
       "path": "replay/hf-india-index-options-1m/options/SENSEX/2026-10-29.parquet",
-      "rows": 212,
+      "rows": 254,
       "date_range": {
         "start": "2026-08-21 12:47:00+05:30",
-        "end": "2026-08-21 12:51:00+05:30"
+        "end": "2026-08-21 12:52:00+05:30"
       },
-      "sha256": "6f4c296382dda7f38a411f3cbe131551512f3449bb328bc344ce4e93c2e129d0",
-      "updated_at": "2026-08-21T07:22:04.284949+00:00"
+      "sha256": "2dc7aa792d3e2c1df1bb5ce644ae18ffa179b1de1239c92e3b64c7adcfbb0ab9",
+      "updated_at": "2026-08-21T07:24:00.603081+00:00"
     }
   ],
-  "updated_at": "2026-08-21T07:22:04.284962+00:00"
+  "updated_at": "2026-08-21T07:24:00.603091+00:00"
 }
