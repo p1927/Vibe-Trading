@@ -691,22 +691,6 @@ class SessionService:
 
                 registry = filter_registry_for_autonomous_agent(registry, session_config)
 
-        def _mcp_collision_warn(msg: str) -> None:
-            """Forward MCP server-name collision warnings to the operator event channel."""
-            self.event_bus.emit(session_id, "mcp.warning", {"attempt_id": attempt_id, "message": msg})
-
-        registry = await loop.run_in_executor(
-            _AGENT_EXECUTOR,
-            lambda: build_registry(
-                persistent_memory=pm,
-                include_shell_tools=include_shell_tools,
-                agent_config=agent_config,
-                session_id=session_id,
-                event_callback=event_callback,
-                warn_callback=_mcp_collision_warn,
-            ),
-        )
-
         agent = AgentLoop(
             registry=registry,
             llm=llm,

@@ -276,6 +276,51 @@ export function Simulator() {
       .catch(() => {});
   }, [loadCalendar]);
 
+  // Reconciles this page's client-held `armedRange` against the server's
+  // actual replay state. Needed both at mount (a replay armed in a prior
+  // session, or by another tab, leaves STOCK_SIMULATOR_MODE=replay set on
+  // the server even after this page reloads) AND periodically thereafter —
+  // the standalone stock_simulator service has no persistence for an armed
+  // replay across its own restarts, so a service restart while this tab is
+  // open silently reverts the server to unarmed/auto-fallback while this
+  // page's cached `armedRange` — and everything derived from it (the REPLAY
+  // badge, the chart's poll mode, the Replay section's Running display) —
+  // would otherwise keep showing the stale pre-restart state indefinitely.
+  // Bidirectional: syncs to armed when the server says replay, and clears
+  // local state when the server says it isn't (rather than only ever
+  // setting, never clearing, as the old mount-only version did). Best-effort
+  // — swallow errors (e.g. SIMULATOR_CONTROL_TOKEN not configured) since
+  // this is a background reconciliation, not a user-initiated action.
+  const reconcileReplayStatus = useCallback(() => {
+    api
+      .getReplayStatus()
+      .then((res) => {
+        const replay = (res.replay ?? null) as Record<string, unknown> | null;
+        if (!replay || replay.mode !== "replay") {
+          setArmedRange((prev) => (prev ? null : prev));
+          return;
+        }
+        const clock = (replay.clock || {}) as Record<string, unknown>;
+        const replayDate = typeof clock.replay_date === "string" ? clock.replay_date : null;
+        if (!replayDate) return;
+        // The status endpoint doesn't cleanly distinguish an explicit
+        // start+end range arm from the "last N trading days" week-mode
+        // default, so reconcile conservatively as a single-day arm at the
+        // current replay date rather than guessing a wider range.
+        setArmedRange((prev) =>
+          prev && prev.start === replayDate && prev.end === replayDate
+            ? prev
+            : { start: replayDate, end: replayDate },
+        );
+        setReplayRange((prev) =>
+          prev && prev.start === replayDate && prev.end === replayDate
+            ? prev
+            : { start: replayDate, end: replayDate },
+        );
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadCalendar();
     api
@@ -292,33 +337,15 @@ export function Simulator() {
       .getAutoRecord()
       .then((res) => setAutoRecordState(res.enabled))
       .catch(() => {});
-    // A replay armed in a prior session (or by another tab) leaves
-    // STOCK_SIMULATOR_MODE=replay set on the OpenAlgo side even after this
-    // page reloads — without this, the page boots with armedRange=null and
-    // drifts out of sync with the server until the user re-arms manually.
-    // Best-effort: swallow errors (e.g. SIMULATOR_CONTROL_TOKEN not
-    // configured) since this is a background reconciliation, not a
-    // user-initiated action.
-    api
-      .getReplayStatus()
-      .then((res) => {
-        const replay = (res.replay ?? null) as Record<string, unknown> | null;
-        if (!replay || replay.mode !== "replay") return;
-        const clock = (replay.clock || {}) as Record<string, unknown>;
-        const replayDate = typeof clock.replay_date === "string" ? clock.replay_date : null;
-        if (!replayDate) return;
-        // The status endpoint doesn't cleanly distinguish an explicit
-        // start+end range arm from the "last N trading days" week-mode
-        // default, so reconcile conservatively as a single-day arm at the
-        // current replay date rather than guessing a wider range.
-        const armed: ReplayRange = { start: replayDate, end: replayDate };
-        setReplayRange(armed);
-        setArmedRange(armed);
-      })
-      .catch(() => {});
+    reconcileReplayStatus();
     return () => abortRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const interval = window.setInterval(reconcileReplayStatus, 20_000);
+    return () => window.clearInterval(interval);
+  }, [reconcileReplayStatus]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });

@@ -14,9 +14,10 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock("@/lib/api", () => ({ api: apiMock }));
 
-function statusPayload(overrides: Record<string, unknown> = {}) {
+function statusPayload(overrides: Record<string, unknown> = {}, { mode = "replay" } = {}) {
   return {
     replay: {
+      mode,
       clock: {
         replay_date: "2024-04-15",
         sim_now: "2024-04-15T10:00:00+05:30",
@@ -167,6 +168,34 @@ describe("SimulatorReplayClock", () => {
     for (const c of gapCells) {
       expect(c.className).not.toContain("bg-emerald-500");
     }
+  });
+
+  it("shows a desync warning (not a stale Running clock) when the server disagrees", async () => {
+    // Client thinks it's armed for 2024-04-15, but the server reports
+    // mode !== "replay" — e.g. the standalone service restarted with no
+    // persisted arm. Must not render Pause/Running as if all were well.
+    apiMock.getReplayStatus.mockResolvedValue(statusPayload({}, { mode: "live" }));
+    render(<SimulatorReplayClock armedRange={{ start: "2024-04-15", end: "2024-04-15" }} onStop={() => {}} />);
+
+    expect(await screen.findByText(/isn't actually replaying/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("simulator-pause")).toBeNull();
+    expect(screen.queryByTestId("simulator-stop")).toBeNull();
+  });
+
+  it("clicking Reset on the desync warning calls onStop", async () => {
+    apiMock.getReplayStatus.mockResolvedValue(statusPayload({}, { mode: "" }));
+    const onStop = vi.fn();
+    render(<SimulatorReplayClock armedRange={{ start: "2024-04-15", end: "2024-04-15" }} onStop={onStop} />);
+
+    const resetBtn = await screen.findByTestId("simulator-reset-desync");
+    fireEvent.click(resetBtn);
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not show the desync warning before the first status poll resolves", () => {
+    apiMock.getReplayStatus.mockReturnValue(new Promise(() => {})); // never resolves
+    render(<SimulatorReplayClock armedRange={{ start: "2024-04-15", end: "2024-04-15" }} onStop={() => {}} />);
+    expect(screen.queryByText(/isn't actually replaying/i)).toBeNull();
   });
 
   it("does not paint any emerald cells when no bars are returned", async () => {

@@ -183,6 +183,18 @@ export function SimulatorReplayClock({
     };
   }, [armedRange]);
 
+  // Server truth vs. this component's own `armedRange` prop (client state,
+  // set once when the user armed a replay and otherwise trusted). A
+  // service restart with no persisted arm — or any other desync between
+  // what the page thinks is armed and what the server is actually serving —
+  // used to be invisible here: this component never looked at `mode` at
+  // all, so it kept rendering "Running" with a plausible date regardless of
+  // whether the server agreed. Only judge desync once a poll has actually
+  // landed (`status !== null`) so the very first render (before the first
+  // response) doesn't flash a false warning.
+  const serverMode = typeof status?.mode === "string" ? (status.mode as string) : null;
+  const desynced = status !== null && serverMode !== "replay";
+
   const clock = (status?.clock || {}) as Record<string, unknown>;
   const simNow = parseSimNow(clock.sim_now);
   const speed = typeof clock.speed === "number" ? clock.speed : 1;
@@ -319,6 +331,34 @@ export function SimulatorReplayClock({
       <div className="rounded-lg border bg-background/60 p-4 text-[11px] text-muted-foreground">
         Select a day (or a start + end range) on the calendar and press{" "}
         <span className="font-medium text-foreground">Arm replay</span> to start the simulator clock.
+      </div>
+    );
+  }
+
+  // The server disagrees with what this page thinks is armed — most often
+  // because the standalone stock_simulator service restarted (it doesn't
+  // currently persist an armed replay across its own restarts) while this
+  // tab stayed open. Say so explicitly rather than silently showing a
+  // "Running" clock that isn't actually moving.
+  if (desynced) {
+    return (
+      <div className="space-y-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 text-[11px]">
+        <p className="flex items-center gap-1.5 font-medium text-amber-700 dark:text-amber-300">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+          Simulator isn't actually replaying
+        </p>
+        <p className="text-muted-foreground">
+          This page still shows {armedRange.start} as armed, but the simulator server reports it
+          isn't currently replaying — most likely it restarted. Re-arm below to resume.
+        </p>
+        <button
+          type="button"
+          onClick={onStop}
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg border bg-background px-3 text-xs hover:bg-muted/50"
+          data-testid="simulator-reset-desync"
+        >
+          Reset
+        </button>
       </div>
     );
   }

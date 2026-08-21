@@ -174,7 +174,11 @@ export function SimulatorOptionChainPanel({
       }
       if (chainRes.status === "ok") {
         setError(null);
-        setLastUpdated(new Date());
+        // `spot.as_of` is the simulator's own sim-clock timestamp while
+        // replaying (SimClock, not wall time) — fall back to wall time only
+        // when it's missing or unparseable, e.g. live (non-replay) mode.
+        const asOf = spotRes.status === "ok" && spotRes.spot?.as_of ? new Date(spotRes.spot.as_of) : null;
+        setLastUpdated(asOf && !Number.isNaN(asOf.getTime()) ? asOf : new Date());
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "fetch failed");

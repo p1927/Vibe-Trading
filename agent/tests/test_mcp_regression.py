@@ -115,6 +115,36 @@ def test_mcp_server_imports_without_raising() -> None:
     assert mod is not None
 
 
+def test_mcp_server_has_no_duplicate_tool_function_names() -> None:
+    """No @mcp.tool-decorated function name may be defined twice in mcp_server.py.
+
+    FastMCP's default on_duplicate="warn" behavior silently keeps the last
+    registration instead of raising, so a duplicate definition (e.g. from a
+    bad merge) can silently shadow the intended implementation without any
+    startup error. Catch that class of bug here via source inspection.
+    """
+    import ast
+
+    mcp_server_path = Path(__file__).parent.parent / "mcp_server.py"
+    tree = ast.parse(mcp_server_path.read_text(), filename=str(mcp_server_path))
+
+    def is_mcp_tool_decorator(node: ast.expr) -> bool:
+        target = node.func if isinstance(node, ast.Call) else node
+        if isinstance(target, ast.Attribute):
+            return target.attr == "tool"
+        return False
+
+    names: list[str] = []
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if any(is_mcp_tool_decorator(dec) for dec in node.decorator_list):
+            names.append(node.name)
+
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    assert not duplicates, f"Duplicate @mcp.tool function name(s) in mcp_server.py: {duplicates}"
+
+
 def test_mcp_server_exposes_expected_tool_count() -> None:
     """The MCP server FastMCP instance must expose the expected number of tools.
 

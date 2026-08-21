@@ -823,11 +823,22 @@ def test_defer_startup_backlog_defers_autonomous_watch_when_agent_not_running(
         return _AGENTS.get(agent_id)
 
     stub_module.get_agent = _get_agent  # type: ignore[attr-defined]
-    sys.modules.setdefault("trade_integrations", type(sys)("trade_integrations"))
-    sys.modules["trade_integrations.autonomous_agents"] = type(sys)(
-        "trade_integrations.autonomous_agents"
+    # Use monkeypatch.setitem (not a bare sys.modules[...] = ...) so these fake
+    # stub modules are removed again at test teardown. A prior version of this
+    # test left them installed permanently, which broke every later test in
+    # the same process that imports anything else under
+    # trade_integrations.autonomous_agents (e.g. intent_capabilities) — the
+    # stub has no __path__, so those imports raised, and callers with broad
+    # except-and-degrade handling (like classify_prefetch_widget_intent)
+    # silently fell back to a wrong default instead of surfacing the error.
+    if "trade_integrations" not in sys.modules:
+        monkeypatch.setitem(sys.modules, "trade_integrations", type(sys)("trade_integrations"))
+    monkeypatch.setitem(
+        sys.modules,
+        "trade_integrations.autonomous_agents",
+        type(sys)("trade_integrations.autonomous_agents"),
     )
-    sys.modules["trade_integrations.autonomous_agents.store"] = stub_module
+    monkeypatch.setitem(sys.modules, "trade_integrations.autonomous_agents.store", stub_module)
 
     store = _store(tmp_path)
     watch = _job("aa_stopped-watch", schedule="420000", next_run_at=10)

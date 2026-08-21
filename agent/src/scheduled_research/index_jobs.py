@@ -179,6 +179,17 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
 
     check_pipeline_cancel()
     cfg = config or {}
+    ticker = str(cfg.get("ticker") or "NIFTY").strip().upper()
+    try:
+        from src.trade.index_prediction_run_jobs import get_active_job
+
+        active = get_active_job(ticker)
+        if active and str(active.get("status") or "") in {"queued", "running"}:
+            logger.info("index factor snapshot skipped: manual run active for %s", ticker)
+            return {"skipped": True, "reason": "manual_run_active", "ticker": ticker}
+    except Exception as exc:
+        logger.debug("manual run active check skipped: %s", exc)
+
     snapshot_date = cfg.get("snapshot_date")
     if not snapshot_date:
         from trade_integrations.dataflows.company_research.market import india_trading_date_iso
