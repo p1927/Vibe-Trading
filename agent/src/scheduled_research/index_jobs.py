@@ -527,13 +527,11 @@ def run_global_macro_eod_refresh_job(config: dict[str, Any] | None = None) -> di
     """
     _ensure_trade_integrations_on_path()
     from trade_integrations.stock_history.api import StockHistory
-    from trade_integrations.stock_history.store import global_macro_store
-
-    cfg = config or {}
-    lookback_days = int(cfg.get("lookback_days") or 90)
-    series_list = cfg.get("series") or sorted(global_macro_store.EOD_REFRESH_SYMBOLS)
 
     sh = StockHistory()
+    cfg = config or {}
+    lookback_days = int(cfg.get("lookback_days") or 90)
+    series_list = cfg.get("series") or sh.list_eod_refreshable_series()
     results: dict[str, Any] = {}
     had_errors = False
     for series in series_list:
