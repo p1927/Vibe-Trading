@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import threading
 import time
 import uuid
@@ -13,6 +12,8 @@ from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import Response
+
+from src.config.accessor import get_env_config
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -34,7 +35,7 @@ _named_tasks: dict[str, tuple[str, float]] = {}
 
 
 def _dev_verbose() -> bool:
-    return os.getenv("STACK_DEV", "").strip().lower() in {"1", "true", "yes", "on"}
+    return get_env_config().trade.stack_dev.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def begin_request(request: Request) -> str:

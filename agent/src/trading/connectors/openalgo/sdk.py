@@ -10,7 +10,6 @@ uses the Alpaca broker plugin inside OpenAlgo.
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
@@ -19,6 +18,7 @@ from typing import Any, Mapping
 
 import requests
 
+from src.config.accessor import get_env_config
 from src.config.paths import get_runtime_root
 
 CONFIG_FILENAME = "openalgo.json"
@@ -55,8 +55,10 @@ class OpenAlgoConfig:
         profile = str(payload.get("profile") or "paper").strip().lower()
         if profile not in PROFILE_ENVIRONMENTS:
             raise OpenAlgoConfigError("profile must be 'paper', 'live-readonly' or 'live'")
-        host = str(payload.get("host") or os.getenv("OPENALGO_HOST") or "http://127.0.0.1:5001").rstrip("/")
-        api_key = str(payload.get("api_key") or os.getenv("OPENALGO_API_KEY") or "").strip()
+        host = str(
+            payload.get("host") or get_env_config().trade.openalgo_host or "http://127.0.0.1:5001"
+        ).rstrip("/")
+        api_key = str(payload.get("api_key") or get_env_config().trade.openalgo_api_key or "").strip()
         return cls(
             host=host,
             api_key=api_key,

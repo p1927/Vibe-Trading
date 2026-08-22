@@ -8,6 +8,7 @@ import os
 import time
 from typing import Any
 
+from src.config.accessor import get_env_config, get_env_or
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
@@ -689,17 +690,12 @@ async def dispatch_index_job(job: ScheduledResearchJob) -> None:
 
 def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     """Register default NIFTY index jobs when missing. Returns count created."""
-    snapshot_cron = os.getenv(INDEX_RESEARCH_SNAPSHOT_CRON_ENV, DEFAULT_SNAPSHOT_CRON).strip()
-    full_cron = os.getenv(INDEX_RESEARCH_FULL_CRON_ENV, DEFAULT_FULL_CRON).strip()
-    coverage_sweep_cron = os.getenv(
-        STOCK_HISTORY_COVERAGE_SWEEP_CRON_ENV, DEFAULT_STOCK_HISTORY_COVERAGE_SWEEP_CRON
-    ).strip()
-    news_quality_eval_cron = os.getenv(
-        NEWS_QUALITY_EVAL_CRON_ENV, DEFAULT_NEWS_QUALITY_EVAL_CRON
-    ).strip()
-    global_macro_eod_refresh_cron = os.getenv(
-        GLOBAL_MACRO_EOD_REFRESH_CRON_ENV, DEFAULT_GLOBAL_MACRO_EOD_REFRESH_CRON
-    ).strip()
+    _cfg = get_env_config().trade
+    snapshot_cron = _cfg.index_research_snapshot_cron.strip()
+    full_cron = _cfg.index_research_full_cron.strip()
+    coverage_sweep_cron = _cfg.stock_history_coverage_sweep_cron.strip()
+    news_quality_eval_cron = _cfg.news_quality_eval_cron.strip()
+    global_macro_eod_refresh_cron = _cfg.global_macro_eod_refresh_cron.strip()
     validate_schedule(snapshot_cron)
     validate_schedule(full_cron)
     validate_schedule(coverage_sweep_cron)
@@ -774,7 +770,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         ScheduledResearchJob(
             id="nifty-hub-news-ingest-full",
             prompt="Full hub news ingest (all sources, daily)",
-            schedule=os.getenv("HUB_NEWS_FULL_INGEST_CRON", "0 7 * * *").strip(),
+            schedule=get_env_config().trade.hub_news_full_ingest_cron.strip(),
             next_run_at=now_ms,
             status=JobStatus.PENDING,
             created_at=now_ms,
@@ -782,16 +778,17 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "job_type": JOB_TYPE_HUB_NEWS_INGEST,
                 "mode": "full",
                 "ticker": "NIFTY",
-                "sources": os.getenv("HUB_NEWS_FULL_SOURCES", "all"),
+                "sources": get_env_config().trade.hub_news_full_sources,
                 "lookback_days": 3,
             },
         ),
         ScheduledResearchJob(
             id="nifty-hub-news-ingest-light",
             prompt="Light hub news ingest (all env RSS feeds)",
-            schedule=os.getenv(
+            schedule=get_env_or(
                 "HUB_NEWS_LIGHT_INGEST_CRON",
-                os.getenv("HUB_NEWS_INGEST_CRON", "0 */4 * * *"),
+                "HUB_NEWS_INGEST_CRON",
+                "0 */4 * * *",
             ).strip(),
             next_run_at=now_ms,
             status=JobStatus.PENDING,
@@ -800,14 +797,14 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "job_type": JOB_TYPE_HUB_NEWS_INGEST,
                 "mode": "light",
                 "ticker": "NIFTY",
-                "sources": os.getenv("HUB_NEWS_LIGHT_SOURCES", "rss"),
+                "sources": get_env_config().trade.hub_news_light_sources,
                 "lookback_days": 1,
             },
         ),
         ScheduledResearchJob(
             id="nifty-hub-news-entity",
             prompt="Drain staging news refs into distilled hub events",
-            schedule=os.getenv("HUB_NEWS_ENTITY_CRON", "35 18 * * *").strip(),
+            schedule=get_env_config().trade.hub_news_entity_cron.strip(),
             next_run_at=now_ms,
             status=JobStatus.PENDING,
             created_at=now_ms,
@@ -821,7 +818,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         ScheduledResearchJob(
             id="nifty-hub-news-entity-maintenance",
             prompt="Heavy hub news maintenance (repair, backfill, compact)",
-            schedule=os.getenv("HUB_NEWS_ENTITY_MAINTENANCE_CRON", "0 4 * * *").strip(),
+            schedule=get_env_config().trade.hub_news_entity_maintenance_cron.strip(),
             next_run_at=now_ms,
             status=JobStatus.PENDING,
             created_at=now_ms,
@@ -898,7 +895,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         ]
 
     if is_index_monitor_scheduler_enabled():
-        poll_cron = os.getenv(INDEX_MONITOR_POLL_CRON_ENV, DEFAULT_INDEX_POLL_CRON).strip()
+        poll_cron = get_env_config().trade.index_monitor_poll_cron.strip()
         validate_schedule(poll_cron)
         defaults.append(
             ScheduledResearchJob(

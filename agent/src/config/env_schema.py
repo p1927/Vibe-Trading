@@ -35,6 +35,7 @@ __all__ = [
     "PathConfig",
     "OcrConfig",
     "MemoryConfig",
+    "TradeConfig",
 ]
 
 
@@ -563,6 +564,196 @@ class MemoryConfig(_EnvBase):
 
 
 # ---------------------------------------------------------------------------
+# Trade stack (fork-only): scheduled-research jobs, guards, OpenAlgo connector
+# ---------------------------------------------------------------------------
+
+
+class TradeConfig(_EnvBase):
+    """Fork-only trade-stack integration settings.
+
+    Sources: ``src/api/runtime_activity.py``, ``src/api/scheduled_startup.py``,
+    ``src/api/trade_routes.py``, ``src/scheduled_research/*_jobs.py``,
+    ``src/scheduled_research/staleness.py``, ``src/session/service.py``,
+    ``src/trade/*_guard.py``, ``src/trade/hub_bridge.py``,
+    ``src/trade/index_prediction_run_jobs.py``, ``src/trade/recording_jobs.py``,
+    ``src/trading/connectors/openalgo/sdk.py``.
+
+    Every field here is deliberately kept as ``str`` (rather than a coerced
+    ``bool``/``int``/``float``) so that each call site's own truthy-set /
+    numeric-parsing logic — which varies from site to site and in several
+    cases differs from the canonical ``{"1","true","yes","on"}`` set — keeps
+    running unmodified against the raw string. This is a mechanical read-path
+    migration, not a behavior change.
+    """
+
+    # --- api/runtime_activity.py, api/scheduled_startup.py -----------------
+    stack_dev: str = Field(alias="STACK_DEV", default="")
+
+    # --- api/trade_routes.py, trading/connectors/openalgo/sdk.py -----------
+    openalgo_host: str = Field(alias="OPENALGO_HOST", default="http://127.0.0.1:5001")
+    openalgo_api_key: str = Field(alias="OPENALGO_API_KEY", default="")
+    openalgo_paper_mode: str = Field(alias="OPENALGO_PAPER_MODE", default="true")
+
+    # --- scheduled_research/autonomous_agent_jobs.py ------------------------
+    autonomous_agents_enable_scheduler: str = Field(
+        alias="AUTONOMOUS_AGENTS_ENABLE_SCHEDULER", default="1",
+    )
+    autonomous_research_on_schedule: str = Field(
+        alias="AUTONOMOUS_RESEARCH_ON_SCHEDULE", default="",
+    )
+
+    # --- scheduled_research/capture_jobs.py ---------------------------------
+    hub_capture_enable_scheduler: str = Field(alias="HUB_CAPTURE_ENABLE_SCHEDULER", default="")
+    hub_capture_intraday_cron: str = Field(
+        alias="HUB_CAPTURE_INTRADAY_CRON", default="0 10,13,15 * * 1-5",
+    )
+    hub_capture_factor_snapshot_cron: str = Field(
+        alias="HUB_CAPTURE_FACTOR_SNAPSHOT_CRON", default="*/30 9-16 * * 1-5",
+    )
+
+    # --- scheduled_research/hub_calibration_jobs.py -------------------------
+    hub_calibration_enable_scheduler: str = Field(
+        alias="HUB_CALIBRATION_ENABLE_SCHEDULER", default="",
+    )
+    hub_calibration_unified: str = Field(alias="HUB_CALIBRATION_UNIFIED", default="true")
+    hub_morning_calibration_cron: str = Field(
+        alias="HUB_MORNING_CALIBRATION_CRON", default="0 6 * * *",
+    )
+    hub_evening_maintenance_cron: str = Field(
+        alias="HUB_EVENING_MAINTENANCE_CRON", default="35 18 * * *",
+    )
+
+    # --- scheduled_research/index_jobs.py -----------------------------------
+    index_research_snapshot_cron: str = Field(
+        alias="INDEX_RESEARCH_SNAPSHOT_CRON", default="0 18 * * *",
+    )
+    index_research_full_cron: str = Field(
+        alias="INDEX_RESEARCH_FULL_CRON", default="0 8 * * 1",
+    )
+    stock_history_coverage_sweep_cron: str = Field(
+        alias="STOCK_HISTORY_COVERAGE_SWEEP_CRON", default="0 19 * * *",
+    )
+    news_quality_eval_cron: str = Field(alias="NEWS_QUALITY_EVAL_CRON", default="0 2 * * *")
+    global_macro_eod_refresh_cron: str = Field(
+        alias="GLOBAL_MACRO_EOD_REFRESH_CRON", default="15 19 * * *",
+    )
+    hub_news_full_ingest_cron: str = Field(
+        alias="HUB_NEWS_FULL_INGEST_CRON", default="0 7 * * *",
+    )
+    hub_news_full_sources: str = Field(alias="HUB_NEWS_FULL_SOURCES", default="all")
+    hub_news_light_sources: str = Field(alias="HUB_NEWS_LIGHT_SOURCES", default="rss")
+    hub_news_entity_cron: str = Field(alias="HUB_NEWS_ENTITY_CRON", default="35 18 * * *")
+    hub_news_entity_maintenance_cron: str = Field(
+        alias="HUB_NEWS_ENTITY_MAINTENANCE_CRON", default="0 4 * * *",
+    )
+    index_monitor_poll_cron: str = Field(alias="INDEX_MONITOR_POLL_CRON", default="*/5 * * * *")
+
+    # --- scheduled_research/options_jobs.py ---------------------------------
+    options_monitor_enable_scheduler: str = Field(
+        alias="OPTIONS_MONITOR_ENABLE_SCHEDULER", default="",
+    )
+    options_auto_dispatch_thesis_break: str = Field(
+        alias="OPTIONS_AUTO_DISPATCH_THESIS_BREAK", default="1",
+    )
+    options_monitor_poll_cron: str = Field(
+        alias="OPTIONS_MONITOR_POLL_CRON", default="*/5 * * * *",
+    )
+
+    # --- scheduled_research/staleness.py ------------------------------------
+    scheduled_research_startup_grace_ms: str = Field(
+        alias="SCHEDULED_RESEARCH_STARTUP_GRACE_MS", default="30000",
+    )
+    scheduled_research_fresh_defer_ms: str = Field(
+        alias="SCHEDULED_RESEARCH_FRESH_DEFER_MS", default="1800000",
+    )
+    scheduled_research_stale_running_ms: str = Field(
+        alias="SCHEDULED_RESEARCH_STALE_RUNNING_MS", default="2700000",
+    )
+    index_plan_refresh_stale_ms: str = Field(
+        alias="INDEX_PLAN_REFRESH_STALE_MS", default="600000",
+    )
+    scheduled_research_dispatch_timeout_ms: str = Field(
+        alias="SCHEDULED_RESEARCH_DISPATCH_TIMEOUT_MS", default="2700000",
+    )
+    scheduled_research_watchdog_interval_ms: str = Field(
+        alias="SCHEDULED_RESEARCH_WATCHDOG_INTERVAL_MS", default="60000",
+    )
+    scheduled_research_failure_threshold: str = Field(
+        alias="SCHEDULED_RESEARCH_FAILURE_THRESHOLD", default="3",
+    )
+
+    # --- scheduled_research/trade_data_jobs.py ------------------------------
+    trade_data_enable_scheduler: str = Field(alias="TRADE_DATA_ENABLE_SCHEDULER", default="")
+    trade_fills_export_cron: str = Field(
+        alias="TRADE_FILLS_EXPORT_CRON", default="0 19 * * *",
+    )
+    research_history_archive_cron: str = Field(
+        alias="RESEARCH_HISTORY_ARCHIVE_CRON", default="35 18 * * *",
+    )
+    nse_macro_refresh_cron: str = Field(alias="NSE_MACRO_REFRESH_CRON", default="15 6 * * *")
+    nse_repo_consistency_cron: str = Field(
+        alias="NSE_REPO_CONSISTENCY_CRON", default="30 5 * * *",
+    )
+
+    # --- session/service.py --------------------------------------------------
+    vibe_attempt_prefetch_timeout_s: str = Field(
+        alias="VIBE_ATTEMPT_PREFETCH_TIMEOUT_S", default="120",
+    )
+
+    # --- trade/autonomous_decision_guard.py, bootstrap_finalize_guard.py,
+    #     orchestrator_propose_guard.py, widget_guard.py --------------------
+    autonomous_decision_guard_enabled: str = Field(
+        alias="AUTONOMOUS_DECISION_GUARD_ENABLED", default="true",
+    )
+    bootstrap_finalize_guard_enabled: str = Field(
+        alias="BOOTSTRAP_FINALIZE_GUARD_ENABLED", default="true",
+    )
+    orchestrator_propose_guard_enabled: str = Field(
+        alias="ORCHESTRATOR_PROPOSE_GUARD_ENABLED", default="true",
+    )
+    options_widget_guard_enabled: str = Field(
+        alias="OPTIONS_WIDGET_GUARD_ENABLED", default="true",
+    )
+
+    # --- trade/hub_bridge.py --------------------------------------------------
+    trade_stack_root: str = Field(alias="TRADE_STACK_ROOT", default="")
+    trade_integrations_skip_apply: str | None = Field(
+        alias="TRADE_INTEGRATIONS_SKIP_APPLY", default=None,
+    )
+    options_auto_widget_on_prefetch: str = Field(
+        alias="OPTIONS_AUTO_WIDGET_ON_PREFETCH", default="false",
+    )
+    index_auto_widget_on_prefetch: str = Field(
+        alias="INDEX_AUTO_WIDGET_ON_PREFETCH", default="false",
+    )
+
+    # --- trade/index_prediction_run_jobs.py -----------------------------------
+    index_prediction_stale_log_seconds: str = Field(
+        alias="INDEX_PREDICTION_STALE_LOG_SECONDS", default="1800",
+    )
+    index_prediction_run_wall_clock_seconds: str = Field(
+        alias="INDEX_PREDICTION_RUN_WALL_CLOCK_SECONDS", default="2700",
+    )
+    index_prediction_refresh_wall_clock_seconds: str = Field(
+        alias="INDEX_PREDICTION_REFRESH_WALL_CLOCK_SECONDS", default="5400",
+    )
+    index_prediction_queued_no_pid_seconds: str = Field(
+        alias="INDEX_PREDICTION_QUEUED_NO_PID_SECONDS", default="60",
+    )
+    index_prediction_watchdog_interval_seconds: str = Field(
+        alias="INDEX_PREDICTION_WATCHDOG_INTERVAL_SECONDS", default="60",
+    )
+
+    # --- trade/recording_jobs.py ----------------------------------------------
+    recording_run_wall_clock_seconds: str = Field(
+        alias="RECORDING_RUN_WALL_CLOCK_SECONDS", default=str(8 * 60 * 60),
+    )
+    recording_queued_no_pid_seconds: str = Field(
+        alias="RECORDING_QUEUED_NO_PID_SECONDS", default="60",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Top-level composition
 # ---------------------------------------------------------------------------
 
@@ -586,6 +777,7 @@ class EnvConfig(_EnvBase):
     paths: PathConfig = Field(default_factory=PathConfig)
     ocr: OcrConfig = Field(default_factory=OcrConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    trade: TradeConfig = Field(default_factory=TradeConfig)
 
     @model_validator(mode="after")
     def _resolve_api_key_alias(self) -> "EnvConfig":

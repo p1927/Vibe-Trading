@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import sys
 import threading
 import time
@@ -11,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.config.accessor import get_env_config
 from src.trade.symbol_detect import (
     detect_finalize_intent,
 )
@@ -30,7 +30,7 @@ def trade_repo_root() -> Path | None:
     for parent in here.parents:
         if (parent / "integrations" / "trade_integrations").is_dir():
             return parent
-    env = os.getenv("TRADE_STACK_ROOT", "").strip()
+    env = get_env_config().trade.trade_stack_root.strip()
     if env:
         path = Path(env).expanduser().resolve()
         if (path / "integrations" / "trade_integrations").is_dir():
@@ -49,18 +49,18 @@ def ensure_trade_stack_path() -> Path:
     for path in (integrations, tradingagents):
         if path.is_dir() and str(path) not in sys.path:
             sys.path.insert(0, str(path))
-    if os.getenv("TRADE_INTEGRATIONS_SKIP_APPLY") != "1":
+    if get_env_config().trade.trade_integrations_skip_apply != "1":
         import trade_integrations  # noqa: F401
     return root
 
 
 def _options_auto_widget_enabled() -> bool:
-    val = os.getenv("OPTIONS_AUTO_WIDGET_ON_PREFETCH", "false").strip().lower()
+    val = get_env_config().trade.options_auto_widget_on_prefetch.strip().lower()
     return val not in ("0", "false", "no", "off")
 
 
 def _index_auto_widget_enabled() -> bool:
-    val = os.getenv("INDEX_AUTO_WIDGET_ON_PREFETCH", "false").strip().lower()
+    val = get_env_config().trade.index_auto_widget_on_prefetch.strip().lower()
     return val not in ("0", "false", "no", "off")
 
 

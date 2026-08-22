@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from src.config.accessor import get_env_config
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
 from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -39,7 +39,7 @@ def is_options_scheduler_enabled(value: str | None = None) -> bool:
     if value is not None:
         return value.strip().lower() in _TRUE_VALUES
     return (
-        os.getenv(OPTIONS_MONITOR_ENABLE_SCHEDULER_ENV, "").strip().lower()
+        get_env_config().trade.options_monitor_enable_scheduler.strip().lower()
         in _TRUE_VALUES
     )
 
@@ -56,7 +56,7 @@ def is_options_thesis_break_auto_dispatch_enabled(
     """
     if value is not None:
         return value.strip().lower() in _TRUE_VALUES
-    raw = os.getenv(OPTIONS_AUTO_DISPATCH_THESIS_BREAK_ENV, "1").strip().lower()
+    raw = get_env_config().trade.options_auto_dispatch_thesis_break.strip().lower()
     return raw in _TRUE_VALUES
 
 
@@ -381,7 +381,7 @@ def register_default_options_jobs(store) -> int:
     _ensure_trade_integrations_on_path()
     from trade_integrations.monitor.config import get_monitor_config
 
-    poll_cron = os.getenv("OPTIONS_MONITOR_POLL_CRON", DEFAULT_OPTIONS_POLL_CRON).strip()
+    poll_cron = get_env_config().trade.options_monitor_poll_cron.strip()
     validate_schedule(poll_cron)
     watchlist = list(get_monitor_config().watchlist)
 

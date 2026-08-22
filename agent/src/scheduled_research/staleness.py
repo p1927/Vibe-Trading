@@ -13,9 +13,9 @@ and external importers (``lifecycle.py``, ``index_prediction_jobs.py``,
 from __future__ import annotations
 
 import logging
-import os
 import time
 
+from src.config.accessor import get_env_config
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob
 from src.scheduled_research.store import ScheduledResearchJobStore
 
@@ -77,7 +77,7 @@ def _autonomous_watch_target_running(job: ScheduledResearchJob) -> bool:
 
 def _startup_grace_ms() -> int:
     """Delay before the first executor tick so the API can serve health checks."""
-    raw = os.getenv(STARTUP_GRACE_ENV, str(DEFAULT_STARTUP_GRACE_MS)).strip()
+    raw = get_env_config().trade.scheduled_research_startup_grace_ms.strip()
     try:
         return max(0, int(raw))
     except ValueError:
@@ -91,10 +91,7 @@ def _fresh_registration_defer_ms() -> int:
     every default scheduled job back-to-back on every code save. Set to 0 to
     restore the pre-fix behaviour (every reload fires everything).
     """
-    raw = os.getenv(
-        FRESH_REGISTRATION_DEFER_ENV,
-        str(DEFAULT_FRESH_REGISTRATION_DEFER_MS),
-    ).strip()
+    raw = get_env_config().trade.scheduled_research_fresh_defer_ms.strip()
     try:
         return max(0, int(raw))
     except ValueError:
@@ -158,7 +155,7 @@ def defer_fresh_registrations(
 
 
 def _stale_running_ms() -> int:
-    raw = os.getenv(STALE_RUNNING_ENV, str(DEFAULT_STALE_RUNNING_MS)).strip()
+    raw = get_env_config().trade.scheduled_research_stale_running_ms.strip()
     try:
         return max(60_000, int(raw))
     except ValueError:
@@ -166,7 +163,7 @@ def _stale_running_ms() -> int:
 
 
 def _index_plan_refresh_stale_ms() -> int:
-    raw = os.getenv(INDEX_PLAN_REFRESH_STALE_ENV, str(DEFAULT_INDEX_PLAN_REFRESH_STALE_MS)).strip()
+    raw = get_env_config().trade.index_plan_refresh_stale_ms.strip()
     try:
         return max(60_000, int(raw))
     except ValueError:
@@ -227,7 +224,7 @@ def dispatch_timeout_ms_for(job: ScheduledResearchJob) -> int:
         return _JOB_DISPATCH_TIMEOUT_MS[job_type]
     if job_type.startswith("index_"):
         return _INDEX_JOB_DISPATCH_TIMEOUT_MS
-    raw_env = os.getenv(DISPATCH_TIMEOUT_ENV, str(DEFAULT_DISPATCH_TIMEOUT_MS)).strip()
+    raw_env = get_env_config().trade.scheduled_research_dispatch_timeout_ms.strip()
     try:
         return max(60_000, int(raw_env))
     except ValueError:
@@ -246,7 +243,7 @@ def _request_pipeline_cancel_on_dispatch_timeout(job_id: str, job_type: str) -> 
 
 
 def _watchdog_interval_ms() -> int:
-    raw = os.getenv(WATCHDOG_INTERVAL_ENV, str(DEFAULT_WATCHDOG_INTERVAL_MS)).strip()
+    raw = get_env_config().trade.scheduled_research_watchdog_interval_ms.strip()
     try:
         return max(10_000, int(raw))
     except ValueError:
@@ -254,7 +251,7 @@ def _watchdog_interval_ms() -> int:
 
 
 def _default_failure_threshold() -> int:
-    raw = os.getenv(FAILURE_THRESHOLD_ENV, str(DEFAULT_FAILURE_THRESHOLD)).strip()
+    raw = get_env_config().trade.scheduled_research_failure_threshold.strip()
     try:
         return max(1, int(raw))
     except ValueError:

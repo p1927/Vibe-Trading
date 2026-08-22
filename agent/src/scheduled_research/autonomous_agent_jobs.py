@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from typing import Any
 
+from src.config.accessor import get_env_config
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
 from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -36,7 +36,7 @@ _STRATEGY_REVIEW_MS_DEFAULT = 1_800_000
 
 
 def is_autonomous_scheduler_enabled() -> bool:
-    raw = os.getenv("AUTONOMOUS_AGENTS_ENABLE_SCHEDULER", "1").strip().lower()
+    raw = get_env_config().trade.autonomous_agents_enable_scheduler.strip().lower()
     return raw not in {"0", "false", "no", "off"}
 
 
@@ -328,9 +328,7 @@ async def dispatch_autonomous_job(job: ScheduledResearchJob) -> None:
         await asyncio.to_thread(run_strategy_review_tick, agent_id)
         return
     if job_type == JOB_TYPE_RESEARCH:
-        import os
-
-        if os.getenv("AUTONOMOUS_RESEARCH_ON_SCHEDULE", "").strip().lower() not in {
+        if get_env_config().trade.autonomous_research_on_schedule.strip().lower() not in {
             "1",
             "true",
             "yes",

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 from typing import Any
+
+from src.config.accessor import get_env_config
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ _AUTONOMOUS_TURN_RE = re.compile(
 
 
 def _guard_enabled() -> bool:
-    raw = os.getenv("AUTONOMOUS_DECISION_GUARD_ENABLED", "true").strip().lower()
+    raw = get_env_config().trade.autonomous_decision_guard_enabled.strip().lower()
     return raw not in {"0", "false", "no", "off"}
 
 

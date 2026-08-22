@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from typing import Any
 
+from src.config.accessor import get_env_config
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
@@ -42,7 +42,7 @@ _TRUE_VALUES = {"1", "true", "yes", "on"}
 def is_trade_data_scheduler_enabled(value: str | None = None) -> bool:
     if value is not None:
         return value.strip().lower() in _TRUE_VALUES
-    explicit = os.getenv(TRADE_DATA_ENABLE_SCHEDULER_ENV, "").strip().lower()
+    explicit = get_env_config().trade.trade_data_enable_scheduler.strip().lower()
     if explicit in _TRUE_VALUES:
         return True
     if explicit in {"0", "false", "no", "off"}:
@@ -147,7 +147,7 @@ def register_default_trade_data_jobs(store: ScheduledResearchJobStore) -> int:
     created = 0
     now_ms = int(time.time() * 1000)
 
-    fills_cron = os.getenv(TRADE_FILLS_EXPORT_CRON_ENV, DEFAULT_FILLS_EXPORT_CRON).strip()
+    fills_cron = get_env_config().trade.trade_fills_export_cron.strip()
     validate_schedule(fills_cron)
     fills_job_id = "hub-trade-fills-export"
     if store.get(fills_job_id) is None:
@@ -165,10 +165,7 @@ def register_default_trade_data_jobs(store: ScheduledResearchJobStore) -> int:
         logger.info("registered default trade data job %s (%s)", fills_job_id, fills_cron)
         created += 1
 
-    archive_cron = os.getenv(
-        RESEARCH_HISTORY_ARCHIVE_CRON_ENV,
-        DEFAULT_RESEARCH_HISTORY_ARCHIVE_CRON,
-    ).strip()
+    archive_cron = get_env_config().trade.research_history_archive_cron.strip()
     validate_schedule(archive_cron)
     archive_job_id = "hub-research-history-archive"
     if store.get(archive_job_id) is None:
@@ -186,7 +183,7 @@ def register_default_trade_data_jobs(store: ScheduledResearchJobStore) -> int:
         logger.info("registered default trade data job %s (%s)", archive_job_id, archive_cron)
         created += 1
 
-    nse_cron = os.getenv(NSE_MACRO_REFRESH_CRON_ENV, DEFAULT_NSE_MACRO_REFRESH_CRON).strip()
+    nse_cron = get_env_config().trade.nse_macro_refresh_cron.strip()
     validate_schedule(nse_cron)
     nse_job_id = "nse-macro-refresh"
     if store.get(nse_job_id) is None:
@@ -204,10 +201,7 @@ def register_default_trade_data_jobs(store: ScheduledResearchJobStore) -> int:
         logger.info("registered default trade data job %s (%s)", nse_job_id, nse_cron)
         created += 1
 
-    consistency_cron = os.getenv(
-        NSE_REPO_CONSISTENCY_CRON_ENV,
-        DEFAULT_NSE_REPO_CONSISTENCY_CRON,
-    ).strip()
+    consistency_cron = get_env_config().trade.nse_repo_consistency_cron.strip()
     validate_schedule(consistency_cron)
     consistency_job_id = "nse-repo-consistency"
     if store.get(consistency_job_id) is None:

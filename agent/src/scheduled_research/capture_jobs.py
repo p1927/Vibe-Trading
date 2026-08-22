@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from typing import Any
 
+from src.config.accessor import get_env_config
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
@@ -38,7 +38,7 @@ _TRUE_VALUES = {"1", "true", "yes", "on"}
 def is_hub_capture_scheduler_enabled(value: str | None = None) -> bool:
     if value is not None:
         return value.strip().lower() in _TRUE_VALUES
-    explicit = os.getenv(HUB_CAPTURE_ENABLE_SCHEDULER_ENV, "").strip().lower()
+    explicit = get_env_config().trade.hub_capture_enable_scheduler.strip().lower()
     if explicit in _TRUE_VALUES:
         return True
     if explicit in {"0", "false", "no", "off"}:
@@ -93,7 +93,7 @@ def register_default_hub_capture_jobs(store: ScheduledResearchJobStore) -> int:
     now_ms = int(time.time() * 1000)
     registered = 0
 
-    cron = os.getenv(HUB_CAPTURE_INTRADAY_CRON_ENV, DEFAULT_INTRADAY_CRON).strip()
+    cron = get_env_config().trade.hub_capture_intraday_cron.strip()
     validate_schedule(cron)
     job_id = "hub-capture-intraday"
     if store.get(job_id) is None:
@@ -114,7 +114,7 @@ def register_default_hub_capture_jobs(store: ScheduledResearchJobStore) -> int:
     # Independent of the intraday job above — registered separately so
     # deployments that already have "hub-capture-intraday" (from before this
     # job existed) still pick up the new one instead of short-circuiting.
-    factor_cron = os.getenv(HUB_CAPTURE_FACTOR_SNAPSHOT_CRON_ENV, DEFAULT_FACTOR_SNAPSHOT_CRON).strip()
+    factor_cron = get_env_config().trade.hub_capture_factor_snapshot_cron.strip()
     validate_schedule(factor_cron)
     factor_job_id = "hub-capture-factor-snapshot"
     if store.get(factor_job_id) is None:

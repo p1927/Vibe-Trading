@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
+
+from src.config.accessor import get_env_config
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +13,7 @@ _DECISION_TOOL = "record_autonomous_decision"
 
 
 def _guard_enabled() -> bool:
-    raw = os.getenv("BOOTSTRAP_FINALIZE_GUARD_ENABLED", "true").strip().lower()
+    raw = get_env_config().trade.bootstrap_finalize_guard_enabled.strip().lower()
     return raw not in {"0", "false", "no", "off"}
 
 

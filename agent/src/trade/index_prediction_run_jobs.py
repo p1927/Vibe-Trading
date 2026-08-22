@@ -30,6 +30,8 @@ except ImportError:  # pragma: no cover - Windows / minimal builds
     fcntl = None  # type: ignore[assignment]
     _HAS_FCNTL = False
 
+from src.config.accessor import get_env_config
+
 logger = logging.getLogger(__name__)
 
 INDEX_PREDICTION_RUN_JOBS: dict[str, dict[str, Any]] = {}
@@ -40,14 +42,14 @@ _JOB_TTL_SECONDS = 60 * 60
 _JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 _ACTIVE_STATUSES = frozenset({"queued", "running"})
 _TERMINAL_STATUSES = frozenset({"done", "done_with_warnings", "error"})
-_STALE_LOG_SECONDS = int(os.getenv("INDEX_PREDICTION_STALE_LOG_SECONDS", "1800"))
-_WALL_CLOCK_SECONDS = int(os.getenv("INDEX_PREDICTION_RUN_WALL_CLOCK_SECONDS", "2700"))
+_STALE_LOG_SECONDS = int(get_env_config().trade.index_prediction_stale_log_seconds)
+_WALL_CLOCK_SECONDS = int(get_env_config().trade.index_prediction_run_wall_clock_seconds)
 _REFRESH_WALL_CLOCK_SECONDS = int(
-    os.getenv("INDEX_PREDICTION_REFRESH_WALL_CLOCK_SECONDS", "5400")
+    get_env_config().trade.index_prediction_refresh_wall_clock_seconds
 )
-_QUEUED_NO_PID_SECONDS = int(os.getenv("INDEX_PREDICTION_QUEUED_NO_PID_SECONDS", "60"))
+_QUEUED_NO_PID_SECONDS = int(get_env_config().trade.index_prediction_queued_no_pid_seconds)
 _WATCHDOG_INTERVAL_SECONDS = float(
-    os.getenv("INDEX_PREDICTION_WATCHDOG_INTERVAL_SECONDS", "60")
+    get_env_config().trade.index_prediction_watchdog_interval_seconds
 )
 _watchdog_thread: threading.Thread | None = None
 _watchdog_stop = threading.Event()

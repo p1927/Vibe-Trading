@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from typing import Any
 
+from src.config.accessor import get_env_config
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
@@ -35,14 +35,14 @@ _TRUE_VALUES = {"1", "true", "yes", "on"}
 def is_hub_unified_calibration_enabled(value: str | None = None) -> bool:
     if value is not None:
         return value.strip().lower() in _TRUE_VALUES
-    raw = os.getenv(HUB_CALIBRATION_UNIFIED_ENV, "true").strip().lower()
+    raw = get_env_config().trade.hub_calibration_unified.strip().lower()
     return raw not in {"0", "false", "no", "off"}
 
 
 def is_hub_calibration_scheduler_enabled(value: str | None = None) -> bool:
     if value is not None:
         return value.strip().lower() in _TRUE_VALUES
-    explicit = os.getenv(HUB_CALIBRATION_ENABLE_SCHEDULER_ENV, "").strip().lower()
+    explicit = get_env_config().trade.hub_calibration_enable_scheduler.strip().lower()
     if explicit in _TRUE_VALUES:
         return True
     if explicit in {"0", "false", "no", "off"}:
@@ -96,7 +96,7 @@ def register_default_hub_calibration_jobs(store: ScheduledResearchJobStore) -> i
     created = 0
     now_ms = int(time.time() * 1000)
 
-    morning_cron = os.getenv(HUB_MORNING_CALIBRATION_CRON_ENV, DEFAULT_MORNING_CRON).strip()
+    morning_cron = get_env_config().trade.hub_morning_calibration_cron.strip()
     validate_schedule(morning_cron)
     morning_id = "hub-morning-calibration"
     if store.get(morning_id) is None:
@@ -114,7 +114,7 @@ def register_default_hub_calibration_jobs(store: ScheduledResearchJobStore) -> i
         logger.info("registered hub calibration job %s (%s)", morning_id, morning_cron)
         created += 1
 
-    evening_cron = os.getenv(HUB_EVENING_MAINTENANCE_CRON_ENV, DEFAULT_EVENING_CRON).strip()
+    evening_cron = get_env_config().trade.hub_evening_maintenance_cron.strip()
     validate_schedule(evening_cron)
     evening_id = "hub-evening-maintenance"
     if store.get(evening_id) is None:

@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
+from src.config.accessor import get_env_config
 from src.session.events import EventBus
 from src.session.models import (
     Attempt,
@@ -297,9 +298,7 @@ class SessionService:
         # forever, since _release_session is never reached.
         prefetch_timeout = 120.0
         try:
-            import os
-
-            prefetch_timeout = float(os.getenv("VIBE_ATTEMPT_PREFETCH_TIMEOUT_S", "120"))
+            prefetch_timeout = float(get_env_config().trade.vibe_attempt_prefetch_timeout_s)
         except ValueError:
             pass
 

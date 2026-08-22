@@ -13,8 +13,9 @@ state, so they carry no coupling back to that file beyond the call site.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
+
+from src.config.accessor import get_env_config
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +137,7 @@ def boot_scheduled_research_stack(get_store) -> None:
     except Exception:
         logger.debug("autonomous agent recovery on startup failed", exc_info=True)
     try:
-        if os.getenv("STACK_DEV", "").strip().lower() in {"1", "true", "yes", "on"}:
+        if get_env_config().trade.stack_dev.strip().lower() in {"1", "true", "yes", "on"}:
             logger.debug("skipping Nautilus watch ensure in dev mode (use: trade reload nautilus)")
         else:
             from src.trade.hub_bridge import ensure_trade_stack_path

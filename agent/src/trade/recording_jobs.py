@@ -35,6 +35,8 @@ except ImportError:  # pragma: no cover - Windows / minimal builds
     fcntl = None  # type: ignore[assignment]
     _HAS_FCNTL = False
 
+from src.config.accessor import get_env_config
+
 logger = logging.getLogger(__name__)
 
 RECORDING_JOBS: dict[str, dict[str, Any]] = {}
@@ -45,8 +47,8 @@ _JOBS_LOCK = threading.RLock()
 _JOB_TTL_SECONDS = 60 * 60
 _JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 _ACTIVE_STATUSES = frozenset({"queued", "waiting_for_open", "running"})
-_WALL_CLOCK_SECONDS = int(os.getenv("RECORDING_RUN_WALL_CLOCK_SECONDS", str(8 * 60 * 60)))
-_QUEUED_NO_PID_SECONDS = int(os.getenv("RECORDING_QUEUED_NO_PID_SECONDS", "60"))
+_WALL_CLOCK_SECONDS = int(get_env_config().trade.recording_run_wall_clock_seconds)
+_QUEUED_NO_PID_SECONDS = int(get_env_config().trade.recording_queued_no_pid_seconds)
 
 
 def _is_pid_alive(pid: int | None) -> bool:

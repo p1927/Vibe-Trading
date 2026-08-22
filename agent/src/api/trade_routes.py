@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import threading
 import asyncio
@@ -17,6 +16,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.api.security import require_local_or_auth
+from src.config.accessor import get_env_config
 from trade_integrations.trade_widgets.store import load_trade_widget
 from trade_integrations.ui_links import trade_ui_deep_link
 
@@ -146,8 +146,8 @@ def _resolve_execution_mode(analyze: bool, paper_env: bool) -> ExecutionModeResp
 
 
 def _openalgo_config() -> tuple[str, str]:
-    host = os.getenv("OPENALGO_HOST", "http://127.0.0.1:5001").rstrip("/")
-    api_key = os.getenv("OPENALGO_API_KEY", "").strip()
+    host = get_env_config().trade.openalgo_host.rstrip("/")
+    api_key = get_env_config().trade.openalgo_api_key.strip()
     if not api_key:
         raise HTTPException(
             status_code=503,
@@ -157,7 +157,7 @@ def _openalgo_config() -> tuple[str, str]:
 
 
 def _paper_mode_env_enabled() -> bool:
-    return os.getenv("OPENALGO_PAPER_MODE", "true").strip().lower() in ("1", "true", "yes")
+    return get_env_config().trade.openalgo_paper_mode.strip().lower() in ("1", "true", "yes")
 
 
 def _openalgo_analyzer_status(host: str, api_key: str) -> bool:

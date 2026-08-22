@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
+
+from src.config.accessor import get_env_config
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,7 @@ _CARD_STATUSES = frozenset({"ready", "incomplete"})
 
 
 def _guard_enabled() -> bool:
-    raw = os.getenv("ORCHESTRATOR_PROPOSE_GUARD_ENABLED", "true").strip().lower()
+    raw = get_env_config().trade.orchestrator_propose_guard_enabled.strip().lower()
     return raw not in {"0", "false", "no", "off"}
 
 
