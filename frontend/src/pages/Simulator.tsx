@@ -9,6 +9,9 @@ import {
   type RecordingResult,
   type ReplayCalendarDay,
 } from "@/lib/api";
+import { COUNTRY_LABELS, GlobalMarketsPanel } from "@/components/simulator/GlobalMarketsPanel";
+import { MarketFactorCoveragePanel } from "@/components/simulator/MarketFactorCoveragePanel";
+import { MarketRecordingPanel } from "@/components/simulator/MarketRecordingPanel";
 import { SimulatorInstrumentPicker } from "@/components/simulator/SimulatorInstrumentPicker";
 import { SimulatorLiveIndexPanel } from "@/components/simulator/SimulatorLiveIndexPanel";
 import { SimulatorOptionChainPanel } from "@/components/simulator/SimulatorOptionChainPanel";
@@ -105,6 +108,11 @@ function ProgressBar({ pct }: { pct: number | null | undefined }) {
 }
 
 export function Simulator() {
+  // Which Global Markets tab is selected — drives which Record/Replay/Coverage section renders
+  // below (India's own INDmoney-based recorder+replay for "IN", tick-recording+factor-coverage
+  // for a country tab or "CURRENCY", nothing extra for "GLOBAL" since gold/oil/VIX/US10Y aren't
+  // owned by one market).
+  const [marketTab, setMarketTab] = useState<string>("IN");
   const [selected, setSelected] = useState<string[]>(UNDERLYINGS);
   const [selectedEquities, setSelectedEquities] = useState<string[]>([]);
   const [waitForOpen, setWaitForOpen] = useState(false);
@@ -530,380 +538,410 @@ export function Simulator() {
         </p>
       </div>
 
-      {/* Primary chart symbol: any index, or any NIFTY-50 constituent —
-          independent of what's checked for recording below. This only
-          controls what the chart/chain show, not what gets recorded. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          Chart symbol
-          <select
-            value={`${primarySymbol.exchange}:${primarySymbol.symbol}`}
-            onChange={(e) => {
-              const [exchange, symbol] = e.target.value.split(":");
-              setPrimarySymbol({ symbol, exchange });
-            }}
-            className="max-w-[220px] rounded border bg-background px-1.5 py-1 text-xs"
-            data-testid="simulator-primary-symbol"
-          >
-            <optgroup label="Indices">
-              {UNDERLYINGS.map((u) => (
-                <option key={u} value={`NSE_INDEX:${u}`}>
-                  {u}
-                </option>
-              ))}
-            </optgroup>
-            {nifty50.length > 0 && (
-              <optgroup label="NIFTY 50 equities">
-                {[...nifty50]
-                  .sort((a, b) => a.symbol.localeCompare(b.symbol))
-                  .map((c) => (
-                    <option key={c.symbol} value={`NSE:${c.symbol}`}>
-                      {c.symbol} — {c.name}
-                    </option>
-                  ))}
-              </optgroup>
-            )}
-          </select>
-        </label>
-      </div>
-
-      {marketOpen === false && !armedRange && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
-          <span>
-            Market is closed right now.
-            {calendarDays[0]
-              ? ` Replay the most recent recorded session (${calendarDays[0].date}) to see it moving.`
-              : " Record a full session (below) to enable replay."}
-          </span>
-          {calendarDays[0] ? (
-            <button
-              type="button"
-              onClick={() => armReplay({ start: calendarDays[0].date, end: calendarDays[0].date })}
-              disabled={Boolean(armingDay)}
-              className="shrink-0 rounded border border-amber-500/40 px-2 py-0.5 font-medium hover:bg-amber-500/10 disabled:opacity-50"
-              data-testid="replay-latest-day"
-            >
-              {armingDay ? "Arming…" : `Replay ${calendarDays[0].date}`}
-            </button>
-          ) : null}
-        </div>
-      )}
-
-      {/* Phase 9: live index panel + option chain toggle. Follows the
-          "Chart symbol" selector above. */}
-      <div className="flex flex-wrap items-start gap-3">
-        <div className="min-w-0 flex-1 basis-full sm:basis-0">
-          <SimulatorLiveIndexPanel
-            symbol={primarySymbol.symbol}
-            exchange={primarySymbol.exchange}
-            isRecordingActive={isActive}
-            isReplayArmed={Boolean(armedRange)}
-            replaySpeed={replaySpeed}
-            height={240}
-            onSessionOpenChange={setMarketOpen}
-          />
-        </div>
-        <button
-          type="button"
-          onClick={() => setShowChain(true)}
-          className="inline-flex h-9 items-center gap-1.5 self-start rounded-lg border bg-background px-3 text-sm hover:bg-muted/50"
-          title="Show live option chain"
-          data-testid="open-option-chain"
-        >
-          <ListOrdered className="h-3.5 w-3.5" />
-          Option Chain
-        </button>
-      </div>
-      <SimulatorOptionChainPanel
-        symbol={primarySymbol.symbol}
-        exchange={primarySymbol.exchange}
-        open={showChain}
-        onClose={() => setShowChain(false)}
-        recordingActive={isActive}
-        isReplayArmed={Boolean(armedRange)}
-        replaySpeed={replaySpeed}
-      />
-
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
-
-      <StatCard title="Record">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <span title={isActive ? "Stop the recording to change what's being recorded" : undefined}>
-              <SimulatorInstrumentPicker
-                indices={UNDERLYINGS}
-                selectedIndices={selected}
-                onChangeIndices={setSelected}
-                selectedEquities={selectedEquities}
-                onChangeEquities={setSelectedEquities}
-                disabled={isActive}
-              />
-            </span>
-            <label
-              className="flex items-center gap-1.5 text-sm text-muted-foreground"
-              title={isActive ? "Stop the recording to change this" : undefined}
-            >
-              <input
-                type="checkbox"
-                checked={waitForOpen}
-                disabled={isActive}
-                onChange={(e) => setWaitForOpen(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-border"
-              />
-              Wait for market open
-            </label>
-            <label
-              className="flex items-center gap-1.5 text-sm text-muted-foreground"
-              title="Automatically start recording at market open and stop at close, every trading day — no need to press Start each morning. Uses whatever's picked above at the moment you turn this on."
-            >
-              <input
-                type="checkbox"
-                checked={autoRecord}
-                disabled={autoRecordBusy}
-                onChange={(e) => setAutoRecord(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-border"
-              />
-              Auto Record
-            </label>
-          </div>
-          <div className="flex items-center gap-2">
-            {autoRecord ? (
-              <span
-                className="rounded-full bg-violet-500/15 px-2.5 py-0.5 text-[11px] font-medium text-violet-800 dark:text-violet-200"
-                title="Every trading day: starts at open, stops at close, re-arms for the next day automatically."
-              >
-                Auto Record ON
-              </span>
-            ) : null}
-            {statusBadge(displayStatus, job?.result?.stopped_reason)}
-            {isWaitingForOpen ? (
-              <span
-                className="text-[11px] text-amber-800 dark:text-amber-200"
-                title={`Next NSE open at ${nextOpenAtLabel}`}
-              >
-                {nextOpenAtLabel === "—"
-                  ? "Awaiting next NSE open"
-                  : `Next open at ${nextOpenAtLabel.slice(11, 16)} IST`}
-              </span>
-            ) : null}
-            {isActive ? (
-              <button
-                type="button"
-                onClick={stopRecording}
-                disabled={busy}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-red-500/40 bg-background px-3 text-sm text-red-600 hover:bg-red-500/10 disabled:opacity-50"
-              >
-                <Square className="h-3.5 w-3.5" />
-                Stop
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={startRecording}
-                disabled={busy || selected.length + selectedEquities.length === 0}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              >
-                <Disc className="h-3.5 w-3.5" />
-                Start Recording
-              </button>
-            )}
-          </div>
-        </div>
-
-        <RecordingConfigProvider
-          config={{
-            categoryIntervals,
-            equityIntervals,
-            wsThrottleHz,
-            historicalConfig,
-            setCategoryInterval,
-            setEquityInterval,
-            setWsThrottle,
-            setHistoricalConfig,
-          }}
-        >
-          <SimulatorRecordingFields disabled={isActive} />
-        </RecordingConfigProvider>
-        {job ? (
-          <div className="mt-4 space-y-3">
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>
-                {job.underlyings?.join(", ") || "—"} · session {job.session_date || "today"}
-              </span>
-              <span>{Math.round((job.session_pct_complete ?? 0) * 100)}% of trading day recorded</span>
-            </div>
-            <ProgressBar pct={job.session_pct_complete} />
-
-            <details
-              className="group rounded-lg border bg-background/60"
-              data-testid="simulator-recording-logs"
-              onToggle={(e) => {
-                // When the user expands the logs, jump them to the
-                // latest entry — the auto-scroll effect above only
-                // fires on log *changes*, not on panel reveal.
-                if ((e.currentTarget as HTMLDetailsElement).open) {
-                  requestAnimationFrame(() => {
-                    logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
-                  });
-                }
-              }}
-            >
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-[11px] font-medium text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden">
-                <span className="flex items-center gap-1.5">
-                  <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
-                  Recording logs
-                  <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
-                    {logs.length}
-                  </span>
-                </span>
-                <span className="font-normal text-muted-foreground/70 group-open:hidden">
-                  Click to expand
-                </span>
-              </summary>
-              <div
-                ref={logRef}
-                className="h-56 overflow-auto rounded-b-lg border-t bg-background/60 p-3 font-mono text-[11px] leading-relaxed"
-              >
-                {logs.length === 0 ? (
-                  <p className="text-muted-foreground">No log entries yet.</p>
-                ) : (
-                  logs.map((entry, i) => (
-                    <div key={i} className={cn("flex gap-2", logLevelColor(entry.level))}>
-                      <span className="shrink-0 text-muted-foreground/60">
-                        {entry.at ? new Date(entry.at).toLocaleTimeString() : ""}
-                      </span>
-                      <span>{entry.message}</span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </details>
-
-            {job.status === "error" && job.error ? (
-              <p className="text-sm text-destructive">{job.error}</p>
-            ) : null}
-            {job.status === "done" && job.result ? (
-              <p className="text-sm text-muted-foreground">
-                Stopped: {job.result.stopped_reason} · {job.result.cycles} cycles
-                {job.result.errors?.length ? ` · ${job.result.errors.length} errors` : ""}
-              </p>
-            ) : null}
-          </div>
-        ) : (
-          <p className="mt-3 text-sm text-muted-foreground">
-            No recording in progress. Recording stops automatically at market close (15:30 IST).
-            {autoRecord
-              ? " Auto Record is on — it will start on its own at the next market open."
-              : ""}
-          </p>
-        )}
+      <StatCard title="Global markets">
+        <GlobalMarketsPanel activeTab={marketTab} onTabChange={setMarketTab} />
       </StatCard>
 
-      <StatCard title="Replay">
-        <div className="space-y-4">
-          {replayNotConfigured ? (
-            <div className="rounded-lg border border-muted-foreground/20 bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
-              Replay not available — {replayNotConfigured}
-            </div>
-          ) : calendarError ? (
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
-              <span>{calendarError}</span>
+      {marketTab === "IN" ? (
+        <>
+        {/* Primary chart symbol: any index, or any NIFTY-50 constituent —
+            independent of what's checked for recording below. This only
+            controls what the chart/chain show, not what gets recorded. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            Chart symbol
+            <select
+              value={`${primarySymbol.exchange}:${primarySymbol.symbol}`}
+              onChange={(e) => {
+                const [exchange, symbol] = e.target.value.split(":");
+                setPrimarySymbol({ symbol, exchange });
+              }}
+              className="max-w-[220px] rounded border bg-background px-1.5 py-1 text-xs"
+              data-testid="simulator-primary-symbol"
+            >
+              <optgroup label="Indices">
+                {UNDERLYINGS.map((u) => (
+                  <option key={u} value={`NSE_INDEX:${u}`}>
+                    {u}
+                  </option>
+                ))}
+              </optgroup>
+              {nifty50.length > 0 && (
+                <optgroup label="NIFTY 50 equities">
+                  {[...nifty50]
+                    .sort((a, b) => a.symbol.localeCompare(b.symbol))
+                    .map((c) => (
+                      <option key={c.symbol} value={`NSE:${c.symbol}`}>
+                        {c.symbol} — {c.name}
+                      </option>
+                    ))}
+                </optgroup>
+              )}
+            </select>
+          </label>
+        </div>
+
+        {marketOpen === false && !armedRange && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+            <span>
+              Market is closed right now.
+              {calendarDays[0]
+                ? ` Replay the most recent recorded session (${calendarDays[0].date}) to see it moving.`
+                : " Record a full session (below) to enable replay."}
+            </span>
+            {calendarDays[0] ? (
               <button
                 type="button"
-                onClick={loadCalendar}
-                className="shrink-0 rounded border border-destructive/40 px-2 py-0.5 text-[10px] font-medium hover:bg-destructive/10"
+                onClick={() => armReplay({ start: calendarDays[0].date, end: calendarDays[0].date })}
+                disabled={Boolean(armingDay)}
+                className="shrink-0 rounded border border-amber-500/40 px-2 py-0.5 font-medium hover:bg-amber-500/10 disabled:opacity-50"
+                data-testid="replay-latest-day"
               >
-                Retry
+                {armingDay ? "Arming…" : `Replay ${calendarDays[0].date}`}
               </button>
-            </div>
-          ) : null}
+            ) : null}
+          </div>
+        )}
 
-          <SimulatorReplayCalendar
-            days={calendarDays}
-            range={replayRange}
-            armedRange={armedRange}
-            onRangeSelect={(range) => setReplayRange(range)}
-            onDaySelect={setSelectedReplayDay}
-            selectedDate={selectedReplayDay?.date ?? null}
-          />
+        {/* Phase 9: live index panel + option chain toggle. Follows the
+            "Chart symbol" selector above. */}
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="min-w-0 flex-1 basis-full sm:basis-0">
+            <SimulatorLiveIndexPanel
+              symbol={primarySymbol.symbol}
+              exchange={primarySymbol.exchange}
+              isRecordingActive={isActive}
+              isReplayArmed={Boolean(armedRange)}
+              replaySpeed={replaySpeed}
+              height={240}
+              onSessionOpenChange={setMarketOpen}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowChain(true)}
+            className="inline-flex h-9 items-center gap-1.5 self-start rounded-lg border bg-background px-3 text-sm hover:bg-muted/50"
+            title="Show live option chain"
+            data-testid="open-option-chain"
+          >
+            <ListOrdered className="h-3.5 w-3.5" />
+            Option Chain
+          </button>
+        </div>
+        <SimulatorOptionChainPanel
+          symbol={primarySymbol.symbol}
+          exchange={primarySymbol.exchange}
+          open={showChain}
+          onClose={() => setShowChain(false)}
+          recordingActive={isActive}
+          isReplayArmed={Boolean(armedRange)}
+          replaySpeed={replaySpeed}
+        />
 
-          <SimulatorReplayClock
-            armedRange={armedRange}
-            onStop={handleSimulatorStopped}
-          />
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background/60 p-4">
-            <div className="flex flex-wrap items-center gap-4 text-xs">
-              <label className="flex items-center gap-1.5">
-                Speed
-                <select
-                  value={replaySpeed}
-                  onChange={(e) => handleSpeedChange(Number(e.target.value))}
-                  disabled={speedUpdating}
-                  className="rounded border bg-background px-1.5 py-0.5 text-xs"
-                  data-testid="simulator-speed"
-                >
-                  {[0.5, 1, 2, 5, 10, 25, 50].map((s) => (
-                    <option key={s} value={s}>{s}×</option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex items-center gap-1.5">
+        <StatCard title="Record">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span title={isActive ? "Stop the recording to change what's being recorded" : undefined}>
+                <SimulatorInstrumentPicker
+                  indices={UNDERLYINGS}
+                  selectedIndices={selected}
+                  onChangeIndices={setSelected}
+                  selectedEquities={selectedEquities}
+                  onChangeEquities={setSelectedEquities}
+                  disabled={isActive}
+                />
+              </span>
+              <label
+                className="flex items-center gap-1.5 text-sm text-muted-foreground"
+                title={isActive ? "Stop the recording to change this" : undefined}
+              >
                 <input
                   type="checkbox"
-                  checked={replayLoop}
-                  onChange={(e) => setReplayLoop(e.target.checked)}
-                  disabled={Boolean(armedRange)}
+                  checked={waitForOpen}
+                  disabled={isActive}
+                  onChange={(e) => setWaitForOpen(e.target.checked)}
                   className="h-3.5 w-3.5 rounded border-border"
-                  data-testid="simulator-loop"
                 />
-                {/* While armed, describe what's actually looping (armedRange),
-                    not the pending calendar selection (replayRange) — the
-                    calendar stays clickable while armed, so replayRange can
-                    drift away from what this checkbox (disabled) controls. */}
-                Loop {(() => {
-                  const active = armedRange ?? replayRange;
-                  return active && active.start !== active.end ? "range" : "at 15:30";
-                })()}
+                Wait for market open
+              </label>
+              <label
+                className="flex items-center gap-1.5 text-sm text-muted-foreground"
+                title="Automatically start recording at market open and stop at close, every trading day — no need to press Start each morning. Uses whatever's picked above at the moment you turn this on."
+              >
+                <input
+                  type="checkbox"
+                  checked={autoRecord}
+                  disabled={autoRecordBusy}
+                  onChange={(e) => setAutoRecord(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-border"
+                />
+                Auto Record
               </label>
             </div>
-            <button
-              type="button"
-              onClick={() => replayRange && armReplay(replayRange)}
-              disabled={!replayRange || Boolean(armingDay) || Boolean(armedRange)}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              data-testid="simulator-arm"
-            >
-              <PlayCircle className="h-3.5 w-3.5" />
-              {armingDay
-                ? "Arming…"
-                : armedRange
-                ? `Armed · ${armedRange.start}${armedRange.end !== armedRange.start ? ` → ${armedRange.end}` : ""}`
-                : replayRange
-                ? `Arm replay · ${replayRange.start}${replayRange.end !== replayRange.start ? ` → ${replayRange.end}` : ""}`
-                : "Select a date"}
-            </button>
+            <div className="flex items-center gap-2">
+              {autoRecord ? (
+                <span
+                  className="rounded-full bg-violet-500/15 px-2.5 py-0.5 text-[11px] font-medium text-violet-800 dark:text-violet-200"
+                  title="Every trading day: starts at open, stops at close, re-arms for the next day automatically."
+                >
+                  Auto Record ON
+                </span>
+              ) : null}
+              {statusBadge(displayStatus, job?.result?.stopped_reason)}
+              {isWaitingForOpen ? (
+                <span
+                  className="text-[11px] text-amber-800 dark:text-amber-200"
+                  title={`Next NSE open at ${nextOpenAtLabel}`}
+                >
+                  {nextOpenAtLabel === "—"
+                    ? "Awaiting next NSE open"
+                    : `Next open at ${nextOpenAtLabel.slice(11, 16)} IST`}
+                </span>
+              ) : null}
+              {isActive ? (
+                <button
+                  type="button"
+                  onClick={stopRecording}
+                  disabled={busy}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-red-500/40 bg-background px-3 text-sm text-red-600 hover:bg-red-500/10 disabled:opacity-50"
+                >
+                  <Square className="h-3.5 w-3.5" />
+                  Stop
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={startRecording}
+                  disabled={busy || selected.length + selectedEquities.length === 0}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                >
+                  <Disc className="h-3.5 w-3.5" />
+                  Start Recording
+                </button>
+              )}
+            </div>
           </div>
 
-          {replayError ? <p className="text-[11px] text-destructive">{replayError}</p> : null}
-          <p className="text-[11px] text-muted-foreground">
-            Configures the simulator's replay clock on the running OpenAlgo instance
-            directly — no restart needed. OpenAlgo then serves quotes from this clock
-            as if it were the live market; the chart in the option chain panel updates
-            accordingly.
+          <RecordingConfigProvider
+            config={{
+              categoryIntervals,
+              equityIntervals,
+              wsThrottleHz,
+              historicalConfig,
+              setCategoryInterval,
+              setEquityInterval,
+              setWsThrottle,
+              setHistoricalConfig,
+            }}
+          >
+            <SimulatorRecordingFields disabled={isActive} />
+          </RecordingConfigProvider>
+          {job ? (
+            <div className="mt-4 space-y-3">
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                <span>
+                  {job.underlyings?.join(", ") || "—"} · session {job.session_date || "today"}
+                </span>
+                <span>{Math.round((job.session_pct_complete ?? 0) * 100)}% of trading day recorded</span>
+              </div>
+              <ProgressBar pct={job.session_pct_complete} />
+
+              <details
+                className="group rounded-lg border bg-background/60"
+                data-testid="simulator-recording-logs"
+                onToggle={(e) => {
+                  // When the user expands the logs, jump them to the
+                  // latest entry — the auto-scroll effect above only
+                  // fires on log *changes*, not on panel reveal.
+                  if ((e.currentTarget as HTMLDetailsElement).open) {
+                    requestAnimationFrame(() => {
+                      logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
+                    });
+                  }
+                }}
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-[11px] font-medium text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden">
+                  <span className="flex items-center gap-1.5">
+                    <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+                    Recording logs
+                    <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
+                      {logs.length}
+                    </span>
+                  </span>
+                  <span className="font-normal text-muted-foreground/70 group-open:hidden">
+                    Click to expand
+                  </span>
+                </summary>
+                <div
+                  ref={logRef}
+                  className="h-56 overflow-auto rounded-b-lg border-t bg-background/60 p-3 font-mono text-[11px] leading-relaxed"
+                >
+                  {logs.length === 0 ? (
+                    <p className="text-muted-foreground">No log entries yet.</p>
+                  ) : (
+                    logs.map((entry, i) => (
+                      <div key={i} className={cn("flex gap-2", logLevelColor(entry.level))}>
+                        <span className="shrink-0 text-muted-foreground/60">
+                          {entry.at ? new Date(entry.at).toLocaleTimeString() : ""}
+                        </span>
+                        <span>{entry.message}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </details>
+
+              {job.status === "error" && job.error ? (
+                <p className="text-sm text-destructive">{job.error}</p>
+              ) : null}
+              {job.status === "done" && job.result ? (
+                <p className="text-sm text-muted-foreground">
+                  Stopped: {job.result.stopped_reason} · {job.result.cycles} cycles
+                  {job.result.errors?.length ? ` · ${job.result.errors.length} errors` : ""}
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-muted-foreground">
+              No recording in progress. Recording stops automatically at market close (15:30 IST).
+              {autoRecord
+                ? " Auto Record is on — it will start on its own at the next market open."
+                : ""}
+            </p>
+          )}
+        </StatCard>
+
+        <StatCard title="Replay">
+          <div className="space-y-4">
+            {replayNotConfigured ? (
+              <div className="rounded-lg border border-muted-foreground/20 bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+                Replay not available — {replayNotConfigured}
+              </div>
+            ) : calendarError ? (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+                <span>{calendarError}</span>
+                <button
+                  type="button"
+                  onClick={loadCalendar}
+                  className="shrink-0 rounded border border-destructive/40 px-2 py-0.5 text-[10px] font-medium hover:bg-destructive/10"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : null}
+
+            <SimulatorReplayCalendar
+              days={calendarDays}
+              range={replayRange}
+              armedRange={armedRange}
+              onRangeSelect={(range) => setReplayRange(range)}
+              onDaySelect={setSelectedReplayDay}
+              selectedDate={selectedReplayDay?.date ?? null}
+            />
+
+            <SimulatorReplayClock
+              armedRange={armedRange}
+              onStop={handleSimulatorStopped}
+            />
+
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background/60 p-4">
+              <div className="flex flex-wrap items-center gap-4 text-xs">
+                <label className="flex items-center gap-1.5">
+                  Speed
+                  <select
+                    value={replaySpeed}
+                    onChange={(e) => handleSpeedChange(Number(e.target.value))}
+                    disabled={speedUpdating}
+                    className="rounded border bg-background px-1.5 py-0.5 text-xs"
+                    data-testid="simulator-speed"
+                  >
+                    {[0.5, 1, 2, 5, 10, 25, 50].map((s) => (
+                      <option key={s} value={s}>{s}×</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={replayLoop}
+                    onChange={(e) => setReplayLoop(e.target.checked)}
+                    disabled={Boolean(armedRange)}
+                    className="h-3.5 w-3.5 rounded border-border"
+                    data-testid="simulator-loop"
+                  />
+                  {/* While armed, describe what's actually looping (armedRange),
+                      not the pending calendar selection (replayRange) — the
+                      calendar stays clickable while armed, so replayRange can
+                      drift away from what this checkbox (disabled) controls. */}
+                  Loop {(() => {
+                    const active = armedRange ?? replayRange;
+                    return active && active.start !== active.end ? "range" : "at 15:30";
+                  })()}
+                </label>
+              </div>
+              <button
+                type="button"
+                onClick={() => replayRange && armReplay(replayRange)}
+                disabled={!replayRange || Boolean(armingDay) || Boolean(armedRange)}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                data-testid="simulator-arm"
+              >
+                <PlayCircle className="h-3.5 w-3.5" />
+                {armingDay
+                  ? "Arming…"
+                  : armedRange
+                  ? `Armed · ${armedRange.start}${armedRange.end !== armedRange.start ? ` → ${armedRange.end}` : ""}`
+                  : replayRange
+                  ? `Arm replay · ${replayRange.start}${replayRange.end !== replayRange.start ? ` → ${replayRange.end}` : ""}`
+                  : "Select a date"}
+              </button>
+            </div>
+
+            {replayError ? <p className="text-[11px] text-destructive">{replayError}</p> : null}
+            <p className="text-[11px] text-muted-foreground">
+              Configures the simulator's replay clock on the running OpenAlgo instance
+              directly — no restart needed. OpenAlgo then serves quotes from this clock
+              as if it were the live market; the chart in the option chain panel updates
+              accordingly.
+            </p>
+          </div>
+        </StatCard>
+
+        <SimulatorReplayDetailPanel day={selectedReplayDay} onClose={() => setSelectedReplayDay(null)} />
+
+        <StatCard title="Data coverage">
+          <p className="mb-3 text-[11px] text-muted-foreground">
+            Per-week bucket availability for the simulator. White cells = data
+            missing; click a cell to backfill it via the registered writer.
           </p>
-        </div>
-      </StatCard>
-
-      <SimulatorReplayDetailPanel day={selectedReplayDay} onClose={() => setSelectedReplayDay(null)} />
-
-      <StatCard title="Data coverage">
-        <p className="mb-3 text-[11px] text-muted-foreground">
-          Per-week bucket availability for the simulator. White cells = data
-          missing; click a cell to backfill it via the registered writer.
+          <StockHistoryCoveragePanel includeOptional />
+        </StatCard>
+        </>
+      ) : marketTab === "CURRENCY" ? (
+        <StatCard title="Recording">
+          <MarketRecordingPanel kind="fx" label="Currencies" />
+        </StatCard>
+      ) : marketTab === "GLOBAL" ? (
+        <p className="text-sm text-muted-foreground">
+          Gold, oil, VIX, and US 10Y aren't owned by one market — recording isn't wired up for
+          these yet. The cards above already read them live/EOD on demand.
         </p>
-        <StockHistoryCoveragePanel includeOptional />
-      </StatCard>
+      ) : (
+        <>
+          <StatCard title="Recording">
+            <MarketRecordingPanel
+              kind="index"
+              country={marketTab}
+              label={COUNTRY_LABELS[marketTab] ?? marketTab}
+            />
+          </StatCard>
+          <StatCard title="Factor coverage">
+            <MarketFactorCoveragePanel country={marketTab} />
+          </StatCard>
+        </>
+      )}
     </div>
   );
 }

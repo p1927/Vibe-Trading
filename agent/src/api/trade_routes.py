@@ -9,7 +9,7 @@ import threading
 import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
@@ -3675,6 +3675,171 @@ def get_replay_calendar(
         status = exc.status_code if exc.status_code and exc.status_code >= 400 else 502
         raise HTTPException(status_code=status, detail=str(exc)) from exc
     return {"configured": True, **payload}
+
+
+@trade_router.get("/markets/registry")
+def get_markets_registry(
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    """Supported markets + their headline indices, for the frontend's market picker.
+
+    Sourced from `market_registry.py` (the Layer-1 shared registry) rather than
+    duplicating the country/index list in the frontend.
+    """
+    from trade_integrations.market_registry import SUPPORTED_MARKETS, get_market
+
+    markets = []
+    for code in SUPPORTED_MARKETS:
+        spec = get_market(code)
+        markets.append(
+            {
+                "code": spec.code,
+                "currency": spec.currency,
+                "timezone": spec.timezone,
+                "indices": [idx.name for idx in spec.indices],
+            }
+        )
+    return {"status": "ok", "markets": markets}
+
+
+@trade_router.get("/markets/{country}/index/{index}")
+def get_market_index_history(
+    country: str,
+    index: str,
+    period: str = "1y",
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    """Historical index OHLCV for a non-India market — proxies `stock_simulator`'s
+    global-markets vertical (`/history/{country}/index/{index}`)."""
+    return _run_control(lambda c: c.get_market_index_history(country=country, index=index, period=period))
+
+
+@trade_router.get("/markets/{country}/live_spot/{index}")
+def get_market_live_spot(
+    country: str,
+    index: str,
+    max_age_seconds: int | None = None,
+    force_refresh: bool = False,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    return _run_control(
+        lambda c: c.get_live_market_spot(
+            country=country, index=index, max_age_seconds=max_age_seconds, force_refresh=force_refresh
+        )
+    )
+
+
+@trade_router.get("/markets/{country}/factors/{series}")
+def get_market_policy_factors(
+    country: str,
+    series: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    return _run_control(lambda c: c.get_policy_factors(country=country, series=series))
+
+
+@trade_router.get("/markets/{country}/flow/{series}")
+def get_market_flow_of_funds(
+    country: str,
+    series: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    return _run_control(lambda c: c.get_flow_of_funds(country=country, series=series))
+
+
+@trade_router.get("/markets/factor_coverage")
+def get_market_factor_coverage(
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    return _run_control(lambda c: c.get_market_factor_coverage())
+
+
+@trade_router.get("/markets/global_macro/refreshable_series")
+def list_market_global_macro_refreshable_series(
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    """Registered before `/markets/global_macro/{series}` below so `refreshable_series` isn't
+    swallowed as a `series` path parameter (same ordering rule the auto-record route above
+    already follows for `/recording/{job_id}`)."""
+    return _run_control(lambda c: c.list_eod_refreshable_series())
+
+
+@trade_router.get("/markets/global_macro/{series}")
+def get_market_global_macro(
+    series: str,
+    start: str | None = None,
+    end: str | None = None,
+    field: str | None = None,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    """Historical read for a cross-market `global_macro_store` series — currencies
+    (`usd_inr`/`usd_cny`/`usd_jpy`/`usd_rub`/`usd_sar`/`usd_brl`) and global factors
+    (`gold`, `oil_brent_daily`, `oil_wti_daily`, `vix_daily`, `us_10y`, `sp500`). Proxies
+    `stock_simulator`'s `/history/global_macro`, not the per-country `/markets/{country}/...`
+    dispatch — these series aren't owned by any one market."""
+    return _run_control(lambda c: c.get_global_macro(series=series, start=start, end=end, field=field))
+
+
+@trade_router.get("/markets/global_macro/{series}/live_spot")
+def get_market_global_macro_live_spot(
+    series: str,
+    max_age_seconds: int | None = None,
+    force_refresh: bool = False,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    return _run_control(
+        lambda c: c.get_live_macro_spot(series=series, max_age_seconds=max_age_seconds, force_refresh=force_refresh)
+    )
+
+
+@trade_router.post("/markets/global_macro/{series}/refresh")
+def refresh_market_global_macro(
+    series: str,
+    lookback_days: int = 90,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    """On-demand EOD-history backfill for a cross-market `global_macro_store` series
+    (currencies included) — populates what `GET /markets/global_macro/{series}` reads back.
+    Nothing calls this automatically; the caller decides when to (re)backfill."""
+    return _run_control(lambda c: c.refresh_global_macro_eod(series=series, lookback_days=lookback_days))
+
+
+class StartMarketTickRecordingRequest(BaseModel):
+    kind: Literal["fx", "index"]
+    country: str | None = None
+    symbols: list[str] | None = None
+    interval_seconds: float
+
+
+@trade_router.post("/markets/recording/start")
+def start_market_tick_recording(
+    body: StartMarketTickRecordingRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    """User-triggered append-only tick recording for FX pairs or a non-India market's
+    indices — separate from the always-on `stock_simulator` capture supervisors, which only
+    write one overwritten value per factor per day. See
+    `stock_simulator/recorder/tick_recorder.py` for the actual poll loop."""
+    return _run_control(
+        lambda c: c.start_tick_recording(
+            kind=body.kind, country=body.country, symbols=body.symbols, interval_seconds=body.interval_seconds
+        )
+    )
+
+
+@trade_router.post("/markets/recording/{job_id}/stop")
+def stop_market_tick_recording(
+    job_id: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    return _run_control(lambda c: c.stop_tick_recording(job_id))
+
+
+@trade_router.get("/markets/recording/active")
+def list_market_tick_recordings(
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    return _run_control(lambda c: c.list_tick_recordings())
 
 
 @trade_router.post("/recording/auto-record", response_model=AutoRecordStatusResponse)

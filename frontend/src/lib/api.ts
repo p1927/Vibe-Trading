@@ -1236,6 +1236,74 @@ export const api = {
       body: JSON.stringify(req),
       timeoutMs: 900_000,
     }),
+  // /trade/markets/* — global-markets vertical (see the type block above).
+  getMarketRegistry: () => request<MarketRegistryResponse>("/trade/markets/registry"),
+  getMarketIndexHistory: (country: string, index: string, period = "1y") =>
+    request<MarketIndexHistoryResponse>(
+      `/trade/markets/${encodeURIComponent(country)}/index/${encodeURIComponent(index)}${api._hubStockHistoryQS({
+        period,
+      })}`,
+    ),
+  getLiveMarketSpot: (
+    country: string,
+    index: string,
+    opts?: { max_age_seconds?: number; force_refresh?: boolean },
+  ) =>
+    request<MarketLiveSpotResponse>(
+      `/trade/markets/${encodeURIComponent(country)}/live_spot/${encodeURIComponent(index)}${api._hubStockHistoryQS({
+        max_age_seconds: opts?.max_age_seconds,
+        force_refresh: opts?.force_refresh ? "1" : undefined,
+      })}`,
+    ),
+  getMarketPolicyFactors: (country: string, series: string) =>
+    request<MarketPolicyFactorsResponse>(
+      `/trade/markets/${encodeURIComponent(country)}/factors/${encodeURIComponent(series)}`,
+    ),
+  getMarketFlowOfFunds: (country: string, series: string) =>
+    request<MarketFlowOfFundsResponse>(
+      `/trade/markets/${encodeURIComponent(country)}/flow/${encodeURIComponent(series)}`,
+    ),
+  getMarketFactorCoverage: () =>
+    request<MarketFactorCoverageResponse>("/trade/markets/factor_coverage"),
+  // Cross-market `global_macro_store` series — currencies (usd_inr/usd_cny/usd_jpy/usd_rub/
+  // usd_sar/usd_brl) and global factors (gold, oil_brent_daily, oil_wti_daily, vix_daily, us_10y).
+  getGlobalMacroHistory: (
+    series: string,
+    opts?: { start?: string; end?: string; field?: string },
+  ) =>
+    request<GlobalMacroHistoryResponse>(
+      `/trade/markets/global_macro/${encodeURIComponent(series)}${api._hubStockHistoryQS({
+        start: opts?.start,
+        end: opts?.end,
+        field: opts?.field,
+      })}`,
+    ),
+  getGlobalMacroLiveSpot: (
+    series: string,
+    opts?: { max_age_seconds?: number; force_refresh?: boolean },
+  ) =>
+    request<MarketLiveSpotResponse>(
+      `/trade/markets/global_macro/${encodeURIComponent(series)}/live_spot${api._hubStockHistoryQS({
+        max_age_seconds: opts?.max_age_seconds,
+        force_refresh: opts?.force_refresh ? "1" : undefined,
+      })}`,
+    ),
+  // Tick recording for non-India markets (`kind: "index"` for a country's headline indices,
+  // `kind: "fx"` for USD-anchored currency pairs) — fronts `stock_simulator`'s
+  // `/tick_recording/*` routes via `StockSimulatorClient`. In-memory job state on the simulator
+  // side (no disk persistence) — a simulator restart drops any running job.
+  startMarketTickRecording: (body: StartMarketTickRecordingRequest) =>
+    request<MarketTickRecordingStartResponse>("/trade/markets/recording/start", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  stopMarketTickRecording: (jobId: string) =>
+    request<MarketTickRecordingStopResponse>(
+      `/trade/markets/recording/${encodeURIComponent(jobId)}/stop`,
+      { method: "POST" },
+    ),
+  getActiveMarketTickRecordings: () =>
+    request<MarketTickRecordingActiveResponse>("/trade/markets/recording/active"),
   getIndexPredictionFactors: () =>
     request<IndexFactorCatalogResponse>("/trade/index-prediction/factors"),
   simulateIndexPrediction: (body: SimulateIndexPredictionRequest) =>
@@ -3574,6 +3642,124 @@ export interface HubStockHistoryBackfillResponse {
   summary: HubStockHistoryBackfillSummary;
   coverage_after?: HubStockHistoryCoverageResponse | null;
   error?: string | null;
+}
+
+// /trade/markets/* — global-markets vertical (multi-country index/factor/flow/live-spot
+// reads), fronting stock_simulator's `/history/{country}/...` routes. `country` is a
+// market_registry code, e.g. "IN", "US", "CN", "JP", "RU", "ME", "LATAM".
+export interface MarketRegistryEntry {
+  code: string;
+  currency: string;
+  timezone: string;
+  indices: string[];
+}
+
+export interface MarketRegistryResponse {
+  status: string;
+  markets: MarketRegistryEntry[];
+}
+
+export interface MarketIndexOhlcRow {
+  day: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  volume: number | null;
+}
+
+export interface MarketIndexHistoryResponse {
+  status: string;
+  data: MarketIndexOhlcRow[];
+}
+
+export interface MarketLiveSpotResponse {
+  status: string;
+  data: {
+    series: string;
+    value: number | null;
+    source: string;
+    fetched_at: string;
+    stale: boolean;
+  };
+}
+
+export interface GlobalMacroRow {
+  day: string;
+  series: string;
+  field: string;
+  value: number | null;
+  source: string;
+}
+
+export interface GlobalMacroHistoryResponse {
+  status: string;
+  data: GlobalMacroRow[];
+}
+
+export interface MarketPolicyFactorsResponse {
+  status: string;
+  data: Record<string, unknown>;
+}
+
+export interface MarketFlowOfFundsResponse {
+  status: string;
+  data: Record<string, unknown>;
+}
+
+export interface MarketFactorCoverageResponse {
+  status: string;
+  data: MarketFactorCoverageReport;
+}
+
+export interface MarketFactorEntry {
+  market: string;
+  name: string;
+  category: string;
+  cadence: string;
+  status: string;
+  source_note: string;
+  gap_note?: string;
+}
+
+export interface MarketFactorCoverageReport {
+  recorded: MarketFactorEntry[];
+  sourced: MarketFactorEntry[];
+  not_sourced: MarketFactorEntry[];
+}
+
+export interface TickRecordingJob {
+  job_id: string;
+  kind: "fx" | "index";
+  country: string | null;
+  symbols: string[];
+  interval_seconds: number;
+  started_at: string;
+  polls: number;
+  errors: number;
+  last_error: string | null;
+}
+
+export interface StartMarketTickRecordingRequest {
+  kind: "fx" | "index";
+  country?: string;
+  symbols?: string[];
+  interval_seconds: number;
+}
+
+export interface MarketTickRecordingStartResponse {
+  status: string;
+  job: TickRecordingJob;
+}
+
+export interface MarketTickRecordingStopResponse {
+  status: string;
+  job_id: string;
+}
+
+export interface MarketTickRecordingActiveResponse {
+  status: string;
+  jobs: TickRecordingJob[];
 }
 
 export interface SimulateIndexPredictionRequest {
