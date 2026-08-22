@@ -14,14 +14,18 @@ export interface IndexCardProps {
   error?: string | null;
 }
 
+// This card renders every market now (US/China/Japan/Russia/Middle East/Latin America/
+// currencies/global factors, not just India), so the number grouping needs to be
+// locale-neutral — "en-IN"'s lakh/crore grouping (e.g. "1,71,031.73") reads as broken for a
+// non-Indian index; "en-US"'s standard thousands grouping is the universal convention.
 function fmtPrice(v: number | null): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  return v.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  return v.toLocaleString("en-US", { maximumFractionDigits: 2 });
 }
 
 function fmtChange(v: number | null): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+  return `${v >= 0 ? "+" : ""}${v.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 }
 
 function fmtPct(v: number | null): string {

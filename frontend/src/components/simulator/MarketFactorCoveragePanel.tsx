@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, type MarketFactorCoverageReport, type MarketFactorEntry } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -37,16 +37,41 @@ function FactorRow({ entry }: { entry: MarketFactorEntry }) {
 export function MarketFactorCoveragePanel({ country }: { country: string }) {
   const [report, setReport] = useState<MarketFactorCoverageReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setLoading(true);
     setError(null);
     api
       .getMarketFactorCoverage()
       .then((res) => setReport(res.data))
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoading(false));
   }, []);
 
-  if (error) return <p className="text-[11px] text-destructive">{error}</p>;
+  // Fetches once (the report covers all 6 non-India markets in one call, filtered client-side
+  // below) — but a switch to a different country tab re-triggers it if the last attempt failed
+  // or nothing has loaded yet, so a one-off cold-start timeout doesn't strand the panel for the
+  // rest of the session.
+  useEffect(() => {
+    if (!report && !loading) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [country, report, loading]);
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-between gap-3 text-[11px] text-destructive">
+        <span>{error}</span>
+        <button
+          type="button"
+          onClick={load}
+          className="shrink-0 rounded border border-destructive/40 px-2 py-0.5 font-medium hover:bg-destructive/10"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
   if (!report) return <p className="text-[11px] text-muted-foreground">Loading…</p>;
 
   const entries = [...report.recorded, ...report.sourced, ...report.not_sourced]
