@@ -303,6 +303,10 @@ register_options_routes(app)
 from src.api.auth_routes import register_auth_routes  # noqa: E402
 register_auth_routes(app)
 
+# --- Observability (Tier 0 agent SSOT issues/events) ---
+from src.api.observability_routes import observability_router  # noqa: E402
+app.include_router(observability_router)
+
 # --- OpenBB Workspace agent bridge (GET /agents.json, POST /v1/query) ---
 # No-op unless the optional `openbb` extra is installed; self-reports either way.
 from src.openbb_bridge import try_register_openbb_routes  # noqa: E402  # OPENBB-WORKSPACE-INTEGRATION
