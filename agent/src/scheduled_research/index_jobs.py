@@ -24,6 +24,8 @@ DEFAULT_FULL_CRON = "0 8 * * 1"
 DEFAULT_INDEX_POLL_CRON = "*/5 * * * *"
 STOCK_HISTORY_COVERAGE_SWEEP_CRON_ENV = "STOCK_HISTORY_COVERAGE_SWEEP_CRON"
 DEFAULT_STOCK_HISTORY_COVERAGE_SWEEP_CRON = "0 19 * * *"
+GLOBAL_MACRO_EOD_REFRESH_CRON_ENV = "GLOBAL_MACRO_EOD_REFRESH_CRON"
+DEFAULT_GLOBAL_MACRO_EOD_REFRESH_CRON = "15 19 * * *"
 
 JOB_TYPE_INDEX_FACTOR_SNAPSHOT = "index_factor_snapshot"
 JOB_TYPE_INDEX_RESEARCH = "index_research"
@@ -36,6 +38,7 @@ JOB_TYPE_HUB_NEWS_ENTITY = "hub_news_entity"
 JOB_TYPE_HUB_NEWS_INGEST = "hub_news_ingest"
 JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP = "stock_history_coverage_sweep"
 JOB_TYPE_NEWS_QUALITY_EVAL = "news_quality_eval"
+JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH = "global_macro_eod_refresh"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -48,6 +51,7 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_HUB_NEWS_INGEST,
     JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP,
     JOB_TYPE_NEWS_QUALITY_EVAL,
+    JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH,
 })
 
 NEWS_QUALITY_EVAL_CRON_ENV = "NEWS_QUALITY_EVAL_CRON"
@@ -509,6 +513,41 @@ def run_stock_history_coverage_sweep_job(config: dict[str, Any] | None = None) -
         return {"status": "error", "error": str(exc), "had_errors": True}
 
 
+def run_global_macro_eod_refresh_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Daily refresh of the stale `github_datasets`-sourced global-macro EOD
+    CSVs (oil_brent_daily, oil_wti_daily, gold, us_10y, sp500) from yfinance.
+
+    Calls `StockHistory.refresh_global_macro_eod()` once per series in
+    `global_macro_store.EOD_REFRESH_SYMBOLS` — the first scheduled caller of
+    that entry point, added because nothing else in the repo refreshes
+    these CSVs (see the 2026-08-22 prediction-tab-data-source-consolidation
+    backlog item's "Remaining follow-ups"). Each series is fetched inside
+    its own try/except so one bad yfinance call (e.g. a `sp500` rate limit)
+    can't block the others from refreshing.
+    """
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.stock_history.api import StockHistory
+    from trade_integrations.stock_history.store import global_macro_store
+
+    cfg = config or {}
+    lookback_days = int(cfg.get("lookback_days") or 90)
+    series_list = cfg.get("series") or sorted(global_macro_store.EOD_REFRESH_SYMBOLS)
+
+    sh = StockHistory()
+    results: dict[str, Any] = {}
+    had_errors = False
+    for series in series_list:
+        try:
+            result = sh.refresh_global_macro_eod(series=series, lookback_days=lookback_days)
+        except Exception as exc:
+            logger.warning("global macro EOD refresh failed for series %s: %s", series, exc)
+            result = {"status": "error", "series": series, "reason": str(exc)}
+        results[series] = result
+        if isinstance(result, dict) and result.get("status") == "error":
+            had_errors = True
+    return {"status": "error" if had_errors else "ok", "had_errors": had_errors, "series": results}
+
+
 def run_hub_news_entity_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Drain staging queue and optionally run heavy entity maintenance."""
     _ensure_trade_integrations_on_path()
@@ -637,6 +676,11 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         _attach_job_result_summary(job, summary)
         logger.info("news quality golden eval completed for job %s: %s", job.id, summary)
         return
+    if job_type == JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH:
+        summary = run_global_macro_eod_refresh_job(job.config)
+        _attach_job_result_summary(job, summary)
+        logger.info("global macro EOD refresh completed for job %s: %s", job.id, summary)
+        return
     raise ValueError(f"unsupported index job_type: {job_type!r}")
 
 
@@ -655,10 +699,14 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     news_quality_eval_cron = os.getenv(
         NEWS_QUALITY_EVAL_CRON_ENV, DEFAULT_NEWS_QUALITY_EVAL_CRON
     ).strip()
+    global_macro_eod_refresh_cron = os.getenv(
+        GLOBAL_MACRO_EOD_REFRESH_CRON_ENV, DEFAULT_GLOBAL_MACRO_EOD_REFRESH_CRON
+    ).strip()
     validate_schedule(snapshot_cron)
     validate_schedule(full_cron)
     validate_schedule(coverage_sweep_cron)
     validate_schedule(news_quality_eval_cron)
+    validate_schedule(global_macro_eod_refresh_cron)
 
     skip_unified_duplicates = False
     try:
@@ -828,6 +876,18 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "job_type": JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP,
                 "include_optional": True,
                 "dispatch_timeout_ms": 1_800_000,
+            },
+        ),
+        ScheduledResearchJob(
+            id="global-macro-eod-refresh",
+            prompt="Daily refresh of global macro EOD series from yfinance (oil, gold, us_10y, sp500)",
+            schedule=global_macro_eod_refresh_cron,
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH,
+                "lookback_days": 90,
             },
         ),
     ]
