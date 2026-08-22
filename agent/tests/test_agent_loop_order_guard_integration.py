@@ -27,7 +27,12 @@ from src.live.mandate.model import (
 )
 from src.live.order_guard import LiveOrderGuardTool
 from src.tools.mcp import MCPRemoteToolSpec
-from tests.scripted_llm_helpers import ScriptedChatLLM, llm_text, llm_tool_call
+from tests.scripted_llm_helpers import (
+    FakeSearchSymbolTool,
+    ScriptedChatLLM,
+    llm_text,
+    llm_tool_call,
+)
 
 
 @pytest.fixture
@@ -91,7 +96,19 @@ def test_llm_requested_order_blocked_by_halt_through_full_loop(live_runtime: Pat
     """A scripted LLM turn asks the loop to place a live order while HALT is
     tripped. The loop must dispatch the call through the gate (not bypass it),
     the gate must refuse, and the mock adapter must never see the order call —
-    end to end, not just at the gate's own unit test."""
+    end to end, not just at the gate's own unit test.
+
+    The scripted run resolves ``AAPL`` via ``search_symbol`` in its own turn
+    first — skip that and ``AgentLoop``'s ``GroundingLedger`` identity gate
+    blocks the order tool call *before it ever reaches the guard*, for
+    "unresolved instrument identity", regardless of halt state. Confirmed by
+    running this scenario without tripping halt at all: the adapter still saw
+    zero calls — meaning the un-fixed version of this test passed for the
+    wrong reason and would keep passing even if the halt check itself were
+    deleted from `LiveOrderGuardTool.execute`. See
+    `.claude/backlog/items/2026-08-21-autonomous-watcher-dst-lite-tests.md`
+    for the write-up.
+    """
     _write_mandate(live_runtime)
     trip_halt(by="file", reason="test halt")
 
@@ -100,9 +117,11 @@ def test_llm_requested_order_blocked_by_halt_through_full_loop(live_runtime: Pat
 
     registry = ToolRegistry()
     registry.register(guard)
+    registry.register(FakeSearchSymbolTool())
 
     llm = ScriptedChatLLM(
         [
+            llm_tool_call("search_symbol", {"query": "AAPL"}),
             llm_tool_call(
                 guard.name,
                 {"symbol": "AAPL", "side": "buy", "instrument_type": "equity", "notional_usd": 100.0},
