@@ -1309,6 +1309,40 @@ export const api = {
     ),
   getActiveMarketTickRecordings: () =>
     request<MarketTickRecordingActiveResponse>("/trade/markets/recording/active"),
+  // Multi-market simultaneous replay — one UTC master clock watching several markets at once.
+  // Fronts `stock_simulator`'s `/multi_market/*` routes. Live-forward tick data + backfilled
+  // daily closes only for non-India markets — see MultiMarketReplayPanel.tsx's own note.
+  armMultiMarketReplay: (body: ArmMultiMarketRequest) =>
+    request<MultiMarketStatusResponse>("/trade/markets/multi_market/arm", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  getMultiMarketStatus: () =>
+    request<MultiMarketStatusResponse>("/trade/markets/multi_market/status"),
+  pauseMultiMarketReplay: () =>
+    request<MultiMarketStatusResponse>("/trade/markets/multi_market/pause", { method: "POST" }),
+  resumeMultiMarketReplay: () =>
+    request<MultiMarketStatusResponse>("/trade/markets/multi_market/resume", { method: "POST" }),
+  seekMultiMarketReplay: (time: string) =>
+    request<MultiMarketStatusResponse>("/trade/markets/multi_market/seek", {
+      method: "POST",
+      body: JSON.stringify({ time }),
+    }),
+  setMultiMarketReplaySpeed: (speed: number) =>
+    request<MultiMarketStatusResponse>("/trade/markets/multi_market/speed", {
+      method: "POST",
+      body: JSON.stringify({ speed }),
+    }),
+  stopMultiMarketReplay: () =>
+    request<{ status: string; message: string }>("/trade/markets/multi_market/stop", { method: "POST" }),
+  getMultiMarketQuote: (params: { market: string; symbol: string; exchange: string }) =>
+    request<MultiMarketQuoteResponse>(
+      `/trade/markets/multi_market/quote${api._hubStockHistoryQS({
+        market: params.market,
+        symbol: params.symbol,
+        exchange: params.exchange,
+      })}`,
+    ),
   getIndexPredictionFactors: () =>
     request<IndexFactorCatalogResponse>("/trade/index-prediction/factors"),
   simulateIndexPrediction: (body: SimulateIndexPredictionRequest) =>
@@ -3765,6 +3799,48 @@ export interface MarketTickRecordingStopResponse {
 export interface MarketTickRecordingActiveResponse {
   status: string;
   jobs: TickRecordingJob[];
+}
+
+export interface ArmMultiMarketRequest {
+  markets: string[];
+  start_utc?: string;
+  speed?: number;
+}
+
+export interface MultiMarketClockStatus {
+  start_utc: string;
+  sim_now_utc: string;
+  speed: number;
+  paused: boolean;
+}
+
+export interface MultiMarketMarketStatus {
+  market: string;
+  session_open: boolean;
+  local_time: string;
+  timezone: string;
+}
+
+export interface MultiMarketStatusResponse {
+  status: string;
+  markets: string[];
+  clock: MultiMarketClockStatus;
+  market_status: Record<string, MultiMarketMarketStatus>;
+}
+
+export interface MultiMarketQuote {
+  market: string;
+  symbol: string;
+  exchange: string;
+  price: number;
+  ts: string;
+  stale: boolean;
+  source: string;
+}
+
+export interface MultiMarketQuoteResponse {
+  status: string;
+  data: MultiMarketQuote;
 }
 
 export interface SimulateIndexPredictionRequest {

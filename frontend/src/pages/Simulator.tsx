@@ -12,6 +12,7 @@ import {
 import { COUNTRY_LABELS, GlobalMarketsPanel } from "@/components/simulator/GlobalMarketsPanel";
 import { MarketFactorCoveragePanel } from "@/components/simulator/MarketFactorCoveragePanel";
 import { MarketRecordingPanel } from "@/components/simulator/MarketRecordingPanel";
+import { MultiMarketReplayPanel } from "@/components/simulator/MultiMarketReplayPanel";
 import { SimulatorInstrumentPicker } from "@/components/simulator/SimulatorInstrumentPicker";
 import { SimulatorLiveIndexPanel } from "@/components/simulator/SimulatorLiveIndexPanel";
 import { SimulatorOptionChainPanel } from "@/components/simulator/SimulatorOptionChainPanel";
@@ -943,6 +944,10 @@ export function Simulator() {
           Gold, oil, VIX, and US 10Y aren't owned by one market — recording isn't wired up for
           these yet. The cards above already read them live/EOD on demand.
         </p>
+      ) : marketTab === "MULTI" ? (
+        <StatCard title="Multi-market replay">
+          <MultiMarketReplayPanel />
+        </StatCard>
       ) : (
         <>
           <StatCard title="Recording">

@@ -14,9 +14,10 @@ export const COUNTRY_LABELS: Record<string, string> = {
 };
 
 // Order mirrors `market_registry.SUPPORTED_MARKETS`, plus Currencies (the 6 USD-anchored FX
-// pairs) and Global (cross-market factors) — both fronting `global_macro_store` series rather
-// than a per-country dispatch, since none of these are owned by one market.
-const TAB_ORDER = ["IN", "US", "CN", "JP", "RU", "ME", "LATAM", "CURRENCY", "GLOBAL"];
+// pairs), Global (cross-market factors) — both fronting `global_macro_store` series rather than
+// a per-country dispatch — and Multi-Market (cross-market simultaneous replay), none of which
+// are owned by one market and so have no index-card grid of their own.
+const TAB_ORDER = ["IN", "US", "CN", "JP", "RU", "ME", "LATAM", "CURRENCY", "GLOBAL", "MULTI"];
 
 // USD-anchored FX pairs — `global_macro_store.LIVE_SPOT_SYMBOLS`/`SERIES_SCHEMA` keys, one per
 // non-USD `market_registry` market (`market_registry.fx_series()`'s series names).
@@ -44,11 +45,14 @@ const GLOBAL_FACTORS: { key: string; name: string; liveSpotSeries: string | null
 // India's headline indices aren't served by the `/trade/markets/{country}/...`
 // dispatch (the backend rejects country="IN" there — it has its own dedicated
 // methods instead), so these cards go through the same `/trade/hub/*` live
-// endpoints the "Chart symbol" panel above already uses.
-const INDIA_INDICES: { name: string; symbol: string }[] = [
-  { name: "NIFTY 50", symbol: "NIFTY" },
-  { name: "SENSEX", symbol: "SENSEX" },
-  { name: "BANK NIFTY", symbol: "BANKNIFTY" },
+// endpoints the "Chart symbol" panel above already uses. GIFT Nifty's exchange
+// is "NSEIX" (NSE International Exchange, GIFT City), not "NSE_INDEX" like the
+// other three — it's a genuinely different exchange, not a formatting quirk.
+const INDIA_INDICES: { name: string; symbol: string; exchange: string }[] = [
+  { name: "NIFTY 50", symbol: "NIFTY", exchange: "NSE_INDEX" },
+  { name: "SENSEX", symbol: "SENSEX", exchange: "NSE_INDEX" },
+  { name: "BANK NIFTY", symbol: "BANKNIFTY", exchange: "NSE_INDEX" },
+  { name: "GIFT NIFTY", symbol: "GIFTNIFTY", exchange: "NSEIX" },
 ];
 
 interface CardState {
@@ -103,8 +107,8 @@ export function GlobalMarketsPanel({
     );
     INDIA_INDICES.forEach((idx) => {
       Promise.all([
-        api.getHubMarketDataSpot({ symbol: idx.symbol, exchange: "NSE_INDEX" }),
-        api.getHubIndexHistoryBars({ symbol: idx.symbol, exchange: "NSE_INDEX" }),
+        api.getHubMarketDataSpot({ symbol: idx.symbol, exchange: idx.exchange }),
+        api.getHubIndexHistoryBars({ symbol: idx.symbol, exchange: idx.exchange }),
       ])
         .then(([spotRes, barsRes]) => {
           const bars = barsRes.bars ?? [];
@@ -232,6 +236,7 @@ export function GlobalMarketsPanel({
   const reload = useCallback(() => {
     if (activeTab === "CURRENCY") loadCurrencies();
     else if (activeTab === "GLOBAL") loadGlobal();
+    else if (activeTab === "MULTI") setCards([]);
     else if (activeTab === "IN") loadIndia();
     else loadCountry(activeTab);
   }, [activeTab, loadIndia, loadCountry, loadCurrencies, loadGlobal]);
@@ -243,6 +248,12 @@ export function GlobalMarketsPanel({
     }
     if (activeTab === "GLOBAL") {
       loadGlobal();
+      return;
+    }
+    if (activeTab === "MULTI") {
+      // No index-card grid — MultiMarketReplayPanel (rendered by Simulator.tsx) shows
+      // per-market status for whichever markets the user arms.
+      setCards([]);
       return;
     }
     if (activeTab === "IN") {
@@ -272,7 +283,13 @@ export function GlobalMarketsPanel({
               activeTab === code ? "bg-foreground text-background" : "text-muted-foreground hover:bg-accent",
             )}
           >
-            {code === "CURRENCY" ? "Currencies" : code === "GLOBAL" ? "Global" : COUNTRY_LABELS[code] ?? code}
+            {code === "CURRENCY"
+              ? "Currencies"
+              : code === "GLOBAL"
+              ? "Global"
+              : code === "MULTI"
+              ? "Multi-Market"
+              : COUNTRY_LABELS[code] ?? code}
           </button>
         ))}
       </div>

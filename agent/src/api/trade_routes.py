@@ -3842,6 +3842,88 @@ def list_market_tick_recordings(
     return _run_control(lambda c: c.list_tick_recordings())
 
 
+class ArmMultiMarketRequest(BaseModel):
+    markets: list[str]
+    start_utc: str | None = None
+    speed: float = 1.0
+
+
+class SeekMultiMarketRequest(BaseModel):
+    time: str
+
+
+class SetMultiMarketSpeedRequest(BaseModel):
+    speed: float
+
+
+@trade_router.post("/markets/multi_market/arm")
+def arm_multi_market(
+    body: ArmMultiMarketRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    """Arm a cross-market simultaneous replay session — one UTC master clock watching several
+    markets at once. See `stock_simulator/multi_market_replay.py`'s module docstring: this is
+    live-forward tick data + backfilled daily closes only, not a deep historical intraday scrub
+    for non-India markets yet."""
+    return _run_control(
+        lambda c: c.arm_multi_market_replay(markets=body.markets, start_utc=body.start_utc, speed=body.speed)
+    )
+
+
+@trade_router.get("/markets/multi_market/status")
+def get_multi_market_status(
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    return _run_control(lambda c: c.get_multi_market_status())
+
+
+@trade_router.post("/markets/multi_market/pause")
+def pause_multi_market(
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    return _run_control(lambda c: c.pause_multi_market_replay())
+
+
+@trade_router.post("/markets/multi_market/resume")
+def resume_multi_market(
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    return _run_control(lambda c: c.resume_multi_market_replay())
+
+
+@trade_router.post("/markets/multi_market/seek")
+def seek_multi_market(
+    body: SeekMultiMarketRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    return _run_control(lambda c: c.seek_multi_market_replay(time=body.time))
+
+
+@trade_router.post("/markets/multi_market/speed")
+def set_multi_market_speed(
+    body: SetMultiMarketSpeedRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    return _run_control(lambda c: c.set_multi_market_replay_speed(speed=body.speed))
+
+
+@trade_router.post("/markets/multi_market/stop")
+def stop_multi_market(
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    return _run_control(lambda c: c.stop_multi_market_replay())
+
+
+@trade_router.get("/markets/multi_market/quote")
+def get_multi_market_quote(
+    market: str,
+    symbol: str,
+    exchange: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    return _run_control(lambda c: c.get_multi_market_quote(market=market, symbol=symbol, exchange=exchange))
+
+
 @trade_router.post("/recording/auto-record", response_model=AutoRecordStatusResponse)
 def set_auto_record(
     body: AutoRecordRequest,
