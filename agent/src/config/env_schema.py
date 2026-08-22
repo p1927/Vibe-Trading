@@ -752,6 +752,19 @@ class TradeConfig(_EnvBase):
         alias="RECORDING_QUEUED_NO_PID_SECONDS", default="60",
     )
 
+    # --- trade/external_predictions_run_jobs.py --------------------------------
+    external_predictions_run_wall_clock_seconds: str = Field(
+        alias="EXTERNAL_PREDICTIONS_RUN_WALL_CLOCK_SECONDS", default="1800",
+    )
+    external_predictions_queued_no_pid_seconds: str = Field(
+        alias="EXTERNAL_PREDICTIONS_QUEUED_NO_PID_SECONDS", default="60",
+    )
+
+    # --- trade/job_watchdog.py ---------------------------------------------
+    job_watchdog_interval_seconds: str = Field(
+        alias="JOB_WATCHDOG_INTERVAL_SECONDS", default="60",
+    )
+
 
 # ---------------------------------------------------------------------------
 # Top-level composition

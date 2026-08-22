@@ -156,6 +156,22 @@ def reconcile_job(job_id: str) -> bool:
     return False
 
 
+def reconcile_all_active_jobs() -> int:
+    """Run reconciliation over every job currently marked active.
+
+    Reconciliation otherwise only runs when something calls ``get_active_job``
+    — a crashed worker for a job nobody is polling would sit reporting
+    "running" forever. Returns the number of jobs terminalized.
+    """
+    with _JOBS_LOCK:
+        job_ids = [
+            job_id
+            for job_id, job in RECORDING_JOBS.items()
+            if job.get("status") in _ACTIVE_STATUSES
+        ]
+    return sum(1 for job_id in job_ids if reconcile_job(job_id))
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
