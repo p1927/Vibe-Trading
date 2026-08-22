@@ -599,6 +599,7 @@ class IndexPredictionRunJobSnapshot(BaseModel):
     run_forecast_lab: bool = False
     created_at: str | None = None
     error: str | None = None
+    warnings: List[str] = Field(default_factory=list)
     logs: List[Dict[str, Any]] = Field(default_factory=list)
     artifact: Dict[str, Any] | None = None
     current_stage: str | None = None
