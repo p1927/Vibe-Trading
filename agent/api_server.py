@@ -136,9 +136,9 @@ async def _run_startup_preflight() -> None:
         logging.getLogger(__name__).warning("Legacy state migration failed", exc_info=True)
     run_preflight(console)
     _start_scheduled_research_executor()
-    from src.trade.index_prediction_run_jobs import start_stuck_job_watchdog
+    from src.trade.job_watchdog import start_job_watchdog
 
-    start_stuck_job_watchdog()
+    start_job_watchdog()
     from src.config.accessor import get_env_config
 
     if get_env_config().agent_tuning.vibe_trading_channels_auto_start:
@@ -147,9 +147,9 @@ async def _run_startup_preflight() -> None:
 
 async def _stop_scheduled_research_on_shutdown() -> None:
     """Stop the scheduled research executor on server shutdown."""
-    from src.trade.index_prediction_run_jobs import stop_stuck_job_watchdog
+    from src.trade.job_watchdog import stop_job_watchdog
 
-    stop_stuck_job_watchdog()
+    stop_job_watchdog()
     try:
         await _stop_channel_runtime()
     finally:

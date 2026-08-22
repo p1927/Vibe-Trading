@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -18,6 +19,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from src.config.accessor import get_env_config
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,8 @@ _JOBS_LOCK = threading.Lock()
 _JOB_TTL_SECONDS = 60 * 60
 _JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 _ACTIVE_STATUSES = frozenset({"queued", "running"})
+_WALL_CLOCK_SECONDS = int(get_env_config().trade.external_predictions_run_wall_clock_seconds)
+_QUEUED_NO_PID_SECONDS = int(get_env_config().trade.external_predictions_queued_no_pid_seconds)
 
 
 def _is_pid_alive(pid: int | None) -> bool:
@@ -60,6 +65,98 @@ def reconcile_zombie_job(job_id: str) -> bool:
         return False
     fail_job(job_id, "worker process exited unexpectedly")
     return True
+
+
+def _parse_iso_timestamp(ts: str | None) -> float | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _job_age_seconds(job: dict[str, Any]) -> float:
+    created = _parse_iso_timestamp(str(job.get("created_at") or ""))
+    if created is None:
+        return 0.0
+    return max(0.0, datetime.now(timezone.utc).timestamp() - created)
+
+
+def reconcile_queued_job(job_id: str) -> bool:
+    """Fail queued jobs whose worker never received a PID."""
+    job = _get_job_record(job_id)
+    if job is None or job.get("status") != "queued":
+        return False
+    if job.get("worker_pid") is not None:
+        return False
+    if _job_age_seconds(job) <= _QUEUED_NO_PID_SECONDS:
+        return False
+    fail_job(job_id, f"worker never spawned after {_QUEUED_NO_PID_SECONDS}s", terminate_worker=True)
+    return True
+
+
+def reconcile_stale_job(job_id: str) -> bool:
+    """Fail running jobs that exceed wall-clock budget."""
+    job = _get_job_record(job_id)
+    if job is None or job.get("status") != "running":
+        return False
+    if not worker_alive(job):
+        return False
+    wall_age = _job_age_seconds(job)
+    if wall_age > _WALL_CLOCK_SECONDS:
+        fail_job(
+            job_id,
+            f"run exceeded wall-clock budget ({int(wall_age)}s > {_WALL_CLOCK_SECONDS}s)",
+            terminate_worker=True,
+        )
+        return True
+    return False
+
+
+def reconcile_job(job_id: str) -> bool:
+    """Run all reconciliation checks. Returns True if job was terminalized."""
+    if reconcile_zombie_job(job_id):
+        return True
+    if reconcile_queued_job(job_id):
+        return True
+    if reconcile_stale_job(job_id):
+        return True
+    return False
+
+
+def reconcile_all_active_jobs() -> int:
+    """Run reconciliation over every job currently marked active.
+
+    Reconciliation otherwise only runs when something calls ``get_active_job``
+    — a crashed worker for a job nobody is polling would sit reporting
+    "running" forever. Returns the number of jobs terminalized.
+    """
+    with _JOBS_LOCK:
+        job_ids = [
+            job_id
+            for job_id, job in EXTERNAL_PREDICTIONS_RUN_JOBS.items()
+            if job.get("status") in _ACTIVE_STATUSES
+        ]
+    return sum(1 for job_id in job_ids if reconcile_job(job_id))
+
+
+def _terminate_worker(job: dict[str, Any] | None) -> None:
+    if job is None:
+        return
+    pid = job.get("worker_pid")
+    if pid is None:
+        return
+    try:
+        pid_int = int(pid)
+    except (TypeError, ValueError):
+        return
+    if not _is_pid_alive(pid_int) or pid_int == os.getpid():
+        return
+    try:
+        os.kill(pid_int, signal.SIGTERM)
+    except OSError:
+        pass
 
 
 def _now_iso() -> str:
@@ -411,7 +508,10 @@ def complete_job(job_id: str, *, ticker: str, snapshot: dict[str, Any]) -> None:
     _mutate_job(job_id, _apply)
 
 
-def fail_job(job_id: str, message: str) -> None:
+def fail_job(job_id: str, message: str, *, terminate_worker: bool = False) -> None:
+    if terminate_worker:
+        _terminate_worker(_get_job_record(job_id))
+
     def _apply(job: dict[str, Any]) -> None:
         job["status"] = "error"
         job["error"] = message
