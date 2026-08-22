@@ -287,6 +287,10 @@ from src.api.live_routes import (  # noqa: F401, E402
     _check_connector_status,
 )
 
+# --- Autonomous agents ---
+from src.api.autonomous_routes import autonomous_router  # noqa: E402
+app.include_router(autonomous_router)
+
 # --- Alpha Zoo ---
 from src.api.alpha_routes import register_alpha_routes  # noqa: E402
 register_alpha_routes(app)
