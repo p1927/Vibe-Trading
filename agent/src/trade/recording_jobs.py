@@ -592,26 +592,34 @@ def kick_recording(
     market_closed = False
     if wait_for_open:
         try:
+            from datetime import datetime as _datetime
+            from zoneinfo import ZoneInfo as _ZoneInfo
+
             from nautilus_openalgo_bridge.market_hours import (
                 is_real_nse_market_open,
                 next_real_nse_open_at,
             )
             from trade_integrations.execution.openalgo_client import OpenAlgoClient
 
-            market_closed = not is_real_nse_market_open()
+            # Holiday-aware: `is_real_nse_market_open()` alone is weekday+time-window
+            # only, so a manual/auto trigger during market hours on a trading holiday
+            # would otherwise proceed unguarded. Fetch holidays first (best-effort —
+            # vendor call, fall back to weekday-only on failure) so both the
+            # market_closed decision and next_open_at use the same holiday set.
+            try:
+                _holidays_raw = OpenAlgoClient().get_market_holidays()
+                holidays = frozenset({
+                    date.fromisoformat(str(row["date"])[:10])
+                    for row in _holidays_raw
+                    if isinstance(row, dict)
+                    and str(row.get("holiday_type") or "").upper() == "TRADING_HOLIDAY"
+                    and row.get("date")
+                })
+            except Exception:
+                holidays = frozenset()
+            today_ist = _datetime.now(_ZoneInfo("Asia/Kolkata")).date()
+            market_closed = (not is_real_nse_market_open()) or today_ist in holidays
             if market_closed:
-                # Compute next_open_at (holiday-aware).
-                try:
-                    _holidays_raw = OpenAlgoClient().get_market_holidays()
-                    holidays = frozenset({
-                        date.fromisoformat(str(row["date"])[:10])
-                        for row in _holidays_raw
-                        if isinstance(row, dict)
-                        and str(row.get("holiday_type") or "").upper() == "TRADING_HOLIDAY"
-                        and row.get("date")
-                    })
-                except Exception:
-                    holidays = frozenset()
                 next_open_at = next_real_nse_open_at(holidays=holidays)
                 from src.trade.recording_wait_scheduler import schedule_recording_wake
 
