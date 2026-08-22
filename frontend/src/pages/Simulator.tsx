@@ -39,6 +39,14 @@ import {
 
 const UNDERLYINGS = ["NIFTY", "BANKNIFTY", "SENSEX"];
 
+// GIFT Nifty (NSE IX futures on Nifty 50) is chart-only, not part of `UNDERLYINGS`: it's always
+// recorded independently (`gift_nifty_poller.py`, a plain page-scrape poll, not INDmoney's
+// option-chain/depth path), so offering it in the "Record" instrument picker below would imply a
+// toggle that doesn't do anything — the recorder's `underlyings` resolution step would just
+// silently drop it (it isn't in INDmoney's tradable scrip master). Also its exchange is "NSEIX",
+// not "NSE_INDEX" like the other three, so it can't just be appended to `UNDERLYINGS`.
+const GIFT_NIFTY_SYMBOL = { symbol: "GIFTNIFTY", exchange: "NSEIX" };
+
 function StatCard({
   title,
   children,
@@ -203,6 +211,7 @@ export function Simulator() {
   const chartableSymbols = useMemo(
     () => [
       ...UNDERLYINGS.map((u) => ({ symbol: u, exchange: "NSE_INDEX" })),
+      GIFT_NIFTY_SYMBOL,
       ...nifty50.map((c) => ({ symbol: c.symbol, exchange: "NSE" })),
     ],
     [nifty50],
@@ -565,6 +574,12 @@ export function Simulator() {
                     {u}
                   </option>
                 ))}
+                <option
+                  key={GIFT_NIFTY_SYMBOL.symbol}
+                  value={`${GIFT_NIFTY_SYMBOL.exchange}:${GIFT_NIFTY_SYMBOL.symbol}`}
+                >
+                  GIFT NIFTY
+                </option>
               </optgroup>
               {nifty50.length > 0 && (
                 <optgroup label="NIFTY 50 equities">

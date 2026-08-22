@@ -1213,6 +1213,10 @@ export const api = {
       })}`,
     ),
   // /trade/hub/stock-history/coverage — per-week bucket availability gate.
+  // ~90 buckets x 5 days of on-disk/parquet existence checks routinely takes
+  // 20-40s (observed directly) — the default 20s abort was cutting this off
+  // before it could finish, surfacing as a false "timed out" error identical
+  // to the one postHubStockHistoryBackfill below was already fixed for.
   getHubStockHistoryCoverage: (params: {
     week: string;
     symbol?: string;
@@ -1224,6 +1228,7 @@ export const api = {
         symbol: params.symbol ?? "NIFTY",
         include_optional: params.include_optional ? "1" : undefined,
       })}`,
+      { timeoutMs: 120_000 },
     ),
   // /trade/hub/stock-history/backfill — run writers for missing buckets.
   // Backend handlers declare up to 900s each (e.g. index_tape/option_chain's
