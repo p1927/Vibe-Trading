@@ -592,6 +592,33 @@ export function ExternalPredictionsPanel({
         ) : null}
       </div>
 
+      {snapshot?.source_health?.length ? (
+        <div className="rounded-xl border border-border/60 bg-card/40 p-3">
+          <p className="mb-2 text-[11px] font-semibold text-muted-foreground">Source health</p>
+          <div className="flex flex-wrap gap-1.5">
+            {snapshot.source_health.map((row) => {
+              const pillClass =
+                row.status === "available"
+                  ? "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
+                  : row.status === "stale"
+                    ? "bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                    : row.status === "error"
+                      ? "bg-red-500/10 text-red-700 dark:text-red-300"
+                      : "bg-muted text-muted-foreground";
+              return (
+                <span
+                  key={row.source_id}
+                  title={row.last_error_code ?? undefined}
+                  className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", pillClass)}
+                >
+                  {row.display_name} · {row.status}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
       {error ? (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-700 dark:text-red-300">
           {error}

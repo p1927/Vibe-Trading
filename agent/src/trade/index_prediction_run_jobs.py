@@ -46,6 +46,11 @@ _REFRESH_WALL_CLOCK_SECONDS = int(
     os.getenv("INDEX_PREDICTION_REFRESH_WALL_CLOCK_SECONDS", "5400")
 )
 _QUEUED_NO_PID_SECONDS = int(os.getenv("INDEX_PREDICTION_QUEUED_NO_PID_SECONDS", "60"))
+_WATCHDOG_INTERVAL_SECONDS = float(
+    os.getenv("INDEX_PREDICTION_WATCHDOG_INTERVAL_SECONDS", "60")
+)
+_watchdog_thread: threading.Thread | None = None
+_watchdog_stop = threading.Event()
 
 
 def _is_pid_alive(pid: int | None) -> bool:
@@ -154,6 +159,61 @@ def reconcile_job(job_id: str) -> bool:
     if reconcile_stale_job(job_id):
         return True
     return False
+
+
+def reconcile_all_active_jobs() -> int:
+    """Run reconciliation over every job currently marked active.
+
+    Reconciliation otherwise only runs when something calls ``get_active_job``
+    — a crashed worker for a job nobody is polling (closed tab, unattended
+    cron run) would sit reporting "running" forever. Returns the number of
+    jobs terminalized.
+    """
+    with _JOBS_LOCK:
+        job_ids = [
+            job_id
+            for job_id, job in INDEX_PREDICTION_RUN_JOBS.items()
+            if job.get("status") in _ACTIVE_STATUSES
+        ]
+    return sum(1 for job_id in job_ids if reconcile_job(job_id))
+
+
+def _watchdog_loop(interval_seconds: float) -> None:
+    hydrate_jobs_from_disk()
+    while not _watchdog_stop.wait(interval_seconds):
+        try:
+            reconciled = reconcile_all_active_jobs()
+            if reconciled:
+                logger.warning("stuck-job watchdog reconciled %d job(s)", reconciled)
+        except Exception:  # pragma: no cover - watchdog must never die
+            logger.exception("stuck-job watchdog iteration failed")
+
+
+def start_stuck_job_watchdog(interval_seconds: float | None = None) -> None:
+    """Start the background reconciliation loop (idempotent, safe to call repeatedly)."""
+    global _watchdog_thread
+    with _JOBS_LOCK:
+        if _watchdog_thread is not None and _watchdog_thread.is_alive():
+            return
+        _watchdog_stop.clear()
+        _watchdog_thread = threading.Thread(
+            target=_watchdog_loop,
+            args=(interval_seconds if interval_seconds is not None else _WATCHDOG_INTERVAL_SECONDS,),
+            name="index-prediction-job-watchdog",
+            daemon=True,
+        )
+        _watchdog_thread.start()
+
+
+def stop_stuck_job_watchdog(timeout: float = 5.0) -> None:
+    """Stop the background reconciliation loop, if running."""
+    global _watchdog_thread
+    _watchdog_stop.set()
+    with _JOBS_LOCK:
+        thread = _watchdog_thread
+        _watchdog_thread = None
+    if thread is not None:
+        thread.join(timeout=timeout)
 
 
 def _now_iso() -> str:

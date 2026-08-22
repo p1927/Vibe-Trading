@@ -123,7 +123,11 @@ export function TrackScoreboardPanel({
 
   const tracks = CANONICAL_TRACK_IDS.map((tid) => [tid, report.tracks?.[tid] ?? { track_id: tid, eval_count: 0 }] as const);
   const experimentalTracks = EXPERIMENTAL_TRACK_IDS.map(
-    (tid) => [tid, report.tracks?.[tid] ?? { track_id: tid, eval_count: 0, experimental: true }] as const,
+    (tid) =>
+      [
+        tid,
+        report.tracks?.[tid] ?? { track_id: tid, eval_count: 0, mae_pct: null, direction_hit_rate: null },
+      ] as const,
   );
   const combiners = BACKTEST_COMBINER_IDS.map((cid) => [cid, report.combiners?.[cid] ?? { track_id: cid, eval_count: 0 }] as const);
   const live = report.live;

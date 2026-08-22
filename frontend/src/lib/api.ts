@@ -2614,7 +2614,8 @@ export interface NavigationTrace {
 export interface ExternalPredictionSource {
   id: string;
   display_name: string;
-  kind?: "media" | "broker" | "global_bank";
+  kind?: "media" | "broker" | "global_bank" | "derived";
+  fetch_strategy?: "crawl_exploratory" | "api_derived" | "structured_scrape" | "search_syndicated";
   search_queries?: string[];
   domains?: string[];
   entry_urls?: string[];
@@ -2624,6 +2625,16 @@ export interface ExternalPredictionSource {
   discovered_at?: string | null;
   added_by?: "seed" | "user" | "discover";
   removable?: boolean;
+}
+
+export interface ExternalPredictionSourceHealth {
+  source_id: string;
+  display_name: string;
+  kind?: string;
+  fetch_strategy?: string;
+  last_success_at?: string;
+  status: "available" | "stale" | "error" | "unknown";
+  last_error_code?: string;
 }
 
 export interface ExternalPredictionSnapshot {
@@ -2641,6 +2652,7 @@ export interface ExternalPredictionSnapshot {
   sources_not_found?: number;
   had_errors?: boolean;
   refresh_attempt_failures?: number;
+  source_health?: ExternalPredictionSourceHealth[];
 }
 
 export interface ExternalPredictionsResponse {
@@ -3818,6 +3830,7 @@ export interface IndexBacktestReport {
   history_end?: string;
   history_rows?: number;
   eval_count?: number;
+  eval_protocol?: string;
   metrics?: {
     mae_pct?: number | null;
     direction_hit_rate?: number | null;
@@ -3827,6 +3840,7 @@ export interface IndexBacktestReport {
     in_sample_mae_pct?: number | null;
     in_sample_r2?: number | null;
     in_sample_direction_hit_rate?: number | null;
+    direction_bootstrap_ci?: IndexDirectionBootstrapCI | null;
   };
   factor_audit?: IndexBacktestFactorAudit[];
   factor_correlations?: Array<{ factor?: string; label?: string; corr_forward_return?: number }>;
@@ -3834,6 +3848,14 @@ export interface IndexBacktestReport {
   nifty_series?: Array<{ date: string; close: number; realized_1d_pct?: number | null }>;
   daily_evaluations?: IndexBacktestDailyEval[];
   limitations?: string[];
+}
+
+export interface IndexDirectionBootstrapCI {
+  n?: number;
+  direction_hit_rate?: number | null;
+  ci_lower?: number | null;
+  ci_upper?: number | null;
+  insufficient_evidence?: boolean;
 }
 
 export interface CausalHypothesis {
@@ -4434,11 +4456,14 @@ export interface IndexTrackPromotionVerdict {
   delta_vs_quant_pp?: number;
   eval_count?: number;
   insufficient_evidence?: boolean;
+  mae_passes?: boolean;
 }
 
 export interface IndexTrackPromotion {
   eval_count?: number;
   quant_direction_hit_rate?: number;
+  quant_mae_pct?: number | null;
+  headline_direction_bootstrap_ci?: IndexDirectionBootstrapCI | null;
   verdicts?: Record<string, IndexTrackPromotionVerdict>;
   promoted_combiners?: string[];
   auto_promote_allowed?: boolean;

@@ -30,6 +30,7 @@ interface ChartItem {
   chartHorizonDays: number;
   mismatch: boolean;
   isInternal?: boolean;
+  isDerived?: boolean;
 }
 
 interface Props {
@@ -54,6 +55,7 @@ export function ExternalPredictionsComparisonChart({ snapshot, horizonDays, heig
         targetDate: p.target_date,
         chartHorizonDays: effectiveChartHorizonDays(p, horizonDays),
         mismatch: hasHorizonMismatch(p),
+        isDerived: src?.kind === "derived",
       };
     });
     const internalReturn = snapshot?.internal_forecast?.expected_return_pct;
@@ -155,8 +157,9 @@ export function ExternalPredictionsComparisonChart({ snapshot, horizonDays, heig
               itemStyle: {
                 color: baseColor,
                 borderRadius: [4, 4, 0, 0],
-                borderColor: item?.mismatch ? "#f59e0b" : undefined,
-                borderWidth: item?.mismatch ? 2 : 0,
+                borderColor: item?.mismatch ? "#f59e0b" : item?.isDerived ? "#14b8a6" : undefined,
+                borderWidth: item?.mismatch || item?.isDerived ? 2 : 0,
+                borderType: item?.isDerived && !item.mismatch ? "dashed" : "solid",
               },
             };
           }),

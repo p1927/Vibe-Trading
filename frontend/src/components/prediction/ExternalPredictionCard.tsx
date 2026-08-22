@@ -9,6 +9,7 @@ const KIND_LABELS: Record<string, string> = {
   media: "Media",
   broker: "Broker",
   global_bank: "Global bank",
+  derived: "Derived",
 };
 
 function fmtLevel(v: number | null | undefined): string {

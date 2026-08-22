@@ -64,9 +64,7 @@ export function BacktestEvaluationPanel({
   const isHybrid = scope === "hybrid";
   const hybridHitRate = metrics.hybrid_direction_hit_rate;
   const macroHitRate = metrics.macro_only_direction_hit_rate ?? metrics.direction_hit_rate;
-  const bootstrapCi = metrics.direction_bootstrap_ci as
-    | { ci_lower?: number; ci_upper?: number; insufficient_evidence?: boolean; n?: number }
-    | undefined;
+  const bootstrapCi = metrics.direction_bootstrap_ci ?? undefined;
   const evalProtocol = report.eval_protocol ?? "expanding";
 
   return (

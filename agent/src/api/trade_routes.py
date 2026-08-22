@@ -1105,6 +1105,38 @@ def _external_predictions_status(snapshot: Any) -> str:
     return "ok"
 
 
+def _external_prediction_source_health(snapshot: Any) -> list[dict[str, Any]]:
+    """Per-source health view, computed from the snapshot rather than stored — mirrors the
+    vendor/capability/status pattern used for Hub's `source_availability` card."""
+    if snapshot is None:
+        return []
+    sources_by_id = {s.id: s for s in getattr(snapshot, "sources", None) or []}
+    rows: list[dict[str, Any]] = []
+    for record in getattr(snapshot, "predictions", None) or []:
+        source = sources_by_id.get(record.source_id)
+        fetch_status = str(getattr(record, "fetch_status", "") or "unknown")
+        status = {"ok": "available", "stale": "stale", "error": "error", "not_found": "error"}.get(
+            fetch_status, "unknown"
+        )
+        provenance = dict(getattr(record, "provenance", None) or {})
+        last_attempt = provenance.get("last_refresh_attempt") or {}
+        rows.append(
+            {
+                "source_id": record.source_id,
+                "display_name": (source.display_name if source else record.source_id),
+                "kind": (source.kind if source else None),
+                "fetch_strategy": (getattr(source, "fetch_strategy", None) if source else None),
+                "last_success_at": (
+                    last_attempt.get("at") if fetch_status == "ok" else provenance.get("last_success_at")
+                )
+                or (getattr(record, "as_of", "") if fetch_status == "ok" else ""),
+                "status": status,
+                "last_error_code": getattr(record, "error_message", "") or None,
+            }
+        )
+    return rows
+
+
 class ExternalPredictionsRefreshRequest(BaseModel):
     ticker: str = "NIFTY"
     horizon_days: int = 14
@@ -2559,10 +2591,12 @@ def get_external_predictions(
 
         ensure_trade_stack_path()
         snapshot = load_snapshot(symbol=key, horizon_days=horizon_days)
+        snapshot_payload = snapshot.to_dict()
+        snapshot_payload["source_health"] = _external_prediction_source_health(snapshot)
         return ExternalPredictionsResponse(
             status=_external_predictions_status(snapshot),
             ticker=key,
-            snapshot=snapshot.to_dict(),
+            snapshot=snapshot_payload,
         )
     except Exception as exc:
         logger.exception("get external predictions failed for %s", key)
@@ -2590,10 +2624,12 @@ def refresh_external_predictions(
             symbol=key,
             horizon_days=body.horizon_days,
         )
+        snapshot_payload = snapshot.to_dict()
+        snapshot_payload["source_health"] = _external_prediction_source_health(snapshot)
         return ExternalPredictionsResponse(
             status=_external_predictions_status(snapshot),
             ticker=key,
-            snapshot=snapshot.to_dict(),
+            snapshot=snapshot_payload,
         )
     except Exception as exc:
         logger.exception("refresh external predictions failed for %s", key)
