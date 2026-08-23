@@ -3983,6 +3983,7 @@ export interface PlaygroundTrigger {
   event_type?: string;
   primary_factor?: string;
   suggested_factors?: string[];
+  suggested_topic_tags?: string[];
   suggested_shock_pct?: number;
   why?: string;
   probability?: number | null;
