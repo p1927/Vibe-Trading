@@ -3497,19 +3497,22 @@ def list_recording_sessions(
     _auth: None = Depends(require_local_or_auth),
 ) -> RecordingSessionsResponse:
     """Days available to replay — scans the exported index + equity parquet files."""
-    from trade_integrations.stock_history.api import StockHistory
+    from trade_integrations.stock_simulator.client import StockSimulatorClient, StockSimulatorClientError
 
-    history = StockHistory()
+    client = StockSimulatorClient()
     days: set[str] = set()
-    for symbol, exchange in (
-        ("NIFTY", "NSE_INDEX"),
-        ("BANKNIFTY", "NSE_INDEX"),
-        ("SENSEX", "BSE_INDEX"),
-    ):
-        days.update(history.recorded_index_days(symbol=symbol, exchange=exchange))
+    try:
+        for symbol, exchange in (
+            ("NIFTY", "NSE_INDEX"),
+            ("BANKNIFTY", "NSE_INDEX"),
+            ("SENSEX", "BSE_INDEX"),
+        ):
+            days.update(client.get_recorded_index_days(symbol=symbol, exchange=exchange)["data"])
 
-    for symbol in history.recorded_equities():
-        days.update(history.recorded_index_days(symbol=symbol, exchange="NSE"))
+        for symbol in client.get_recorded_equities()["data"]:
+            days.update(client.get_recorded_index_days(symbol=symbol, exchange="NSE")["data"])
+    except StockSimulatorClientError:
+        logger.exception("stock_simulator unavailable while listing recording sessions")
 
     return RecordingSessionsResponse(sessions=sorted(days, reverse=True))
 

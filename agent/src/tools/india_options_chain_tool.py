@@ -33,10 +33,13 @@ quality tier:
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from src.agent.tools import BaseTool
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_STRIKE_COUNT = 10
 _LIVE_VENDOR_SOURCES = ("indmoney", "openalgo")
@@ -207,15 +210,18 @@ def _fetch_expiries(source: str, underlying: str, exchange: str) -> List[str]:
     resolves on its own. Not every source can list every expiry equally
     cheaply/reliably, so each has its own path rather than one shared call."""
     if source == "stock_simulator":
-        from trade_integrations.stock_history.api import StockHistory
+        from trade_integrations.stock_simulator.client import StockSimulatorClient, StockSimulatorClientError
 
         # The archive can hold years of expiries (every weekly/monthly ever
         # recorded) — real data, but unusable as a flat dropdown list. Keep
         # only the most recent ones, same intent as list_expiries' max_count
         # for the live vendor sources.
-        all_recorded = sorted(
-            StockHistory().recorded_option_expiries(symbol=underlying, exchange=exchange)
-        )
+        try:
+            resp = StockSimulatorClient().get_recorded_option_expiries(symbol=underlying, exchange=exchange)
+        except StockSimulatorClientError as exc:
+            logger.debug("stock_simulator get_recorded_option_expiries unavailable: %s", exc)
+            return []
+        all_recorded = sorted(resp["data"])
         return all_recorded[-24:]
 
     if source == "indmoney":
@@ -392,9 +398,14 @@ def list_india_underlyings(source: str) -> Dict[str, Any]:
     offered here" apart from "genuinely nothing recorded")."""
     equities: Optional[List[str]] = None
     if source == "stock_simulator":
-        from trade_integrations.stock_history.api import StockHistory
+        from trade_integrations.stock_simulator.client import StockSimulatorClient, StockSimulatorClientError
 
-        equities = sorted(StockHistory().recorded_equities())
+        try:
+            resp = StockSimulatorClient().get_recorded_equities()
+        except StockSimulatorClientError as exc:
+            logger.debug("stock_simulator get_recorded_equities unavailable: %s", exc)
+            resp = {"data": []}
+        equities = sorted(resp["data"])
     return {
         "indexes": list(_KNOWN_INDEXES),
         "equities": equities,
