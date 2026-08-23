@@ -126,8 +126,7 @@ export function SectorIndicesPanel({ country, label }: { country: string; label:
     <div className="space-y-5">
       <div>
         <p className="mb-2 text-[11px] text-muted-foreground">
-          {label}'s sector indices, sourced live via TradingView (see the item's Attempts log for
-          which sectors pass both TradingView feeds and which are chart-feed-only, not wired here).
+          {label}'s sector indices, sourced live via TradingView.
         </p>
         {sectorsError ? (
           <p className="text-[11px] text-destructive">{sectorsError}</p>
