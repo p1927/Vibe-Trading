@@ -14,10 +14,10 @@ export const COUNTRY_LABELS: Record<string, string> = {
 };
 
 // Order mirrors `market_registry.SUPPORTED_MARKETS`, plus Currencies (the 6 USD-anchored FX
-// pairs), Global (cross-market factors) — both fronting `global_macro_store` series rather than
-// a per-country dispatch — and Multi-Market (cross-market simultaneous replay), none of which
-// are owned by one market and so have no index-card grid of their own.
-const TAB_ORDER = ["IN", "US", "CN", "JP", "RU", "ME", "LATAM", "CURRENCY", "GLOBAL", "MULTI"];
+// pairs), Global (cross-market factors), Economy (cross-market GDP/fiscal/unemployment/etc.
+// comparison, `EconomyPanel`) — all three fronting series that aren't owned by one market and so
+// have no index-card grid of their own — and Multi-Market (cross-market simultaneous replay).
+const TAB_ORDER = ["IN", "US", "CN", "JP", "RU", "ME", "LATAM", "CURRENCY", "GLOBAL", "ECONOMY", "MULTI"];
 
 // USD-anchored FX pairs — `global_macro_store.LIVE_SPOT_SYMBOLS`/`SERIES_SCHEMA` keys, one per
 // non-USD `market_registry` market (`market_registry.fx_series()`'s series names).
@@ -246,7 +246,7 @@ export function GlobalMarketsPanel({
   const reload = useCallback(() => {
     if (activeTab === "CURRENCY") loadCurrencies();
     else if (activeTab === "GLOBAL") loadGlobal();
-    else if (activeTab === "MULTI") setCards([]);
+    else if (activeTab === "ECONOMY" || activeTab === "MULTI") setCards([]);
     else if (activeTab === "IN") loadIndia();
     else loadCountry(activeTab);
   }, [activeTab, loadIndia, loadCountry, loadCurrencies, loadGlobal]);
@@ -258,6 +258,12 @@ export function GlobalMarketsPanel({
     }
     if (activeTab === "GLOBAL") {
       loadGlobal();
+      return;
+    }
+    if (activeTab === "ECONOMY") {
+      // No index-card grid — EconomyPanel (rendered by Simulator.tsx) has its own
+      // cross-market factor picker + chart, fetched independently.
+      setCards([]);
       return;
     }
     if (activeTab === "MULTI") {
@@ -297,6 +303,8 @@ export function GlobalMarketsPanel({
               ? "Currencies"
               : code === "GLOBAL"
               ? "Global"
+              : code === "ECONOMY"
+              ? "Economy"
               : code === "MULTI"
               ? "Multi-Market"
               : COUNTRY_LABELS[code] ?? code}

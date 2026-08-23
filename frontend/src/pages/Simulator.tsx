@@ -9,9 +9,12 @@ import {
   type RecordingResult,
   type ReplayCalendarDay,
 } from "@/lib/api";
+import { EconomyPanel } from "@/components/simulator/EconomyPanel";
 import { COUNTRY_LABELS, GlobalMarketsPanel } from "@/components/simulator/GlobalMarketsPanel";
+import { MarketCoveragePanel } from "@/components/simulator/MarketCoveragePanel";
 import { MarketFactorCoveragePanel } from "@/components/simulator/MarketFactorCoveragePanel";
 import { MarketRecordingPanel } from "@/components/simulator/MarketRecordingPanel";
+import { MarketReplayPanel } from "@/components/simulator/MarketReplayPanel";
 import { MultiMarketReplayPanel } from "@/components/simulator/MultiMarketReplayPanel";
 import { SimulatorInstrumentPicker } from "@/components/simulator/SimulatorInstrumentPicker";
 import { SimulatorLiveIndexPanel } from "@/components/simulator/SimulatorLiveIndexPanel";
@@ -944,6 +947,10 @@ export function Simulator() {
           Gold, oil, VIX, and US 10Y aren't owned by one market — recording isn't wired up for
           these yet. The cards above already read them live/EOD on demand.
         </p>
+      ) : marketTab === "ECONOMY" ? (
+        <StatCard title="Economy">
+          <EconomyPanel />
+        </StatCard>
       ) : marketTab === "MULTI" ? (
         <StatCard title="Multi-market replay">
           <MultiMarketReplayPanel />
@@ -956,6 +963,12 @@ export function Simulator() {
               country={marketTab}
               label={COUNTRY_LABELS[marketTab] ?? marketTab}
             />
+          </StatCard>
+          <StatCard title="Replay">
+            <MarketReplayPanel country={marketTab} label={COUNTRY_LABELS[marketTab] ?? marketTab} />
+          </StatCard>
+          <StatCard title="Data coverage">
+            <MarketCoveragePanel country={marketTab} />
           </StatCard>
           <StatCard title="Factor coverage">
             <MarketFactorCoveragePanel country={marketTab} />

@@ -156,7 +156,7 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
         return {"skipped": True, "reason": "monitor_disabled"}
 
     _ensure_trade_integrations_on_path()
-    from trade_integrations.dataflows.options_research.prediction_ledger import (
+    from trade_integrations.dataflows.prediction_ledger_bridge import (
         reconcile_options_predictions,
     )
     from trade_integrations.monitor.config import get_monitor_config

@@ -1268,8 +1268,24 @@ export const api = {
     request<MarketFlowOfFundsResponse>(
       `/trade/markets/${encodeURIComponent(country)}/flow/${encodeURIComponent(series)}`,
     ),
+  getMarketEconomyFactor: (country: string, series: string) =>
+    request<MarketEconomyFactorResponse>(
+      `/trade/markets/${encodeURIComponent(country)}/economy/${encodeURIComponent(series)}`,
+    ),
   getMarketFactorCoverage: () =>
     request<MarketFactorCoverageResponse>("/trade/markets/factor_coverage"),
+  // Per-country `market_ticks` day calendar + idempotent backfill — the non-India analog of
+  // the India-tab Replay calendar / Data-coverage backfill.
+  getMarketReplayCalendar: (country: string) =>
+    request<MarketReplayCalendarResponse>(`/trade/markets/${encodeURIComponent(country)}/replay/calendar`),
+  // A "max"-period backfill is a real per-index vendor call (yfinance), not a cache read — the
+  // default 20s abort cut this off in practice, same reasoning as postHubStockHistoryBackfill above.
+  backfillMarketTicks: (country: string, index?: string) =>
+    request<MarketBackfillResponse>("/trade/markets/backfill", {
+      method: "POST",
+      body: JSON.stringify({ country, index }),
+      timeoutMs: 300_000,
+    }),
   // Cross-market `global_macro_store` series — currencies (usd_inr/usd_cny/usd_jpy/usd_rub/
   // usd_sar/usd_brl) and global factors (gold, oil_brent_daily, oil_wti_daily, vix_daily, us_10y).
   getGlobalMacroHistory: (
@@ -3746,6 +3762,23 @@ export interface MarketFlowOfFundsResponse {
   data: Record<string, unknown>;
 }
 
+// Raw per-period rows straight from `market_factor_catalog`'s economy-factor sources: IMF
+// DataMapper/World Bank annual rows are `{"year": "2006", "value": 8.1}`; FRED monthly rows are
+// `{"date": "2026-07-01", "value": "12.3"}` (value comes back as a string, and `"."` means a
+// missing observation) — `get_economy_factor()` passes these straight through unnormalized, so
+// the frontend has to handle both shapes/cadences itself rather than assume one.
+export interface EconomyFactorRow {
+  year?: string | number;
+  date?: string;
+  value: number | string | null;
+  [key: string]: unknown;
+}
+
+export interface MarketEconomyFactorResponse {
+  status: string;
+  data: EconomyFactorRow[];
+}
+
 export interface MarketFactorCoverageResponse {
   status: string;
   data: MarketFactorCoverageReport;
@@ -3765,6 +3798,33 @@ export interface MarketFactorCoverageReport {
   recorded: MarketFactorEntry[];
   sourced: MarketFactorEntry[];
   not_sourced: MarketFactorEntry[];
+}
+
+// Per-day cells carry `has_<index>: boolean` / `<index>_rows: number` for every index the
+// market has (see `history_data.py`'s `get_market_replay_calendar` — keys are dynamic per
+// country, so this is intentionally an index signature rather than named fields).
+export interface MarketReplayCalendarDay {
+  date: string;
+  [key: string]: string | number | boolean;
+}
+
+export interface MarketReplayCalendarResponse {
+  status: string;
+  days: MarketReplayCalendarDay[];
+  indices: string[];
+}
+
+export interface MarketBackfillResult {
+  country: string;
+  index: string;
+  written?: number;
+  status?: string;
+  error?: string;
+}
+
+export interface MarketBackfillResponse {
+  status: string;
+  results: MarketBackfillResult[];
 }
 
 export interface TickRecordingJob {

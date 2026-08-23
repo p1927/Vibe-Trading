@@ -3747,6 +3747,19 @@ def get_market_flow_of_funds(
     return _run_control(lambda c: c.get_flow_of_funds(country=country, series=series))
 
 
+@trade_router.get("/markets/{country}/economy/{series}")
+def get_market_economy_factor(
+    country: str,
+    series: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    """Economy factor (GDP growth, fiscal balance, current-account balance, unemployment,
+    consumption share of GDP, industrial production, PMI manufacturing) for any of the 7
+    `market_registry` markets — proxies `stock_simulator`'s `/history/{country}/economy/{series}`,
+    added for the Economy tab frontend ([[2026-08-23-economy-section-frontend-ui]])."""
+    return _run_control(lambda c: c.get_economy_factor(country=country, series=series))
+
+
 @trade_router.get("/markets/factor_coverage")
 def get_market_factor_coverage(
     _auth: None = Depends(require_local_or_auth),
@@ -4131,7 +4144,7 @@ def get_index_prediction_history(
     """Return prediction ledger rows for timeline chart."""
     key = (ticker or "NIFTY").strip().upper()
     try:
-        from trade_integrations.dataflows.index_research.prediction_ledger import (
+        from trade_integrations.dataflows.prediction_ledger_bridge import (
             list_forecast_history_bundle,
             list_prediction_history,
         )
@@ -4178,7 +4191,7 @@ def get_index_factor_history(
     """Return macro factor time series for historical charts."""
     key = (ticker or "NIFTY").strip().upper()
     try:
-        from trade_integrations.dataflows.index_research.prediction_ledger import (
+        from trade_integrations.dataflows.prediction_ledger_bridge import (
             list_factor_history_series,
         )
         from src.trade.hub_bridge import ensure_trade_stack_path
