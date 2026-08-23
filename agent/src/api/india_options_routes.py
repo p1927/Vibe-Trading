@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
@@ -233,6 +234,129 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
             "distribution_type": "physical",
             "forecast_quantiles": forecast.quantiles,
             "overlay": overlay,
+        }
+
+    @app.get("/options/india/selector", dependencies=[Depends(require_auth)])
+    async def options_selector_route(
+        ticker: str = Query(..., max_length=64),
+        expiry_date: str | None = Query(None, max_length=16),
+        horizon_days: int = Query(7, ge=1, le=60),
+        target_profit: float = Query(..., gt=0),
+        rank_by: str = Query("risk_reward", pattern="^(risk_reward|pop_per_risk)$"),
+        n_paths: int = Query(5_000, ge=100, le=50_000),
+    ) -> Response:
+        """Module 5's risk-adjusted candidate selector: generates candidate
+        strategies off the live chain (module 5's `candidate_generator`),
+        scores each by max-loss/max-profit + module 4's POP-by-T, and ranks
+        by risk/reward (`max_loss / target_profit`) or POP-per-risk. Same
+        physical-not-risk-neutral caveat as `/options/india/pop-overlay` —
+        see `pop_engine.py`'s module docstring. Every scored candidate is
+        returned (`options_selector.select_candidates` never filters), so
+        callers see `meets_target=false` candidates too, not just the winner.
+        """
+        ticker_norm = ticker.strip().upper()
+        if not ticker_norm:
+            return JSONResponse(status_code=400, content={"ok": False, "error": "ticker is required"})
+
+        try:
+            from trade_integrations.dataflows.options_research.market import (
+                options_research_ineligible_reason,
+                resolve_options_instrument,
+            )
+
+            ineligible = options_research_ineligible_reason(ticker_norm)
+            if ineligible:
+                return JSONResponse(
+                    status_code=400,
+                    content={"ok": False, "error": f"{ticker_norm} is not eligible for options research ({ineligible})"},
+                )
+            instrument = resolve_options_instrument(ticker_norm)
+        except Exception as exc:  # noqa: BLE001 — never leak a stack frame to clients
+            logger.warning("selector instrument resolution failed (ticker=%s): %s", ticker_norm, exc)
+            return JSONResponse(status_code=400, content={"ok": False, "error": str(exc)})
+
+        try:
+            from trade_integrations.dataflows.options_research.sources.chain_openalgo import (
+                fetch_chain_stage,
+            )
+
+            stage = await asyncio.to_thread(fetch_chain_stage, instrument, expiry_date=expiry_date)
+        except Exception:  # noqa: BLE001 — never leak a stack frame to clients
+            logger.exception("selector chain fetch failed (ticker=%s)", ticker_norm)
+            return JSONResponse(status_code=502, content={"ok": False, "error": "options chain request failed"})
+
+        if stage.status == "error" or not stage.data:
+            return JSONResponse(
+                status_code=502,
+                content={"ok": False, "error": "; ".join(stage.errors) or f"no live option chain for {ticker_norm}"},
+            )
+
+        chain_snapshot = stage.data
+        underlying_ltp = chain_snapshot.get("underlying_ltp")
+        if not underlying_ltp or underlying_ltp <= 0:
+            return JSONResponse(
+                status_code=502, content={"ok": False, "error": f"no underlying spot available for {ticker_norm}"}
+            )
+        expiry_str = chain_snapshot.get("expiry_date")
+        if not expiry_str:
+            return JSONResponse(status_code=502, content={"ok": False, "error": f"no resolvable expiry for {ticker_norm}"})
+
+        try:
+            from trade_integrations.dataflows.company_research.market import india_trading_date
+
+            today = india_trading_date()
+            expiry_day = datetime.strptime(str(expiry_str)[:10], "%Y-%m-%d").date()
+            expiry_days = (expiry_day - today).days
+            if expiry_days <= 0:
+                return JSONResponse(
+                    status_code=400,
+                    content={"ok": False, "error": f"resolved expiry {expiry_day} is not in the future"},
+                )
+
+            from trade_integrations.dataflows.options_research.candidate_generator import (
+                generate_candidates,
+            )
+
+            candidates = await asyncio.to_thread(generate_candidates, instrument, chain_snapshot)
+            if not candidates:
+                return JSONResponse(
+                    status_code=502,
+                    content={"ok": False, "error": "no candidates could be generated from the live chain"},
+                )
+
+            forecast = await asyncio.to_thread(_quantile_forecast_for_pop, ticker_norm, horizon_days)
+
+            from trade_integrations.dataflows.options_research.options_selector import (
+                select_candidates,
+            )
+
+            results = await asyncio.to_thread(
+                select_candidates,
+                candidates,
+                spot=float(underlying_ltp),
+                forecast=forecast,
+                expiry_days=expiry_days,
+                target_profit=target_profit,
+                n_paths=n_paths,
+                rank_by=rank_by,
+            )
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"ok": False, "error": str(exc)})
+        except Exception:  # noqa: BLE001 — never leak a stack frame to clients
+            logger.exception("selector computation failed (ticker=%s)", ticker_norm)
+            return JSONResponse(status_code=502, content={"ok": False, "error": "selector computation failed"})
+
+        return {
+            "ok": True,
+            "ticker": ticker_norm,
+            "expiry_date": expiry_day.isoformat(),
+            "expiry_days": expiry_days,
+            "horizon_days": horizon_days,
+            "underlying_ltp": underlying_ltp,
+            "target_profit": target_profit,
+            "rank_by": rank_by,
+            "distribution_type": "physical",
+            "candidates": [asdict(r) for r in results],
         }
 
     @app.get("/options/research", dependencies=[Depends(require_auth)])

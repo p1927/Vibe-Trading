@@ -283,3 +283,187 @@ def test_pop_overlay_success_returns_scored_overlay(
     assert seen_overlay_kwargs["expiry_days"] > 0
     assert len(seen_overlay_kwargs["calls"]) == 1
     assert len(seen_overlay_kwargs["puts"]) == 1
+
+
+# --- GET /options/india/selector --------------------------------------------------------
+
+
+def _fake_stage_result(*, expiry_date: str | None, underlying_ltp: float | None = 24000.0):
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+
+    from trade_integrations.dataflows.company_research.models import StageResult
+
+    if expiry_date is None:
+        return StageResult(
+            stage="chain", status="error", vendor="stock_simulator",
+            fetched_at=_dt.now(_tz.utc), errors=["no live option chain for NIFTY"],
+        )
+    return StageResult(
+        stage="chain",
+        status="ok",
+        vendor="stock_simulator",
+        fetched_at=_dt.now(_tz.utc),
+        data={
+            "underlying": "NIFTY",
+            "underlying_ltp": underlying_ltp,
+            "expiry_date": expiry_date,
+            "atm_strike": 24000.0,
+            "chain": [{"strike": 24000.0, "ce": {"ltp": 150.0, "iv": 15.0}, "pe": {"ltp": 140.0, "iv": 15.0}}],
+        },
+    )
+
+
+def _future_expiry_date_str(days_ahead: int = 14) -> str:
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+    from datetime import timezone as _tz
+
+    return (_dt.now(_tz.utc) + _td(days=days_ahead)).date().isoformat()
+
+
+def _patch_chain_stage(monkeypatch, result):
+    import trade_integrations.dataflows.options_research.sources.chain_openalgo as chain_mod
+
+    monkeypatch.setattr(chain_mod, "fetch_chain_stage", lambda instrument, **kw: result)
+
+
+def test_selector_requires_ticker(client: TestClient) -> None:
+    response = client.get("/options/india/selector", params={"target_profit": 500})
+    assert response.status_code == 422  # FastAPI's own required-query-param rejection
+
+
+def test_selector_requires_target_profit(client: TestClient) -> None:
+    response = client.get("/options/india/selector", params={"ticker": "NIFTY"})
+    assert response.status_code == 422
+
+
+def test_selector_blank_ticker_returns_400(client: TestClient) -> None:
+    response = client.get(
+        "/options/india/selector", params={"ticker": "   ", "target_profit": 500}
+    )
+    assert response.status_code == 400
+
+
+def test_selector_ineligible_ticker_returns_400(client: TestClient) -> None:
+    response = client.get(
+        "/options/india/selector", params={"ticker": "AAPL", "target_profit": 500}
+    )
+    assert response.status_code == 400
+    assert response.json()["ok"] is False
+
+
+def test_selector_chain_fetch_error_returns_502(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_chain_stage(monkeypatch, _fake_stage_result(expiry_date=None))
+    response = client.get(
+        "/options/india/selector", params={"ticker": "NIFTY", "target_profit": 500}
+    )
+    assert response.status_code == 502
+    assert response.json()["ok"] is False
+
+
+def test_selector_missing_spot_returns_502(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_chain_stage(
+        monkeypatch,
+        _fake_stage_result(expiry_date=_future_expiry_date_str(), underlying_ltp=None),
+    )
+    response = client.get(
+        "/options/india/selector", params={"ticker": "NIFTY", "target_profit": 500}
+    )
+    assert response.status_code == 502
+    assert "spot" in response.json()["error"]
+
+
+def test_selector_expiry_in_past_returns_400(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_chain_stage(monkeypatch, _fake_stage_result(expiry_date=_future_expiry_date_str(days_ahead=-5)))
+    response = client.get(
+        "/options/india/selector", params={"ticker": "NIFTY", "target_profit": 500}
+    )
+    assert response.status_code == 400
+    assert "future" in response.json()["error"]
+
+
+def test_selector_no_candidates_returns_502(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_chain_stage(monkeypatch, _fake_stage_result(expiry_date=_future_expiry_date_str()))
+
+    import trade_integrations.dataflows.options_research.candidate_generator as cg_mod
+
+    monkeypatch.setattr(cg_mod, "generate_candidates", lambda instrument, chain_snapshot: [])
+    response = client.get(
+        "/options/india/selector", params={"ticker": "NIFTY", "target_profit": 500}
+    )
+    assert response.status_code == 502
+    assert "candidates" in response.json()["error"]
+
+
+def test_selector_success_returns_ranked_candidates(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_chain_stage(monkeypatch, _fake_stage_result(expiry_date=_future_expiry_date_str(days_ahead=14)))
+
+    import trade_integrations.dataflows.options_research.candidate_generator as cg_mod
+
+    fake_candidate = {
+        "name": "long_call",
+        "legs": [
+            {
+                "side": "BUY", "option_type": "CE", "strike": 24000.0, "price": 150.0,
+                "quantity": 50, "iv": 15.0,
+            }
+        ],
+        "rationale": "test",
+    }
+    monkeypatch.setattr(cg_mod, "generate_candidates", lambda instrument, chain_snapshot: [fake_candidate])
+
+    from trade_integrations.dataflows.options_research.pop_engine import QuantileForecast
+
+    fake_forecast = QuantileForecast(horizon_days=7, quantiles={"p10": -2.0, "p50": 0.0, "p90": 2.0})
+    monkeypatch.setattr(
+        india_options_routes, "_quantile_forecast_for_pop", lambda ticker, horizon_days: fake_forecast
+    )
+
+    seen_select_kwargs = {}
+
+    import trade_integrations.dataflows.options_research.options_selector as selector_mod
+    from trade_integrations.dataflows.options_research.options_selector import SelectorCandidateResult
+
+    def _fake_select_candidates(candidates, **kwargs):
+        seen_select_kwargs.update(kwargs)
+        return [
+            SelectorCandidateResult(
+                name="long_call", legs=fake_candidate["legs"], max_profit=1000.0, max_loss=-7500.0,
+                probability_of_profit=0.4, expected_pnl=100.0, entry_iv=0.15,
+                risk_reward_ratio=15.0, pop_per_risk=0.00005, meets_target=True,
+            )
+        ]
+
+    monkeypatch.setattr(selector_mod, "select_candidates", _fake_select_candidates)
+
+    response = client.get(
+        "/options/india/selector",
+        params={"ticker": "NIFTY", "target_profit": 500, "horizon_days": 7, "n_paths": 1000, "rank_by": "pop_per_risk"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["ticker"] == "NIFTY"
+    assert body["target_profit"] == 500
+    assert body["rank_by"] == "pop_per_risk"
+    assert body["distribution_type"] == "physical"
+    assert len(body["candidates"]) == 1
+    assert body["candidates"][0]["name"] == "long_call"
+    assert body["candidates"][0]["meets_target"] is True
+
+    assert seen_select_kwargs["spot"] == 24000.0
+    assert seen_select_kwargs["target_profit"] == 500
+    assert seen_select_kwargs["n_paths"] == 1000
+    assert seen_select_kwargs["rank_by"] == "pop_per_risk"
+    assert seen_select_kwargs["expiry_days"] > 0
+
+
+def test_selector_invalid_rank_by_returns_422(client: TestClient) -> None:
+    response = client.get(
+        "/options/india/selector",
+        params={"ticker": "NIFTY", "target_profit": 500, "rank_by": "not_a_real_mode"},
+    )
+    assert response.status_code == 422
