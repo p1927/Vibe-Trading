@@ -8,6 +8,8 @@ import type {
   OptionsChainResponse,
   OptionsPayoffRequest,
   OptionsPayoffResponse,
+  SelectorRankBy,
+  SelectorResponse,
 } from "@/lib/options";
 
 const BASE = resolveApiBase();
@@ -840,6 +842,25 @@ export const api = {
     // successful or not, well before the server could ever answer.
     return request<IndiaOptionsResearchResponse>(`/options/research?${q.toString()}`, {
       timeoutMs: 190_000,
+    });
+  },
+  getIndiaOptionsSelector: (
+    ticker: string,
+    targetProfit: number,
+    opts?: { expiryDate?: string; horizonDays?: number; rankBy?: SelectorRankBy; nPaths?: number },
+  ) => {
+    const q = new URLSearchParams();
+    q.set("ticker", ticker);
+    q.set("target_profit", String(targetProfit));
+    if (opts?.expiryDate) q.set("expiry_date", opts.expiryDate);
+    if (opts?.horizonDays !== undefined) q.set("horizon_days", String(opts.horizonDays));
+    if (opts?.rankBy) q.set("rank_by", opts.rankBy);
+    if (opts?.nPaths !== undefined) q.set("n_paths", String(opts.nPaths));
+    // Fetches the live chain, generates candidates, then Monte Carlo-scores
+    // each one's POP-by-T — fewer sequential external-data stages than
+    // /options/research above, but still well past the 20s default.
+    return request<SelectorResponse>(`/options/india/selector?${q.toString()}`, {
+      timeoutMs: 60_000,
     });
   },
 

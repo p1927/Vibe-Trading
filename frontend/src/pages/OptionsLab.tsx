@@ -16,6 +16,7 @@ import {
 import { StrategyBuilder } from "@/components/options/StrategyBuilder";
 import { GreeksCards } from "@/components/options/GreeksCards";
 import { OptionsChainTable } from "@/components/options/OptionsChainTable";
+import { IndiaSelectorPanel } from "@/components/options/IndiaSelectorPanel";
 import { IndiaStrategyPanel } from "@/components/options/IndiaStrategyPanel";
 import { IndiaUnderlyingSelect } from "@/components/options/IndiaUnderlyingSelect";
 import { OptionsPayoffChart } from "@/components/charts/OptionsPayoffChart";
@@ -318,6 +319,8 @@ export function OptionsLab() {
       />
 
       {market === "india_equity" && <IndiaStrategyPanel underlying={underlying} />}
+
+      {market === "india_equity" && <IndiaSelectorPanel underlying={underlying} />}
 
       <p className="pb-2 text-xs text-muted-foreground">{t("options.disclaimer")}</p>
     </div>

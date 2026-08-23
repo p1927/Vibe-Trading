@@ -198,6 +198,68 @@ export interface IndiaOptionsResearchResponse {
 }
 
 // ---------------------------------------------------------------------------
+// API contract — GET /options/india/selector (module 5: risk-adjusted
+// candidate selector for a target profit)
+// ---------------------------------------------------------------------------
+
+/** One leg of a selector candidate — shape comes straight from
+ * candidate_generator/combo_builder and is rendered generically. */
+export interface SelectorLeg {
+  option_type: "CE" | "PE" | string;
+  side: "BUY" | "SELL" | string;
+  strike: number;
+  quantity?: number;
+  lots?: number;
+  lot_size?: number;
+  price?: number;
+  entry_premium?: number;
+  [key: string]: unknown;
+}
+
+export interface SelectorEventRisk {
+  label?: string;
+  date?: string;
+  category?: string;
+  [key: string]: unknown;
+}
+
+/** One scored candidate — always present regardless of `meets_target`
+ * (`select_candidates` never filters or drops a candidate silently). */
+export interface SelectorCandidate {
+  name: string;
+  legs: SelectorLeg[];
+  max_profit: number | null;
+  max_loss: number | null;
+  probability_of_profit: number;
+  expected_pnl: number;
+  entry_iv: number;
+  risk_reward_ratio: number | null;
+  pop_per_risk: number | null;
+  meets_target: boolean;
+  event_risks: SelectorEventRisk[];
+  rationale?: string | null;
+}
+
+export type SelectorRankBy = "risk_reward" | "pop_per_risk";
+
+export interface SelectorResponseData {
+  ticker: string;
+  expiry_date: string;
+  expiry_days: number;
+  horizon_days: number;
+  underlying_ltp: number;
+  target_profit: number;
+  rank_by: SelectorRankBy;
+  distribution_type: string;
+  candidates: SelectorCandidate[];
+}
+
+export interface SelectorResponse extends SelectorResponseData {
+  ok: boolean;
+  error?: string;
+}
+
+// ---------------------------------------------------------------------------
 // UI parameter model (percent convention)
 // ---------------------------------------------------------------------------
 

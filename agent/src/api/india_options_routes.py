@@ -204,7 +204,10 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
 
             forecast = await asyncio.to_thread(_quantile_forecast_for_pop, ticker.strip().upper(), horizon_days)
 
-            from trade_integrations.dataflows.options_research.pop_engine import compute_chain_pop_overlay
+            from trade_integrations.dataflows.options_research.pop_engine import (
+                compute_chain_pop_overlay,
+                event_window_for_ticker,
+            )
 
             overlay = await asyncio.to_thread(
                 compute_chain_pop_overlay,
@@ -214,6 +217,9 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
                 calls=data.get("calls") or [],
                 puts=data.get("puts") or [],
                 n_paths=n_paths,
+            )
+            event_risks = await asyncio.to_thread(
+                event_window_for_ticker, ticker.strip().upper(), expiry_days
             )
         except ValueError as exc:
             return JSONResponse(status_code=400, content={"ok": False, "error": str(exc)})
@@ -234,6 +240,7 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
             "distribution_type": "physical",
             "forecast_quantiles": forecast.quantiles,
             "overlay": overlay,
+            "event_risks": event_risks,
         }
 
     @app.get("/options/india/selector", dependencies=[Depends(require_auth)])
@@ -326,9 +333,18 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
 
             forecast = await asyncio.to_thread(_quantile_forecast_for_pop, ticker_norm, horizon_days)
 
+            from trade_integrations.dataflows.index_research.prediction_algorithms.context_builder import (
+                context_from_hub,
+            )
             from trade_integrations.dataflows.options_research.options_selector import (
                 select_candidates,
             )
+
+            # select_candidates only populates event_risks when both signals/macro_factors
+            # are given — this route never passed them before, so every result's
+            # event_risks was silently always empty. Cheap cached hub-doc read, same source
+            # pop-overlay's own event_window_for_ticker uses.
+            event_ctx = await asyncio.to_thread(context_from_hub, ticker_norm, horizon_days=expiry_days)
 
             results = await asyncio.to_thread(
                 select_candidates,
@@ -339,6 +355,8 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
                 target_profit=target_profit,
                 n_paths=n_paths,
                 rank_by=rank_by,
+                signals=event_ctx.signals if event_ctx else None,
+                macro_factors=event_ctx.macro_factors if event_ctx else None,
             )
         except ValueError as exc:
             return JSONResponse(status_code=400, content={"ok": False, "error": str(exc)})
