@@ -40,6 +40,7 @@ JOB_TYPE_HUB_NEWS_INGEST = "hub_news_ingest"
 JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP = "stock_history_coverage_sweep"
 JOB_TYPE_NEWS_QUALITY_EVAL = "news_quality_eval"
 JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH = "global_macro_eod_refresh"
+JOB_TYPE_OI_SNAPSHOT = "oi_snapshot"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -53,6 +54,7 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP,
     JOB_TYPE_NEWS_QUALITY_EVAL,
     JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH,
+    JOB_TYPE_OI_SNAPSHOT,
 })
 
 NEWS_QUALITY_EVAL_CRON_ENV = "NEWS_QUALITY_EVAL_CRON"
@@ -547,6 +549,31 @@ def run_global_macro_eod_refresh_job(config: dict[str, Any] | None = None) -> di
     return {"status": "error" if had_errors else "ok", "had_errors": had_errors, "series": results}
 
 
+def run_oi_snapshot_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Daily forward-only OI/max-pain snapshot capture (module 2 step 4 of the
+    options-profitability-prediction-platform backlog item — see
+    .claude/backlog/items/2026-08-22-nifty-market-reversal-signal.md).
+
+    `openalgo/services/oi_tracker_service.py::calculate_max_pain` is
+    live-only and cannot be backfilled — this job's only purpose is to run
+    on a daily cadence so history accumulates for later backtesting; a
+    missed day is lost, not a job failure worth alerting loudly on (the
+    underlying capture function already degrades to a status dict rather
+    than raising for exactly this reason).
+    """
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.dataflows.index_research.oi_snapshot_store import (
+        capture_and_append_oi_snapshot,
+    )
+
+    cfg = config or {}
+    return capture_and_append_oi_snapshot(
+        underlying=str(cfg.get("underlying") or "NIFTY"),
+        exchange=str(cfg.get("exchange") or "NSE_INDEX"),
+        expiry_date=cfg.get("expiry_date"),
+    )
+
+
 def run_hub_news_entity_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Drain staging queue and optionally run heavy entity maintenance."""
     _ensure_trade_integrations_on_path()
@@ -578,6 +605,7 @@ def run_hub_news_ingest_job(config: dict[str, Any] | None = None) -> dict[str, A
     try:
         summary = run_hub_news_ingest(
             ticker=str(cfg.get("ticker") or "NIFTY"),
+            market=str(cfg.get("market") or "IN"),
             sources=sources,
             mode=mode,
             lookback_days=cfg.get("lookback_days"),
@@ -680,6 +708,11 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         _attach_job_result_summary(job, summary)
         logger.info("global macro EOD refresh completed for job %s: %s", job.id, summary)
         return
+    if job_type == JOB_TYPE_OI_SNAPSHOT:
+        summary = run_oi_snapshot_job(job.config)
+        _attach_job_result_summary(job, summary)
+        logger.info("OI snapshot capture completed for job %s: %s", job.id, summary)
+        return
     raise ValueError(f"unsupported index job_type: {job_type!r}")
 
 
@@ -696,11 +729,13 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     coverage_sweep_cron = _cfg.stock_history_coverage_sweep_cron.strip()
     news_quality_eval_cron = _cfg.news_quality_eval_cron.strip()
     global_macro_eod_refresh_cron = _cfg.global_macro_eod_refresh_cron.strip()
+    oi_snapshot_cron = _cfg.oi_snapshot_cron.strip()
     validate_schedule(snapshot_cron)
     validate_schedule(full_cron)
     validate_schedule(coverage_sweep_cron)
     validate_schedule(news_quality_eval_cron)
     validate_schedule(global_macro_eod_refresh_cron)
+    validate_schedule(oi_snapshot_cron)
 
     skip_unified_duplicates = False
     try:
@@ -832,6 +867,50 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             },
         ),
         ScheduledResearchJob(
+            id="us-hub-news-ingest-full",
+            prompt="Full US market hub news ingest (SearXNG + Currents + MarketAux, daily)",
+            schedule=get_env_config().trade.hub_news_full_ingest_cron.strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "full",
+                "ticker": "SPX",
+                "market": "US",
+                # Explicit list, not "all" — excludes moneycontrol/searxng_sector/
+                # searxng_constituent/watcher, which are Nifty-50-specific sources
+                # with no US equivalent yet.
+                "sources": "rss,searxng,searxng_global,marketaux,currents",
+                "lookback_days": 3,
+            },
+        ),
+        ScheduledResearchJob(
+            id="us-hub-news-ingest-light",
+            prompt="Light US market hub news ingest (RSS)",
+            schedule=get_env_or(
+                "HUB_NEWS_LIGHT_INGEST_CRON",
+                "HUB_NEWS_INGEST_CRON",
+                "0 */4 * * *",
+            ).strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "light",
+                "ticker": "SPX",
+                "market": "US",
+                "sources": get_env_config().trade.hub_news_light_sources,
+                "lookback_days": 1,
+            },
+        ),
+        # No dedicated "us-hub-news-entity" job: nifty-hub-news-entity already
+        # auto-discovers and drains every ticker with pending staging refs
+        # (news_entity_worker._tickers_with_pending_staging(), not just its own
+        # "ticker" config value) — SPX's queued refs from the two jobs above get
+        # distilled by that same existing job, no separate drain needed.
+        ScheduledResearchJob(
             id="nifty-index-prediction-post-close",
             prompt="Weekly post-close prediction pipeline refresh (flows, backtest, counterfactual)",
             schedule="0 4 * * 6",
@@ -883,6 +962,18 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             config={
                 "job_type": JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH,
                 "lookback_days": 90,
+            },
+        ),
+        ScheduledResearchJob(
+            id="nifty-oi-snapshot",
+            prompt="Daily forward-only NIFTY OI/max-pain snapshot capture (accumulates history for backtesting)",
+            schedule=oi_snapshot_cron,
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_OI_SNAPSHOT,
+                "underlying": "NIFTY",
             },
         ),
     ]

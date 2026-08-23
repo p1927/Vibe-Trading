@@ -637,6 +637,9 @@ class TradeConfig(_EnvBase):
     global_macro_eod_refresh_cron: str = Field(
         alias="GLOBAL_MACRO_EOD_REFRESH_CRON", default="15 19 * * *",
     )
+    oi_snapshot_cron: str = Field(
+        alias="OI_SNAPSHOT_CRON", default="45 15 * * 1-5",
+    )
     hub_news_full_ingest_cron: str = Field(
         alias="HUB_NEWS_FULL_INGEST_CRON", default="0 7 * * *",
     )

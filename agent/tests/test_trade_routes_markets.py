@@ -146,6 +146,40 @@ def test_market_factor_coverage_reads_from_the_service() -> None:
     assert res.json()["data"] == {"sourced": [], "not_sourced": []}
 
 
+def test_market_replay_calendar_forwards_country() -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
+        captured["url"] = url
+        return _FakeResponse(200, {"status": "ok", "days": [{"date": "2024-05-01", "has_spx": True}], "indices": ["SPX"]})
+
+    with patch("requests.request", side_effect=fake_request):
+        res = _client().get("/trade/markets/US/replay/calendar")
+
+    assert res.status_code == 200
+    assert captured["url"].endswith("/history/US/replay/calendar")
+    assert res.json()["days"][0]["has_spx"] is True
+
+
+def test_market_backfill_forwards_country_index_and_period() -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
+        captured["method"] = method
+        captured["url"] = url
+        captured["json"] = json
+        return _FakeResponse(200, {"status": "ok", "results": [{"country": "US", "index": "SPX", "written": 3}]})
+
+    with patch("requests.request", side_effect=fake_request):
+        res = _client().post("/trade/markets/backfill", json={"country": "US", "index": "SPX"})
+
+    assert res.status_code == 200
+    assert captured["method"] == "POST"
+    assert captured["url"].endswith("/tick_recording/backfill")
+    assert captured["json"] == {"country": "US", "index": "SPX", "period": "max"}
+    assert res.json()["results"][0]["written"] == 3
+
+
 # ============================================================
 # global_macro proxy — currencies (usd_inr/usd_cny/...) and global factors
 # (gold/oil/vix/us_10y), fronting `/history/global_macro` and

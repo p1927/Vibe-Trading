@@ -76,9 +76,38 @@ def test_arm_forwards_markets_start_utc_and_speed() -> None:
     assert captured["method"] == "POST"
     assert captured["url"].endswith("/multi_market/arm")
     assert captured["json"] == {
-        "markets": ["IN", "US"], "speed": 2.0, "start_utc": "2026-08-23T00:00:00+00:00",
+        "markets": ["IN", "US"], "speed": 2.0, "start_utc": "2026-08-23T00:00:00+00:00", "loop": False,
     }
     assert res.json()["markets"] == ["IN", "US"]
+
+
+def test_arm_forwards_end_utc_and_loop() -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
+        captured["json"] = json
+        return _FakeResponse(200, _STATUS_PAYLOAD)
+
+    with patch("requests.request", side_effect=fake_request):
+        res = _client().post(
+            "/trade/markets/multi_market/arm",
+            json={
+                "markets": ["US"],
+                "start_utc": "2026-08-17T00:00:00+00:00",
+                "end_utc": "2026-08-21T23:59:59+00:00",
+                "speed": 1.0,
+                "loop": True,
+            },
+        )
+
+    assert res.status_code == 200
+    assert captured["json"] == {
+        "markets": ["US"],
+        "speed": 1.0,
+        "loop": True,
+        "start_utc": "2026-08-17T00:00:00+00:00",
+        "end_utc": "2026-08-21T23:59:59+00:00",
+    }
 
 
 def test_arm_propagates_unsupported_market_as_400() -> None:

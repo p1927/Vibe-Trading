@@ -1624,6 +1624,12 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  getModelAdapters: () => request<ModelAdaptersResponse>("/trade/model-adapters"),
+  updateModelAdapter: (adapterId: string, body: ModelAdapterUpdate) =>
+    request<ModelAdaptersResponse>(
+      `/trade/model-adapters/${encodeURIComponent(adapterId)}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+    ),
   runHubNewsIngest: (body: HubNewsIngestRequest = { mode: "full" }) =>
     request<HubStagingDrainResponse>("/trade/hub/news-pipeline/ingest", {
       method: "POST",
@@ -3864,7 +3870,9 @@ export interface MarketTickRecordingActiveResponse {
 export interface ArmMultiMarketRequest {
   markets: string[];
   start_utc?: string;
+  end_utc?: string;
   speed?: number;
+  loop?: boolean;
 }
 
 export interface MultiMarketClockStatus {
@@ -3872,6 +3880,9 @@ export interface MultiMarketClockStatus {
   sim_now_utc: string;
   speed: number;
   paused: boolean;
+  end_utc: string | null;
+  loop: boolean;
+  completed: boolean;
 }
 
 export interface MultiMarketMarketStatus {
@@ -4645,6 +4656,47 @@ export interface HubNewsPipelineConfigUpdate {
   wiki_search_top_k?: number;
   wiki_search_max_per_pass?: number;
   wiki_search_min_score?: number;
+}
+
+export interface ModelAdapterRateLimit {
+  rpm: number;
+  max_concurrent: number;
+  max_attempts: number;
+  base_delay_s: number;
+  max_delay_s: number;
+  jitter: boolean;
+  honor_retry_after: boolean;
+}
+
+export interface ModelAdapter {
+  adapter_id: string;
+  kind: string;
+  provider: string;
+  model: string;
+  enabled: boolean;
+  priority: number;
+  fallback_adapter_id: string | null;
+  rate_limit: ModelAdapterRateLimit;
+}
+
+export interface ModelAdaptersResponse {
+  status: string;
+  adapters?: ModelAdapter[];
+  message?: string;
+}
+
+export interface ModelAdapterUpdate {
+  enabled?: boolean;
+  priority?: number;
+  fallback_adapter_id?: string | null;
+  rate_limit?: Partial<ModelAdapterRateLimit>;
+  retry?: {
+    max_attempts?: number;
+    base_delay_s?: number;
+    max_delay_s?: number;
+    jitter?: boolean;
+    honor_retry_after?: boolean;
+  };
 }
 
 export interface HubNewsDiscardRequest {
