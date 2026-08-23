@@ -263,6 +263,15 @@ def test_pop_overlay_success_returns_scored_overlay(
 
     monkeypatch.setattr(pop_engine_mod, "compute_chain_pop_overlay", _fake_overlay)
 
+    seen_event_window_args = {}
+
+    def _fake_event_window(ticker, expiry_days):
+        seen_event_window_args["ticker"] = ticker
+        seen_event_window_args["expiry_days"] = expiry_days
+        return [{"symbol": "RELIANCE", "event_type": "earnings", "days_from_now": 3}]
+
+    monkeypatch.setattr(pop_engine_mod, "event_window_for_ticker", _fake_event_window)
+
     response = client.get(
         "/options/india/pop-overlay",
         params={"ticker": "NIFTY", "horizon_days": 7, "n_paths": 1000},
@@ -276,6 +285,7 @@ def test_pop_overlay_success_returns_scored_overlay(
     assert body["underlying_ltp"] == 24000.0
     assert len(body["overlay"]) == 2
     assert body["forecast_quantiles"] == {"p10": -2.0, "p50": 0.0, "p90": 2.0}
+    assert body["event_risks"] == [{"symbol": "RELIANCE", "event_type": "earnings", "days_from_now": 3}]
 
     assert seen_forecast_args == {"ticker": "NIFTY", "horizon_days": 7}
     assert seen_overlay_kwargs["spot"] == 24000.0
@@ -283,6 +293,8 @@ def test_pop_overlay_success_returns_scored_overlay(
     assert seen_overlay_kwargs["expiry_days"] > 0
     assert len(seen_overlay_kwargs["calls"]) == 1
     assert len(seen_overlay_kwargs["puts"]) == 1
+    assert seen_event_window_args["ticker"] == "NIFTY"
+    assert seen_event_window_args["expiry_days"] == seen_overlay_kwargs["expiry_days"]
 
 
 # --- GET /options/india/selector --------------------------------------------------------
@@ -439,6 +451,22 @@ def test_selector_success_returns_ranked_candidates(
 
     monkeypatch.setattr(selector_mod, "select_candidates", _fake_select_candidates)
 
+    from trade_integrations.dataflows.index_research.horizon import resolve_horizon
+    from trade_integrations.dataflows.index_research.models import ConstituentSignal
+    from trade_integrations.dataflows.index_research.prediction_algorithms.types import TrackContext
+
+    fake_ctx = TrackContext(
+        ticker="NIFTY",
+        spot=24000.0,
+        horizon=resolve_horizon(7),
+        macro_factors={"india_vix": 14.0},
+        signals=[ConstituentSignal(symbol="RELIANCE", weight=0.1)],
+    )
+    monkeypatch.setattr(
+        "trade_integrations.dataflows.index_research.prediction_algorithms.context_builder.context_from_hub",
+        lambda ticker, horizon_days=None: fake_ctx,
+    )
+
     response = client.get(
         "/options/india/selector",
         params={"ticker": "NIFTY", "target_profit": 500, "horizon_days": 7, "n_paths": 1000, "rank_by": "pop_per_risk"},
@@ -459,6 +487,68 @@ def test_selector_success_returns_ranked_candidates(
     assert seen_select_kwargs["n_paths"] == 1000
     assert seen_select_kwargs["rank_by"] == "pop_per_risk"
     assert seen_select_kwargs["expiry_days"] > 0
+    # event-window wiring: signals/macro_factors now reach select_candidates instead of
+    # always being None (previously the route never passed them at all).
+    assert seen_select_kwargs["signals"] == fake_ctx.signals
+    assert seen_select_kwargs["macro_factors"] == fake_ctx.macro_factors
+
+
+def test_selector_degrades_gracefully_without_hub_context(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No cached hub doc for the ticker -> signals/macro_factors stay None, matching
+    select_candidates' own no-event-risks default, not a request failure."""
+    _patch_chain_stage(monkeypatch, _fake_stage_result(expiry_date=_future_expiry_date_str(days_ahead=14)))
+
+    import trade_integrations.dataflows.options_research.candidate_generator as cg_mod
+
+    fake_candidate = {
+        "name": "long_call",
+        "legs": [
+            {
+                "side": "BUY", "option_type": "CE", "strike": 24000.0, "price": 150.0,
+                "quantity": 50, "iv": 15.0,
+            }
+        ],
+        "rationale": "test",
+    }
+    monkeypatch.setattr(cg_mod, "generate_candidates", lambda instrument, chain_snapshot: [fake_candidate])
+
+    from trade_integrations.dataflows.options_research.pop_engine import QuantileForecast
+
+    fake_forecast = QuantileForecast(horizon_days=7, quantiles={"p10": -2.0, "p50": 0.0, "p90": 2.0})
+    monkeypatch.setattr(
+        india_options_routes, "_quantile_forecast_for_pop", lambda ticker, horizon_days: fake_forecast
+    )
+
+    seen_select_kwargs = {}
+
+    import trade_integrations.dataflows.options_research.options_selector as selector_mod
+    from trade_integrations.dataflows.options_research.options_selector import SelectorCandidateResult
+
+    def _fake_select_candidates(candidates, **kwargs):
+        seen_select_kwargs.update(kwargs)
+        return [
+            SelectorCandidateResult(
+                name="long_call", legs=fake_candidate["legs"], max_profit=1000.0, max_loss=-7500.0,
+                probability_of_profit=0.4, expected_pnl=100.0, entry_iv=0.15,
+                risk_reward_ratio=15.0, pop_per_risk=0.00005, meets_target=True,
+            )
+        ]
+
+    monkeypatch.setattr(selector_mod, "select_candidates", _fake_select_candidates)
+    monkeypatch.setattr(
+        "trade_integrations.dataflows.index_research.prediction_algorithms.context_builder.context_from_hub",
+        lambda ticker, horizon_days=None: None,
+    )
+
+    response = client.get(
+        "/options/india/selector",
+        params={"ticker": "NIFTY", "target_profit": 500, "horizon_days": 7},
+    )
+    assert response.status_code == 200
+    assert seen_select_kwargs["signals"] is None
+    assert seen_select_kwargs["macro_factors"] is None
 
 
 def test_selector_invalid_rank_by_returns_422(client: TestClient) -> None:
