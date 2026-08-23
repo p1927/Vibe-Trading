@@ -6,7 +6,9 @@ import asyncio
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from src.config.accessor import get_env_config, get_env_or
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
@@ -43,6 +45,7 @@ JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH = "global_macro_eod_refresh"
 JOB_TYPE_OI_SNAPSHOT = "oi_snapshot"
 JOB_TYPE_REINFERENCE_TICK = "reinference_tick"
 JOB_TYPE_PUMP_DUMP_PROXY = "pump_dump_proxy"
+JOB_TYPE_MAX_PAIN_BHAVCOPY = "max_pain_bhavcopy"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -59,6 +62,7 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_OI_SNAPSHOT,
     JOB_TYPE_REINFERENCE_TICK,
     JOB_TYPE_PUMP_DUMP_PROXY,
+    JOB_TYPE_MAX_PAIN_BHAVCOPY,
 })
 
 NEWS_QUALITY_EVAL_CRON_ENV = "NEWS_QUALITY_EVAL_CRON"
@@ -601,6 +605,41 @@ def run_pump_dump_proxy_job(config: dict[str, Any] | None = None) -> dict[str, A
     )
 
 
+def run_max_pain_bhavcopy_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Daily post-close max-pain reconstruction from NSE's F&O bhavcopy
+    (module 2 step 4's retroactive complement — see
+    .claude/backlog/archive/items/2026-08-22-nifty-market-reversal-signal.md's
+    2026-08-24 entries).
+
+    Made the primary forward-going max-pain source over the live
+    ``run_oi_snapshot_job`` (2026-08-24 decision): bhavcopy needs no broker
+    session (the live path's own broker session was confirmed broken —
+    `active_sessions` empty — during this module's own E2E verification)
+    and is published well within this job's schedule margin — NSE's F&O
+    bhavcopy is publicly reported to land ~30-60 min after the 15:30 IST
+    close (~16:00-16:30 IST); this job runs at 17:30 IST
+    (``MAX_PAIN_BHAVCOPY_CRON``, explicit ``timezone="Asia/Kolkata"`` on the
+    registered job — unlike the *other* index jobs in this file, whose
+    cron strings are evaluated in UTC by default since none of them set
+    `timezone` explicitly, a real inaccuracy in this file's own prior
+    "just after close" comments worth fixing wherever those jobs' actual
+    intended wall-clock time matters). `run_oi_snapshot_job` is kept
+    running alongside, not removed, as a same-day-freshness path for
+    whenever a live broker session exists again.
+    """
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.dataflows.index_research.oi_bhavcopy_history import (
+        backfill_max_pain_history,
+    )
+
+    cfg = config or {}
+    symbol = str(cfg.get("symbol") or "NIFTY")
+    trading_day = cfg.get("trading_day") or (
+        datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    )
+    return backfill_max_pain_history(trading_day, trading_day, symbol=symbol)
+
+
 def run_reinference_tick_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Frequent poll for module 3's event/heartbeat-triggered re-inference (step 5
     of the options-profitability-prediction-platform backlog item — see
@@ -767,6 +806,11 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         _attach_job_result_summary(job, summary)
         logger.info("pump-dump proxy capture completed for job %s: %s", job.id, summary)
         return
+    if job_type == JOB_TYPE_MAX_PAIN_BHAVCOPY:
+        summary = run_max_pain_bhavcopy_job(job.config)
+        _attach_job_result_summary(job, summary)
+        logger.info("max pain bhavcopy capture completed for job %s: %s", job.id, summary)
+        return
     if job_type == JOB_TYPE_REINFERENCE_TICK:
         summary = run_reinference_tick_job(job.config)
         _attach_job_result_summary(job, summary)
@@ -791,6 +835,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     oi_snapshot_cron = _cfg.oi_snapshot_cron.strip()
     reinference_tick_cron = _cfg.reinference_tick_cron.strip()
     pump_dump_proxy_cron = _cfg.pump_dump_proxy_cron.strip()
+    max_pain_bhavcopy_cron = _cfg.max_pain_bhavcopy_cron.strip()
     validate_schedule(snapshot_cron)
     validate_schedule(full_cron)
     validate_schedule(coverage_sweep_cron)
@@ -799,6 +844,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     validate_schedule(oi_snapshot_cron)
     validate_schedule(reinference_tick_cron)
     validate_schedule(pump_dump_proxy_cron)
+    validate_schedule(max_pain_bhavcopy_cron)
 
     skip_unified_duplicates = False
     try:
@@ -1048,6 +1094,19 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             created_at=now_ms,
             config={
                 "job_type": JOB_TYPE_PUMP_DUMP_PROXY,
+                "symbol": "NIFTY",
+            },
+        ),
+        ScheduledResearchJob(
+            id="nifty-max-pain-bhavcopy",
+            prompt="Daily post-close NIFTY max-pain reconstruction from NSE's F&O bhavcopy (primary max-pain source — no broker session needed)",
+            schedule=max_pain_bhavcopy_cron,
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            timezone="Asia/Kolkata",
+            config={
+                "job_type": JOB_TYPE_MAX_PAIN_BHAVCOPY,
                 "symbol": "NIFTY",
             },
         ),

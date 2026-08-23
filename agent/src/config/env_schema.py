@@ -643,6 +643,9 @@ class TradeConfig(_EnvBase):
     pump_dump_proxy_cron: str = Field(
         alias="PUMP_DUMP_PROXY_CRON", default="50 15 * * 1-5",
     )
+    max_pain_bhavcopy_cron: str = Field(
+        alias="MAX_PAIN_BHAVCOPY_CRON", default="30 17 * * 1-5",
+    )
     reinference_tick_cron: str = Field(
         alias="REINFERENCE_TICK_CRON", default="*/15 9-16 * * 1-5",
     )
