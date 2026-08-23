@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import logging
 import threading
 import time
 from datetime import datetime
@@ -23,6 +22,7 @@ from src.session.models import (
     Principal,
     Session,
 )
+from src.session import service_hooks
 from src.session.search import get_shared_index
 from src.session.store import SessionStore
 
@@ -143,67 +143,6 @@ class SessionService:
         """Return a session by ID."""
         return self.store.get_session(session_id)
 
-    @staticmethod
-    def _maybe_refresh_agent_intent(
-        service: "SessionService",
-        session: Session,
-        content: str,
-        message_id: str,
-    ) -> None:
-        try:
-            from src.trade.hub_bridge import ensure_trade_stack_path
-
-            ensure_trade_stack_path()
-            from trade_integrations.autonomous_agents.intent_capabilities import summarize_intent_change
-            from trade_integrations.autonomous_agents.intent_hooks import maybe_refresh_intent_on_user_message
-            from trade_integrations.autonomous_agents.intent_store import load_intent_from_session_config
-
-            prior = load_intent_from_session_config(dict(session.config or {}))
-            updated = maybe_refresh_intent_on_user_message(
-                dict(session.config or {}),
-                content,
-                source_message_id=message_id,
-            )
-            if updated:
-                session.config = updated
-                current = load_intent_from_session_config(updated)
-                if current is not None:
-                    change = summarize_intent_change(prior, current)
-                    if change:
-                        service.event_bus.emit(
-                            session.session_id,
-                            "autonomous_agent.intent_updated",
-                            change,
-                        )
-        except Exception:
-            logging.getLogger(__name__).warning(
-                "refresh agent intent failed for %s",
-                session.session_id,
-                exc_info=True,
-            )
-
-    @staticmethod
-    def _maybe_mark_autonomous_user_turn(session: Session, content: str) -> None:
-        try:
-            from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
-            from src.trade.session_context import is_autonomous_agent_session
-
-            cfg = dict(session.config or {})
-            if not is_autonomous_agent_session(cfg) or is_autonomous_scheduler_turn(content):
-                return
-            agent_id = str(cfg.get("autonomous_agent_id") or "").strip()
-            if not agent_id:
-                return
-            from src.trade.plan_widget_hook import mark_user_chat_turn
-
-            mark_user_chat_turn(agent_id)
-        except Exception:
-            logging.getLogger(__name__).debug(
-                "mark autonomous user turn failed for %s",
-                session.session_id,
-                exc_info=True,
-            )
-
     def list_sessions(self, limit: int = 50) -> list[Session]:
         """List all sessions."""
         return self.store.list_sessions(limit)
@@ -262,8 +201,8 @@ class SessionService:
             self.store.create_attempt(attempt)
             session.config["include_shell_tools"] = include_shell_tools
             session.last_attempt_id = attempt.attempt_id
-            self._maybe_mark_autonomous_user_turn(session, content)
-            self._maybe_refresh_agent_intent(self, session, content, message.message_id)
+            service_hooks.maybe_mark_autonomous_user_turn(session, content)
+            service_hooks.maybe_refresh_agent_intent(self, session, content, message.message_id)
             session.updated_at = datetime.now().isoformat()
             self.store.update_session(session)
             self.event_bus.emit(session_id, "attempt.created", {"attempt_id": attempt.attempt_id, "prompt": content})
@@ -305,7 +244,8 @@ class SessionService:
         try:
             research_context = await asyncio.wait_for(
                 asyncio.to_thread(
-                    self._prefetch_research_for_message,
+                    service_hooks.prefetch_research_for_message,
+                    self.event_bus,
                     session.session_id,
                     content,
                     dict(session.config),
@@ -349,76 +289,6 @@ class SessionService:
             include_shell_tools=include_shell_tools,
             research_context=research_context,
         )
-
-    def _prefetch_research_for_message(
-        self,
-        session_id: str,
-        content: str,
-        session_config: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        from src.session.orchestrator_profile import is_orchestrator_session
-
-        if is_orchestrator_session(session_config):
-            return ""
-        from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
-        from src.trade.session_context import is_autonomous_agent_session
-
-        cfg = dict(session_config or {})
-        blocks: list[str] = []
-        try:
-            from src.trade.hub_bridge import prefetch_autonomous_context, prefetch_research_for_message
-
-            agent_ctx = prefetch_autonomous_context(session_id, content, session_config)
-            if agent_ctx.strip():
-                blocks.append(agent_ctx.strip())
-
-            if is_autonomous_agent_session(cfg) and is_autonomous_scheduler_turn(content):
-                return "\n\n".join(blocks)
-
-            research_ctx = prefetch_research_for_message(
-                session_id,
-                content,
-                self.event_bus,
-                session_config,
-            )
-            if research_ctx.strip():
-                blocks.append(research_ctx.strip())
-        except Exception:
-            import logging
-
-            logging.getLogger(__name__).exception("Research prefetch hook failed")
-            return "\n\n".join(blocks)
-        return "\n\n".join(blocks)
-
-    def _emit_provenance_if_needed(
-        self,
-        session_id: str,
-        attempt_id: str,
-        event_type: str,
-        data: dict,
-    ) -> None:
-        """Record non-tool provenance and emit a dedicated SSE frame."""
-        if event_type in {"tool_result", "provenance.source"}:
-            return
-        try:
-            from src.provenance.hook import record_from_event
-
-            source = record_from_event(
-                session_id,
-                event_type,
-                data,
-                attempt_id=attempt_id,
-            )
-            if source:
-                self.event_bus.emit(
-                    session_id,
-                    "provenance.source",
-                    {"source": source.to_dict(), "attempt_id": attempt_id},
-                )
-        except Exception:
-            import logging
-
-            logging.getLogger(__name__).exception("Provenance recording failed")
 
     def get_messages(self, session_id: str, limit: int = 100) -> list[Message]:
         """Return the message history."""
@@ -529,7 +399,8 @@ class SessionService:
                  **{key: reply_metadata[key] for key in ("elapsed_ms", *runtime_keys) if key in reply_metadata}},
             )
             if attempt.status == AttemptStatus.COMPLETED:
-                await self._maybe_orchestrator_propose_guard(
+                await service_hooks.maybe_orchestrator_propose_guard(
+                    self,
                     session.session_id,
                     attempt.prompt,
                     attempt.summary or "",
@@ -537,19 +408,22 @@ class SessionService:
                     dict(session.config),
                 )
                 await asyncio.to_thread(
-                    self._maybe_widget_guard,
+                    service_hooks.maybe_widget_guard,
+                    self.event_bus,
                     session.session_id,
                     attempt.prompt,
                     attempt.summary or "",
                     result.get("tools_called") or [],
                     dict(session.config),
                 )
-                await self._maybe_autonomous_decision_guard(
+                await service_hooks.maybe_autonomous_decision_guard(
+                    self,
                     session,
                     attempt.prompt,
                     result.get("tools_called") or [],
                 )
-                await self._maybe_bootstrap_finalize_guard(
+                await service_hooks.maybe_bootstrap_finalize_guard(
+                    self,
                     session,
                     attempt.prompt,
                     result.get("tools_called") or [],
@@ -580,28 +454,7 @@ class SessionService:
         agent_id = str((session.config or {}).get("autonomous_agent_id") or "").strip()
         if not agent_id:
             return
-        await asyncio.to_thread(self._clear_agent_streaming, agent_id)
-
-    @staticmethod
-    def _clear_agent_streaming(agent_id: str) -> None:
-        try:
-            from src.trade.hub_bridge import ensure_trade_stack_path
-
-            ensure_trade_stack_path()
-            from trade_integrations.autonomous_agents.bootstrap import safe_finalize_bootstrap_if_ready
-            from trade_integrations.autonomous_agents.store import get_agent, save_agent
-
-            agent = get_agent(agent_id)
-            if not agent:
-                return
-            if agent.get("streaming"):
-                agent["streaming"] = False
-                save_agent(agent)
-            safe_finalize_bootstrap_if_ready(agent_id)
-        except Exception:
-            logging.getLogger(__name__).debug(
-                "clear agent streaming failed for %s", agent_id, exc_info=True
-            )
+        await asyncio.to_thread(service_hooks.clear_agent_streaming, agent_id)
 
     async def _run_with_agent(
         self,
@@ -648,7 +501,7 @@ class SessionService:
             if event_type in {"tool_call", "tool_result"}:
                 self._record_tool_trail_event(tool_trail, event_type, data)
             data["attempt_id"] = attempt_id
-            self._emit_provenance_if_needed(session_id, attempt_id, event_type, data)
+            service_hooks.emit_provenance_if_needed(self.event_bus, session_id, attempt_id, event_type, data)
             self.event_bus.emit(session_id, event_type, data)
             if event_type == "tool_result" and isinstance(data, dict):
                 tool = str(data.get("tool") or "")
@@ -805,112 +658,6 @@ class SessionService:
         match["preview"] = str(data.get("preview") or "")
         if call_id:
             match["call_id"] = call_id
-
-    async def _maybe_orchestrator_propose_guard(
-        self,
-        session_id: str,
-        user_message: str,
-        assistant_text: str,
-        tools_called: set[str] | list[str],
-        session_config: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        from src.session.orchestrator_profile import is_orchestrator_session
-
-        if not is_orchestrator_session(session_config):
-            return
-        try:
-            from src.trade.orchestrator_propose_guard import maybe_enforce_orchestrator_propose
-
-            await maybe_enforce_orchestrator_propose(
-                self,
-                session_id,
-                user_message=user_message,
-                assistant_text=assistant_text,
-                tools_called=tools_called,
-                session_config=session_config,
-            )
-        except Exception:
-            import logging
-
-            logging.getLogger(__name__).exception("Orchestrator propose guard failed")
-
-    def _maybe_widget_guard(
-        self,
-        session_id: str,
-        user_message: str,
-        assistant_text: str,
-        tools_called: set[str] | list[str],
-        session_config: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        from src.session.orchestrator_profile import is_orchestrator_session
-
-        if is_orchestrator_session(session_config):
-            return
-        try:
-            from src.trade.widget_guard import maybe_inject_widget
-
-            maybe_inject_widget(
-                session_id,
-                self.event_bus,
-                user_message=user_message,
-                assistant_text=assistant_text,
-                tools_called=tools_called,
-                session_config=session_config,
-            )
-        except Exception:
-            import logging
-
-            logging.getLogger(__name__).exception("Widget guard hook failed")
-
-    async def _maybe_autonomous_decision_guard(
-        self,
-        session: Session,
-        user_message: str,
-        tools_called: set[str] | list[str],
-    ) -> None:
-        from src.session.orchestrator_profile import is_orchestrator_session
-
-        if is_orchestrator_session(session.config):
-            return
-        try:
-            from src.trade.autonomous_decision_guard import maybe_retry_autonomous_decision
-
-            await maybe_retry_autonomous_decision(
-                self,
-                session.session_id,
-                user_message=user_message,
-                tools_called=tools_called,
-                session_config=dict(session.config),
-            )
-        except Exception:
-            import logging
-
-            logging.getLogger(__name__).exception("Autonomous decision guard hook failed")
-
-    async def _maybe_bootstrap_finalize_guard(
-        self,
-        session: Session,
-        user_message: str,
-        tools_called: set[str] | list[str],
-    ) -> None:
-        from src.session.orchestrator_profile import is_orchestrator_session
-
-        if is_orchestrator_session(session.config):
-            return
-        try:
-            from src.trade.bootstrap_finalize_guard import maybe_retry_bootstrap_widget
-
-            await maybe_retry_bootstrap_widget(
-                self,
-                session.session_id,
-                user_message=user_message,
-                tools_called=tools_called,
-                session_config=dict(session.config),
-            )
-        except Exception:
-            import logging
-
-            logging.getLogger(__name__).exception("Bootstrap finalize guard hook failed")
 
     @staticmethod
     def _convert_messages_to_history(
