@@ -172,12 +172,26 @@ _goal_store = None
 # ============================================================================
 
 def _get_goal_store():
-    """Return the shared finance goal store."""
-    global _goal_store
-    if _goal_store is None:
-        from src.goal import GoalStore
+    """Return the shared finance goal store.
 
-        _goal_store = GoalStore()
+    Checks `sys.modules["api_server"]._goal_store` first, mirroring
+    `state.py::_get_session_service()` — so a test's
+    `monkeypatch.setattr(api_server, "_goal_store", None)` actually resets the singleton this
+    function returns, instead of only rebinding `api_server`'s own import-time name while this
+    module's real global keeps pointing at whatever store the first caller in the process built.
+    """
+    global _goal_store
+
+    from src.api._compat import host_attr as _host_attr, set_host_attr as _set_host_attr
+
+    host_val = _host_attr("_goal_store", _goal_store)
+    if host_val is not None:
+        return host_val
+
+    from src.goal import GoalStore
+
+    _goal_store = GoalStore()
+    _set_host_attr("_goal_store", _goal_store)
     return _goal_store
 
 # ============================================================================
