@@ -1,16 +1,21 @@
 """TestClient coverage for `india_options_routes.py`
-(`GET /options/india/underlyings`, `GET /options/research`) — previously untested.
+(`GET /options/india/underlyings`, `GET /options/research`, `GET /options/india/pop-overlay`)
+— previously untested.
 
 Domain: `2026-08-21-agent-api-route-coverage-audit`. Confirmed correctly mounted (via
 `register_india_options_routes()`, called from `register_options_routes()` in
 `options_routes.py`, itself mounted by `api_server.py`). Both routes wrap tools that make real
 market-data/vendor calls (`list_india_underlyings`, `IndiaOptionsResearchTool`) — mocked at the
-module-attribute level rather than exercised live.
+module-attribute level rather than exercised live. `pop-overlay` is module 4 of the
+options-profitability-prediction-platform backlog item (see
+.claude/backlog/items/2026-08-22-options-profitability-pop-engine.md) wiring real chain/
+forecast data into `pop_engine.compute_chain_pop_overlay`.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -116,3 +121,165 @@ def test_research_tool_exception_returns_502(
     response = client.get("/options/research", params={"ticker": "NIFTY"})
     assert response.status_code == 502
     assert response.json() == {"ok": False, "error": "options research request failed"}
+
+
+# --- GET /options/india/pop-overlay -----------------------------------------------------
+
+
+def _future_expiry_epoch(days_ahead: int = 14) -> int:
+    dt = datetime.now(timezone.utc) + timedelta(days=days_ahead)
+    return int(dt.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+
+
+class _FakeChainTool:
+    """Stand-in for IndiaOptionsChainTool.execute — returns a fixed envelope."""
+
+    envelope: dict = {}
+
+    def execute(self, **kwargs):
+        return json.dumps(self.envelope)
+
+
+def _chain_envelope(*, expiration: int | None, underlying_ltp: float | None = 24000.0) -> dict:
+    return {
+        "ok": True,
+        "market": "india_equity",
+        "source": "stock_simulator",
+        "data": {
+            "ticker": "NIFTY",
+            "expiration": expiration,
+            "expirations": [expiration] if expiration else [],
+            "underlying_ltp": underlying_ltp,
+            "lot_size": 75,
+            "calls_count": 1,
+            "puts_count": 1,
+            "calls": [{"strike": 24000.0, "last_price": 150.0, "implied_volatility": 0.15}],
+            "puts": [{"strike": 24000.0, "last_price": 140.0, "implied_volatility": 0.16}],
+        },
+    }
+
+
+def test_pop_overlay_requires_ticker(client: TestClient) -> None:
+    response = client.get("/options/india/pop-overlay")
+    assert response.status_code == 422  # FastAPI's own required-query-param rejection
+
+
+def test_pop_overlay_blank_ticker_returns_400(client: TestClient) -> None:
+    response = client.get("/options/india/pop-overlay", params={"ticker": "   "})
+    assert response.status_code == 400
+
+
+def test_pop_overlay_chain_fetch_error_returns_502(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class _Boom:
+        def execute(self, **kwargs):
+            return json.dumps({"ok": False, "error": "no chain data"})
+
+    monkeypatch.setattr(india_options_routes, "IndiaOptionsChainTool", _Boom)
+    response = client.get("/options/india/pop-overlay", params={"ticker": "NIFTY"})
+    assert response.status_code == 502
+    assert response.json()["ok"] is False
+
+
+def test_pop_overlay_missing_expiration_returns_502(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _FakeChainTool()
+    tool.envelope = _chain_envelope(expiration=None)
+    monkeypatch.setattr(india_options_routes, "IndiaOptionsChainTool", lambda: tool)
+    response = client.get("/options/india/pop-overlay", params={"ticker": "NIFTY"})
+    assert response.status_code == 502
+    assert "expiry" in response.json()["error"]
+
+
+def test_pop_overlay_missing_spot_returns_502(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _FakeChainTool()
+    tool.envelope = _chain_envelope(expiration=_future_expiry_epoch(), underlying_ltp=None)
+    monkeypatch.setattr(india_options_routes, "IndiaOptionsChainTool", lambda: tool)
+    response = client.get("/options/india/pop-overlay", params={"ticker": "NIFTY"})
+    assert response.status_code == 502
+    assert "spot" in response.json()["error"]
+
+
+def test_pop_overlay_expiry_in_past_returns_400(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _FakeChainTool()
+    tool.envelope = _chain_envelope(expiration=_future_expiry_epoch(days_ahead=-5))
+    monkeypatch.setattr(india_options_routes, "IndiaOptionsChainTool", lambda: tool)
+    response = client.get("/options/india/pop-overlay", params={"ticker": "NIFTY"})
+    assert response.status_code == 400
+    assert "future" in response.json()["error"]
+
+
+def test_pop_overlay_forecast_unavailable_returns_502(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _FakeChainTool()
+    tool.envelope = _chain_envelope(expiration=_future_expiry_epoch())
+    monkeypatch.setattr(india_options_routes, "IndiaOptionsChainTool", lambda: tool)
+
+    def _boom(ticker, horizon_days):
+        raise RuntimeError("module 3's quantile_fusion forecast is unavailable right now")
+
+    monkeypatch.setattr(india_options_routes, "_quantile_forecast_for_pop", _boom)
+    response = client.get("/options/india/pop-overlay", params={"ticker": "NIFTY"})
+    assert response.status_code == 502
+    assert response.json()["ok"] is False
+
+
+def test_pop_overlay_success_returns_scored_overlay(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _FakeChainTool()
+    tool.envelope = _chain_envelope(expiration=_future_expiry_epoch(days_ahead=14))
+    monkeypatch.setattr(india_options_routes, "IndiaOptionsChainTool", lambda: tool)
+
+    from trade_integrations.dataflows.options_research.pop_engine import QuantileForecast
+
+    fake_forecast = QuantileForecast(horizon_days=7, quantiles={"p10": -2.0, "p50": 0.0, "p90": 2.0})
+    seen_forecast_args = {}
+
+    def _fake_forecast_fn(ticker, horizon_days):
+        seen_forecast_args["ticker"] = ticker
+        seen_forecast_args["horizon_days"] = horizon_days
+        return fake_forecast
+
+    monkeypatch.setattr(india_options_routes, "_quantile_forecast_for_pop", _fake_forecast_fn)
+
+    seen_overlay_kwargs = {}
+
+    def _fake_overlay(**kwargs):
+        seen_overlay_kwargs.update(kwargs)
+        return [
+            {"strike": 24000.0, "option_type": "CE", "pop": {"probability_of_profit": 0.5}},
+            {"strike": 24000.0, "option_type": "PE", "pop": {"probability_of_profit": 0.4}},
+        ]
+
+    import trade_integrations.dataflows.options_research.pop_engine as pop_engine_mod
+
+    monkeypatch.setattr(pop_engine_mod, "compute_chain_pop_overlay", _fake_overlay)
+
+    response = client.get(
+        "/options/india/pop-overlay",
+        params={"ticker": "NIFTY", "horizon_days": 7, "n_paths": 1000},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["ticker"] == "NIFTY"
+    assert body["distribution_type"] == "physical"
+    assert body["horizon_days"] == 7
+    assert body["underlying_ltp"] == 24000.0
+    assert len(body["overlay"]) == 2
+    assert body["forecast_quantiles"] == {"p10": -2.0, "p50": 0.0, "p90": 2.0}
+
+    assert seen_forecast_args == {"ticker": "NIFTY", "horizon_days": 7}
+    assert seen_overlay_kwargs["spot"] == 24000.0
+    assert seen_overlay_kwargs["n_paths"] == 1000
+    assert seen_overlay_kwargs["expiry_days"] > 0
+    assert len(seen_overlay_kwargs["calls"]) == 1
+    assert len(seen_overlay_kwargs["puts"]) == 1

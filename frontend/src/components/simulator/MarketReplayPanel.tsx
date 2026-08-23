@@ -1,20 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pause, Play, RefreshCw, Square, Timer } from "lucide-react";
+import { ChevronLeft, ChevronRight, Pause, Play, RefreshCw, Square, Timer } from "lucide-react";
 import { api, type MarketReplayCalendarDay, type MultiMarketStatusResponse } from "@/lib/api";
-import { cn, localIsoDate } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { useMarketReplayCalendar } from "./useMarketReplayCalendar";
 
-const CALENDAR_DAYS = 120;
-
-function recentDates(end: string, count: number): string[] {
-  const out: string[] = [];
-  const cursor = new Date(end + "T00:00:00");
-  for (let i = 0; i < count; i++) {
-    out.push(localIsoDate(cursor));
-    cursor.setDate(cursor.getDate() - 1);
-  }
-  return out.reverse();
-}
+// Same weekday/cell-sizing convention as India's `StockHistoryCoveragePanel` `YearHeatmap` and
+// `MarketCoveragePanel`, so all three grids read as the same kind of calendar.
+const ROW_LABELS = ["", "Mon", "", "Wed", "", "Fri", ""];
+const CELL_PX = 12;
+const CELL_GAP_PX = 3;
+const LABEL_COL_PX = 28;
+const HEADER_ROW_PX = 14;
 
 /** Per-country Replay panel — the non-India analog of `SimulatorReplayCalendar` +
  * `SimulatorReplayClock`, scoped to one market instead of India's per-week/minute-bar model.
@@ -29,8 +25,23 @@ function recentDates(end: string, count: number): string[] {
  * fall in the range — there's no deep historical archive behind this clock, just `market_ticks`
  * rows, so a range with gaps just holds the last known tick through them like any other gap. */
 export function MarketReplayPanel({ country, label }: { country: string; label: string }) {
-  const { days, indices, loading, error, backfillingDay, reload: loadCalendar, backfill } =
-    useMarketReplayCalendar(country);
+  const {
+    days,
+    indices,
+    loading,
+    error,
+    backfillingDay,
+    reload: loadCalendar,
+    backfill,
+    grid,
+    weeks,
+    monthLabels,
+    windowDays,
+    isLatestWindow,
+    goOlder,
+    goNewer,
+    goToLatest,
+  } = useMarketReplayCalendar(country);
 
   const [rangeStart, setRangeStart] = useState<string | null>(null);
   const [rangeEnd, setRangeEnd] = useState<string | null>(null);
@@ -79,8 +90,6 @@ export function MarketReplayPanel({ country, label }: { country: string; label: 
   }, [status, refreshStatus]);
 
   const byDate = useMemo(() => new Map(days.map((d) => [d.date, d])), [days]);
-  const latest = days.length > 0 ? days.reduce((max, d) => (d.date > max ? d.date : max), days[0].date) : localIsoDate(new Date());
-  const grid = useMemo(() => recentDates(latest, CALENDAR_DAYS), [latest]);
 
   const rowsFor = (day: MarketReplayCalendarDay | undefined): number => {
     if (!day) return 0;
@@ -155,13 +164,57 @@ export function MarketReplayPanel({ country, label }: { country: string; label: 
     }
   };
 
+  const seek = async (date: string) => {
+    setBusy(true);
+    setArmError(null);
+    try {
+      setStatus(await api.seekMultiMarketReplay(`${date}T00:00:00Z`));
+    } catch (err) {
+      setArmError(err instanceof Error ? err.message : "Failed to seek");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <p className="text-[11px] text-muted-foreground">
-        {label} only has daily-close depth (no free vendor gives real historical intraday bars
-        for this market) — each cell below is one trading day, not a per-minute heatmap like
-        India's. Click a white (missing) day to backfill it, then select a day and arm replay.
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <p className="text-[11px] text-muted-foreground">
+          {label} only has daily-close depth (no free vendor gives real historical intraday bars
+          for this market) — each cell below is one trading day, not a per-minute heatmap like
+          India's. Click a white (missing) day to backfill it, then select a day and arm replay.
+          Once armed, click any recorded day to seek there directly.
+          {" "}{grid[0]} → {grid[grid.length - 1]} ({windowDays} days) shown.
+        </p>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={goOlder}
+            title="Older"
+            className="inline-flex h-6 w-6 items-center justify-center rounded border text-muted-foreground hover:bg-accent"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={isLatestWindow ? undefined : goNewer}
+            disabled={isLatestWindow}
+            title="Newer"
+            className="inline-flex h-6 w-6 items-center justify-center rounded border text-muted-foreground hover:bg-accent disabled:opacity-30"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+          {!isLatestWindow ? (
+            <button
+              type="button"
+              onClick={goToLatest}
+              className="rounded border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-accent"
+            >
+              Latest
+            </button>
+          ) : null}
+        </div>
+      </div>
 
       {error ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
@@ -173,33 +226,78 @@ export function MarketReplayPanel({ country, label }: { country: string; label: 
       ) : null}
 
       <div className="overflow-x-auto rounded-lg border bg-background/60 p-3">
-        <div className="flex flex-wrap gap-[3px]">
-          {grid.map((date) => {
-            const day = byDate.get(date);
-            const rows = rowsFor(day);
-            const hasData = rows > 0;
-            const isEndpoint = date === rangeStart || date === rangeEnd;
-            const isInRange = Boolean(rangeStart && rangeEnd && date > rangeStart && date < rangeEnd);
-            const isArmed = Boolean(status && status.clock.sim_now_utc.slice(0, 10) === date);
-            return (
-              <button
-                key={date}
-                type="button"
-                title={`${date}${hasData ? ` · ${rows} row${rows === 1 ? "" : "s"}` : " · not recorded"}`}
-                onClick={() => (hasData ? selectDay(date) : backfill(date))}
-                disabled={backfillingDay === date}
-                data-testid={`market-replay-day-${date}`}
-                className={cn(
-                  "h-[12px] w-[12px] rounded-[2px] border transition-colors",
-                  hasData ? "border-emerald-500/50 bg-emerald-500/50 hover:bg-emerald-500/70" : "border-border/40 bg-muted/40 hover:bg-muted",
-                  isInRange && "bg-foreground/30",
-                  isEndpoint && "ring-2 ring-foreground",
-                  isArmed && "ring-2 ring-amber-400",
-                  backfillingDay === date && "opacity-50",
-                )}
-              />
-            );
-          })}
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: `${LABEL_COL_PX}px repeat(${weeks.length}, ${CELL_PX}px)`,
+            gridTemplateRows: `${HEADER_ROW_PX}px repeat(7, ${CELL_PX}px)`,
+            columnGap: `${CELL_GAP_PX}px`,
+            rowGap: `${CELL_GAP_PX}px`,
+          }}
+        >
+          {ROW_LABELS.map((label, di) =>
+            label ? (
+              <div
+                key={`wd-${di}`}
+                className="text-[9px] leading-none text-muted-foreground/70"
+                style={{ gridColumn: 1, gridRow: di + 2, alignSelf: "center" }}
+              >
+                {label}
+              </div>
+            ) : null,
+          )}
+          {monthLabels.map((m) => (
+            <div
+              key={`m-${m.col}`}
+              className="shrink-0 text-[9px] leading-none text-muted-foreground/70"
+              style={{ gridColumn: m.col + 2, gridRow: 1, alignSelf: "end" }}
+            >
+              {m.label}
+            </div>
+          ))}
+          {weeks.map((week, wi) =>
+            week.map((cell, di) => {
+              if (!cell) {
+                return <div key={`${wi}-${di}`} style={{ gridColumn: wi + 2, gridRow: di + 2 }} />;
+              }
+              const date = cell.date;
+              const day = byDate.get(date);
+              const rows = rowsFor(day);
+              const hasData = rows > 0;
+              const isEndpoint = date === rangeStart || date === rangeEnd;
+              const isInRange = Boolean(rangeStart && rangeEnd && date > rangeStart && date < rangeEnd);
+              const isArmed = Boolean(status && status.clock.sim_now_utc.slice(0, 10) === date);
+              return (
+                <button
+                  key={date}
+                  type="button"
+                  title={`${date}${hasData ? ` · ${rows} row${rows === 1 ? "" : "s"}` : " · not recorded"}${hasData && status ? " · click to seek" : ""}`}
+                  onClick={() => {
+                    if (!hasData) {
+                      backfill(date);
+                      return;
+                    }
+                    if (status) {
+                      seek(date);
+                      return;
+                    }
+                    selectDay(date);
+                  }}
+                  disabled={backfillingDay === date || (Boolean(status) && busy)}
+                  data-testid={`market-replay-day-${date}`}
+                  style={{ gridColumn: wi + 2, gridRow: di + 2 }}
+                  className={cn(
+                    "h-full w-full rounded-[2px] border transition-colors",
+                    hasData ? "border-emerald-500/50 bg-emerald-500/50 hover:bg-emerald-500/70" : "border-border/40 bg-muted/40 hover:bg-muted",
+                    isInRange && "bg-foreground/30",
+                    isEndpoint && "ring-2 ring-foreground",
+                    isArmed && "ring-2 ring-amber-400",
+                    backfillingDay === date && "opacity-50",
+                  )}
+                />
+              );
+            }),
+          )}
         </div>
         <div className="mt-2 flex items-center gap-3 text-[10px] text-muted-foreground">
           <span className="inline-flex items-center gap-1">

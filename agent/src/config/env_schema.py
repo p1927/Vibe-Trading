@@ -640,6 +640,9 @@ class TradeConfig(_EnvBase):
     oi_snapshot_cron: str = Field(
         alias="OI_SNAPSHOT_CRON", default="45 15 * * 1-5",
     )
+    reinference_tick_cron: str = Field(
+        alias="REINFERENCE_TICK_CRON", default="*/15 9-16 * * 1-5",
+    )
     hub_news_full_ingest_cron: str = Field(
         alias="HUB_NEWS_FULL_INGEST_CRON", default="0 7 * * *",
     )

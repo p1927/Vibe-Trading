@@ -95,6 +95,7 @@ def _hub_news_pipeline_health() -> dict[str, Any]:
             "pause_reason": str(pause.get("pause_reason") or ""),
             "user_message": str(pause.get("user_message") or ""),
             "minimax_configured": bool(pause.get("minimax_configured")),
+            "generative_adapter_configured": bool(pause.get("generative_adapter_configured")),
             "worker_last": worker_last,
             "backpressure_active": queued >= threshold,
             "backpressure_threshold": threshold,

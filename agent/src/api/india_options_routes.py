@@ -79,8 +79,61 @@ async def fetch_india_chain(
     return envelope
 
 
+async def _fetch_india_chain_envelope(
+    ticker: str, expiry_date: str | None, source: str
+) -> dict[str, Any]:
+    """Run ``IndiaOptionsChainTool`` and return its parsed envelope, or raise
+    ``RuntimeError`` with a caller-facing message — thin wrapper shared by
+    ``fetch_india_chain`` (HTTP response) and the POP-overlay route below
+    (needs the parsed dict, not an HTTP `Response`)."""
+    kwargs: dict[str, Any] = {"ticker": ticker, "source": source}
+    if expiry_date:
+        kwargs["expiry_date"] = expiry_date
+    raw = await asyncio.to_thread(IndiaOptionsChainTool().execute, **kwargs)
+    envelope = json.loads(raw)
+    if not envelope.get("ok"):
+        raise RuntimeError(str(envelope.get("error") or "options chain request failed"))
+    return envelope
+
+
+def _quantile_forecast_for_pop(ticker: str, horizon_days: int):
+    """Module 3's forecast for the POP overlay — prefers the cheap, already-
+    persisted `reinference_trigger` snapshot (module 3 step 5) when it matches
+    the requested horizon, else runs `quantile_fusion` fresh (module 3's own
+    curated fusion track, not the full ~20-track sweep — same cost discipline
+    `reinference_trigger.py` already established for this exact situation).
+    """
+    from trade_integrations.dataflows.index_research.prediction_algorithms.reinference_trigger import (
+        load_reinference_snapshot,
+    )
+    from trade_integrations.dataflows.options_research.pop_engine import QuantileForecast
+
+    snapshot = load_reinference_snapshot(ticker)
+    forecast_data = (snapshot or {}).get("forecast") or {}
+    quantiles = forecast_data.get("quantiles")
+    if quantiles and snapshot.get("horizon_days") == horizon_days:
+        return QuantileForecast(horizon_days=horizon_days, quantiles=quantiles)
+
+    from trade_integrations.dataflows.index_research.prediction_algorithms.context_builder import (
+        context_from_hub,
+    )
+    from trade_integrations.dataflows.index_research.prediction_algorithms.registry import (
+        run_all_tracks,
+    )
+
+    ctx = context_from_hub(ticker, horizon_days=horizon_days)
+    if ctx is None:
+        raise RuntimeError(f"no cached forecast context available for {ticker}")
+    tracks = run_all_tracks(ctx, track_ids=["quantile_fusion"])
+    fusion = tracks.get("quantile_fusion")
+    if fusion is None or not fusion.available or not fusion.quantiles:
+        raise RuntimeError("module 3's quantile_fusion forecast is unavailable right now")
+    return QuantileForecast(horizon_days=horizon_days, quantiles=fusion.quantiles)
+
+
 def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
-    """Mount ``GET /options/research`` and ``GET /options/india/underlyings``."""
+    """Mount ``GET /options/research``, ``GET /options/india/underlyings``, and
+    ``GET /options/india/pop-overlay``."""
 
     @app.get("/options/india/underlyings", dependencies=[Depends(require_auth)])
     async def india_underlyings(source: str = Query("stock_simulator")) -> Response:
@@ -96,6 +149,91 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
                 content={"ok": False, "error": "underlyings lookup failed"},
             )
         return {"ok": True, "data": data}
+
+    @app.get("/options/india/pop-overlay", dependencies=[Depends(require_auth)])
+    async def options_pop_overlay(
+        ticker: str = Query(..., max_length=64),
+        expiry_date: str | None = Query(None, max_length=16),
+        horizon_days: int = Query(7, ge=1, le=60),
+        source: str = Query("stock_simulator"),
+        n_paths: int = Query(5_000, ge=100, le=50_000),
+    ) -> Response:
+        """Module 4's chain-wide probability-of-profit-by-time-T overlay: one
+        row per strike (calls + puts) with a Monte Carlo POP scored under
+        module 3's own directional forecast — a **physical** (model-view)
+        probability, not a market-neutral one; see
+        `pop_engine.py`'s module docstring. Not authoritative "will this
+        trade work" advice, a research overlay for the prediction-tab chain
+        view.
+        """
+        if not ticker.strip():
+            return JSONResponse(status_code=400, content={"ok": False, "error": "ticker is required"})
+
+        try:
+            chain_envelope = await _fetch_india_chain_envelope(ticker, expiry_date, source)
+        except Exception as exc:  # noqa: BLE001 — never leak a stack frame to clients
+            logger.warning("pop-overlay chain fetch failed (ticker=%s): %s", ticker, exc)
+            return JSONResponse(status_code=502, content={"ok": False, "error": str(exc)})
+
+        data = chain_envelope["data"]
+        expiration_epoch = data.get("expiration")
+        if expiration_epoch is None:
+            return JSONResponse(
+                status_code=502,
+                content={"ok": False, "error": f"no resolvable expiry for {ticker}"},
+            )
+        underlying_ltp = data.get("underlying_ltp")
+        if not underlying_ltp or underlying_ltp <= 0:
+            return JSONResponse(
+                status_code=502,
+                content={"ok": False, "error": f"no underlying spot available for {ticker}"},
+            )
+
+        try:
+            from trade_integrations.dataflows.company_research.market import india_trading_date
+
+            today = india_trading_date()
+            expiry_day = datetime.fromtimestamp(expiration_epoch, tz=timezone.utc).date()
+            expiry_days = (expiry_day - today).days
+            if expiry_days <= 0:
+                return JSONResponse(
+                    status_code=400,
+                    content={"ok": False, "error": f"resolved expiry {expiry_day} is not in the future"},
+                )
+
+            forecast = await asyncio.to_thread(_quantile_forecast_for_pop, ticker.strip().upper(), horizon_days)
+
+            from trade_integrations.dataflows.options_research.pop_engine import compute_chain_pop_overlay
+
+            overlay = await asyncio.to_thread(
+                compute_chain_pop_overlay,
+                spot=float(underlying_ltp),
+                forecast=forecast,
+                expiry_days=expiry_days,
+                calls=data.get("calls") or [],
+                puts=data.get("puts") or [],
+                n_paths=n_paths,
+            )
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"ok": False, "error": str(exc)})
+        except Exception:  # noqa: BLE001 — never leak a stack frame to clients
+            logger.exception("pop-overlay computation failed (ticker=%s)", ticker)
+            return JSONResponse(
+                status_code=502, content={"ok": False, "error": "POP overlay computation failed"}
+            )
+
+        return {
+            "ok": True,
+            "ticker": ticker,
+            "source": source,
+            "expiry_date": expiry_day.isoformat(),
+            "expiry_days": expiry_days,
+            "horizon_days": horizon_days,
+            "underlying_ltp": underlying_ltp,
+            "distribution_type": "physical",
+            "forecast_quantiles": forecast.quantiles,
+            "overlay": overlay,
+        }
 
     @app.get("/options/research", dependencies=[Depends(require_auth)])
     async def options_research(

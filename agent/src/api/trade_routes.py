@@ -1388,7 +1388,7 @@ def get_hub_status(
 
         ensure_trade_stack_path()
         from trade_integrations.hub_storage.hub_status import build_hub_status
-        from trade_integrations.hub_storage.news_feed_query import apply_news_feed_to_hub
+        from trade_integrations.dataflows.news_hub_bridge import apply_news_feed_to_hub
 
         # The feed pool has to cover every page the client can ask for, so the
         # inventory load scales with the requested page rather than the old 50.
@@ -1684,14 +1684,12 @@ def discard_hub_news(
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
-        from trade_integrations.dataflows.index_research.news_discard import (
+        from trade_integrations.dataflows.news_hub_bridge import (
             discard_news_item,
             discard_similar_items,
-            preview_discard_similar,
-        )
-        from trade_integrations.dataflows.news_hub_bridge import (
             get_distilled_event,
             list_pending_staging_refs,
+            preview_discard_similar,
         )
 
         reason = str(body.reason or "manual discard")
@@ -1751,9 +1749,9 @@ def undo_hub_news_discard(
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
-        from trade_integrations.dataflows.index_research.news_discard import undo_discard
+        from trade_integrations.dataflows.news_hub_bridge import undo_news_discard
 
-        result = undo_discard(str(body.discard_id or "").strip())
+        result = undo_news_discard(str(body.discard_id or "").strip())
         if not result.get("restored"):
             return HubNewsDiscardResponse(
                 status="failed",
@@ -1779,9 +1777,9 @@ def list_hub_discarded_news(
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
-        from trade_integrations.dataflows.index_research.news_discard import list_discarded
+        from trade_integrations.dataflows.news_hub_bridge import list_discarded_news
 
-        items = list_discarded(ticker=key, limit=max(1, min(limit, 200)))
+        items = list_discarded_news(ticker=key, limit=max(1, min(limit, 200)))
         return HubNewsDiscardedListResponse(status="ok", items=items, count=len(items))
     except Exception as exc:
         logger.exception("hub discarded news list failed")
@@ -1799,7 +1797,7 @@ def get_hub_news_pipeline_trace_summary(
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
-        from trade_integrations.hub_storage.news_pipeline_trace_store import pipeline_trace_summary
+        from trade_integrations.dataflows.news_hub_bridge import pipeline_trace_summary
 
         summary = pipeline_trace_summary(ticker=key)
         return HubNewsPipelineTraceSummaryResponse(status="ok", summary=summary)
@@ -1823,7 +1821,7 @@ def list_hub_news_pipeline_trace_items(
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
-        from trade_integrations.hub_storage.news_pipeline_trace_store import list_pipeline_trace_items
+        from trade_integrations.dataflows.news_hub_bridge import list_pipeline_trace_items
 
         items = list_pipeline_trace_items(
             ticker=key,
@@ -3895,12 +3893,22 @@ def get_market_factor_coverage(
 @trade_router.get("/markets/{country}/replay/calendar")
 def get_market_replay_calendar(
     country: str,
+    lookback_days: int | None = None,
+    before: str | None = None,
     _auth: None = Depends(require_local_or_auth),
 ) -> dict[str, Any]:
     """Per-day `market_ticks` presence for a non-India market's indices — proxies
     `stock_simulator`'s `/history/{country}/replay/calendar`, driving the per-country
-    Replay/Data-coverage calendar (the India-tab analog of `/replay/calendar` above)."""
-    return _run_control(lambda c: c.get_market_replay_calendar(country=country))
+    Replay/Data-coverage calendar (the India-tab analog of `/replay/calendar` above).
+
+    `lookback_days`/`before` let the frontend page further back in history a window at a time
+    instead of always seeing the most recent `lookback_days` days (see `history_data.py`'s
+    route docstring)."""
+    return _run_control(
+        lambda c: c.get_market_replay_calendar(
+            country=country, lookback_days=lookback_days, before=before,
+        )
+    )
 
 
 class BackfillMarketTicksRequest(BaseModel):

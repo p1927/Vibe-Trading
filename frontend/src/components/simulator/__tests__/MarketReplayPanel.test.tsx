@@ -12,6 +12,7 @@ const apiMock = vi.hoisted(() => ({
   resumeMultiMarketReplay: vi.fn(),
   setMultiMarketReplaySpeed: vi.fn(),
   stopMultiMarketReplay: vi.fn(),
+  seekMultiMarketReplay: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({ api: apiMock }));
@@ -59,7 +60,9 @@ describe("MarketReplayPanel", () => {
 
     render(<MarketReplayPanel country="US" label="US" />);
 
-    await waitFor(() => expect(apiMock.getMarketReplayCalendar).toHaveBeenCalledWith("US"));
+    await waitFor(() =>
+      expect(apiMock.getMarketReplayCalendar).toHaveBeenCalledWith("US", { lookbackDays: 120, before: undefined }),
+    );
     // "2024-04-30" is inside the 120-day window ending 2024-05-01 (the only recorded day) but
     // isn't in `CALENDAR.days` itself, so it's a deterministic "missing" cell.
     const missingDay = await screen.findByTestId("market-replay-day-2024-04-30");
@@ -111,6 +114,47 @@ describe("MarketReplayPanel", () => {
         speed: 1,
         loop: true,
       }),
+    );
+  });
+
+  it("clicking a recorded day while armed seeks instead of re-arming", async () => {
+    apiMock.getMultiMarketStatus.mockResolvedValue(STATUS);
+    const sought = { ...STATUS, clock: { ...STATUS.clock, sim_now_utc: "2024-04-29T00:00:00Z" } };
+    apiMock.seekMultiMarketReplay.mockResolvedValue(sought);
+
+    render(<MarketReplayPanel country="US" label="US" />);
+
+    await waitFor(() => expect(screen.getByText("Stop")).toBeInTheDocument());
+
+    fireEvent.click(await screen.findByTestId("market-replay-day-2024-04-29"));
+
+    await waitFor(() =>
+      expect(apiMock.seekMultiMarketReplay).toHaveBeenCalledWith("2024-04-29T00:00:00Z"),
+    );
+    expect(apiMock.armMultiMarketReplay).not.toHaveBeenCalled();
+  });
+
+  it("paging older re-fetches the calendar with a before cursor, then Latest resets it", async () => {
+    render(<MarketReplayPanel country="US" label="US" />);
+
+    await waitFor(() =>
+      expect(apiMock.getMarketReplayCalendar).toHaveBeenCalledWith("US", { lookbackDays: 120, before: undefined }),
+    );
+
+    fireEvent.click(screen.getByTitle("Older"));
+
+    await waitFor(() =>
+      expect(apiMock.getMarketReplayCalendar).toHaveBeenLastCalledWith("US", {
+        lookbackDays: 120,
+        before: "2024-01-02",
+      }),
+    );
+
+    const latestButton = await screen.findByRole("button", { name: "Latest" });
+    fireEvent.click(latestButton);
+
+    await waitFor(() =>
+      expect(apiMock.getMarketReplayCalendar).toHaveBeenLastCalledWith("US", { lookbackDays: 120, before: undefined }),
     );
   });
 });

@@ -41,6 +41,7 @@ JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP = "stock_history_coverage_sweep"
 JOB_TYPE_NEWS_QUALITY_EVAL = "news_quality_eval"
 JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH = "global_macro_eod_refresh"
 JOB_TYPE_OI_SNAPSHOT = "oi_snapshot"
+JOB_TYPE_REINFERENCE_TICK = "reinference_tick"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -55,6 +56,7 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_NEWS_QUALITY_EVAL,
     JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH,
     JOB_TYPE_OI_SNAPSHOT,
+    JOB_TYPE_REINFERENCE_TICK,
 })
 
 NEWS_QUALITY_EVAL_CRON_ENV = "NEWS_QUALITY_EVAL_CRON"
@@ -574,6 +576,30 @@ def run_oi_snapshot_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     )
 
 
+def run_reinference_tick_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Frequent poll for module 3's event/heartbeat-triggered re-inference (step 5
+    of the options-profitability-prediction-platform backlog item — see
+    .claude/backlog/items/2026-08-22-nifty-probabilistic-forecast-engine.md).
+
+    Cheap on a no-trigger tick (no forecast tracks run) — safe to schedule at a
+    much tighter cadence than the other index jobs; `run_reinference_tick` itself
+    decides per-tick whether a price move, fresh material news, or the heartbeat
+    fallback actually warrants recomputing the fusion forecast.
+    """
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.dataflows.index_research.prediction_algorithms.reinference_trigger import (
+        run_reinference_tick,
+    )
+
+    cfg = config or {}
+    return run_reinference_tick(
+        ticker=str(cfg.get("ticker") or "NIFTY"),
+        price_materiality_pct=float(cfg.get("price_materiality_pct") or 0.5),
+        news_materiality_threshold=float(cfg.get("news_materiality_threshold") or 3.0),
+        heartbeat_minutes=float(cfg.get("heartbeat_minutes") or 60.0),
+    )
+
+
 def run_hub_news_entity_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Drain staging queue and optionally run heavy entity maintenance."""
     _ensure_trade_integrations_on_path()
@@ -636,9 +662,7 @@ def run_news_quality_eval_job(config: dict[str, Any] | None = None) -> dict[str,
     the ``continue-on-error`` behavior of the same eval in nightly CI.
     """
     _ensure_trade_integrations_on_path()
-    from trade_integrations.dataflows.index_research.hub_news_pipeline.news_golden_eval import (
-        run_news_golden_eval,
-    )
+    from trade_integrations.dataflows.news_hub_bridge import run_news_golden_eval
 
     try:
         summary = run_news_golden_eval()
@@ -713,6 +737,11 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         _attach_job_result_summary(job, summary)
         logger.info("OI snapshot capture completed for job %s: %s", job.id, summary)
         return
+    if job_type == JOB_TYPE_REINFERENCE_TICK:
+        summary = run_reinference_tick_job(job.config)
+        _attach_job_result_summary(job, summary)
+        logger.info("reinference tick completed for job %s: %s", job.id, summary)
+        return
     raise ValueError(f"unsupported index job_type: {job_type!r}")
 
 
@@ -730,12 +759,14 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     news_quality_eval_cron = _cfg.news_quality_eval_cron.strip()
     global_macro_eod_refresh_cron = _cfg.global_macro_eod_refresh_cron.strip()
     oi_snapshot_cron = _cfg.oi_snapshot_cron.strip()
+    reinference_tick_cron = _cfg.reinference_tick_cron.strip()
     validate_schedule(snapshot_cron)
     validate_schedule(full_cron)
     validate_schedule(coverage_sweep_cron)
     validate_schedule(news_quality_eval_cron)
     validate_schedule(global_macro_eod_refresh_cron)
     validate_schedule(oi_snapshot_cron)
+    validate_schedule(reinference_tick_cron)
 
     skip_unified_duplicates = False
     try:
@@ -974,6 +1005,22 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             config={
                 "job_type": JOB_TYPE_OI_SNAPSHOT,
                 "underlying": "NIFTY",
+            },
+        ),
+        ScheduledResearchJob(
+            id="nifty-reinference-tick",
+            prompt=(
+                "Frequent poll for module 3's event/heartbeat-triggered fusion-forecast "
+                "re-inference (cheap no-op unless a price move, material news, or the "
+                "heartbeat fallback actually warrants recomputing)"
+            ),
+            schedule=reinference_tick_cron,
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_REINFERENCE_TICK,
+                "ticker": "NIFTY",
             },
         ),
     ]

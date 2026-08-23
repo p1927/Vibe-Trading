@@ -45,7 +45,7 @@ def test_markets_registry_lists_all_supported_markets() -> None:
     codes = {m["code"] for m in body["markets"]}
     assert codes == {"IN", "US", "CN", "JP", "RU", "ME", "LATAM"}
     us = next(m for m in body["markets"] if m["code"] == "US")
-    assert us["indices"] == ["SPX", "NASDAQ", "DOW"]
+    assert us["indices"] == ["SPX", "NASDAQ", "DOW", "SOX"]
     assert us["currency"] == "USD"
 
 
@@ -201,6 +201,21 @@ def test_market_replay_calendar_forwards_country() -> None:
     assert res.status_code == 200
     assert captured["url"].endswith("/history/US/replay/calendar")
     assert res.json()["days"][0]["has_spx"] is True
+
+
+def test_market_replay_calendar_forwards_lookback_days_and_before() -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["params"] = params
+        return _FakeResponse(200, {"status": "ok", "days": [], "indices": ["SPX"]})
+
+    with patch("requests.request", side_effect=fake_request):
+        res = _client().get("/trade/markets/US/replay/calendar?lookback_days=30&before=2025-01-01")
+
+    assert res.status_code == 200
+    assert captured["params"] == {"lookback_days": 30, "before": "2025-01-01"}
 
 
 def test_market_backfill_forwards_country_index_and_period() -> None:

@@ -1282,8 +1282,13 @@ export const api = {
     ),
   // Per-country `market_ticks` day calendar + idempotent backfill — the non-India analog of
   // the India-tab Replay calendar / Data-coverage backfill.
-  getMarketReplayCalendar: (country: string) =>
-    request<MarketReplayCalendarResponse>(`/trade/markets/${encodeURIComponent(country)}/replay/calendar`),
+  getMarketReplayCalendar: (country: string, opts?: { lookbackDays?: number; before?: string }) =>
+    request<MarketReplayCalendarResponse>(
+      `/trade/markets/${encodeURIComponent(country)}/replay/calendar${api._hubStockHistoryQS({
+        lookback_days: opts?.lookbackDays,
+        before: opts?.before,
+      })}`,
+    ),
   // A "max"-period backfill is a real per-index vendor call (yfinance), not a cache read — the
   // default 20s abort cut this off in practice, same reasoning as postHubStockHistoryBackfill above.
   backfillMarketTicks: (country: string, index?: string) =>
