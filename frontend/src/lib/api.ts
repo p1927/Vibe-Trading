@@ -4215,7 +4215,7 @@ export interface IndexBacktestDrawdown {
     change_pct?: number;
   }>;
   calendar_events?: Array<{ type?: string; event?: string; description?: string }>;
-  constituent_movers?: IndexBacktestConstituentMover[];
+  worst_movers?: IndexBacktestConstituentMover[];
   worst_contributors?: IndexBacktestConstituentMover[];
   causal_hypotheses?: CausalHypothesis[];
   index_headlines?: Array<{ title?: string; source?: string }>;

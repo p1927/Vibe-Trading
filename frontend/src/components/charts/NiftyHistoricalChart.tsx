@@ -178,7 +178,7 @@ export function NiftyHistoricalChart({ series = [], majorDrawdowns = [], height 
   }, [series, bigMoveIndices, dark]);
 
   const drawdownRow = selectedDate ? drawdownByDate.get(selectedDate) : undefined;
-  const constituentMovers = drawdownRow?.constituent_movers ?? drawdownRow?.worst_contributors ?? [];
+  const constituentMovers = drawdownRow?.worst_movers ?? drawdownRow?.worst_contributors ?? [];
 
   if (!series.length) {
     return (
