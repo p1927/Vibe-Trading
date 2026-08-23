@@ -9,12 +9,7 @@ avoid a module-load-time import cycle.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
-
 from src.preflight import CheckResult
-
-if TYPE_CHECKING:
-    from rich.console import Console
 
 
 def check_environment() -> CheckResult:
@@ -82,17 +77,3 @@ def check_prediction_ml() -> CheckResult:
             impact="forecast lab ML tracks unavailable",
             critical=True,
         )
-
-
-def require_prediction_ml_runtime(console: "Optional[Console]" = None) -> Optional[int]:
-    """Hard-gate server startup on the Prediction ML check. None = proceed, else exit code."""
-    from rich.console import Console
-
-    result = check_prediction_ml()
-    if result.status == "ready":
-        return None
-    out = console or Console()
-    out.print(f"[red]FAIL[/red] Prediction ML: {result.message}")
-    if result.impact:
-        out.print(f"  {result.impact}")
-    return 1
