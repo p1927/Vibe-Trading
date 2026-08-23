@@ -640,6 +640,9 @@ class TradeConfig(_EnvBase):
     oi_snapshot_cron: str = Field(
         alias="OI_SNAPSHOT_CRON", default="45 15 * * 1-5",
     )
+    pump_dump_proxy_cron: str = Field(
+        alias="PUMP_DUMP_PROXY_CRON", default="50 15 * * 1-5",
+    )
     reinference_tick_cron: str = Field(
         alias="REINFERENCE_TICK_CRON", default="*/15 9-16 * * 1-5",
     )

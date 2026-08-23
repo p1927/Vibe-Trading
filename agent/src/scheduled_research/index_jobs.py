@@ -42,6 +42,7 @@ JOB_TYPE_NEWS_QUALITY_EVAL = "news_quality_eval"
 JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH = "global_macro_eod_refresh"
 JOB_TYPE_OI_SNAPSHOT = "oi_snapshot"
 JOB_TYPE_REINFERENCE_TICK = "reinference_tick"
+JOB_TYPE_PUMP_DUMP_PROXY = "pump_dump_proxy"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -57,6 +58,7 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH,
     JOB_TYPE_OI_SNAPSHOT,
     JOB_TYPE_REINFERENCE_TICK,
+    JOB_TYPE_PUMP_DUMP_PROXY,
 })
 
 NEWS_QUALITY_EVAL_CRON_ENV = "NEWS_QUALITY_EVAL_CRON"
@@ -576,6 +578,29 @@ def run_oi_snapshot_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     )
 
 
+def run_pump_dump_proxy_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Daily post-close pump-and-dump proxy capture (module 2 step 3 of the
+    options-profitability-prediction-platform backlog item — see
+    .claude/backlog/items/2026-08-22-nifty-market-reversal-signal.md).
+
+    Cadence decided 2026-08-24: run once daily after close, same shape as
+    ``run_oi_snapshot_job`` — a missed/no-data day is expected (only India's
+    tick recorder is always-on) and written as-is rather than skipped, so
+    this accumulator's day-coverage stays honestly visible for whenever
+    there's enough history to join into `reversal_hazard`'s training panel.
+    """
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.dataflows.index_research.volume_concentration import (
+        capture_and_append_pump_dump_snapshot,
+    )
+
+    cfg = config or {}
+    return capture_and_append_pump_dump_snapshot(
+        symbol=str(cfg.get("symbol") or "NIFTY"),
+        exchange=str(cfg.get("exchange") or "NSE_INDEX"),
+    )
+
+
 def run_reinference_tick_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Frequent poll for module 3's event/heartbeat-triggered re-inference (step 5
     of the options-profitability-prediction-platform backlog item — see
@@ -737,6 +762,11 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         _attach_job_result_summary(job, summary)
         logger.info("OI snapshot capture completed for job %s: %s", job.id, summary)
         return
+    if job_type == JOB_TYPE_PUMP_DUMP_PROXY:
+        summary = run_pump_dump_proxy_job(job.config)
+        _attach_job_result_summary(job, summary)
+        logger.info("pump-dump proxy capture completed for job %s: %s", job.id, summary)
+        return
     if job_type == JOB_TYPE_REINFERENCE_TICK:
         summary = run_reinference_tick_job(job.config)
         _attach_job_result_summary(job, summary)
@@ -760,6 +790,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     global_macro_eod_refresh_cron = _cfg.global_macro_eod_refresh_cron.strip()
     oi_snapshot_cron = _cfg.oi_snapshot_cron.strip()
     reinference_tick_cron = _cfg.reinference_tick_cron.strip()
+    pump_dump_proxy_cron = _cfg.pump_dump_proxy_cron.strip()
     validate_schedule(snapshot_cron)
     validate_schedule(full_cron)
     validate_schedule(coverage_sweep_cron)
@@ -767,6 +798,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     validate_schedule(global_macro_eod_refresh_cron)
     validate_schedule(oi_snapshot_cron)
     validate_schedule(reinference_tick_cron)
+    validate_schedule(pump_dump_proxy_cron)
 
     skip_unified_duplicates = False
     try:
@@ -1005,6 +1037,18 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             config={
                 "job_type": JOB_TYPE_OI_SNAPSHOT,
                 "underlying": "NIFTY",
+            },
+        ),
+        ScheduledResearchJob(
+            id="nifty-pump-dump-proxy",
+            prompt="Daily post-close NIFTY pump-and-dump proxy capture (accumulates history for backtesting)",
+            schedule=pump_dump_proxy_cron,
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_PUMP_DUMP_PROXY,
+                "symbol": "NIFTY",
             },
         ),
         ScheduledResearchJob(
