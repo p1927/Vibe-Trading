@@ -1,0 +1,147 @@
+import { expect, test, type Page } from '@playwright/test'
+import { hasErrorBoundary, installBaselineApiMock } from './helpers/apiMock'
+
+/**
+ * Scripted state-graph walker for exploratory bug-finding (backlog item
+ * 2026-08-21-vibetrading-frontend-playwright-e2e-harness's "click around and
+ * find bugs" goal). A hand-declared node/edge graph over the routes in
+ * src/router.tsx, BFS-walked, asserting no console error and no React error
+ * boundary fires at each node.
+ *
+ * This is intentionally a small custom runner (~150 lines), not a
+ * heavyweight state-graph tool like GraphWalker/AltWalker — per the backlog
+ * item's own explicit instruction that those are a poor fit here (Java/YAML
+ * centric, nothing else in this repo uses them).
+ *
+ * Edges here are declared but walked as direct `page.goto(node.path)` calls
+ * rather than simulated nav-link clicks: src/components/layout/Layout.tsx
+ * only surfaces a handful of routes as clickable nav links (home, agent),
+ * not all ~15 router.tsx routes, so there is no reliable in-app click path
+ * to most nodes. The task's own instructions call this an acceptable first
+ * version, to be noted in the report. The graph/edge/BFS shape is kept
+ * exactly as specified — only the edge *traversal mechanism* is a goto
+ * instead of a click — so a future pass can swap in real nav-link clicks for
+ * whichever edges do have one, without changing the graph structure.
+ */
+
+interface GraphNode {
+  id: string
+  path: string
+}
+
+interface GraphEdge {
+  from: string
+  to: string
+}
+
+// Static routes only (src/router.tsx) — dynamic routes like /runs/:runId and
+// /alpha-zoo/:alphaId are excluded, since they need a real record id and
+// aren't part of the "click around the app" surface this walker targets.
+const NODES: GraphNode[] = [
+  { id: 'Home', path: '/' },
+  { id: 'Agent', path: '/agent' },
+  { id: 'Autonomous', path: '/autonomous' },
+  { id: 'Runtime', path: '/runtime' },
+  { id: 'Scheduled', path: '/scheduled' },
+  { id: 'Reports', path: '/reports' },
+  { id: 'Settings', path: '/settings' },
+  { id: 'ModelAdapters', path: '/model-adapters' },
+  { id: 'Compare', path: '/compare' },
+  { id: 'Correlation', path: '/correlation' },
+  { id: 'Prediction', path: '/prediction' },
+  { id: 'Hub', path: '/hub' },
+  { id: 'Simulator', path: '/simulator' },
+  { id: 'OptionsLab', path: '/options' },
+  { id: 'AlphaZoo', path: '/alpha-zoo' },
+]
+
+// A star graph from Home to every other node is enough to cover every route
+// at least once via BFS, while staying a genuine node/edge graph (not just a
+// flat list) that a future pass can extend with real nav-link edges.
+const EDGES: GraphEdge[] = NODES.filter((n) => n.id !== 'Home').map((n) => ({
+  from: 'Home',
+  to: n.id,
+}))
+
+function neighbors(nodeId: string): string[] {
+  return EDGES.filter((e) => e.from === nodeId).map((e) => e.to)
+}
+
+function nodeById(id: string): GraphNode {
+  const node = NODES.find((n) => n.id === id)
+  if (!node) throw new Error(`Unknown graph node: ${id}`)
+  return node
+}
+
+interface VisitResult {
+  nodeId: string
+  path: string
+  consoleErrors: string[]
+  errorBoundary: boolean
+}
+
+async function visitNode(page: Page, node: GraphNode): Promise<VisitResult> {
+  const consoleErrors: string[] = []
+  const onConsole = (msg: import('@playwright/test').ConsoleMessage) => {
+    if (msg.type() === 'error') consoleErrors.push(msg.text())
+  }
+  const onPageError = (err: Error) => consoleErrors.push(err.message)
+  page.on('console', onConsole)
+  page.on('pageerror', onPageError)
+
+  try {
+    await page.goto(node.path)
+    // Let lazy-loaded route chunks and their first-effect fetches settle.
+    await page.waitForLoadState('networkidle').catch(() => {
+      // A page that keeps a live poll/SSE connection open never reaches
+      // "networkidle" — fall back to a fixed settle window instead.
+    })
+    await page.waitForTimeout(300)
+    const errorBoundary = await hasErrorBoundary(page)
+    return { nodeId: node.id, path: node.path, consoleErrors: [...consoleErrors], errorBoundary }
+  } finally {
+    page.off('console', onConsole)
+    page.off('pageerror', onPageError)
+  }
+}
+
+/** Plain BFS over the declared graph, starting from Home, visiting each
+ *  reachable node exactly once and recording a result per node. */
+async function bfsWalk(page: Page, startId: string): Promise<VisitResult[]> {
+  const visited = new Set<string>()
+  const queue: string[] = [startId]
+  const results: VisitResult[] = []
+
+  while (queue.length > 0) {
+    const currentId = queue.shift()!
+    if (visited.has(currentId)) continue
+    visited.add(currentId)
+
+    results.push(await visitNode(page, nodeById(currentId)))
+
+    for (const next of neighbors(currentId)) {
+      if (!visited.has(next)) queue.push(next)
+    }
+  }
+
+  return results
+}
+
+test.describe('State-graph walk', () => {
+  test('BFS-walks every declared route with no console errors or error boundary', async ({ page }) => {
+    await installBaselineApiMock(page)
+
+    const results = await bfsWalk(page, 'Home')
+
+    // Every declared node was actually visited.
+    expect(results.map((r) => r.nodeId).sort()).toEqual(NODES.map((n) => n.id).sort())
+
+    const failures = results.filter((r) => r.errorBoundary || r.consoleErrors.length > 0)
+    if (failures.length > 0) {
+      const report = failures
+        .map((f) => `  ${f.nodeId} (${f.path}): errorBoundary=${f.errorBoundary}, console=${JSON.stringify(f.consoleErrors)}`)
+        .join('\n')
+      throw new Error(`Graph walk found ${failures.length} node(s) with issues:\n${report}`)
+    }
+  })
+})
