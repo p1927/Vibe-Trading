@@ -334,6 +334,303 @@ def test_pop_overlay_passes_through_apply_liquidity_discount(
     assert seen_overlay_kwargs["apply_liquidity_discount"] is True
 
 
+def test_pop_overlay_term_structure_not_armed_returns_400(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _FakeChainTool()
+    tool.envelope = _chain_envelope(expiration=_future_expiry_epoch(days_ahead=14))
+    monkeypatch.setattr(india_options_routes, "IndiaOptionsChainTool", lambda: tool)
+
+    from trade_integrations.dataflows.options_research.pop_engine import QuantileForecast
+
+    fake_forecast = QuantileForecast(horizon_days=7, quantiles={"p10": -2.0, "p50": 0.0, "p90": 2.0})
+    monkeypatch.setattr(
+        india_options_routes, "_quantile_forecast_for_pop", lambda ticker, horizon_days: fake_forecast
+    )
+
+    import trade_integrations.dataflows.stock_history_bridge as bridge_mod
+
+    monkeypatch.setattr(
+        bridge_mod,
+        "get_replay_multi_expiry_chains",
+        lambda **kwargs: ([], "simulator not configured for replay"),
+    )
+
+    response = client.get(
+        "/options/india/pop-overlay",
+        params={"ticker": "NIFTY", "use_iv_term_structure": True},
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["ok"] is False
+    assert "not configured for replay" in body["error"]
+
+
+def test_pop_overlay_term_structure_no_points_returns_400(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _FakeChainTool()
+    tool.envelope = _chain_envelope(expiration=_future_expiry_epoch(days_ahead=14))
+    monkeypatch.setattr(india_options_routes, "IndiaOptionsChainTool", lambda: tool)
+
+    from trade_integrations.dataflows.options_research.pop_engine import QuantileForecast
+
+    fake_forecast = QuantileForecast(horizon_days=7, quantiles={"p10": -2.0, "p50": 0.0, "p90": 2.0})
+    monkeypatch.setattr(
+        india_options_routes, "_quantile_forecast_for_pop", lambda ticker, horizon_days: fake_forecast
+    )
+
+    import trade_integrations.dataflows.stock_history_bridge as bridge_mod
+    import trade_integrations.dataflows.options_research.pop_engine as pop_engine_mod
+
+    monkeypatch.setattr(
+        bridge_mod, "get_replay_multi_expiry_chains", lambda **kwargs: ([{"expiry_date": "x"}], None)
+    )
+    monkeypatch.setattr(pop_engine_mod, "term_structure_from_chains", lambda batch, **kwargs: [])
+
+    response = client.get(
+        "/options/india/pop-overlay",
+        params={"ticker": "NIFTY", "use_iv_term_structure": True},
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["ok"] is False
+    assert "no usable" in body["error"].lower()
+
+
+def test_pop_overlay_term_structure_success_passes_through(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _FakeChainTool()
+    tool.envelope = _chain_envelope(expiration=_future_expiry_epoch(days_ahead=14))
+    monkeypatch.setattr(india_options_routes, "IndiaOptionsChainTool", lambda: tool)
+
+    from trade_integrations.dataflows.options_research.pop_engine import QuantileForecast
+
+    fake_forecast = QuantileForecast(horizon_days=7, quantiles={"p10": -2.0, "p50": 0.0, "p90": 2.0})
+    monkeypatch.setattr(
+        india_options_routes, "_quantile_forecast_for_pop", lambda ticker, horizon_days: fake_forecast
+    )
+
+    import trade_integrations.dataflows.stock_history_bridge as bridge_mod
+    import trade_integrations.dataflows.options_research.pop_engine as pop_engine_mod
+
+    seen_batch_kwargs = {}
+
+    def _fake_batch(**kwargs):
+        seen_batch_kwargs.update(kwargs)
+        return ([{"expiry_date": "2026-09-25"}], None)
+
+    monkeypatch.setattr(bridge_mod, "get_replay_multi_expiry_chains", _fake_batch)
+    monkeypatch.setattr(
+        pop_engine_mod, "term_structure_from_chains", lambda batch, **kwargs: [(7.0, 0.15), (30.0, 0.18)]
+    )
+
+    seen_overlay_kwargs = {}
+
+    def _fake_overlay(**kwargs):
+        seen_overlay_kwargs.update(kwargs)
+        return []
+
+    monkeypatch.setattr(pop_engine_mod, "compute_chain_pop_overlay", _fake_overlay)
+    monkeypatch.setattr(pop_engine_mod, "event_window_for_ticker", lambda ticker, expiry_days: [])
+
+    response = client.get(
+        "/options/india/pop-overlay",
+        params={"ticker": "NIFTY", "use_iv_term_structure": True},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["use_iv_term_structure"] is True
+    assert body["iv_term_structure_points"] == [
+        {"days_to_expiry": 7.0, "atm_iv": 0.15},
+        {"days_to_expiry": 30.0, "atm_iv": 0.18},
+    ]
+    assert seen_overlay_kwargs["iv_term_structure"] == [(7.0, 0.15), (30.0, 0.18)]
+    assert seen_batch_kwargs["underlying"] == "NIFTY"
+
+
+def test_pop_overlay_passes_through_iv_decay_params(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _FakeChainTool()
+    tool.envelope = _chain_envelope(expiration=_future_expiry_epoch(days_ahead=14))
+    monkeypatch.setattr(india_options_routes, "IndiaOptionsChainTool", lambda: tool)
+
+    from trade_integrations.dataflows.options_research.pop_engine import QuantileForecast
+
+    fake_forecast = QuantileForecast(horizon_days=7, quantiles={"p10": -2.0, "p50": 0.0, "p90": 2.0})
+    monkeypatch.setattr(
+        india_options_routes, "_quantile_forecast_for_pop", lambda ticker, horizon_days: fake_forecast
+    )
+
+    seen_overlay_kwargs = {}
+
+    def _fake_overlay(**kwargs):
+        seen_overlay_kwargs.update(kwargs)
+        return []
+
+    import trade_integrations.dataflows.options_research.pop_engine as pop_engine_mod
+
+    monkeypatch.setattr(pop_engine_mod, "compute_chain_pop_overlay", _fake_overlay)
+    monkeypatch.setattr(pop_engine_mod, "event_window_for_ticker", lambda ticker, expiry_days: [])
+
+    response = client.get(
+        "/options/india/pop-overlay",
+        params={"ticker": "NIFTY", "iv_decay_half_life_days": 5.0, "iv_decay_floor_fraction": 0.6},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["iv_decay_half_life_days"] == 5.0
+    assert body["iv_decay_floor_fraction"] == 0.6
+    assert seen_overlay_kwargs["iv_decay_half_life_days"] == 5.0
+    assert seen_overlay_kwargs["iv_decay_floor_fraction"] == 0.6
+
+
+def test_pop_overlay_decay_and_term_structure_together_returns_400(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _FakeChainTool()
+    tool.envelope = _chain_envelope(expiration=_future_expiry_epoch(days_ahead=14))
+    monkeypatch.setattr(india_options_routes, "IndiaOptionsChainTool", lambda: tool)
+
+    response = client.get(
+        "/options/india/pop-overlay",
+        params={"ticker": "NIFTY", "iv_decay_half_life_days": 5.0, "use_iv_term_structure": True},
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["ok"] is False
+    assert "mutually exclusive" in body["error"]
+
+
+def test_term_structure_entry_from_normalized_chain_merges_by_strike() -> None:
+    entry = india_options_routes._term_structure_entry_from_normalized_chain(
+        {
+            "calls": [{"strike": 24000.0, "implied_volatility": 0.15}, {"strike": 24100.0, "implied_volatility": None}],
+            "puts": [{"strike": 24000.0, "implied_volatility": 0.16}],
+        },
+        expiry_date="2026-09-25",
+    )
+    assert entry["expiry_date"] == "2026-09-25"
+    # strike 24100 has implied_volatility=None on its only leg (the call) and no put leg at
+    # all — skipped entirely rather than emitting a useless strike-only row with no IV.
+    assert entry["chain"] == [{"strike": 24000.0, "ce_iv": 0.15, "pe_iv": 0.16}]
+
+
+def test_term_structure_entry_from_normalized_chain_empty_input() -> None:
+    entry = india_options_routes._term_structure_entry_from_normalized_chain(
+        {}, expiry_date="2026-09-25"
+    )
+    assert entry == {"expiry_date": "2026-09-25", "chain": []}
+
+
+async def _run_fetch_live_multi_expiry_batch(**kwargs):
+    return await india_options_routes._fetch_live_multi_expiry_batch(**kwargs)
+
+
+def test_fetch_live_multi_expiry_batch_no_expirations_returns_reason() -> None:
+    import asyncio
+
+    batch, reason = asyncio.run(
+        _run_fetch_live_multi_expiry_batch(ticker="NIFTY", source="indmoney", expirations=[])
+    )
+    assert batch == []
+    assert reason is not None
+    assert "no expiries" in reason
+
+
+def test_fetch_live_multi_expiry_batch_one_failure_does_not_drop_others(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    calls = []
+
+    async def _fake_fetch(ticker, expiry_date, source):
+        calls.append(expiry_date)
+        if expiry_date == "2026-09-25":
+            raise RuntimeError("vendor timeout")
+        return {
+            "data": {
+                "calls": [{"strike": 24000.0, "implied_volatility": 0.2}],
+                "puts": [{"strike": 24000.0, "implied_volatility": 0.21}],
+            }
+        }
+
+    monkeypatch.setattr(india_options_routes, "_fetch_india_chain_envelope", _fake_fetch)
+
+    expirations = [
+        int(datetime(2026, 9, 25, tzinfo=timezone.utc).timestamp()),
+        int(datetime(2026, 10, 30, tzinfo=timezone.utc).timestamp()),
+    ]
+    batch, reason = asyncio.run(
+        _run_fetch_live_multi_expiry_batch(ticker="NIFTY", source="indmoney", expirations=expirations)
+    )
+    assert reason is None
+    assert len(batch) == 2
+    assert batch[0]["expiry_date"] == "2026-09-25"
+    assert batch[0]["chain"] is None
+    assert batch[0]["error"] == "vendor timeout"
+    assert batch[1]["expiry_date"] == "2026-10-30"
+    assert batch[1]["chain"]["chain"] == [{"strike": 24000.0, "ce_iv": 0.2, "pe_iv": 0.21}]
+    assert calls == ["2026-09-25", "2026-10-30"]
+
+
+def test_pop_overlay_term_structure_live_source_uses_live_batch_not_replay(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _FakeChainTool()
+    tool.envelope = _chain_envelope(expiration=_future_expiry_epoch(days_ahead=14))
+    monkeypatch.setattr(india_options_routes, "IndiaOptionsChainTool", lambda: tool)
+
+    from trade_integrations.dataflows.options_research.pop_engine import QuantileForecast
+
+    fake_forecast = QuantileForecast(horizon_days=7, quantiles={"p10": -2.0, "p50": 0.0, "p90": 2.0})
+    monkeypatch.setattr(
+        india_options_routes, "_quantile_forecast_for_pop", lambda ticker, horizon_days: fake_forecast
+    )
+
+    import trade_integrations.dataflows.stock_history_bridge as bridge_mod
+    import trade_integrations.dataflows.options_research.pop_engine as pop_engine_mod
+
+    def _replay_should_not_be_called(**kwargs):
+        raise AssertionError("replay batch fetch must not be used for a live vendor source")
+
+    monkeypatch.setattr(bridge_mod, "get_replay_multi_expiry_chains", _replay_should_not_be_called)
+
+    seen_live_batch_kwargs = {}
+
+    async def _fake_live_batch(**kwargs):
+        seen_live_batch_kwargs.update(kwargs)
+        return ([{"expiry_date": "x", "chain": {"expiry_date": "x", "chain": []}, "error": None}], None)
+
+    monkeypatch.setattr(india_options_routes, "_fetch_live_multi_expiry_batch", _fake_live_batch)
+    monkeypatch.setattr(
+        pop_engine_mod, "term_structure_from_chains", lambda batch, **kwargs: [(7.0, 0.2)]
+    )
+
+    seen_overlay_kwargs = {}
+
+    def _fake_overlay(**kwargs):
+        seen_overlay_kwargs.update(kwargs)
+        return []
+
+    monkeypatch.setattr(pop_engine_mod, "compute_chain_pop_overlay", _fake_overlay)
+    monkeypatch.setattr(pop_engine_mod, "event_window_for_ticker", lambda ticker, expiry_days: [])
+
+    response = client.get(
+        "/options/india/pop-overlay",
+        params={"ticker": "NIFTY", "source": "indmoney", "use_iv_term_structure": True},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["use_iv_term_structure"] is True
+    assert seen_overlay_kwargs["iv_term_structure"] == [(7.0, 0.2)]
+    assert seen_live_batch_kwargs["ticker"] == "NIFTY"
+    assert seen_live_batch_kwargs["source"] == "indmoney"
+
+
 # --- GET /options/india/selector --------------------------------------------------------
 
 

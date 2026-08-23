@@ -134,7 +134,7 @@ class IndiaOptionsChainTool(BaseTool):
         except Exception:  # noqa: BLE001
             expiries = []
 
-        return _success(ticker, source, chain, expiries, underlying=underlying)
+        return _success(ticker, source, chain, expiries, underlying=underlying, exchange=exchange)
 
 
 def _resolve_india_symbol(ticker: str) -> tuple[str, str]:
@@ -333,6 +333,7 @@ def _success(
     expiries: List[str] | None = None,
     *,
     underlying: str,
+    exchange: str = "",
 ) -> str:
     underlying_ltp = chain.get("underlying_ltp")
     expiration = _expiry_epoch(chain.get("expiry_date"))
@@ -362,6 +363,8 @@ def _success(
 
     data = {
         "ticker": ticker,
+        "underlying": underlying,
+        "exchange": exchange,
         "expiration": expiration,
         "expirations": expirations,
         "underlying_ltp": underlying_ltp,
