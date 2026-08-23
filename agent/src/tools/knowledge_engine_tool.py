@@ -1,10 +1,11 @@
-"""Knowledge-engine browse tool: query_strategies / query_factor / query_track_record.
+"""Knowledge-engine browse tool: query_strategies / query_factor / query_event_factors /
+query_track_record.
 
 A single agent-facing tool with an ``action`` discriminator, mirroring
 alpha_zoo_tool.py's shape. Queries the module 8 knowledge engine
-(trade_integrations.knowledge_engine) — strategy/factor theory, module 1's
-factor taxonomy (interim source until that module ships), and module 6's
-prediction-ledger track record.
+(trade_integrations.knowledge_engine) — strategy/factor theory, module 1's event-factor
+taxonomy (plus an interim calibration signal until module 1's learned impact weights
+ship), and module 6's prediction-ledger track record.
 """
 
 from __future__ import annotations
@@ -29,10 +30,11 @@ def _ok(result: Any) -> str:
 def run_knowledge_engine(**kwargs: Any) -> dict[str, Any]:
     """Module-level entry returning a parsed envelope (dict, not JSON string)."""
     action = kwargs.get("action")
-    if action not in {"query_strategies", "query_factor", "query_track_record"}:
+    valid_actions = {"query_strategies", "query_factor", "query_event_factors", "query_track_record"}
+    if action not in valid_actions:
         return {
             "status": "error",
-            "error": f"action must be query_strategies|query_factor|query_track_record, got {action!r}",
+            "error": f"action must be one of {sorted(valid_actions)}, got {action!r}",
         }
 
     try:
@@ -57,6 +59,8 @@ def run_knowledge_engine(**kwargs: Any) -> dict[str, Any]:
             result = knowledge_query.query_factor(
                 factor_key, market=kwargs.get("market", "IN")
             )
+        elif action == "query_event_factors":
+            result = knowledge_query.query_event_factors(category=kwargs.get("category"))
         else:  # query_track_record
             result = knowledge_query.query_track_record(
                 window=int(kwargs.get("window", 14)),
@@ -76,7 +80,9 @@ class KnowledgeEngineTool(BaseTool):
     description = (
         "Query the platform's knowledge engine. action=query_strategies ranks strategy/"
         "options-structure catalog entries by market_view/risk_profile/horizon/tags match; "
-        "action=query_factor returns pedagogy + interim calibration for one factor key; "
+        "action=query_factor returns pedagogy + module 1's event-factor taxonomy entry + "
+        "interim calibration for one factor key; action=query_event_factors lists/browses "
+        "module 1's event-factor taxonomy, optionally filtered by category; "
         "action=query_track_record returns the prediction ledger's system-wide calibration/"
         "accuracy metrics (not yet filterable per-strategy)."
     )
@@ -85,7 +91,7 @@ class KnowledgeEngineTool(BaseTool):
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["query_strategies", "query_factor", "query_track_record"],
+                "enum": ["query_strategies", "query_factor", "query_event_factors", "query_track_record"],
                 "description": "Which knowledge-engine query to run.",
             },
             "market_view": {
@@ -118,6 +124,14 @@ class KnowledgeEngineTool(BaseTool):
                 "type": "string",
                 "default": "IN",
                 "description": "Market scope for query_factor (passed to news_hub_bridge.get_market_analysis_state).",
+            },
+            "category": {
+                "type": "string",
+                "description": (
+                    "Optional taxonomy category filter for query_event_factors (e.g. "
+                    "monetary_policy, fiscal, geopolitical, global_spillover_us, "
+                    "global_spillover_other_cb, ma_deal, sector_regulatory, political_stability)."
+                ),
             },
             "ticker": {
                 "type": "string",
