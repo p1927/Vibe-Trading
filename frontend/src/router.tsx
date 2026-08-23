@@ -45,6 +45,9 @@ const OptionsLab = lazy(() =>
 const ModelAdapters = lazy(() =>
   import("@/pages/ModelAdapters").then((m) => ({ default: m.ModelAdapters })),
 );
+const ExecutionAdvisor = lazy(() =>
+  import("@/pages/ExecutionAdvisor").then((m) => ({ default: m.ExecutionAdvisor })),
+);
 
 function PageLoader() {
   return (
@@ -83,6 +86,7 @@ export const router = createBrowserRouter([
       { path: "/hub", element: wrap(Hub) },
       { path: "/simulator", element: wrap(Simulator) },
       { path: "/options", element: wrap(OptionsLab) },
+      { path: "/execution-advisor", element: wrap(ExecutionAdvisor) },
       { path: "/alpha-zoo", element: wrap(AlphaZoo) },
       { path: "/alpha-zoo/bench", element: wrap(AlphaZoo) },
       { path: "/alpha-zoo/compare", element: wrap(AlphaZoo) },

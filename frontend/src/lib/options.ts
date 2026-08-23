@@ -260,6 +260,39 @@ export interface SelectorResponse extends SelectorResponseData {
 }
 
 // ---------------------------------------------------------------------------
+// Execution advisor (module 7) — advisory-only position monitoring
+// ---------------------------------------------------------------------------
+
+export type ExecutionAdvisorFsmState = "in_trade" | "trailing" | "exit_pending" | string;
+export type ExecutionAdvisorAction = "hold" | "tighten_stop" | "exit" | string;
+
+/** One FSM step for one open position — never an order mutation, only a
+ * recommendation. Mirrors `advise_position()`'s return dict verbatim. */
+export interface ExecutionAdvisorAdvisory {
+  symbol: string;
+  strategy_group_id: string | null;
+  fsm_state: ExecutionAdvisorFsmState;
+  action: ExecutionAdvisorAction;
+  reason: string;
+  recommended_stop_price: number | null;
+  entry_price: number;
+  entry_direction: "bullish" | "bearish" | string;
+  entry_confidence: number | null;
+  live_confidence: number | null;
+  confidence_ema: number | null;
+  consecutive_flip_count: number;
+  ltp: number;
+}
+
+export interface ExecutionAdvisorResponse {
+  ok: boolean;
+  error?: string;
+  count?: number;
+  advisories: ExecutionAdvisorAdvisory[];
+  grouped: Record<string, ExecutionAdvisorAdvisory[]>;
+}
+
+// ---------------------------------------------------------------------------
 // UI parameter model (percent convention)
 // ---------------------------------------------------------------------------
 

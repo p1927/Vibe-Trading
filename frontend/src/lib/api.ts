@@ -2,6 +2,7 @@ import { authHeaders, withAuthTicket } from "@/lib/apiAuth";
 import { resolveApiBase } from "@/lib/apiBase";
 import i18n from "@/i18n";
 import type {
+  ExecutionAdvisorResponse,
   IndiaOptionsResearchResponse,
   IndiaOptionsSource,
   IndiaUnderlyingsResponse,
@@ -863,6 +864,13 @@ export const api = {
       timeoutMs: 60_000,
     });
   },
+
+  // Execution advisor (module 7) — advisory-only, never mutates an order.
+  // Polled every 15s by the UI, so this must never serve a browser-cached
+  // response — a stale positions snapshot would defeat the whole point of a
+  // live monitor.
+  getExecutionAdvisorAdvisories: () =>
+    request<ExecutionAdvisorResponse>("/execution-advisor/positions", { cache: "no-store" }),
 
   // Connector runtime channel — privileged surface actions (NOT agent tools).
   // commit is the ONLY action that writes a mandate; halt trips the kill switch.

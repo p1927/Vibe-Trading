@@ -299,6 +299,10 @@ register_alpha_routes(app)
 from src.api.options_routes import register_options_routes  # noqa: E402
 register_options_routes(app)
 
+# --- Execution advisor (module 7) ---
+from src.api.execution_advisor_routes import register_execution_advisor_routes  # noqa: E402
+register_execution_advisor_routes(app)
+
 # --- Auth helpers (SSE tickets) ---
 from src.api.auth_routes import register_auth_routes  # noqa: E402
 register_auth_routes(app)
