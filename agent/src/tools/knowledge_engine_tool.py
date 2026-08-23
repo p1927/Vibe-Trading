@@ -56,15 +56,14 @@ def run_knowledge_engine(**kwargs: Any) -> dict[str, Any]:
             factor_key = kwargs.get("factor_key")
             if not factor_key or not isinstance(factor_key, str):
                 return {"status": "error", "error": "query_factor requires factor_key (string)"}
-            result = knowledge_query.query_factor(
-                factor_key, market=kwargs.get("market", "IN")
-            )
+            result = knowledge_query.query_factor(factor_key, market=kwargs.get("market", "IN"))
         elif action == "query_event_factors":
             result = knowledge_query.query_event_factors(category=kwargs.get("category"))
         else:  # query_track_record
             result = knowledge_query.query_track_record(
                 window=int(kwargs.get("window", 14)),
                 ticker=kwargs.get("ticker", "NIFTY"),
+                strategy=kwargs.get("strategy"),
             )
     except Exception as exc:
         logger.exception("knowledge_engine action %s failed", action)
@@ -84,7 +83,8 @@ class KnowledgeEngineTool(BaseTool):
         "interim calibration for one factor key; action=query_event_factors lists/browses "
         "module 1's event-factor taxonomy, optionally filtered by category; "
         "action=query_track_record returns the prediction ledger's system-wide calibration/"
-        "accuracy metrics (not yet filterable per-strategy)."
+        "accuracy metrics, plus module 9's real win-rate/expectancy for one strategy tag "
+        "when the optional strategy parameter is given."
     )
     parameters = {
         "type": "object",
@@ -142,6 +142,15 @@ class KnowledgeEngineTool(BaseTool):
                 "type": "integer",
                 "default": 14,
                 "description": "Rolling window (days) for query_track_record.",
+            },
+            "strategy": {
+                "type": "string",
+                "description": (
+                    "Optional strategy tag for query_track_record — when given, also "
+                    "returns module 9's real win-rate/expectancy for that strategy "
+                    "(requires OpenAlgo to be configured/reachable; degrades to "
+                    "available: False otherwise, not an error)."
+                ),
             },
         },
         "required": ["action"],
