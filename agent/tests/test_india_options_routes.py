@@ -281,6 +281,7 @@ def test_pop_overlay_success_returns_scored_overlay(
     assert body["ok"] is True
     assert body["ticker"] == "NIFTY"
     assert body["distribution_type"] == "physical"
+    assert body["apply_liquidity_discount"] is False
     assert body["horizon_days"] == 7
     assert body["underlying_ltp"] == 24000.0
     assert len(body["overlay"]) == 2
@@ -291,10 +292,46 @@ def test_pop_overlay_success_returns_scored_overlay(
     assert seen_overlay_kwargs["spot"] == 24000.0
     assert seen_overlay_kwargs["n_paths"] == 1000
     assert seen_overlay_kwargs["expiry_days"] > 0
+    assert seen_overlay_kwargs["apply_liquidity_discount"] is False
     assert len(seen_overlay_kwargs["calls"]) == 1
     assert len(seen_overlay_kwargs["puts"]) == 1
     assert seen_event_window_args["ticker"] == "NIFTY"
     assert seen_event_window_args["expiry_days"] == seen_overlay_kwargs["expiry_days"]
+
+
+def test_pop_overlay_passes_through_apply_liquidity_discount(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = _FakeChainTool()
+    tool.envelope = _chain_envelope(expiration=_future_expiry_epoch(days_ahead=14))
+    monkeypatch.setattr(india_options_routes, "IndiaOptionsChainTool", lambda: tool)
+
+    from trade_integrations.dataflows.options_research.pop_engine import QuantileForecast
+
+    fake_forecast = QuantileForecast(horizon_days=7, quantiles={"p10": -2.0, "p50": 0.0, "p90": 2.0})
+    monkeypatch.setattr(
+        india_options_routes, "_quantile_forecast_for_pop", lambda ticker, horizon_days: fake_forecast
+    )
+
+    seen_overlay_kwargs = {}
+
+    def _fake_overlay(**kwargs):
+        seen_overlay_kwargs.update(kwargs)
+        return []
+
+    import trade_integrations.dataflows.options_research.pop_engine as pop_engine_mod
+
+    monkeypatch.setattr(pop_engine_mod, "compute_chain_pop_overlay", _fake_overlay)
+    monkeypatch.setattr(pop_engine_mod, "event_window_for_ticker", lambda ticker, expiry_days: [])
+
+    response = client.get(
+        "/options/india/pop-overlay",
+        params={"ticker": "NIFTY", "source": "indmoney", "apply_liquidity_discount": True},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["apply_liquidity_discount"] is True
+    assert seen_overlay_kwargs["apply_liquidity_discount"] is True
 
 
 # --- GET /options/india/selector --------------------------------------------------------

@@ -158,6 +158,7 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
         horizon_days: int = Query(7, ge=1, le=60),
         source: str = Query("stock_simulator"),
         n_paths: int = Query(5_000, ge=100, le=50_000),
+        apply_liquidity_discount: bool = Query(False),
     ) -> Response:
         """Module 4's chain-wide probability-of-profit-by-time-T overlay: one
         row per strike (calls + puts) with a Monte Carlo POP scored under
@@ -166,6 +167,13 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
         `pop_engine.py`'s module docstring. Not authoritative "will this
         trade work" advice, a research overlay for the prediction-tab chain
         view.
+
+        ``apply_liquidity_discount`` (default off) models realistic-fill
+        entry cost + an exit-side spread haircut using each strike's real
+        top-of-book bid/ask — only available when ``source`` is
+        ``indmoney``/``openalgo`` (``stock_simulator`` rows have no bid/ask,
+        so this is a no-op per strike against that source; see
+        `pop_engine.py`'s `compute_pop_at_t` docstring).
         """
         if not ticker.strip():
             return JSONResponse(status_code=400, content={"ok": False, "error": "ticker is required"})
@@ -217,6 +225,7 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
                 calls=data.get("calls") or [],
                 puts=data.get("puts") or [],
                 n_paths=n_paths,
+                apply_liquidity_discount=apply_liquidity_discount,
             )
             event_risks = await asyncio.to_thread(
                 event_window_for_ticker, ticker.strip().upper(), expiry_days
@@ -238,6 +247,7 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
             "horizon_days": horizon_days,
             "underlying_ltp": underlying_ltp,
             "distribution_type": "physical",
+            "apply_liquidity_discount": apply_liquidity_discount,
             "forecast_quantiles": forecast.quantiles,
             "overlay": overlay,
             "event_risks": event_risks,
