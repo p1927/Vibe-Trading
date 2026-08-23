@@ -40,6 +40,16 @@ const GLOBAL_FACTORS: { key: string; name: string; liveSpotSeries: string | null
   { key: "oil_wti_daily", name: "Oil (WTI)", liveSpotSeries: "oil_wti", field: "price" },
   { key: "vix_daily", name: "VIX", liveSpotSeries: null, field: "close" },
   { key: "us_10y", name: "US 10Y Yield", liveSpotSeries: null, field: "rate" },
+  // Cross-market money-flow/risk-appetite factors (2026-08-23, "what's limiting Nifty 50
+  // prediction" gap pass) — the signals FII/FPI capital rotates on: dollar strength, broad EM
+  // risk appetite, 3 EM peer markets India's FII flows compete with, and a credit-spread proxy.
+  { key: "dxy", name: "US Dollar Index (DXY)", liveSpotSeries: "dxy", field: "price" },
+  { key: "msci_em", name: "MSCI Emerging Markets (EEM)", liveSpotSeries: "msci_em", field: "price" },
+  { key: "kospi", name: "Korea (KOSPI)", liveSpotSeries: "kospi", field: "price" },
+  { key: "taiex", name: "Taiwan (TAIEX)", liveSpotSeries: "taiex", field: "price" },
+  { key: "jci_indonesia", name: "Indonesia (JCI)", liveSpotSeries: "jci_indonesia", field: "price" },
+  { key: "hyg", name: "US High Yield Bond ETF (HYG)", liveSpotSeries: "hyg", field: "price" },
+  { key: "lqd", name: "US Investment Grade Bond ETF (LQD)", liveSpotSeries: "lqd", field: "price" },
 ];
 
 // India's headline indices aren't served by the `/trade/markets/{country}/...`
