@@ -949,8 +949,17 @@ export function Simulator() {
         </StatCard>
       ) : marketTab === "GLOBAL" ? (
         <p className="text-sm text-muted-foreground">
-          Gold, oil, VIX, and US 10Y aren't owned by one market — recording isn't wired up for
-          these yet. The cards above already read them live/EOD on demand.
+          Gold, oil, VIX, and US 10Y are EOD/refresh-only — no live spot, so they aren't
+          tick-recordable. The 7 money-flow factors (DXY, MSCI EM, KOSPI, TAIEX, JCI, HYG, LQD)
+          do have live spots and can be tick-recorded — check their boxes under the{" "}
+          <button
+            type="button"
+            onClick={() => setMarketTab("CURRENCY")}
+            className="underline underline-offset-2"
+          >
+            Currencies
+          </button>{" "}
+          tab's Recording panel. The cards above already read all of these live/EOD on demand.
         </p>
       ) : marketTab === "ECONOMY" ? (
         <StatCard title="Economy">
