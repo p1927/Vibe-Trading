@@ -96,4 +96,37 @@ describe("EconomyPanel", () => {
     await waitFor(() => expect(apiMock.getMarketEconomyFactor).toHaveBeenCalledTimes(MARKETS.length));
     expect(apiMock.getMarketEconomyFactor).toHaveBeenCalledWith("IN", "unemployment_rate");
   });
+
+  it("switches to per-market view and fetches all 6 factors for the selected market", async () => {
+    const FACTOR_COUNT = 6;
+    apiMock.getMarketEconomyFactor.mockImplementation((_country: string, series: string) => {
+      if (series === "industrial_production") return Promise.reject(new MockApiError("No catalog entry", 404));
+      return Promise.resolve({
+        status: "ok",
+        data: [
+          { year: "2023", value: 1 },
+          { year: "2024", value: 2 },
+        ],
+      });
+    });
+
+    render(<EconomyPanel />);
+    await waitFor(() => expect(apiMock.getMarketEconomyFactor).toHaveBeenCalledTimes(MARKETS.length));
+
+    apiMock.getMarketEconomyFactor.mockClear();
+    fireEvent.click(screen.getByText("Per-market"));
+
+    await waitFor(() => expect(apiMock.getMarketEconomyFactor).toHaveBeenCalledTimes(FACTOR_COUNT));
+    expect(apiMock.getMarketEconomyFactor).toHaveBeenCalledWith("IN", "gdp_growth");
+    expect(apiMock.getMarketEconomyFactor).toHaveBeenCalledWith("IN", "industrial_production");
+    await waitFor(() =>
+      expect(screen.getByTestId("economy-detail-not-sourced-industrial_production")).toBeInTheDocument(),
+    );
+
+    apiMock.getMarketEconomyFactor.mockClear();
+    fireEvent.change(screen.getByTestId("economy-market-picker"), { target: { value: "US" } });
+
+    await waitFor(() => expect(apiMock.getMarketEconomyFactor).toHaveBeenCalledTimes(FACTOR_COUNT));
+    expect(apiMock.getMarketEconomyFactor).toHaveBeenCalledWith("US", "gdp_growth");
+  });
 });
