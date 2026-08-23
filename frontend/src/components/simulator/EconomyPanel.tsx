@@ -192,7 +192,9 @@ export function EconomyPanel() {
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4" data-testid="economy-market-status">
         {MARKETS.map((market) => {
           const state = byMarket[market] ?? EMPTY_STATE;
-          const latest = [...state.rows].reverse().find((r) => parseValue(r.value) != null);
+          const latest = [...state.rows]
+            .filter((r) => parseValue(r.value) != null)
+            .sort((a, b) => periodSortKey(periodOf(b)) - periodSortKey(periodOf(a)))[0];
           return (
             <div key={market} className="rounded-lg border bg-card p-2.5">
               <p className="text-xs font-semibold">{COUNTRY_LABELS[market] ?? market}</p>
