@@ -3863,6 +3863,28 @@ def get_market_economy_factor(
     return _run_control(lambda c: c.get_economy_factor(country=country, series=series))
 
 
+@trade_router.get("/markets/{country}/sector_indices")
+def get_market_sector_indices(
+    country: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    """List of sector/headline indices TradingView has wired for a market — proxies
+    `stock_simulator`'s `/history/{country}/sector_indices`, added for the sector-indices
+    frontend wiring ([[2026-08-23-tradingview-sector-constituent-integration]])."""
+    return _run_control(lambda c: c.get_market_sector_indices(country=country))
+
+
+@trade_router.get("/markets/{country}/top_constituents")
+def get_market_top_constituents(
+    country: str,
+    top_n: int = 10,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    """Top-N constituents by market cap for a market — proxies `stock_simulator`'s
+    `/history/{country}/top_constituents`. Not sourced for CN/RU/US."""
+    return _run_control(lambda c: c.get_market_top_constituents(country=country, top_n=top_n))
+
+
 @trade_router.get("/markets/factor_coverage")
 def get_market_factor_coverage(
     _auth: None = Depends(require_local_or_auth),

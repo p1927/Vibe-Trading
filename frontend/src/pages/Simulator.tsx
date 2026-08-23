@@ -16,6 +16,7 @@ import { MarketFactorCoveragePanel } from "@/components/simulator/MarketFactorCo
 import { MarketRecordingPanel } from "@/components/simulator/MarketRecordingPanel";
 import { MarketReplayPanel } from "@/components/simulator/MarketReplayPanel";
 import { MultiMarketReplayPanel } from "@/components/simulator/MultiMarketReplayPanel";
+import { SectorIndicesPanel } from "@/components/simulator/SectorIndicesPanel";
 import { SimulatorInstrumentPicker } from "@/components/simulator/SimulatorInstrumentPicker";
 import { SimulatorLiveIndexPanel } from "@/components/simulator/SimulatorLiveIndexPanel";
 import { SimulatorOptionChainPanel } from "@/components/simulator/SimulatorOptionChainPanel";
@@ -937,6 +938,10 @@ export function Simulator() {
           </p>
           <StockHistoryCoveragePanel includeOptional />
         </StatCard>
+
+        <StatCard title="Sector Indices">
+          <SectorIndicesPanel country="IN" label="India" />
+        </StatCard>
         </>
       ) : marketTab === "CURRENCY" ? (
         <StatCard title="Recording">
@@ -972,6 +977,9 @@ export function Simulator() {
           </StatCard>
           <StatCard title="Factor coverage">
             <MarketFactorCoveragePanel country={marketTab} />
+          </StatCard>
+          <StatCard title="Sector Indices">
+            <SectorIndicesPanel country={marketTab} label={COUNTRY_LABELS[marketTab] ?? marketTab} />
           </StatCard>
         </>
       )}

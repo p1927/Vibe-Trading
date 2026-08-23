@@ -121,6 +121,48 @@ def test_market_policy_factors_propagates_not_sourced_as_404() -> None:
     assert res.status_code == 404
 
 
+def test_market_sector_indices_forwards_country() -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
+        captured["url"] = url
+        return _FakeResponse(200, {"status": "ok", "data": [{"name": "SPX", "label": "S&P 500 Index", "kind": "headline"}]})
+
+    with patch("requests.request", side_effect=fake_request):
+        res = _client().get("/trade/markets/US/sector_indices")
+
+    assert res.status_code == 200
+    assert captured["url"].endswith("/history/US/sector_indices")
+    assert res.json()["data"][0]["name"] == "SPX"
+
+
+def test_market_top_constituents_forwards_country_and_top_n() -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["params"] = params
+        return _FakeResponse(200, {"status": "ok", "data": [{"symbol": "NSE:RELIANCE", "name": "RELIANCE"}]})
+
+    with patch("requests.request", side_effect=fake_request):
+        res = _client().get("/trade/markets/IN/top_constituents", params={"top_n": 5})
+
+    assert res.status_code == 200
+    assert captured["url"].endswith("/history/IN/top_constituents")
+    assert captured["params"] == {"top_n": 5}
+    assert res.json()["data"][0]["symbol"] == "NSE:RELIANCE"
+
+
+def test_market_top_constituents_propagates_not_sourced_as_404() -> None:
+    def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
+        return _FakeResponse(404, {"detail": "no constituent ranking source for market 'US'"})
+
+    with patch("requests.request", side_effect=fake_request):
+        res = _client().get("/trade/markets/US/top_constituents")
+
+    assert res.status_code == 404
+
+
 def test_market_flow_of_funds_forwards_country_and_series() -> None:
     captured: dict[str, Any] = {}
 

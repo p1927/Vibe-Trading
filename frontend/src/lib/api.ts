@@ -1274,6 +1274,12 @@ export const api = {
     ),
   getMarketFactorCoverage: () =>
     request<MarketFactorCoverageResponse>("/trade/markets/factor_coverage"),
+  getMarketSectorIndices: (country: string) =>
+    request<MarketSectorIndicesResponse>(`/trade/markets/${encodeURIComponent(country)}/sector_indices`),
+  getMarketTopConstituents: (country: string, topN = 10) =>
+    request<MarketTopConstituentsResponse>(
+      `/trade/markets/${encodeURIComponent(country)}/top_constituents${api._hubStockHistoryQS({ top_n: topN })}`,
+    ),
   // Per-country `market_ticks` day calendar + idempotent backfill — the non-India analog of
   // the India-tab Replay calendar / Data-coverage backfill.
   getMarketReplayCalendar: (country: string) =>
@@ -3783,6 +3789,36 @@ export interface EconomyFactorRow {
 export interface MarketEconomyFactorResponse {
   status: string;
   data: EconomyFactorRow[];
+}
+
+// `sector_indices()` — a listing of index names a market has wired via TradingView, headline
+// and sector alike (`kind` distinguishes them). Not OHLCV itself — pair a `name` with
+// `getMarketIndexHistory(country, name)` to chart it.
+export interface SectorIndexEntry {
+  name: string;
+  label: string;
+  kind: "headline" | "sector";
+}
+
+export interface MarketSectorIndicesResponse {
+  status: string;
+  data: SectorIndexEntry[];
+}
+
+// `top_constituents()` — live TradingView screener ranking by market cap. Real for IN/JP/ME/
+// LATAM only; CN/RU/US 404 as "not sourced" (see market_factor_catalog.py's own gap notes).
+export interface TopConstituentRow {
+  symbol: string;
+  name: string;
+  close: number;
+  market_cap_basic: number;
+  sector: string;
+  [key: string]: unknown;
+}
+
+export interface MarketTopConstituentsResponse {
+  status: string;
+  data: TopConstituentRow[];
 }
 
 export interface MarketFactorCoverageResponse {
