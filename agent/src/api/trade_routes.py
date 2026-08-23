@@ -5216,18 +5216,16 @@ def hub_constituents_panel(
     limit: int = 1000,
     _auth: None = Depends(require_local_or_auth),
 ) -> HubConstituentsPanelResponse:
-    # Constituents live under stock_history.api, not the bridge module.
-    from trade_integrations.stock_history import StockHistory
+    # Constituents live under stock_history.api, reached through the stock_simulator facade
+    # (StockSimulatorClient) rather than StockHistory() directly — see
+    # .claude/backlog/items/2026-08-23-india-dedicated-methods-retirement.md, Tier 4.
+    from trade_integrations.stock_simulator.client import StockSimulatorClient, StockSimulatorClientError
 
     try:
-        df = StockHistory().load_constituents_history(start=start, end=end)
-        if df.empty:
-            return HubConstituentsPanelResponse(status="ok", rows=[])
-        df = df.head(limit)
-        df_clean = df.where(df.notna(), None)
-        rows = df_clean.to_dict(orient="records")
+        resp = StockSimulatorClient().get_constituents_history(start=start, end=end)
+        rows = resp["data"][:limit]
         return HubConstituentsPanelResponse(status="ok", rows=rows)
-    except Exception as exc:
+    except StockSimulatorClientError as exc:
         logger.exception("hub constituents panel failed")
         return HubConstituentsPanelResponse(status="error", rows=[], error=str(exc))
 
