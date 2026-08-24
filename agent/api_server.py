@@ -135,6 +135,17 @@ async def _run_startup_preflight() -> None:
     except Exception:  # pragma: no cover — best-effort
         logging.getLogger(__name__).warning("Legacy state migration failed", exc_info=True)
     run_preflight(console)
+
+    import asyncio
+
+    from src.api.async_bridge import register_main_loop
+
+    loop = asyncio.get_running_loop()
+    register_main_loop(loop)
+    svc = _get_session_service()
+    if svc is not None and hasattr(svc, "event_bus"):
+        svc.event_bus.set_loop(loop)
+
     _start_scheduled_research_executor()
     from src.trade.job_watchdog import start_job_watchdog
 
