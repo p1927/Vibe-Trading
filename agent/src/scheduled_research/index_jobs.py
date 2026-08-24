@@ -1020,6 +1020,51 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         # "ticker" config value) — SPX's queued refs from the two jobs above get
         # distilled by that same existing job, no separate drain needed.
         ScheduledResearchJob(
+            id="jp-hub-news-ingest-full",
+            prompt="Full Japan market hub news ingest (SearXNG, daily)",
+            schedule=get_env_config().trade.hub_news_full_ingest_cron.strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "full",
+                "ticker": "NIKKEI225",
+                "market": "JP",
+                # No currents/marketaux: live-tested 2026-08-25, Currents'
+                # country="jp" query returns 0 articles (no JP-country-tagged
+                # coverage at all on this account/plan) — unlike US, there's no
+                # keyword fallback wired for this yet (see this job's backlog
+                # item for the open follow-up). SearXNG's market-aware query
+                # widening (same _ingest_searxng_ticker/_ingest_searxng_market
+                # path proven for US) is the real source here.
+                "sources": "rss,searxng,searxng_global",
+                "lookback_days": 3,
+            },
+        ),
+        ScheduledResearchJob(
+            id="jp-hub-news-ingest-light",
+            prompt="Light Japan market hub news ingest (RSS)",
+            schedule=get_env_or(
+                "HUB_NEWS_LIGHT_INGEST_CRON",
+                "HUB_NEWS_INGEST_CRON",
+                "0 */4 * * *",
+            ).strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "light",
+                "ticker": "NIKKEI225",
+                "market": "JP",
+                "sources": get_env_config().trade.hub_news_light_sources,
+                "lookback_days": 1,
+            },
+        ),
+        # Same reasoning as US: no dedicated "jp-hub-news-entity" job needed —
+        # nifty-hub-news-entity's pending-staging auto-discovery drains NIKKEI225 too.
+        ScheduledResearchJob(
             id="nifty-index-prediction-post-close",
             prompt="Weekly post-close prediction pipeline refresh (flows, backtest, counterfactual)",
             schedule="0 4 * * 6",
