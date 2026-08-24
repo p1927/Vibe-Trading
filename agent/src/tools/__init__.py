@@ -93,6 +93,7 @@ def build_registry(
     warn_callback: Callable[[str], None] | None = None,
     interactive: bool | None = None,
     _mcp_server_tool_name_segments: Mapping[str, str] | None = None,
+    session_config: dict | None = None,
 ) -> ToolRegistry:
     """Build the tool registry via auto-discovery, optionally enriched with MCP tools.
 
@@ -165,8 +166,14 @@ def build_registry(
             if not cls.check_available():
                 logger.info("Tool %s unavailable, skipping", cls.name)
                 continue
-            if cls is RememberTool and persistent_memory is not None:
-                registry.register(cls(memory=persistent_memory))
+            if cls is RememberTool:
+                if (session_config or {}).get("e2e_integration_test"):
+                    logger.info("Tool %s disabled for e2e_integration_test session", cls.name)
+                    continue
+                if persistent_memory is not None:
+                    registry.register(cls(memory=persistent_memory))
+                else:
+                    registry.register(cls())
             elif cls in session_injected_classes:
                 registry.register(cls(default_session_id=session_id, event_callback=event_callback))
             elif cls is SwarmTool:
