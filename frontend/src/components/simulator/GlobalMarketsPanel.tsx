@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
-import { api, type GlobalMacroRow, type MarketIndexOhlcRow, type MarketRegistryEntry } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, type GlobalMacroRow, type MarketRegistryEntry } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { IndexCard } from "./IndexCard";
+import { fetchMarketBundle, findBundleEntry } from "./marketBundleCache";
 
 export const COUNTRY_LABELS: Record<string, string> = {
   IN: "India",
@@ -138,10 +139,15 @@ export function GlobalMarketsPanel({
     });
   }, []);
 
+  // Tracks which country's cards are currently on screen so a bundle response that resolves
+  // after the user has already switched tabs again doesn't overwrite the newer tab's cards.
+  const activeCountryRef = useRef<string | null>(null);
+
   const loadCountry = useCallback(
-    (country: string) => {
+    (country: string, opts?: { force?: boolean }) => {
       const market = registry.find((m) => m.code === country);
       if (!market) return;
+      activeCountryRef.current = country;
       setCards((prev) =>
         market.indices.map((idx) => {
           const existing = prev.find((c) => c.key === idx);
@@ -150,24 +156,33 @@ export function GlobalMarketsPanel({
             : { key: idx, name: idx, price: null, change: null, changePct: null, sparkline: [], badge: "EOD", loading: true, error: null };
         }),
       );
-      market.indices.forEach((idx) => {
-        api
-          .getMarketIndexHistory(country, idx, "3mo")
-          .then((res) => {
-            const rows: MarketIndexOhlcRow[] = Array.isArray(res.data) ? res.data : [];
-            const closes = rows.map((r) => r.close).filter((v): v is number => typeof v === "number");
-            const price = closes.length ? closes[closes.length - 1] : null;
-            const prevClose = closes.length > 1 ? closes[closes.length - 2] : null;
-            const { change, changePct } = deriveChange(price, prevClose);
-            setCards((prev) =>
-              prev.map((c) => (c.key === idx ? { ...c, price, change, changePct, sparkline: closes.slice(-30), loading: false } : c)),
-            );
-          })
-          .catch((err) => {
-            const message = err instanceof Error ? err.message : String(err);
-            setCards((prev) => prev.map((c) => (c.key === idx ? { ...c, loading: false, error: message } : c)));
-          });
-      });
+      // One request for every headline + sector index in this market (see marketBundleCache),
+      // replacing what used to be one `getMarketIndexHistory` call per headline index.
+      fetchMarketBundle(country, opts)
+        .then((data) => {
+          if (activeCountryRef.current !== country) return;
+          setCards(
+            market.indices.map((idx) => {
+              const entry = findBundleEntry(data, idx);
+              if (!entry) {
+                return { key: idx, name: idx, price: null, change: null, changePct: null, sparkline: [], badge: "EOD", loading: false, error: "not in bundle" };
+              }
+              const closes = entry.rows.map((r) => r.close).filter((v): v is number => typeof v === "number");
+              const price = closes.length ? closes[closes.length - 1] : null;
+              const prevClose = closes.length > 1 ? closes[closes.length - 2] : null;
+              const { change, changePct } = deriveChange(price, prevClose);
+              return {
+                key: idx, name: idx, price, change, changePct,
+                sparkline: closes.slice(-30), badge: "EOD", loading: false, error: entry.error,
+              };
+            }),
+          );
+        })
+        .catch((err) => {
+          if (activeCountryRef.current !== country) return;
+          const message = err instanceof Error ? err.message : String(err);
+          setCards((prev) => prev.map((c) => ({ ...c, loading: false, error: message })));
+        });
     },
     [registry],
   );
@@ -249,7 +264,7 @@ export function GlobalMarketsPanel({
     else if (activeTab === "GLOBAL") loadGlobal();
     else if (activeTab === "ECONOMY" || activeTab === "MULTI") setCards([]);
     else if (activeTab === "IN") loadIndia();
-    else loadCountry(activeTab);
+    else loadCountry(activeTab, { force: true });
   }, [activeTab, loadIndia, loadCountry, loadCurrencies, loadGlobal]);
 
   useEffect(() => {

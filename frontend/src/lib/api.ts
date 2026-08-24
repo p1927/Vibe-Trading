@@ -1305,6 +1305,10 @@ export const api = {
     request<MarketFactorCoverageResponse>("/trade/markets/factor_coverage"),
   getMarketSectorIndices: (country: string) =>
     request<MarketSectorIndicesResponse>(`/trade/markets/${encodeURIComponent(country)}/sector_indices`),
+  getMarketBundle: (country: string, period = "3mo") =>
+    request<MarketBundleResponse>(
+      `/trade/markets/${encodeURIComponent(country)}/bundle${api._hubStockHistoryQS({ period })}`,
+    ),
   getMarketTopConstituents: (country: string, topN = 10) =>
     request<MarketTopConstituentsResponse>(
       `/trade/markets/${encodeURIComponent(country)}/top_constituents${api._hubStockHistoryQS({ top_n: topN })}`,
@@ -1414,9 +1418,14 @@ export const api = {
     );
   },
   refreshIndexPrediction: (body: RefreshIndexPredictionRequest) =>
+    // Light refresh usually returns quickly (cached spot touch), but on macro
+    // drift/material news it runs the full momentum + prediction pipeline
+    // server-side (budgeted up to 420s) — the default 20s client timeout
+    // aborts and misreports those legitimate runs as failures.
     request<IndexPredictionRefreshResponse>("/trade/index-prediction/refresh", {
       method: "POST",
       body: JSON.stringify(body),
+      timeoutMs: 90_000,
     }),
   getIndexPredictionHistory: (ticker = "NIFTY", limit = 50, horizonDays?: number, dailyLast = true) => {
     const params = new URLSearchParams({
@@ -3837,6 +3846,25 @@ export interface SectorIndexEntry {
 export interface MarketSectorIndicesResponse {
   status: string;
   data: SectorIndexEntry[];
+}
+
+// `get_market_bundle()` — headline + sector index histories for a market in one call, replacing
+// the per-index `getMarketIndexHistory` fan-out (`GlobalMarketsPanel`/`SectorIndicesPanel` used
+// to fire one request per headline/sector index — up to ~15 for a market like US). `error` is
+// set (and `rows` empty) when that one index's fetch failed, without failing the whole bundle.
+export interface MarketBundleEntry {
+  name: string;
+  label: string;
+  rows: MarketIndexOhlcRow[];
+  error: string | null;
+}
+
+export interface MarketBundleResponse {
+  status: string;
+  data: {
+    headline: MarketBundleEntry[];
+    sectors: MarketBundleEntry[];
+  };
 }
 
 // `top_constituents()` — live TradingView screener ranking by market cap. Real for IN/JP/ME/

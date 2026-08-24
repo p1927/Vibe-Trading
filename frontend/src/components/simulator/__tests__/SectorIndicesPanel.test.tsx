@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { SectorIndicesPanel } from "../SectorIndicesPanel";
+import { __resetMarketBundleCacheForTests } from "../marketBundleCache";
 
 const { apiMock, MockApiError } = vi.hoisted(() => {
   class MockApiError extends Error {
@@ -13,7 +14,7 @@ const { apiMock, MockApiError } = vi.hoisted(() => {
     }
   }
   return {
-    apiMock: { getMarketSectorIndices: vi.fn(), getMarketIndexHistory: vi.fn(), getMarketTopConstituents: vi.fn() },
+    apiMock: { getMarketBundle: vi.fn(), getMarketTopConstituents: vi.fn() },
     MockApiError,
   };
 });
@@ -23,6 +24,7 @@ vi.mock("@/lib/api", () => ({ api: apiMock, ApiError: MockApiError }));
 describe("SectorIndicesPanel", () => {
   beforeEach(() => {
     Object.values(apiMock).forEach((fn) => fn.mockReset());
+    __resetMarketBundleCacheForTests();
   });
 
   afterEach(() => {
@@ -30,20 +32,26 @@ describe("SectorIndicesPanel", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders sector-index cards (filtering out headline entries) and a constituents table", async () => {
-    apiMock.getMarketSectorIndices.mockResolvedValue({
+  it("renders sector-index cards (headline entries stay out of the bundle's sectors list) and a constituents table", async () => {
+    apiMock.getMarketBundle.mockResolvedValue({
       status: "ok",
-      data: [
-        { name: "SPX", label: "S&P 500 Index", kind: "headline" },
-        { name: "SECTOR_TECHNOLOGY", label: "Technology Sector (XLK)", kind: "sector" },
-      ],
-    });
-    apiMock.getMarketIndexHistory.mockResolvedValue({
-      status: "ok",
-      data: [
-        { date: "2024-05-01", close: 100 },
-        { date: "2024-05-02", close: 105 },
-      ],
+      data: {
+        headline: [
+          {
+            name: "SPX", label: "S&P 500 Index", error: null,
+            rows: [{ day: "2024-05-01", open: 100, high: 106, low: 99, close: 100, volume: 1 }],
+          },
+        ],
+        sectors: [
+          {
+            name: "SECTOR_TECHNOLOGY", label: "Technology Sector (XLK)", error: null,
+            rows: [
+              { day: "2024-05-01", open: 99, high: 101, low: 98, close: 100, volume: 1 },
+              { day: "2024-05-02", open: 100, high: 106, low: 99, close: 105, volume: 1 },
+            ],
+          },
+        ],
+      },
     });
     apiMock.getMarketTopConstituents.mockResolvedValue({
       status: "ok",
@@ -61,7 +69,7 @@ describe("SectorIndicesPanel", () => {
   });
 
   it("renders an honest not-sourced note for constituents instead of crashing", async () => {
-    apiMock.getMarketSectorIndices.mockResolvedValue({ status: "ok", data: [] });
+    apiMock.getMarketBundle.mockResolvedValue({ status: "ok", data: { headline: [], sectors: [] } });
     apiMock.getMarketTopConstituents.mockRejectedValue(new MockApiError("no constituent query", 404));
 
     render(<SectorIndicesPanel country="US" label="US" />);
@@ -71,7 +79,7 @@ describe("SectorIndicesPanel", () => {
   });
 
   it("surfaces a real constituents fetch error distinctly from a not-sourced gap", async () => {
-    apiMock.getMarketSectorIndices.mockResolvedValue({ status: "ok", data: [] });
+    apiMock.getMarketBundle.mockResolvedValue({ status: "ok", data: { headline: [], sectors: [] } });
     apiMock.getMarketTopConstituents.mockRejectedValue(new Error("network error"));
 
     render(<SectorIndicesPanel country="US" label="US" />);
@@ -81,15 +89,15 @@ describe("SectorIndicesPanel", () => {
   });
 
   it("refetches both sections when the country prop changes", async () => {
-    apiMock.getMarketSectorIndices.mockResolvedValue({ status: "ok", data: [] });
+    apiMock.getMarketBundle.mockResolvedValue({ status: "ok", data: { headline: [], sectors: [] } });
     apiMock.getMarketTopConstituents.mockResolvedValue({ status: "ok", data: [] });
 
     const { rerender } = render(<SectorIndicesPanel country="US" label="US" />);
-    await waitFor(() => expect(apiMock.getMarketSectorIndices).toHaveBeenCalledWith("US"));
+    await waitFor(() => expect(apiMock.getMarketBundle).toHaveBeenCalledWith("US"));
     await waitFor(() => expect(apiMock.getMarketTopConstituents).toHaveBeenCalledWith("US", 10));
 
     rerender(<SectorIndicesPanel country="IN" label="India" />);
-    await waitFor(() => expect(apiMock.getMarketSectorIndices).toHaveBeenCalledWith("IN"));
+    await waitFor(() => expect(apiMock.getMarketBundle).toHaveBeenCalledWith("IN"));
     await waitFor(() => expect(apiMock.getMarketTopConstituents).toHaveBeenCalledWith("IN", 10));
   });
 });

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { ApiError, api, type MarketIndexOhlcRow, type SectorIndexEntry, type TopConstituentRow } from "@/lib/api";
+import { ApiError, api, type TopConstituentRow } from "@/lib/api";
 import { IndexCard } from "./IndexCard";
+import { fetchMarketBundle } from "./marketBundleCache";
 
 interface SectorCardState {
   key: string;
@@ -51,38 +52,24 @@ export function SectorIndicesPanel({ country, label }: { country: string; label:
     setSectorsError(null);
     setSectorCards([]);
 
-    api
-      .getMarketSectorIndices(country)
-      .then((res) => {
+    // Shared with `GlobalMarketsPanel` — one bundle request covers both panels' index-history
+    // needs for this market, cached/deduped so switching tabs doesn't double the requests.
+    fetchMarketBundle(country)
+      .then((data) => {
         if (cancelled) return;
-        const sectors: SectorIndexEntry[] = (res.data ?? []).filter((s) => s.kind === "sector");
         setSectorCards(
-          sectors.map((s) => ({
-            key: s.name, name: s.label, price: null, change: null, changePct: null, sparkline: [],
-            loading: true, error: null,
-          })),
+          data.sectors.map((entry) => {
+            const closes = entry.rows.map((r) => r.close).filter((v): v is number => typeof v === "number");
+            const price = closes.length ? closes[closes.length - 1] : null;
+            const prevClose = closes.length > 1 ? closes[closes.length - 2] : null;
+            const { change, changePct } = deriveChange(price, prevClose);
+            return {
+              key: entry.name, name: entry.label, price, change, changePct,
+              sparkline: closes.slice(-30), loading: false, error: entry.error,
+            };
+          }),
         );
         setSectorsLoading(false);
-        sectors.forEach((s) => {
-          api
-            .getMarketIndexHistory(country, s.name, "3mo")
-            .then((histRes) => {
-              if (cancelled) return;
-              const rows: MarketIndexOhlcRow[] = Array.isArray(histRes.data) ? histRes.data : [];
-              const closes = rows.map((r) => r.close).filter((v): v is number => typeof v === "number");
-              const price = closes.length ? closes[closes.length - 1] : null;
-              const prevClose = closes.length > 1 ? closes[closes.length - 2] : null;
-              const { change, changePct } = deriveChange(price, prevClose);
-              setSectorCards((prev) =>
-                prev.map((c) => (c.key === s.name ? { ...c, price, change, changePct, sparkline: closes.slice(-30), loading: false } : c)),
-              );
-            })
-            .catch((err) => {
-              if (cancelled) return;
-              const message = err instanceof Error ? err.message : String(err);
-              setSectorCards((prev) => prev.map((c) => (c.key === s.name ? { ...c, loading: false, error: message } : c)));
-            });
-        });
       })
       .catch((err) => {
         if (cancelled) return;
