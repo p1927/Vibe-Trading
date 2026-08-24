@@ -721,6 +721,7 @@ def run_hub_news_ingest_job(config: dict[str, Any] | None = None) -> dict[str, A
             rss_limit_per_feed=int(cfg.get("rss_limit_per_feed") or 10),
             watcher_since_hours=int(cfg.get("watcher_since_hours") or 6),
             watcher_tickers=cfg.get("watcher_tickers"),
+            currents_keywords=cfg.get("currents_keywords"),
         )
         if summary.get("blocked") or (
             summary.get("pipeline_paused")
@@ -1133,6 +1134,55 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         ),
         # Same reasoning as US/JP: no dedicated "cn-hub-news-entity" job needed —
         # nifty-hub-news-entity's pending-staging auto-discovery drains CSI300 too.
+        ScheduledResearchJob(
+            id="ru-hub-news-ingest-full",
+            prompt="Full Russia market hub news ingest (RSS + Currents keyword search, daily)",
+            schedule=get_env_config().trade.hub_news_full_ingest_cron.strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "full",
+                "ticker": "MOEX",
+                "market": "RU",
+                # No searxng/searxng_global: live-tested 2026-08-25 with two
+                # different query phrasings, both returned almost entirely
+                # generic Russia country-profile pages (Wikipedia, Britannica,
+                # Al Jazeera) or off-topic contamination (chicken-soup recipes,
+                # Fortnite downloads — a worse Bing-mismatch than SPX's "S"
+                # Wikipedia-page issue) with essentially no real market
+                # articles, unlike every other wired market so far. Currents'
+                # plain country="ru" query is also empty (same class of gap
+                # as JP), but a keyword search finds real signal Currents'
+                # country filter alone misses — see currents_keywords below.
+                "sources": "rss,currents",
+                "currents_keywords": ["MOEX", "Russia", "stock"],
+                "lookback_days": 3,
+            },
+        ),
+        ScheduledResearchJob(
+            id="ru-hub-news-ingest-light",
+            prompt="Light Russia market hub news ingest (RSS)",
+            schedule=get_env_or(
+                "HUB_NEWS_LIGHT_INGEST_CRON",
+                "HUB_NEWS_INGEST_CRON",
+                "0 */4 * * *",
+            ).strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "light",
+                "ticker": "MOEX",
+                "market": "RU",
+                "sources": get_env_config().trade.hub_news_light_sources,
+                "lookback_days": 1,
+            },
+        ),
+        # Same reasoning as US/JP/CN: no dedicated "ru-hub-news-entity" job needed —
+        # nifty-hub-news-entity's pending-staging auto-discovery drains MOEX too.
         ScheduledResearchJob(
             id="nifty-index-prediction-post-close",
             prompt="Weekly post-close prediction pipeline refresh (flows, backtest, counterfactual)",
