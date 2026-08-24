@@ -17,7 +17,7 @@ const { apiMock, MockApiError } = vi.hoisted(() => {
 
 vi.mock("@/lib/api", () => ({ api: apiMock, ApiError: MockApiError }));
 
-const MARKETS = ["IN", "US", "CN", "JP", "RU", "ME", "LATAM"];
+const MARKETS = ["IN", "US", "CN", "JP", "RU", "ME", "LATAM", "EU"];
 
 describe("EconomyPanel", () => {
   beforeEach(() => {

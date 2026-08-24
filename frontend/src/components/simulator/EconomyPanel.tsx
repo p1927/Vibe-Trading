@@ -3,10 +3,10 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, X
 import { ApiError, api, type EconomyFactorRow } from "@/lib/api";
 import { COUNTRY_LABELS } from "./GlobalMarketsPanel";
 
-const MARKETS = ["IN", "US", "CN", "JP", "RU", "ME", "LATAM"];
+const MARKETS = ["IN", "US", "CN", "JP", "RU", "ME", "LATAM", "EU"];
 
 // Fixed per-market colors so a line keeps its identity across factor switches — reuses the same
-// 7-market set `MultiMarketReplayPanel`/`GlobalMarketsPanel` already work with.
+// 8-market set `MultiMarketReplayPanel`/`GlobalMarketsPanel` already work with.
 const MARKET_COLOR: Record<string, string> = {
   IN: "#f97316",
   US: "#2563eb",
@@ -15,6 +15,7 @@ const MARKET_COLOR: Record<string, string> = {
   RU: "#0891b2",
   ME: "#65a30d",
   LATAM: "#db2777",
+  EU: "#0ea5e9",
 };
 
 // The 6 economy factors the backlog item asked for (`market_factor_catalog.FactorCategory.

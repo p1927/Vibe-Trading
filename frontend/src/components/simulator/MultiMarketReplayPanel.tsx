@@ -8,7 +8,7 @@ import {
 } from "@/lib/api";
 import { COUNTRY_LABELS } from "./GlobalMarketsPanel";
 
-const ALL_MARKETS = ["IN", "US", "CN", "JP", "RU", "ME", "LATAM"];
+const ALL_MARKETS = ["IN", "US", "CN", "JP", "RU", "ME", "LATAM", "EU"];
 
 /** Cross-market simultaneous replay — one UTC master clock watching several markets at once,
  * fronting `stock_simulator`'s `/multi_market/*` routes. Real data behind this today is

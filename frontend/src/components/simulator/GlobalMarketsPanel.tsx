@@ -11,13 +11,14 @@ export const COUNTRY_LABELS: Record<string, string> = {
   RU: "Russia",
   ME: "Middle East",
   LATAM: "Latin America",
+  EU: "Europe",
 };
 
 // Order mirrors `market_registry.SUPPORTED_MARKETS`, plus Currencies (the 6 USD-anchored FX
 // pairs), Global (cross-market factors), Economy (cross-market GDP/fiscal/unemployment/etc.
 // comparison, `EconomyPanel`) — all three fronting series that aren't owned by one market and so
 // have no index-card grid of their own — and Multi-Market (cross-market simultaneous replay).
-const TAB_ORDER = ["IN", "US", "CN", "JP", "RU", "ME", "LATAM", "CURRENCY", "GLOBAL", "ECONOMY", "MULTI"];
+const TAB_ORDER = ["IN", "US", "CN", "JP", "RU", "ME", "LATAM", "EU", "CURRENCY", "GLOBAL", "ECONOMY", "MULTI"];
 
 // USD-anchored FX pairs — `global_macro_store.LIVE_SPOT_SYMBOLS`/`SERIES_SCHEMA` keys, one per
 // non-USD `market_registry` market (`market_registry.fx_series()`'s series names).
