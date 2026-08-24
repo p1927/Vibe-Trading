@@ -1,11 +1,12 @@
 """Knowledge-engine browse tool: query_strategies / query_factor / query_event_factors /
-query_track_record.
+query_track_record / query_wiki / get_wiki_page.
 
 A single agent-facing tool with an ``action`` discriminator, mirroring
 alpha_zoo_tool.py's shape. Queries the module 8 knowledge engine
 (trade_integrations.knowledge_engine) — strategy/factor theory, module 1's event-factor
 taxonomy (plus an interim calibration signal until module 1's learned impact weights
-ship), and module 6's prediction-ledger track record.
+ship), module 6's prediction-ledger track record, and layer 1's web-researched wiki
+(financial-knowledge/wiki/, ingested via the separate llm-wiki desktop app).
 """
 
 from __future__ import annotations
@@ -30,7 +31,14 @@ def _ok(result: Any) -> str:
 def run_knowledge_engine(**kwargs: Any) -> dict[str, Any]:
     """Module-level entry returning a parsed envelope (dict, not JSON string)."""
     action = kwargs.get("action")
-    valid_actions = {"query_strategies", "query_factor", "query_event_factors", "query_track_record"}
+    valid_actions = {
+        "query_strategies",
+        "query_factor",
+        "query_event_factors",
+        "query_track_record",
+        "query_wiki",
+        "get_wiki_page",
+    }
     if action not in valid_actions:
         return {
             "status": "error",
@@ -59,12 +67,24 @@ def run_knowledge_engine(**kwargs: Any) -> dict[str, Any]:
             result = knowledge_query.query_factor(factor_key, market=kwargs.get("market", "IN"))
         elif action == "query_event_factors":
             result = knowledge_query.query_event_factors(category=kwargs.get("category"))
-        else:  # query_track_record
+        elif action == "query_track_record":
             result = knowledge_query.query_track_record(
                 window=int(kwargs.get("window", 14)),
                 ticker=kwargs.get("ticker", "NIFTY"),
                 strategy=kwargs.get("strategy"),
             )
+        elif action == "query_wiki":
+            result = knowledge_query.query_wiki(
+                text=kwargs.get("text"),
+                tags=kwargs.get("tags"),
+                wiki_type=kwargs.get("wiki_type"),
+                limit=int(kwargs.get("limit", 10)),
+            )
+        else:  # get_wiki_page
+            slug = kwargs.get("slug")
+            if not slug or not isinstance(slug, str):
+                return {"status": "error", "error": "get_wiki_page requires slug (string)"}
+            result = knowledge_query.get_wiki_page(slug)
     except Exception as exc:
         logger.exception("knowledge_engine action %s failed", action)
         return {"status": "error", "error": f"{action} failed: {exc}"}
@@ -84,14 +104,24 @@ class KnowledgeEngineTool(BaseTool):
         "module 1's event-factor taxonomy, optionally filtered by category; "
         "action=query_track_record returns the prediction ledger's system-wide calibration/"
         "accuracy metrics, plus module 9's real win-rate/expectancy for one strategy tag "
-        "when the optional strategy parameter is given."
+        "when the optional strategy parameter is given; action=query_wiki searches layer 1's "
+        "web-researched wiki (concepts/entities/sources/queries/synthesis pages) by title/tag/"
+        "summary match, returning metadata + a one-line summary per hit; action=get_wiki_page "
+        "returns one wiki page's full content by slug (from query_wiki's `slug` field)."
     )
     parameters = {
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["query_strategies", "query_factor", "query_event_factors", "query_track_record"],
+                "enum": [
+                    "query_strategies",
+                    "query_factor",
+                    "query_event_factors",
+                    "query_track_record",
+                    "query_wiki",
+                    "get_wiki_page",
+                ],
                 "description": "Which knowledge-engine query to run.",
             },
             "market_view": {
@@ -109,12 +139,12 @@ class KnowledgeEngineTool(BaseTool):
             "tags": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Optional keyword/indicator tags for query_strategies.",
+                "description": "Optional keyword/indicator tags for query_strategies, or wiki tags for query_wiki.",
             },
             "limit": {
                 "type": "integer",
                 "default": 5,
-                "description": "Cap on returned strategies for query_strategies (default 5).",
+                "description": "Cap on returned entries for query_strategies (default 5) or query_wiki (default 10).",
             },
             "factor_key": {
                 "type": "string",
@@ -150,6 +180,21 @@ class KnowledgeEngineTool(BaseTool):
                     "returns module 9's real win-rate/expectancy for that strategy "
                     "(requires OpenAlgo to be configured/reachable; degrades to "
                     "available: False otherwise, not an error)."
+                ),
+            },
+            "text": {
+                "type": "string",
+                "description": "Free-text query for query_wiki, matched against page title/summary/tags.",
+            },
+            "wiki_type": {
+                "type": "string",
+                "description": "Optional page-type filter for query_wiki (concept/entity/source/query/synthesis).",
+            },
+            "slug": {
+                "type": "string",
+                "description": (
+                    "Required for get_wiki_page — a wiki page slug like 'concepts/kelly-criterion' "
+                    "(from query_wiki's `slug` field)."
                 ),
             },
         },
