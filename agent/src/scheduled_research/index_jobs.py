@@ -46,6 +46,7 @@ JOB_TYPE_OI_SNAPSHOT = "oi_snapshot"
 JOB_TYPE_REINFERENCE_TICK = "reinference_tick"
 JOB_TYPE_PUMP_DUMP_PROXY = "pump_dump_proxy"
 JOB_TYPE_MAX_PAIN_BHAVCOPY = "max_pain_bhavcopy"
+JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT = "constituent_volume_snapshot"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -63,6 +64,7 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_REINFERENCE_TICK,
     JOB_TYPE_PUMP_DUMP_PROXY,
     JOB_TYPE_MAX_PAIN_BHAVCOPY,
+    JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT,
 })
 
 NEWS_QUALITY_EVAL_CRON_ENV = "NEWS_QUALITY_EVAL_CRON"
@@ -664,6 +666,23 @@ def run_reinference_tick_job(config: dict[str, Any] | None = None) -> dict[str, 
     )
 
 
+def run_constituent_volume_snapshot_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Frequent intraday poll capturing per-constituent volume/interest snapshots (part 2
+    of .claude/backlog/items/2026-08-25-options-microstructure-signal-gap.md).
+
+    Same market-hours cadence shape as ``run_reinference_tick_job`` — this is a batch
+    live-quote call (one HTTP round-trip for all NIFTY50 constituents), not a per-symbol
+    fetch, so it's cheap enough to run every ~15 minutes without needing a per-tick
+    materiality gate the way reinference does.
+    """
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.dataflows.index_research.constituent_volume_snapshot_store import (
+        capture_and_append_constituent_volume_snapshot,
+    )
+
+    return capture_and_append_constituent_volume_snapshot()
+
+
 def run_hub_news_entity_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Drain staging queue and optionally run heavy entity maintenance."""
     _ensure_trade_integrations_on_path()
@@ -816,6 +835,11 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         _attach_job_result_summary(job, summary)
         logger.info("reinference tick completed for job %s: %s", job.id, summary)
         return
+    if job_type == JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT:
+        summary = run_constituent_volume_snapshot_job(job.config)
+        _attach_job_result_summary(job, summary)
+        logger.info("constituent volume snapshot completed for job %s: %s", job.id, summary)
+        return
     raise ValueError(f"unsupported index job_type: {job_type!r}")
 
 
@@ -836,6 +860,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     reinference_tick_cron = _cfg.reinference_tick_cron.strip()
     pump_dump_proxy_cron = _cfg.pump_dump_proxy_cron.strip()
     max_pain_bhavcopy_cron = _cfg.max_pain_bhavcopy_cron.strip()
+    constituent_volume_snapshot_cron = _cfg.constituent_volume_snapshot_cron.strip()
     validate_schedule(snapshot_cron)
     validate_schedule(full_cron)
     validate_schedule(coverage_sweep_cron)
@@ -845,6 +870,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     validate_schedule(reinference_tick_cron)
     validate_schedule(pump_dump_proxy_cron)
     validate_schedule(max_pain_bhavcopy_cron)
+    validate_schedule(constituent_volume_snapshot_cron)
 
     skip_unified_duplicates = False
     try:
@@ -1065,6 +1091,49 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         # Same reasoning as US: no dedicated "jp-hub-news-entity" job needed —
         # nifty-hub-news-entity's pending-staging auto-discovery drains NIKKEI225 too.
         ScheduledResearchJob(
+            id="cn-hub-news-ingest-full",
+            prompt="Full China market hub news ingest (SearXNG + Currents, daily)",
+            schedule=get_env_config().trade.hub_news_full_ingest_cron.strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "full",
+                "ticker": "CSI300",
+                "market": "CN",
+                # Currents included — unlike JP, live-tested 2026-08-25:
+                # category="business" + country="cn" returns real, on-topic
+                # articles (Evergrande, Alibaba share placement, Shein IPO,
+                # etc.), not empty like JP's country query. No marketaux
+                # (not configured/no key).
+                "sources": "rss,searxng,searxng_global,currents",
+                "lookback_days": 3,
+            },
+        ),
+        ScheduledResearchJob(
+            id="cn-hub-news-ingest-light",
+            prompt="Light China market hub news ingest (RSS)",
+            schedule=get_env_or(
+                "HUB_NEWS_LIGHT_INGEST_CRON",
+                "HUB_NEWS_INGEST_CRON",
+                "0 */4 * * *",
+            ).strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "light",
+                "ticker": "CSI300",
+                "market": "CN",
+                "sources": get_env_config().trade.hub_news_light_sources,
+                "lookback_days": 1,
+            },
+        ),
+        # Same reasoning as US/JP: no dedicated "cn-hub-news-entity" job needed —
+        # nifty-hub-news-entity's pending-staging auto-discovery drains CSI300 too.
+        ScheduledResearchJob(
             id="nifty-index-prediction-post-close",
             prompt="Weekly post-close prediction pipeline refresh (flows, backtest, counterfactual)",
             schedule="0 4 * * 6",
@@ -1169,6 +1238,20 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             config={
                 "job_type": JOB_TYPE_REINFERENCE_TICK,
                 "ticker": "NIFTY",
+            },
+        ),
+        ScheduledResearchJob(
+            id="nifty50-constituent-volume-snapshot",
+            prompt=(
+                "Frequent intraday capture of per-constituent volume/interest snapshots "
+                "(relative volume vs 20d baseline) for all NIFTY50 constituents"
+            ),
+            schedule=constituent_volume_snapshot_cron,
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT,
             },
         ),
     ]
