@@ -1745,6 +1745,32 @@ export const api = {
       `/trade/hub/news-pipeline/trace/items?${search.toString()}`,
     );
   },
+
+  // --- Board 2 (Agent) — 2026-08-25-dual-board-advisory-agent-ui ---
+  getAgentBoardSummary: (agentId: string) =>
+    request<AgentBoardSummary>(`/board/agent/${encodeURIComponent(agentId)}/summary`),
+  getAgentBoardWealthCurve: (agentId: string, pricingMethod?: string) => {
+    const q = pricingMethod ? `?pricing_method=${encodeURIComponent(pricingMethod)}` : "";
+    return request<AgentBoardWealthCurveResponse>(
+      `/board/agent/${encodeURIComponent(agentId)}/wealth-curve${q}`,
+    );
+  },
+  getAgentBoardHindsight: (agentId: string) =>
+    request<AgentBoardHindsightSummary>(`/board/agent/${encodeURIComponent(agentId)}/hindsight`),
+  getAgentBoardHindsightCurves: (agentId: string) =>
+    request<AgentBoardHindsightCurvesResponse>(
+      `/board/agent/${encodeURIComponent(agentId)}/hindsight-curves`,
+    ),
+  getModelVersionTimeline: (params: { agentId?: string; weightId?: string; windowDays?: number } = {}) => {
+    const search = new URLSearchParams();
+    if (params.agentId) search.set("agent_id", params.agentId);
+    if (params.weightId) search.set("weight_id", params.weightId);
+    if (params.windowDays) search.set("window_days", String(params.windowDays));
+    const qs = search.toString();
+    return request<ModelVersionTimelineResponse>(
+      `/board/model-version-timeline${qs ? `?${qs}` : ""}`,
+    );
+  },
 };
 
 // --- Scheduled research types ---
@@ -5996,4 +6022,140 @@ export interface ToolTrailItem {
   preview?: string;
   call_id?: string;
   timestamp?: number;
+}
+
+// --- Board 2 (Agent) types — 2026-08-25-dual-board-advisory-agent-ui ---
+
+export interface AgentBoardPnlSummary {
+  trade_count: number;
+  agent_actual_total_pnl_inr: number | null;
+  shadow_total_pnl_inr: number | null;
+  shadow_minus_actual_inr: number | null;
+  pricing_method_breakdown?: Record<
+    string,
+    {
+      trade_count: number;
+      agent_actual_total_pnl_inr: number | null;
+      shadow_total_pnl_inr: number | null;
+      shadow_minus_actual_inr: number | null;
+    }
+  >;
+}
+
+export interface AgentBoardAlignment {
+  total: number;
+  aligned: number;
+  diverged: number;
+  alignment_rate: number | null;
+  recent_divergences: Array<{
+    compared_at: string;
+    symbol: string;
+    agent_strategy?: string | null;
+    shadow_strategy?: string | null;
+    shadow_tier?: string | null;
+  }>;
+  prediction_ledger: {
+    total: number;
+    aligned: number;
+    diverged: number;
+    alignment_rate: number | null;
+  };
+}
+
+export interface AgentBoardSummary {
+  agent_id: string;
+  pnl_summary: AgentBoardPnlSummary;
+  alignment: AgentBoardAlignment;
+}
+
+export interface AgentBoardWealthCurvePoint {
+  exit_at: string;
+  symbol?: string;
+  cumulative_shadow_pnl_inr: number;
+  cumulative_agent_actual_pnl_inr: number;
+}
+
+export interface AgentBoardWealthCurveResponse {
+  agent_id: string;
+  points: AgentBoardWealthCurvePoint[];
+}
+
+export interface AgentBoardHindsightCandidate {
+  candidate_rank: number;
+  trade_count: number;
+  total_shadow_pnl_inr: number;
+}
+
+export interface AgentBoardAttributionFinding {
+  factor: string;
+  direction: "favored_winner" | "favored_choice" | "neutral";
+  magnitude: number;
+  confidence: number | null;
+  source_mechanism: string;
+  symbol?: string;
+  entry_at?: string;
+  winning_candidate_rank?: number;
+  winning_strategy_name?: string | null;
+  chosen_strategy_name?: string | null;
+}
+
+export interface AgentBoardAttributionRollupRow {
+  factor: string;
+  favored_winner_count: number;
+  favored_choice_count: number;
+  average_magnitude: number;
+}
+
+export interface AgentBoardHindsightSummary {
+  trade_decision_points: number;
+  candidates: AgentBoardHindsightCandidate[];
+  best_candidate_rank: number | null;
+  attribution_findings: AgentBoardAttributionFinding[];
+  attribution_factor_rollup: AgentBoardAttributionRollupRow[];
+}
+
+export interface AgentBoardHindsightCurvePoint {
+  exit_at: string;
+  strategy_name?: string | null;
+  cumulative_shadow_pnl_inr: number;
+}
+
+export interface AgentBoardHindsightCurve {
+  candidate_rank: number;
+  points: AgentBoardHindsightCurvePoint[];
+}
+
+export interface AgentBoardHindsightCurvesResponse {
+  agent_id: string;
+  curves: AgentBoardHindsightCurve[];
+}
+
+export interface ModelVersionTimelinePerformance {
+  trade_count: number;
+  win_count: number;
+  loss_count: number;
+  breakeven_count: number;
+  win_rate: number | null;
+  expectancy: number | null;
+  average_win: number | null;
+  average_loss: number | null;
+  gross_profit: number;
+  gross_loss: number;
+  net_pnl: number;
+}
+
+export interface ModelVersionTimelineEntry {
+  proposal_id: string;
+  weight_id: string;
+  applied_at: string;
+  value_before: number;
+  value_after: number;
+  rationale: string;
+  window_days: number;
+  performance_before: ModelVersionTimelinePerformance;
+  performance_after: ModelVersionTimelinePerformance;
+}
+
+export interface ModelVersionTimelineResponse {
+  timeline: ModelVersionTimelineEntry[];
 }

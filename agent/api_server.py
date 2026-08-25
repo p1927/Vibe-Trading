@@ -302,6 +302,10 @@ from src.api.live_routes import (  # noqa: F401, E402
 from src.api.autonomous_routes import autonomous_router  # noqa: E402
 app.include_router(autonomous_router)
 
+# --- Dual-board advisory/agent UI (2026-08-25-dual-board-advisory-agent-ui) ---
+from src.api.board_routes import board_router  # noqa: E402
+app.include_router(board_router)
+
 # --- Alpha Zoo ---
 from src.api.alpha_routes import register_alpha_routes  # noqa: E402
 register_alpha_routes(app)
