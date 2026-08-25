@@ -22,11 +22,12 @@ from trade_integrations.trade_widgets import store as widget_store
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     tmp = Path(tempfile.mkdtemp(prefix="advisory_routes_test_"))
+    # `prediction_ledger.py` used to do `from ... import get_hub_dir` (a direct name import),
+    # so the single `hub_context` patch below silently missed it — fixed at the source
+    # (`prediction_ledger.py` now does `from trade_integrations.context import hub as
+    # hub_context`, matching `autonomous_agents/store.py`'s pattern), so one patch is enough.
+    # See .claude/backlog item 2026-08-25-prediction-ledger-get-hub-dir-not-monkeypatch-isolated.
     monkeypatch.setattr(hub_context, "get_hub_dir", lambda: tmp)
-    monkeypatch.setattr(
-        "trade_integrations.dataflows.index_research.prediction_ledger.get_hub_dir",
-        lambda: tmp,
-    )
     monkeypatch.setattr(api_server, "_API_KEY", "")
     monkeypatch.delenv("AUTONOMOUS_AGENT_TRADING_WATCHLIST", raising=False)
     return TestClient(api_server.app, client=("127.0.0.1", 50000))
