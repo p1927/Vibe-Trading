@@ -128,13 +128,20 @@ def test_upload_does_not_block_health_while_disk_write_is_slow(monkeypatch: pyte
     monkeypatch.setattr(api_server, "UPLOADS_DIR", uploads_dir)
     monkeypatch.setattr(api_server, "_API_KEY", "")
 
-    real_write_bytes = Path.write_bytes
+    # Mocks `Path.mkdir`, not `Path.write_bytes` — both the fixed and pre-fix `upload_file`
+    # call `uploads_dir.mkdir(...)` with the same signature, so this mock exercises the same
+    # code path either way. A `write_bytes`-based mock was tried first and found to be a false
+    # positive: the pre-fix code never calls `Path.write_bytes` at all (it uses
+    # `dest.open("wb")` + `handle.write(chunk)`), so that mock silently did nothing against the
+    # regression this test is supposed to catch — confirmed via revert-and-rerun, see this
+    # item's own Attempts log.
+    real_mkdir = Path.mkdir
 
-    def _slow_write_bytes(self: Path, data: bytes) -> int:
+    def _slow_mkdir(self: Path, *a, **kw) -> None:
         time.sleep(1.5)
-        return real_write_bytes(self, data)
+        return real_mkdir(self, *a, **kw)
 
-    monkeypatch.setattr(Path, "write_bytes", _slow_write_bytes)
+    monkeypatch.setattr(Path, "mkdir", _slow_mkdir)
 
     with TestClient(api_server.app, client=("127.0.0.1", 50000)) as client:
         results: dict[str, object] = {}
