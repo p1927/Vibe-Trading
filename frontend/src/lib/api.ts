@@ -2708,6 +2708,17 @@ export interface NewsScenarioFanBand {
   high_path?: NewsScenarioPathPoint[];
 }
 
+export interface NewsFactorScenarioTimelineResponse {
+  status: string;
+  ticker?: string;
+  factor_id?: string;
+  shock_pct?: number;
+  message?: string;
+  baseline?: NewsScenarioBaseline;
+  outcomes?: NewsScenarioOutcome[];
+  fan_band?: NewsScenarioFanBand;
+}
+
 export interface NewsScenarioSessionRequest {
   ticker?: string;
   pipeline_as_of: string;
