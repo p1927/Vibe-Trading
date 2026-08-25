@@ -28,6 +28,7 @@ from typing import Any, Awaitable, Callable
 
 from fastapi import Depends, FastAPI, Query
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel
 
 from src.tools.india_options_chain_tool import IndiaOptionsChainTool, list_india_underlyings
 from src.tools.india_options_research_tool import IndiaOptionsResearchTool
@@ -535,6 +536,64 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
             "distribution_type": "physical",
             "candidates": [asdict(r) for r in results],
         }
+
+    class SelectorPrepareWidgetRequest(BaseModel):
+        ticker: str
+        candidate: dict[str, Any]
+
+    @app.post("/options/india/selector/prepare-widget", dependencies=[Depends(require_auth)])
+    async def options_selector_prepare_widget(body: SelectorPrepareWidgetRequest) -> dict[str, Any]:
+        """Build+persist a trade-plan widget from a *specific* `/options/india/selector`
+        candidate the user reviewed on screen, so the frontend can hand its `widget_id` to
+        the existing `POST /trade/execute-basket` (2026-08-25-selector-driven-manual-orders-
+        invisible-to-outcome-ledger).
+
+        Deliberately does **not** reuse `advisory_routes.py`'s `build_options_trade_widget`
+        (ticker) + strategy-name lookup pattern: this endpoint's candidates come from
+        `options_selector.select_candidates`, a completely separate live-chain-driven
+        pipeline from `build_options_trade_widget`'s `doc.ranked_strategies` — a name-match
+        lookup between the two could silently substitute a same-named-but-different-legs
+        strategy. Building the widget directly from the candidate's own `legs` (which already
+        carry real broker symbols) guarantees the order placed is exactly the position shown.
+        """
+        ticker_norm = body.ticker.strip().upper()
+        legs = body.candidate.get("legs") or []
+        if not ticker_norm or not legs:
+            return JSONResponse(
+                status_code=400, content={"ok": False, "error": "ticker and candidate.legs are required"}
+            )
+
+        import uuid
+
+        from trade_integrations.dataflows.options_research.payoff_charges import (
+            build_implementation_steps,
+        )
+        from trade_integrations.trade_widgets.store import persist_trade_widget
+
+        recommended = {
+            "name": body.candidate.get("name"),
+            "legs": legs,
+            "max_loss": body.candidate.get("max_loss"),
+            "max_profit": body.candidate.get("max_profit"),
+        }
+        widget_id = f"tp_{ticker_norm}_{uuid.uuid4().hex[:12]}"
+        implementation_steps = build_implementation_steps(recommended, options_exchange="NFO")
+        widget = {
+            "type": "trade_plan.widget",
+            "widget_id": widget_id,
+            "underlying": ticker_norm,
+            "recommended": recommended,
+            "implementation_steps": implementation_steps,
+        }
+        persist_trade_widget(widget)
+
+        orders: list[dict[str, Any]] = []
+        for step in implementation_steps:
+            if step.get("action") == "execute_basket" and step.get("payload"):
+                orders = step["payload"].get("orders") or []
+                break
+
+        return {"ok": True, "widget_id": widget_id, "orders": orders}
 
     @app.get("/options/research", dependencies=[Depends(require_auth)])
     async def options_research(

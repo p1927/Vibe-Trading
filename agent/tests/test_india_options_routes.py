@@ -891,3 +891,78 @@ def test_selector_invalid_rank_by_returns_422(client: TestClient) -> None:
         params={"ticker": "NIFTY", "target_profit": 500, "rank_by": "not_a_real_mode"},
     )
     assert response.status_code == 422
+
+
+# --- POST /options/india/selector/prepare-widget ---
+# 2026-08-25-selector-driven-manual-orders-invisible-to-outcome-ledger: builds a widget
+# directly from a selector candidate's own legs (not a ticker+name lookup against a
+# different pipeline's ranked_strategies) so the frontend can hand its widget_id to the
+# existing POST /trade/execute-basket for real outcome_ledger visibility.
+
+_SELECTOR_CANDIDATE = {
+    "name": "long_call",
+    "legs": [
+        {
+            "side": "BUY",
+            "option_type": "CE",
+            "strike": 24000.0,
+            "price": 120.0,
+            "symbol": "NIFTY31JUL25C24000",
+            "lot_size": 25,
+            "lots": 1,
+            "quantity": 25,
+        }
+    ],
+    "max_profit": 5000.0,
+    "max_loss": -3000.0,
+    "probability_of_profit": 0.45,
+    "expected_pnl": 200.0,
+    "entry_iv": 0.15,
+    "risk_reward_ratio": 1.6,
+    "pop_per_risk": 0.00015,
+    "meets_target": True,
+    "event_risks": [],
+    "rationale": None,
+}
+
+
+def test_prepare_widget_builds_orders_from_the_exact_candidate_legs(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import trade_integrations.trade_widgets.store as widget_store
+
+    monkeypatch.setattr(widget_store, "trade_widget_dir", lambda: tmp_path)
+
+    response = client.post(
+        "/options/india/selector/prepare-widget",
+        json={"ticker": "nifty", "candidate": _SELECTOR_CANDIDATE},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["widget_id"].startswith("tp_NIFTY_")
+    assert body["orders"] == [
+        {
+            "symbol": "NIFTY31JUL25C24000",
+            "exchange": "NFO",
+            "action": "BUY",
+            "quantity": "25",
+            "pricetype": "MARKET",
+            "product": "NRML",
+        }
+    ]
+
+    loaded = widget_store.load_trade_widget(body["widget_id"])
+    assert loaded is not None
+    assert loaded["underlying"] == "NIFTY"
+    assert loaded["recommended"]["legs"] == _SELECTOR_CANDIDATE["legs"]
+    assert loaded["recommended"]["max_loss"] == -3000.0
+
+
+def test_prepare_widget_rejects_missing_legs(client: TestClient) -> None:
+    response = client.post(
+        "/options/india/selector/prepare-widget",
+        json={"ticker": "NIFTY", "candidate": {"name": "empty", "legs": []}},
+    )
+    assert response.status_code == 400
