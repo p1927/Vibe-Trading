@@ -320,17 +320,19 @@ def execute_basket(
     if body.widget_id:
         widget = load_trade_widget(body.widget_id)
         if widget:
+            just_recorded_execution_id: str | None = None
             try:
                 from src.trade.hub_bridge import ensure_trade_stack_path
 
                 ensure_trade_stack_path()
                 from trade_integrations.monitor.execution_ledger import record_execution_from_widget
 
-                record_execution_from_widget(
+                recorded_entry = record_execution_from_widget(
                     widget,
                     results,
                     execution_mode=execution_mode,
                 )
+                just_recorded_execution_id = str(recorded_entry.get("execution_id") or "") or None
             except Exception:
                 logger.warning(
                     "Failed to record execution ledger for widget %s",
@@ -368,6 +370,29 @@ def execute_basket(
                     logger.warning(
                         "Failed to record manual outcome_ledger entry for widget %s",
                         body.widget_id,
+                        exc_info=True,
+                    )
+
+            # Reconcile this underlying's open ledger entries right now, agent
+            # or not — see
+            # 2026-08-25-manual-widget-close-reconciliation-depends-on-agent-tick:
+            # `close_ledger_entry` (and the outcome_ledger EXIT row it writes)
+            # was previously only ever reached from an autonomous agent's own
+            # status check or review tick, so with zero agents running a
+            # manually-executed widget's position was never marked closed —
+            # this call makes reconciliation happen off the human's own
+            # action instead of depending on an agent tick that may never
+            # fire. Narrowly scoped to this underlying (not a repo-wide
+            # sweep) so it's cheap enough to run synchronously here.
+            if underlying:
+                try:
+                    from trade_integrations.monitor.execution_ledger import reconcile_underlying
+
+                    reconcile_underlying(underlying, exclude_execution_id=just_recorded_execution_id)
+                except Exception:
+                    logger.warning(
+                        "Failed to reconcile execution ledger for %s",
+                        underlying,
                         exc_info=True,
                     )
 
