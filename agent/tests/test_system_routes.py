@@ -204,3 +204,82 @@ def test_correlation_rate_limiter_is_per_client(monkeypatch: pytest.MonkeyPatch)
     assert limiter.allow("1.1.1.1") is True
     assert limiter.allow("1.1.1.1") is False
     assert limiter.allow("2.2.2.2") is True
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-25-correlation-route-blocks-event-loop-takes-down-health — a slow
+# /correlation (or /correlation/regime) fetch must not starve the single
+# asyncio event loop, or every other request on this single-process server
+# (including /health) hangs behind it. Verified by making the route's own
+# blocking work artificially slow and proving /health still answers promptly
+# from a concurrent request, using real threads against a real TestClient —
+# a mocked `asyncio.to_thread` call count wouldn't prove the loop stays free.
+# ---------------------------------------------------------------------------
+
+
+def test_correlation_does_not_block_health_while_computing(
+    local_client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    import threading
+    import time
+
+    import backtest.correlation as corr
+
+    def _slow(**_kwargs):
+        time.sleep(1.5)
+        return {"labels": ["AAPL", "SPY"], "matrix": [[1.0, 0.5], [0.5, 1.0]]}
+
+    monkeypatch.setattr(corr, "compute_correlation_matrix", _slow)
+
+    results: dict[str, object] = {}
+
+    def _call_correlation():
+        results["correlation"] = local_client.get("/correlation", params={"codes": "AAPL,SPY"})
+
+    thread = threading.Thread(target=_call_correlation)
+    thread.start()
+    time.sleep(0.3)  # let the slow correlation request actually start first
+
+    started = time.monotonic()
+    health_resp = local_client.get("/health")
+    health_elapsed = time.monotonic() - started
+
+    thread.join(timeout=5)
+
+    assert health_resp.status_code == 200
+    # Generous margin over network/scheduling noise, but nowhere near the
+    # 1.5s the correlation call is stuck for — before the fix this request
+    # would have queued behind it on the same event loop.
+    assert health_elapsed < 1.0
+    assert results["correlation"].status_code == 200
+
+
+def test_correlation_regime_does_not_block_health_while_computing(
+    local_client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    import threading
+    import time
+
+    import backtest.regime as regime
+
+    def _slow(**_kwargs):
+        time.sleep(1.5)
+        return {"timeline": []}
+
+    monkeypatch.setattr(regime, "compute_regime_timeline", _slow)
+
+    def _call_regime():
+        local_client.get("/correlation/regime", params={"codes": "AAPL,SPY"})
+
+    thread = threading.Thread(target=_call_regime)
+    thread.start()
+    time.sleep(0.3)
+
+    started = time.monotonic()
+    health_resp = local_client.get("/health")
+    health_elapsed = time.monotonic() - started
+
+    thread.join(timeout=5)
+
+    assert health_resp.status_code == 200
+    assert health_elapsed < 1.0

@@ -5,6 +5,7 @@ Mounted by ``agent/api_server.py`` via ``register_system_routes(app, ...)``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import signal
@@ -300,7 +301,16 @@ def register_system_routes(
             raise HTTPException(status_code=400, detail="method must be 'pearson' or 'spearman'")
 
         try:
-            result = compute_correlation_matrix(codes=code_list, days=days, method=method)
+            # Off the event loop: compute_correlation_matrix does synchronous
+            # network I/O (per-code price-history fetches via the loader
+            # fallback chain) with no async support of its own. Called
+            # directly on this coroutine, a single slow/hung fetch — a real,
+            # observed failure mode with yfinance — starves every other
+            # request this single-process server handles, /health included.
+            # See 2026-08-25-correlation-route-blocks-event-loop-takes-down-health.
+            result = await asyncio.to_thread(
+                compute_correlation_matrix, codes=code_list, days=days, method=method
+            )
             return result
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
@@ -344,7 +354,12 @@ def register_system_routes(
             raise HTTPException(status_code=400, detail="exit_threshold must be below enter_threshold")
 
         try:
-            return compute_regime_timeline(
+            # Same event-loop-starvation risk as /correlation, same fix — see
+            # 2026-08-25-correlation-route-blocks-event-loop-takes-down-health.
+            # compute_regime_timeline fetches the same price series via the
+            # same synchronous loader chain.
+            return await asyncio.to_thread(
+                compute_regime_timeline,
                 codes=code_list,
                 days=days,
                 corr_window=corr_window,

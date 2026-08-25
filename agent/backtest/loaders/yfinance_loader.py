@@ -111,6 +111,12 @@ def _download_history(
     Returns:
         Raw dataframe from ``yf.download``.
     """
+    # Explicit, not relying on yfinance's own default: this loader is called
+    # synchronously from `backtest/correlation.py`'s fallback chain, and a
+    # hang here has previously frozen the whole single-process API server —
+    # see 2026-08-25-correlation-route-blocks-event-loop-takes-down-health.
+    # 15s matches this codebase's other loaders' HTTP timeout convention
+    # (e.g. `backtest/loaders/_http.py`'s default).
     return yf.download(
         tickers,
         start=start_date,
@@ -118,6 +124,7 @@ def _download_history(
         interval=interval,
         auto_adjust=False,
         progress=False,
+        timeout=15,
     )
 
 
