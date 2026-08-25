@@ -107,3 +107,53 @@ def test_shadow_report_html_served_when_present(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.text == "<html>ok</html>"
     assert response.headers["content-type"].startswith("text/html")
+
+
+def test_upload_does_not_block_health_while_disk_write_is_slow(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression test for [[2026-08-25-uploads-route-blocking-file-write.md]]: the disk write
+    in `upload_file` used to run synchronously on the request coroutine, so a slow write would
+    have stalled every other request, including /health — the same failure mode as the original
+    /correlation bug.
+
+    Uses ``with TestClient(...) as client`` (not a plain, non-context-managed client) so requests
+    share one persistent anyio portal/event loop — without ``__enter__``, `TestClient` opens a
+    fresh portal per request, so two "concurrent" calls from different threads land on two
+    independent event loops and a blocking call in one is never observed stalling the other. See
+    [[2026-08-25-blocking-io-regression-tests-not-portal-shared]].
+    """
+    import threading
+    import time
+
+    uploads_dir = Path(tempfile.mkdtemp(prefix="uploads_routes_test_"))
+    monkeypatch.setattr(api_server, "UPLOADS_DIR", uploads_dir)
+    monkeypatch.setattr(api_server, "_API_KEY", "")
+
+    real_write_bytes = Path.write_bytes
+
+    def _slow_write_bytes(self: Path, data: bytes) -> int:
+        time.sleep(1.5)
+        return real_write_bytes(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", _slow_write_bytes)
+
+    with TestClient(api_server.app, client=("127.0.0.1", 50000)) as client:
+        results: dict[str, object] = {}
+
+        def _call_upload() -> None:
+            results["upload"] = client.post(
+                "/upload", files={"file": ("note.txt", io.BytesIO(b"hello"), "text/plain")}
+            )
+
+        thread = threading.Thread(target=_call_upload)
+        thread.start()
+        time.sleep(0.3)  # let the slow upload request actually start first
+
+        started = time.monotonic()
+        health_resp = client.get("/health")
+        health_elapsed = time.monotonic() - started
+
+        thread.join(timeout=5)
+
+    assert health_resp.status_code == 200
+    assert health_elapsed < 1.0
+    assert results["upload"].status_code == 200
