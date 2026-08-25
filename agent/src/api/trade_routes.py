@@ -340,8 +340,8 @@ def execute_basket(
                     exc_info=True,
                 )
 
-            # Tag genuinely human-placed orders in outcome_ledger.py so Board 1
-            # (Advisory) has *any* downstream analytics at all — see
+            # Tag every order placed through this route in outcome_ledger.py so
+            # Board 1 (Advisory) has *any* downstream analytics at all — see
             # 2026-08-25-manual-recommendation-to-order-path-audit: before this,
             # a manual order placed from the selector/chat-widget UI never wrote
             # an ENTER row here, so its eventual CLOSE (if ever detected via
@@ -350,12 +350,16 @@ def execute_basket(
             # distinct tag — deliberately not `"execution_ledger"` (that tag
             # means "closed via reconciliation," not "opened by a human," and
             # is a mixed bag that also fires for some agent-opened positions;
-            # see that audit item for the evidence). Only tags the no-agent-at-all
-            # case — a widget carrying a non-bridge agent's `agent_id` is left
-            # alone here, a known pre-existing gap, not newly introduced.
+            # see that audit item for the evidence). A widget carrying a
+            # non-bridge agent's `agent_id` (any bridge agent's widget was
+            # already 403'd above) is tagged `"vibe_basket"` instead — the
+            # same tag the dedicated MCP execution path
+            # (`autonomous_agents/execution_actions.py`) uses for agent-placed
+            # ENTERs — rather than being left completely untagged, see
+            # 2026-08-25-non-bridge-agent-widget-execute-basket-untagged.
             agent_id_on_widget = str(widget.get("autonomous_agent_id") or widget.get("agent_id") or "").strip()
             underlying = str(widget.get("underlying") or "").strip()
-            if not agent_id_on_widget and underlying:
+            if underlying:
                 try:
                     from trade_integrations.autonomous_agents.outcome_ledger import append_outcome
 
@@ -363,8 +367,9 @@ def execute_basket(
                         symbol=underlying,
                         strategy=(widget.get("recommended") or {}).get("name"),
                         action="ENTER",
-                        intent_source="manual_ui",
+                        intent_source="vibe_basket" if agent_id_on_widget else "manual_ui",
                         widget_id=body.widget_id,
+                        agent_id=agent_id_on_widget or None,
                     )
                 except Exception:
                     logger.warning(

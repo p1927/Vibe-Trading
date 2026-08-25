@@ -1,12 +1,15 @@
-"""Tests for `execute_basket`'s manual outcome_ledger tagging.
+"""Tests for `execute_basket`'s outcome_ledger tagging.
 
 Before this, a manual order placed via the chat trade-plan widget (no autonomous
 agent involved) never wrote an ENTER row to
 `trade_integrations.autonomous_agents.outcome_ledger` at all — see
-2026-08-25-manual-recommendation-to-order-path-audit. These tests cover the fix:
-a genuinely human-placed widget order now gets tagged `intent_source="manual_ui"`,
-while a widget already attributed to an agent is left untouched (a known,
-pre-existing gap for non-bridge agents, not newly introduced here).
+2026-08-25-manual-recommendation-to-order-path-audit. A genuinely human-placed
+widget order is tagged `intent_source="manual_ui"`.
+
+A widget already attributed to a (non-bridge; bridge agents are 403'd earlier in
+this route) agent's `agent_id` is tagged `intent_source="vibe_basket"` with that
+`agent_id` instead of being left completely untagged — see
+2026-08-25-non-bridge-agent-widget-execute-basket-untagged.
 
 No network: OpenAlgo's REST client and the execution-ledger/outcome-ledger side
 effects are all mocked, matching `test_trade_routes_markets.py`'s no-network style.
@@ -92,13 +95,22 @@ def test_manual_widget_order_gets_tagged_manual_ui():
 
 
 @pytest.mark.unit
-def test_agent_attributed_widget_is_left_untouched():
-    """A widget already carrying an agent_id is not the manual path this fix
-    covers — must not be mistagged as manual_ui."""
+def test_agent_attributed_widget_gets_tagged_vibe_basket():
+    """A widget carrying a (non-bridge) agent_id is not the manual path — must
+    not be mistagged as manual_ui — but must still get an ENTER row, tagged
+    the same as the dedicated MCP execution path's agent-placed ENTERs, not
+    left completely untagged."""
     response, mock_append, _ = _run_execute_basket(_widget(agent_id="agent-1"))
 
     assert response.status == "success"
-    mock_append.assert_not_called()
+    mock_append.assert_called_once()
+    _, kwargs = mock_append.call_args
+    assert kwargs["symbol"] == "NIFTY"
+    assert kwargs["strategy"] == "long_call"
+    assert kwargs["action"] == "ENTER"
+    assert kwargs["intent_source"] == "vibe_basket"
+    assert kwargs["agent_id"] == "agent-1"
+    assert kwargs["widget_id"] == "tp_NIFTY_abc123def456"
 
 
 @pytest.mark.unit
