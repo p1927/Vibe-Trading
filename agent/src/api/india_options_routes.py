@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 
 AuthDep = Callable[..., Awaitable[Any] | Any]
 
+
+class SelectorPrepareWidgetRequest(BaseModel):
+    ticker: str
+    candidate: dict[str, Any]
+
 # The options_research pipeline (aggregator.py) runs several sequential
 # external-data stages (chain, events via nselib, analytics via yfinance/
 # qfinindia) — the chain stage has its own bounded timeout, but the others
@@ -536,10 +541,6 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
             "distribution_type": "physical",
             "candidates": [asdict(r) for r in results],
         }
-
-    class SelectorPrepareWidgetRequest(BaseModel):
-        ticker: str
-        candidate: dict[str, Any]
 
     @app.post("/options/india/selector/prepare-widget", dependencies=[Depends(require_auth)])
     async def options_selector_prepare_widget(body: SelectorPrepareWidgetRequest) -> dict[str, Any]:
