@@ -338,6 +338,39 @@ def execute_basket(
                     exc_info=True,
                 )
 
+            # Tag genuinely human-placed orders in outcome_ledger.py so Board 1
+            # (Advisory) has *any* downstream analytics at all — see
+            # 2026-08-25-manual-recommendation-to-order-path-audit: before this,
+            # a manual order placed from the selector/chat-widget UI never wrote
+            # an ENTER row here, so its eventual CLOSE (if ever detected via
+            # `execution_ledger.py`'s stale-position reconciliation) had no
+            # matching ENTER to pair with. `intent_source="manual_ui"` is a new,
+            # distinct tag — deliberately not `"execution_ledger"` (that tag
+            # means "closed via reconciliation," not "opened by a human," and
+            # is a mixed bag that also fires for some agent-opened positions;
+            # see that audit item for the evidence). Only tags the no-agent-at-all
+            # case — a widget carrying a non-bridge agent's `agent_id` is left
+            # alone here, a known pre-existing gap, not newly introduced.
+            agent_id_on_widget = str(widget.get("autonomous_agent_id") or widget.get("agent_id") or "").strip()
+            underlying = str(widget.get("underlying") or "").strip()
+            if not agent_id_on_widget and underlying:
+                try:
+                    from trade_integrations.autonomous_agents.outcome_ledger import append_outcome
+
+                    append_outcome(
+                        symbol=underlying,
+                        strategy=(widget.get("recommended") or {}).get("name"),
+                        action="ENTER",
+                        intent_source="manual_ui",
+                        widget_id=body.widget_id,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to record manual outcome_ledger entry for widget %s",
+                        body.widget_id,
+                        exc_info=True,
+                    )
+
     mode_label = "Paper" if execution_mode == "paper" else "Live"
     return ExecuteBasketResponse(
         status=str(body_json.get("status") or "success"),
