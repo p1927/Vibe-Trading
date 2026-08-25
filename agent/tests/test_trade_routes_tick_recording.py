@@ -38,6 +38,11 @@ def _token(monkeypatch):
 
 def test_start_recording_returns_503_without_token(monkeypatch) -> None:
     monkeypatch.delenv("SIMULATOR_CONTROL_TOKEN", raising=False)
+    # `_control_token()` falls back to this var (see
+    # [[2026-08-25-stock-simulator-control-token-not-loaded-from-root-env]]) — clearing only the
+    # unprefixed name isn't "no token configured" in any environment that loaded the root `.env`,
+    # which sets this fallback to a real credential.
+    monkeypatch.delenv("OPENALGO_SIMULATOR_CONTROL_TOKEN", raising=False)
     res = _client().post("/trade/markets/recording/start", json={"kind": "fx", "interval_seconds": 30})
     assert res.status_code == 503
     assert "SIMULATOR_CONTROL_TOKEN" in res.json()["detail"]
