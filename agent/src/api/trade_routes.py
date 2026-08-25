@@ -2482,6 +2482,37 @@ def get_index_prediction_news_impact(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@trade_router.get("/index-prediction/news-impact/factor-timeline")
+def get_index_prediction_news_factor_timeline(
+    ticker: str = "NIFTY",
+    factor_id: str = "",
+    shock_pct: float | None = None,
+    horizon_days: int = 14,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict:
+    """Single-factor up/down point-impact-over-time timeline for one top-ranked news factor.
+
+    Anchored to the current index doc's spot; no cascading/second-order effects (see
+    news_factor_scenario.py's module docstring for why).
+    """
+    key = (ticker or "NIFTY").strip().upper()
+    if not factor_id.strip():
+        raise HTTPException(status_code=400, detail="factor_id is required")
+    try:
+        from trade_integrations.dataflows import news_hub_bridge
+
+        result = news_hub_bridge.factor_scenario_timeline(
+            factor_id.strip(),
+            ticker=key,
+            shock_pct=shock_pct,
+            horizon_days=horizon_days,
+        )
+        return result
+    except Exception as exc:
+        logger.exception("index-prediction news factor-timeline failed for %s/%s", key, factor_id)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @trade_router.post("/index-prediction/news-scenarios/session", response_model=NewsScenarioSessionResponse)
 def create_news_scenario_session(
     body: NewsScenarioSessionRequest,

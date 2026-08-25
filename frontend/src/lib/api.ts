@@ -1554,6 +1554,22 @@ export const api = {
     });
     return request<IndexNewsImpactResponse>(`/trade/index-prediction/news-impact?${params}`);
   },
+  getNewsFactorScenarioTimeline: (
+    ticker = "NIFTY",
+    factorId: string,
+    shockPct?: number,
+    horizonDays = 14,
+  ) => {
+    const params = new URLSearchParams({
+      ticker,
+      factor_id: factorId,
+      horizon_days: String(horizonDays),
+    });
+    if (shockPct != null) params.set("shock_pct", String(shockPct));
+    return request<NewsFactorScenarioTimelineResponse>(
+      `/trade/index-prediction/news-impact/factor-timeline?${params}`,
+    );
+  },
   createNewsScenarioSession: (body: NewsScenarioSessionRequest) =>
     request<NewsScenarioSessionResponse>("/trade/index-prediction/news-scenarios/session", {
       method: "POST",
