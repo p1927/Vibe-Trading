@@ -363,6 +363,16 @@ def serve_main(argv: list[str] | None = None) -> int:
     except SystemExit as exc:
         return int(exc.code) if isinstance(exc.code, int) else 2
 
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.service_lock import acquire_service_lock
+
+        acquire_service_lock("vibetrading-agent", port=args.port)
+    except (ImportError, RuntimeError):
+        pass  # trade_integrations not on path (standalone vibe-trading install)
+
     if not _is_loopback_bind_host(args.host) and not _configured_api_key():
         print(
             f"[warn] Binding to {args.host} without API_AUTH_KEY set. "
