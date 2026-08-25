@@ -29,8 +29,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from src.scheduled_research.models import (
     JobStatus,
@@ -190,6 +191,54 @@ async def _recording_wake_poll_tick(store: "ScheduledResearchJobStore") -> None:
         _cancel_existing(store, job.id)
 
 
+# Circuit breaker for the rearm loop below. Without it, a recording that
+# fails almost instantly (e.g. an expired broker access token —> instrument
+# resolution 403, ``cycles: 0``) gets re-kicked every ``_POLL_INTERVAL_S``
+# forever: observed live 2026-08-25, 6 identical failed jobs (and 6
+# redundant end-of-session supplement scrapes, see
+# ``recording_supplement_worker.spawn_supplement_worker``) inside 17
+# minutes. A job that finishes within ``_FAST_FAIL_WINDOW_S`` of being
+# created with zero recorded cycles counts as a "fast failure"; after
+# ``_FAST_FAIL_STREAK_LIMIT`` of those in a row, auto-rearm pauses for
+# ``_FAST_FAIL_COOLDOWN_S`` instead of retrying every tick, then tries
+# once more (self-healing if whatever was wrong — e.g. the token — gets
+# fixed without anyone touching the Auto Record toggle).
+_FAST_FAIL_WINDOW_S = 90.0
+_FAST_FAIL_STREAK_LIMIT = 3
+_FAST_FAIL_COOLDOWN_S = 30 * 60.0
+
+_auto_rearm_state: dict[str, Any] = {
+    "pending_job_id": None,
+    "consecutive_fast_failures": 0,
+    "circuit_open_until": None,
+}
+
+
+def _job_is_fast_failure(job: dict[str, Any] | None) -> bool | None:
+    """``True`` if ``job`` finished almost immediately with nothing
+    recorded, ``False`` if it did real work, ``None`` if still in flight
+    or its outcome can't be determined (never counts against the streak)."""
+    if job is None:
+        return None
+    if job.get("status") not in ("done", "error"):
+        return None
+    result = job.get("result") or {}
+    cycles = result.get("cycles")
+    if cycles is None:
+        return None
+    if cycles > 0:
+        return False
+    created_at = job.get("created_at")
+    finished_at = job.get("_finished_at")
+    if not created_at or not finished_at:
+        return True
+    try:
+        created_ts = datetime.fromisoformat(str(created_at).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return True
+    return (float(finished_at) - created_ts) <= _FAST_FAIL_WINDOW_S
+
+
 async def _maybe_rearm_auto_record() -> None:
     """When Auto Record is on and nothing is currently recording, kick a
     fresh ``wait_for_open`` job using the persisted config template.
@@ -200,9 +249,14 @@ async def _maybe_rearm_auto_record() -> None:
     While a job is queued/waiting_for_open/running, ``get_active_job()``
     returns non-``None`` and this is a no-op — so a job that's merely
     *waiting* for tomorrow's open is not re-kicked every tick.
+
+    Also guarded by the fast-failure circuit breaker above so a
+    consistently-broken recording path (bad token, unreachable broker API)
+    can't turn into an unbounded flood of jobs + duplicate supplement
+    scrapes every 30s.
     """
     from src.trade.recording_auto import load_auto_record
-    from src.trade.recording_jobs import get_active_job, kick_recording
+    from src.trade.recording_jobs import get_active_job, get_job, kick_recording
 
     state = load_auto_record()
     if not state.get("enabled"):
@@ -214,9 +268,44 @@ async def _maybe_rearm_auto_record() -> None:
     except Exception:
         logger.exception("auto-record poller: get_active_job failed")
         return
+
+    pending_job_id = _auto_rearm_state["pending_job_id"]
+    if pending_job_id:
+        outcome = _job_is_fast_failure(get_job(pending_job_id))
+        if outcome is not None:
+            _auto_rearm_state["pending_job_id"] = None
+            if outcome:
+                _auto_rearm_state["consecutive_fast_failures"] += 1
+            else:
+                _auto_rearm_state["consecutive_fast_failures"] = 0
+
+    now = time.time()
+    circuit_open_until = _auto_rearm_state["circuit_open_until"]
+    if circuit_open_until is not None:
+        if now < circuit_open_until:
+            return
+        logger.info(
+            "auto-record poller: cooldown elapsed after %d consecutive fast "
+            "failures — retrying once",
+            _auto_rearm_state["consecutive_fast_failures"],
+        )
+        _auto_rearm_state["circuit_open_until"] = None
+        _auto_rearm_state["consecutive_fast_failures"] = 0
+    elif _auto_rearm_state["consecutive_fast_failures"] >= _FAST_FAIL_STREAK_LIMIT:
+        _auto_rearm_state["circuit_open_until"] = now + _FAST_FAIL_COOLDOWN_S
+        logger.warning(
+            "auto-record poller: %d consecutive recordings finished with 0 "
+            "cycles — pausing auto-rearm for %ds instead of retrying every "
+            "%ds (check the broker access token / connectivity)",
+            _auto_rearm_state["consecutive_fast_failures"],
+            int(_FAST_FAIL_COOLDOWN_S),
+            int(_POLL_INTERVAL_S),
+        )
+        return
+
     logger.info("auto-record poller: no active recording — re-arming for next session")
     try:
-        kick_recording(
+        job_id, _status, _reused = kick_recording(
             underlyings=list(config.get("underlyings") or []),
             equities=list(config.get("equities") or []),
             poll_interval_s=int(config.get("poll_interval_s") or 10),
@@ -226,6 +315,7 @@ async def _maybe_rearm_auto_record() -> None:
             historical_config=config.get("historical_config"),
             wait_for_open=True,
         )
+        _auto_rearm_state["pending_job_id"] = job_id
     except Exception:
         logger.exception("auto-record poller: kick_recording failed")
 

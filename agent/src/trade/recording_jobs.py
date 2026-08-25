@@ -259,6 +259,44 @@ def _write_job_to_disk_unsafe(job: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def _supplement_marker_path(session_date: str) -> Path:
+    return _jobs_root() / "_supplement" / f"{session_date}.json"
+
+
+def claim_supplement_run(session_date: str, job_id: str) -> bool:
+    """Atomically claim the right to run the end-of-session supplement
+    (``StockHistory().supplement_today``) for ``session_date``.
+
+    Returns ``True`` if this caller won the claim (no job has already run
+    or is already running today's supplement), ``False`` otherwise. Guards
+    against the fan-out where several recording jobs for the same calendar
+    date — e.g. repeated fast-failing Auto Record restarts — each
+    independently spawn the same expensive macro/flow gap-fill scrape.
+    One marker per calendar date, so it resets naturally the next day.
+    """
+    marker = _supplement_marker_path(session_date)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    if not _HAS_FCNTL:
+        if marker.is_file():
+            return False
+        marker.write_text(
+            json.dumps({"job_id": job_id, "claimed_at": _now_iso()}), encoding="utf-8"
+        )
+        return True
+    lock_path = marker.with_suffix(".lock")
+    with open(lock_path, "a+", encoding="utf-8") as lockf:
+        fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
+        try:
+            if marker.is_file():
+                return False
+            marker.write_text(
+                json.dumps({"job_id": job_id, "claimed_at": _now_iso()}), encoding="utf-8"
+            )
+            return True
+        finally:
+            fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
+
+
 def _read_job_from_disk_unsafe(job_id: str) -> dict[str, Any] | None:
     path = _job_file(job_id)
     if not path.is_file():

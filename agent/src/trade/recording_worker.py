@@ -138,16 +138,19 @@ def run_worker(job_id: str) -> None:
                 spawn_supplement_worker,
             )
 
-            spawn_supplement_worker(job_id, result.session_date)
-            jobs.append_log(
-                job_id,
-                {
-                    "stage": "supplement",
-                    "message": "spawned detached subprocess",
-                    "level": "info",
-                    "at": _now_iso(),
-                },
+            pid = spawn_supplement_worker(
+                job_id, result.session_date, cycles=result.cycles
             )
+            if pid is not None:
+                jobs.append_log(
+                    job_id,
+                    {
+                        "stage": "supplement",
+                        "message": "spawned detached subprocess",
+                        "level": "info",
+                        "at": _now_iso(),
+                    },
+                )
         except Exception as exc:
             # Spawn failure must not flip the already-``done`` job back
             # to ``error`` — operators can see the failure in

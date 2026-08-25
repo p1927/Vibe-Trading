@@ -167,7 +167,9 @@ def _agent_dir() -> Path:
     return here.parents[1]
 
 
-def spawn_supplement_worker(job_id: str, session_date: str) -> int | None:
+def spawn_supplement_worker(
+    job_id: str, session_date: str, *, cycles: int | None = None
+) -> int | None:
     """Launch the supplement as its own detached subprocess.
 
     Mirrors ``recording_jobs.spawn_worker``:
@@ -178,7 +180,55 @@ def spawn_supplement_worker(job_id: str, session_date: str) -> int | None:
         crawl4ai call is debuggable after the fact.
       - the returned PID is informational only; callers should not
         wait on it (the supplement is fire-and-forget).
+
+    Returns ``None`` (no subprocess spawned) when either guard below
+    trips instead of raising, since a skip is a normal outcome, not a
+    failure — the caller only needs to know whether to log "spawned".
+
+    ``cycles``: the just-completed recording's cycle count. ``0`` means
+    nothing was recorded (e.g. instrument resolution failed) — there is
+    nothing to supplement, so skip rather than run the scrape anyway.
+
+    Dedup: at most one supplement run per ``session_date`` regardless of
+    how many recording jobs touched that date — see
+    ``recording_jobs.claim_supplement_run``. Without this, several
+    recording jobs for the same day (e.g. Auto Record's rearm poller
+    retrying a fast-failing recording) each spawn a redundant copy of the
+    same moneycontrol/searxng scrape — observed live 2026-08-25, 6
+    duplicate scrapes in 17 minutes tripping each other's rate limits.
     """
+    from src.trade import recording_jobs as jobs
+
+    if cycles is not None and cycles <= 0:
+        jobs.append_log(
+            job_id,
+            {
+                "stage": "supplement",
+                "message": (
+                    f"skipped: recording captured 0 cycles for "
+                    f"{session_date} — nothing to supplement"
+                ),
+                "level": "info",
+                "at": _now_iso(),
+            },
+        )
+        return None
+
+    if not jobs.claim_supplement_run(session_date, job_id):
+        jobs.append_log(
+            job_id,
+            {
+                "stage": "supplement",
+                "message": (
+                    f"skipped: another job already ran the {session_date} "
+                    "supplement today"
+                ),
+                "level": "info",
+                "at": _now_iso(),
+            },
+        )
+        return None
+
     agent_dir = _agent_dir()
     log_path = _log_path(job_id)
     log_path.parent.mkdir(parents=True, exist_ok=True)
