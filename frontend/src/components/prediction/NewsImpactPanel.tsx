@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, Loader2, Newspaper, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, Loader2, Newspaper, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { NewsScenarioPathChart } from "@/components/charts/NewsScenarioPathChart";
 import {
   api,
   type IndexNewsImpactReport,
   type IndexPredictionArtifact,
   type IndexPredictionNewsPipelineHealth,
+  type NewsFactorScenarioTimelineResponse,
 } from "@/lib/api";
 
 interface Props {
@@ -78,6 +80,41 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shock
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRejected, setShowRejected] = useState(false);
+  const [expandedFactor, setExpandedFactor] = useState<string | null>(null);
+  const [factorTimelines, setFactorTimelines] = useState<
+    Record<string, { status: "loading" | "ok" | "error"; data?: NewsFactorScenarioTimelineResponse; message?: string }>
+  >({});
+
+  const toggleFactorTimeline = useCallback(
+    (factorId: string, shockPct?: number) => {
+      if (expandedFactor === factorId) {
+        setExpandedFactor(null);
+        return;
+      }
+      setExpandedFactor(factorId);
+      if (factorTimelines[factorId]) return;
+      setFactorTimelines((prev) => ({ ...prev, [factorId]: { status: "loading" } }));
+      void api
+        .getNewsFactorScenarioTimeline("NIFTY", factorId, shockPct, horizonDays)
+        .then((res) => {
+          if (res.status !== "ok") {
+            setFactorTimelines((prev) => ({
+              ...prev,
+              [factorId]: { status: "error", message: res.message || "Timeline unavailable" },
+            }));
+            return;
+          }
+          setFactorTimelines((prev) => ({ ...prev, [factorId]: { status: "ok", data: res } }));
+        })
+        .catch((e) => {
+          setFactorTimelines((prev) => ({
+            ...prev,
+            [factorId]: { status: "error", message: e instanceof Error ? e.message : "Failed to load timeline" },
+          }));
+        });
+    },
+    [expandedFactor, factorTimelines, horizonDays],
+  );
 
   const load = useCallback(
     async (refresh = false) => {
@@ -263,6 +300,40 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shock
                         </li>
                       ))}
                     </ul>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => toggleFactorTimeline(factor.factor_id, factor.calibration?.calibrated_shock_pct)}
+                    className="inline-flex items-center gap-1 text-[10px] font-medium text-foreground/70 hover:text-foreground"
+                  >
+                    {expandedFactor === factor.factor_id ? (
+                      <ChevronUp className="h-3 w-3" />
+                    ) : (
+                      <ChevronDown className="h-3 w-3" />
+                    )}
+                    {expandedFactor === factor.factor_id ? "Hide timeline" : "Show timeline"}
+                  </button>
+                  {expandedFactor === factor.factor_id ? (
+                    <div className="rounded-md border bg-background/60 p-1">
+                      {factorTimelines[factor.factor_id]?.status === "loading" ? (
+                        <p className="flex items-center gap-1 px-2 py-3 text-muted-foreground">
+                          <Loader2 className="h-3 w-3 animate-spin" /> Loading timeline…
+                        </p>
+                      ) : factorTimelines[factor.factor_id]?.status === "error" ? (
+                        <p className="px-2 py-3 text-red-600 dark:text-red-400">
+                          {factorTimelines[factor.factor_id]?.message}
+                        </p>
+                      ) : factorTimelines[factor.factor_id]?.data ? (
+                        <NewsScenarioPathChart
+                          baselinePath={factorTimelines[factor.factor_id]?.data?.baseline?.path}
+                          outcomes={factorTimelines[factor.factor_id]?.data?.outcomes}
+                          fanBand={factorTimelines[factor.factor_id]?.data?.fan_band}
+                          compact
+                          showLegend={false}
+                          height={160}
+                        />
+                      ) : null}
+                    </div>
                   ) : null}
                 </li>
               );
