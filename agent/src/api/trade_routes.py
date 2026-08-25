@@ -2515,7 +2515,9 @@ def get_index_prediction_news_impact(
 
             gate = check_ingest_allowed()
             if gate.get("blocked"):
-                report = news_hub_bridge.resolve_news_impact(ticker=key, doc=doc, limit=12)
+                report = news_hub_bridge.resolve_news_impact(
+                    ticker=key, doc=doc, limit=12, horizon_days=horizon_days
+                )
                 report = dict(report or {})
                 report["ingest_blocked"] = True
                 report["pipeline_paused"] = True
@@ -2532,7 +2534,9 @@ def get_index_prediction_news_impact(
                 include_rejected=include_rejected,
             )
         else:
-            report = news_hub_bridge.resolve_news_impact(ticker=key, doc=doc, limit=12)
+            report = news_hub_bridge.resolve_news_impact(
+                ticker=key, doc=doc, limit=12, horizon_days=horizon_days
+            )
         status = str((report or {}).get("status") or "ok")
         return IndexNewsImpactResponse(status=status, ticker=key, report=report)
     except Exception as exc:
