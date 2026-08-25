@@ -5,6 +5,7 @@ Mounted by ``agent/api_server.py`` via ``register_uploads_routes(app, ...)``.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from pathlib import Path
@@ -141,29 +142,34 @@ def register_uploads_routes(
         safe_name = f"{uuid.uuid4().hex}{ext}"
         dest = uploads_dir / safe_name
         total_size = 0
+        buffer = bytearray()
+
+        def _write_upload() -> None:
+            # Runs off the event loop via asyncio.to_thread below — the disk write is the
+            # blocking part of this handler, the chunked read above is a network read from the
+            # client and stays on the loop. See
+            # .claude/backlog/items/2026-08-25-uploads-route-blocking-file-write.md.
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(bytes(buffer))
 
         try:
-            uploads_dir.mkdir(parents=True, exist_ok=True)
-            with dest.open("wb") as handle:
-                while True:
-                    chunk = await file.read(chunk_size)
-                    if not chunk:
-                        break
-                    total_size += len(chunk)
-                    if total_size > max_size:
-                        handle.close()
-                        if dest.exists():
-                            dest.unlink()
-                        raise HTTPException(
-                            status_code=413,
-                            detail=f"File too large (limit {max_size // (1024 * 1024)} MB)",
-                        )
-                    handle.write(chunk)
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                total_size += len(chunk)
+                if total_size > max_size:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File too large (limit {max_size // (1024 * 1024)} MB)",
+                    )
+                buffer.extend(chunk)
+            await asyncio.to_thread(_write_upload)
         except HTTPException:
             raise
         except OSError as exc:
             if dest.exists():
-                dest.unlink()
+                await asyncio.to_thread(dest.unlink)
             raise HTTPException(
                 status_code=500,
                 detail="Upload failed while storing the file. Please retry or choose a different file.",
