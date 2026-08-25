@@ -494,6 +494,61 @@ def get_active_job() -> dict[str, Any] | None:
     return _job_snapshot(job)
 
 
+def _active_job_lock_file() -> Path:
+    return _jobs_root() / "_active.lock"
+
+
+@contextmanager
+def _active_job_creation_lock():
+    """Cross-process exclusive lock guarding recording-job creation.
+
+    ``_ACTIVE_JOB_ID`` is only an in-process cache; without this lock, two
+    separate process invocations of ``start_job`` (two ad-hoc scripts, or
+    a persistent server plus a one-off script) can each observe "no
+    active job in my memory" and both create one, since neither can see
+    the other's in-memory state. Reproduced live 2026-08-25: 5
+    concurrently-running recording jobs for the identical underlyings,
+    each started from a process that had no idea about the others.
+    """
+    lock_path = _active_job_lock_file()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if not _HAS_FCNTL:
+        yield
+        return
+    with open(lock_path, "a+", encoding="utf-8") as lockf:
+        fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
+
+
+def _find_live_active_job_on_disk() -> dict[str, Any] | None:
+    """Ground truth scan across every job dir for one whose worker is
+    actually alive — what an in-memory-only check can't see when called
+    from a process that just started. Along the way, reconciles (fails)
+    any job still marked active on disk whose worker has actually died,
+    so a stale row left by a crashed process can't wedge the lock
+    forever. Must be called while holding ``_active_job_creation_lock``.
+    """
+    root = _jobs_root()
+    if not root.is_dir():
+        return None
+    live: dict[str, Any] | None = None
+    for path in sorted(root.iterdir()):
+        if not path.is_dir() or not job_id_valid(path.name):
+            continue
+        job = _read_job_from_disk(path.name)
+        if job is None or job.get("status") not in _ACTIVE_STATUSES:
+            continue
+        if worker_alive(job):
+            if live is None:
+                live = job
+        else:
+            fail_job(str(job.get("job_id")), "worker process exited unexpectedly")
+    return live
+
+
 def start_job(
     *,
     underlyings: list[str],
@@ -527,65 +582,84 @@ def start_job(
     """
     global _ACTIVE_JOB_ID
     _prune_old_jobs()
-    with _JOBS_LOCK:
-        existing_id = _ACTIVE_JOB_ID
-        existing_mem = RECORDING_JOBS.get(existing_id) if existing_id else None
 
-    if existing_id:
-        existing = existing_mem or _read_job_from_disk(existing_id)
-        if existing and existing.get("status") in _ACTIVE_STATUSES:
-            if existing.get("worker_pid") is not None and not worker_alive(existing):
-                fail_job(existing_id, "worker process exited unexpectedly")
-            else:
-                with _JOBS_LOCK:
-                    if existing_id not in RECORDING_JOBS:
-                        RECORDING_JOBS[existing_id] = existing
-                return existing_id, True
+    # Cross-process critical section: everything from "is anything else
+    # active" through "persist the new job" must be atomic w.r.t. any
+    # other process calling start_job concurrently, or two processes can
+    # each see "nothing active" and both create one (see docstring on
+    # ``_active_job_creation_lock``).
+    with _active_job_creation_lock():
+        with _JOBS_LOCK:
+            existing_id = _ACTIVE_JOB_ID
+            existing_mem = RECORDING_JOBS.get(existing_id) if existing_id else None
 
-    job_id = uuid.uuid4().hex
-    job = {
-        "job_id": job_id,
-        "status": "queued",
-        "underlyings": list(underlyings),
-        "equities": list(equities or []),
-        "poll_interval_s": int(poll_interval_s),
-        # Persist as None for legacy callers so the snapshot truthfully
-        # reports "no per-category config" rather than a synthesised map.
-        "category_intervals": (
-            {k: int(v) for k, v in category_intervals.items()}
-            if category_intervals
-            else None
-        ),
-        "equity_intervals": (
-            {k: int(v) for k, v in equity_intervals.items()}
-            if equity_intervals
-            else None
-        ),
-        "ws_throttle_hz": (
-            float(ws_throttle_hz) if ws_throttle_hz and ws_throttle_hz > 0 else None
-        ),
-        "historical_config": (
-            {"interval": str(historical_config["interval"]),
-             "lookback_days": int(historical_config["lookback_days"])}
-            if historical_config
-            and "interval" in historical_config
-            and "lookback_days" in historical_config
-            else None
-        ),
-        "wait_for_open": bool(wait_for_open),
-        "created_at": _now_iso(),
-        "logs": [],
-        "session_date": None,
-        "result": None,
-        "error": None,
-        "worker_pid": None,
-        "_finished_at": None,
-    }
-    with _JOBS_LOCK:
-        RECORDING_JOBS[job_id] = job
-        _ACTIVE_JOB_ID = job_id
-    _write_job_to_disk(job)
-    return job_id, False
+        if existing_id:
+            existing = existing_mem or _read_job_from_disk(existing_id)
+            if existing and existing.get("status") in _ACTIVE_STATUSES:
+                if existing.get("worker_pid") is not None and not worker_alive(existing):
+                    fail_job(existing_id, "worker process exited unexpectedly")
+                else:
+                    with _JOBS_LOCK:
+                        if existing_id not in RECORDING_JOBS:
+                            RECORDING_JOBS[existing_id] = existing
+                    return existing_id, True
+
+        # This process's memory had nothing active — but another process
+        # may have created a still-live job we've simply never heard of.
+        # Ground-truth that against disk before deciding it's safe to
+        # create a new one.
+        disk_active = _find_live_active_job_on_disk()
+        if disk_active is not None:
+            disk_job_id = str(disk_active["job_id"])
+            with _JOBS_LOCK:
+                RECORDING_JOBS[disk_job_id] = disk_active
+                _ACTIVE_JOB_ID = disk_job_id
+            return disk_job_id, True
+
+        job_id = uuid.uuid4().hex
+        job = {
+            "job_id": job_id,
+            "status": "queued",
+            "underlyings": list(underlyings),
+            "equities": list(equities or []),
+            "poll_interval_s": int(poll_interval_s),
+            # Persist as None for legacy callers so the snapshot truthfully
+            # reports "no per-category config" rather than a synthesised map.
+            "category_intervals": (
+                {k: int(v) for k, v in category_intervals.items()}
+                if category_intervals
+                else None
+            ),
+            "equity_intervals": (
+                {k: int(v) for k, v in equity_intervals.items()}
+                if equity_intervals
+                else None
+            ),
+            "ws_throttle_hz": (
+                float(ws_throttle_hz) if ws_throttle_hz and ws_throttle_hz > 0 else None
+            ),
+            "historical_config": (
+                {"interval": str(historical_config["interval"]),
+                 "lookback_days": int(historical_config["lookback_days"])}
+                if historical_config
+                and "interval" in historical_config
+                and "lookback_days" in historical_config
+                else None
+            ),
+            "wait_for_open": bool(wait_for_open),
+            "created_at": _now_iso(),
+            "logs": [],
+            "session_date": None,
+            "result": None,
+            "error": None,
+            "worker_pid": None,
+            "_finished_at": None,
+        }
+        with _JOBS_LOCK:
+            RECORDING_JOBS[job_id] = job
+            _ACTIVE_JOB_ID = job_id
+        _write_job_to_disk(job)
+        return job_id, False
 
 
 def kick_recording(
