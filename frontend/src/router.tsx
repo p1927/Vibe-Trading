@@ -23,6 +23,9 @@ const Autonomous = lazy(() =>
 const AgentBoard = lazy(() =>
   import("@/pages/AgentBoard").then((m) => ({ default: m.AgentBoard })),
 );
+const AdvisoryBoard = lazy(() =>
+  import("@/pages/AdvisoryBoard").then((m) => ({ default: m.AdvisoryBoard })),
+);
 const Reports = lazy(() =>
   import("@/pages/Reports").then((m) => ({ default: m.Reports })),
 );
@@ -78,6 +81,7 @@ export const router = createBrowserRouter([
       { path: "/agent", element: <Agent /> },
       { path: "/autonomous", element: wrap(Autonomous) },
       { path: "/agent-board", element: wrap(AgentBoard) },
+      { path: "/advisory-board", element: wrap(AdvisoryBoard) },
       { path: "/runtime", element: wrap(Runtime) },
       { path: "/scheduled", element: wrap(Scheduled) },
       { path: "/reports", element: wrap(Reports) },

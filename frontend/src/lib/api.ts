@@ -1771,6 +1771,18 @@ export const api = {
       `/board/model-version-timeline${qs ? `?${qs}` : ""}`,
     );
   },
+
+  // --- Board 1 (Advisory) — 2026-08-25-advisory-board-live-prediction-approve-reject-ui ---
+  getAdvisoryCandidates: () => request<AdvisoryCandidatesResponse>("/board/advisory/candidates"),
+  prepareAdvisoryWidget: (body: { ticker: string; strategyName?: string }) =>
+    request<AdvisoryPrepareResponse>("/board/advisory/approve", {
+      method: "POST",
+      body: JSON.stringify({ ticker: body.ticker, strategy_name: body.strategyName }),
+      // Building a widget can run fresh options research when no fresh cache exists
+      // (build_options_trade_widget -> ensure_research_complete) — same 60s allowance as
+      // getIndiaOptionsSelector's "scoring the live chain can take up to a minute".
+      timeoutMs: 60_000,
+    }),
 };
 
 // --- Scheduled research types ---
@@ -6158,4 +6170,39 @@ export interface ModelVersionTimelineEntry {
 
 export interface ModelVersionTimelineResponse {
   timeline: ModelVersionTimelineEntry[];
+}
+
+// --- Board 1 (Advisory) — 2026-08-25-advisory-board-live-prediction-approve-reject-ui ---
+
+export interface AdvisoryConfidence {
+  ticker: string;
+  confidence: number | null;
+  direction: string | null;
+  last_updated: string | null;
+  is_stale: boolean;
+}
+
+/** One ranked, scenario-weighted candidate strategy from `score_ranked_strategies` —
+ * a thinner shape than the options-selector `SelectorCandidate` (no legs/PoP/max-profit,
+ * just the net expected-value figures the ranker itself scores candidates on). */
+export interface AdvisoryCandidate {
+  name: string;
+  base_score: number;
+  ev_inr: number;
+  net_ev_inr: number;
+  max_loss_inr: number | null;
+  confidence_adjusted_score: number;
+}
+
+export interface AdvisoryTickerCandidates {
+  confidence: AdvisoryConfidence;
+  candidates: AdvisoryCandidate[];
+}
+
+export type AdvisoryCandidatesResponse = Record<string, AdvisoryTickerCandidates>;
+
+export interface AdvisoryPrepareResponse {
+  widget_id: string;
+  orders: Record<string, unknown>[];
+  widget: Record<string, unknown>;
 }

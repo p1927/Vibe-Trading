@@ -306,6 +306,10 @@ app.include_router(autonomous_router)
 from src.api.board_routes import board_router  # noqa: E402
 app.include_router(board_router)
 
+# --- Advisory board (Board 1) live candidates + approve (2026-08-25-advisory-board-live-prediction-approve-reject-ui) ---
+from src.api.advisory_routes import advisory_router  # noqa: E402
+app.include_router(advisory_router)
+
 # --- Alpha Zoo ---
 from src.api.alpha_routes import register_alpha_routes  # noqa: E402
 register_alpha_routes(app)
