@@ -85,6 +85,75 @@ _AGENT_STYLES = ["cyan", "magenta", "green", "yellow", "blue", "bright_red", "br
 _agent_color_map: dict[str, str] = {}
 
 
+def _trade_stack_root() -> Optional[Path]:
+    """Walk up from this file looking for the Trade monorepo's launch.json.
+
+    Only fires for an in-place checkout (including an editable install of
+    this package from within it) — a real standalone pip install elsewhere
+    has no such ancestor and this returns None.
+    """
+    for parent in AGENT_DIR.parents:
+        if (parent / ".claude" / "launch.json").is_file():
+            return parent
+    return None
+
+
+def _trade_stack_launch_ports(root: Path) -> set[int]:
+    try:
+        data = json.loads((root / ".claude" / "launch.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    ports: set[int] = set()
+    for cfg in data.get("configurations", []) or []:
+        port = cfg.get("port")
+        if isinstance(port, int):
+            ports.add(port)
+    return ports
+
+
+def _refuse_if_monorepo_port_squat(port: int, invocation: str) -> Optional[int]:
+    """Refuse to bind ``port`` if this is a rogue standalone invocation of
+    this CLI inside the Trade monorepo, squatting a port ``.claude/launch.json``
+    already assigns to a stack-managed service.
+
+    ``trade``'s own stack scripts set ``TRADE_STACK_MANAGED=1`` before
+    launching this CLI, so those legitimate launches always pass. This
+    guards against exactly what it says: someone running
+    ``vibe-trading serve``/``vibe-trading dev`` by hand inside this checkout,
+    which independently defaults to the same 8899/5899 ports as
+    launch.json and can silently squat them with an unmanaged process — see
+    ``.claude/backlog`` for the incident this was written to prevent.
+    """
+    if os.environ.get("TRADE_STACK_MANAGED") == "1":
+        return None
+    if os.environ.get("VIBE_TRADING_ALLOW_STANDALONE") == "1":
+        return None
+    root = _trade_stack_root()
+    if root is None:
+        return None
+    if port not in _trade_stack_launch_ports(root):
+        return None
+    console.print(
+        Panel(
+            f"[red]Refusing to bind :{port}[/red] — this checkout is the Trade "
+            f"monorepo and [cyan].claude/launch.json[/cyan] already assigns :{port} "
+            "to a stack-managed service.\n\n"
+            f"Running [bold]vibe-trading {invocation}[/bold] directly here bypasses "
+            "stack bookkeeping (env sync, port-claim tracking, dependency startup) "
+            "and can squat the port with an unmanaged process.\n\n"
+            "[dim]Use instead:[/dim]\n"
+            "  [cyan]./trade dev[/cyan]   (hot-reload dev mode)\n"
+            "  [cyan]./trade up[/cyan]    (background stack)\n\n"
+            "[dim]Running vibe-trading standalone here on purpose (e.g. isolated "
+            "testing)? Set VIBE_TRADING_ALLOW_STANDALONE=1 to bypass this check.[/dim]",
+            title="vibe-trading",
+            border_style="red",
+            padding=(0, 1),
+        )
+    )
+    return EXIT_USAGE_ERROR
+
+
 def _truncate_swarm_vars_preview(value: str) -> str:
     """Return a compact preview for a CLI JSON token."""
     if len(value) <= SWARM_RUN_VARS_PREVIEW_CHARS:
@@ -252,6 +321,13 @@ def _read_input(prompt_session: Any, prompt_str: str = "> ") -> str:
 
 def serve_main(argv: list[str] | None = None) -> int:
     """Delegate server startup to api_server."""
+    port_parser = argparse.ArgumentParser(add_help=False)
+    port_parser.add_argument("--port", type=int, default=8000)
+    port_ns, _ = port_parser.parse_known_args(argv or [])
+    blocked = _refuse_if_monorepo_port_squat(port_ns.port, f"serve --port {port_ns.port}")
+    if blocked is not None:
+        return blocked
+
     from api_server import serve_main as api_serve_main
 
     return api_serve_main(argv)
@@ -5744,6 +5820,12 @@ def cmd_dev(
     with the dev banner. ``Ctrl+C`` (SIGINT) and ``SIGTERM`` cleanly
     terminate both children.
     """
+    blocked = _refuse_if_monorepo_port_squat(
+        backend_port, f"dev --port {backend_port} --frontend-port {frontend_port}"
+    )
+    if blocked is not None:
+        return blocked
+
     frontend_dir = frontend_dir or (AGENT_DIR.parent / "frontend")
     if not frontend_dir.exists():
         console.print(

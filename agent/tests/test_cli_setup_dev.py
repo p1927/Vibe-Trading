@@ -143,6 +143,14 @@ class TestCmdDev:
     5173, and launch the backend from AGENT_DIR so the in-repo `cli`
     package is importable."""
 
+    @pytest.fixture(autouse=True)
+    def _bypass_monorepo_squat_guard(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # These tests unit-test cmd_dev's own spawn/cleanup logic against
+        # mocked subprocesses; they aren't exercising (and would otherwise
+        # spuriously trip) the standalone-invocation guard added for the
+        # rogue-port-squat backlog item.
+        monkeypatch.setenv("VIBE_TRADING_ALLOW_STANDALONE", "1")
+
     def test_default_frontend_port_is_5899(self, tmp_path: Path) -> None:
         """Hardcoded wrong-port regression: this is the value users see
         in the banner. Vite config sets 5899; we must not print 5173."""
