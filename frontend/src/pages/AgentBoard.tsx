@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import {
   api,
   type AgentBoardHindsightSummary,
@@ -12,6 +13,11 @@ import { AgentPnlCurveChart, type PnlSeries } from "@/components/board/AgentPnlC
 import { cn } from "@/lib/utils";
 
 const CANDIDATE_COLORS = ["#3b82f6", "#8b5cf6", "#f59e0b", "#14b8a6", "#ec4899", "#6366f1"];
+
+// This board's data changes per-closed-trade, not per-tick like Autonomous.tsx's runtime
+// strip (RUNTIME_POLL_MS=15s there) — a slower interval is enough to avoid staleness
+// without polling 5 endpoints needlessly often.
+const BOARD_POLL_MS = 60_000;
 
 function fmtInr(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -95,7 +101,10 @@ export function AgentBoard() {
   }, []);
 
   useEffect(() => {
-    if (agentId) loadBoard(agentId);
+    if (!agentId) return;
+    loadBoard(agentId);
+    const timer = window.setInterval(() => loadBoard(agentId), BOARD_POLL_MS);
+    return () => window.clearInterval(timer);
   }, [agentId, loadBoard]);
 
   const wealthSeries: PnlSeries[] = [
@@ -130,18 +139,30 @@ export function AgentBoard() {
             performance for one autonomous agent.
           </p>
         </div>
-        <select
-          value={agentId}
-          onChange={(e) => setAgentId(e.target.value)}
-          className="rounded-md border bg-background px-3 py-2 text-sm"
-        >
-          {agents.length === 0 ? <option value="">No agents</option> : null}
-          {agents.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name || a.id}
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <select
+            value={agentId}
+            onChange={(e) => setAgentId(e.target.value)}
+            className="rounded-md border bg-background px-3 py-2 text-sm"
+          >
+            {agents.length === 0 ? <option value="">No agents</option> : null}
+            {agents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name || a.id}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => agentId && loadBoard(agentId)}
+            disabled={!agentId || loading}
+            title="Refresh now"
+            aria-label="Refresh now"
+            className="rounded-md border bg-background p-2 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+          >
+            <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+          </button>
+        </div>
       </div>
 
       {error ? (
