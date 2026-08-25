@@ -359,6 +359,43 @@ def execute_basket(
             # 2026-08-25-non-bridge-agent-widget-execute-basket-untagged.
             agent_id_on_widget = str(widget.get("autonomous_agent_id") or widget.get("agent_id") or "").strip()
             underlying = str(widget.get("underlying") or "").strip()
+
+            # Persist this strategy's risk/profit-at-entry to OpenAlgo's portfolio ledger
+            # (StrategyRiskProfile) now that its basket order has actually gone in — see
+            # .claude/backlog/items/2026-08-26-selector-not-writing-strategy-risk-profile.md.
+            # `set_strategy_risk_profile`'s own `/riskprofile` REST endpoint had zero
+            # production callers before this: module 5's selector computes max_loss/max_profit
+            # per candidate already (carried on the widget's `recommended` block by
+            # `/options/india/selector/prepare-widget`), but nothing downstream ever wrote it
+            # to the ledger — so module 9's capital-at-risk rollup only ever reflected manually
+            # entered sandbox trades. `max_loss` is a PnL figure (negative), `max_risk` the
+            # ledger's own convention is a non-negative magnitude — same `abs()` the payoff
+            # engine's own callers already apply. Best-effort: a failure here must not undo an
+            # order that has already been placed, so it's caught and logged like every other
+            # post-execution side effect in this block.
+            recommended = widget.get("recommended") or {}
+            max_loss = recommended.get("max_loss")
+            if body.strategy and max_loss is not None:
+                try:
+                    from trade_integrations.openalgo.rest_client import get_rest_client
+
+                    get_rest_client(host=host, api_key=api_key).post(
+                        "riskprofile",
+                        {
+                            "apikey": api_key,
+                            "strategy": body.strategy,
+                            "max_risk": abs(float(max_loss)),
+                            "max_profit": recommended.get("max_profit"),
+                        },
+                        timeout=15,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to record strategy risk profile for widget %s",
+                        body.widget_id,
+                        exc_info=True,
+                    )
+
             if underlying:
                 try:
                     from trade_integrations.autonomous_agents.outcome_ledger import append_outcome
