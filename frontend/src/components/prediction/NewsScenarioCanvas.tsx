@@ -155,12 +155,12 @@ export function NewsScenarioCanvas({
             <div>
               <p className="mb-2 text-[11px] font-medium text-muted-foreground">Outcome branches</p>
               <div className="flex flex-wrap gap-2">
-                {outcomes.map((outcome) => {
+                {outcomes.map((outcome, index) => {
                   const id = outcome.id || outcome.label || "";
                   const active = Boolean(activeOutcomeId && id === activeOutcomeId);
                   return (
                     <button
-                      key={id}
+                      key={id ? `${id}-${index}` : index}
                       type="button"
                       disabled={disabled || !id || !onOutcomeSelect}
                       onClick={() => id && onOutcomeSelect?.(id)}
