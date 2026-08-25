@@ -15,14 +15,22 @@ import pytest
 from fastapi.testclient import TestClient
 
 import api_server
-import trade_integrations.context.hub as hub_context
 from trade_integrations.autonomous_agents.store import save_agent
 
 
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """Isolated hub dir via ``TRADE_STACK_HUB_DIR`` (not attribute-patching
+    ``hub_context.get_hub_dir`` directly) — ``get_hub_dir()`` reads the env var fresh on
+    every call, so this isolates every caller regardless of which module imported the
+    name. The attribute-patch form used here previously did NOT isolate `weight_model`
+    (`store.py`/`proposals.py` both do ``from trade_integrations.context.hub import
+    get_hub_dir``, a name binding immune to patching the source module's attribute) —
+    confirmed live to silently write real test data into the production hub dir. See
+    .claude/backlog/items/2026-08-24-recurring-test-order-flakiness-pattern.md for the
+    same fragility pattern in a different test file."""
     tmp = Path(tempfile.mkdtemp(prefix="board_routes_test_"))
-    monkeypatch.setattr(hub_context, "get_hub_dir", lambda: tmp)
+    monkeypatch.setenv("TRADE_STACK_HUB_DIR", str(tmp))
     monkeypatch.setattr(api_server, "_API_KEY", "")
     return TestClient(api_server.app, client=("127.0.0.1", 50000))
 
@@ -118,3 +126,66 @@ def test_model_version_timeline_omitting_agent_id_does_not_require_an_agent(clie
     # No agent created at all in this test -- must not 404 just because agent_id was omitted.
     response = client.get("/board/model-version-timeline")
     assert response.status_code == 200
+
+
+def test_pending_weight_proposals_empty_when_none_proposed(client: TestClient) -> None:
+    response = client.get("/board/weight-proposals")
+
+    assert response.status_code == 200
+    assert response.json() == {"proposals": []}
+
+
+def test_pending_weight_proposals_lists_a_real_proposal(client: TestClient) -> None:
+    from trade_integrations.weight_model import REGISTRY, propose_weight_adjustment
+
+    weight_id = next(iter(REGISTRY))
+    spec = REGISTRY[weight_id]
+    proposed_value = round(min(spec.max_value, spec.default + 0.01), 6)
+    propose_weight_adjustment(weight_id, proposed_value, rationale="test proposal")
+
+    response = client.get("/board/weight-proposals")
+
+    assert response.status_code == 200
+    proposals = response.json()["proposals"]
+    assert len(proposals) == 1
+    assert proposals[0]["weight_id"] == weight_id
+    assert proposals[0]["status"] == "pending"
+
+
+def test_apply_weight_proposal_promotes_it_to_the_live_store(client: TestClient) -> None:
+    from trade_integrations.weight_model import REGISTRY, get_weight, propose_weight_adjustment
+
+    weight_id = next(iter(REGISTRY))
+    spec = REGISTRY[weight_id]
+    proposed_value = round(min(spec.max_value, spec.default + 0.01), 6)
+    created = propose_weight_adjustment(weight_id, proposed_value, rationale="test proposal")
+    proposal_id = created["proposal"]["id"]
+
+    response = client.post(f"/board/weight-proposals/{proposal_id}/apply")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["proposal"]["status"] == "applied"
+    assert get_weight(weight_id) == proposed_value
+
+
+def test_apply_unknown_weight_proposal_is_a_client_error(client: TestClient) -> None:
+    response = client.post("/board/weight-proposals/does-not-exist/apply")
+    assert response.status_code == 400
+
+
+def test_apply_already_applied_weight_proposal_is_a_client_error(client: TestClient) -> None:
+    from trade_integrations.weight_model import REGISTRY, propose_weight_adjustment
+
+    weight_id = next(iter(REGISTRY))
+    spec = REGISTRY[weight_id]
+    proposed_value = round(min(spec.max_value, spec.default + 0.01), 6)
+    created = propose_weight_adjustment(weight_id, proposed_value, rationale="test proposal")
+    proposal_id = created["proposal"]["id"]
+
+    first = client.post(f"/board/weight-proposals/{proposal_id}/apply")
+    assert first.status_code == 200
+
+    second = client.post(f"/board/weight-proposals/{proposal_id}/apply")
+    assert second.status_code == 400

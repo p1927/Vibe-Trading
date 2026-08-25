@@ -1771,6 +1771,15 @@ export const api = {
       `/board/model-version-timeline${qs ? `?${qs}` : ""}`,
     );
   },
+  getPendingWeightProposals: (weightId?: string) => {
+    const q = weightId ? `?weight_id=${encodeURIComponent(weightId)}` : "";
+    return request<PendingWeightProposalsResponse>(`/board/weight-proposals${q}`);
+  },
+  applyWeightProposal: (proposalId: string) =>
+    request<ApplyWeightProposalResponse>(
+      `/board/weight-proposals/${encodeURIComponent(proposalId)}/apply`,
+      { method: "POST" },
+    ),
 
   // --- Board 1 (Advisory) — 2026-08-25-advisory-board-live-prediction-approve-reject-ui ---
   getAdvisoryCandidates: () => request<AdvisoryCandidatesResponse>("/board/advisory/candidates"),
@@ -6170,6 +6179,28 @@ export interface ModelVersionTimelineEntry {
 
 export interface ModelVersionTimelineResponse {
   timeline: ModelVersionTimelineEntry[];
+}
+
+export interface PendingWeightProposal {
+  id: string;
+  weight_id: string;
+  created_at: string;
+  status: string;
+  current_value: number;
+  proposed_value: number;
+  rationale: string;
+  source_run_id: string | null;
+  source_metrics: Record<string, number>;
+  applied_at: string | null;
+}
+
+export interface PendingWeightProposalsResponse {
+  proposals: PendingWeightProposal[];
+}
+
+export interface ApplyWeightProposalResponse {
+  status: string;
+  proposal: PendingWeightProposal;
 }
 
 // --- Board 1 (Advisory) — 2026-08-25-advisory-board-live-prediction-approve-reject-ui ---

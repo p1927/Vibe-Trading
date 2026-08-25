@@ -8,6 +8,7 @@ import {
   type AgentBoardHindsightCurve,
   type AutonomousAgentInstance,
   type ModelVersionTimelineEntry,
+  type PendingWeightProposal,
 } from "@/lib/api";
 import { AgentPnlCurveChart, type PnlSeries } from "@/components/board/AgentPnlCurveChart";
 import { cn } from "@/lib/utils";
@@ -60,6 +61,9 @@ export function AgentBoard() {
   const [hindsight, setHindsight] = useState<AgentBoardHindsightSummary | null>(null);
   const [hindsightCurves, setHindsightCurves] = useState<AgentBoardHindsightCurve[]>([]);
   const [timeline, setTimeline] = useState<ModelVersionTimelineEntry[]>([]);
+  const [proposals, setProposals] = useState<PendingWeightProposal[]>([]);
+  const [applyingId, setApplyingId] = useState<string | null>(null);
+  const [proposalError, setProposalError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -106,6 +110,37 @@ export function AgentBoard() {
     const timer = window.setInterval(() => loadBoard(agentId), BOARD_POLL_MS);
     return () => window.clearInterval(timer);
   }, [agentId, loadBoard]);
+
+  // Pending weight proposals are global to weight_model, not scoped to one agent — load
+  // independently of the agent picker above.
+  const loadProposals = useCallback(() => {
+    api
+      .getPendingWeightProposals()
+      .then((res) => setProposals(res.proposals))
+      .catch(() => setProposalError("Failed to load pending weight proposals."));
+  }, []);
+
+  useEffect(() => {
+    loadProposals();
+    const timer = window.setInterval(loadProposals, BOARD_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadProposals]);
+
+  const applyProposal = useCallback(
+    (proposalId: string) => {
+      setApplyingId(proposalId);
+      setProposalError(null);
+      api
+        .applyWeightProposal(proposalId)
+        .then(() => {
+          loadProposals();
+          if (agentId) loadBoard(agentId);
+        })
+        .catch(() => setProposalError(`Failed to apply proposal ${proposalId}.`))
+        .finally(() => setApplyingId(null));
+    },
+    [agentId, loadBoard, loadProposals],
+  );
 
   const wealthSeries: PnlSeries[] = [
     {
@@ -170,6 +205,62 @@ export function AgentBoard() {
           {error}
         </div>
       ) : null}
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-medium text-muted-foreground">
+          Pending weight proposals
+          {proposals.length > 0 ? ` (${proposals.length})` : ""}
+        </h2>
+        {proposalError ? (
+          <div className="rounded-xl border border-red-500/40 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">
+            {proposalError}
+          </div>
+        ) : null}
+        {proposals.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-border/60 bg-muted/10 p-4 text-center text-[11px] text-muted-foreground">
+            No pending weight proposals — every self-learning recalibration is either
+            already applied or below its clamped-change threshold.
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border bg-card">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b bg-muted/40 text-[11px] uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2">Proposed</th>
+                  <th className="px-3 py-2">Weight</th>
+                  <th className="px-3 py-2">Change</th>
+                  <th className="px-3 py-2">Rationale</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {proposals.map((p) => (
+                  <tr key={p.id} className="border-b last:border-0 align-top">
+                    <td className="px-3 py-2 text-xs text-muted-foreground">
+                      {new Date(p.created_at).toLocaleString("en-IN")}
+                    </td>
+                    <td className="px-3 py-2 font-medium">{p.weight_id}</td>
+                    <td className="px-3 py-2">
+                      {p.current_value.toFixed(3)} → {p.proposed_value.toFixed(3)}
+                    </td>
+                    <td className="px-3 py-2 max-w-md text-xs text-muted-foreground">{p.rationale}</td>
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => applyProposal(p.id)}
+                        disabled={applyingId === p.id}
+                        className="rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50"
+                      >
+                        {applyingId === p.id ? "Applying…" : "Apply"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {!agentId ? (
         <div className="rounded-xl border border-dashed border-border/60 bg-muted/10 p-6 text-center text-sm text-muted-foreground">

@@ -3,11 +3,23 @@
 the autonomous agent alongside what it actually did, shadow-track P&L, multi-candidate
 hindsight comparison, and the weight-change-vs-performance timeline.
 
-Deliberately a read-only display layer over `autonomous_agents.shadow_pnl`/`shadow_strategy`/
+Mostly a read-only display layer over `autonomous_agents.shadow_pnl`/`shadow_strategy`/
 `model_version_timeline` and `weight_model` — it doesn't itself decide or execute anything, per
 the backlog item's own scope. Same pattern as `autonomous_routes.py`: deferred imports of
 `trade_integrations.*` inside each handler body, plain dict returns, 404 via `HTTPException`
 for an unknown agent.
+
+The one exception is `apply_weight_proposal` below (2026-08-25-weight-model-proposals-no-
+review-surface): `weight_model.propose_weight_adjustment` can generate real pending proposals
+(e.g. from `options_research.self_learning.evaluate_options_pop_drift`, wired into the morning
+calibration job) but until this route existed there was no way for a human to ever see or act
+on one except a Python shell — a proposal nobody can see is equivalent to no proposal at all.
+This is a real write path (it changes a live weight via `weight_model.store.set_weight`), gated
+the same way the module itself already gates it: `apply_pending_weight_proposal` never auto-
+applies, only promotes a proposal a human explicitly clicked "Apply" on, and re-validates the
+proposal's bounds before writing — this route adds no additional confirmation of its own
+because clicking a named "Apply" button on a specific proposal already *is* the explicit human
+action the module's whole design requires.
 """
 
 from __future__ import annotations
@@ -88,3 +100,25 @@ def get_model_version_timeline(
         agent_id=agent_id, weight_id=weight_id, window_days=window_days
     )
     return {"timeline": timeline}
+
+
+@board_router.get("/weight-proposals")
+def get_pending_weight_proposals(weight_id: Optional[str] = None) -> Dict[str, Any]:
+    """Every pending `weight_model` proposal awaiting human review — the counterpart to
+    `/model-version-timeline`'s already-applied history."""
+    from trade_integrations.weight_model import list_pending_weight_proposals
+
+    return {"proposals": list_pending_weight_proposals(weight_id=weight_id)}
+
+
+@board_router.post("/weight-proposals/{proposal_id}/apply")
+def apply_weight_proposal(proposal_id: str) -> Dict[str, Any]:
+    """Promote one pending proposal into the live weight store. See module docstring for
+    why no extra confirmation is added here beyond `apply_pending_weight_proposal`'s own
+    bounds re-validation."""
+    from trade_integrations.weight_model import apply_pending_weight_proposal
+
+    result = apply_pending_weight_proposal(proposal_id)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("error") or "apply failed")
+    return result
