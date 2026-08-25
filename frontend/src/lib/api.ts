@@ -1792,6 +1792,10 @@ export const api = {
       // getIndiaOptionsSelector's "scoring the live chain can take up to a minute".
       timeoutMs: 60_000,
     }),
+
+  // --- Live positions forecast board — 2026-08-25-live-positions-forecast-band-board ---
+  getAgentLivePositions: (agentId: string) =>
+    request<AgentLivePositionsResponse>(`/board/positions/${encodeURIComponent(agentId)}`),
 };
 
 // --- Scheduled research types ---
@@ -6236,4 +6240,52 @@ export interface AdvisoryPrepareResponse {
   widget_id: string;
   orders: Record<string, unknown>[];
   widget: Record<string, unknown>;
+}
+
+// --- Live positions forecast board — 2026-08-25-live-positions-forecast-band-board ---
+
+export interface LivePositionLeg {
+  symbol: string;
+  exchange: string;
+  option_type: string;
+  strike: number;
+  side: string;
+  quantity: number;
+  entry_premium: number;
+  close_price: number;
+}
+
+export interface LivePositionForecastBandPoint {
+  days_ahead: number;
+  pnl_p10_inr: number;
+  pnl_p50_inr: number;
+  pnl_p90_inr: number;
+}
+
+export interface LivePositionGroup {
+  underlying: string;
+  expiry_days: number;
+  legs_count: number;
+  live_spot: number;
+  legs: LivePositionLeg[];
+  live_iv_pct: number;
+  forecast_horizon_days: number;
+  forecast_as_of: string | null;
+  forecast_stale_days: number | null;
+  probability_of_profit: number;
+  /** [0] is today's real observed P&L; [1] is the terminal-day mean/p5 summary
+   * (`expected_pnl_inr`/`pnl_p10_inr`/`worst_5pct_pnl_inr`) rotate_comparison.py reads. */
+  trajectory: Array<Record<string, number>>;
+  pnl_forecast_band: LivePositionForecastBandPoint[];
+}
+
+export interface LivePositionSkipped {
+  underlying: string;
+  reason: string;
+}
+
+export interface AgentLivePositionsResponse {
+  agent_id?: string;
+  groups: LivePositionGroup[];
+  skipped: LivePositionSkipped[];
 }

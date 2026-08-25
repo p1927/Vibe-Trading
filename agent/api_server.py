@@ -310,6 +310,10 @@ app.include_router(board_router)
 from src.api.advisory_routes import advisory_router  # noqa: E402
 app.include_router(advisory_router)
 
+# --- Live positions forecast board (2026-08-25-live-positions-forecast-band-board) ---
+from src.api.positions_routes import positions_router  # noqa: E402
+app.include_router(positions_router)
+
 # --- Alpha Zoo ---
 from src.api.alpha_routes import register_alpha_routes  # noqa: E402
 register_alpha_routes(app)
