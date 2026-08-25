@@ -20,7 +20,7 @@ from unittest.mock import patch
 import pytest
 
 import api_server
-from api.trade_routes import ExecuteBasketRequest, execute_basket
+from src.api.trade_routes import ExecuteBasketRequest, execute_basket
 
 
 def _widget(*, agent_id: str | None = None) -> dict:
@@ -50,7 +50,7 @@ def _run_execute_basket(widget: dict, *, orders: list[dict] | None = None):
     )
 
     with (
-        patch("api.trade_routes.load_trade_widget", return_value=widget),
+        patch("src.api.trade_routes.load_trade_widget", return_value=widget),
         patch(
             "trade_integrations.execution.context_verify.ensure_paper_execution_ready",
             return_value=SimpleNamespace(analyze_mode=True),
