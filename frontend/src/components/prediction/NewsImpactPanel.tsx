@@ -213,6 +213,80 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shock
         </div>
       ) : null}
 
+      {report?.top_factors && report.top_factors.length ? (
+        <div className="rounded-lg border bg-muted/10 px-3 py-2 text-[11px]">
+          <p className="font-medium text-foreground">Top factors moving NIFTY</p>
+          <p className="text-muted-foreground">
+            Ranked across {report.top_factors_lookback_count ?? report.top_factors.length} recent verified
+            headlines, deduplicated and weighted by source credibility
+          </p>
+          <ul className="mt-2 space-y-2">
+            {report.top_factors.slice(0, 5).map((factor) => {
+              const tone =
+                factor.direction === "bullish"
+                  ? "text-emerald-700 dark:text-emerald-400 bg-emerald-500/10"
+                  : factor.direction === "bearish"
+                    ? "text-red-700 dark:text-red-400 bg-red-500/10"
+                    : "text-muted-foreground bg-muted";
+              return (
+                <li key={factor.factor_id} className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-foreground">
+                      {factor.description ?? factor.factor_id.replace(/_/g, " ")}
+                    </span>
+                    <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium capitalize", tone)}>
+                      {factor.direction ?? "neutral"}
+                    </span>
+                  </div>
+                  <p className="tabular-nums text-muted-foreground">
+                    {formatPts(factor.net_weighted_nifty_points)} net · {factor.article_count ?? 0} article
+                    {(factor.article_count ?? 0) === 1 ? "" : "s"}
+                    {factor.calibration?.overlay_eligible ? ` · n=${factor.calibration.sample_count}` : ""}
+                  </p>
+                  {factor.articles?.length ? (
+                    <ul className="ml-3 space-y-0.5 border-l pl-2 text-muted-foreground">
+                      {factor.articles.map((article, idx) => (
+                        <li key={article.canonical_story_id || `${factor.factor_id}-${idx}`} className="truncate">
+                          {article.url ? (
+                            <a
+                              href={article.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="hover:text-foreground hover:underline"
+                            >
+                              {article.title}
+                            </a>
+                          ) : (
+                            article.title
+                          )}
+                          {article.source ? ` — ${article.source}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+          {report.top_factors.length > 5 ? (
+            <div className="mt-3 border-t pt-2 opacity-60">
+              <p className="text-muted-foreground">Lower-impact factors</p>
+              <ul className="mt-1 space-y-1">
+                {report.top_factors.slice(5, 10).map((factor) => (
+                  <li key={factor.factor_id} className="flex items-center justify-between gap-2 tabular-nums">
+                    <span className="truncate">{factor.description ?? factor.factor_id.replace(/_/g, " ")}</span>
+                    <span className="shrink-0 text-muted-foreground">
+                      {formatPts(factor.net_weighted_nifty_points)} · {factor.article_count ?? 0} article
+                      {(factor.article_count ?? 0) === 1 ? "" : "s"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {error ? <p className="text-[11px] text-red-600 dark:text-red-400">{error}</p> : null}
 
       {!items.length && !loading ? (

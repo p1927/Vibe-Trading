@@ -1184,6 +1184,101 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         # Same reasoning as US/JP/CN: no dedicated "ru-hub-news-entity" job needed —
         # nifty-hub-news-entity's pending-staging auto-discovery drains MOEX too.
         ScheduledResearchJob(
+            id="me-hub-news-ingest-full",
+            prompt="Full Middle East market hub news ingest (RSS + Currents keyword search, daily)",
+            schedule=get_env_config().trade.hub_news_full_ingest_cron.strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "full",
+                "ticker": "TASI",
+                "market": "ME",
+                # No searxng: live-tested 2026-08-25, both TASI/Tadawul-themed
+                # queries returned total noise (Stack Overflow questions, Las
+                # Vegas Burger King locations — no relation to the query terms
+                # at all). Currents' plain country="sa"/"ae" query is also
+                # empty (same class of gap as JP/RU), and short bare tickers
+                # (TASI/DFM/ADX) as keywords collide with unrelated content —
+                # but the single precise term "Tadawul" (the exchange's own
+                # name) returned real, clean Gulf-market articles.
+                "sources": "rss,currents",
+                "currents_keywords": ["Tadawul"],
+                "lookback_days": 3,
+            },
+        ),
+        ScheduledResearchJob(
+            id="me-hub-news-ingest-light",
+            prompt="Light Middle East market hub news ingest (RSS)",
+            schedule=get_env_or(
+                "HUB_NEWS_LIGHT_INGEST_CRON",
+                "HUB_NEWS_INGEST_CRON",
+                "0 */4 * * *",
+            ).strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "light",
+                "ticker": "TASI",
+                "market": "ME",
+                "sources": get_env_config().trade.hub_news_light_sources,
+                "lookback_days": 1,
+            },
+        ),
+        # Same reasoning as US/JP/CN/RU: no dedicated "me-hub-news-entity" job needed —
+        # nifty-hub-news-entity's pending-staging auto-discovery drains TASI too.
+        ScheduledResearchJob(
+            id="latam-hub-news-ingest-full",
+            prompt="Full Latin America market hub news ingest (RSS + Currents keyword search, daily)",
+            schedule=get_env_config().trade.hub_news_full_ingest_cron.strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "full",
+                "ticker": "IBOVESPA",
+                "market": "LATAM",
+                # No searxng: live-tested 2026-08-25 — returned Reddit forum
+                # content with no relation to the query terms, including
+                # NSFW-adjacent results, worse than any other market's noise
+                # seen so far. Currents' country="br" query returns only 1
+                # article (politics, not market-specific); the bare keyword
+                # "IBOVESPA" alone (not combined with "Brazil"/"stock", which
+                # dilutes into football/coffee noise) returned real, clean
+                # signal instead.
+                "sources": "rss,currents",
+                "currents_keywords": ["IBOVESPA"],
+                "lookback_days": 3,
+            },
+        ),
+        ScheduledResearchJob(
+            id="latam-hub-news-ingest-light",
+            prompt="Light Latin America market hub news ingest (RSS)",
+            schedule=get_env_or(
+                "HUB_NEWS_LIGHT_INGEST_CRON",
+                "HUB_NEWS_INGEST_CRON",
+                "0 */4 * * *",
+            ).strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "light",
+                "ticker": "IBOVESPA",
+                "market": "LATAM",
+                "sources": get_env_config().trade.hub_news_light_sources,
+                "lookback_days": 1,
+            },
+        ),
+        # Same reasoning as US/JP/CN/RU/ME: no dedicated "latam-hub-news-entity" job
+        # needed — nifty-hub-news-entity's pending-staging auto-discovery drains
+        # IBOVESPA too.
+        ScheduledResearchJob(
             id="nifty-index-prediction-post-close",
             prompt="Weekly post-close prediction pipeline refresh (flows, backtest, counterfactual)",
             schedule="0 4 * * 6",

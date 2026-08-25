@@ -55,12 +55,21 @@ class SearchIndiaSymbolTool(BaseTool):
         limit = max(1, min(limit, 10))
 
         matches = search_india_symbols(query, limit=limit)
+        # Same envelope shape as search_symbol's resolver output (candidates
+        # under data.candidates, per-provider status under data.sources) so
+        # the grounding ledger's identity resolver can consume either tool's
+        # result identically — see grounding.py's _RESOLVER_TOOLS.
         return json.dumps(
             {
                 "ok": True,
-                "query": query,
-                "count": len(matches),
-                "matches": matches,
+                "market": "IN",
+                "source": "search_india_symbol",
+                "data": {
+                    "query": query,
+                    "count": len(matches),
+                    "candidates": matches,
+                    "sources": {"openalgo": "ok"},
+                },
             },
             ensure_ascii=False,
         )

@@ -2594,7 +2594,7 @@ class AgentLoop:
                 call_id=tc.id,
                 success=success,
             )
-            if tc.name == "search_symbol":
+            if tc.name in ("search_symbol", "search_india_symbol"):
                 trace.write(
                     {
                         "type": "identity_state",

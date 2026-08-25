@@ -35,6 +35,11 @@ from typing import Any, Iterable, Mapping, Sequence
 GROUNDING_ARTIFACT = "grounding_evidence.json"
 
 _RESOLVER_TOOL = "search_symbol"
+# search_india_symbol resolves NSE/BSE instruments (the orchestrator-session
+# tool allowlist has this one, not search_symbol, whose Eastmoney/Yahoo/SEC
+# providers don't cover India anyway) and returns the same resolver envelope
+# shape, so it satisfies identity resolution exactly like search_symbol does.
+_RESOLVER_TOOLS = (_RESOLVER_TOOL, "search_india_symbol")
 _PRIVATE_COMPANY_SKILL_NAMES = {
     "private-company",
     "private-company-analysis",
@@ -904,8 +909,9 @@ class ToolAuthorization:
                 "symbols": list(self.symbols),
                 "identity": dict(identity),
                 "required_action": (
-                    "Call search_symbol in a separate assistant tool turn, wait for "
-                    "its result, then reuse the exact locked symbol and venue. If the "
+                    "Call search_symbol (or search_india_symbol for NSE/BSE instruments, "
+                    "whichever this session has) in a separate assistant tool turn, wait "
+                    "for its result, then reuse the exact locked symbol and venue. If the "
                     "resolver answers with a shortlist rather than one instrument, "
                     "show the candidates and ask the user which one to use — narrowing "
                     "the query again will not turn a genuine dual listing into one."
@@ -1059,7 +1065,7 @@ class GroundingLedger:
             An allow/block decision. Resolver calls are allowed but their result
             cannot affect another call in this same batch.
         """
-        if tool_name == _RESOLVER_TOOL:
+        if tool_name in _RESOLVER_TOOLS:
             self._identity_required = True
             self._buffer_output = True
             self._begin_resolution(str(arguments.get("query") or ""), call_id)
@@ -1232,13 +1238,13 @@ class GroundingLedger:
         payload = _json_object(result)
         if not success:
             self._record_tool_failure(tool_name, call_id, result)
-            if tool_name == _RESOLVER_TOOL:
+            if tool_name in _RESOLVER_TOOLS:
                 self._finish_failed_resolution(arguments, call_id)
             self.persist()
             return
 
         self._track_session_symbols(arguments, result)
-        if tool_name == _RESOLVER_TOOL:
+        if tool_name in _RESOLVER_TOOLS:
             self._ingest_resolution(arguments, payload, call_id)
         elif tool_name == "get_market_data":
             self._ingest_market_data(arguments, payload, call_id)
@@ -1328,9 +1334,11 @@ class GroundingLedger:
         if recovery == _RESOLVER_TOOL:
             lines.extend(
                 [
-                    "Instrument identity is unresolved. Call `search_symbol` for the "
-                    "candidate name in a separate tool-call turn, lock the exact canonical "
-                    "symbol and venue it returns, then call `get_market_data` before finalizing.",
+                    "Instrument identity is unresolved. Call `search_symbol` (or "
+                    "`search_india_symbol` for NSE/BSE instruments, whichever this session "
+                    "has) for the candidate name in a separate tool-call turn, lock the "
+                    "exact canonical symbol and venue it returns, then call "
+                    "`get_market_data` before finalizing.",
                     "Do NOT ask the user to confirm or continue while this read-only recovery "
                     "remains available.",
                 ]
@@ -1392,9 +1400,11 @@ class GroundingLedger:
         if action == _RESOLVER_TOOL:
             return (
                 "[GROUNDING RECOVERY] Instrument identity is not yet locked and is "
-                "recoverable with read-only tools. Call `search_symbol` for the candidate "
-                "name in a separate assistant tool-call turn, lock and reuse the exact "
-                "canonical symbol and venue it returns, then call `get_market_data`. "
+                "recoverable with read-only tools. Call `search_symbol` (or "
+                "`search_india_symbol` for NSE/BSE instruments, whichever this session "
+                "has) for the candidate name in a separate assistant tool-call turn, lock "
+                "and reuse the exact canonical symbol and venue it returns, then call "
+                "`get_market_data`. "
                 "Do NOT ask the user to confirm or continue while this read-only recovery "
                 "remains available, and do NOT finalize yet."
             )

@@ -5132,6 +5132,35 @@ export interface NewsImpactItem {
   confidence_note?: string;
 }
 
+export interface NewsFactorRollupArticle {
+  canonical_story_id?: string;
+  title?: string;
+  url?: string;
+  source?: string;
+  published_at?: string;
+  verification_status?: string;
+  nifty_points?: number;
+  weight?: number;
+}
+
+export interface NewsFactorRollupEntry {
+  factor_id: string;
+  category?: string | null;
+  description?: string | null;
+  direction?: string;
+  net_weighted_nifty_points?: number;
+  net_weighted_return_pct?: number;
+  gross_weighted_nifty_points?: number;
+  article_count?: number;
+  calibration?: {
+    calibrated_shock_pct?: number;
+    overlay_eligible?: boolean;
+    sample_count?: number;
+    posterior_stderr?: number;
+  };
+  articles?: NewsFactorRollupArticle[];
+}
+
 export interface IndexNewsImpactReport {
   status?: string;
   as_of?: string;
@@ -5148,6 +5177,8 @@ export interface IndexNewsImpactReport {
     excerpt?: string;
   } | null;
   items?: NewsImpactItem[];
+  top_factors?: NewsFactorRollupEntry[];
+  top_factors_lookback_count?: number;
   summary?: {
     live_count?: number;
     approved_count?: number;

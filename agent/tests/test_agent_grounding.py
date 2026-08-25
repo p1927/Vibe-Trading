@@ -483,6 +483,55 @@ def test_explicit_symbol_and_resolver_suffix_alias_are_one_identity(
     assert authorization.allowed is True
 
 
+def test_search_india_symbol_satisfies_identity_resolver(tmp_path: Path) -> None:
+    """search_india_symbol is a second, session-scoped resolver, not a dead end.
+
+    Orchestrator sessions never get ``search_symbol`` (its Eastmoney/Yahoo/SEC
+    providers don't cover NSE/BSE anyway) — only ``search_india_symbol``. Before
+    this fix, ``_RESOLVER_TOOL`` recognized only the literal name
+    ``"search_symbol"``, so an orchestrator session could never satisfy this
+    gate and every India-symbol propose call deadlocked on ``identity_required``
+    forever (reproduced live 2026-08-25).
+    """
+    ledger = GroundingLedger(
+        run_dir=tmp_path,
+        user_message="What is the current price of NIFTY index options?",
+    )
+    ledger.ingest_tool_result(
+        tool_name="search_india_symbol",
+        arguments={"query": "NIFTY"},
+        result=json.dumps(
+            {
+                "ok": True,
+                "market": "IN",
+                "source": "search_india_symbol",
+                "data": {
+                    "query": "NIFTY",
+                    "count": 1,
+                    "candidates": [
+                        {"symbol": "NIFTY", "name": "NIFTY", "exchange": "NSE_INDEX"}
+                    ],
+                    "sources": {"openalgo": "ok"},
+                },
+            }
+        ),
+        call_id="resolver-india",
+        success=True,
+    )
+
+    authorization = ledger.authorize_tool_call(
+        "propose_autonomous_agent",
+        {"symbols": ["NIFTY"]},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        batch_identity_status=ledger.identity_status,
+        call_id="propose",
+    )
+
+    assert ledger.identity_status == "locked"
+    assert ledger.authorized_symbols == {"NIFTY"}
+    assert authorization.allowed is True
+
+
 def test_resolver_answering_a_different_venue_is_still_conflicting(
     tmp_path: Path,
 ) -> None:

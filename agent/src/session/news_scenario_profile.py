@@ -22,6 +22,7 @@ _NEWS_SCENARIO_MCP_TOOL_SUBSTRINGS = (
     "query_equation_coefficients",
     "query_constituent_drivers",
     "get_pipeline_news_items",
+    "get_live_news_impact",
     "get_playground_context",
     "get_index_trade_plan",
     "simulate_pipeline_scenario",

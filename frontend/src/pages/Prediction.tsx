@@ -773,6 +773,19 @@ export function Prediction() {
                 {newsSessionError}
               </div>
             ) : null}
+            <section className="space-y-3">
+              <PredictionSectionHeader
+                title="Live top factors"
+                subtitle="What's actually moving Nifty right now, ranked across recent verified headlines — not frozen to this session's Analysis snapshot."
+                modelRole="display"
+              />
+              <NewsImpactPanel
+                horizonDays={horizonDays}
+                pollMs={pollMs}
+                monitorEnabled={pollMs > 0}
+                shockCalibration={artifact?.news_shock_calibration}
+              />
+            </section>
             <div className="grid min-h-[calc(100vh-12rem)] gap-4 lg:grid-cols-2">
               <div className="flex min-h-[420px] flex-col overflow-hidden rounded-xl border border-border/60 bg-background">
                 <div className="border-b border-border/60 px-3 py-2 text-[11px] font-medium text-muted-foreground">
