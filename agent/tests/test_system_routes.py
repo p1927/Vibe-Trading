@@ -218,12 +218,25 @@ def test_correlation_rate_limiter_is_per_client(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_correlation_does_not_block_health_while_computing(
-    local_client: TestClient, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    """Regression test for correlation-route-blocks-event-loop-takes-down-health.
+
+    Uses ``with TestClient(...) as client`` rather than the module's plain
+    ``local_client`` fixture — without ``__enter__``, ``TestClient`` opens a
+    fresh anyio portal (its own event loop) per request
+    (``starlette.testclient.TestClient._portal_factory``), so two
+    "concurrent" calls from different threads land on independent event
+    loops and this test would pass whether or not the event-loop-starvation
+    fix is actually present. Confirmed empirically — see
+    [[2026-08-25-blocking-io-regression-tests-not-portal-shared]]."""
     import threading
     import time
 
     import backtest.correlation as corr
+
+    monkeypatch.delenv("API_AUTH_KEY", raising=False)
+    monkeypatch.setattr(api_server, "_API_KEY", "")
 
     def _slow(**_kwargs):
         time.sleep(1.5)
@@ -231,20 +244,21 @@ def test_correlation_does_not_block_health_while_computing(
 
     monkeypatch.setattr(corr, "compute_correlation_matrix", _slow)
 
-    results: dict[str, object] = {}
+    with TestClient(api_server.app, client=("127.0.0.1", 50000)) as client:
+        results: dict[str, object] = {}
 
-    def _call_correlation():
-        results["correlation"] = local_client.get("/correlation", params={"codes": "AAPL,SPY"})
+        def _call_correlation():
+            results["correlation"] = client.get("/correlation", params={"codes": "AAPL,SPY"})
 
-    thread = threading.Thread(target=_call_correlation)
-    thread.start()
-    time.sleep(0.3)  # let the slow correlation request actually start first
+        thread = threading.Thread(target=_call_correlation)
+        thread.start()
+        time.sleep(0.3)  # let the slow correlation request actually start first
 
-    started = time.monotonic()
-    health_resp = local_client.get("/health")
-    health_elapsed = time.monotonic() - started
+        started = time.monotonic()
+        health_resp = client.get("/health")
+        health_elapsed = time.monotonic() - started
 
-    thread.join(timeout=5)
+        thread.join(timeout=5)
 
     assert health_resp.status_code == 200
     # Generous margin over network/scheduling noise, but nowhere near the
@@ -255,12 +269,17 @@ def test_correlation_does_not_block_health_while_computing(
 
 
 def test_correlation_regime_does_not_block_health_while_computing(
-    local_client: TestClient, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    """See test_correlation_does_not_block_health_while_computing above for why
+    this uses ``with TestClient(...) as client`` instead of ``local_client``."""
     import threading
     import time
 
     import backtest.regime as regime
+
+    monkeypatch.delenv("API_AUTH_KEY", raising=False)
+    monkeypatch.setattr(api_server, "_API_KEY", "")
 
     def _slow(**_kwargs):
         time.sleep(1.5)
@@ -268,18 +287,20 @@ def test_correlation_regime_does_not_block_health_while_computing(
 
     monkeypatch.setattr(regime, "compute_regime_timeline", _slow)
 
-    def _call_regime():
-        local_client.get("/correlation/regime", params={"codes": "AAPL,SPY"})
+    with TestClient(api_server.app, client=("127.0.0.1", 50000)) as client:
 
-    thread = threading.Thread(target=_call_regime)
-    thread.start()
-    time.sleep(0.3)
+        def _call_regime():
+            client.get("/correlation/regime", params={"codes": "AAPL,SPY"})
 
-    started = time.monotonic()
-    health_resp = local_client.get("/health")
-    health_elapsed = time.monotonic() - started
+        thread = threading.Thread(target=_call_regime)
+        thread.start()
+        time.sleep(0.3)
 
-    thread.join(timeout=5)
+        started = time.monotonic()
+        health_resp = client.get("/health")
+        health_elapsed = time.monotonic() - started
+
+        thread.join(timeout=5)
 
     assert health_resp.status_code == 200
     assert health_elapsed < 1.0

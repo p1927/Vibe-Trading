@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys as _sys
 from typing import Any, Literal
 
@@ -207,8 +208,14 @@ async def get_qveris_status() -> QVerisStatusResponse:
         )
     try:
         client = QVerisClient(cfg)
-        search = client.search("status", limit=1)
-        usage = client.usage_history(limit=10, page_size=10)
+
+        def _fetch_status() -> tuple[dict[str, Any], dict[str, Any]]:
+            # Both calls are synchronous httpx requests (60s timeout each,
+            # plus retry sleeps) — run them together off the event loop so a
+            # slow/degraded QVeris API can't stall every other request.
+            return client.search("status", limit=1), client.usage_history(limit=10, page_size=10)
+
+        search, usage = await asyncio.to_thread(_fetch_status)
         remaining = search.get("remaining_credits")
         return QVerisStatusResponse(
             enabled=cfg.enabled,

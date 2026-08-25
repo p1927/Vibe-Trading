@@ -655,7 +655,7 @@ def register_live_routes(
 
         from src.live.mandate.commit import CommitError, commit_mandate
 
-        broker_ceilings = _host()._fetch_broker_ceilings(payload.broker)
+        broker_ceilings = await asyncio.to_thread(_host()._fetch_broker_ceilings, payload.broker)
 
         try:
             result = commit_mandate(
@@ -789,7 +789,7 @@ def register_live_routes(
             sdk_metadata: Dict[str, Any] = {}
             if selected_profile is not None:
                 try:
-                    verify_report = h._check_connector_status(selected_profile.id)
+                    verify_report = await asyncio.to_thread(h._check_connector_status, selected_profile.id)
                     if verify_report.get("profile_id") == selected_profile.id:
                         def _normalize_capabilities(value: Any) -> Optional[tuple[str, ...]]:
                             if not isinstance(value, (list, tuple)) or not value:
@@ -956,7 +956,7 @@ def register_live_routes(
                 ),
             )
 
-        report = h._check_connector_status(profile_id, force=force)
+        report = await asyncio.to_thread(h._check_connector_status, profile_id, force=force)
         return report
 
     @app.post("/live/runner/start", dependencies=[Depends(require_auth)])
