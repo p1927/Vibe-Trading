@@ -634,6 +634,9 @@ class TradeConfig(_EnvBase):
         alias="STOCK_HISTORY_COVERAGE_SWEEP_CRON", default="0 19 * * *",
     )
     news_quality_eval_cron: str = Field(alias="NEWS_QUALITY_EVAL_CRON", default="0 2 * * *")
+    news_dedup_quality_eval_cron: str = Field(
+        alias="NEWS_DEDUP_QUALITY_EVAL_CRON", default="30 2 * * *",
+    )
     global_macro_eod_refresh_cron: str = Field(
         alias="GLOBAL_MACRO_EOD_REFRESH_CRON", default="15 19 * * *",
     )

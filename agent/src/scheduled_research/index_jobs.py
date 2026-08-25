@@ -41,6 +41,7 @@ JOB_TYPE_HUB_NEWS_ENTITY = "hub_news_entity"
 JOB_TYPE_HUB_NEWS_INGEST = "hub_news_ingest"
 JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP = "stock_history_coverage_sweep"
 JOB_TYPE_NEWS_QUALITY_EVAL = "news_quality_eval"
+JOB_TYPE_NEWS_DEDUP_QUALITY_EVAL = "news_dedup_quality_eval"
 JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH = "global_macro_eod_refresh"
 JOB_TYPE_OI_SNAPSHOT = "oi_snapshot"
 JOB_TYPE_REINFERENCE_TICK = "reinference_tick"
@@ -756,6 +757,26 @@ def run_news_quality_eval_job(config: dict[str, Any] | None = None) -> dict[str,
         return {"status": "error", "error": str(exc), "had_errors": True}
 
 
+def run_news_dedup_quality_eval_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Run the semantic-dedup golden-pair eval (real embedding-based merge decisions, scored via
+    MLflow accuracy/precision/recall/F1 + a DeepEval LLM-judge cross-check) and log a trend
+    metric — see [[2026-08-26-dedup-golden-eval-never-scheduled-dataset-too-small]]: this eval
+    existed but had zero callers outside its own test, so a regression in `cluster_threshold()`/
+    `events_are_merge_candidates()` had no automatic signal.
+
+    Non-blocking, mirroring `run_news_quality_eval_job`: never fails the scheduler on eval error.
+    """
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.dataflows.news_hub_bridge import run_news_dedup_golden_eval
+
+    try:
+        summary = run_news_dedup_golden_eval()
+        return summary
+    except Exception as exc:
+        logger.exception("news dedup quality golden eval failed")
+        return {"status": "error", "error": str(exc), "had_errors": True}
+
+
 def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
     """Execute one index scheduled job synchronously."""
     try:
@@ -811,6 +832,11 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         _attach_job_result_summary(job, summary)
         logger.info("news quality golden eval completed for job %s: %s", job.id, summary)
         return
+    if job_type == JOB_TYPE_NEWS_DEDUP_QUALITY_EVAL:
+        summary = run_news_dedup_quality_eval_job(job.config)
+        _attach_job_result_summary(job, summary)
+        logger.info("news dedup quality golden eval completed for job %s: %s", job.id, summary)
+        return
     if job_type == JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH:
         summary = run_global_macro_eod_refresh_job(job.config)
         _attach_job_result_summary(job, summary)
@@ -856,6 +882,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     full_cron = _cfg.index_research_full_cron.strip()
     coverage_sweep_cron = _cfg.stock_history_coverage_sweep_cron.strip()
     news_quality_eval_cron = _cfg.news_quality_eval_cron.strip()
+    news_dedup_quality_eval_cron = _cfg.news_dedup_quality_eval_cron.strip()
     global_macro_eod_refresh_cron = _cfg.global_macro_eod_refresh_cron.strip()
     oi_snapshot_cron = _cfg.oi_snapshot_cron.strip()
     reinference_tick_cron = _cfg.reinference_tick_cron.strip()
@@ -866,6 +893,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     validate_schedule(full_cron)
     validate_schedule(coverage_sweep_cron)
     validate_schedule(news_quality_eval_cron)
+    validate_schedule(news_dedup_quality_eval_cron)
     validate_schedule(global_macro_eod_refresh_cron)
     validate_schedule(oi_snapshot_cron)
     validate_schedule(reinference_tick_cron)
@@ -1303,6 +1331,19 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             created_at=now_ms,
             config={
                 "job_type": JOB_TYPE_NEWS_QUALITY_EVAL,
+                "ticker": "NIFTY",
+                "dispatch_timeout_ms": 1_800_000,
+            },
+        ),
+        ScheduledResearchJob(
+            id="nifty-news-dedup-quality-eval",
+            prompt="Score hub news semantic-dedup quality against the golden pair dataset (MLflow + DeepEval)",
+            schedule=news_dedup_quality_eval_cron,
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_NEWS_DEDUP_QUALITY_EVAL,
                 "ticker": "NIFTY",
                 "dispatch_timeout_ms": 1_800_000,
             },
