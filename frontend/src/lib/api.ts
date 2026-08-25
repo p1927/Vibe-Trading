@@ -9,6 +9,7 @@ import type {
   OptionsChainResponse,
   OptionsPayoffRequest,
   OptionsPayoffResponse,
+  SelectorCandidate,
   SelectorRankBy,
   SelectorResponse,
 } from "@/lib/options";
@@ -864,6 +865,15 @@ export const api = {
       timeoutMs: 60_000,
     });
   },
+  // 2026-08-25-selector-driven-manual-orders-invisible-to-outcome-ledger: builds a widget
+  // directly from the *exact* candidate the user reviewed (not a ticker+name lookup against
+  // a different pipeline), so approving it and calling executeTradeBasket makes the order
+  // visible to outcome_ledger the same way the chat/Advisory-board widget flows are.
+  prepareSelectorWidget: (ticker: string, candidate: SelectorCandidate) =>
+    request<SelectorPrepareWidgetResponse>("/options/india/selector/prepare-widget", {
+      method: "POST",
+      body: JSON.stringify({ ticker, candidate }),
+    }),
 
   // Execution advisor (module 7) — advisory-only, never mutates an order.
   // Polled every 15s by the UI, so this must never serve a browser-cached
@@ -6240,6 +6250,12 @@ export interface AdvisoryPrepareResponse {
   widget_id: string;
   orders: Record<string, unknown>[];
   widget: Record<string, unknown>;
+}
+
+export interface SelectorPrepareWidgetResponse {
+  ok: boolean;
+  widget_id: string;
+  orders: Record<string, unknown>[];
 }
 
 // --- Live positions forecast board — 2026-08-25-live-positions-forecast-band-board ---

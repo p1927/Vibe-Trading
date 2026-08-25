@@ -1,10 +1,12 @@
 import { useCallback, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { SelectorCandidate, SelectorRankBy, SelectorResponseData } from "@/lib/options";
 import { formatCurrency } from "@/lib/marketConfig";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 
 const DEFAULT_TICKER = "NIFTY";
 
@@ -45,7 +47,15 @@ function LegsTable({ legs }: { legs: SelectorCandidate["legs"] }) {
   );
 }
 
-function CandidateCard({ candidate }: { candidate: SelectorCandidate }) {
+function CandidateCard({
+  candidate,
+  preparing,
+  onApprove,
+}: {
+  candidate: SelectorCandidate;
+  preparing: boolean;
+  onApprove: (candidate: SelectorCandidate) => void;
+}) {
   const { t } = useTranslation();
   return (
     <div
@@ -115,6 +125,16 @@ function CandidateCard({ candidate }: { candidate: SelectorCandidate }) {
         <p className="mt-1.5 text-[11px] text-muted-foreground">{candidate.rationale}</p>
       )}
       <LegsTable legs={candidate.legs} />
+      <button
+        type="button"
+        onClick={() => onApprove(candidate)}
+        disabled={preparing}
+        className="mt-2.5 w-full rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+      >
+        {preparing
+          ? t("options.india.selector.preparing", { defaultValue: "Preparing…" })
+          : t("options.india.selector.approve", { defaultValue: "Approve" })}
+      </button>
     </div>
   );
 }
@@ -147,6 +167,13 @@ export function IndiaSelectorPanel({ underlying }: Props) {
   const [data, setData] = useState<SelectorResponseData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [preparingName, setPreparingName] = useState<string | null>(null);
+  const [pending, setPending] = useState<{
+    candidate: SelectorCandidate;
+    widgetId: string;
+    orders: Record<string, unknown>[];
+  } | null>(null);
+  const [executing, setExecuting] = useState(false);
 
   const load = useCallback(
     async (ticker: string, targetProfit: number, currentRankBy: SelectorRankBy) => {
@@ -175,6 +202,45 @@ export function IndiaSelectorPanel({ underlying }: Props) {
     },
     [t],
   );
+
+  const handleApprove = useCallback(
+    async (candidate: SelectorCandidate) => {
+      const ticker = data?.ticker;
+      if (!ticker) return;
+      setPreparingName(candidate.name);
+      try {
+        const res = await api.prepareSelectorWidget(ticker, candidate);
+        setPending({ candidate, widgetId: res.widget_id, orders: res.orders });
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Failed to prepare order");
+      } finally {
+        setPreparingName(null);
+      }
+    },
+    [data?.ticker],
+  );
+
+  const handleConfirm = useCallback(async () => {
+    if (!pending) return;
+    setExecuting(true);
+    try {
+      const result = await api.executeTradeBasket({ widget_id: pending.widgetId, orders: pending.orders });
+      const mode = result.execution_mode === "paper" ? " (paper)" : "";
+      toast.success((result.message || "Basket order submitted") + mode);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 0) {
+        toast.error(
+          "No response from the server — the order status is unknown. Check your positions before retrying.",
+          { duration: 10000 },
+        );
+      } else {
+        toast.error(err instanceof Error ? err.message : "Execution failed");
+      }
+    } finally {
+      setExecuting(false);
+      setPending(null);
+    }
+  }, [pending]);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -273,12 +339,40 @@ export function IndiaSelectorPanel({ underlying }: Props) {
           ) : (
             <div className={cn("grid gap-2", "sm:grid-cols-2 lg:grid-cols-3")}>
               {data.candidates.map((candidate, i) => (
-                <CandidateCard key={i} candidate={candidate} />
+                <CandidateCard
+                  key={i}
+                  candidate={candidate}
+                  preparing={preparingName === candidate.name}
+                  onApprove={handleApprove}
+                />
               ))}
             </div>
           )}
         </>
       )}
+
+      <ConfirmDialog
+        open={pending != null}
+        title={t("options.india.selector.placeOrder", { defaultValue: "Place order" })}
+        description={
+          pending
+            ? t("options.india.selector.placeOrderDescription", {
+                defaultValue: `Place ${pending.orders.length} leg(s) for ${data?.ticker ?? ""} — ${pending.candidate.name}. This submits a real order.`,
+                count: pending.orders.length,
+                ticker: data?.ticker ?? "",
+                strategy: pending.candidate.name,
+              })
+            : undefined
+        }
+        confirmLabel={
+          executing
+            ? t("options.india.selector.submitting", { defaultValue: "Submitting…" })
+            : t("options.india.selector.approveAndExecute", { defaultValue: "Approve & execute" })
+        }
+        cancelLabel={t("common.cancel", { defaultValue: "Cancel" })}
+        onConfirm={handleConfirm}
+        onCancel={() => setPending(null)}
+      />
     </section>
   );
 }
