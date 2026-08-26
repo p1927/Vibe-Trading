@@ -4007,6 +4007,21 @@ def get_market_sector_indices(
     return _run_control(lambda c: c.get_market_sector_indices(country=country))
 
 
+@trade_router.get("/markets/{country}/bundle")
+def get_market_bundle(
+    country: str,
+    period: str = "3mo",
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    """Headline + sector index histories for a market in one request — proxies
+    `stock_simulator`'s `/history/{country}/bundle`. Replaces the per-index `index/{index}`
+    fan-out `GlobalMarketsPanel`/`SectorIndicesPanel` used to do (up to ~15 requests for a market
+    like US) — the frontend already calls this route, but it was never wired up here, so every
+    non-India market card surfaced as "Not Found" (see
+    2026-08-27-global-markets-non-india-bundle-route-missing)."""
+    return _run_control(lambda c: c.get_market_bundle(country=country, period=period))
+
+
 @trade_router.get("/markets/{country}/top_constituents")
 def get_market_top_constituents(
     country: str,

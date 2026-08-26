@@ -3,6 +3,7 @@ import { RefreshCw, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, ApiError, type AdvisoryCandidate, type AdvisoryCandidatesResponse } from "@/lib/api";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { MiniPayoffChart } from "@/components/charts/MiniPayoffChart";
 import { cn } from "@/lib/utils";
 
 // Mirrors AgentBoard.tsx's poll cadence — candidate scoring reads local cached research +
@@ -70,7 +71,10 @@ function CandidateCard({
           {candidate.net_ev_inr > 0 ? "Net EV positive" : "Net EV negative"}
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
+      {candidate.payoff_samples.length > 1 && (
+        <MiniPayoffChart samples={candidate.payoff_samples} height={80} />
+      )}
+      <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <div>
           Net EV <span className="font-medium text-foreground">{fmtInr(candidate.net_ev_inr)}</span>
         </div>

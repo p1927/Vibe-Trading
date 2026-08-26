@@ -77,13 +77,48 @@ function modeBadge(
   isReplayArmed: boolean,
   source: string | undefined,
   sessionOpen: boolean | null,
+  lastSessionDay: string | null,
 ): { label: string; live: boolean } {
   if (isReplayArmed) return { label: "REPLAY", live: false };
   if (source === "openalgo") return { label: "BROKER · LIVE", live: true };
   if (source === "timescale") return { label: "RECENT · RECORDED", live: false };
   if (source === "parquet_fallback") return { label: "RECENT · FALLBACK", live: false };
+  if (lastSessionDay) return { label: `LAST SESSION · ${lastSessionDay}`, live: false };
   if (sessionOpen === false) return { label: "MARKET CLOSED", live: false };
   return { label: "LIVE", live: true };
+}
+
+// Falls back to the most recently recorded full trading day's bars when the
+// live rolling-window tick fetch comes back empty because the market has
+// been closed longer than that window — otherwise a closed market with a
+// perfectly good recorded session on disk still renders a blank chart.
+// Bounded to one day's bars (~375 rows), never the endpoint's unbounded
+// default range — see 2026-08-27-global-markets-india-card-unbounded-history-fetch.
+async function fetchLastSessionTicks(
+  symbol: string,
+  exchange: string,
+): Promise<{ day: string; ticks: Tick[] } | null> {
+  try {
+    const daysRes = await api.getHubIndexHistoryDays({ symbol, exchange });
+    if (daysRes.status !== "ok" || !daysRes.days.length) return null;
+    const day = daysRes.days.reduce((latest, d) => (d > latest ? d : latest));
+    const barsRes = await api.getHubIndexHistoryBars({
+      symbol,
+      exchange,
+      since_ist: `${day}T09:15:00+05:30`,
+      until_ist: `${day}T15:30:00+05:30`,
+    });
+    if (barsRes.status !== "ok" || !barsRes.bars.length) return null;
+    const ticks: Tick[] = barsRes.bars.map((b) => ({
+      ts: b.ts_ist,
+      price: b.close,
+      volume: b.volume ?? null,
+      open: b.open ?? null,
+    }));
+    return { day, ticks };
+  } catch {
+    return null;
+  }
 }
 
 export function SimulatorLiveIndexPanel({
@@ -110,11 +145,18 @@ export function SimulatorLiveIndexPanel({
   // messages below so the empty state tells the truth instead of a plausible
   // but possibly wrong guess.
   const [emptyReason, setEmptyReason] = useState<string | null>(null);
+  // Set when the chart is showing the last recorded session's bars instead
+  // of a live tape — the market-closed empty state below used to leave the
+  // graph blank even though a full recorded day exists to show instead.
+  const [lastSessionDay, setLastSessionDay] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const { dark } = useDarkMode();
+  // Per-symbol cache of the last-recorded-session fallback so a closed
+  // market doesn't re-fetch the same day's bars on every 5s poll.
+  const lastSessionCacheRef = useRef<Map<string, { day: string; ticks: Tick[] }>>(new Map());
 
   // Poll cadence: while armed for replay, scales with replay speed (capped
   // at 4/sec, see replayPollMs); otherwise 2s while recording, 5s idle.
@@ -137,6 +179,7 @@ export function SimulatorLiveIndexPanel({
     setLoading(true);
     setSessionOpen(null);
     setEmptyReason(null);
+    setLastSessionDay(null);
     prevCloseRef.current = null;
     if (seriesRef.current) {
       seriesRef.current.setData([]);
@@ -167,8 +210,9 @@ export function SimulatorLiveIndexPanel({
           api.getHubMarketDataSpot({ symbol, exchange, replay: isReplayArmed }),
         ]);
         if (cancelled) return;
+        let nextSessionOpen: boolean | null = null;
         if (!isReplayArmed) {
-          const nextSessionOpen = spotRes.session_open ?? null;
+          nextSessionOpen = spotRes.session_open ?? null;
           setSessionOpen(nextSessionOpen);
           onSessionOpenChange?.(nextSessionOpen);
         }
@@ -180,12 +224,42 @@ export function SimulatorLiveIndexPanel({
             volume: t.volume ?? null,
             open: t.open ?? null,
           }));
-          setTicks(next);
-          if (next.length) lastTickPrice = next[next.length - 1].price;
+          if (next.length === 0 && !isReplayArmed && nextSessionOpen === false) {
+            // Live window is empty because the market's been closed longer
+            // than the rolling lookback — fall back to the last full
+            // recorded session so the chart still shows something instead
+            // of staying blank. Cached per symbol so a closed market doesn't
+            // re-fetch the same day's bars on every poll.
+            const cached = lastSessionCacheRef.current.get(symbolKey);
+            if (cached) {
+              setTicks(cached.ticks);
+              setLastSessionDay(cached.day);
+              if (cached.ticks.length) lastTickPrice = cached.ticks[cached.ticks.length - 1].price;
+              setEmptyReason(null);
+            } else {
+              const fallback = await fetchLastSessionTicks(symbol, exchange);
+              if (cancelled) return;
+              if (fallback) {
+                lastSessionCacheRef.current.set(symbolKey, fallback);
+                setTicks(fallback.ticks);
+                setLastSessionDay(fallback.day);
+                if (fallback.ticks.length) lastTickPrice = fallback.ticks[fallback.ticks.length - 1].price;
+                setEmptyReason(null);
+              } else {
+                setTicks(next);
+                setLastSessionDay(null);
+                setEmptyReason(ticksRes.error ?? null);
+              }
+            }
+          } else {
+            setTicks(next);
+            setLastSessionDay(null);
+            if (next.length) lastTickPrice = next[next.length - 1].price;
+            setEmptyReason(next.length === 0 ? ticksRes.error ?? null : null);
+          }
           if (next.length && prevCloseRef.current == null && next[0].open != null) {
             prevCloseRef.current = next[0].open ?? null;
           }
-          setEmptyReason(next.length === 0 ? ticksRes.error ?? null : null);
         }
         if (spotRes.status === "ok" && spotRes.spot) {
           // In replay mode the ticks and spot requests are two independent
@@ -322,7 +396,7 @@ export function SimulatorLiveIndexPanel({
   }, [spot]);
 
   const positive = (change ?? 0) >= 0;
-  const badge = modeBadge(isReplayArmed, spot?.source, sessionOpen);
+  const badge = modeBadge(isReplayArmed, spot?.source, sessionOpen, lastSessionDay);
 
   return (
     <div className="rounded-xl border bg-card p-4 shadow-sm">
@@ -387,13 +461,19 @@ export function SimulatorLiveIndexPanel({
           {error}
         </p>
       )}
+      {lastSessionDay && ticks.length > 0 && !loading && !error && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Market is closed — showing the last recorded session ({lastSessionDay}). Arm a replay
+          day below to see it move.
+        </p>
+      )}
       {ticks.length === 0 && !loading && !error && (
         <p className="mt-1 text-xs text-muted-foreground">
           {isReplayArmed
             ? emptyReason ??
               "No replay ticks at the current sim clock — try a different speed or check the replay day."
             : sessionOpen === false
-            ? "Market is closed right now — arm a replay day below to see it move."
+            ? "Market is closed and no recorded session exists yet — arm a replay day below once one does."
             : "No live ticks — start a recording or check TimescaleDB."}
         </p>
       )}

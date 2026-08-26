@@ -6274,6 +6274,10 @@ export interface AdvisoryCandidate {
   net_ev_inr: number;
   max_loss_inr: number | null;
   confidence_adjusted_score: number;
+  /** Full payoff curve at the current spot, shaped for `MiniPayoffChart` directly
+   * (`{spot, pnl}` — already renamed server-side from `compute_payoff`'s own
+   * `underlying` key). Empty when the candidate has no legs to price. */
+  payoff_samples: { spot: number; pnl: number }[];
 }
 
 export interface AdvisoryTickerCandidates {

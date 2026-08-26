@@ -6,6 +6,8 @@ import { SimulatorLiveIndexPanel } from "../SimulatorLiveIndexPanel";
 const apiMock = vi.hoisted(() => ({
   getHubMarketDataTicks: vi.fn(),
   getHubMarketDataSpot: vi.fn(),
+  getHubIndexHistoryDays: vi.fn(),
+  getHubIndexHistoryBars: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({ api: apiMock }));
@@ -14,6 +16,8 @@ describe("SimulatorLiveIndexPanel", () => {
   beforeEach(() => {
     apiMock.getHubMarketDataTicks.mockReset();
     apiMock.getHubMarketDataSpot.mockReset();
+    apiMock.getHubIndexHistoryDays.mockReset();
+    apiMock.getHubIndexHistoryBars.mockReset();
     // Stub requestAnimationFrame so lightweight-charts schedules paint on
     // macrotask instead of synchronously during teardown. Without this the
     // chart's draw loop fires after the React unmount and produces
@@ -85,6 +89,41 @@ describe("SimulatorLiveIndexPanel", () => {
     await waitFor(() => {
       expect(screen.getByText(/no live ticks/i)).toBeInTheDocument();
     });
+  });
+
+  it("falls back to the last recorded session when the market is closed and the live window is empty", async () => {
+    apiMock.getHubMarketDataTicks.mockResolvedValue({
+      status: "ok", symbol: "NIFTY", exchange: "NSE_INDEX", source: "empty", ticks: [],
+    });
+    apiMock.getHubMarketDataSpot.mockResolvedValue({
+      status: "ok", symbol: "NIFTY", exchange: "NSE_INDEX",
+      spot: { symbol: "NIFTY", exchange: "NSE_INDEX", ltp: 24207.75,
+              prev_close: 24334.55, source: "indmoney", as_of: null },
+      session_open: false,
+    });
+    apiMock.getHubIndexHistoryDays.mockResolvedValue({
+      status: "ok", symbol: "NIFTY", exchange: "NSE_INDEX", days: ["2026-08-20", "2026-08-25"],
+    });
+    apiMock.getHubIndexHistoryBars.mockResolvedValue({
+      status: "ok", symbol: "NIFTY", exchange: "NSE_INDEX",
+      bars: [
+        { ts_ist: "2026-08-25T09:15:00", open: 24300, high: 24310, low: 24290, close: 24300,
+          volume: 0, trading_day: "2026-08-25", symbol: "NIFTY", exchange: "NSE_INDEX",
+          prev_close: null, bar_minutes: 1, source: "recorder" },
+        { ts_ist: "2026-08-25T15:30:00", open: 24310, high: 24320, low: 24200, close: 24207.75,
+          volume: 0, trading_day: "2026-08-25", symbol: "NIFTY", exchange: "NSE_INDEX",
+          prev_close: null, bar_minutes: 1, source: "recorder" },
+      ],
+    });
+    render(<SimulatorLiveIndexPanel symbol="NIFTY" />);
+    await waitFor(() => {
+      expect(screen.getByText(/last recorded session \(2026-08-25\)/i)).toBeInTheDocument();
+    });
+    // Picks the latest of the two recorded days, not just the first one.
+    expect(apiMock.getHubIndexHistoryBars).toHaveBeenCalledWith(
+      expect.objectContaining({ since_ist: "2026-08-25T09:15:00+05:30", until_ist: "2026-08-25T15:30:00+05:30" }),
+    );
+    expect(screen.getByText(/LAST SESSION · 2026-08-25/i)).toBeInTheDocument();
   });
 
   it("shows error when fetch fails", async () => {
