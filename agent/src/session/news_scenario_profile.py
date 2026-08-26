@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from src.agent.tools import ToolRegistry
+if TYPE_CHECKING:
+    from src.agent.tools import ToolRegistry
 
 SESSION_KIND_NEWS_SCENARIO = "news_scenario_advisor"
 
@@ -47,8 +48,10 @@ def is_news_scenario_pipeline_tool(tool_name: str) -> bool:
     return any(sub in name for sub in _NEWS_SCENARIO_MCP_TOOL_SUBSTRINGS)
 
 
-def filter_registry_for_news_scenario(registry: ToolRegistry) -> ToolRegistry:
+def filter_registry_for_news_scenario(registry: "ToolRegistry") -> "ToolRegistry":
     """Keep pipeline read/simulate tools; block execution and refresh paths."""
+    from src.agent.tools import ToolRegistry
+
     filtered = ToolRegistry()
     for name, tool in registry._tools.items():
         if name in _NEWS_SCENARIO_LOCAL_TOOLS:
