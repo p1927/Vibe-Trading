@@ -260,6 +260,75 @@ export interface SelectorResponse extends SelectorResponseData {
 }
 
 // ---------------------------------------------------------------------------
+// API contract — GET /options/india/pop-overlay (module 4: Monte Carlo
+// probability-of-profit overlaid on the full chain for a chosen horizon)
+// ---------------------------------------------------------------------------
+
+/** Mirrors `pop_engine.PopResult` verbatim (`asdict`d on the backend). */
+export interface PopResult {
+  horizon_days: number;
+  n_paths: number;
+  probability_of_profit: number;
+  expected_pnl: number;
+  pnl_p10: number;
+  pnl_p50: number;
+  pnl_p90: number;
+  worst_5pct_pnl: number;
+  best_5pct_pnl: number;
+  distribution_type: "physical" | "risk_neutral";
+  liquidity_discount_applied: boolean;
+}
+
+/** One chain row (call or put) with its PoP scored for the selected horizon.
+ * `pop` is `null` (with `pop_skip_reason` set) when the leg couldn't be
+ * scored — e.g. missing premium — never silently dropped from the list. */
+export interface PopOverlayRow {
+  strike: number;
+  option_type: "CE" | "PE" | string;
+  last_price?: number | null;
+  bid?: number | null;
+  ask?: number | null;
+  implied_volatility?: number | null;
+  open_interest?: number | null;
+  volume?: number | null;
+  pop: PopResult | null;
+  pop_skip_reason?: string;
+  [key: string]: unknown;
+}
+
+export interface IvTermStructurePoint {
+  days_to_expiry: number;
+  atm_iv: number;
+}
+
+export interface PopOverlayEventRisk {
+  label?: string;
+  date?: string;
+  category?: string;
+  [key: string]: unknown;
+}
+
+export interface PopOverlayResponse {
+  ok: boolean;
+  error?: string;
+  ticker: string;
+  source: string;
+  expiry_date: string;
+  expiry_days: number;
+  horizon_days: number;
+  underlying_ltp: number;
+  distribution_type: string;
+  apply_liquidity_discount: boolean;
+  iv_decay_half_life_days: number | null;
+  iv_decay_floor_fraction: number;
+  use_iv_term_structure: boolean;
+  iv_term_structure_points: IvTermStructurePoint[] | null;
+  forecast_quantiles: { p10: number; p50: number; p90: number };
+  overlay: PopOverlayRow[];
+  event_risks: PopOverlayEventRisk[];
+}
+
+// ---------------------------------------------------------------------------
 // Execution advisor (module 7) — advisory-only position monitoring
 // ---------------------------------------------------------------------------
 

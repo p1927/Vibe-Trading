@@ -9,6 +9,7 @@ import type {
   OptionsChainResponse,
   OptionsPayoffRequest,
   OptionsPayoffResponse,
+  PopOverlayResponse,
   SelectorCandidate,
   SelectorRankBy,
   SelectorResponse,
@@ -862,6 +863,41 @@ export const api = {
     // each one's POP-by-T — fewer sequential external-data stages than
     // /options/research above, but still well past the 20s default.
     return request<SelectorResponse>(`/options/india/selector?${q.toString()}`, {
+      timeoutMs: 60_000,
+    });
+  },
+  // 2026-08-27-options-chain-pop-overlay-ui-missing: full chain scored by
+  // Monte Carlo PoP-by-horizon (module 4), distinct from the selector above
+  // (module 5's filtered/ranked candidates) — this returns every strike.
+  getIndiaOptionsPopOverlay: (
+    ticker: string,
+    opts?: {
+      expiryDate?: string;
+      horizonDays?: number;
+      source?: IndiaOptionsSource;
+      nPaths?: number;
+      applyLiquidityDiscount?: boolean;
+      useIvTermStructure?: boolean;
+      ivDecayHalfLifeDays?: number;
+      ivDecayFloorFraction?: number;
+    },
+  ) => {
+    const q = new URLSearchParams();
+    q.set("ticker", ticker);
+    if (opts?.expiryDate) q.set("expiry_date", opts.expiryDate);
+    if (opts?.horizonDays !== undefined) q.set("horizon_days", String(opts.horizonDays));
+    if (opts?.source) q.set("source", opts.source);
+    if (opts?.nPaths !== undefined) q.set("n_paths", String(opts.nPaths));
+    if (opts?.applyLiquidityDiscount) q.set("apply_liquidity_discount", "true");
+    if (opts?.useIvTermStructure) q.set("use_iv_term_structure", "true");
+    if (opts?.ivDecayHalfLifeDays !== undefined) {
+      q.set("iv_decay_half_life_days", String(opts.ivDecayHalfLifeDays));
+    }
+    if (opts?.ivDecayFloorFraction !== undefined) {
+      q.set("iv_decay_floor_fraction", String(opts.ivDecayFloorFraction));
+    }
+    // Monte Carlo over the whole chain — same cost order as the selector above.
+    return request<PopOverlayResponse>(`/options/india/pop-overlay?${q.toString()}`, {
       timeoutMs: 60_000,
     });
   },
