@@ -33,6 +33,7 @@ class _FakeResponse:
 
 @pytest.fixture(autouse=True)
 def _token(monkeypatch):
+    monkeypatch.delenv("SIMULATOR_CONTROL_TOKEN", raising=False)
     monkeypatch.setenv("OPENALGO_SIMULATOR_CONTROL_TOKEN", "test-shared-secret")
     monkeypatch.setenv("STOCK_SIMULATOR_URL", "http://127.0.0.1:8902")
     yield
