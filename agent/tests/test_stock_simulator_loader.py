@@ -26,11 +26,13 @@ class _FakeBar:
 
 
 class _FakeStockHistory:
-    def __init__(self, bars_by_symbol=None, recorded_days_by_symbol=None, chain=None):
+    def __init__(self, bars_by_symbol=None, recorded_days_by_symbol=None, chain=None, latest_bar=None):
         self._bars = bars_by_symbol or {}
         self._recorded = recorded_days_by_symbol or {}
         self._chain = chain
+        self._latest_bar = latest_bar
         self.calls: list[dict] = []
+        self.option_chain_at_calls: list[dict] = []
 
     def index_history(self, *, symbol, exchange, since_ist, until_ist):
         self.calls.append({"symbol": symbol, "exchange": exchange})
@@ -39,7 +41,11 @@ class _FakeStockHistory:
     def recorded_index_days(self, *, symbol, exchange):
         return self._recorded.get(symbol, [])
 
+    def bar_at(self, *, symbol, exchange, sim_now):
+        return self._latest_bar
+
     def option_chain_at(self, **kwargs):
+        self.option_chain_at_calls.append(kwargs)
         return self._chain
 
 
@@ -170,3 +176,50 @@ def test_fetch_option_chain_reshapes_flat_legs_to_nested() -> None:
     assert leg["ce"]["iv"] == 18.5
     assert leg["ce"]["delta"] == 0.6
     assert leg["pe"]["oi"] == 300
+
+
+class _FakeLatestBar:
+    def __init__(self, close):
+        self.close = close
+
+
+def test_fetch_latest_option_chain_anchors_default_expiry_on_real_trading_date(monkeypatch) -> None:
+    """Regression test for the "resolved expiry is already in the past" bug: when
+    `recorded_index_days`' latest day lags behind the real India trading date (recorder gap),
+    `expiry_date=None`'s default "nearest expiry" must still be resolved against real
+    "today" — not against the stale latest recorded day — see
+    .claude/backlog/items/2026-08-27-india-chain-default-expiry-resolves-past-date.md."""
+    import datetime as dt
+
+    fake = _FakeStockHistory(
+        recorded_days_by_symbol={"NIFTY": ["2026-08-19", "2026-08-25"]},
+        latest_bar=_FakeLatestBar(close=24800.0),
+        chain={"chain": [{"strike": 24800.0}], "expiry_date": "2026-09-01"},
+    )
+    monkeypatch.setattr(mod, "_ensure_stock_history", lambda: fake)
+    monkeypatch.setattr(
+        "trade_integrations.dataflows.company_research.market.india_trading_date",
+        lambda: dt.date(2026, 8, 27),
+    )
+
+    result = mod.fetch_latest_option_chain(underlying="NIFTY", exchange="NSE_INDEX")
+
+    assert result is not None
+    assert result["as_of"] == "2026-08-25"
+    assert fake.option_chain_at_calls[0]["expiry_anchor"] == dt.date(2026, 8, 27)
+
+
+def test_fetch_latest_option_chain_skips_anchor_when_expiry_date_given(monkeypatch) -> None:
+    fake = _FakeStockHistory(
+        recorded_days_by_symbol={"NIFTY": ["2026-08-25"]},
+        latest_bar=_FakeLatestBar(close=24800.0),
+        chain={"chain": [{"strike": 24800.0}], "expiry_date": "2026-08-25"},
+    )
+    monkeypatch.setattr(mod, "_ensure_stock_history", lambda: fake)
+
+    result = mod.fetch_latest_option_chain(
+        underlying="NIFTY", exchange="NSE_INDEX", expiry_date="2026-08-25",
+    )
+
+    assert result is not None
+    assert fake.option_chain_at_calls[0]["expiry_anchor"] is None

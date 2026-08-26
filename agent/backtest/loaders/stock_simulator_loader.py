@@ -33,7 +33,7 @@ convention.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time as _time
+from datetime import date, datetime, time as _time
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
@@ -216,6 +216,7 @@ def fetch_option_chain(
     sim_now,
     expiry_date: str | None = None,
     strike_count: int = 10,
+    expiry_anchor: date | None = None,
 ) -> dict[str, Any] | None:
     """Recorded/synthesized India option chain, reshaped to the
     ``normalize_option_chain_response``/``dataflows.options_research`` contract.
@@ -235,7 +236,7 @@ def fetch_option_chain(
         return None
     raw = sh.option_chain_at(
         underlying=underlying, exchange=exchange, spot=spot, sim_now=sim_now,
-        expiry_date=expiry_date, strike_count=strike_count,
+        expiry_date=expiry_date, strike_count=strike_count, expiry_anchor=expiry_anchor,
     )
     if not raw or not raw.get("chain"):
         return None
@@ -294,6 +295,15 @@ def fetch_latest_option_chain(
     latest day in ``recorded_index_days`` and its closing spot bar, then
     delegates. Returns ``None`` (never a stale or fabricated chain) if nothing
     has been recorded yet for this underlying/exchange.
+
+    When ``expiry_date`` isn't given, the "nearest expiry" default is anchored on the real
+    India trading date, not on ``latest_day`` — the recorded archive can lag behind today by a
+    session or more, and picking "nearest expiry >= latest_day" against a stale ``latest_day``
+    can resolve an expiry that has since passed by the time it's actually served (see
+    .claude/backlog/items/2026-08-27-india-chain-default-expiry-resolves-past-date.md). The
+    expiry file this resolves to still carries data for every trading day up to and including
+    ``latest_day`` (each weekly expiry file records that whole week, not just its own expiry),
+    so anchoring expiry selection on real "today" doesn't lose any coverage.
     """
     sh = _ensure_stock_history()
     if sh is None:
@@ -308,9 +318,14 @@ def fetch_latest_option_chain(
     bar = sh.bar_at(symbol=underlying, exchange=exchange, sim_now=day_end)
     if bar is None:
         return None
+    expiry_anchor = None
+    if not expiry_date:
+        from trade_integrations.dataflows.company_research.market import india_trading_date
+
+        expiry_anchor = india_trading_date()
     result = fetch_option_chain(
         underlying=underlying, exchange=exchange, spot=bar.close, sim_now=day_end,
-        expiry_date=expiry_date, strike_count=strike_count,
+        expiry_date=expiry_date, strike_count=strike_count, expiry_anchor=expiry_anchor,
     )
     if result is not None:
         result["as_of"] = latest_day
