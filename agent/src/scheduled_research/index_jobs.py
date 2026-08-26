@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import os
 import time
@@ -1599,6 +1600,33 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 config={"job_type": JOB_TYPE_INDEX_PLAN_REFRESH, "ticker": "NIFTY"},
             ),
         )
+
+    # Tight-cadence variants: one per market's existing "-hub-news-ingest-light" job,
+    # same config (RSS-only by default via hub_news_light_sources — no extra SearXNG
+    # load), just a much shorter interval. Per-market news timeline density for
+    # 2026-08-27-market-news-timeline-recording; dedup against already-drained refs
+    # is handled by news_staging_store.enqueue_raw_ref's merged-ledger check.
+    tight_cron = os.environ.get("HUB_NEWS_TIGHT_INGEST_CRON", "*/5 * * * *").strip() or "*/5 * * * *"
+    validate_schedule(tight_cron)
+    tight_jobs = []
+    for job in defaults:
+        if not job.id.endswith("-hub-news-ingest-light"):
+            continue
+        tight_prompt = (
+            job.prompt.replace("Light ", "Tight-cadence ", 1)
+            if job.prompt.startswith("Light ")
+            else f"Tight-cadence {job.prompt}"
+        )
+        tight_jobs.append(
+            dataclasses.replace(
+                job,
+                id=job.id.replace("-hub-news-ingest-light", "-hub-news-ingest-tight"),
+                prompt=tight_prompt,
+                schedule=tight_cron,
+                config=dict(job.config),
+            )
+        )
+    defaults.extend(tight_jobs)
 
     created = 0
     try:
