@@ -136,6 +136,46 @@ def test_market_sector_indices_forwards_country() -> None:
     assert res.json()["data"][0]["name"] == "SPX"
 
 
+def test_market_bundle_forwards_country_and_period() -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
+        captured["url"] = url
+        captured["params"] = params
+        return _FakeResponse(
+            200,
+            {
+                "status": "ok",
+                "data": {
+                    "headline": [{"name": "SPX", "label": "S&P 500", "rows": [], "error": None}],
+                    "sectors": [],
+                },
+            },
+        )
+
+    with patch("requests.request", side_effect=fake_request):
+        res = _client().get("/trade/markets/US/bundle", params={"period": "1y"})
+
+    assert res.status_code == 200
+    assert captured["url"].endswith("/history/US/bundle")
+    assert captured["params"] == {"period": "1y"}
+    assert res.json()["data"]["headline"][0]["name"] == "SPX"
+
+
+def test_market_bundle_defaults_period_to_3mo() -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
+        captured["params"] = params
+        return _FakeResponse(200, {"status": "ok", "data": {"headline": [], "sectors": []}})
+
+    with patch("requests.request", side_effect=fake_request):
+        res = _client().get("/trade/markets/US/bundle")
+
+    assert res.status_code == 200
+    assert captured["params"] == {"period": "3mo"}
+
+
 def test_market_top_constituents_forwards_country_and_top_n() -> None:
     captured: dict[str, Any] = {}
 

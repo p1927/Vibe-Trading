@@ -71,7 +71,7 @@ function CandidateCard({
           {candidate.net_ev_inr > 0 ? "Net EV positive" : "Net EV negative"}
         </span>
       </div>
-      {candidate.payoff_samples.length > 1 && (
+      {(candidate.payoff_samples?.length ?? 0) > 1 && (
         <MiniPayoffChart samples={candidate.payoff_samples} height={80} />
       )}
       <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
