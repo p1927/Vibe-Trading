@@ -63,6 +63,7 @@ export function AgentBoard() {
   const [timeline, setTimeline] = useState<ModelVersionTimelineEntry[]>([]);
   const [proposals, setProposals] = useState<PendingWeightProposal[]>([]);
   const [applyingId, setApplyingId] = useState<string | null>(null);
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [proposalError, setProposalError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -140,6 +141,21 @@ export function AgentBoard() {
         .finally(() => setApplyingId(null));
     },
     [agentId, loadBoard, loadProposals],
+  );
+
+  const rejectProposal = useCallback(
+    (proposalId: string) => {
+      const reason = window.prompt("Why is this proposal being rejected?");
+      if (reason === null || reason.trim() === "") return;
+      setRejectingId(proposalId);
+      setProposalError(null);
+      api
+        .rejectWeightProposal(proposalId, reason.trim())
+        .then(() => loadProposals())
+        .catch(() => setProposalError(`Failed to reject proposal ${proposalId}.`))
+        .finally(() => setRejectingId(null));
+    },
+    [loadProposals],
   );
 
   const wealthSeries: PnlSeries[] = [
@@ -245,14 +261,24 @@ export function AgentBoard() {
                     </td>
                     <td className="px-3 py-2 max-w-md text-xs text-muted-foreground">{p.rationale}</td>
                     <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        onClick={() => applyProposal(p.id)}
-                        disabled={applyingId === p.id}
-                        className="rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50"
-                      >
-                        {applyingId === p.id ? "Applying…" : "Apply"}
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => applyProposal(p.id)}
+                          disabled={applyingId === p.id || rejectingId === p.id}
+                          className="rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50"
+                        >
+                          {applyingId === p.id ? "Applying…" : "Apply"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => rejectProposal(p.id)}
+                          disabled={applyingId === p.id || rejectingId === p.id}
+                          className="rounded-md border border-red-500/40 bg-background px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
+                        >
+                          {rejectingId === p.id ? "Rejecting…" : "Reject"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

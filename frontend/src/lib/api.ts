@@ -1826,9 +1826,22 @@ export const api = {
       `/board/weight-proposals/${encodeURIComponent(proposalId)}/apply`,
       { method: "POST" },
     ),
+  rejectWeightProposal: (proposalId: string, reason: string) =>
+    request<ApplyWeightProposalResponse>(
+      `/board/weight-proposals/${encodeURIComponent(proposalId)}/reject`,
+      { method: "POST", body: JSON.stringify({ reason }) },
+    ),
 
   // --- Board 1 (Advisory) — 2026-08-25-advisory-board-live-prediction-approve-reject-ui ---
   getAdvisoryCandidates: () => request<AdvisoryCandidatesResponse>("/board/advisory/candidates"),
+  // 2026-08-27-advisory-candidate-detail-view: doc-level prediction explanation + that
+  // candidate's legs/rationale only — the richer per-candidate numbers (payoff curve,
+  // risk/reward, predicted trajectory) already reached the frontend via
+  // getAdvisoryCandidates and aren't recomputed here.
+  getAdvisoryCandidateDetail: (ticker: string, strategyName: string) => {
+    const q = new URLSearchParams({ ticker, strategy_name: strategyName });
+    return request<AdvisoryCandidateDetailResponse>(`/board/advisory/candidate-detail?${q.toString()}`);
+  },
   prepareAdvisoryWidget: (body: { ticker: string; strategyName?: string }) =>
     request<AdvisoryPrepareResponse>("/board/advisory/approve", {
       method: "POST",
@@ -6243,6 +6256,8 @@ export interface PendingWeightProposal {
   source_run_id: string | null;
   source_metrics: Record<string, number>;
   applied_at: string | null;
+  rejected_at: string | null;
+  reject_reason: string | null;
 }
 
 export interface PendingWeightProposalsResponse {
@@ -6302,6 +6317,48 @@ export interface AdvisoryPrepareResponse {
   widget_id: string;
   orders: Record<string, unknown>[];
   widget: Record<string, unknown>;
+}
+
+export interface AdvisoryDetailLeg {
+  option_type?: string;
+  strike?: number;
+  side?: string;
+  price?: number;
+  quantity?: number;
+  lots?: number;
+  lot_size?: number;
+  [key: string]: unknown;
+}
+
+/** Doc-level prediction explanation — same for every candidate on a ticker, not
+ * per-strategy (module 3's forecast doesn't vary by which strategy the user is
+ * previewing). `signals` shape comes straight from the pipeline and is rendered
+ * generically. */
+export interface AdvisoryPrediction {
+  view: string | null;
+  iv_regime: string | null;
+  expected_move_pct: number | null;
+  confidence: number | null;
+  signals?: Record<string, unknown>;
+  earnings_summary?: string;
+  corp_events_summary?: string;
+}
+
+export interface AdvisoryCandidateDetailResponse {
+  ok: boolean;
+  error?: string;
+  ticker: string;
+  strategy_name: string;
+  /** `false` when the named strategy has no matching `strategy_variants` entry on the
+   * current widget (e.g. the candidate list and the doc briefly disagree) — `prediction`
+   * is still returned in that case, only `legs`/`rationale` come back empty. */
+  found: boolean;
+  spot: number | null;
+  expiry: string | null;
+  as_of: string | null;
+  prediction: AdvisoryPrediction;
+  legs: AdvisoryDetailLeg[];
+  rationale: string | null;
 }
 
 export interface SelectorPrepareWidgetResponse {

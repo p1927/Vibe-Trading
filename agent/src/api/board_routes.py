@@ -27,8 +27,13 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 board_router = APIRouter(prefix="/board", tags=["board"])
+
+
+class RejectWeightProposalRequest(BaseModel):
+    reason: str
 
 
 def _require_agent(agent_id: str) -> None:
@@ -121,4 +126,17 @@ def apply_weight_proposal(proposal_id: str) -> Dict[str, Any]:
     result = apply_pending_weight_proposal(proposal_id)
     if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result.get("error") or "apply failed")
+    return result
+
+
+@board_router.post("/weight-proposals/{proposal_id}/reject")
+def reject_weight_proposal(proposal_id: str, body: RejectWeightProposalRequest) -> Dict[str, Any]:
+    """Mark one pending proposal rejected — the "no, this is wrong" counterpart to
+    `apply_weight_proposal`. Never touches the live weight store; only records the decision
+    and reason so the proposal doesn't sit in the pending queue forever."""
+    from trade_integrations.weight_model import reject_pending_weight_proposal
+
+    result = reject_pending_weight_proposal(proposal_id, body.reason)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("error") or "reject failed")
     return result

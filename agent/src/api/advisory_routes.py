@@ -78,6 +78,38 @@ def get_advisory_candidates() -> Dict[str, Any]:
     return result
 
 
+@advisory_router.get("/candidate-detail")
+def get_advisory_candidate_detail(ticker: str, strategy_name: str) -> Dict[str, Any]:
+    """Pre-approval detail payload for one candidate: the doc-level prediction
+    explanation (view/iv_regime/expected_move_pct/confidence/signals) plus that
+    candidate's legs/rationale, pulled out of the same `strategy_variants` widget shape
+    `POST /board/advisory/approve` already builds (`_orders_for_strategy` reuses the
+    identical lookup) -- no new pricing/scoring here. The richer per-candidate numbers
+    (payoff curve, risk/reward, predicted trajectory) already reach the frontend via
+    `GET /board/advisory/candidates`'s `score_ranked_strategies` rows and are not
+    recomputed on this route.
+    (2026-08-27-advisory-candidate-detail-view)"""
+    from trade_integrations.bridge.hub_context import normalize_strategy_key
+    from trade_integrations.dataflows.options_research.widget_payload import build_options_trade_widget
+
+    widget = build_options_trade_widget(ticker, refresh=False)
+    variants = widget.get("strategy_variants") or {}
+    variant = variants.get(strategy_name) or variants.get(normalize_strategy_key(strategy_name))
+    recommended = (variant or {}).get("recommended") or {}
+    return {
+        "ok": True,
+        "ticker": ticker,
+        "strategy_name": strategy_name,
+        "found": variant is not None,
+        "spot": widget.get("spot"),
+        "expiry": widget.get("expiry"),
+        "as_of": widget.get("as_of"),
+        "prediction": widget.get("prediction") or {},
+        "legs": recommended.get("legs") or [],
+        "rationale": recommended.get("rationale"),
+    }
+
+
 @advisory_router.get("/forecast")
 def get_advisory_forecast() -> Dict[str, Any]:
     """Most recently pushed quantile-conformal Nifty range forecast (per-horizon

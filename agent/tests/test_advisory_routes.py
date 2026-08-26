@@ -176,3 +176,63 @@ def test_approve_resolves_orders_for_a_named_strategy_variant(
 
     assert response.status_code == 200
     assert response.json()["orders"] == bull_call_orders
+
+
+def test_candidate_detail_returns_prediction_and_legs_for_named_variant(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bull_call_legs = [{"side": "BUY", "option_type": "CE", "strike": 24500, "price": 120}]
+    canned_widget = {
+        "spot": 24334.55,
+        "expiry": "2026-09-01",
+        "as_of": "2026-08-27T09:00:00+00:00",
+        "prediction": {"view": "bullish", "iv_regime": "elevated", "expected_move_pct": 1.2, "confidence": 0.6},
+        "strategy_variants": {
+            "bull_call_spread": {
+                "recommended": {"legs": bull_call_legs, "rationale": "Momentum breakout above resistance."},
+            },
+        },
+    }
+    monkeypatch.setattr(
+        "trade_integrations.dataflows.options_research.widget_payload.build_options_trade_widget",
+        lambda ticker, refresh=False: dict(canned_widget),
+    )
+
+    response = client.get(
+        "/board/advisory/candidate-detail", params={"ticker": "NIFTY", "strategy_name": "bull_call_spread"}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["found"] is True
+    assert body["prediction"]["view"] == "bullish"
+    assert body["legs"] == bull_call_legs
+    assert body["rationale"] == "Momentum breakout above resistance."
+
+
+def test_candidate_detail_found_false_for_unknown_strategy_name(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    canned_widget = {
+        "spot": 24334.55,
+        "prediction": {"view": "neutral"},
+        "strategy_variants": {"iron_condor": {"recommended": {"legs": [], "rationale": None}}},
+    }
+    monkeypatch.setattr(
+        "trade_integrations.dataflows.options_research.widget_payload.build_options_trade_widget",
+        lambda ticker, refresh=False: dict(canned_widget),
+    )
+
+    response = client.get(
+        "/board/advisory/candidate-detail", params={"ticker": "NIFTY", "strategy_name": "not_a_real_strategy"}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["found"] is False
+    assert body["legs"] == []
+    # Doc-level prediction is still returned even when the named variant isn't found --
+    # the explanation of *why* the pipeline views the market this way doesn't depend on
+    # which candidate the user clicked.
+    assert body["prediction"]["view"] == "neutral"

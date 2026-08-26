@@ -5,32 +5,14 @@ import { api, ApiError, type AdvisoryCandidate, type AdvisoryCandidatesResponse 
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { MiniPayoffChart } from "@/components/charts/MiniPayoffChart";
 import { PnlForecastBandChart } from "@/components/board/PnlForecastBandChart";
+import { AdvisoryCandidateDetailModal } from "@/components/board/AdvisoryCandidateDetailModal";
+import { fmtInr, fmtPct, fmtRatio, toneFor } from "@/lib/advisoryFormat";
 import { cn } from "@/lib/utils";
 
 // Mirrors AgentBoard.tsx's poll cadence — candidate scoring reads local cached research +
 // a single ledger parquet read, cheap enough to poll but no reason to hammer it faster than
 // the agent board does.
 const BOARD_POLL_MS = 60_000;
-
-function fmtInr(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return v.toLocaleString("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
-}
-
-function fmtPct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${(v * 100).toFixed(0)}%`;
-}
-
-function fmtRatio(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return `${v.toFixed(2)}:1`;
-}
-
-function toneFor(v: number | null | undefined): "up" | "down" | "neutral" {
-  if (v == null || !Number.isFinite(v)) return "neutral";
-  return v >= 0 ? "up" : "down";
-}
 
 function ConfidenceBanner({ ticker, data }: { ticker: string; data: AdvisoryCandidatesResponse[string] }) {
   const c = data.confidence;
@@ -52,15 +34,23 @@ function CandidateCard({
   ticker,
   candidate,
   onApprove,
+  onOpenDetail,
 }: {
   ticker: string;
   candidate: AdvisoryCandidate;
   onApprove: (ticker: string, candidate: AdvisoryCandidate) => void;
+  onOpenDetail: (ticker: string, candidate: AdvisoryCandidate) => void;
 }) {
   return (
     <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpenDetail(ticker, candidate)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") onOpenDetail(ticker, candidate);
+      }}
       className={cn(
-        "rounded-lg border p-3",
+        "cursor-pointer rounded-lg border p-3 transition-colors hover:border-primary/60",
         candidate.net_ev_inr > 0 ? "border-primary/40 bg-primary/5" : "border-border/60 bg-muted/20",
       )}
     >
@@ -104,7 +94,10 @@ function CandidateCard({
       )}
       <button
         type="button"
-        onClick={() => onApprove(ticker, candidate)}
+        onClick={(e) => {
+          e.stopPropagation();
+          onApprove(ticker, candidate);
+        }}
         className="mt-2.5 w-full rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
       >
         Approve
@@ -127,6 +120,9 @@ export function AdvisoryBoard() {
   const [preparing, setPreparing] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingApproval | null>(null);
   const [executing, setExecuting] = useState(false);
+  const [detailTarget, setDetailTarget] = useState<{ ticker: string; candidate: AdvisoryCandidate } | null>(
+    null,
+  );
 
   const load = useCallback(() => {
     setLoading(true);
@@ -145,6 +141,7 @@ export function AdvisoryBoard() {
   }, [load]);
 
   const handleApprove = useCallback(async (ticker: string, candidate: AdvisoryCandidate) => {
+    setDetailTarget(null);
     setPreparing(candidate.name);
     try {
       const res = await api.prepareAdvisoryWidget({ ticker, strategyName: candidate.name });
@@ -234,6 +231,7 @@ export function AdvisoryBoard() {
                       ticker={ticker}
                       candidate={candidate}
                       onApprove={handleApprove}
+                      onOpenDetail={(t, c) => setDetailTarget({ ticker: t, candidate: c })}
                     />
                   ))}
                 </div>
@@ -247,6 +245,16 @@ export function AdvisoryBoard() {
         <div className="fixed bottom-4 right-4 flex items-center gap-2 rounded-md border bg-card px-3 py-2 text-xs text-muted-foreground shadow-sm">
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> Preparing {preparing}…
         </div>
+      ) : null}
+
+      {detailTarget ? (
+        <AdvisoryCandidateDetailModal
+          ticker={detailTarget.ticker}
+          candidate={detailTarget.candidate}
+          approving={preparing === detailTarget.candidate.name}
+          onClose={() => setDetailTarget(null)}
+          onApprove={() => handleApprove(detailTarget.ticker, detailTarget.candidate)}
+        />
       ) : null}
 
       <ConfirmDialog
