@@ -49,6 +49,7 @@ JOB_TYPE_PUMP_DUMP_PROXY = "pump_dump_proxy"
 JOB_TYPE_MAX_PAIN_BHAVCOPY = "max_pain_bhavcopy"
 JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT = "constituent_volume_snapshot"
 JOB_TYPE_FORECAST_PLATFORM_RETRAIN = "forecast_platform_retrain"
+JOB_TYPE_QUANTILE_FORECAST_LEDGER_PUSH = "quantile_forecast_ledger_push"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -68,6 +69,7 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_MAX_PAIN_BHAVCOPY,
     JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT,
     JOB_TYPE_FORECAST_PLATFORM_RETRAIN,
+    JOB_TYPE_QUANTILE_FORECAST_LEDGER_PUSH,
 })
 
 NEWS_QUALITY_EVAL_CRON_ENV = "NEWS_QUALITY_EVAL_CRON"
@@ -509,6 +511,33 @@ def run_forecast_platform_retrain_job(config: dict[str, Any] | None = None) -> d
     return retrain_forecast_platform(end=cfg.get("end"), factor_start=cfg.get("factor_start", "2020-01-01"))
 
 
+def run_quantile_forecast_ledger_push_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Daily live push of `quantile_forecast.forecast_nifty_range()` into the index
+    `prediction_ledger` (.claude/backlog/items/2026-08-25-multi-factor-causal-forecast-
+    platform.md, Phase 7). Trains fresh quantile models off whatever causal graph/regime
+    summary is currently *promoted* — never a saved-but-unpromoted candidate — same
+    governance boundary `forecast_platform_retrain`'s job respects for its own legs.
+
+    Deliberately held back until a real, validated walk-forward coverage number existed
+    to justify pushing this signal somewhere live-facing readers see — see
+    `.claude/backlog/items/2026-08-26-quantile-forecast-live-wiring-pending-real-coverage.md`
+    for that number and the reasoning for finally wiring this in.
+    """
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.quantile_forecast.forecast import forecast_nifty_range
+    from trade_integrations.quantile_forecast.ledger_bridge import push_forecast_to_ledger
+
+    cfg = config or {}
+    try:
+        result = forecast_nifty_range(as_of=cfg.get("as_of"), factor_start=cfg.get("factor_start", "2020-01-01"))
+    except Exception as exc:
+        logger.exception("quantile forecast ledger push: forecast_nifty_range failed")
+        return {"status": "error", "error": str(exc)}
+
+    rows_appended = push_forecast_to_ledger(result)
+    return {"status": "ok", "rows_appended": rows_appended, "as_of_date": result.get("as_of_date")}
+
+
 def run_stock_history_coverage_sweep_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Daily full-coverage backfill sweep.
 
@@ -831,6 +860,11 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         _attach_job_result_summary(job, summary)
         logger.info("forecast platform retrain completed for job %s: %s", job.id, summary)
         return
+    if job_type == JOB_TYPE_QUANTILE_FORECAST_LEDGER_PUSH:
+        summary = run_quantile_forecast_ledger_push_job(job.config)
+        _attach_job_result_summary(job, summary)
+        logger.info("quantile forecast ledger push completed for job %s: %s", job.id, summary)
+        return
     if job_type == JOB_TYPE_COMPANY_RESEARCH_ARCHIVE:
         summary = run_company_research_archive_job(job.config)
         logger.info("company research archive completed for job %s: %s", job.id, summary)
@@ -996,6 +1030,19 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             status=JobStatus.PENDING,
             created_at=now_ms,
             config={"job_type": JOB_TYPE_FORECAST_PLATFORM_RETRAIN, "ticker": "NIFTY"},
+        ),
+        ScheduledResearchJob(
+            id="nifty-quantile-forecast-ledger-push",
+            prompt=(
+                "Push a live quantile-conformal Nifty range forecast into the "
+                "prediction ledger for Board 1's Advisory display"
+            ),
+            schedule="0 9 * * 1-5",
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            timezone="Asia/Kolkata",
+            config={"job_type": JOB_TYPE_QUANTILE_FORECAST_LEDGER_PUSH, "ticker": "NIFTY"},
         ),
         ScheduledResearchJob(
             id="nifty-company-research-archive",

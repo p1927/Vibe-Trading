@@ -72,6 +72,35 @@ def test_candidates_uses_configured_watchlist(client: TestClient, monkeypatch: p
     assert sorted(response.json().keys()) == ["BANKNIFTY", "NIFTY"]
 
 
+def test_forecast_returns_none_status_when_nothing_pushed(client: TestClient) -> None:
+    response = client.get("/board/advisory/forecast")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {"status": "none", "forecast": None}
+
+
+def test_forecast_returns_latest_pushed_forecast(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    canned = {
+        "predicted_at": "2026-08-26T09:00:00+00:00",
+        "spot_at_as_of": 24207.75,
+        "horizons": [{"horizon_days": 1, "quantiles_pct": {"p50": 0.1}}],
+    }
+    monkeypatch.setattr(
+        "trade_integrations.quantile_forecast.ledger_bridge.load_latest_pushed_forecast",
+        lambda: canned,
+    )
+
+    response = client.get("/board/advisory/forecast")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["forecast"] == canned
+
+
 def test_approve_builds_and_persists_a_loadable_widget(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

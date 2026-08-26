@@ -78,6 +78,22 @@ def get_advisory_candidates() -> Dict[str, Any]:
     return result
 
 
+@advisory_router.get("/forecast")
+def get_advisory_forecast() -> Dict[str, Any]:
+    """Most recently pushed quantile-conformal Nifty range forecast (per-horizon
+    quantiles/coverage from `quantile_forecast`), read back from the prediction ledger
+    rather than recomputed live — `forecast_nifty_range` trains real quantile models on
+    every call, too expensive for a page-load read; the scheduled
+    `nifty-quantile-forecast-ledger-push` job is what keeps this fresh. Returns
+    `{"status": "none"}` if nothing has been pushed yet."""
+    from trade_integrations.quantile_forecast.ledger_bridge import load_latest_pushed_forecast
+
+    forecast = load_latest_pushed_forecast()
+    if forecast is None:
+        return {"status": "none", "forecast": None}
+    return {"status": "ok", "forecast": forecast}
+
+
 @advisory_router.post("/approve")
 def prepare_advisory_widget(body: ApproveCandidateRequest) -> Dict[str, Any]:
     """Build and persist a trade-plan widget for `ticker`, resolving `strategy_name`'s own
