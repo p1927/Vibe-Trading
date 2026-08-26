@@ -25,6 +25,23 @@ import api_server
 _BIND_WARN = "without API_AUTH_KEY set"
 
 
+@pytest.fixture(autouse=True)
+def _clear_service_lock() -> None:
+    """Remove the vibetrading-agent service lock before each test.
+
+    `acquire_service_lock` (integrations/trade_integrations/service_lock.py)
+    only releases its lock via `atexit`, keyed by PID. Every test in this
+    file calls `serve_main` in-process, under the same pytest PID, so once
+    one test acquires the lock the next one sees its own (still-alive) PID
+    holding it and refuses to start — unrelated to what each test is
+    actually asserting. Clear it up front so each test starts unlocked.
+    """
+    from trade_integrations.service_lock import _lock_dir
+
+    lock_path = _lock_dir() / "vibetrading-agent.lock"
+    lock_path.unlink(missing_ok=True)
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "host, expected",
