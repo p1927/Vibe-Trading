@@ -83,4 +83,29 @@ describe("MultiMarketReplayPanel", () => {
 
     await waitFor(() => expect(screen.getByText(/arm 2 markets/i)).toBeInTheDocument());
   });
+
+  it("labels an interpolated quote as simulated, distinct from a stale one", async () => {
+    apiMock.armMultiMarketReplay.mockResolvedValue(STATUS);
+    apiMock.getMultiMarketQuote.mockResolvedValue({
+      status: "ok",
+      data: {
+        market: "US", symbol: "SPX", exchange: "US_INDEX", price: 150,
+        ts: "2026-08-24T15:00:00+00:00", stale: false, synthetic: true, source: "interpolated_ohlc",
+      },
+    });
+
+    render(<MultiMarketReplayPanel />);
+    await waitFor(() => expect(screen.getByText(/arm 2 markets/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByText(/arm 2 markets/i));
+    await waitFor(() => expect(screen.getByText("Pause")).toBeInTheDocument());
+
+    const [marketSelect, symbolSelect] = screen.getAllByRole("combobox");
+    fireEvent.change(marketSelect, { target: { value: "US" } });
+    await waitFor(() => expect(symbolSelect).not.toBeDisabled());
+    fireEvent.change(symbolSelect, { target: { value: "SPX" } });
+    fireEvent.click(screen.getByText("Get quote"));
+
+    await waitFor(() => expect(screen.getByText(/simulated.*interpolated open→close/i)).toBeInTheDocument());
+    expect(screen.queryByText(/stale — held over/i)).not.toBeInTheDocument();
+  });
 });

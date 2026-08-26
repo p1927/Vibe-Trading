@@ -324,8 +324,12 @@ export function MultiMarketReplayPanel() {
                 <span className="font-mono font-medium">{quote.price}</span>{" "}
                 <span className="text-muted-foreground">
                   @ {new Date(quote.ts).toLocaleString()}
-                  {quote.stale ? " (stale — held over from the last known tick)" : ""} ·{" "}
-                  {quote.source}
+                  {quote.synthetic
+                    ? " (simulated — no live tick data, interpolated open→close)"
+                    : quote.stale
+                      ? " (stale — held over from the last known tick)"
+                      : ""}{" "}
+                  · {quote.source}
                 </span>
               </p>
             ) : null}

@@ -4092,6 +4092,7 @@ export interface MultiMarketQuote {
   price: number;
   ts: string;
   stale: boolean;
+  synthetic: boolean;
   source: string;
 }
 
