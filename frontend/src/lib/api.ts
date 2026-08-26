@@ -1821,6 +1821,10 @@ export const api = {
     const q = weightId ? `?weight_id=${encodeURIComponent(weightId)}` : "";
     return request<PendingWeightProposalsResponse>(`/board/weight-proposals${q}`);
   },
+  getAppliedWeightProposals: (weightId?: string) => {
+    const q = weightId ? `?weight_id=${encodeURIComponent(weightId)}` : "";
+    return request<PendingWeightProposalsResponse>(`/board/weight-proposals/applied${q}`);
+  },
   applyWeightProposal: (proposalId: string) =>
     request<ApplyWeightProposalResponse>(
       `/board/weight-proposals/${encodeURIComponent(proposalId)}/apply`,
@@ -1829,6 +1833,11 @@ export const api = {
   rejectWeightProposal: (proposalId: string, reason: string) =>
     request<ApplyWeightProposalResponse>(
       `/board/weight-proposals/${encodeURIComponent(proposalId)}/reject`,
+      { method: "POST", body: JSON.stringify({ reason }) },
+    ),
+  revertWeightProposal: (proposalId: string, reason: string) =>
+    request<ApplyWeightProposalResponse>(
+      `/board/weight-proposals/${encodeURIComponent(proposalId)}/revert`,
       { method: "POST", body: JSON.stringify({ reason }) },
     ),
 
@@ -6258,6 +6267,8 @@ export interface PendingWeightProposal {
   applied_at: string | null;
   rejected_at: string | null;
   reject_reason: string | null;
+  reverted_at: string | null;
+  revert_reason: string | null;
 }
 
 export interface PendingWeightProposalsResponse {

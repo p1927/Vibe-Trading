@@ -36,6 +36,10 @@ class RejectWeightProposalRequest(BaseModel):
     reason: str
 
 
+class RevertWeightProposalRequest(BaseModel):
+    reason: str
+
+
 def _require_agent(agent_id: str) -> None:
     from trade_integrations.autonomous_agents.store import get_agent
 
@@ -116,6 +120,15 @@ def get_pending_weight_proposals(weight_id: Optional[str] = None) -> Dict[str, A
     return {"proposals": list_pending_weight_proposals(weight_id=weight_id)}
 
 
+@board_router.get("/weight-proposals/applied")
+def get_applied_weight_proposals(weight_id: Optional[str] = None) -> Dict[str, Any]:
+    """Every applied `weight_model` proposal — what a "Revert" action in the UI needs to
+    list, since only an applied proposal can be reverted."""
+    from trade_integrations.weight_model import list_applied_weight_proposals
+
+    return {"proposals": list_applied_weight_proposals(weight_id=weight_id)}
+
+
 @board_router.post("/weight-proposals/{proposal_id}/apply")
 def apply_weight_proposal(proposal_id: str) -> Dict[str, Any]:
     """Promote one pending proposal into the live weight store. See module docstring for
@@ -139,4 +152,18 @@ def reject_weight_proposal(proposal_id: str, body: RejectWeightProposalRequest) 
     result = reject_pending_weight_proposal(proposal_id, body.reason)
     if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result.get("error") or "reject failed")
+    return result
+
+
+@board_router.post("/weight-proposals/{proposal_id}/revert")
+def revert_weight_proposal(proposal_id: str, body: RevertWeightProposalRequest) -> Dict[str, Any]:
+    """Undo one already-applied proposal, writing the weight back to its pre-apply value.
+    Same no-extra-confirmation reasoning as `apply_weight_proposal`: a named "Revert" click on
+    a specific proposal already is the explicit human action `revert_applied_weight_proposal`
+    requires; it separately refuses if the live value has since moved on."""
+    from trade_integrations.weight_model import revert_applied_weight_proposal
+
+    result = revert_applied_weight_proposal(proposal_id, body.reason)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("error") or "revert failed")
     return result

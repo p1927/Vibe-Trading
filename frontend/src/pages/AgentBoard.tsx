@@ -62,8 +62,10 @@ export function AgentBoard() {
   const [hindsightCurves, setHindsightCurves] = useState<AgentBoardHindsightCurve[]>([]);
   const [timeline, setTimeline] = useState<ModelVersionTimelineEntry[]>([]);
   const [proposals, setProposals] = useState<PendingWeightProposal[]>([]);
+  const [appliedProposals, setAppliedProposals] = useState<PendingWeightProposal[]>([]);
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [revertingId, setRevertingId] = useState<string | null>(null);
   const [proposalError, setProposalError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -112,13 +114,17 @@ export function AgentBoard() {
     return () => window.clearInterval(timer);
   }, [agentId, loadBoard]);
 
-  // Pending weight proposals are global to weight_model, not scoped to one agent — load
-  // independently of the agent picker above.
+  // Pending/applied weight proposals are global to weight_model, not scoped to one agent —
+  // load independently of the agent picker above.
   const loadProposals = useCallback(() => {
     api
       .getPendingWeightProposals()
       .then((res) => setProposals(res.proposals))
       .catch(() => setProposalError("Failed to load pending weight proposals."));
+    api
+      .getAppliedWeightProposals()
+      .then((res) => setAppliedProposals(res.proposals))
+      .catch(() => setProposalError("Failed to load applied weight proposals."));
   }, []);
 
   useEffect(() => {
@@ -156,6 +162,24 @@ export function AgentBoard() {
         .finally(() => setRejectingId(null));
     },
     [loadProposals],
+  );
+
+  const revertProposal = useCallback(
+    (proposalId: string) => {
+      const reason = window.prompt("Why is this applied change being reverted?");
+      if (reason === null || reason.trim() === "") return;
+      setRevertingId(proposalId);
+      setProposalError(null);
+      api
+        .revertWeightProposal(proposalId, reason.trim())
+        .then(() => {
+          loadProposals();
+          if (agentId) loadBoard(agentId);
+        })
+        .catch(() => setProposalError(`Failed to revert proposal ${proposalId}.`))
+        .finally(() => setRevertingId(null));
+    },
+    [agentId, loadBoard, loadProposals],
   );
 
   const wealthSeries: PnlSeries[] = [
@@ -282,6 +306,59 @@ export function AgentBoard() {
                     </td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-medium text-muted-foreground">
+          Recently applied weight changes
+          {appliedProposals.length > 0 ? ` (${appliedProposals.length})` : ""}
+        </h2>
+        {appliedProposals.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-border/60 bg-muted/10 p-4 text-center text-[11px] text-muted-foreground">
+            No applied weight changes yet.
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border bg-card">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b bg-muted/40 text-[11px] uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2">Applied</th>
+                  <th className="px-3 py-2">Weight</th>
+                  <th className="px-3 py-2">Change</th>
+                  <th className="px-3 py-2">Rationale</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {[...appliedProposals]
+                  .reverse()
+                  .slice(0, 10)
+                  .map((p) => (
+                    <tr key={p.id} className="border-b last:border-0 align-top">
+                      <td className="px-3 py-2 text-xs text-muted-foreground">
+                        {p.applied_at ? new Date(p.applied_at).toLocaleString("en-IN") : "—"}
+                      </td>
+                      <td className="px-3 py-2 font-medium">{p.weight_id}</td>
+                      <td className="px-3 py-2">
+                        {p.current_value.toFixed(3)} → {p.proposed_value.toFixed(3)}
+                      </td>
+                      <td className="px-3 py-2 max-w-md text-xs text-muted-foreground">{p.rationale}</td>
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => revertProposal(p.id)}
+                          disabled={revertingId === p.id}
+                          className="rounded-md border border-amber-500/40 bg-background px-3 py-1.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-400"
+                        >
+                          {revertingId === p.id ? "Reverting…" : "Revert"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>
