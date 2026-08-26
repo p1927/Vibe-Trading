@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections import defaultdict
 from typing import Dict, List, Optional, Union
 
@@ -10,6 +11,48 @@ import pandas as pd
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
+
+# yfinance's own `timeout=` argument does not reliably bound a stuck
+# yf.download() call — see
+# 2026-08-25-yfinance-hang-outlasted-default-timeout-unexplained.md: the
+# cookie/crumb bootstrap step (data.py's _make_request) calls
+# _get_cookie_and_crumb() with no timeout arg, silently falling back to a
+# hardcoded 30s regardless of what was passed to yf.download(); and a stuck
+# DNS resolution inside curl_cffi/libcurl is not bounded by CURLOPT_TIMEOUT
+# at all (blocking getaddrinfo() is outside libcurl's cancellable timers).
+# Because yfinance's YfData is a process-wide singleton guarded by one
+# threading.Lock, a single thread stuck in either of those can wedge every
+# other yfinance call in the process indefinitely, not just its own.
+_HARD_TIMEOUT_SECONDS = 20
+
+
+def _run_with_hard_timeout(fn, *args, **kwargs):
+    """Bound the caller's wait on ``fn`` independent of ``fn``'s own timeout handling.
+
+    Runs ``fn`` in a throwaway daemon thread rather than a ThreadPoolExecutor:
+    executor workers are non-daemon, so a genuinely stuck call would still
+    block process shutdown even after this function stops waiting on it. A
+    daemon thread lets a stuck call leak silently instead.
+    """
+    box: dict = {}
+
+    def _target() -> None:
+        try:
+            box["value"] = fn(*args, **kwargs)
+        except BaseException as exc:  # noqa: BLE001 - forward to the caller's thread
+            box["error"] = exc
+
+    thread = threading.Thread(target=_target, daemon=True)
+    thread.start()
+    thread.join(timeout=_HARD_TIMEOUT_SECONDS)
+    if thread.is_alive():
+        raise TimeoutError(
+            f"{getattr(fn, '__module__', '?')}.{getattr(fn, '__qualname__', fn)} "
+            f"exceeded hard timeout of {_HARD_TIMEOUT_SECONDS}s"
+        )
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
 
 from backtest.loaders.base import (
     loader_cache_get,
@@ -116,8 +159,11 @@ def _download_history(
     # hang here has previously frozen the whole single-process API server —
     # see 2026-08-25-correlation-route-blocks-event-loop-takes-down-health.
     # 15s matches this codebase's other loaders' HTTP timeout convention
-    # (e.g. `backtest/loaders/_http.py`'s default).
-    return yf.download(
+    # (e.g. `backtest/loaders/_http.py`'s default). It is not trustworthy on
+    # its own — see _HARD_TIMEOUT_SECONDS above — so _run_with_hard_timeout
+    # provides the actual bound on this call's duration.
+    return _run_with_hard_timeout(
+        yf.download,
         tickers,
         start=start_date,
         end=end_date,
