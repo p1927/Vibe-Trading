@@ -6284,6 +6284,11 @@ export interface AdvisoryCandidate {
    * (`{spot, pnl}` — already renamed server-side from `compute_payoff`'s own
    * `underlying` key). Empty when the candidate has no legs to price. */
   payoff_samples: { spot: number; pnl: number }[];
+  /** Day-by-day predicted PnL percentile band (GBM, same machinery as the Positions
+   * board's `pnl_forecast_band`), shaped for `PnlForecastBandChart` directly. Empty when
+   * there's no usable expiry date or forecast scenarios to calibrate from — the
+   * candidate is still scored and returned either way. */
+  trajectory_band: { days_ahead: number; pnl_p10_inr: number; pnl_p50_inr: number; pnl_p90_inr: number }[];
 }
 
 export interface AdvisoryTickerCandidates {

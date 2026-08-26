@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api, ApiError, type AdvisoryCandidate, type AdvisoryCandidatesResponse } from "@/lib/api";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { MiniPayoffChart } from "@/components/charts/MiniPayoffChart";
+import { PnlForecastBandChart } from "@/components/board/PnlForecastBandChart";
 import { cn } from "@/lib/utils";
 
 // Mirrors AgentBoard.tsx's poll cadence — candidate scoring reads local cached research +
@@ -93,6 +94,14 @@ function CandidateCard({
           Risk/Reward <span className="font-medium text-foreground">{fmtRatio(candidate.risk_reward_ratio)}</span>
         </div>
       </div>
+      {(candidate.trajectory_band?.length ?? 0) > 1 && (
+        <div className="mt-2">
+          <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+            Predicted trajectory
+          </div>
+          <PnlForecastBandChart band={candidate.trajectory_band} height={110} />
+        </div>
+      )}
       <button
         type="button"
         onClick={() => onApprove(ticker, candidate)}
