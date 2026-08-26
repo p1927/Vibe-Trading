@@ -10,6 +10,7 @@ import {
   type ModelVersionTimelineEntry,
   type PendingWeightProposal,
   type RetrainProposal,
+  type LearningActivityEntry,
 } from "@/lib/api";
 import { AgentPnlCurveChart, type PnlSeries } from "@/components/board/AgentPnlCurveChart";
 import { cn } from "@/lib/utils";
@@ -73,6 +74,9 @@ export function AgentBoard() {
   const [retrainError, setRetrainError] = useState<string | null>(null);
   const [proposalError, setProposalError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activity, setActivity] = useState<LearningActivityEntry[]>([]);
+  const [activityFilter, setActivityFilter] = useState<string>("all");
+  const [activityError, setActivityError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -138,6 +142,22 @@ export function AgentBoard() {
     return () => window.clearInterval(timer);
   }, [loadProposals]);
 
+  // Unified read-only timeline over every learning mechanism's proposals (weight_model +
+  // index calibrator retrains), pending/applied/rejected/reverted alike — refreshed whenever
+  // either track's own write actions below resolve, plus its own poll.
+  const loadActivity = useCallback(() => {
+    api
+      .getLearningActivity()
+      .then((res) => setActivity(res.entries))
+      .catch(() => setActivityError("Failed to load learning activity."));
+  }, []);
+
+  useEffect(() => {
+    loadActivity();
+    const timer = window.setInterval(loadActivity, BOARD_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadActivity]);
+
   const applyProposal = useCallback(
     (proposalId: string) => {
       setApplyingId(proposalId);
@@ -146,12 +166,13 @@ export function AgentBoard() {
         .applyWeightProposal(proposalId)
         .then(() => {
           loadProposals();
+          loadActivity();
           if (agentId) loadBoard(agentId);
         })
         .catch(() => setProposalError(`Failed to apply proposal ${proposalId}.`))
         .finally(() => setApplyingId(null));
     },
-    [agentId, loadBoard, loadProposals],
+    [agentId, loadBoard, loadProposals, loadActivity],
   );
 
   const rejectProposal = useCallback(
@@ -162,11 +183,14 @@ export function AgentBoard() {
       setProposalError(null);
       api
         .rejectWeightProposal(proposalId, reason.trim())
-        .then(() => loadProposals())
+        .then(() => {
+          loadProposals();
+          loadActivity();
+        })
         .catch(() => setProposalError(`Failed to reject proposal ${proposalId}.`))
         .finally(() => setRejectingId(null));
     },
-    [loadProposals],
+    [loadProposals, loadActivity],
   );
 
   const revertProposal = useCallback(
@@ -179,12 +203,13 @@ export function AgentBoard() {
         .revertWeightProposal(proposalId, reason.trim())
         .then(() => {
           loadProposals();
+          loadActivity();
           if (agentId) loadBoard(agentId);
         })
         .catch(() => setProposalError(`Failed to revert proposal ${proposalId}.`))
         .finally(() => setRevertingId(null));
     },
-    [agentId, loadBoard, loadProposals],
+    [agentId, loadBoard, loadProposals, loadActivity],
   );
 
   // Index-calibrator retrain proposals are also global, separate from weight_model's queue —
@@ -208,11 +233,14 @@ export function AgentBoard() {
       setRetrainError(null);
       api
         .applyRetrainProposal(proposalId)
-        .then(() => loadRetrainProposals())
+        .then(() => {
+          loadRetrainProposals();
+          loadActivity();
+        })
         .catch(() => setRetrainError(`Failed to apply retrain proposal ${proposalId}.`))
         .finally(() => setRetrainApplyingId(null));
     },
-    [loadRetrainProposals],
+    [loadRetrainProposals, loadActivity],
   );
 
   const rejectRetrainProposal = useCallback(
@@ -223,12 +251,18 @@ export function AgentBoard() {
       setRetrainError(null);
       api
         .rejectRetrainProposal(proposalId, reason.trim())
-        .then(() => loadRetrainProposals())
+        .then(() => {
+          loadRetrainProposals();
+          loadActivity();
+        })
         .catch(() => setRetrainError(`Failed to reject retrain proposal ${proposalId}.`))
         .finally(() => setRetrainRejectingId(null));
     },
-    [loadRetrainProposals],
+    [loadRetrainProposals, loadActivity],
   );
+
+  const filteredActivity =
+    activityFilter === "all" ? activity : activity.filter((e) => e.status === activityFilter);
 
   const wealthSeries: PnlSeries[] = [
     {
@@ -491,6 +525,84 @@ export function AgentBoard() {
                         </button>
                       </div>
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-2">
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-sm font-medium text-muted-foreground">
+            Learning activity
+            {activity.length > 0 ? ` (${activity.length})` : ""}
+          </h2>
+          <select
+            value={activityFilter}
+            onChange={(e) => setActivityFilter(e.target.value)}
+            className="rounded-md border bg-background px-2 py-1 text-xs"
+          >
+            <option value="all">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="applied">Applied</option>
+            <option value="rejected">Rejected</option>
+            <option value="reverted">Reverted</option>
+          </select>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Every self-learning proposal — weight-model recalibrations and index-calibrator
+          retrains alike — in one timeline, regardless of which mechanism produced it or
+          whether it's still pending, was applied, rejected, or later reverted.
+        </p>
+        {activityError ? (
+          <div className="rounded-xl border border-red-500/40 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">
+            {activityError}
+          </div>
+        ) : null}
+        {filteredActivity.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-border/60 bg-muted/10 p-4 text-center text-[11px] text-muted-foreground">
+            No learning activity{activityFilter !== "all" ? ` with status "${activityFilter}"` : ""} yet.
+          </div>
+        ) : (
+          <div className="max-h-96 overflow-x-auto overflow-y-auto rounded-xl border bg-card">
+            <table className="w-full text-left text-sm">
+              <thead className="sticky top-0 border-b bg-muted/40 text-[11px] uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2">Created</th>
+                  <th className="px-3 py-2">Track</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Change</th>
+                  <th className="px-3 py-2">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredActivity.map((e) => (
+                  <tr key={`${e.track}-${e.id}`} className="border-b last:border-0 align-top">
+                    <td className="px-3 py-2 text-xs text-muted-foreground">
+                      {new Date(e.created_at).toLocaleString("en-IN")}
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      {e.track === "weight_model" ? "Weight model" : "Index calibrator"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={cn(
+                          "rounded-full px-2 py-0.5 text-[11px] font-medium",
+                          e.status === "applied" &&
+                            "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+                          e.status === "pending" && "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+                          e.status === "rejected" && "bg-red-500/10 text-red-700 dark:text-red-400",
+                          e.status === "reverted" &&
+                            "bg-orange-500/10 text-orange-700 dark:text-orange-400",
+                        )}
+                      >
+                        {e.status}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-xs">{e.summary}</td>
+                    <td className="px-3 py-2 max-w-md text-xs text-muted-foreground">{e.reason || "—"}</td>
                   </tr>
                 ))}
               </tbody>

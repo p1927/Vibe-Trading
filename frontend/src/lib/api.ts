@@ -1852,6 +1852,7 @@ export const api = {
       `/board/retrain-proposals/${encodeURIComponent(proposalId)}/reject`,
       { method: "POST", body: JSON.stringify({ reason }) },
     ),
+  getLearningActivity: () => request<LearningActivityResponse>("/board/learning-activity"),
 
   // --- Board 1 (Advisory) — 2026-08-25-advisory-board-live-prediction-approve-reject-ui ---
   getAdvisoryCandidates: () => request<AdvisoryCandidatesResponse>("/board/advisory/candidates"),
@@ -6322,6 +6323,20 @@ export interface RetrainProposalsResponse {
 export interface ApplyRetrainProposalResponse {
   status: string;
   proposal: RetrainProposal;
+}
+
+export interface LearningActivityEntry {
+  track: "weight_model" | "index_calibrator";
+  id: string;
+  status: string;
+  created_at: string;
+  resolved_at: string | null;
+  summary: string;
+  reason: string | null;
+}
+
+export interface LearningActivityResponse {
+  entries: LearningActivityEntry[];
 }
 
 // --- Board 1 (Advisory) — 2026-08-25-advisory-board-live-prediction-approve-reject-ui ---
