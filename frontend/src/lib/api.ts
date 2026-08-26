@@ -6273,6 +6273,12 @@ export interface AdvisoryCandidate {
   ev_inr: number;
   net_ev_inr: number;
   max_loss_inr: number | null;
+  max_profit_inr: number | null;
+  /** Reward:risk = `max_profit_inr / abs(max_loss_inr)` — a different definition from
+   * the India Options Selector's `risk_reward_ratio` (there: risk relative to a
+   * user-supplied target profit; the advisory pipeline has no such target). `null`
+   * when max_loss is 0/undefined. */
+  risk_reward_ratio: number | null;
   confidence_adjusted_score: number;
   /** Full payoff curve at the current spot, shaped for `MiniPayoffChart` directly
    * (`{spot, pnl}` — already renamed server-side from `compute_payoff`'s own

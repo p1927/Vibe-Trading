@@ -21,6 +21,11 @@ function fmtPct(v: number | null | undefined): string {
   return `${(v * 100).toFixed(0)}%`;
 }
 
+function fmtRatio(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return `${v.toFixed(2)}:1`;
+}
+
 function toneFor(v: number | null | undefined): "up" | "down" | "neutral" {
   if (v == null || !Number.isFinite(v)) return "neutral";
   return v >= 0 ? "up" : "down";
@@ -83,6 +88,9 @@ function CandidateCard({
         </div>
         <div>
           Score <span className="font-medium text-foreground">{candidate.base_score.toFixed(2)}</span>
+        </div>
+        <div>
+          Risk/Reward <span className="font-medium text-foreground">{fmtRatio(candidate.risk_reward_ratio)}</span>
         </div>
       </div>
       <button
