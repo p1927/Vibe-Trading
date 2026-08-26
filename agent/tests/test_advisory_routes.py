@@ -178,6 +178,44 @@ def test_approve_resolves_orders_for_a_named_strategy_variant(
     assert response.json()["orders"] == bull_call_orders
 
 
+def test_approve_rejects_unknown_strategy_name_instead_of_falling_back(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """2026-08-27-advisory-approve-executes-wrong-strategy-orders: approving a strategy
+    name that isn't in this widget's strategy_variants must fail loudly, not silently
+    submit the widget's top-level (different) recommended-strategy orders."""
+    tmp_widgets = Path(tempfile.mkdtemp(prefix="advisory_widgets_test_"))
+    monkeypatch.setattr(widget_store, "trade_widget_dir", lambda: tmp_widgets)
+
+    recommended_orders = [{"side": "BUY", "symbol": "NIFTY31JUL25C24500", "quantity": 50}]
+    canned_widget = {
+        "type": "trade_plan.widget",
+        "widget_id": "tp_NIFTY_abcdef123456",
+        "underlying": "NIFTY",
+        "implementation_steps": [
+            {"action": "execute_basket", "payload": {"orders": recommended_orders}},
+        ],
+        "strategy_variants": {
+            "bull_call_spread": {
+                "implementation_steps": [
+                    {"action": "execute_basket", "payload": {"orders": recommended_orders}},
+                ],
+            },
+        },
+    }
+    monkeypatch.setattr(
+        "trade_integrations.dataflows.options_research.widget_payload.build_options_trade_widget",
+        lambda ticker, refresh=False: dict(canned_widget),
+    )
+
+    response = client.post(
+        "/board/advisory/approve", json={"ticker": "NIFTY", "strategy_name": "short_strangle"}
+    )
+
+    assert response.status_code == 400
+    assert "short_strangle" in response.json()["detail"]
+
+
 def test_candidate_detail_returns_prediction_and_legs_for_named_variant(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
