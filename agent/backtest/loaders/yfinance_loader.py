@@ -10,6 +10,14 @@ from typing import Dict, List, Optional, Union
 import pandas as pd
 import yfinance as yf
 
+from backtest.loaders.base import (
+    loader_cache_get,
+    loader_cache_put,
+    validate_date_range,
+    validate_ohlc,
+)
+from backtest.loaders.registry import register
+
 logger = logging.getLogger(__name__)
 
 # yfinance's own `timeout=` argument does not reliably bound a stuck
@@ -54,13 +62,87 @@ def _run_with_hard_timeout(fn, *args, **kwargs):
         raise box["error"]
     return box.get("value")
 
-from backtest.loaders.base import (
-    loader_cache_get,
-    loader_cache_put,
-    validate_date_range,
-    validate_ohlc,
-)
-from backtest.loaders.registry import register
+
+# yfinance's YfData is a process-wide singleton (SingletonMeta) guarded by one
+# shared threading.Lock (`_cookie_lock`), held for the whole cookie/crumb
+# bootstrap with no `acquire(timeout=...)` anywhere in yfinance itself
+# (data.py, yfinance 1.6.0). The daemon-thread wrapper above bounds *this
+# loader's own* wait on a stuck call, but it does not free `_cookie_lock`
+# itself: a thread stuck inside the bootstrap (e.g. an unbounded getaddrinfo()
+# DNS stall) still wedges every other thread in the process trying to acquire
+# that same lock, forever. See
+# 2026-08-26-yfinance-singleton-cookie-lock-unbounded-process-wide-starvation.
+#
+# _BoundedLock swaps in a bounded default acquire for that one lock instance.
+# It cannot force a genuinely stuck holder to release the lock -- no cross-
+# thread mechanism in Python can -- but it turns every *other* acquisition
+# (including the ones inside yfinance's own code) from an indefinite hang
+# into a prompt TimeoutError, so a wedged holder no longer starves the rest
+# of the process silently.
+_COOKIE_LOCK_TIMEOUT_SECONDS = 20
+
+
+class _BoundedLock:
+    """threading.Lock drop-in whose default acquire is bounded, not infinite."""
+
+    def __init__(self, default_timeout: float = _COOKIE_LOCK_TIMEOUT_SECONDS) -> None:
+        self._lock = threading.Lock()
+        self._default_timeout = default_timeout
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        # Only substitute our own bounded default when the caller didn't ask
+        # for a specific timeout. yfinance's own call sites never do (see
+        # module docstring above), and they assume acquire() always
+        # eventually succeeds rather than checking its return value -- so an
+        # injected default that fails must raise instead of silently
+        # returning False into code that isn't expecting it. A caller that
+        # *does* pass its own timeout is assumed to already handle a False
+        # return, so it keeps normal threading.Lock semantics.
+        injected_default = blocking and timeout < 0
+        if injected_default:
+            timeout = self._default_timeout
+        acquired = self._lock.acquire(blocking, timeout)
+        if not acquired and injected_default:
+            raise TimeoutError(
+                f"yfinance YfData._cookie_lock not acquired within {timeout}s "
+                "-- another thread in this process is likely stuck holding it"
+            )
+        return acquired
+
+    def release(self) -> None:
+        self._lock.release()
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+    def __enter__(self) -> "_BoundedLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.release()
+
+
+def _patch_yfinance_cookie_lock() -> None:
+    """Swap yfinance's shared ``YfData._cookie_lock`` for a bounded one.
+
+    Best-effort: yfinance's internals aren't a public API and have already
+    changed shape across versions in this repo's own venvs (1.5.2 pinned vs.
+    1.6.0 installed, per the backlog item above). If the attribute isn't
+    where expected, skip the patch rather than breaking data loading over a
+    defense-in-depth measure.
+    """
+    try:
+        import yfinance.data as yf_data
+
+        instance = yf_data.YfData()
+        if not isinstance(instance._cookie_lock, _BoundedLock):
+            instance._cookie_lock = _BoundedLock()
+    except Exception:  # noqa: BLE001 - defense-in-depth patch must not be fatal
+        logger.warning("Failed to patch yfinance YfData._cookie_lock", exc_info=True)
+
+
+_patch_yfinance_cookie_lock()
 
 _OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
 _COLUMN_RENAMES = {
