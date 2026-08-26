@@ -48,6 +48,7 @@ JOB_TYPE_REINFERENCE_TICK = "reinference_tick"
 JOB_TYPE_PUMP_DUMP_PROXY = "pump_dump_proxy"
 JOB_TYPE_MAX_PAIN_BHAVCOPY = "max_pain_bhavcopy"
 JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT = "constituent_volume_snapshot"
+JOB_TYPE_FORECAST_PLATFORM_RETRAIN = "forecast_platform_retrain"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -66,6 +67,7 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_PUMP_DUMP_PROXY,
     JOB_TYPE_MAX_PAIN_BHAVCOPY,
     JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT,
+    JOB_TYPE_FORECAST_PLATFORM_RETRAIN,
 })
 
 NEWS_QUALITY_EVAL_CRON_ENV = "NEWS_QUALITY_EVAL_CRON"
@@ -487,6 +489,26 @@ def run_index_calibration_job(config: dict[str, Any] | None = None) -> dict[str,
     )
 
 
+def run_forecast_platform_retrain_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Weekly retrain for the multi-factor causal forecast platform
+    (.claude/backlog/items/2026-08-25-multi-factor-causal-forecast-platform.md): causal
+    graph discovery, regime-model fitting, and quantile-forecast training, each saved as
+    a new candidate version. Never auto-promotes anything — see
+    `trade_integrations.forecast_platform_retrain`'s own module docstring for why that's
+    a deliberate governance decision, not a gap. This job existing and being scheduled
+    (see `default_index_jobs()` below) is itself the fix for a real, confirmed gap: as of
+    2026-08-26 the three retrain entrypoints this calls had zero call sites anywhere in
+    the repo, not even in tests — exactly the "built but never scheduled" pattern
+    `.claude/backlog/items/2026-08-25-investigation-built-but-never-scheduled-pattern.md`
+    already documented 4 prior instances of.
+    """
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.forecast_platform_retrain import retrain_forecast_platform
+
+    cfg = config or {}
+    return retrain_forecast_platform(end=cfg.get("end"), factor_start=cfg.get("factor_start", "2020-01-01"))
+
+
 def run_stock_history_coverage_sweep_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Daily full-coverage backfill sweep.
 
@@ -804,6 +826,11 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         summary = run_index_calibration_job(job.config)
         logger.info("index calibration completed for job %s: %s", job.id, summary)
         return
+    if job_type == JOB_TYPE_FORECAST_PLATFORM_RETRAIN:
+        summary = run_forecast_platform_retrain_job(job.config)
+        _attach_job_result_summary(job, summary)
+        logger.info("forecast platform retrain completed for job %s: %s", job.id, summary)
+        return
     if job_type == JOB_TYPE_COMPANY_RESEARCH_ARCHIVE:
         summary = run_company_research_archive_job(job.config)
         logger.info("company research archive completed for job %s: %s", job.id, summary)
@@ -956,6 +983,19 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             status=JobStatus.PENDING,
             created_at=now_ms,
             config={"job_type": JOB_TYPE_INDEX_CALIBRATION, "ticker": "NIFTY"},
+        ),
+        ScheduledResearchJob(
+            id="nifty-forecast-platform-retrain",
+            prompt=(
+                "Retrain the multi-factor causal forecast platform (causal graph, "
+                "regime model, quantile forecast) — saves new candidate versions only, "
+                "never auto-promotes"
+            ),
+            schedule="0 5 * * 1",
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={"job_type": JOB_TYPE_FORECAST_PLATFORM_RETRAIN, "ticker": "NIFTY"},
         ),
         ScheduledResearchJob(
             id="nifty-company-research-archive",
