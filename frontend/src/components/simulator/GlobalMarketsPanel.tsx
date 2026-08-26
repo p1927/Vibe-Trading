@@ -117,10 +117,18 @@ export function GlobalMarketsPanel({
           : { key: idx.symbol, name: idx.name, price: null, change: null, changePct: null, sparkline: [], badge: "LIVE", loading: true, error: null };
       }),
     );
+    // Bounded to a recent window (not the endpoint's unbounded 2015-2026 default): a
+    // sparkline only needs the last few trading days, and NIFTY alone has a fully
+    // recorded multi-year 1-min bundle (BANKNIFTY/SENSEX have far less history), so an
+    // unbounded request for NIFTY returns ~487k rows (~130MB) and stalls the card
+    // indefinitely while its siblings load fine — see
+    // 2026-08-27-global-markets-india-card-unbounded-history-fetch.
+    const untilIst = new Date().toISOString();
+    const sinceIst = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
     INDIA_INDICES.forEach((idx) => {
       Promise.all([
         api.getHubMarketDataSpot({ symbol: idx.symbol, exchange: idx.exchange }),
-        api.getHubIndexHistoryBars({ symbol: idx.symbol, exchange: idx.exchange }),
+        api.getHubIndexHistoryBars({ symbol: idx.symbol, exchange: idx.exchange, since_ist: sinceIst, until_ist: untilIst }),
       ])
         .then(([spotRes, barsRes]) => {
           const bars = barsRes.bars ?? [];
