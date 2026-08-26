@@ -33,7 +33,7 @@ class _FakeResponse:
 
 @pytest.fixture(autouse=True)
 def _token(monkeypatch):
-    monkeypatch.setenv("SIMULATOR_CONTROL_TOKEN", "test-shared-secret")
+    monkeypatch.setenv("OPENALGO_SIMULATOR_CONTROL_TOKEN", "test-shared-secret")
     monkeypatch.setenv("STOCK_SIMULATOR_URL", "http://127.0.0.1:8902")
     yield
 
@@ -43,7 +43,7 @@ def test_markets_registry_lists_all_supported_markets() -> None:
     assert res.status_code == 200
     body = res.json()
     codes = {m["code"] for m in body["markets"]}
-    assert codes == {"IN", "US", "CN", "JP", "RU", "ME", "LATAM"}
+    assert codes == {"IN", "US", "CN", "JP", "RU", "ME", "LATAM", "EU"}
     us = next(m for m in body["markets"] if m["code"] == "US")
     assert us["indices"] == ["SPX", "NASDAQ", "DOW", "SOX"]
     assert us["currency"] == "USD"
@@ -53,12 +53,14 @@ def test_markets_registry_does_not_require_simulator_token(monkeypatch) -> None:
     """The registry is static local data — no reason to fail-closed on a
     missing control token the way the proxy reads below do."""
     monkeypatch.delenv("SIMULATOR_CONTROL_TOKEN", raising=False)
+    monkeypatch.delenv("OPENALGO_SIMULATOR_CONTROL_TOKEN", raising=False)
     res = _client().get("/trade/markets/registry")
     assert res.status_code == 200
 
 
 def test_market_index_history_returns_503_without_token(monkeypatch) -> None:
     monkeypatch.delenv("SIMULATOR_CONTROL_TOKEN", raising=False)
+    monkeypatch.delenv("OPENALGO_SIMULATOR_CONTROL_TOKEN", raising=False)
     res = _client().get("/trade/markets/US/index/SPX")
     assert res.status_code == 503
     assert "SIMULATOR_CONTROL_TOKEN" in res.json()["detail"]
@@ -321,6 +323,7 @@ def test_market_global_macro_live_spot_forwards_series() -> None:
 
 def test_market_global_macro_returns_503_without_token(monkeypatch) -> None:
     monkeypatch.delenv("SIMULATOR_CONTROL_TOKEN", raising=False)
+    monkeypatch.delenv("OPENALGO_SIMULATOR_CONTROL_TOKEN", raising=False)
     res = _client().get("/trade/markets/global_macro/usd_inr")
     assert res.status_code == 503
 

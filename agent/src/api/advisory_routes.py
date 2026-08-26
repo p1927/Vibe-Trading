@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 advisory_router = APIRouter(prefix="/board/advisory", tags=["board"])
@@ -31,9 +31,13 @@ class ApproveCandidateRequest(BaseModel):
 
 def _orders_for_strategy(widget: Dict[str, Any], strategy_name: str | None) -> list[Dict[str, Any]]:
     """Pull the execute_basket order list for `strategy_name` out of the widget's
-    per-strategy `strategy_variants`, falling back to the widget's own top-level
-    (recommended-strategy) implementation steps when no name matches — same variant
-    shape/lookup `TradePlanWidgetCard.tsx`'s `resolveVariant` uses in the chat UI."""
+    per-strategy `strategy_variants`. Falls back to the widget's own top-level
+    (recommended-strategy) implementation steps only when the caller didn't name a
+    strategy at all. When a `strategy_name` IS given but doesn't resolve in
+    `strategy_variants`, fails loudly instead of silently substituting whatever
+    strategy the doc happens to recommend — see
+    2026-08-27-advisory-approve-executes-wrong-strategy-orders: that silent fallback
+    let approving one strategy submit a completely different strategy's real orders."""
     from trade_integrations.bridge.hub_context import normalize_strategy_key
 
     def _orders_from_steps(steps: Any) -> list[Dict[str, Any]]:
@@ -44,15 +48,27 @@ def _orders_for_strategy(widget: Dict[str, Any], strategy_name: str | None) -> l
                     return orders
         return []
 
-    variants = widget.get("strategy_variants") or {}
-    if strategy_name:
-        variant = variants.get(strategy_name) or variants.get(normalize_strategy_key(strategy_name))
-        if variant:
-            orders = _orders_from_steps(variant.get("implementation_steps"))
-            if orders:
-                return orders
+    if not strategy_name:
+        return _orders_from_steps(widget.get("implementation_steps"))
 
-    return _orders_from_steps(widget.get("implementation_steps"))
+    variants = widget.get("strategy_variants") or {}
+    variant = variants.get(strategy_name) or variants.get(normalize_strategy_key(strategy_name))
+    if not variant:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"strategy_name {strategy_name!r} not found among this widget's "
+                f"strategy_variants ({sorted(variants.keys())}); refusing to fall back "
+                "to a different strategy's orders"
+            ),
+        )
+    orders = _orders_from_steps(variant.get("implementation_steps"))
+    if not orders:
+        raise HTTPException(
+            status_code=400,
+            detail=f"strategy_name {strategy_name!r} resolved but has no execute_basket orders",
+        )
+    return orders
 
 
 def _watchlist() -> list[str]:
