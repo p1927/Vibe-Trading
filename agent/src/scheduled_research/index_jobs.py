@@ -1394,6 +1394,55 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         # needed — nifty-hub-news-entity's pending-staging auto-discovery drains
         # IBOVESPA too.
         ScheduledResearchJob(
+            id="eu-hub-news-ingest-full",
+            prompt="Full Europe market hub news ingest (RSS + Currents keyword search, daily)",
+            schedule=get_env_config().trade.hub_news_full_ingest_cron.strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "full",
+                "ticker": "EURO_STOXX_50",
+                "market": "EU",
+                # No searxng: not live-tested this pass (every other market's searxng
+                # attempt has failed or been skipped as redundant once a working
+                # rss/currents combo was found — see RU/ME/LATAM's own notes above).
+                # Currents' plain country="de" query is near-empty/off-topic (2
+                # articles, one unrelated) same as JP/RU/ME's gap; keywords=
+                # ("DAX", "stocks") live-tested 2026-08-27 returns 10/10 clean, real
+                # European-market articles (ECB rate coverage, DAX/FTSE moves) —
+                # no noise at all, the cleanest of any market's currents_keywords
+                # result so far.
+                "sources": "rss,currents",
+                "currents_keywords": ["DAX", "stocks"],
+                "lookback_days": 3,
+            },
+        ),
+        ScheduledResearchJob(
+            id="eu-hub-news-ingest-light",
+            prompt="Light Europe market hub news ingest (RSS)",
+            schedule=get_env_or(
+                "HUB_NEWS_LIGHT_INGEST_CRON",
+                "HUB_NEWS_INGEST_CRON",
+                "0 */4 * * *",
+            ).strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_INGEST,
+                "mode": "light",
+                "ticker": "EURO_STOXX_50",
+                "market": "EU",
+                "sources": get_env_config().trade.hub_news_light_sources,
+                "lookback_days": 1,
+            },
+        ),
+        # Same reasoning as US/JP/CN/RU/ME/LATAM: no dedicated "eu-hub-news-entity" job
+        # needed — nifty-hub-news-entity's pending-staging auto-discovery drains
+        # EURO_STOXX_50 too.
+        ScheduledResearchJob(
             id="nifty-index-prediction-post-close",
             prompt="Weekly post-close prediction pipeline refresh (flows, backtest, counterfactual)",
             schedule="0 4 * * 6",

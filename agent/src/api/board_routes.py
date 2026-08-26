@@ -40,6 +40,10 @@ class RevertWeightProposalRequest(BaseModel):
     reason: str
 
 
+class RejectRetrainProposalRequest(BaseModel):
+    reason: str
+
+
 def _require_agent(agent_id: str) -> None:
     from trade_integrations.autonomous_agents.store import get_agent
 
@@ -167,3 +171,133 @@ def revert_weight_proposal(proposal_id: str, body: RevertWeightProposalRequest) 
     if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result.get("error") or "revert failed")
     return result
+
+
+@board_router.get("/retrain-proposals")
+def get_pending_retrain_proposals() -> Dict[str, Any]:
+    """Every pending index-calibrator retrain proposal awaiting human review — the
+    counterpart to `/weight-proposals` but for the Ridge model artifact rather than a scalar
+    weight. See `retrain_proposals.py`'s module docstring for why this is a separate queue."""
+    from trade_integrations.dataflows.index_research.retrain_proposals import (
+        list_pending_retrain_proposals,
+    )
+
+    return {"proposals": list_pending_retrain_proposals()}
+
+
+@board_router.get("/retrain-proposals/applied")
+def get_applied_retrain_proposals() -> Dict[str, Any]:
+    """Every applied index-calibrator retrain proposal."""
+    from trade_integrations.dataflows.index_research.retrain_proposals import (
+        list_applied_retrain_proposals,
+    )
+
+    return {"proposals": list_applied_retrain_proposals()}
+
+
+@board_router.post("/retrain-proposals/{proposal_id}/apply")
+def apply_retrain_proposal(proposal_id: str) -> Dict[str, Any]:
+    """Promote one pending retrain proposal's candidate artifact into the live model store.
+    Same no-extra-confirmation reasoning as `apply_weight_proposal`."""
+    from trade_integrations.dataflows.index_research.retrain_proposals import (
+        apply_pending_retrain_proposal,
+    )
+
+    result = apply_pending_retrain_proposal(proposal_id)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("error") or "apply failed")
+    return result
+
+
+@board_router.post("/retrain-proposals/{proposal_id}/reject")
+def reject_retrain_proposal(proposal_id: str, body: RejectRetrainProposalRequest) -> Dict[str, Any]:
+    """Mark one pending retrain proposal rejected. Never touches the live model artifact."""
+    from trade_integrations.dataflows.index_research.retrain_proposals import (
+        reject_pending_retrain_proposal,
+    )
+
+    result = reject_pending_retrain_proposal(proposal_id, body.reason)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("error") or "reject failed")
+    return result
+
+
+def _weight_activity_entry(p: Dict[str, Any]) -> Dict[str, Any]:
+    resolved_at = p.get("applied_at") or p.get("rejected_at") or p.get("reverted_at")
+    reason = p.get("rationale")
+    if p.get("status") == "rejected":
+        reason = p.get("reject_reason") or reason
+    elif p.get("status") == "reverted":
+        reason = p.get("revert_reason") or reason
+    return {
+        "track": "weight_model",
+        "id": p["id"],
+        "status": p.get("status"),
+        "created_at": p.get("created_at"),
+        "resolved_at": resolved_at,
+        "summary": f"{p.get('weight_id')}: {p.get('current_value')} → {p.get('proposed_value')}",
+        "reason": reason,
+    }
+
+
+def _retrain_activity_entry(p: Dict[str, Any]) -> Dict[str, Any]:
+    resolved_at = p.get("applied_at") or p.get("rejected_at")
+    reason = p.get("reason")
+    if p.get("status") == "rejected":
+        reason = p.get("reject_reason") or reason
+    diff = p.get("diff") or {}
+    prev_mae = diff.get("previous_mae")
+    prev_mae_str = f"{prev_mae:.4f}" if isinstance(prev_mae, (int, float)) else "—"
+    cand_mae = diff.get("candidate_mae")
+    cand_mae_str = f"{cand_mae:.4f}" if isinstance(cand_mae, (int, float)) else "—"
+    return {
+        "track": "index_calibrator",
+        "id": p["id"],
+        "status": p.get("status"),
+        "created_at": p.get("created_at"),
+        "resolved_at": resolved_at,
+        "summary": f"NIFTY Ridge retrain: MAE {prev_mae_str} → {cand_mae_str}",
+        "reason": reason,
+    }
+
+
+@board_router.get("/learning-activity")
+def get_learning_activity() -> Dict[str, Any]:
+    """Every learning-mechanism proposal — pending, applied, rejected, or reverted — across
+    both `weight_model` and the index calibrator's retrain queue, in one timeline. Read-only
+    aggregation over each track's own list_* accessors; doesn't itself decide or execute
+    anything, same as the rest of this module. See
+    [[2026-08-27-unified-learning-review-dashboard]]: before this route, a human wanting to
+    "monitor what it's learning" had to check `weight_model`'s pending list, its applied
+    history, and (once it existed) the calibrator's retrain-proposal queue separately, with no
+    single place to see rejected/reverted entries at all."""
+    from trade_integrations.weight_model import (
+        list_applied_weight_proposals,
+        list_pending_weight_proposals,
+        list_rejected_weight_proposals,
+        list_reverted_weight_proposals,
+    )
+    from trade_integrations.dataflows.index_research.retrain_proposals import (
+        list_applied_retrain_proposals,
+        list_pending_retrain_proposals,
+        list_rejected_retrain_proposals,
+    )
+
+    entries = [
+        _weight_activity_entry(p)
+        for p in (
+            list_pending_weight_proposals()
+            + list_applied_weight_proposals()
+            + list_rejected_weight_proposals()
+            + list_reverted_weight_proposals()
+        )
+    ] + [
+        _retrain_activity_entry(p)
+        for p in (
+            list_pending_retrain_proposals()
+            + list_applied_retrain_proposals()
+            + list_rejected_retrain_proposals()
+        )
+    ]
+    entries.sort(key=lambda e: e.get("created_at") or "", reverse=True)
+    return {"entries": entries}

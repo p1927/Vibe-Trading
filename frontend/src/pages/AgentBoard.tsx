@@ -9,6 +9,7 @@ import {
   type AutonomousAgentInstance,
   type ModelVersionTimelineEntry,
   type PendingWeightProposal,
+  type RetrainProposal,
 } from "@/lib/api";
 import { AgentPnlCurveChart, type PnlSeries } from "@/components/board/AgentPnlCurveChart";
 import { cn } from "@/lib/utils";
@@ -66,6 +67,10 @@ export function AgentBoard() {
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [revertingId, setRevertingId] = useState<string | null>(null);
+  const [retrainProposals, setRetrainProposals] = useState<RetrainProposal[]>([]);
+  const [retrainApplyingId, setRetrainApplyingId] = useState<string | null>(null);
+  const [retrainRejectingId, setRetrainRejectingId] = useState<string | null>(null);
+  const [retrainError, setRetrainError] = useState<string | null>(null);
   const [proposalError, setProposalError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -180,6 +185,49 @@ export function AgentBoard() {
         .finally(() => setRevertingId(null));
     },
     [agentId, loadBoard, loadProposals],
+  );
+
+  // Index-calibrator retrain proposals are also global, separate from weight_model's queue —
+  // see retrain_proposals.py's module docstring for why it's a parallel queue.
+  const loadRetrainProposals = useCallback(() => {
+    api
+      .getPendingRetrainProposals()
+      .then((res) => setRetrainProposals(res.proposals))
+      .catch(() => setRetrainError("Failed to load pending retrain proposals."));
+  }, []);
+
+  useEffect(() => {
+    loadRetrainProposals();
+    const timer = window.setInterval(loadRetrainProposals, BOARD_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadRetrainProposals]);
+
+  const applyRetrainProposal = useCallback(
+    (proposalId: string) => {
+      setRetrainApplyingId(proposalId);
+      setRetrainError(null);
+      api
+        .applyRetrainProposal(proposalId)
+        .then(() => loadRetrainProposals())
+        .catch(() => setRetrainError(`Failed to apply retrain proposal ${proposalId}.`))
+        .finally(() => setRetrainApplyingId(null));
+    },
+    [loadRetrainProposals],
+  );
+
+  const rejectRetrainProposal = useCallback(
+    (proposalId: string) => {
+      const reason = window.prompt("Why is this retrain proposal being rejected?");
+      if (reason === null || reason.trim() === "") return;
+      setRetrainRejectingId(proposalId);
+      setRetrainError(null);
+      api
+        .rejectRetrainProposal(proposalId, reason.trim())
+        .then(() => loadRetrainProposals())
+        .catch(() => setRetrainError(`Failed to reject retrain proposal ${proposalId}.`))
+        .finally(() => setRetrainRejectingId(null));
+    },
+    [loadRetrainProposals],
   );
 
   const wealthSeries: PnlSeries[] = [
@@ -359,6 +407,92 @@ export function AgentBoard() {
                       </td>
                     </tr>
                   ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-medium text-muted-foreground">
+          Pending index calibrator retrain proposals
+          {retrainProposals.length > 0 ? ` (${retrainProposals.length})` : ""}
+        </h2>
+        {retrainError ? (
+          <div className="rounded-xl border border-red-500/40 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">
+            {retrainError}
+          </div>
+        ) : null}
+        {retrainProposals.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-border/60 bg-muted/10 p-4 text-center text-[11px] text-muted-foreground">
+            No pending retrain proposals — the live NIFTY Ridge model hasn't drifted since its
+            last review.
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border bg-card">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b bg-muted/40 text-[11px] uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2">Proposed</th>
+                  <th className="px-3 py-2">MAE change</th>
+                  <th className="px-3 py-2">Direction hit-rate change</th>
+                  <th className="px-3 py-2">Features</th>
+                  <th className="px-3 py-2">Reason</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {retrainProposals.map((p) => (
+                  <tr key={p.id} className="border-b last:border-0 align-top">
+                    <td className="px-3 py-2 text-xs text-muted-foreground">
+                      {new Date(p.created_at).toLocaleString("en-IN")}
+                    </td>
+                    <td className="px-3 py-2">
+                      {p.diff.previous_mae != null ? p.diff.previous_mae.toFixed(4) : "—"} →{" "}
+                      {p.diff.candidate_mae.toFixed(4)}
+                    </td>
+                    <td className="px-3 py-2">
+                      {p.diff.previous_direction_hit_rate_oos != null
+                        ? `${(p.diff.previous_direction_hit_rate_oos * 100).toFixed(0)}%`
+                        : "—"}{" "}
+                      →{" "}
+                      {p.diff.candidate_direction_hit_rate_oos != null
+                        ? `${(p.diff.candidate_direction_hit_rate_oos * 100).toFixed(0)}%`
+                        : "—"}
+                    </td>
+                    <td className="px-3 py-2 max-w-xs text-xs text-muted-foreground">
+                      {p.diff.features_added.length === 0 && p.diff.features_removed.length === 0
+                        ? "unchanged"
+                        : [
+                            p.diff.features_added.length > 0 ? `+${p.diff.features_added.length}` : null,
+                            p.diff.features_removed.length > 0 ? `-${p.diff.features_removed.length}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                    </td>
+                    <td className="px-3 py-2 max-w-md text-xs text-muted-foreground">{p.reason}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => applyRetrainProposal(p.id)}
+                          disabled={retrainApplyingId === p.id || retrainRejectingId === p.id}
+                          className="rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50"
+                        >
+                          {retrainApplyingId === p.id ? "Applying…" : "Apply"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => rejectRetrainProposal(p.id)}
+                          disabled={retrainApplyingId === p.id || retrainRejectingId === p.id}
+                          className="rounded-md border border-red-500/40 bg-background px-3 py-1.5 text-xs font-medium text-red-600 transition-colors hover:bg-red-500/10 disabled:opacity-50 dark:text-red-400"
+                        >
+                          {retrainRejectingId === p.id ? "Rejecting…" : "Reject"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

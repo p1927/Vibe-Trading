@@ -1840,6 +1840,18 @@ export const api = {
       `/board/weight-proposals/${encodeURIComponent(proposalId)}/revert`,
       { method: "POST", body: JSON.stringify({ reason }) },
     ),
+  getPendingRetrainProposals: () => request<RetrainProposalsResponse>("/board/retrain-proposals"),
+  getAppliedRetrainProposals: () => request<RetrainProposalsResponse>("/board/retrain-proposals/applied"),
+  applyRetrainProposal: (proposalId: string) =>
+    request<ApplyRetrainProposalResponse>(
+      `/board/retrain-proposals/${encodeURIComponent(proposalId)}/apply`,
+      { method: "POST" },
+    ),
+  rejectRetrainProposal: (proposalId: string, reason: string) =>
+    request<ApplyRetrainProposalResponse>(
+      `/board/retrain-proposals/${encodeURIComponent(proposalId)}/reject`,
+      { method: "POST", body: JSON.stringify({ reason }) },
+    ),
 
   // --- Board 1 (Advisory) — 2026-08-25-advisory-board-live-prediction-approve-reject-ui ---
   getAdvisoryCandidates: () => request<AdvisoryCandidatesResponse>("/board/advisory/candidates"),
@@ -6278,6 +6290,38 @@ export interface PendingWeightProposalsResponse {
 export interface ApplyWeightProposalResponse {
   status: string;
   proposal: PendingWeightProposal;
+}
+
+export interface RetrainProposalDiff {
+  previous_mae: number | null;
+  candidate_mae: number;
+  previous_r2_walk_forward: number | null;
+  candidate_r2_walk_forward: number | null;
+  previous_direction_hit_rate_oos: number | null;
+  candidate_direction_hit_rate_oos: number | null;
+  features_added: string[];
+  features_removed: string[];
+  horizon_name: string;
+}
+
+export interface RetrainProposal {
+  id: string;
+  created_at: string;
+  status: string;
+  reason: string;
+  diff: RetrainProposalDiff;
+  applied_at: string | null;
+  rejected_at: string | null;
+  reject_reason: string | null;
+}
+
+export interface RetrainProposalsResponse {
+  proposals: RetrainProposal[];
+}
+
+export interface ApplyRetrainProposalResponse {
+  status: string;
+  proposal: RetrainProposal;
 }
 
 // --- Board 1 (Advisory) — 2026-08-25-advisory-board-live-prediction-approve-reject-ui ---
