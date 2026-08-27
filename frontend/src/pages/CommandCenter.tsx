@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ClipboardCheck, RefreshCw } from "lucide-react";
+import { ClipboardCheck, History, RefreshCw } from "lucide-react";
 import {
   api,
   type AutonomousAgentInstance,
@@ -12,6 +12,7 @@ import {
 import { PnlForecastBandChart } from "@/components/board/PnlForecastBandChart";
 import { IndexEventsForecastChart } from "@/components/charts/IndexEventsForecastChart";
 import { NewsImpactPanel } from "@/components/prediction/NewsImpactPanel";
+import { safeGet, safeSet } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 
 // Same live-reprice cadence as PositionsBoard.tsx — this panel reads the same
@@ -29,6 +30,41 @@ function fmtInr(v: number | null | undefined): string {
 function fmtLevel(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
+}
+
+function fmtPct(v: number | null | undefined, digits = 2): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return `${v >= 0 ? "+" : ""}${v.toFixed(digits)}%`;
+}
+
+const LAST_SEEN_PREDICTION_KEY = "command-center:last-seen-nifty-prediction";
+
+/** What this browser last saw for the NIFTY prediction artifact — real fields (`as_of`,
+ * `expected_return_pct`, `range.low/high`) from the last artifact this page rendered, not a
+ * fabricated delta feed. "Revised since I last looked" is genuinely a per-viewer, per-browser
+ * concept for this single-operator dashboard, so localStorage is the honest home for it —
+ * there's no multi-user identity system to hang a server-side "last seen" state off. */
+interface LastSeenPrediction {
+  as_of: string;
+  expected_return_pct: number | null;
+  range_low: number | null;
+  range_high: number | null;
+}
+
+function readLastSeenPrediction(): LastSeenPrediction | null {
+  const raw = safeGet(LAST_SEEN_PREDICTION_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.as_of === "string") return parsed as LastSeenPrediction;
+  } catch {
+    /* corrupt/old-shape value — treat as no prior snapshot */
+  }
+  return null;
+}
+
+function writeLastSeenPrediction(snapshot: LastSeenPrediction): void {
+  safeSet(LAST_SEEN_PREDICTION_KEY, JSON.stringify(snapshot));
 }
 
 /** Real expiry_days-derived progress bar, normalized against the longest current
@@ -216,13 +252,31 @@ function EventsRangePanel() {
   const [artifact, setArtifact] = useState<IndexPredictionArtifact | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Captured once, from storage, the first time this component sees data — not re-read on
+  // every poll — so the "revised since you looked" comparison stays anchored to what this
+  // browser saw when the page was opened, not to the previous poll a minute ago.
+  const baselineRef = useRef<LastSeenPrediction | null | undefined>(undefined);
 
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
     api
       .getIndexPrediction("NIFTY", EVENTS_HORIZON_DAYS)
-      .then((res) => setArtifact(res.artifact ?? null))
+      .then((res) => {
+        const art = res.artifact ?? null;
+        if (baselineRef.current === undefined) {
+          baselineRef.current = readLastSeenPrediction();
+        }
+        setArtifact(art);
+        if (art?.as_of) {
+          writeLastSeenPrediction({
+            as_of: art.as_of,
+            expected_return_pct: art.prediction?.expected_return_pct ?? null,
+            range_low: art.prediction?.range?.low ?? null,
+            range_high: art.prediction?.range?.high ?? null,
+          });
+        }
+      })
       .catch(() => setError("Failed to load Nifty prediction artifact."))
       .finally(() => setLoading(false));
   }, []);
@@ -240,6 +294,21 @@ function EventsRangePanel() {
       ),
     [artifact],
   );
+
+  const revision = useMemo(() => {
+    const prev = baselineRef.current;
+    if (!prev || !artifact?.as_of || prev.as_of === artifact.as_of) return null;
+    const curRet = artifact.prediction?.expected_return_pct ?? null;
+    return {
+      prevAsOf: prev.as_of,
+      returnDeltaPct: curRet != null && prev.expected_return_pct != null ? curRet - prev.expected_return_pct : null,
+      prevRangeLow: prev.range_low,
+      prevRangeHigh: prev.range_high,
+    };
+    // Only artifact.as_of actually changes this outcome once baselineRef is captured;
+    // baselineRef.current is intentionally excluded since refs don't participate in deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [artifact?.as_of, artifact?.prediction?.expected_return_pct]);
 
   return (
     <div className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
@@ -280,6 +349,20 @@ function EventsRangePanel() {
         </div>
       ) : (
         <div className="space-y-3">
+          {revision ? (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+              <History className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                Prediction revised since you last checked (previous run {" "}
+                {new Date(revision.prevAsOf).toLocaleString("en-IN")}). Expected return moved{" "}
+                {fmtPct(revision.returnDeltaPct)}
+                {revision.prevRangeLow != null && revision.prevRangeHigh != null
+                  ? `; range was ${fmtLevel(revision.prevRangeLow)} – ${fmtLevel(revision.prevRangeHigh)}`
+                  : ""}
+                .
+              </span>
+            </div>
+          ) : null}
           <IndexEventsForecastChart
             spot={artifact.spot ?? 0}
             horizonDays={EVENTS_HORIZON_DAYS}
