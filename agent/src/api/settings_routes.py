@@ -687,3 +687,21 @@ def register_settings_routes(
         return _build_data_source_settings_response(
             saved_values if updates else _read_settings_env_values()
         )
+
+    @app.post(
+        "/settings/data-sources/indmoney-token/reload",
+        dependencies=[Depends(require_settings_write_auth)],
+    )
+    async def reload_indmoney_token():
+        """Re-read INDMONEY_ACCESS_TOKEN from the trade root .env into this process.
+
+        `os.environ` is only ever seeded once at startup via `setdefault`
+        (see `trade_integrations.env.load_trade_env`), so a rotated token
+        never reaches an already-running agent process on its own — this is
+        the vibe-agent counterpart of `stock_simulator`'s
+        `/control/indmoney-token/reload`, called by OpenAlgo's IndMoney
+        token-repair page right after it rotates the root .env value.
+        """
+        from trade_integrations.stock_simulator.recorder import indmoney_token_health
+
+        return {"status": "ok", "data": indmoney_token_health.reload_from_root()}

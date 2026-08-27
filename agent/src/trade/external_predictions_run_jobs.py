@@ -260,7 +260,8 @@ def _read_job_from_disk(job_id: str) -> dict[str, Any] | None:
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("external-predictions job file unreadable (job=%s): %s", job_id, exc)
         return None
     if not isinstance(payload, dict) or not job_id_valid(str(payload.get("job_id") or job_id)):
         return None
