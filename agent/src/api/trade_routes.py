@@ -4872,6 +4872,7 @@ class HubIndexHistoryBarsResponse(BaseModel):
     symbol: str
     exchange: str
     bars: list[dict[str, Any]] = []
+    truncated: bool = False
     error: str | None = None
 
 
@@ -5322,12 +5323,13 @@ def hub_index_history_bars(
     try:
         since_dt = datetime.fromisoformat(since_ist)
         until_dt = datetime.fromisoformat(until_ist)
-        bars = get_index_history(
+        bars, truncated = get_index_history(
             symbol=symbol, exchange=exchange,
             since_ist=since_dt, until_ist=until_dt,
         )
         return HubIndexHistoryBarsResponse(
             status="ok", symbol=symbol.upper(), exchange=exchange.upper(), bars=bars,
+            truncated=truncated,
         )
     except Exception as exc:
         logger.exception("hub index-history bars failed")
