@@ -1,5 +1,5 @@
 import { Eye, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { WatchRuleTelemetryRow } from "@/components/research/WatchRuleTelemetryRow";
 import { WatchersPollControls } from "@/components/research/WatchersPollControls";
@@ -18,11 +18,70 @@ interface Props {
   className?: string;
 }
 
-export function WatchersPanel({ sessionId, agentId, className }: Props) {
+interface WatchersLiveContextValue {
+  sessionId?: string | null;
+  agentId?: string | null;
+  pollMs: number;
+  setPollMs: (ms: number) => void;
+  watchers: ReturnType<typeof useWatchersLive>;
+}
+
+const WatchersLiveContext = createContext<WatchersLiveContextValue | null>(null);
+
+export function WatchersLiveProvider({
+  sessionId,
+  agentId,
+  children,
+}: Props & { children: ReactNode }) {
   const { pollMs, setPollMs } = usePollIntervalPreference(
     WATCHERS_POLL_STORAGE_KEY,
     WATCHERS_DEFAULT_POLL_MS,
   );
+  const watchers = useWatchersLive({
+    sessionId,
+    agentId,
+    pollMs,
+    enabled: Boolean(sessionId || agentId),
+  });
+  const value = useMemo(
+    () => ({ sessionId, agentId, pollMs, setPollMs, watchers }),
+    [agentId, pollMs, sessionId, setPollMs, watchers],
+  );
+
+  return <WatchersLiveContext.Provider value={value}>{children}</WatchersLiveContext.Provider>;
+}
+
+export function WatchersPanel(props: Props) {
+  const shared = useContext(WatchersLiveContext);
+  const hasMatchingSharedWatcher =
+    shared != null &&
+    shared.agentId === props.agentId &&
+    (props.agentId != null || shared.sessionId === props.sessionId);
+
+  if (hasMatchingSharedWatcher) {
+    return <WatchersPanelContent {...props} shared={shared} />;
+  }
+
+  return (
+    <WatchersLiveProvider sessionId={props.sessionId} agentId={props.agentId}>
+      <WatchersPanelStandaloneContent {...props} />
+    </WatchersLiveProvider>
+  );
+}
+
+function WatchersPanelStandaloneContent(props: Props) {
+  const shared = useContext(WatchersLiveContext);
+  if (!shared) throw new Error("WatchersPanel must be rendered inside WatchersLiveProvider");
+  return <WatchersPanelContent {...props} shared={shared} />;
+}
+
+function WatchersPanelContent({
+  sessionId,
+  agentId,
+  className,
+  shared,
+}: Props & { shared: WatchersLiveContextValue }) {
+  const { pollMs, setPollMs } = shared;
   const {
     watches,
     loading,
@@ -32,7 +91,7 @@ export function WatchersPanel({ sessionId, agentId, className }: Props) {
     countdownSec,
     refresh,
     liveEnabled,
-  } = useWatchersLive({ sessionId, agentId, pollMs, enabled: Boolean(sessionId || agentId) });
+  } = shared.watchers;
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
 

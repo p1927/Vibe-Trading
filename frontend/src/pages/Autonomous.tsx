@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { api, type AutonomousAgentInstance } from "@/lib/api";
 import { AutonomousAgentHub } from "@/components/autonomous/AutonomousAgentHub";
 import { PlanApprovalBanner } from "@/components/autonomous/PlanApprovalBanner";
+import { WatchersLiveProvider } from "@/components/research/WatchersPanel";
 import { cn } from "@/lib/utils";
 
 const EmbeddedAgent = lazy(() =>
@@ -253,21 +254,10 @@ export function Autonomous() {
 
   if (sessionId && (agentId || isOrchestrator)) {
     const title = isDraftView ? agent?.name || "Create agent" : agent?.name || "Autonomous agent";
-
-    return (
-      <div className="flex h-[calc(100vh-0px)] flex-col">
-        <header className="flex shrink-0 items-center gap-3 border-b border-border/60 bg-background/95 px-4 py-2">
-          <button
-            type="button"
-            onClick={goBack}
-            className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            Back to agents
-          </button>
-          <span className="text-sm font-medium text-foreground">{title}</span>
-          {agent && !isDraftView && <AgentRuntimeStrip agent={agent} />}
-        </header>
+    const sharesWatchersWithDrawer =
+      agent?.bootstrap_status === "plan_rejected" && !isDraftView && !isObserveAgent(agent);
+    const agentDetail = (
+      <>
         {agent && !isDraftView && !isObserveAgent(agent) && (
           <PlanApprovalBanner agent={agent} />
         )}
@@ -290,6 +280,26 @@ export function Autonomous() {
             />
           </Suspense>
         </div>
+      </>
+    );
+
+    return (
+      <div className="flex h-[calc(100vh-0px)] flex-col">
+        <header className="flex shrink-0 items-center gap-3 border-b border-border/60 bg-background/95 px-4 py-2">
+          <button
+            type="button"
+            onClick={goBack}
+            className="inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Back to agents
+          </button>
+          <span className="text-sm font-medium text-foreground">{title}</span>
+          {agent && !isDraftView && <AgentRuntimeStrip agent={agent} />}
+        </header>
+        {sharesWatchersWithDrawer && agent ? (
+          <WatchersLiveProvider agentId={agent.id}>{agentDetail}</WatchersLiveProvider>
+        ) : agentDetail}
       </div>
     );
   }
