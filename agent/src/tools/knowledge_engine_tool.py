@@ -1,14 +1,12 @@
 """Knowledge-engine browse tool: query_strategies / query_factor / query_event_factors /
-query_track_record / query_wiki / get_wiki_page / query_news_derived_strategies.
+query_track_record / query_wiki / get_wiki_page.
 
 A single agent-facing tool with an ``action`` discriminator, mirroring
 alpha_zoo_tool.py's shape. Queries the module 8 knowledge engine
 (trade_integrations.knowledge_engine) — strategy/factor theory, module 1's event-factor
 taxonomy (plus an interim calibration signal until module 1's learned impact weights
-ship), module 6's prediction-ledger track record, layer 1's web-researched wiki
-(financial-knowledge/wiki/, ingested via the separate llm-wiki desktop app), and layer 1's
-third source — verified profit-strategy/tactic concepts extracted from news
-(see .claude/backlog/archive/items/2026-08-27-knowledge-engine-news-derived-layer.md).
+ship), module 6's prediction-ledger track record, and layer 1's web-researched wiki
+(financial-knowledge/wiki/, ingested via the separate llm-wiki desktop app).
 """
 
 from __future__ import annotations
@@ -40,7 +38,6 @@ def run_knowledge_engine(**kwargs: Any) -> dict[str, Any]:
         "query_track_record",
         "query_wiki",
         "get_wiki_page",
-        "query_news_derived_strategies",
     }
     if action not in valid_actions:
         return {
@@ -83,17 +80,11 @@ def run_knowledge_engine(**kwargs: Any) -> dict[str, Any]:
                 wiki_type=kwargs.get("wiki_type"),
                 limit=int(kwargs.get("limit", 10)),
             )
-        elif action == "get_wiki_page":
+        else:  # get_wiki_page
             slug = kwargs.get("slug")
             if not slug or not isinstance(slug, str):
                 return {"status": "error", "error": "get_wiki_page requires slug (string)"}
             result = knowledge_query.get_wiki_page(slug)
-        else:  # query_news_derived_strategies
-            result = knowledge_query.query_news_derived_strategies(
-                text=kwargs.get("text"),
-                tags=kwargs.get("tags"),
-                limit=int(kwargs.get("limit", 5)),
-            )
     except Exception as exc:
         logger.exception("knowledge_engine action %s failed", action)
         return {"status": "error", "error": f"{action} failed: {exc}"}
@@ -116,12 +107,7 @@ class KnowledgeEngineTool(BaseTool):
         "when the optional strategy parameter is given; action=query_wiki searches layer 1's "
         "web-researched wiki (concepts/entities/sources/queries/synthesis pages) by title/tag/"
         "summary match, returning metadata + a one-line summary per hit; action=get_wiki_page "
-        "returns one wiki page's full content by slug (from query_wiki's `slug` field); "
-        "action=query_news_derived_strategies searches layer 1's third source — verified "
-        "profit-strategy/tactic concepts extracted from real news and passed through a "
-        "legitimacy-verification gate (distinct from the hand-curated strategy_catalog.yaml "
-        "and the externally-fed wiki) — by free-text/tags, returning each concept plus its "
-        "originating-news source_citation."
+        "returns one wiki page's full content by slug (from query_wiki's `slug` field)."
     )
     parameters = {
         "type": "object",
@@ -135,7 +121,6 @@ class KnowledgeEngineTool(BaseTool):
                     "query_track_record",
                     "query_wiki",
                     "get_wiki_page",
-                    "query_news_derived_strategies",
                 ],
                 "description": "Which knowledge-engine query to run.",
             },
@@ -154,18 +139,12 @@ class KnowledgeEngineTool(BaseTool):
             "tags": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": (
-                    "Optional keyword/indicator tags for query_strategies, wiki tags for "
-                    "query_wiki, or concept tags for query_news_derived_strategies."
-                ),
+                "description": "Optional keyword/indicator tags for query_strategies, or wiki tags for query_wiki.",
             },
             "limit": {
                 "type": "integer",
                 "default": 5,
-                "description": (
-                    "Cap on returned entries for query_strategies (default 5), query_wiki "
-                    "(default 10), or query_news_derived_strategies (default 5)."
-                ),
+                "description": "Cap on returned entries for query_strategies (default 5) or query_wiki (default 10).",
             },
             "factor_key": {
                 "type": "string",
@@ -205,10 +184,7 @@ class KnowledgeEngineTool(BaseTool):
             },
             "text": {
                 "type": "string",
-                "description": (
-                    "Free-text query for query_wiki (matched against page title/summary/tags) "
-                    "or query_news_derived_strategies (matched against tactic kind/trigger/text)."
-                ),
+                "description": "Free-text query for query_wiki, matched against page title/summary/tags.",
             },
             "wiki_type": {
                 "type": "string",
