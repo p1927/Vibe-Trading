@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import sys
 import threading
 import time
@@ -19,6 +20,22 @@ if TYPE_CHECKING:
     from src.session.events import EventBus
 
 logger = logging.getLogger(__name__)
+
+# A human operator's own follow-up chat message asking the agent to retry a
+# previously-failed action -- distinct from `is_autonomous_scheduler_turn`'s
+# literal `# Autonomous agent turn` marker text, which only the scheduler
+# itself injects. Without this, prefetch_autonomous_context() below returns ""
+# for every plain user chat turn (retry included), so the LLM has no fresh
+# tool-state snapshot to check against and just repeats whatever it last said
+# in that session's own chat history -- confirmed live: telling a real agent
+# "the backend is fixed, retry" produced the identical stale tool-failure
+# claim with zero fresh tool calls made (tool_trail: []), 6+ turns straight.
+# See .claude/backlog/items/2026-08-27-autonomous-agent-stale-tool-failure-no-reverify.md.
+_OPERATOR_RETRY_RE = re.compile(r"\bretry\b|\btry again\b", re.IGNORECASE)
+
+
+def _is_operator_retry_message(content: str) -> bool:
+    return bool(_OPERATOR_RETRY_RE.search(content or ""))
 
 session_widget_emitted: dict[str, dict[str, float]] = {}
 WIDGET_EMIT_DEDUP_SECONDS = 10 * 60
@@ -718,7 +735,12 @@ def prefetch_autonomous_context(
     content: str,
     session_config: dict[str, Any] | None = None,
 ) -> str:
-    """Inject expanded agent learning/progress for autonomous scheduler turns."""
+    """Inject expanded agent learning/progress for autonomous scheduler turns, and for
+    a human operator's own retry follow-up in an active autonomous-agent session (see
+    _is_operator_retry_message above) -- otherwise a "the backend is fixed, retry"
+    message gets no fresh tool-state snapshot and the LLM just repeats its last stale
+    conclusion from chat history instead of re-checking.
+    """
     try:
         ensure_trade_stack_path()
     except RuntimeError:
@@ -727,7 +749,9 @@ def prefetch_autonomous_context(
     from src.trade.session_context import is_autonomous_agent_session
 
     cfg = dict(session_config or {})
-    if not is_autonomous_agent_session(cfg) or not is_autonomous_scheduler_turn(content):
+    if not is_autonomous_agent_session(cfg):
+        return ""
+    if not is_autonomous_scheduler_turn(content) and not _is_operator_retry_message(content):
         return ""
     agent_id = str(cfg.get("autonomous_agent_id") or "").strip()
     if not agent_id:
