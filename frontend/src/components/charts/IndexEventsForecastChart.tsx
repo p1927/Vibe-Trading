@@ -4,12 +4,25 @@ import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type { IndexScenario, IndexUpcomingEvent } from "@/lib/api";
 
+interface DailyBandPoint {
+  days_ahead: number;
+  p10: number;
+  p50: number;
+  p90: number;
+}
+
 interface Props {
   spot: number;
   horizonDays: number;
   expectedReturnPct: number;
   rangeLow?: number | null;
   rangeHigh?: number | null;
+  /** Real day-by-day p10/p50/p90 level band (GBM-calibrated from `rangeLow`/`rangeHigh`'s
+   * own terminal endpoints — see `compute_daily_range_band` in predictor.py), one row per
+   * trading day. When present, this drives both the shaded band AND the median line —
+   * a real geometric-drift path, not the linear interpolation used as a fallback when
+   * absent (an older cached artifact predating this field). */
+  dailyBand?: DailyBandPoint[];
   upcomingEvents?: IndexUpcomingEvent[];
   scenarios?: IndexScenario[];
   simulatedReturnPct?: number | null;
@@ -36,6 +49,7 @@ export function IndexEventsForecastChart({
   expectedReturnPct,
   rangeLow,
   rangeHigh,
+  dailyBand,
   upcomingEvents = [],
   scenarios = [],
   simulatedReturnPct,
@@ -49,6 +63,15 @@ export function IndexEventsForecastChart({
     [horizonDays],
   );
 
+  // Real per-day band only counts as usable when it actually covers every day this chart
+  // renders (0..horizonDays) — a shorter/gappy band (e.g. a stale cached artifact from a
+  // smaller horizon) falls back to the linear approximation rather than silently truncating.
+  const bandByDay = useMemo(() => {
+    if (!dailyBand || dailyBand.length === 0) return null;
+    const map = new Map(dailyBand.map((row) => [row.days_ahead, row]));
+    return days.every((d) => map.has(d)) ? map : null;
+  }, [dailyBand, days]);
+
   const baselineTarget = spot * (1 + expectedReturnPct / 100);
   const simulatedTarget =
     simulatedReturnPct != null && Number.isFinite(simulatedReturnPct)
@@ -56,26 +79,27 @@ export function IndexEventsForecastChart({
       : null;
 
   const baselinePath = useMemo(
-    () => days.map((d) => spot + (baselineTarget - spot) * (d / Math.max(horizonDays, 1))),
-    [days, spot, baselineTarget, horizonDays],
+    () =>
+      bandByDay
+        ? days.map((d) => bandByDay.get(d)!.p50)
+        : days.map((d) => spot + (baselineTarget - spot) * (d / Math.max(horizonDays, 1))),
+    [bandByDay, days, spot, baselineTarget, horizonDays],
   );
 
   const hasRange =
     rangeLow != null && rangeHigh != null && Number.isFinite(rangeLow) && Number.isFinite(rangeHigh);
-  const rangeLowPath = useMemo(
-    () =>
-      hasRange
-        ? days.map((d) => spot + ((rangeLow as number) - spot) * (d / Math.max(horizonDays, 1)))
-        : null,
-    [hasRange, days, spot, rangeLow, horizonDays],
-  );
-  const rangeHighPath = useMemo(
-    () =>
-      hasRange
-        ? days.map((d) => spot + ((rangeHigh as number) - spot) * (d / Math.max(horizonDays, 1)))
-        : null,
-    [hasRange, days, spot, rangeHigh, horizonDays],
-  );
+  const rangeLowPath = useMemo(() => {
+    if (bandByDay) return days.map((d) => bandByDay.get(d)!.p10);
+    return hasRange
+      ? days.map((d) => spot + ((rangeLow as number) - spot) * (d / Math.max(horizonDays, 1)))
+      : null;
+  }, [bandByDay, hasRange, days, spot, rangeLow, horizonDays]);
+  const rangeHighPath = useMemo(() => {
+    if (bandByDay) return days.map((d) => bandByDay.get(d)!.p90);
+    return hasRange
+      ? days.map((d) => spot + ((rangeHigh as number) - spot) * (d / Math.max(horizonDays, 1)))
+      : null;
+  }, [bandByDay, hasRange, days, spot, rangeHigh, horizonDays]);
 
   const simulatedPath = useMemo(() => {
     if (simulatedTarget == null) return null;
@@ -153,7 +177,7 @@ export function IndexEventsForecastChart({
       });
       series.push({
         id: "range-band-fill",
-        name: "Projected range",
+        name: bandByDay ? "p10–p90 forecast band" : "Projected range",
         type: "line",
         data: rangeHighPath.map((h, i) => h - rangeLowPath[i]),
         stack: "range-band",

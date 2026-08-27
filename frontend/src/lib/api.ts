@@ -3244,6 +3244,10 @@ export interface PlanPrediction {
   bottom_up_return_pct?: number | null;
   macro_delta_pct?: number | null;
   range?: { low?: number; high?: number; confidence?: number } | null;
+  /** Real day-by-day p10/p50/p90 NIFTY level band, GBM-calibrated from `range`'s own
+   * ±1 MAE terminal endpoints — see `compute_daily_range_band` in predictor.py. One row
+   * per trading day 0..horizon.days; absent on artifacts predating this field. */
+  daily_range_band?: Array<{ days_ahead: number; p10: number; p50: number; p90: number }>;
   equation?: {
     form?: string;
     coefficients?: Record<string, number>;
