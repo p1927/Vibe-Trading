@@ -13,6 +13,7 @@ import {
 import { factorLabel, triggerToWorkbenchState } from "@/lib/factorEventMapping";
 import { FactorImpactInteractiveChart } from "@/components/prediction/FactorImpactInteractiveChart";
 import { FactorNewsEventPanel } from "@/components/prediction/FactorNewsEventPanel";
+import { FactorPedagogyLink } from "@/components/prediction/FactorPedagogyLink";
 
 interface Props {
   artifact: IndexPredictionArtifact;
@@ -477,6 +478,8 @@ export function FactorImpactWorkbench({
               ) : null}
             </p>
           ) : null}
+
+          <FactorPedagogyLink factorKey={activeFactor} label={activeMeta?.label || activeFactor} />
 
           {whyText ? (
             <p className="rounded-md bg-muted/30 px-2 py-1.5 text-[10px] text-muted-foreground">{whyText}</p>

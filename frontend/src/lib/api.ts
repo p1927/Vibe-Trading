@@ -16,6 +16,8 @@ import type {
 } from "@/lib/options";
 import type {
   NewsDerivedConceptsResponse,
+  FactorDetailResponse,
+  FactorListResponse,
   StrategyListResponse,
   TrackRecordResponse,
   WikiListResponse,
@@ -966,6 +968,16 @@ export const api = {
     if (params.ticker) q.set("ticker", params.ticker);
     if (params.strategy) q.set("strategy", params.strategy);
     return request<TrackRecordResponse>(`/knowledge/track-record?${q.toString()}`, { cache: "no-store" });
+  },
+  getKnowledgeFactor: (factorKey: string, market = "IN") =>
+    request<FactorDetailResponse>(
+      `/knowledge/factors/${encodeURIComponent(factorKey)}?${new URLSearchParams({ market }).toString()}`,
+      { cache: "no-store" },
+    ),
+  getKnowledgeFactors: (category?: string) => {
+    const q = new URLSearchParams();
+    if (category) q.set("category", category);
+    return request<FactorListResponse>(`/knowledge/factors?${q.toString()}`, { cache: "no-store" });
   },
 
   // Connector runtime channel — privileged surface actions (NOT agent tools).

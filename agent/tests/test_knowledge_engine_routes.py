@@ -150,3 +150,37 @@ def test_knowledge_track_record_threads_filters(client: TestClient, monkeypatch:
     assert response.status_code == 200
     assert response.json()["sample_count"] == 12
     assert captured == {"window": 30, "ticker": "NIFTY", "strategy": "iron_condor"}
+
+
+def test_knowledge_factor_detail_threads_factor_and_market(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    import trade_integrations.knowledge_engine.query as query_mod
+
+    captured: dict = {}
+
+    def _fake_query_factor(factor_key: str, *, market: str = "IN"):
+        captured.update(factor_key=factor_key, market=market)
+        return {"factor_key": factor_key, "found": True, "pedagogy": None, "taxonomy": None}
+
+    monkeypatch.setattr(query_mod, "query_factor", _fake_query_factor)
+    response = client.get("/knowledge/factors/oil_brent", params={"market": "US"})
+
+    assert response.status_code == 200
+    assert response.json()["found"] is True
+    assert captured == {"factor_key": "oil_brent", "market": "US"}
+
+
+def test_knowledge_factor_taxonomy_threads_category(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    import trade_integrations.knowledge_engine.query as query_mod
+
+    captured: dict = {}
+
+    def _fake_query_event_factors(*, category=None):
+        captured["category"] = category
+        return [{"factor_id": "rbi_rate_decision"}]
+
+    monkeypatch.setattr(query_mod, "query_event_factors", _fake_query_event_factors)
+    response = client.get("/knowledge/factors", params={"category": "monetary_policy"})
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
+    assert captured == {"category": "monetary_policy"}

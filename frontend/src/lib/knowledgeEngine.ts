@@ -88,3 +88,36 @@ export interface TrackRecordResponse {
   strategy_performance: Record<string, unknown> | null;
   error?: string;
 }
+
+export interface FactorTaxonomyEntry {
+  factor_id: string;
+  category: string;
+  default_polarity: string;
+  description: string;
+}
+
+export interface FactorListResponse {
+  ok: boolean;
+  count: number;
+  results: FactorTaxonomyEntry[];
+  error?: string;
+}
+
+export interface FactorDetailResponse {
+  ok: boolean;
+  factor_key: string;
+  found: boolean;
+  pedagogy: {
+    label?: string;
+    category?: string;
+    expected_direction?: string;
+    summary?: string;
+    caveat?: string;
+    india_caveat?: string;
+    interpretation_rules?: string[];
+  } | null;
+  taxonomy: FactorTaxonomyEntry | null;
+  interim_calibration: Record<string, unknown> | null;
+  calibration_note: string;
+  error?: string;
+}

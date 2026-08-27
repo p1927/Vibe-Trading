@@ -20,6 +20,8 @@ Routes (auth via the caller-supplied ``require_auth`` dependency):
 - ``GET /knowledge/strategies``         — strategy catalog, filterable/rankable
 - ``GET /knowledge/news-derived-strategies`` — verified news-derived concepts
 - ``GET /knowledge/track-record``        — realized forecast accuracy and optional strategy P&L
+- ``GET /knowledge/factors``             — event-factor taxonomy, optionally by category
+- ``GET /knowledge/factors/{factor_key}`` — one factor's pedagogy and calibration context
 
 Error surface: an unexpected exception inside a query call → 502 with a
 generic envelope (never leaks a stack frame). A missing wiki slug → 200 with
@@ -155,4 +157,31 @@ def register_knowledge_engine_routes(app: FastAPI, require_auth: AuthDep | None 
         except Exception:  # noqa: BLE001 — never leak a stack frame to clients
             logger.exception("knowledge track-record query failed")
             return JSONResponse(status_code=502, content={"ok": False, "error": "track record unavailable"})
+        return {"ok": True, **result}
+
+    @app.get("/knowledge/factors", dependencies=[Depends(require_auth)])
+    async def knowledge_event_factors(
+        category: str | None = Query(None, max_length=64),
+    ) -> Response:
+        try:
+            from trade_integrations.knowledge_engine.query import query_event_factors
+
+            results = await asyncio.to_thread(query_event_factors, category=category)
+        except Exception:  # noqa: BLE001 — never leak a stack frame to clients
+            logger.exception("knowledge event-factor query failed")
+            return JSONResponse(status_code=502, content={"ok": False, "error": "factor taxonomy unavailable"})
+        return {"ok": True, "count": len(results), "results": results}
+
+    @app.get("/knowledge/factors/{factor_key}", dependencies=[Depends(require_auth)])
+    async def knowledge_factor(
+        factor_key: str,
+        market: str = Query("IN", min_length=1, max_length=16),
+    ) -> Response:
+        try:
+            from trade_integrations.knowledge_engine.query import query_factor
+
+            result = await asyncio.to_thread(query_factor, factor_key, market=market)
+        except Exception:  # noqa: BLE001 — never leak a stack frame to clients
+            logger.exception("knowledge factor query failed (factor_key=%s)", factor_key)
+            return JSONResponse(status_code=502, content={"ok": False, "error": "factor detail unavailable"})
         return {"ok": True, **result}
