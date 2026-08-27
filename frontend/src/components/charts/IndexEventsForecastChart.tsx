@@ -60,6 +60,23 @@ export function IndexEventsForecastChart({
     [days, spot, baselineTarget, horizonDays],
   );
 
+  const hasRange =
+    rangeLow != null && rangeHigh != null && Number.isFinite(rangeLow) && Number.isFinite(rangeHigh);
+  const rangeLowPath = useMemo(
+    () =>
+      hasRange
+        ? days.map((d) => spot + ((rangeLow as number) - spot) * (d / Math.max(horizonDays, 1)))
+        : null,
+    [hasRange, days, spot, rangeLow, horizonDays],
+  );
+  const rangeHighPath = useMemo(
+    () =>
+      hasRange
+        ? days.map((d) => spot + ((rangeHigh as number) - spot) * (d / Math.max(horizonDays, 1)))
+        : null,
+    [hasRange, days, spot, rangeHigh, horizonDays],
+  );
+
   const simulatedPath = useMemo(() => {
     if (simulatedTarget == null) return null;
     return days.map((d) => spot + (simulatedTarget - spot) * (d / Math.max(horizonDays, 1)));
@@ -118,24 +135,32 @@ export function IndexEventsForecastChart({
       },
     ];
 
-    if (rangeLow != null && rangeHigh != null && Number.isFinite(rangeLow) && Number.isFinite(rangeHigh)) {
+    if (rangeLowPath && rangeHighPath) {
+      // Stacked-area trick for a sloped shaded band: an invisible baseline series
+      // at the low path, then a visible area series holding the (high - low) gap
+      // stacked on top of it — the area's visible top edge is exactly the high
+      // path, its bottom edge exactly the low path.
       series.push({
-        name: "Range high",
+        id: "range-band-base",
+        name: "Range low (band base)",
         type: "line",
-        data: days.map((d) => spot + (rangeHigh - spot) * (d / Math.max(horizonDays, 1))),
+        data: rangeLowPath,
+        stack: "range-band",
         smooth: true,
         showSymbol: false,
-        lineStyle: { type: "dashed", color: t.upColor, width: 1, opacity: 0.5 },
-        itemStyle: { color: t.upColor },
+        lineStyle: { opacity: 0 },
+        areaStyle: { opacity: 0 },
       });
       series.push({
-        name: "Range low",
+        id: "range-band-fill",
+        name: "Projected range",
         type: "line",
-        data: days.map((d) => spot + (rangeLow - spot) * (d / Math.max(horizonDays, 1))),
+        data: rangeHighPath.map((h, i) => h - rangeLowPath[i]),
+        stack: "range-band",
         smooth: true,
         showSymbol: false,
-        lineStyle: { type: "dashed", color: t.downColor, width: 1, opacity: 0.5 },
-        itemStyle: { color: t.downColor },
+        lineStyle: { opacity: 0 },
+        areaStyle: { opacity: 0.18, color: t.infoColor },
       });
     }
 
@@ -175,6 +200,9 @@ export function IndexEventsForecastChart({
         type: "scroll",
         bottom: 0,
         textStyle: { fontSize: 9, color: t.textColor },
+        data: series
+          .map((s) => s.name as string)
+          .filter((n) => n !== "Range low (band base)"),
       },
       grid: { left: 56, right: 16, top: 52, bottom: 48 },
       tooltip: {
@@ -184,8 +212,12 @@ export function IndexEventsForecastChart({
           const day = rows[0]?.dataIndex ?? 0;
           const lines = [`Day +${day}`];
           for (const row of rows) {
+            if (row?.seriesId === "range-band-base" || row?.seriesId === "range-band-fill") continue;
             const val = row?.value;
             if (typeof val === "number") lines.push(`${row.seriesName}: ${fmtLevel(val)}`);
+          }
+          if (rangeLowPath && rangeHighPath) {
+            lines.push(`Projected range: ${fmtLevel(rangeLowPath[day])} – ${fmtLevel(rangeHighPath[day])}`);
           }
           const ev = upcomingEvents.find((e) => e.days_from_now === day);
           if (ev?.label) lines.push(`📅 ${ev.label}`);
@@ -222,8 +254,8 @@ export function IndexEventsForecastChart({
     baselinePath,
     simulatedPath,
     scenarioPaths,
-    rangeLow,
-    rangeHigh,
+    rangeLowPath,
+    rangeHighPath,
     upcomingEvents,
     dark,
   ]);

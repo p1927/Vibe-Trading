@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useSearchParams } from "react-router";
-import { Activity, BarChart3, Bot, BookOpen, CalendarClock, CandlestickChart, Check, ChevronDown, Cpu, Database, Disc, FileText, Gauge, Languages, Moon, Sun, Plus, Trash2, Pencil, MessageSquare, ChevronsLeft, ChevronsRight, Settings, Layers, Loader2, TrendingUp, Radio, LineChart, ClipboardCheck, AreaChart } from "lucide-react";
+import { Activity, BarChart3, Bot, BookOpen, CalendarClock, CandlestickChart, Check, ChevronDown, Cpu, Database, Disc, FileText, Gauge, Languages, Moon, Sun, Plus, Trash2, Pencil, MessageSquare, ChevronsLeft, ChevronsRight, Settings, Layers, Loader2, TrendingUp, Radio, LineChart, ClipboardCheck, AreaChart, LayoutDashboard } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { api, type SessionItem } from "@/lib/api";
@@ -24,6 +24,7 @@ export function Layout() {
   // matches both "/" and legacy "/agent" deep links.
   const NAV = [
     { to: "/", icon: Bot, label: t('layout.agent') },
+    { to: "/command-center", icon: LayoutDashboard, label: "Command Center" },
     { to: "/autonomous", icon: Radio, label: t('layout.autonomous') },
     { to: "/agent-board", icon: LineChart, label: "Agent Board" },
     { to: "/advisory-board", icon: ClipboardCheck, label: "Advisory Board" },

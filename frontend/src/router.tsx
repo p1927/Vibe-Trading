@@ -60,6 +60,9 @@ const ExecutionAdvisor = lazy(() =>
 const KnowledgeEngine = lazy(() =>
   import("@/pages/KnowledgeEngine").then((m) => ({ default: m.KnowledgeEngine })),
 );
+const CommandCenter = lazy(() =>
+  import("@/pages/CommandCenter").then((m) => ({ default: m.CommandCenter })),
+);
 
 function PageLoader() {
   return (
@@ -84,6 +87,7 @@ export const router = createBrowserRouter([
     children: [
       { path: "/", element: wrap(Home) },
       { path: "/about", element: wrap(Home) },
+      { path: "/command-center", element: wrap(CommandCenter) },
       { path: "/agent", element: <Agent /> },
       { path: "/autonomous", element: wrap(Autonomous) },
       { path: "/agent-board", element: wrap(AgentBoard) },
