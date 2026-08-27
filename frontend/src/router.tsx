@@ -57,6 +57,9 @@ const ModelAdapters = lazy(() =>
 const ExecutionAdvisor = lazy(() =>
   import("@/pages/ExecutionAdvisor").then((m) => ({ default: m.ExecutionAdvisor })),
 );
+const KnowledgeEngine = lazy(() =>
+  import("@/pages/KnowledgeEngine").then((m) => ({ default: m.KnowledgeEngine })),
+);
 
 function PageLoader() {
   return (
@@ -99,6 +102,7 @@ export const router = createBrowserRouter([
       { path: "/simulator", element: wrap(Simulator) },
       { path: "/options", element: wrap(OptionsLab) },
       { path: "/execution-advisor", element: wrap(ExecutionAdvisor) },
+      { path: "/knowledge", element: wrap(KnowledgeEngine) },
       { path: "/alpha-zoo", element: wrap(AlphaZoo) },
       { path: "/alpha-zoo/bench", element: wrap(AlphaZoo) },
       { path: "/alpha-zoo/compare", element: wrap(AlphaZoo) },

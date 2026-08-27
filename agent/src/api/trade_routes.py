@@ -948,6 +948,7 @@ class IndexPredictionJobsResponse(BaseModel):
     master_scheduler_running: bool = False
     executor_is_running: bool = False
     news_pipeline: Dict[str, Any] = Field(default_factory=dict)
+    index_quote: Dict[str, Any] = Field(default_factory=dict)
     jobs: List[Dict[str, Any]] = Field(default_factory=list)
     job: Dict[str, Any] | None = None
     message: str = ""
@@ -4596,6 +4597,7 @@ def get_index_prediction_jobs(
         master_scheduler_running=bool(payload.get("master_scheduler_running")),
         executor_is_running=bool(payload.get("executor_is_running")),
         news_pipeline=payload.get("news_pipeline") or {},
+        index_quote=payload.get("index_quote") or {},
         jobs=payload.get("jobs") or [],
     )
 

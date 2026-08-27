@@ -14,6 +14,12 @@ import type {
   SelectorRankBy,
   SelectorResponse,
 } from "@/lib/options";
+import type {
+  NewsDerivedConceptsResponse,
+  StrategyListResponse,
+  WikiListResponse,
+  WikiPage,
+} from "@/lib/knowledgeEngine";
 
 const BASE = resolveApiBase();
 
@@ -917,6 +923,42 @@ export const api = {
   // live monitor.
   getExecutionAdvisorAdvisories: () =>
     request<ExecutionAdvisorResponse>("/execution-advisor/positions", { cache: "no-store" }),
+
+  // Knowledge engine (module 8) — read-only wiki/strategy-catalog/news-derived
+  // concept browser. Same query functions the agent's own knowledge_engine_tool
+  // uses, so results match what the agent sees.
+  queryKnowledgeWiki: (params: { text?: string; tags?: string[]; wikiType?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params.text) q.set("text", params.text);
+    if (params.tags?.length) q.set("tags", params.tags.join(","));
+    if (params.wikiType) q.set("wiki_type", params.wikiType);
+    if (params.limit) q.set("limit", String(params.limit));
+    return request<WikiListResponse>(`/knowledge/wiki?${q.toString()}`);
+  },
+  getKnowledgeWikiPage: (slug: string) =>
+    request<WikiPage>(`/knowledge/wiki/${encodeURIComponent(slug)}`),
+  queryKnowledgeStrategies: (params: {
+    marketView?: string;
+    riskProfile?: string;
+    horizon?: string;
+    tags?: string[];
+    limit?: number;
+  }) => {
+    const q = new URLSearchParams();
+    if (params.marketView) q.set("market_view", params.marketView);
+    if (params.riskProfile) q.set("risk_profile", params.riskProfile);
+    if (params.horizon) q.set("horizon", params.horizon);
+    if (params.tags?.length) q.set("tags", params.tags.join(","));
+    if (params.limit) q.set("limit", String(params.limit));
+    return request<StrategyListResponse>(`/knowledge/strategies?${q.toString()}`);
+  },
+  queryKnowledgeNewsDerivedStrategies: (params: { text?: string; tags?: string[]; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params.text) q.set("text", params.text);
+    if (params.tags?.length) q.set("tags", params.tags.join(","));
+    if (params.limit) q.set("limit", String(params.limit));
+    return request<NewsDerivedConceptsResponse>(`/knowledge/news-derived-strategies?${q.toString()}`);
+  },
 
   // Connector runtime channel — privileged surface actions (NOT agent tools).
   // commit is the ONLY action that writes a mandate; halt trips the kill switch.
@@ -4519,6 +4561,11 @@ export interface IndexPredictionNewsPipelineHealth {
   error?: string;
 }
 
+export interface IndexPredictionIndexQuoteHealth {
+  healthy?: boolean;
+  error?: string;
+}
+
 export interface IndexPredictionJobsResponse {
   status: string;
   env?: {
@@ -4530,6 +4577,7 @@ export interface IndexPredictionJobsResponse {
   master_scheduler_running?: boolean;
   executor_is_running?: boolean;
   news_pipeline?: IndexPredictionNewsPipelineHealth;
+  index_quote?: IndexPredictionIndexQuoteHealth;
   jobs?: IndexPredictionJob[];
   job?: IndexPredictionJob | null;
   message?: string;

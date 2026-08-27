@@ -106,6 +106,21 @@ def _hub_news_pipeline_health() -> dict[str, Any]:
         return {"error": str(exc)}
 
 
+def _index_quote_health() -> dict[str, Any]:
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.dataflows.index_research.spot_fetch import (
+            check_openalgo_index_quote_health,
+        )
+
+        healthy, error = check_openalgo_index_quote_health("NIFTY")
+        return {"healthy": healthy, "error": error}
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
 def _scheduler_master_enabled() -> bool:
     from src.config.accessor import get_env_config
 
@@ -193,6 +208,7 @@ def list_index_prediction_jobs(store: ScheduledResearchJobStore | None = None) -
         "executor_is_running": executor_running,
         "jobs": [_serialize_job(job) for job in jobs],
         "news_pipeline": _hub_news_pipeline_health(),
+        "index_quote": _index_quote_health(),
     }
 
 

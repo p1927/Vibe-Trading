@@ -3,6 +3,7 @@ import { Pause, Play, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   api,
+  type IndexPredictionIndexQuoteHealth,
   type IndexPredictionJob,
   type IndexPredictionJobsResponse,
   type IndexPredictionNewsPipelineHealth,
@@ -75,10 +76,20 @@ function NewsPipelineHealthBanner({ pipeline }: { pipeline: IndexPredictionNewsP
   );
 }
 
+function IndexQuoteHealthBanner({ quote }: { quote: IndexPredictionIndexQuoteHealth | undefined }) {
+  if (!quote || quote.healthy) return null;
+  return (
+    <p className="mb-3 text-[11px] text-amber-700 dark:text-amber-400">
+      Live NIFTY index quote unavailable{quote.error ? `: ${quote.error}` : ""}
+    </p>
+  );
+}
+
 export function PredictionScheduledJobsPanel() {
   const [jobs, setJobs] = useState<IndexPredictionJob[]>([]);
   const [env, setEnv] = useState<IndexPredictionJobsResponse["env"]>({});
   const [newsPipeline, setNewsPipeline] = useState<IndexPredictionNewsPipelineHealth>();
+  const [indexQuote, setIndexQuote] = useState<IndexPredictionIndexQuoteHealth>();
   const [masterEnvOn, setMasterEnvOn] = useState(false);
   const [executorRunning, setExecutorRunning] = useState(false);
   const [statusLoaded, setStatusLoaded] = useState(false);
@@ -94,6 +105,7 @@ export function PredictionScheduledJobsPanel() {
       setJobs(res.jobs ?? []);
       setEnv(res.env ?? {});
       setNewsPipeline(res.news_pipeline);
+      setIndexQuote(res.index_quote);
       setMasterEnvOn(Boolean(res.master_scheduler_env_enabled ?? res.env?.vibe_trading_enable_scheduler));
       setExecutorRunning(Boolean(res.executor_is_running ?? res.master_scheduler_running));
       setStatusLoaded(true);
@@ -184,6 +196,7 @@ export function PredictionScheduledJobsPanel() {
       </div>
 
       <NewsPipelineHealthBanner pipeline={newsPipeline} />
+      <IndexQuoteHealthBanner quote={indexQuote} />
 
       {statusLoaded && !masterEnvOn ? (
         <p className="mb-3 text-[11px] text-amber-700 dark:text-amber-400">

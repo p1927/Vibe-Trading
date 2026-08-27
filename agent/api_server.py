@@ -326,6 +326,10 @@ register_options_routes(app)
 from src.api.execution_advisor_routes import register_execution_advisor_routes  # noqa: E402
 register_execution_advisor_routes(app)
 
+# --- Knowledge engine (module 8) ---
+from src.api.knowledge_engine_routes import register_knowledge_engine_routes  # noqa: E402
+register_knowledge_engine_routes(app)
+
 # --- Auth helpers (SSE tickets) ---
 from src.api.auth_routes import register_auth_routes  # noqa: E402
 register_auth_routes(app)
