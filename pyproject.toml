@@ -275,6 +275,7 @@ markers = [
     "integration: Integration tests (may need network)",
     "runtime_dst: Hypothesis DST-lite property/state-machine tests over src/live/runtime/",
     "prediction_pool_dst: Hypothesis+real-thread DST-lite tests over src/trade/prediction_heavy_pool.py",
+    "job_watchdog_dst: Hypothesis+real-thread DST-lite tests over src/trade/job_watchdog.py",
 ]
 
 [tool.ruff]
