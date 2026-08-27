@@ -187,20 +187,30 @@ export function Autonomous() {
     agent?.runtime?.bootstrap_status === "running" ||
     agent?.runtime?.scheduler_health === "initializing";
 
+  const isBootstrappingAgentRef = useRef(isBootstrappingAgent);
+  isBootstrappingAgentRef.current = isBootstrappingAgent;
+
   useEffect(() => {
-    void loadAgent();
     if (!agentId || agentId === "orchestrator") return;
-    const pollMs = isBootstrappingAgent ? RUNTIME_POLL_BOOTSTRAP_MS : RUNTIME_POLL_MS;
-    const timer = window.setInterval(() => void loadAgent(), pollMs);
+    void loadAgent();
+    let timer: number;
+    const scheduleNext = () => {
+      const pollMs = isBootstrappingAgentRef.current ? RUNTIME_POLL_BOOTSTRAP_MS : RUNTIME_POLL_MS;
+      timer = window.setTimeout(async () => {
+        await loadAgent();
+        scheduleNext();
+      }, pollMs);
+    };
+    scheduleNext();
     const onRefresh = () => {
       void loadAgent();
     };
     window.addEventListener("autonomous-agents-refresh", onRefresh);
     return () => {
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
       window.removeEventListener("autonomous-agents-refresh", onRefresh);
     };
-  }, [agentId, loadAgent, isBootstrappingAgent]);
+  }, [agentId, loadAgent]);
 
   useEffect(() => {
     if (!agentId || agentId === "orchestrator") {
