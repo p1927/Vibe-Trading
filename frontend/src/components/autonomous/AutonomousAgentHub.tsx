@@ -58,6 +58,16 @@ function StackHealthStrip({ health }: { health: AutonomousStackHealth | undefine
         <span>market {health.market_open ? "open" : "closed"}</span>
       )}
       {health.paper_session_enabled && <span>paper session active</span>}
+      <span
+        className={cn(
+          "rounded border px-1.5 py-0.5",
+          health.agent_trading_enabled
+            ? "border-emerald-500/40 text-emerald-700"
+            : "text-muted-foreground",
+        )}
+      >
+        trading {health.agent_trading_enabled ? "live" : "off"}
+      </span>
     </div>
   );
 }

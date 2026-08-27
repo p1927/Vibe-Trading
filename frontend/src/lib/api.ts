@@ -5808,6 +5808,7 @@ export interface AutonomousStackHealth {
   scheduler_health?: string;
   market_open?: boolean;
   paper_session_enabled?: boolean;
+  agent_trading_enabled?: boolean;
 }
 
 export interface AutonomousAgentSchedules {
