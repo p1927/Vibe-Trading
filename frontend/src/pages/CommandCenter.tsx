@@ -4,6 +4,7 @@ import { ClipboardCheck, History, RefreshCw } from "lucide-react";
 import {
   api,
   type AutonomousAgentInstance,
+  type HubIndexHistoryBar,
   type IndexPredictionArtifact,
   type IndexUpcomingEvent,
   type LivePositionGroup,
@@ -11,6 +12,7 @@ import {
 } from "@/lib/api";
 import { PnlForecastBandChart } from "@/components/board/PnlForecastBandChart";
 import { IndexEventsForecastChart } from "@/components/charts/IndexEventsForecastChart";
+import { PriorDayPriceStrip } from "@/components/charts/PriorDayPriceStrip";
 import { NewsImpactPanel } from "@/components/prediction/NewsImpactPanel";
 import { safeGet, safeSet } from "@/lib/storage";
 import { cn } from "@/lib/utils";
@@ -252,10 +254,45 @@ function EventsRangePanel() {
   const [artifact, setArtifact] = useState<IndexPredictionArtifact | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [priorDay, setPriorDay] = useState<{ day: string; bars: HubIndexHistoryBar[] } | null>(null);
   // Captured once, from storage, the first time this component sees data — not re-read on
   // every poll — so the "revised since you looked" comparison stays anchored to what this
   // browser saw when the page was opened, not to the previous poll a minute ago.
   const baselineRef = useRef<LastSeenPrediction | null | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Yesterday's closed session never changes, so this is a one-time fetch on mount, not
+    // part of the 60s prediction poll. "Yesterday" is resolved from the real recorded-days
+    // list (the most recent recorded day strictly before today, IST) rather than naive date
+    // arithmetic, so weekends/holidays resolve correctly to the actual last trading session.
+    api
+      .getHubIndexHistoryDays({ symbol: "NIFTY", exchange: "NSE_INDEX" })
+      .then((daysRes) => {
+        if (cancelled || daysRes.status !== "ok" || !daysRes.days.length) return null;
+        const todayIst = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+        const priorDays = daysRes.days.filter((d) => d < todayIst);
+        if (!priorDays.length) return null;
+        const day = priorDays.reduce((latest, d) => (d > latest ? d : latest));
+        return api
+          .getHubIndexHistoryBars({
+            symbol: "NIFTY",
+            exchange: "NSE_INDEX",
+            since_ist: `${day}T09:15:00+05:30`,
+            until_ist: `${day}T15:30:00+05:30`,
+          })
+          .then((barsRes) => {
+            if (cancelled || barsRes.status !== "ok" || !barsRes.bars.length) return;
+            setPriorDay({ day, bars: barsRes.bars });
+          });
+      })
+      .catch(() => {
+        /* prior-day strip is a supplementary panel — leave it in its honest empty state */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -363,6 +400,7 @@ function EventsRangePanel() {
               </span>
             </div>
           ) : null}
+          <PriorDayPriceStrip day={priorDay?.day ?? null} bars={priorDay?.bars ?? []} currentSpot={artifact.spot} />
           <IndexEventsForecastChart
             spot={artifact.spot ?? 0}
             horizonDays={EVENTS_HORIZON_DAYS}
