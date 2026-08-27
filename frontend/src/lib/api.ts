@@ -6374,6 +6374,18 @@ export interface AdvisoryCandidate {
    * there's no usable expiry date or forecast scenarios to calibrate from — the
    * candidate is still scored and returned either way. */
   trajectory_band: { days_ahead: number; pnl_p10_inr: number; pnl_p50_inr: number; pnl_p90_inr: number }[];
+  /** Positive = net credit received, negative = net debit paid. `null` when the
+   * candidate has no legs to price. */
+  net_debit_credit: number | null;
+  /** Pre-trade exit-timing intent: when to plan on leaving, not just what to enter.
+   * `null` when there isn't enough data (no trajectory band, or no bounded max
+   * profit) to say anything principled. See 2026-08-27-advisory-exit-plan-field. */
+  exit_plan: {
+    kind: "target_day" | "hold_to_expiry";
+    target_day: number | null;
+    target_fraction_of_max_profit: number | null;
+    rationale: string;
+  } | null;
 }
 
 export interface AdvisoryTickerCandidates {

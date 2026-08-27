@@ -92,6 +92,21 @@ function CandidateCard({
           <PnlForecastBandChart band={candidate.trajectory_band} height={110} />
         </div>
       )}
+      {candidate.exit_plan && (
+        <div
+          className="mt-2 text-xs text-muted-foreground"
+          title={candidate.exit_plan.rationale}
+        >
+          Exit:{" "}
+          <span className="font-medium text-foreground">
+            {candidate.exit_plan.kind === "target_day"
+              ? `~D+${candidate.exit_plan.target_day} (${Math.round(
+                  (candidate.exit_plan.target_fraction_of_max_profit ?? 0) * 100,
+                )}% profit)`
+              : "hold to expiry"}
+          </span>
+        </div>
+      )}
       <button
         type="button"
         onClick={(e) => {

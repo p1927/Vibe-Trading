@@ -139,6 +139,19 @@ export function AdvisoryCandidateDetailModal({ ticker, candidate, approving, onC
                 </span>
               </div>
               {detail.rationale && <p>{detail.rationale}</p>}
+              {candidate.exit_plan && (
+                <p>
+                  <span className="font-medium text-foreground">
+                    Exit plan:{" "}
+                    {candidate.exit_plan.kind === "target_day"
+                      ? `~D+${candidate.exit_plan.target_day} (${Math.round(
+                          (candidate.exit_plan.target_fraction_of_max_profit ?? 0) * 100,
+                        )}% of max profit)`
+                      : "hold to expiry"}
+                  </span>{" "}
+                  — {candidate.exit_plan.rationale}
+                </p>
+              )}
               {!detail.found && (
                 <p className="text-amber-600 dark:text-amber-400">
                   Leg breakdown temporarily unavailable — the underlying research doc may have refreshed
