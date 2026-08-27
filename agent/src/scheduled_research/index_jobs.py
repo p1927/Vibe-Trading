@@ -40,6 +40,14 @@ JOB_TYPE_COMPANY_RESEARCH_ARCHIVE = "company_research_archive"
 JOB_TYPE_INDEX_PREDICTION_POST_CLOSE = "index_prediction_post_close"
 JOB_TYPE_HUB_NEWS_ENTITY = "hub_news_entity"
 JOB_TYPE_HUB_NEWS_INGEST = "hub_news_ingest"
+# Per-job dispatch_timeout_ms overrides for the heavier "full" ingest and
+# "drain" entity variants, which share a job_type (and thus a default
+# staleness.py timeout bucket) with a much cheaper sibling ("light" ingest,
+# "maintenance" entity). Sized with headroom over the known ~52min real
+# full-ingest runtime and the observed 20min entity-drain timeout failure.
+# See 2026-08-27-scheduler-dispatch-timeouts.
+_HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS = 90 * 60 * 1000
+_HUB_NEWS_ENTITY_DRAIN_DISPATCH_TIMEOUT_MS = 40 * 60 * 1000
 JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP = "stock_history_coverage_sweep"
 JOB_TYPE_NEWS_QUALITY_EVAL = "news_quality_eval"
 JOB_TYPE_NEWS_DEDUP_QUALITY_EVAL = "news_dedup_quality_eval"
@@ -1067,6 +1075,11 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "ticker": "NIFTY",
                 "sources": get_env_config().trade.hub_news_full_sources,
                 "lookback_days": 3,
+                # "full" ingest runs a known ~52min (observed 2026-08-27); the
+                # shared hub_news_ingest job_type timeout (10min) is sized for
+                # the "light" RSS-only variant. See
+                # 2026-08-27-scheduler-dispatch-timeouts.
+                "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         ScheduledResearchJob(
@@ -1100,6 +1113,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "mode": "drain",
                 "ticker": "NIFTY",
                 "batch_size": 200,
+                "dispatch_timeout_ms": _HUB_NEWS_ENTITY_DRAIN_DISPATCH_TIMEOUT_MS,
             },
         ),
         ScheduledResearchJob(
@@ -1135,6 +1149,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 # with no US equivalent yet.
                 "sources": "rss,searxng,searxng_global,marketaux,currents",
                 "lookback_days": 3,
+                "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         ScheduledResearchJob(
@@ -1183,6 +1198,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 # path proven for US) is the real source here.
                 "sources": "rss,searxng,searxng_global",
                 "lookback_days": 3,
+                "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         ScheduledResearchJob(
@@ -1226,6 +1242,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 # (not configured/no key).
                 "sources": "rss,searxng,searxng_global,currents",
                 "lookback_days": 3,
+                "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         ScheduledResearchJob(
@@ -1275,6 +1292,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "sources": "rss,currents",
                 "currents_keywords": ["MOEX", "Russia", "stock"],
                 "lookback_days": 3,
+                "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         ScheduledResearchJob(
@@ -1322,6 +1340,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "sources": "rss,currents",
                 "currents_keywords": ["Tadawul"],
                 "lookback_days": 3,
+                "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         ScheduledResearchJob(
@@ -1369,6 +1388,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "sources": "rss,currents",
                 "currents_keywords": ["IBOVESPA"],
                 "lookback_days": 3,
+                "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         ScheduledResearchJob(
@@ -1418,6 +1438,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "sources": "rss,currents",
                 "currents_keywords": ["DAX", "stocks"],
                 "lookback_days": 3,
+                "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         ScheduledResearchJob(

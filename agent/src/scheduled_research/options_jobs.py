@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import time
@@ -26,6 +27,18 @@ OPTIONS_AUTO_DISPATCH_THESIS_BREAK_ENV = "OPTIONS_AUTO_DISPATCH_THESIS_BREAK"
 
 JOB_TYPE_OPTIONS_PLAN_REFRESH = "options_plan_refresh"
 JOB_TYPE_OPTIONS_POSITION_MONITOR = "options_position_monitor"
+
+# options-plan-refresh polls every 5min (OPTIONS_MONITOR_POLL_CRON) but was
+# inheriting the *global* 45min dispatch_timeout_ms default, since its
+# job_type has no dedicated staleness.py entry. Its per-ticker loop below
+# calls the full options research pipeline synchronously with no bound, so a
+# handful of slow tickers can legitimately blow well past 45min. Bound each
+# ticker's refresh individually so one slow/stuck ticker can't consume the
+# whole dispatch window, and size the job-level timeout to a handful of
+# ticker-refresh cycles rather than the unrelated global default. See
+# 2026-08-27-scheduler-dispatch-timeouts.
+_OPTIONS_PLAN_REFRESH_PER_TICKER_TIMEOUT_S = 180
+OPTIONS_PLAN_REFRESH_DISPATCH_TIMEOUT_MS = 20 * 60 * 1000
 
 OPTIONS_JOB_TYPES = frozenset(
     {JOB_TYPE_OPTIONS_PLAN_REFRESH, JOB_TYPE_OPTIONS_POSITION_MONITOR}
@@ -200,6 +213,7 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
     refreshed: list[dict[str, Any]] = []
     skipped: list[str] = []
     ineligible: list[str] = []
+    timed_out: list[str] = []
 
     for raw_ticker in watchlist:
         ticker = str(raw_ticker).strip().upper()
@@ -217,7 +231,25 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
             skipped.append(ticker)
             continue
 
-        if refresh_options_research(ticker, config=cfg):
+        # Bounded in its own thread: this function already runs off the event
+        # loop (dispatch_options_job wraps it in asyncio.to_thread), so a
+        # plain blocking call with a timeout is enough. A timed-out ticker's
+        # thread is abandoned (best-effort; the pipeline call itself is not
+        # cancelled) rather than letting it stall the rest of the watchlist.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(refresh_options_research, ticker, config=cfg)
+            try:
+                did_refresh = future.result(timeout=_OPTIONS_PLAN_REFRESH_PER_TICKER_TIMEOUT_S)
+            except concurrent.futures.TimeoutError:
+                logger.error(
+                    "options plan refresh timed out for %s after %ss; skipping",
+                    ticker,
+                    _OPTIONS_PLAN_REFRESH_PER_TICKER_TIMEOUT_S,
+                )
+                timed_out.append(ticker)
+                continue
+
+        if did_refresh:
             refreshed.append({"ticker": ticker, "reasons": reasons})
             logger.info("options plan refreshed for %s (%s)", ticker, ", ".join(reasons))
 
@@ -227,6 +259,7 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
         "refreshed": refreshed,
         "unchanged": skipped,
         "ineligible": ineligible,
+        "timed_out": timed_out,
     }
 
 
@@ -397,6 +430,7 @@ def register_default_options_jobs(store) -> int:
             config={
                 "job_type": JOB_TYPE_OPTIONS_PLAN_REFRESH,
                 "watchlist": watchlist,
+                "dispatch_timeout_ms": OPTIONS_PLAN_REFRESH_DISPATCH_TIMEOUT_MS,
             },
         ),
         ScheduledResearchJob(
