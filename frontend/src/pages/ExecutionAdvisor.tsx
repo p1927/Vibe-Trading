@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import type { TrackRecordResponse } from "@/lib/knowledgeEngine";
 import type { ExecutionAdvisorAdvisory } from "@/lib/options";
 
 const POLL_INTERVAL_MS = 15_000;
@@ -89,6 +90,24 @@ function StrategyGroup({
   );
 }
 
+function TrackRecordPanel({ record }: { record: TrackRecordResponse | null }) {
+  if (!record) return null;
+  return (
+    <section className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
+      <div className="mb-3">
+        <div className="text-sm font-semibold">Track Record</div>
+        <p className="text-xs text-muted-foreground">Forecast accuracy from the realized prediction ledger — {record.scope}</p>
+      </div>
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-4">
+        <div>Samples <span className="font-medium text-foreground">{fmtNum(record.sample_count, 0)}</span></div>
+        <div>Evaluated <span className="font-medium text-foreground">{fmtNum(record.eval_count, 0)}</span></div>
+        <div>Direction, {record.window_days}d <span className="font-medium text-foreground">{fmtPct(record.direction_hit_rate_14d)}</span></div>
+        <div>MAE, {record.window_days}d <span className="font-medium text-foreground">{record.mae_14d_pct == null ? "–" : `${fmtNum(record.mae_14d_pct)}%`}</span></div>
+      </div>
+    </section>
+  );
+}
+
 /**
  * Module 7: read-only, advisory-only view of every open position's FSM state
  * (in_trade → trailing → exit_pending) and recommended action
@@ -102,6 +121,8 @@ export function ExecutionAdvisor() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [trackRecord, setTrackRecord] = useState<TrackRecordResponse | null>(null);
+  const [trackRecordError, setTrackRecordError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -122,19 +143,41 @@ export function ExecutionAdvisor() {
     }
   }, []);
 
+  const loadTrackRecord = useCallback(async () => {
+    try {
+      const res = await api.getKnowledgeTrackRecord({ window: 14, ticker: "NIFTY" });
+      if (!res.ok) {
+        setTrackRecordError(res.error || "Track record unavailable");
+        return;
+      }
+      setTrackRecord(res);
+      setTrackRecordError(null);
+    } catch (e) {
+      setTrackRecord(null);
+      setTrackRecordError(e instanceof Error ? e.message : "Track record unavailable");
+    }
+  }, []);
+
   useEffect(() => {
     void load();
+    void loadTrackRecord();
     pollRef.current = setInterval(() => void load(), POLL_INTERVAL_MS);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [load]);
+  }, [load, loadTrackRecord]);
 
   const groupEntries = grouped ? Object.entries(grouped) : [];
   const totalCount = groupEntries.reduce((sum, [, advisories]) => sum + advisories.length, 0);
 
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-4">
+      <TrackRecordPanel record={trackRecord} />
+      {trackRecordError && (
+        <div className="rounded border border-danger/30 bg-danger/5 p-3 text-sm text-danger">
+          Track record unavailable: {trackRecordError}
+        </div>
+      )}
       <section className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>

@@ -17,6 +17,7 @@ import type {
 import type {
   NewsDerivedConceptsResponse,
   StrategyListResponse,
+  TrackRecordResponse,
   WikiListResponse,
   WikiPage,
 } from "@/lib/knowledgeEngine";
@@ -958,6 +959,13 @@ export const api = {
     if (params.tags?.length) q.set("tags", params.tags.join(","));
     if (params.limit) q.set("limit", String(params.limit));
     return request<NewsDerivedConceptsResponse>(`/knowledge/news-derived-strategies?${q.toString()}`);
+  },
+  getKnowledgeTrackRecord: (params: { window?: number; ticker?: string; strategy?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.window) q.set("window", String(params.window));
+    if (params.ticker) q.set("ticker", params.ticker);
+    if (params.strategy) q.set("strategy", params.strategy);
+    return request<TrackRecordResponse>(`/knowledge/track-record?${q.toString()}`, { cache: "no-store" });
   },
 
   // Connector runtime channel — privileged surface actions (NOT agent tools).

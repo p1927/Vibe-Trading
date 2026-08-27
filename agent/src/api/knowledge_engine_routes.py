@@ -19,6 +19,7 @@ Routes (auth via the caller-supplied ``require_auth`` dependency):
 - ``GET /knowledge/wiki/{slug}``        — one wiki page's full content
 - ``GET /knowledge/strategies``         — strategy catalog, filterable/rankable
 - ``GET /knowledge/news-derived-strategies`` — verified news-derived concepts
+- ``GET /knowledge/track-record``        — realized forecast accuracy and optional strategy P&L
 
 Error surface: an unexpected exception inside a query call → 502 with a
 generic envelope (never leaks a stack frame). A missing wiki slug → 200 with
@@ -140,3 +141,18 @@ def register_knowledge_engine_routes(app: FastAPI, require_auth: AuthDep | None 
                 status_code=502, content={"ok": False, "error": "news-derived strategies unavailable"}
             )
         return {"ok": True, "count": len(results), "results": results}
+
+    @app.get("/knowledge/track-record", dependencies=[Depends(require_auth)])
+    async def knowledge_track_record(
+        window: int = Query(14, ge=1, le=365),
+        ticker: str = Query("NIFTY", min_length=1, max_length=32),
+        strategy: str | None = Query(None, max_length=128),
+    ) -> Response:
+        try:
+            from trade_integrations.knowledge_engine.query import query_track_record
+
+            result = await asyncio.to_thread(query_track_record, window=window, ticker=ticker, strategy=strategy)
+        except Exception:  # noqa: BLE001 — never leak a stack frame to clients
+            logger.exception("knowledge track-record query failed")
+            return JSONResponse(status_code=502, content={"ok": False, "error": "track record unavailable"})
+        return {"ok": True, **result}

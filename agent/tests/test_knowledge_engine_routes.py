@@ -133,3 +133,20 @@ def test_knowledge_news_derived_strategies_failure_returns_502(
     response = client.get("/knowledge/news-derived-strategies")
     assert response.status_code == 502
     assert response.json()["ok"] is False
+
+
+def test_knowledge_track_record_threads_filters(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    import trade_integrations.knowledge_engine.query as query_mod
+
+    captured: dict = {}
+
+    def _fake_query_track_record(*, window=14, ticker="NIFTY", strategy=None):
+        captured.update(window=window, ticker=ticker, strategy=strategy)
+        return {"ticker": ticker, "sample_count": 12, "strategy_performance": None}
+
+    monkeypatch.setattr(query_mod, "query_track_record", _fake_query_track_record)
+    response = client.get("/knowledge/track-record", params={"window": 30, "ticker": "NIFTY", "strategy": "iron_condor"})
+
+    assert response.status_code == 200
+    assert response.json()["sample_count"] == 12
+    assert captured == {"window": 30, "ticker": "NIFTY", "strategy": "iron_condor"}

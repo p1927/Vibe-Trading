@@ -73,3 +73,18 @@ export interface NewsDerivedConceptsResponse {
   results: NewsDerivedConcept[];
   error?: string;
 }
+
+export interface TrackRecordResponse {
+  ok: boolean;
+  ticker: string;
+  scope: string;
+  sample_count: number;
+  eval_count: number;
+  window_days: number;
+  mae_pct?: number | null;
+  mae_14d_pct?: number | null;
+  direction_hit_rate?: number | null;
+  direction_hit_rate_14d?: number | null;
+  strategy_performance: Record<string, unknown> | null;
+  error?: string;
+}
