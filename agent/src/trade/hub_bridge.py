@@ -767,6 +767,14 @@ def prefetch_autonomous_context(
         if not agent:
             return ""
         turn_kind = infer_turn_kind_from_prompt(content)
+        if turn_kind == "research" and not is_autonomous_scheduler_turn(content):
+            # An operator retry with no explicit turn-kind marker defaults to
+            # "research", which format_strategy_progress_for_prompt skips entirely
+            # (it only renders for strategy_revision/post_execution) -- meaning
+            # "research" would leave out exactly the fresh, tool-backed
+            # portfolio_greeks/live_pop/etc. snapshot a retry needs to actually
+            # re-check prior tool failures against, not just repeat them from memory.
+            turn_kind = "strategy_revision"
         return format_autonomous_context_for_prefetch(agent=agent, turn_kind=turn_kind)
     except Exception:
         logger.exception("Autonomous context prefetch failed for %s", agent_id)
