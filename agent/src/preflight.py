@@ -311,9 +311,9 @@ def run_preflight(console: Optional[Console] = None) -> List[CheckResult]:
         _check_content_filter_threshold,
     ]
 
-    results: List[CheckResult] = []
-    for check_fn in checks:
-        results.append(check_fn())
+    from src.preflight_parallel import run_checks_concurrently
+
+    results: List[CheckResult] = run_checks_concurrently(checks)
 
     # Build display table
     table = Table(show_header=False, show_edge=False, padding=(0, 1), expand=False)
