@@ -1812,8 +1812,11 @@ export const api = {
     if (params.end) query.set("end", params.end);
     if (params.ticker) query.set("ticker", params.ticker);
     const qs = query.toString();
+    // list_extracted_future_events() scans the full events corpus on every call (no
+    // caching) — routinely takes ~30s, so this needs a longer-than-default timeout.
     return request<HubNewsEventsCalendarResponse>(
       `/trade/hub/news-events/calendar${qs ? `?${qs}` : ""}`,
+      { timeoutMs: 60_000 },
     );
   },
   getModelAdapters: () => request<ModelAdaptersResponse>("/trade/model-adapters"),
@@ -4709,10 +4712,11 @@ export interface HubNewsFutureEvent {
 }
 
 export interface HubNewsCalendarEventFactCheck {
-  confirmed?: boolean;
+  status?: string;
   confirmed_date?: string;
   confidence?: string;
   reasoning?: string;
+  checked_at?: number;
 }
 
 export interface HubNewsCalendarEventArticle {

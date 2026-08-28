@@ -1630,24 +1630,24 @@ def get_hub_news_events_calendar(
 
         ensure_trade_stack_path()
         from trade_integrations.dataflows.news_hub_bridge import (
-            get_distilled_event,
             list_extracted_future_events,
+            query_verified_news,
         )
 
         rows = list_extracted_future_events(market="IN", start=start, end=end)
 
-        article_cache: Dict[str, HubNewsCalendarEventArticle] = {}
-
-        def resolve_article(event_id: str) -> Optional[HubNewsCalendarEventArticle]:
-            if event_id in article_cache:
-                return article_cache[event_id]
-            raw = get_distilled_event(event_id)
-            if not raw:
-                article_cache[event_id] = None  # type: ignore[assignment]
-                return None
+        # Resolve all source articles with a single bulk read rather than one facade
+        # call per event_id — get_distilled_event() reloads the whole events frame on
+        # every call, so calling it in a per-row loop is an N+1 that times out once the
+        # corpus has more than a handful of events.
+        article_by_id: Dict[str, HubNewsCalendarEventArticle] = {}
+        for raw in query_verified_news(ticker=ticker, market="IN", include_rejected=True, limit=10_000):
+            event_id = str(raw.get("event_id") or raw.get("id") or "")
+            if not event_id:
+                continue
             sources = raw.get("sources") or raw.get("references") or []
             first = sources[0] if sources and isinstance(sources[0], dict) else {}
-            article = HubNewsCalendarEventArticle(
+            article_by_id[event_id] = HubNewsCalendarEventArticle(
                 event_id=event_id,
                 title=str(raw.get("title") or ""),
                 url=str(raw.get("url") or first.get("url") or ""),
@@ -1655,13 +1655,11 @@ def get_hub_news_events_calendar(
                 source=str(raw.get("source") or first.get("vendor") or ""),
                 verification_status=str(raw.get("verification_status") or ""),
             )
-            article_cache[event_id] = article
-            return article
 
         events: List[HubNewsCalendarEvent] = []
         for row in rows:
             event_ids = [str(eid) for eid in (row.get("source_event_ids") or []) if eid]
-            articles = [a for a in (resolve_article(eid) for eid in event_ids) if a is not None]
+            articles = [article_by_id[eid] for eid in event_ids if eid in article_by_id]
             events.append(
                 HubNewsCalendarEvent(
                     date=str(row.get("date") or ""),

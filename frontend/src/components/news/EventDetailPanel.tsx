@@ -103,13 +103,13 @@ export function EventDetailPanel({
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span
                     className={cn(
-                      "rounded-full px-2 py-0.5 text-[10px] font-medium",
-                      factCheck.confirmed
+                      "rounded-full px-2 py-0.5 text-[10px] font-medium capitalize",
+                      factCheck.status === "confirmed"
                         ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
                         : "bg-amber-500/10 text-amber-700 dark:text-amber-400",
                     )}
                   >
-                    {factCheck.confirmed ? "Confirmed" : "Not yet confirmed"}
+                    {(factCheck.status || "not yet confirmed").replace(/_/g, " ")}
                   </span>
                   {factCheck.confirmed_date ? (
                     <span className="text-[10px] tabular-nums text-muted-foreground">
