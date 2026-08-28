@@ -1449,10 +1449,13 @@ def _build_typer_app():  # type: ignore[no-untyped-def]
         host: str = typer.Option("127.0.0.1", "--host"),
         port: int = typer.Option(8000, "--port"),
         dev: bool = typer.Option(False, "--dev", help="Also boot the Vite dev server."),
+        reload: bool = typer.Option(False, "--reload", help="Auto-restart on backend code changes."),
     ) -> None:
         forwarded = ["serve", "--host", host, "--port", str(port)]
         if dev:
             forwarded.append("--dev")
+        if reload:
+            forwarded.append("--reload")
         sys.exit(main(forwarded))
 
     @app.command("list", help="List recent runs.")

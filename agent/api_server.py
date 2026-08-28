@@ -367,6 +367,7 @@ def serve_main(argv: list[str] | None = None) -> int:
     """Start the API server from CLI-style arguments."""
     import argparse
     import subprocess
+    import sys
     import uvicorn
     from src.api.helpers import SPAStaticFiles
 
@@ -438,18 +439,45 @@ def serve_main(argv: list[str] | None = None) -> int:
         if args.reload:
             agent_dir = Path(__file__).resolve().parent
             reload_dirs = [str(agent_dir)]
-            integrations_dir = agent_dir.parent.parent / "integrations"
-            if integrations_dir.is_dir():
-                reload_dirs.append(str(integrations_dir))
+            # Mirror hub_bridge.ensure_trade_stack_path()'s sys.path insertions exactly —
+            # those are the directories this process actually imports live code from
+            # (trade_integrations under integrations/, plus tradingagents/), so anything
+            # not covered here can change on disk without the reloader ever noticing.
+            try:
+                from src.trade.hub_bridge import trade_repo_root
+
+                repo_root = trade_repo_root()
+            except Exception:
+                repo_root = None
+            if repo_root is not None:
+                for extra in (repo_root / "integrations", repo_root / "tradingagents"):
+                    if extra.is_dir():
+                        reload_dirs.append(str(extra))
             print(f"[dev] Auto-reload watching: {', '.join(reload_dirs)}")
-            uvicorn.run(
+            # uvicorn.run(..., reload=True) spawns workers via multiprocessing's "spawn"
+            # context, which needs to re-import whatever module was recorded as __main__ —
+            # here that's the dotted `cli._legacy`, which spawn's bootstrap cannot resolve
+            # (ImportError: No module named cli._legacy), confirmed live. Running uvicorn's
+            # own CLI as a subprocess sidesteps this entirely: __main__ becomes uvicorn's,
+            # its own officially-supported reload invocation.
+            reload_dir_args = []
+            for directory in reload_dirs:
+                reload_dir_args.extend(["--reload-dir", directory])
+            cmd = [
+                sys.executable,
+                "-m",
+                "uvicorn",
                 "api_server:app",
-                host=args.host,
-                port=args.port,
-                log_level="info",
-                reload=True,
-                reload_dirs=reload_dirs,
-            )
+                "--host",
+                args.host,
+                "--port",
+                str(args.port),
+                "--log-level",
+                "info",
+                "--reload",
+                *reload_dir_args,
+            ]
+            subprocess.run(cmd, cwd=str(agent_dir))
         else:
             uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     finally:
