@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { hasErrorBoundary, installBaselineApiMock } from './helpers/apiMock'
+import { hasErrorBoundary } from './helpers/apiMock'
 
 /**
  * Scripted state-graph walker for exploratory bug-finding (backlog item
@@ -22,6 +22,11 @@ import { hasErrorBoundary, installBaselineApiMock } from './helpers/apiMock'
  * exactly as specified — only the edge *traversal mechanism* is a goto
  * instead of a click — so a future pass can swap in real nav-link clicks for
  * whichever edges do have one, without changing the graph structure.
+ *
+ * Rewritten 2026-08-28 to talk to the real Vibe Trading API on :8899 — NO
+ * `installBaselineApiMock`, NO mocks of any kind, per the standing rule that
+ * E2E tests must run against the live stack (see testing/README.md's
+ * "Running the tests" section and docs/audits/2026-08-27-test-coverage-handoff.md).
  */
 
 interface GraphNode {
@@ -92,11 +97,21 @@ async function visitNode(page: Page, node: GraphNode): Promise<VisitResult> {
   try {
     await page.goto(node.path)
     // Let lazy-loaded route chunks and their first-effect fetches settle.
-    await page.waitForLoadState('networkidle').catch(() => {
+    // `waitForLoadState` has no timeout of its own — it silently inherits
+    // whatever test-timeout budget remains, so a page with continuous
+    // background polling/SSE (several routes here do, e.g. Simulator's
+    // multi-symbol spot polling) never reaches "networkidle" and burns
+    // nearly the *entire remaining test timeout* on this one call before
+    // falling through to the catch (confirmed live: this starved later
+    // nodes and blew the whole BFS walk's budget once mocks were removed
+    // and real per-request latency replaced near-instant mocked responses).
+    // Cap it explicitly so a polling page fails fast into the fixed
+    // settle window instead.
+    await page.waitForLoadState('networkidle', { timeout: 4_000 }).catch(() => {
       // A page that keeps a live poll/SSE connection open never reaches
       // "networkidle" — fall back to a fixed settle window instead.
     })
-    await page.waitForTimeout(300)
+    await page.waitForTimeout(500)
     const errorBoundary = await hasErrorBoundary(page)
     return { nodeId: node.id, path: node.path, consoleErrors: [...consoleErrors], errorBoundary }
   } finally {
@@ -134,7 +149,6 @@ test.describe('State-graph walk', () => {
     // 30.4s under 5 concurrent workers, 32s alone) — bump rather than let
     // this flake on resource pressure.
     test.setTimeout(90_000)
-    await installBaselineApiMock(page)
 
     const results = await bfsWalk(page, 'Home')
 
