@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { Database, ExternalLink, Loader2, Newspaper, RefreshCw, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type HubDiscardedNewsItem, type HubNewsItem, type HubNewsPipelineConfig, type HubStatusQuery, type HubStatusResponse, type ObservabilitySummaryResponse } from "@/lib/api";
-import { CronFrequencyPicker } from "@/components/CronFrequencyPicker";
+import { RepeatIntervalPicker } from "@/components/RepeatIntervalPicker";
 import { NewsPipelineGraph } from "@/components/NewsPipelineGraph";
+import { EventsCalendar } from "@/components/news/EventsCalendar";
 
 type NewsFilter = "all" | "staging" | "distilled" | "discarded";
 
@@ -608,7 +609,14 @@ export function Hub() {
   const [error, setError] = useState<string | null>(null);
   const [newsFilter, setNewsFilter] = useState<NewsFilter>("all");
   const [showQueue, setShowQueue] = useState(false);
-  const [newsView, setNewsView] = useState<"list" | "pipeline">("list");
+  const [scheduleExpanded, setScheduleExpanded] = useState(() => {
+    try {
+      return localStorage.getItem("vibe-hub-schedule-expanded") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [newsView, setNewsView] = useState<"list" | "pipeline" | "events">("list");
   const [newsSection, setNewsSection] = useState<"ranked" | "all">("ranked");
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -670,6 +678,14 @@ export function Hub() {
   useEffect(() => {
     setNewsPage(1);
   }, [searchQuery, newsFilter, newsSection, showQueue]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("vibe-hub-schedule-expanded", scheduleExpanded ? "1" : "0");
+    } catch {
+      // ignore storage failures (private browsing, etc.)
+    }
+  }, [scheduleExpanded]);
 
   const hub = data?.hub;
   const gates = hub?.gates;
@@ -976,21 +992,28 @@ export function Hub() {
 
       {pipelineDraft ? (
         <StatCard title="News pipeline schedule" className="col-span-full">
-          <p className="mb-3 text-[12px] text-muted-foreground">
-            Full ingest runs all sources once daily; light ingest keeps RSS and watcher fresh between runs.
-            Cron uses standard 5-field syntax. Overrides persist in hub config (env supplies defaults).
-          </p>
-          <div className="grid gap-4 md:grid-cols-2">
+          <details
+            open={scheduleExpanded}
+            onToggle={(e) => setScheduleExpanded((e.target as HTMLDetailsElement).open)}
+          >
+            <summary className="cursor-pointer select-none text-[12px] font-medium text-foreground">
+              {scheduleExpanded ? "Hide schedule settings" : "Show schedule settings"}
+            </summary>
+            <p className="mb-3 mt-2 text-[12px] text-muted-foreground">
+              Full ingest runs all sources once daily; light ingest keeps RSS and watcher fresh between runs.
+              Overrides persist in hub config (env supplies defaults).
+            </p>
+            <div className="grid gap-4 md:grid-cols-2">
             <label className="space-y-1 text-sm">
               <span className="text-[11px] text-muted-foreground">Full ingest cron</span>
-              <CronFrequencyPicker
+              <RepeatIntervalPicker
                 value={pipelineDraft.full_ingest_cron ?? ""}
                 onChange={(v) => patchDraft({ full_ingest_cron: v })}
               />
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-[11px] text-muted-foreground">Light ingest cron</span>
-              <CronFrequencyPicker
+              <RepeatIntervalPicker
                 value={pipelineDraft.light_ingest_cron ?? ""}
                 onChange={(v) => patchDraft({ light_ingest_cron: v })}
                 disabled={!pipelineDraft.light_ingest_enabled}
@@ -998,7 +1021,7 @@ export function Hub() {
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-[11px] text-muted-foreground">Entity drain cron</span>
-              <CronFrequencyPicker
+              <RepeatIntervalPicker
                 value={pipelineDraft.entity_drain_cron ?? ""}
                 onChange={(v) => patchDraft({ entity_drain_cron: v })}
               />
@@ -1007,14 +1030,14 @@ export function Hub() {
               <span className="text-[11px] text-muted-foreground">
                 Maintainer cron (repair · backfill · merge · cleanup)
               </span>
-              <CronFrequencyPicker
+              <RepeatIntervalPicker
                 value={pipelineDraft.entity_maintenance_cron ?? ""}
                 onChange={(v) => patchDraft({ entity_maintenance_cron: v })}
               />
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-[11px] text-muted-foreground">Continuous drain cron</span>
-              <CronFrequencyPicker
+              <RepeatIntervalPicker
                 value={pipelineDraft.entity_drain_continuous_cron ?? ""}
                 onChange={(v) => patchDraft({ entity_drain_continuous_cron: v })}
                 disabled={!pipelineDraft.entity_drain_continuous_enabled}
@@ -1152,7 +1175,8 @@ export function Hub() {
                 className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] disabled:opacity-50"
               />
             </label>
-          </div>
+            </div>
+          </details>
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -1195,7 +1219,7 @@ export function Hub() {
 
       <StatCard title="News & references" className="col-span-full">
         <div className="mb-3 inline-flex rounded-lg border p-0.5 text-[11px]">
-          {(["list", "pipeline"] as const).map((key) => (
+          {(["list", "pipeline", "events"] as const).map((key) => (
             <button
               key={key}
               type="button"
@@ -1205,7 +1229,7 @@ export function Hub() {
                 newsView === key ? "bg-muted font-medium" : "text-muted-foreground",
               )}
             >
-              {key === "pipeline" ? "Pipeline view" : "List"}
+              {key === "pipeline" ? "Pipeline view" : key === "events" ? "Events" : "List"}
             </button>
           ))}
         </div>
@@ -1299,6 +1323,8 @@ export function Hub() {
 
         {newsView === "pipeline" ? (
           <NewsPipelineGraph entityId="NIFTY" />
+        ) : newsView === "events" ? (
+          <EventsCalendar />
         ) : !filteredNews.length ? (
           <p className="rounded-lg border border-dashed bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
             {newsFilter === "discarded"

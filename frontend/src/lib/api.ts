@@ -1797,6 +1797,16 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  getHubNewsEventsCalendar: (params: { start?: string; end?: string; ticker?: string } = {}) => {
+    const query = new URLSearchParams();
+    if (params.start) query.set("start", params.start);
+    if (params.end) query.set("end", params.end);
+    if (params.ticker) query.set("ticker", params.ticker);
+    const qs = query.toString();
+    return request<HubNewsEventsCalendarResponse>(
+      `/trade/hub/news-events/calendar${qs ? `?${qs}` : ""}`,
+    );
+  },
   getModelAdapters: () => request<ModelAdaptersResponse>("/trade/model-adapters"),
   updateModelAdapter: (adapterId: string, body: ModelAdapterUpdate) =>
     request<ModelAdaptersResponse>(
@@ -4687,6 +4697,41 @@ export interface HubNewsFutureEvent {
   timeline_phrase?: string;
   date_confidence?: string;
   index_impact_mechanism?: string;
+}
+
+export interface HubNewsCalendarEventFactCheck {
+  confirmed?: boolean;
+  confirmed_date?: string;
+  confidence?: string;
+  reasoning?: string;
+}
+
+export interface HubNewsCalendarEventArticle {
+  event_id?: string;
+  title?: string;
+  url?: string;
+  publisher?: string;
+  source?: string;
+  verification_status?: string;
+  cause_indicators?: HubNewsCauseIndicator[];
+}
+
+export interface HubNewsCalendarEvent {
+  date?: string;
+  event?: string;
+  type?: string;
+  timeline_phrase?: string;
+  date_confidence?: string;
+  index_impact_mechanism?: string;
+  verification_status?: string;
+  fact_check?: HubNewsCalendarEventFactCheck | null;
+  articles: HubNewsCalendarEventArticle[];
+}
+
+export interface HubNewsEventsCalendarResponse {
+  status: string;
+  events: HubNewsCalendarEvent[];
+  message?: string;
 }
 
 export interface HubNewsArticleOpinion {

@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from src.api.security import require_local_or_auth
+from src.api.security import require_event_stream_auth, require_local_or_auth
 from src.config.accessor import get_env_config
 from trade_integrations.trade_widgets.store import load_trade_widget
 from trade_integrations.ui_links import trade_ui_deep_link
@@ -1057,6 +1057,33 @@ class HubNewsPipelineConfigUpdate(BaseModel):
     wiki_search_min_score: float | None = None
 
 
+class HubNewsCalendarEventArticle(BaseModel):
+    event_id: str = ""
+    title: str = ""
+    url: str = ""
+    publisher: str = ""
+    source: str = ""
+    verification_status: str = ""
+
+
+class HubNewsCalendarEvent(BaseModel):
+    date: str = ""
+    event: str = ""
+    type: str = ""
+    timeline_phrase: str = ""
+    date_confidence: str = ""
+    index_impact_mechanism: str = ""
+    verification_status: str = ""
+    fact_check: Dict[str, Any] | None = None
+    articles: List[HubNewsCalendarEventArticle] = Field(default_factory=list)
+
+
+class HubNewsEventsCalendarResponse(BaseModel):
+    status: str = "ok"
+    events: List[HubNewsCalendarEvent] = Field(default_factory=list)
+    message: str = ""
+
+
 class HubNewsDiscardRequest(BaseModel):
     entity_id: str = "NIFTY"
     item_id: str = ""
@@ -1586,6 +1613,72 @@ def patch_hub_news_pipeline_config(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("hub news pipeline config update failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/hub/news-events/calendar", response_model=HubNewsEventsCalendarResponse)
+def get_hub_news_events_calendar(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    ticker: str = "NIFTY",
+    _auth: None = Depends(require_local_or_auth),
+) -> HubNewsEventsCalendarResponse:
+    """News-extracted future events across the whole corpus, each resolved back to its
+    source article(s) for the Hub Events calendar view."""
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.dataflows.news_hub_bridge import (
+            get_distilled_event,
+            list_extracted_future_events,
+        )
+
+        rows = list_extracted_future_events(market="IN", start=start, end=end)
+
+        article_cache: Dict[str, HubNewsCalendarEventArticle] = {}
+
+        def resolve_article(event_id: str) -> Optional[HubNewsCalendarEventArticle]:
+            if event_id in article_cache:
+                return article_cache[event_id]
+            raw = get_distilled_event(event_id)
+            if not raw:
+                article_cache[event_id] = None  # type: ignore[assignment]
+                return None
+            sources = raw.get("sources") or raw.get("references") or []
+            first = sources[0] if sources and isinstance(sources[0], dict) else {}
+            article = HubNewsCalendarEventArticle(
+                event_id=event_id,
+                title=str(raw.get("title") or ""),
+                url=str(raw.get("url") or first.get("url") or ""),
+                publisher=str(first.get("publisher") or first.get("vendor") or ""),
+                source=str(raw.get("source") or first.get("vendor") or ""),
+                verification_status=str(raw.get("verification_status") or ""),
+            )
+            article_cache[event_id] = article
+            return article
+
+        events: List[HubNewsCalendarEvent] = []
+        for row in rows:
+            event_ids = [str(eid) for eid in (row.get("source_event_ids") or []) if eid]
+            articles = [a for a in (resolve_article(eid) for eid in event_ids) if a is not None]
+            events.append(
+                HubNewsCalendarEvent(
+                    date=str(row.get("date") or ""),
+                    event=str(row.get("event") or ""),
+                    type=str(row.get("type") or ""),
+                    timeline_phrase=str(row.get("timeline_phrase") or ""),
+                    date_confidence=str(row.get("date_confidence") or ""),
+                    index_impact_mechanism=str(row.get("index_impact_mechanism") or ""),
+                    verification_status=str(row.get("verification_status") or ""),
+                    fact_check=row.get("fact_check"),
+                    articles=articles,
+                )
+            )
+
+        return HubNewsEventsCalendarResponse(status="ok", events=events)
+    except Exception as exc:
+        logger.exception("hub news events calendar read failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -3406,6 +3499,129 @@ async def _index_prediction_run_event_stream(job_id: str, request: Request):
 def _index_prediction_run_stream_response(job_id: str, request: Request) -> StreamingResponse:
     return StreamingResponse(
         _index_prediction_run_event_stream(job_id, request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+_COMMAND_CENTER_POSITIONS_POLL_SECONDS = 5.0
+_COMMAND_CENTER_PREDICTION_POLL_SECONDS = 20.0
+_COMMAND_CENTER_NEWS_POLL_SECONDS = 20.0
+_COMMAND_CENTER_HEARTBEAT_SECONDS = 15.0
+_COMMAND_CENTER_TICK_SECONDS = 1.0
+
+
+def _command_center_sse_frame(event: str, data: dict[str, Any]) -> str:
+    payload = json.dumps(data, ensure_ascii=False, default=str)
+    return f"event: {event}\ndata: {payload}\n\n"
+
+
+def _command_center_snapshot_hash(data: Any) -> str:
+    return json.dumps(data, ensure_ascii=False, default=str, sort_keys=True)
+
+
+async def _command_center_event_stream(agent_id: str, ticker: str, request: Request):
+    """Server-push replacement for Command Center's client-side poll timers +
+    manual refresh buttons — per user request (see
+    [[2026-08-28-command-center-real-time-push]]). Each of the 3 data legs (positions,
+    prediction, news) is polled server-side on its own cadence — matching this module's
+    established job-store-poll-as-SSE pattern (see `_index_prediction_run_event_stream`
+    above) since none of positions/prediction/news has a real change-notification hook to
+    piggyback on (confirmed while scoping: positions is recomputed fresh from the broker per
+    call with no cache; the prediction artifact is written by a scheduled pipeline with no
+    publish hook; news has no pub/sub either) — but a snapshot is only ever emitted to the
+    client when it actually differs from the last one sent, so this isn't just polling
+    relabeled as push: an unchanged tick produces no frame, no re-render, no flicker.
+    """
+    import time as time_mod
+
+    from nautilus_openalgo_bridge.live_pop import compute_live_pop_for_agent
+
+    last_positions_snapshot: str | None = None
+    last_prediction_snapshot: str | None = None
+    last_news_snapshot: str | None = None
+    last_positions_poll = 0.0
+    last_prediction_poll = 0.0
+    last_news_poll = 0.0
+    last_emit = time_mod.monotonic()
+
+    while True:
+        if await request.is_disconnected():
+            return
+        now = time_mod.monotonic()
+
+        if agent_id and now - last_positions_poll >= _COMMAND_CENTER_POSITIONS_POLL_SECONDS:
+            last_positions_poll = now
+            try:
+                positions = compute_live_pop_for_agent(agent_id)
+                snapshot = _command_center_snapshot_hash(positions)
+                if snapshot != last_positions_snapshot:
+                    last_positions_snapshot = snapshot
+                    yield _command_center_sse_frame("positions", positions)
+                    last_emit = now
+            except Exception as exc:  # noqa: BLE001 — one leg's failure must not kill the stream
+                logger.warning("command-center stream: positions poll failed", exc_info=exc)
+                yield _command_center_sse_frame("positions_error", {"message": str(exc)})
+                last_emit = now
+
+        if now - last_prediction_poll >= _COMMAND_CENTER_PREDICTION_POLL_SECONDS:
+            last_prediction_poll = now
+            try:
+                from src.trade.hub_bridge import load_hub_plan_artifact
+
+                artifact = load_hub_plan_artifact(ticker, "index")
+                snapshot = _command_center_snapshot_hash(artifact)
+                if snapshot != last_prediction_snapshot:
+                    last_prediction_snapshot = snapshot
+                    yield _command_center_sse_frame(
+                        "prediction", {"status": "ok", "ticker": ticker, "artifact": artifact}
+                    )
+                    last_emit = now
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("command-center stream: prediction poll failed", exc_info=exc)
+                yield _command_center_sse_frame("prediction_error", {"message": str(exc)})
+                last_emit = now
+
+        if now - last_news_poll >= _COMMAND_CENTER_NEWS_POLL_SECONDS:
+            last_news_poll = now
+            try:
+                from trade_integrations.context.hub import load_index_research_json
+                from trade_integrations.dataflows import news_hub_bridge
+
+                doc = load_index_research_json(ticker)
+                report = news_hub_bridge.resolve_news_impact(ticker=ticker, doc=doc, limit=12, horizon_days=7)
+                snapshot = _command_center_snapshot_hash(report)
+                if snapshot != last_news_snapshot:
+                    last_news_snapshot = snapshot
+                    yield _command_center_sse_frame("news", {"status": "ok", "ticker": ticker, "report": report})
+                    last_emit = now
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("command-center stream: news poll failed", exc_info=exc)
+                yield _command_center_sse_frame("news_error", {"message": str(exc)})
+                last_emit = now
+
+        if now - last_emit >= _COMMAND_CENTER_HEARTBEAT_SECONDS:
+            yield ": keepalive\n\n"
+            last_emit = now
+
+        await asyncio.sleep(_COMMAND_CENTER_TICK_SECONDS)
+
+
+@trade_router.get("/command-center/stream", dependencies=[Depends(require_event_stream_auth)])
+async def command_center_stream(
+    request: Request,
+    agent_id: str = "",
+    ticker: str = "NIFTY",
+) -> StreamingResponse:
+    """SSE: push positions/prediction/news updates to the Command Center dashboard as they
+    change, so the page never needs a manual refresh button or client-side poll timer."""
+    key = (ticker or "NIFTY").strip().upper()
+    return StreamingResponse(
+        _command_center_event_stream(agent_id.strip(), key, request),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
