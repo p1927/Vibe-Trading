@@ -215,7 +215,9 @@ export function IndexEventsForecastChart({
       backgroundColor: "transparent",
       title: {
         text: "Forecast path with upcoming events",
-        subtext: `Spot today → ${horizonDays}d target · drag factors below to shift the orange line`,
+        subtext: bandByDay
+          ? `Spot today → ${horizonDays}d, real day-by-day p10–p90 band · drag factors below to shift the orange line`
+          : `Spot today → ${horizonDays}d target · drag factors below to shift the orange line`,
         left: 0,
         textStyle: { fontSize: 11, color: t.textColor, fontWeight: 600 },
         subtextStyle: { fontSize: 9, color: t.textColor, opacity: 0.65 },
@@ -241,7 +243,8 @@ export function IndexEventsForecastChart({
             if (typeof val === "number") lines.push(`${row.seriesName}: ${fmtLevel(val)}`);
           }
           if (rangeLowPath && rangeHighPath) {
-            lines.push(`Projected range: ${fmtLevel(rangeLowPath[day])} – ${fmtLevel(rangeHighPath[day])}`);
+            const label = bandByDay ? "p10–p90" : "Projected range";
+            lines.push(`${label}: ${fmtLevel(rangeLowPath[day])} – ${fmtLevel(rangeHighPath[day])}`);
           }
           const ev = upcomingEvents.find((e) => e.days_from_now === day);
           if (ev?.label) lines.push(`📅 ${ev.label}`);
@@ -280,6 +283,7 @@ export function IndexEventsForecastChart({
     scenarioPaths,
     rangeLowPath,
     rangeHighPath,
+    bandByDay,
     upcomingEvents,
     dark,
   ]);

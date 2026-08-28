@@ -332,6 +332,14 @@ function EventsRangePanel() {
     [artifact],
   );
 
+  // Real per-day band, sliced to this panel's 7-day window — the backend artifact's own
+  // pipeline horizon (commonly 14d) covers more days than this dashboard shows; slicing to
+  // a real band's first week is honest (still real data), unlike fabricating a 7-day one.
+  const dailyBand7d = useMemo(
+    () => artifact?.prediction?.daily_range_band?.filter((row) => row.days_ahead <= EVENTS_HORIZON_DAYS),
+    [artifact],
+  );
+
   const revision = useMemo(() => {
     const prev = baselineRef.current;
     if (!prev || !artifact?.as_of || prev.as_of === artifact.as_of) return null;
@@ -353,9 +361,10 @@ function EventsRangePanel() {
         <div>
           <h2 className="text-sm font-semibold">Next {EVENTS_HORIZON_DAYS} days — Nifty events &amp; projected range</h2>
           <p className="text-xs text-muted-foreground">
-            Shaded band is a linear projection between real spot and the model's real
-            {" "}{EVENTS_HORIZON_DAYS}d range endpoints (not a per-day distribution — see
-            backlog for the real daily-quantile-band gap).
+            {dailyBand7d && dailyBand7d.length > 0
+              ? "Shaded band is a real day-by-day p10–p90 forecast, GBM-calibrated from the model's own range endpoints."
+              : "Shaded band is a linear projection between real spot and the model's real " +
+                `${EVENTS_HORIZON_DAYS}d range endpoints (no daily band on this cached artifact yet — refresh the prediction to compute one).`}
           </p>
         </div>
         <button
@@ -407,6 +416,7 @@ function EventsRangePanel() {
             expectedReturnPct={artifact.prediction?.expected_return_pct ?? 0}
             rangeLow={artifact.prediction?.range?.low}
             rangeHigh={artifact.prediction?.range?.high}
+            dailyBand={dailyBand7d}
             upcomingEvents={events7d}
             height={260}
           />
