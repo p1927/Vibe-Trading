@@ -129,6 +129,11 @@ async function bfsWalk(page: Page, startId: string): Promise<VisitResult[]> {
 
 test.describe('State-graph walk', () => {
   test('BFS-walks every declared route with no console errors or error boundary', async ({ page }) => {
+    // 15 routes * ~2s settle each genuinely needs more than Playwright's 30s
+    // default, especially under parallel-worker CPU contention (observed:
+    // 30.4s under 5 concurrent workers, 32s alone) — bump rather than let
+    // this flake on resource pressure.
+    test.setTimeout(90_000)
     await installBaselineApiMock(page)
 
     const results = await bfsWalk(page, 'Home')
