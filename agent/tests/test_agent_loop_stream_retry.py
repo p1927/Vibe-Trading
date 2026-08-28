@@ -15,7 +15,7 @@ from typing import Any, Callable
 import pytest
 
 import src.agent.loop as loop_mod
-from src.providers.chat import LLMResponse, ProviderStreamError
+from src.providers.chat import LLMResponse, LLMRuntimeSnapshot, ProviderStreamError
 
 
 class _FlakyLoopLLM:
@@ -33,6 +33,7 @@ class _FlakyLoopLLM:
         self._errors = list(errors)
         self._final_content = final_content
         self.calls = 0
+        self.fallback: Any | None = None
 
     def stream_chat(
         self,
@@ -78,6 +79,40 @@ class _FlakyLoopLLM:
             Empty ``LLMResponse``.
         """
         return LLMResponse(content="")
+
+    def build_fallback(self) -> Any | None:
+        """Return the scripted fallback stub, or None (no fallback configured)."""
+        return self.fallback
+
+
+class _FixedFallbackLLM:
+    """A fallback LLM stub that always succeeds, for testing the third-attempt path."""
+
+    def __init__(self, content: str) -> None:
+        self._content = content
+        self.calls = 0
+        self.closed = False
+        self.runtime_snapshot = LLMRuntimeSnapshot(
+            provider="nvidia", configured_model="nvidia/nemotron-3-nano-30b-a3b", reasoning_effort=""
+        )
+
+    def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[Any] | None = None,
+        on_text_chunk: Callable[[str], None] | None = None,
+        on_reasoning_chunk: Callable[[str], None] | None = None,
+        timeout: int | None = None,
+        idle_timeout_s: float | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> LLMResponse:
+        self.calls += 1
+        if on_text_chunk:
+            on_text_chunk(self._content)
+        return LLMResponse(content=self._content)
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def _transient_error() -> ProviderStreamError:
@@ -176,6 +211,52 @@ def test_transient_stream_failure_is_retried_and_run_succeeds(
 def test_double_stream_failure_fails_run(monkeypatch, tmp_path: Path) -> None:
     """Two consecutive transient failures → failed run, no third attempt."""
     llm = _FlakyLoopLLM([_transient_error(), _transient_error()], "Final answer.")
+
+    result = _run(monkeypatch, tmp_path, llm)
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "provider_stream_error"
+    assert llm.calls == 2
+
+
+def test_double_stream_failure_falls_back_to_configured_provider(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Two consecutive transient failures with a fallback configured → run
+
+    succeeds via the fallback provider instead of failing the turn, mirroring
+    generative.py's runtime fallback for the batch LLM path.
+    """
+    llm = _FlakyLoopLLM([_transient_error(), _transient_error()], "unused")
+    fallback = _FixedFallbackLLM("Answer from fallback.")
+    llm.fallback = fallback
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    result = _run(monkeypatch, tmp_path, llm, events)
+
+    assert result["status"] == "success"
+    assert result["content"] == "Answer from fallback."
+    assert llm.calls == 2
+    assert fallback.calls == 1
+    assert fallback.closed is True
+
+    resets = [data for event_type, data in events if event_type == "stream_reset"]
+    assert len(resets) == 2
+    assert resets[0]["reason"] == "provider_stream_retry"
+    assert resets[1]["reason"] == "provider_fallback"
+    assert resets[1]["provider"] == "nvidia"
+    assert resets[1]["model"] == "nvidia/nemotron-3-nano-30b-a3b"
+
+
+def test_double_stream_failure_no_fallback_available_still_fails(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """build_fallback() returning None (nothing configured/credentialed) degrades to
+
+    the pre-fallback-feature behavior: fail the run, no third attempt.
+    """
+    llm = _FlakyLoopLLM([_transient_error(), _transient_error()], "unused")
+    llm.fallback = None
 
     result = _run(monkeypatch, tmp_path, llm)
 

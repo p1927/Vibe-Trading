@@ -674,6 +674,7 @@ class IndexPredictionResponse(BaseModel):
     ticker: str = ""
     artifact: Dict[str, Any] | None = None
     message: str = ""
+    degraded_reason: str | None = None
 
 
 class RunIndexPredictionRequest(BaseModel):
@@ -1316,6 +1317,22 @@ class ExternalPredictionSourcesResponse(BaseModel):
     message: str = ""
 
 
+def _index_artifact_degraded_reason(artifact: Dict[str, Any] | None) -> str | None:
+    """Surface a human-readable reason when a plan_status=incomplete artifact is served as ok.
+
+    `plan_status`/`data_warnings` already ride inside the artifact body (see
+    `hub_bridge._index_doc_to_panel`), but nothing at the response level flagged an
+    incomplete plan loudly — a 200 + status:"ok" with an empty `prediction` dict looked
+    identical to a genuine "nothing changed" response.
+    """
+    if not artifact or artifact.get("plan_status") != "incomplete":
+        return None
+    warnings = artifact.get("data_warnings") or []
+    if warnings:
+        return f"Index prediction incomplete: {warnings[0]}"
+    return "Index prediction incomplete: no view/contributors available."
+
+
 @trade_router.get("/index-prediction", response_model=IndexPredictionResponse)
 def get_index_prediction(
     ticker: str = "NIFTY",
@@ -1344,7 +1361,12 @@ def get_index_prediction(
         return IndexPredictionResponse(status="not_found", ticker=key, message="No index research")
     if horizon_days is not None and artifact.get("horizon", {}).get("days") != horizon_days:
         artifact["_horizon_mismatch"] = True
-    return IndexPredictionResponse(status="ok", ticker=key, artifact=artifact)
+    return IndexPredictionResponse(
+        status="ok",
+        ticker=key,
+        artifact=artifact,
+        degraded_reason=_index_artifact_degraded_reason(artifact),
+    )
 
 
 @trade_router.post("/index-prediction/run", response_model=IndexPredictionResponse)
@@ -1375,7 +1397,12 @@ def run_index_prediction(
         logger.exception("index-prediction run failed for %s", key)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    return IndexPredictionResponse(status="ok", ticker=key, artifact=artifact)
+    return IndexPredictionResponse(
+        status="ok",
+        ticker=key,
+        artifact=artifact,
+        degraded_reason=_index_artifact_degraded_reason(artifact),
+    )
 
 
 @trade_router.get("/index-prediction/factors", response_model=IndexFactorCatalogResponse)

@@ -862,6 +862,14 @@ export function Prediction() {
           </div>
         ) : null}
 
+        {artifact?.plan_status === "incomplete" ? (
+          <div className="flex items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-[12px] font-medium text-red-800 dark:text-red-300">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            Prediction incomplete — no forecast could be produced for this run. See the
+            warnings below for what's missing.
+          </div>
+        ) : null}
+
         {artifact?.stage_errors?.length ? (
           <ul className="space-y-1 text-[11px] text-red-700 dark:text-red-400">
             {artifact.stage_errors.map((e, i) => (

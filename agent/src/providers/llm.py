@@ -1338,11 +1338,16 @@ def provider_diagnostics() -> dict[str, Any]:
     }
 
 
-def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any:
+def build_llm(
+    *, model_name: Optional[str] = None, provider: Optional[str] = None, callbacks: Any = None
+) -> Any:
     """Construct the configured LangChain chat model.
 
     Args:
         model_name: Model name; defaults to LANGCHAIN_MODEL_NAME.
+        provider: Provider override; defaults to LANGCHAIN_PROVIDER. Lets a caller
+            build a model for a *different* provider than the globally configured one
+            (e.g. ChatLLM.build_fallback()) without touching process-wide env state.
         callbacks: Optional LangChain callbacks.
 
     Returns:
@@ -1356,7 +1361,7 @@ def build_llm(*, model_name: Optional[str] = None, callbacks: Any = None) -> Any
     if not name:
         raise RuntimeError("LANGCHAIN_MODEL_NAME is not set")
     temperature = get_env_config().llm.langchain_temperature
-    provider = get_env_config().llm.langchain_provider.lower()
+    provider = (provider or get_env_config().llm.langchain_provider).lower()
     caps = get_provider_capabilities(provider, name)
     if provider in {"openai-codex", "openai_codex"}:
         from src.providers.openai_codex import OpenAICodexLLM

@@ -1329,15 +1329,61 @@ class AgentLoop:
                     reasoning_chars = 0
                     last_reasoning_emit = None
                     _time.sleep(_stream_retry_delay_s())
-                    response = self.llm.stream_chat(
-                        messages,
-                        tools=tool_defs,
-                        on_text_chunk=_on_text_chunk,
-                        on_reasoning_chunk=_on_reasoning_chunk,
-                        timeout=llm_timeout,
-                        idle_timeout_s=llm_timeout,
-                        should_cancel=self._cancel_event.is_set,
-                    )
+                    try:
+                        response = self.llm.stream_chat(
+                            messages,
+                            tools=tool_defs,
+                            on_text_chunk=_on_text_chunk,
+                            on_reasoning_chunk=_on_reasoning_chunk,
+                            timeout=llm_timeout,
+                            idle_timeout_s=llm_timeout,
+                            should_cancel=self._cancel_event.is_set,
+                        )
+                    except ProviderStreamError as exc2:
+                        # Same-provider retry also failed: try a configured
+                        # cross-provider fallback for this call only (mirrors
+                        # generative.py's runtime fallback for the batch LLM
+                        # path) rather than failing the whole turn outright.
+                        if not exc2.retryable:
+                            raise
+                        fallback_llm = None
+                        build_fallback = getattr(self.llm, "build_fallback", None)
+                        if build_fallback is not None:
+                            fallback_llm = build_fallback()
+                        if fallback_llm is None:
+                            raise
+                        logger.warning(
+                            "Provider stream failed twice (iter %s), falling back to "
+                            "%s/%s: %s",
+                            current_iter,
+                            fallback_llm.runtime_snapshot.provider,
+                            fallback_llm.runtime_snapshot.configured_model,
+                            exc2,
+                        )
+                        self._emit(
+                            "stream_reset",
+                            {
+                                "iter": current_iter,
+                                "reason": "provider_fallback",
+                                "provider": fallback_llm.runtime_snapshot.provider,
+                                "model": fallback_llm.runtime_snapshot.configured_model,
+                            },
+                        )
+                        thinking_chunks.clear()
+                        reasoning_chars = 0
+                        last_reasoning_emit = None
+                        try:
+                            response = fallback_llm.stream_chat(
+                                messages,
+                                tools=tool_defs,
+                                on_text_chunk=_on_text_chunk,
+                                on_reasoning_chunk=_on_reasoning_chunk,
+                                timeout=llm_timeout,
+                                idle_timeout_s=llm_timeout,
+                                should_cancel=self._cancel_event.is_set,
+                            )
+                        finally:
+                            fallback_llm.close()
 
                 # Cancelled mid-stream: discard this turn's partial response and
                 # end the run now, without executing any of its tool calls.

@@ -316,20 +316,23 @@ class ChatLLM:
         model_name: Model name.
     """
 
-    def __init__(self, model_name: Optional[str] = None) -> None:
+    def __init__(self, model_name: Optional[str] = None, *, provider: Optional[str] = None) -> None:
         """Initialize ChatLLM.
 
         Args:
             model_name: Model name; defaults to the environment variable value.
+            provider: Provider override; defaults to the environment variable value.
+                Used by ``build_fallback()`` to build a sibling instance pointed at a
+                different provider without touching process-wide config.
         """
-        self._llm = build_llm(model_name=model_name)
+        self._llm = build_llm(model_name=model_name, provider=provider)
         runtime_cfg = get_env_config().llm
         configured_model = (
             model_name or runtime_cfg.langchain_model_name
         ).strip()
         self.model_name = configured_model
         self.runtime_snapshot = LLMRuntimeSnapshot(
-            provider=runtime_cfg.langchain_provider.strip().lower() or "openai",
+            provider=(provider or runtime_cfg.langchain_provider).strip().lower() or "openai",
             configured_model=configured_model,
             reasoning_effort=runtime_cfg.langchain_reasoning_effort.strip().lower(),
         )
@@ -355,6 +358,79 @@ class ChatLLM:
                 except Exception:
                     logger.debug("ChatLLM.close: failed to close %s", attr, exc_info=True)
 
+    def build_fallback(self) -> Optional["ChatLLM"]:
+        """Build a cross-provider fallback ChatLLM for this call only, or None.
+
+        Reuses the same adapter catalog (``integrations/trade_integrations/dataflows/
+        model_adapters/catalog.yaml``) that already backs the batch/ingestion fallback in
+        ``generative.py`` (e.g. minimax-generative -> nvidia-generative), instead of
+        hand-rolling a second, parallel fallback config — so both the chat and batch LLM
+        paths agree on "what's the fallback for provider X" from one source of truth.
+
+        Looks up the enabled ``generative`` adapter matching this instance's own provider,
+        follows its ``fallback_adapter_id``, and returns a ready ``ChatLLM`` for that
+        adapter's provider/model — or None if there's no such adapter, no fallback
+        configured for it, the fallback is disabled/uncredentialed, or the registry isn't
+        importable here. Callers should treat None as "no fallback available" and
+        propagate the original error, exactly as ``generative.py`` does for its own
+        exhausted-primary case.
+        """
+        try:
+            from trade_integrations.dataflows.model_adapters.generative import _PROVIDER_CONFIGURED
+            from trade_integrations.dataflows.model_adapters.registry import (
+                get_adapter_by_id,
+                list_adapters,
+            )
+        except ImportError:
+            return None
+
+        primary = next(
+            (
+                spec
+                for spec in list_adapters("generative")
+                if spec.enabled and spec.provider == self.runtime_snapshot.provider
+            ),
+            None,
+        )
+        fallback_id = primary.fallback_adapter_id if primary else None
+        if not fallback_id:
+            return None
+        fallback = get_adapter_by_id(fallback_id)
+        if fallback is None or not fallback.enabled:
+            return None
+        check = _PROVIDER_CONFIGURED.get(fallback.provider)
+        if check is not None and not check():
+            return None
+
+        try:
+            return ChatLLM(fallback.model, provider=fallback.provider)
+        except Exception:
+            logger.warning(
+                "chat fallback adapter %r (provider=%r model=%r) failed to build; "
+                "no fallback available",
+                fallback_id,
+                fallback.provider,
+                fallback.model,
+                exc_info=True,
+            )
+            return None
+
+    def _runtime_provider_model(self) -> tuple[str, str]:
+        """Provider/model for logging and error attribution.
+
+        Falls back to the global env config when ``runtime_snapshot`` was never set —
+        e.g. a test double built via ``ChatLLM.__new__`` that skips ``__init__`` — so
+        this stays a drop-in replacement for the pre-fallback-feature reads.
+        """
+        snapshot = getattr(self, "runtime_snapshot", None)
+        if snapshot is not None:
+            return snapshot.provider, self.model_name or "(unset)"
+        cfg = get_env_config().llm
+        return (
+            cfg.langchain_provider.strip().lower() or "openai",
+            self.model_name or cfg.langchain_model_name.strip() or "(unset)",
+        )
+
     def chat(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None, timeout: Optional[int] = None) -> LLMResponse:
         """Call the LLM synchronously.
 
@@ -366,9 +442,7 @@ class ChatLLM:
         Returns:
             LLMResponse.
         """
-        _cfg = get_env_config()
-        provider = _cfg.llm.langchain_provider.strip().lower() or "openai"
-        model = self.model_name or _cfg.llm.langchain_model_name.strip() or "(unset)"
+        provider, model = self._runtime_provider_model()
         try:
             from trade_integrations.observability.hooks import llm_call_span
 
@@ -419,9 +493,7 @@ class ChatLLM:
         Returns:
             Parsed ``LLMResponse``.
         """
-        _cfg = get_env_config()
-        provider = _cfg.llm.langchain_provider.strip().lower() or "openai"
-        model = self.model_name or _cfg.llm.langchain_model_name.strip() or "(unset)"
+        provider, model = self._runtime_provider_model()
         try:
             from trade_integrations.observability.hooks import llm_call_span
 
@@ -466,7 +538,7 @@ class ChatLLM:
             accumulated = None
             pending_text = ""
             possible_dsml_text = True
-            provider = get_env_config().llm.langchain_provider.strip().lower()
+            provider, _ = self._runtime_provider_model()
             think_filter = ThinkBlockStreamFilter() if provider == "minimax" else None
             cancelled = False
             last_chunk_ts = _time.monotonic()
@@ -534,9 +606,7 @@ class ChatLLM:
                     type(exc).__name__,
                 )
                 return self.chat(messages, tools=tools, timeout=timeout)
-            _cfg = get_env_config()
-            provider = _cfg.llm.langchain_provider.strip().lower() or "openai"
-            model = self.model_name or _cfg.llm.langchain_model_name.strip() or "(unset)"
+            provider, model = self._runtime_provider_model()
             raise ProviderStreamError(provider=provider, model=model, original=exc) from exc
 
     @staticmethod
