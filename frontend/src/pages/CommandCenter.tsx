@@ -462,7 +462,7 @@ function EventsRangePanel() {
 
 export function CommandCenter() {
   return (
-    <div className="mx-auto max-w-[1600px] space-y-4 p-6">
+    <div className="mx-auto min-h-screen max-w-none space-y-4 bg-background p-6 text-foreground">
       <div>
         <h1 className="text-2xl font-semibold">Command Center</h1>
         <p className="text-sm text-muted-foreground">

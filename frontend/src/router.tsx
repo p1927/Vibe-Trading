@@ -81,13 +81,20 @@ function wrap(Component: ComponentType) {
 }
 
 export const router = createBrowserRouter([
+  // Standalone — deliberately outside <Layout>'s sidebar/chrome. This is the
+  // page the UI shell's "Dashboard" tab embeds directly; it should use the
+  // full iframe, not share space with Vibe's nav rail.
+  {
+    path: "/command-center",
+    errorElement: <RouteErrorFallback />,
+    element: wrap(CommandCenter),
+  },
   {
     element: <Layout />,
     errorElement: <RouteErrorFallback />,
     children: [
       { path: "/", element: wrap(Home) },
       { path: "/about", element: wrap(Home) },
-      { path: "/command-center", element: wrap(CommandCenter) },
       { path: "/agent", element: <Agent /> },
       { path: "/autonomous", element: wrap(Autonomous) },
       { path: "/agent-board", element: wrap(AgentBoard) },
