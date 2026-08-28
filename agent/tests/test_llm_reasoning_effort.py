@@ -314,11 +314,14 @@ class TestUnsupportedProviders:
 
 
 class TestAnthropicNativeProvider:
-    """The native Anthropic adapter takes effort as `reasoning_effort`.
+    """The native Anthropic adapter takes effort as `effort` (langchain-anthropic
 
-    langchain-anthropic renders that kwarg as ``output_config={'effort': ...}``
-    on the wire, which is where the Anthropic API expects it — unlike the
-    OpenAI-compatible providers above, which send a top-level field.
+    >=1.4.0; older installs used `reasoning_effort` — see
+    `_anthropic_effort_field_name`, which resolves whichever name the
+    installed adapter actually declares). langchain-anthropic renders that
+    kwarg as ``output_config={'effort': ...}`` on the wire, which is where the
+    Anthropic API expects it — unlike the OpenAI-compatible providers above,
+    which send a top-level field.
     """
 
     def _capture(self, env: dict[str, str]) -> dict[str, Any]:
@@ -326,7 +329,9 @@ class TestAnthropicNativeProvider:
 
         Patches the temperature-safe subclass factory rather than the module
         attribute, because ``_build_anthropic`` resolves ChatAnthropic lazily
-        through ``import_module`` at call time.
+        through ``import_module`` at call time — so the *real* installed
+        ``ChatAnthropic`` class is what ``_anthropic_effort_field_name`` sees,
+        exercising the real gate rather than a mocked one.
 
         Args:
             env: Full environment for the call; every other variable is cleared.
@@ -339,8 +344,6 @@ class TestAnthropicNativeProvider:
         captured: dict[str, Any] = {}
 
         class _FakeChatAnthropic:
-            model_fields = {"reasoning_effort": object()}
-
             def __init__(self, **kwargs: Any) -> None:
                 captured.update(kwargs)
 
@@ -361,16 +364,27 @@ class TestAnthropicNativeProvider:
         env.update(overrides)
         return env
 
+    def _effort_field(self) -> str:
+        """The effort kwarg name the *actually installed* adapter declares.
+
+        Resolved the same way ``_build_anthropic`` resolves it, so these tests
+        track a real langchain-anthropic rename instead of hardcoding either
+        name and silently drifting from what's installed.
+        """
+        from langchain_anthropic import ChatAnthropic
+
+        return llm_mod._anthropic_effort_field_name(ChatAnthropic) or "reasoning_effort"
+
     def test_effort_reaches_the_anthropic_adapter(self) -> None:
         """The gap this closes: the value was read and then dropped."""
         kwargs = self._capture(self._env(LANGCHAIN_REASONING_EFFORT="high"))
 
-        assert kwargs["reasoning_effort"] == "high"
+        assert kwargs[self._effort_field()] == "high"
 
     def test_unset_effort_stays_absent(self) -> None:
         kwargs = self._capture(self._env())
 
-        assert kwargs["reasoning_effort"] is None
+        assert kwargs[self._effort_field()] is None
 
     def test_temperature_is_omitted_when_effort_is_sent(self) -> None:
         """Effort enables adaptive thinking, which rejects temperature != 1.
@@ -404,7 +418,7 @@ class TestAnthropicNativeProvider:
             )
         )
 
-        assert kwargs["reasoning_effort"] is None
+        assert kwargs[self._effort_field()] is None
         assert kwargs["temperature"] == 0.0
 
     def test_an_unrecognised_model_is_not_sent_it(self) -> None:
@@ -421,7 +435,7 @@ class TestAnthropicNativeProvider:
             )
         )
 
-        assert kwargs["reasoning_effort"] is None
+        assert kwargs[self._effort_field()] is None
 
     def test_an_adapter_without_the_field_is_not_sent_it(self) -> None:
         """pyproject allows langchain-anthropic>=1.3.0, which predates the field.
@@ -459,10 +473,11 @@ class TestAnthropicNativeProvider:
     def test_the_installed_adapter_renders_effort_as_output_config(self) -> None:
         """Guards the assumption the whole change rests on.
 
-        `reasoning_effort` is only worth forwarding because langchain-anthropic
-        turns it into the `output_config.effort` field the API reads. If a
-        future release renames or drops that mapping, this fails here rather
-        than silently at request time.
+        The effort kwarg (`effort` on langchain-anthropic>=1.4.0, `reasoning_effort`
+        on older installs — see `_effort_field`) is only worth forwarding because
+        langchain-anthropic turns it into the `output_config.effort` field the API
+        reads. If a future release renames or drops that mapping, this fails here
+        rather than silently at request time.
         """
         if importlib.util.find_spec("langchain_anthropic") is None:
             pytest.skip("langchain-anthropic is not installed")
@@ -470,7 +485,9 @@ class TestAnthropicNativeProvider:
         from langchain_core.messages import HumanMessage
 
         instance = ChatAnthropic(
-            model="claude-fable-5", api_key="sk-ant-test", reasoning_effort="high"
+            model="claude-fable-5",
+            api_key="sk-ant-test",
+            **{self._effort_field(): "high"},
         )
         payload = instance._get_request_payload([HumanMessage(content="hi")])
 

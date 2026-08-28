@@ -374,6 +374,11 @@ def serve_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8000, help="Listen port (default 8000)")
     parser.add_argument("--host", default="127.0.0.1", help="Bind address")
     parser.add_argument("--dev", action="store_true", help="Dev mode: spawn Vite on :5173")
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Auto-restart on backend code changes (this file's dir + the monorepo integrations/ tree)",
+    )
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -430,7 +435,23 @@ def serve_main(argv: list[str] | None = None) -> int:
     install_access_log_redaction_filter()
 
     try:
-        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+        if args.reload:
+            agent_dir = Path(__file__).resolve().parent
+            reload_dirs = [str(agent_dir)]
+            integrations_dir = agent_dir.parent.parent / "integrations"
+            if integrations_dir.is_dir():
+                reload_dirs.append(str(integrations_dir))
+            print(f"[dev] Auto-reload watching: {', '.join(reload_dirs)}")
+            uvicorn.run(
+                "api_server:app",
+                host=args.host,
+                port=args.port,
+                log_level="info",
+                reload=True,
+                reload_dirs=reload_dirs,
+            )
+        else:
+            uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     finally:
         if vite_proc:
             vite_proc.terminate()

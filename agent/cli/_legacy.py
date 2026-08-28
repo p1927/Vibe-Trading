@@ -5866,7 +5866,7 @@ def cmd_dev(
         )
         return EXIT_USAGE_ERROR
 
-    backend_cmd = [sys.executable, "-m", "cli._legacy", "serve", "--port", str(backend_port)]
+    backend_cmd = [sys.executable, "-m", "cli._legacy", "serve", "--port", str(backend_port), "--reload"]
     # On Windows, ``npm`` is typically ``npm.cmd``. ``subprocess.Popen`` does
     # not consult ``PATHEXT`` for bare command names, so the call would fail
     # with ``FileNotFoundError`` even though ``shutil.which("npm")`` returned
