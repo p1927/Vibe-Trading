@@ -1,13 +1,50 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Radio, Trash2 } from "lucide-react";
+import { Loader2, OctagonX, Plus, Radio, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { ApiError, api, autonomousDeleteErrorMessage, type AutonomousAgentInstance, type AutonomousStackHealth } from "@/lib/api";
+import { ApiError, api, autonomousDeleteErrorMessage, type AutonomousAgentInstance, type AutonomousStackHealth, type LiveStatus } from "@/lib/api";
 import { AutonomousAgentCard } from "@/components/autonomous/AutonomousAgentCard";
 import { cn } from "@/lib/utils";
 
 const POLL_MS = 15_000;
 const REFRESH_DEBOUNCE_MS = 300;
+
+function GlobalHaltBanner({ onResumed }: { onResumed: () => void }) {
+  const [resuming, setResuming] = useState(false);
+
+  const handleResume = async () => {
+    if (resuming) return;
+    setResuming(true);
+    try {
+      await api.resumeLive();
+      toast.success("Live trading resumed");
+      onResumed();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to resume live trading");
+    } finally {
+      setResuming(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+      <OctagonX className="h-3.5 w-3.5 shrink-0" />
+      <span className="font-medium">Live broker halted</span>
+      <span className="text-destructive/80">
+        Agent controls below won't have any broker-side effect until the global kill switch is cleared.
+      </span>
+      <button
+        type="button"
+        onClick={() => void handleResume()}
+        disabled={resuming}
+        className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 px-2.5 py-1 font-medium transition-colors hover:bg-destructive/10 disabled:opacity-40"
+      >
+        {resuming ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+        Resume live trading
+      </button>
+    </div>
+  );
+}
 
 function StackHealthStrip({ health }: { health: AutonomousStackHealth | undefined }) {
   if (!health) return null;
@@ -82,6 +119,7 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
   const [stackHealth, setStackHealth] = useState<AutonomousStackHealth | undefined>();
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
+  const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -101,6 +139,16 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
     }
   }, []);
 
+  const loadLiveStatus = useCallback(async () => {
+    try {
+      setLiveStatus(await api.getLiveStatus());
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
+        setLiveStatus(null);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     load();
     const timer = window.setInterval(load, POLL_MS);
@@ -116,6 +164,12 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
       window.removeEventListener("autonomous-agents-refresh", onRefresh);
     };
   }, [load]);
+
+  useEffect(() => {
+    void loadLiveStatus();
+    const timer = window.setInterval(() => void loadLiveStatus(), POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadLiveStatus]);
 
   const openAgent = (agent: AutonomousAgentInstance) => {
     const session = agent.vibe_session_id;
@@ -262,6 +316,10 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
           {clearing ? "Clearing…" : "Clear all agents"}
         </button>
       </div>
+
+      {liveStatus?.global_halted && (
+        <GlobalHaltBanner onResumed={() => void loadLiveStatus()} />
+      )}
 
       <StackHealthStrip health={stackHealth} />
 
