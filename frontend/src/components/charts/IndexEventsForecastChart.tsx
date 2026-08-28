@@ -214,13 +214,9 @@ export function IndexEventsForecastChart({
     chart.setOption({
       backgroundColor: "transparent",
       title: {
-        text: "Forecast path with upcoming events",
-        subtext: bandByDay
-          ? `Spot today → ${horizonDays}d, real day-by-day p10–p90 band · drag factors below to shift the orange line`
-          : `Spot today → ${horizonDays}d target · drag factors below to shift the orange line`,
+        text: `Spot → ${horizonDays}d`,
         left: 0,
-        textStyle: { fontSize: 11, color: t.textColor, fontWeight: 600 },
-        subtextStyle: { fontSize: 9, color: t.textColor, opacity: 0.65 },
+        textStyle: { fontSize: 10, color: t.textColor, fontWeight: 600 },
       },
       legend: {
         type: "scroll",
@@ -290,34 +286,15 @@ export function IndexEventsForecastChart({
 
   if (spot <= 0) {
     return (
-      <div className="rounded-xl border bg-card p-4 text-[12px] text-muted-foreground">
+      <div className="rounded-xl border bg-card p-2 text-[12px] text-muted-foreground">
         Run analysis to see forecast timeline.
       </div>
     );
   }
 
   return (
-    <div className="rounded-xl border bg-card p-4 shadow-sm">
+    <div className="rounded-xl border bg-card p-2 shadow-sm">
       <div ref={ref} style={{ height }} className="w-full" />
-      {upcomingEvents.length > 0 ? (
-        <ul className="mt-3 max-h-28 space-y-1 overflow-y-auto border-t pt-2 text-[10px] text-muted-foreground">
-          {upcomingEvents.slice(0, 12).map((ev) => (
-            <li key={`${ev.date}-${ev.label}`} className="flex gap-2">
-              <span className="shrink-0 font-mono text-foreground/80">
-                +{ev.days_from_now}d
-              </span>
-              <span>{ev.label}</span>
-              {ev.weight != null ? (
-                <span className="ml-auto opacity-60">{(ev.weight * 100).toFixed(1)}% wt</span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-2 text-[10px] text-muted-foreground">
-          No dated constituent events in horizon — expiry and macro flags still shown on chart when present.
-        </p>
-      )}
     </div>
   );
 }

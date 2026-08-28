@@ -144,25 +144,41 @@ function PnlPositionsPanel() {
   );
 
   return (
-    <div className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-sm font-semibold">P&amp;L, open positions &amp; exit timeline</h2>
-          <p className="text-xs text-muted-foreground">Live re-price, same source as Positions board.</p>
-        </div>
+    <div className="rounded-xl border border-border/60 bg-card p-2 shadow-sm">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <select
+          value={agentId}
+          onChange={(e) => setAgentId(e.target.value)}
+          className="rounded-md border bg-background px-2 py-1 text-xs"
+        >
+          {agents.length === 0 ? <option value="">No agents</option> : null}
+          {agents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name || a.id}
+            </option>
+          ))}
+        </select>
         <div className="flex items-center gap-2">
-          <select
-            value={agentId}
-            onChange={(e) => setAgentId(e.target.value)}
-            className="rounded-md border bg-background px-2 py-1 text-xs"
+          {groups.length > 0 ? (
+            <span
+              className={cn(
+                "rounded px-2 py-0.5 text-sm font-semibold",
+                totalPnl >= 0
+                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  : "bg-red-500/10 text-red-600 dark:text-red-400",
+              )}
+            >
+              {fmtInr(totalPnl)}
+            </span>
+          ) : null}
+          <Link
+            to="/advisory-board"
+            title="Strategy recommendations"
+            aria-label="Strategy recommendations"
+            className="rounded-md border bg-background p-1.5 text-muted-foreground transition-colors hover:text-foreground"
           >
-            {agents.length === 0 ? <option value="">No agents</option> : null}
-            {agents.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name || a.id}
-              </option>
-            ))}
-          </select>
+            <ClipboardCheck className="h-3.5 w-3.5" />
+          </Link>
           <button
             type="button"
             onClick={() => agentId && load(agentId)}
@@ -177,51 +193,40 @@ function PnlPositionsPanel() {
       </div>
 
       {error ? (
-        <div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/5 p-3 text-xs text-red-600 dark:text-red-400">
+        <div className="mb-2 rounded-lg border border-red-500/40 bg-red-500/5 p-2 text-xs text-red-600 dark:text-red-400">
           {error}
         </div>
       ) : null}
 
       {!agentId ? (
-        <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-4 text-center text-xs text-muted-foreground">
+        <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-3 text-center text-xs text-muted-foreground">
           No autonomous agents exist yet.
         </div>
       ) : loading && groups.length === 0 && skipped.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-4 text-center text-xs text-muted-foreground">
+        <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-3 text-center text-xs text-muted-foreground">
           Loading…
         </div>
       ) : groups.length === 0 && skipped.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-4 text-center text-xs text-muted-foreground">
+        <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-3 text-center text-xs text-muted-foreground">
           No open positions for this agent.
         </div>
       ) : (
-        <div className="space-y-4">
-          <div
-            className={cn(
-              "flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium",
-              totalPnl >= 0
-                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                : "bg-red-500/10 text-red-600 dark:text-red-400",
-            )}
-          >
-            <span>Total P&amp;L (today, across {groups.length} position group{groups.length === 1 ? "" : "s"})</span>
-            <span>{fmtInr(totalPnl)}</span>
-          </div>
-
+        <div className="space-y-2">
           {groups.length > 0 ? (
-            <div className="space-y-2">
-              <div className="text-xs font-medium text-muted-foreground">Exit timeline</div>
+            <div className="space-y-1">
               {groups.map((g) => (
                 <ExitTimelineRow key={`${g.underlying}-${g.expiry_days}`} group={g} maxDays={maxExpiryDays} />
               ))}
             </div>
           ) : null}
 
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {groups.map((g) => (
-              <div key={`${g.underlying}-${g.expiry_days}-band`} className="space-y-1">
-                <div className="text-xs text-muted-foreground">{g.underlying} P&amp;L forecast band</div>
-                <PnlForecastBandChart band={g.pnl_forecast_band} height={140} />
+              <div key={`${g.underlying}-${g.expiry_days}-band`} className="relative">
+                <span className="absolute left-2 top-1 z-10 text-[10px] font-medium text-muted-foreground">
+                  {g.underlying}
+                </span>
+                <PnlForecastBandChart band={g.pnl_forecast_band} height={100} />
               </div>
             ))}
           </div>
@@ -229,23 +234,13 @@ function PnlPositionsPanel() {
           {skipped.map((row, i) => (
             <div
               key={`${row.underlying}-${i}`}
-              className="rounded-lg border border-dashed border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400"
+              className="rounded-lg border border-dashed border-amber-500/40 bg-amber-500/5 px-2 py-1 text-xs text-amber-700 dark:text-amber-400"
             >
-              {row.underlying}: exit distance not tracked yet — {row.reason}
+              {row.underlying}: {row.reason}
             </div>
           ))}
         </div>
       )}
-
-      <div className="mt-4 border-t border-border/50 pt-3">
-        <Link
-          to="/advisory-board"
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-        >
-          <ClipboardCheck className="h-3.5 w-3.5" />
-          Review strategy recommendations →
-        </Link>
-      </div>
     </div>
   );
 }
@@ -356,17 +351,8 @@ function EventsRangePanel() {
   }, [artifact?.as_of, artifact?.prediction?.expected_return_pct]);
 
   return (
-    <div className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 className="text-sm font-semibold">Next {EVENTS_HORIZON_DAYS} days — Nifty events &amp; projected range</h2>
-          <p className="text-xs text-muted-foreground">
-            {dailyBand7d && dailyBand7d.length > 0
-              ? "Shaded band is a real day-by-day p10–p90 forecast, GBM-calibrated from the model's own range endpoints."
-              : "Shaded band is a linear projection between real spot and the model's real " +
-                `${EVENTS_HORIZON_DAYS}d range endpoints (no daily band on this cached artifact yet — refresh the prediction to compute one).`}
-          </p>
-        </div>
+    <div className="rounded-xl border border-border/60 bg-card p-2 shadow-sm">
+      <div className="mb-2 flex items-center justify-end">
         <button
           type="button"
           onClick={load}
@@ -380,36 +366,49 @@ function EventsRangePanel() {
       </div>
 
       {error ? (
-        <div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/5 p-3 text-xs text-red-600 dark:text-red-400">
+        <div className="mb-2 rounded-lg border border-red-500/40 bg-red-500/5 p-2 text-xs text-red-600 dark:text-red-400">
           {error}
         </div>
       ) : null}
 
       {!artifact && loading ? (
-        <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-4 text-center text-xs text-muted-foreground">
+        <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-3 text-center text-xs text-muted-foreground">
           Loading…
         </div>
       ) : !artifact ? (
-        <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-4 text-center text-xs text-muted-foreground">
+        <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-3 text-center text-xs text-muted-foreground">
           No prediction artifact available yet.
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {revision ? (
-            <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-              <History className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <div className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/5 px-2 py-1 text-xs text-amber-700 dark:text-amber-400">
+              <History className="h-3.5 w-3.5 shrink-0" />
               <span>
-                Prediction revised since you last checked (previous run {" "}
-                {new Date(revision.prevAsOf).toLocaleString("en-IN")}). Expected return moved{" "}
-                {fmtPct(revision.returnDeltaPct)}
+                Revised: {fmtPct(revision.returnDeltaPct)}
                 {revision.prevRangeLow != null && revision.prevRangeHigh != null
-                  ? `; range was ${fmtLevel(revision.prevRangeLow)} – ${fmtLevel(revision.prevRangeHigh)}`
+                  ? ` (was ${fmtLevel(revision.prevRangeLow)}–${fmtLevel(revision.prevRangeHigh)})`
                   : ""}
-                .
               </span>
             </div>
           ) : null}
-          <PriorDayPriceStrip day={priorDay?.day ?? null} bars={priorDay?.bars ?? []} currentSpot={artifact.spot} />
+
+          {events7d.length > 0 ? (
+            <div className="flex gap-1.5 overflow-x-auto pb-1">
+              {events7d.map((ev, i) => (
+                <div
+                  key={`${ev.date ?? i}-${ev.label ?? i}`}
+                  className="flex w-32 shrink-0 flex-col gap-0.5 rounded-md border border-border/50 bg-muted/10 px-2 py-1 text-[11px]"
+                  title={[ev.label, ev.category ?? ev.event_type, ev.symbol, ev.impact].filter(Boolean).join(" · ")}
+                >
+                  <span className="font-mono text-muted-foreground">+{ev.days_from_now}d</span>
+                  <span className="truncate font-medium">{ev.label ?? ev.event_type ?? "Event"}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <PriorDayPriceStrip day={priorDay?.day ?? null} bars={priorDay?.bars ?? []} currentSpot={artifact.spot} height={64} />
           <IndexEventsForecastChart
             spot={artifact.spot ?? 0}
             horizonDays={EVENTS_HORIZON_DAYS}
@@ -418,42 +417,8 @@ function EventsRangePanel() {
             rangeHigh={artifact.prediction?.range?.high}
             dailyBand={dailyBand7d}
             upcomingEvents={events7d}
-            height={260}
+            height={220}
           />
-          <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-            <div>
-              Spot: <span className="font-mono text-foreground">{fmtLevel(artifact.spot)}</span>
-            </div>
-            <div>
-              Projected range: {" "}
-              <span className="font-mono text-foreground">
-                {fmtLevel(artifact.prediction?.range?.low)} – {fmtLevel(artifact.prediction?.range?.high)}
-              </span>
-            </div>
-          </div>
-
-          {events7d.length > 0 ? (
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {events7d.map((ev, i) => (
-                <div
-                  key={`${ev.date ?? i}-${ev.label ?? i}`}
-                  className="rounded-lg border border-border/50 bg-muted/10 px-3 py-2 text-xs"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">{ev.label ?? ev.event_type ?? "Event"}</span>
-                    <span className="font-mono text-muted-foreground">+{ev.days_from_now}d</span>
-                  </div>
-                  <div className="mt-0.5 text-muted-foreground">
-                    {ev.category ?? ev.event_type ?? "—"}
-                    {ev.symbol ? ` · ${ev.symbol}` : ""}
-                    {ev.impact ? ` · ${ev.impact}` : ""}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">No dated events in the next {EVENTS_HORIZON_DAYS} days.</p>
-          )}
         </div>
       )}
     </div>
@@ -462,26 +427,14 @@ function EventsRangePanel() {
 
 export function CommandCenter() {
   return (
-    <div className="mx-auto min-h-screen max-w-none space-y-4 bg-background p-6 text-foreground">
-      <div>
-        <h1 className="text-2xl font-semibold">Command Center</h1>
-        <p className="text-sm text-muted-foreground">
-          One screen: current P&amp;L and exit timeline, the next {EVENTS_HORIZON_DAYS} days of
-          Nifty events and projected range, and live news impact. Display only — no
-          auto-trigger or exit decision happens here.
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[2fr_1fr]">
-        <div className="space-y-4">
+    <div className="mx-auto min-h-screen max-w-none space-y-2 bg-background p-3 text-foreground">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[2fr_1fr]">
+        <div className="space-y-2">
           <PnlPositionsPanel />
           <EventsRangePanel />
         </div>
-        <div>
-          <div className="rounded-xl border border-border/60 bg-card p-4 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold">News events &amp; Nifty impact</h2>
-            <NewsImpactPanel horizonDays={EVENTS_HORIZON_DAYS} />
-          </div>
+        <div className="rounded-xl border border-border/60 bg-card p-2 shadow-sm">
+          <NewsImpactPanel horizonDays={EVENTS_HORIZON_DAYS} />
         </div>
       </div>
     </div>
