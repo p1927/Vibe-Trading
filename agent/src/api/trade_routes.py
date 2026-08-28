@@ -2333,6 +2333,7 @@ def get_index_track_scoreboard(
             scoreboard_needs_refresh,
         )
         from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.walk_forward import (
+            run_strategy_walk_forward,
             run_track_walk_forward,
         )
         from trade_integrations.dataflows.index_research.prediction_algorithms.promotion import (
@@ -2357,6 +2358,7 @@ def get_index_track_scoreboard(
                 horizon_days=horizon_days,
                 eval_step=eval_step,
             )
+            report = run_strategy_walk_forward(ticker=key, days=history_days, horizon_days=horizon_days)
             report["needs_refresh"] = False
         else:
             report = load_scoreboard(key)
@@ -2371,6 +2373,7 @@ def get_index_track_scoreboard(
                     horizon_days=horizon_days,
                     eval_step=eval_step,
                 )
+                report = run_strategy_walk_forward(ticker=key, days=history_days, horizon_days=horizon_days)
             report = normalize_scoreboard_report(report or {})
             report["needs_refresh"] = False
         report = normalize_scoreboard_report(report or {})

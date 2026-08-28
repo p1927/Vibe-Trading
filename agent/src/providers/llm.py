@@ -974,22 +974,33 @@ def _anthropic_supports_effort(model: str) -> bool:
     return any(name.startswith(prefix) for prefix in _EFFORT_CAPABLE_ANTHROPIC)
 
 
-def _adapter_accepts_effort(chat_anthropic: type) -> bool:
-    """Report whether the installed langchain-anthropic exposes the field.
+# pyproject allows ``langchain-anthropic>=1.3.0,<2`` — a range spanning a real field
+# rename: the constructor kwarg was ``reasoning_effort`` (<=1.3.x) and became ``effort``
+# (>=1.4.0, confirmed live against the installed 1.4.8:
+# ``"effort" in ChatAnthropic.model_fields`` is True, ``"reasoning_effort" in ...`` is False).
+# Checking only the old name silently disabled effort forwarding on every 1.4.x install —
+# found live 2026-08-29, see
+# .claude/backlog/items/2026-08-29-vibetrading-anthropic-reasoning-effort-tests-fail-installed-version.md.
+_ANTHROPIC_EFFORT_FIELD_NAMES: tuple[str, ...] = ("effort", "reasoning_effort")
 
-    ``ChatAnthropic`` is configured with ``extra="ignore"``, so an unknown
-    keyword is dropped in silence rather than raising. pyproject allows
-    ``langchain-anthropic>=1.3.0``, and ``reasoning_effort`` arrived later --
-    without this check, an older install would swallow the value while the
-    caller still paid the temperature cost below, which is the worst of both.
+
+def _anthropic_effort_field_name(chat_anthropic: type) -> Optional[str]:
+    """Return the installed langchain-anthropic's effort kwarg name, or None.
+
+    ``ChatAnthropic`` is configured with ``extra="ignore"``, so an unknown keyword is
+    dropped in silence rather than raising — without this check, a version exposing
+    neither name would swallow the value while the caller still paid the temperature
+    cost below, which is the worst of both.
 
     Args:
         chat_anthropic: The resolved ``ChatAnthropic`` class.
 
     Returns:
-        True when the class declares a ``reasoning_effort`` field.
+        The first of ``_ANTHROPIC_EFFORT_FIELD_NAMES`` the class actually declares, or
+        None if it declares neither.
     """
-    return "reasoning_effort" in getattr(chat_anthropic, "model_fields", {})
+    fields = getattr(chat_anthropic, "model_fields", {})
+    return next((name for name in _ANTHROPIC_EFFORT_FIELD_NAMES if name in fields), None)
 
 
 def _build_anthropic(
@@ -1019,11 +1030,14 @@ def _build_anthropic(
         ) from exc
 
     safe_anthropic = _make_temperature_safe_anthropic(chat_anthropic)
+    resolved_effort_field = _anthropic_effort_field_name(chat_anthropic)
     use_effort = (
-        bool(effort)
-        and _anthropic_supports_effort(model)
-        and _adapter_accepts_effort(chat_anthropic)
+        bool(effort) and _anthropic_supports_effort(model) and resolved_effort_field is not None
     )
+    # Falls back to the pre-rename kwarg name when the installed adapter declares
+    # neither — harmless either way since ChatAnthropic ignores unknown kwargs
+    # (extra="ignore"), and keeps this call shape stable for testing.
+    effort_kwarg_name = resolved_effort_field or "reasoning_effort"
     # Effort makes langchain-anthropic enable adaptive thinking, and the API
     # then rejects any temperature other than 1:
     #   `temperature` may only be set to 1 when thinking is enabled or in
@@ -1041,8 +1055,9 @@ def _build_anthropic(
         callbacks=callbacks,
         # Rendered by langchain-anthropic as output_config={'effort': ...}.
         # Without it, Fable 5 and Opus 5 run at the default effort however
-        # LANGCHAIN_REASONING_EFFORT is set.
-        reasoning_effort=effort if use_effort else None,
+        # LANGCHAIN_REASONING_EFFORT is set. Keyword name varies by installed
+        # version — see _anthropic_effort_field_name.
+        **{effort_kwarg_name: effort if use_effort else None},
         api_key=os.getenv("ANTHROPIC_API_KEY") or None,  # noqa: env-gate — native provider credential
         base_url=(
             os.getenv("ANTHROPIC_BASE_URL")  # noqa: env-gate — native provider endpoint
