@@ -755,6 +755,15 @@ export const api = {
     if (options?.replay) url = appendQueryParam(url, "replay", options.replay);
     return url;
   },
+  // Command Center dashboard's real-time push stream — see CommandCenter.tsx.
+  // Same "no auth in the query string, useSSE mints a ticket per connect" convention as
+  // sseUrl above.
+  commandCenterStreamUrl: (agentId: string, ticker = "NIFTY") => {
+    let url = `${BASE}/trade/command-center/stream`;
+    url = appendQueryParam(url, "ticker", ticker);
+    if (agentId) url = appendQueryParam(url, "agent_id", agentId);
+    return url;
+  },
 
   // Swarm API
   listSwarmPresets: () => request<SwarmPreset[]>("/swarm/presets"),

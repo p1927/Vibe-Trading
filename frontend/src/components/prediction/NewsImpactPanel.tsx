@@ -15,6 +15,11 @@ interface Props {
   pollMs?: number;
   monitorEnabled?: boolean;
   shockCalibration?: IndexPredictionArtifact["news_shock_calibration"];
+  /** When provided (even `null`), this panel renders from server-pushed data instead of
+   * self-fetching — used by CommandCenter.tsx's SSE stream so news updates arrive without
+   * a poll timer or refresh click. `undefined` (the default) keeps this panel's normal
+   * self-fetching behavior unchanged for every other caller (e.g. Prediction.tsx). */
+  externalReport?: IndexNewsImpactReport | null;
 }
 
 function statusBadge(status?: string) {
@@ -74,7 +79,14 @@ function consensusBadge(consensus?: {
   );
 }
 
-export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shockCalibration }: Props) {
+export function NewsImpactPanel({
+  horizonDays,
+  pollMs = 0,
+  monitorEnabled,
+  shockCalibration,
+  externalReport,
+}: Props) {
+  const pushDriven = externalReport !== undefined;
   const [report, setReport] = useState<IndexNewsImpactReport | null>(null);
   const [newsPipeline, setNewsPipeline] = useState<IndexPredictionNewsPipelineHealth | null>(null);
   const [loading, setLoading] = useState(false);
@@ -138,8 +150,15 @@ export function NewsImpactPanel({ horizonDays, pollMs = 0, monitorEnabled, shock
   );
 
   useEffect(() => {
+    if (pushDriven) return;
     void load(false);
-  }, [load]);
+  }, [load, pushDriven]);
+
+  // Push-driven mode: render whatever the SSE stream last sent, no fetch of our own.
+  useEffect(() => {
+    if (!pushDriven) return;
+    setReport(externalReport ?? null);
+  }, [pushDriven, externalReport]);
 
   useEffect(() => {
     let cancelled = false;

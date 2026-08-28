@@ -100,6 +100,10 @@ export function useSSE(config?: SSEConfig) {
       "research.artifact", "research.debate",
       "provenance.source",
       "heartbeat", "done",
+      // Command Center dashboard stream (GET /trade/command-center/stream) — see
+      // CommandCenter.tsx. Distinct from the agent-session event names above; this hook is
+      // reused as a generic SSE client, not narrowly agent-chat-specific.
+      "positions", "positions_error", "prediction", "prediction_error", "news", "news_error",
     ];
 
     const handleRaw = (eventType: string, raw: MessageEvent) => {
