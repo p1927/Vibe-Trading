@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ClipboardCheck, History, RefreshCw } from "lucide-react";
+import { ClipboardCheck, History } from "lucide-react";
 import {
   api,
   type AutonomousAgentInstance,
   type HubIndexHistoryBar,
+  type IndexNewsImpactReport,
   type IndexPredictionArtifact,
   type IndexUpcomingEvent,
   type LivePositionGroup,
@@ -14,14 +15,10 @@ import { PnlForecastBandChart } from "@/components/board/PnlForecastBandChart";
 import { IndexEventsForecastChart } from "@/components/charts/IndexEventsForecastChart";
 import { PriorDayPriceStrip } from "@/components/charts/PriorDayPriceStrip";
 import { NewsImpactPanel } from "@/components/prediction/NewsImpactPanel";
+import { useSSE, type SSEStatus } from "@/hooks/useSSE";
 import { safeGet, safeSet } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 
-// Same live-reprice cadence as PositionsBoard.tsx — this panel reads the same
-// compute_live_pop_for_agent-backed endpoint.
-const POSITIONS_POLL_MS = 20_000;
-// Matches Prediction.tsx's index-prediction refresh cadence for the same artifact.
-const PREDICTION_POLL_MS = 60_000;
 const EVENTS_HORIZON_DAYS = 7;
 
 function fmtInr(v: number | null | undefined): string {
@@ -69,6 +66,91 @@ function writeLastSeenPrediction(snapshot: LastSeenPrediction): void {
   safeSet(LAST_SEEN_PREDICTION_KEY, JSON.stringify(snapshot));
 }
 
+/** One push-driven SSE connection to GET /trade/command-center/stream backs the whole
+ * dashboard — positions/prediction/news all multiplexed over it, each leg diffed
+ * server-side so a frame only arrives when something actually changed. Replaces the
+ * page's old per-panel setInterval polling and manual refresh buttons entirely (per user
+ * request — see .claude/backlog/items/2026-08-28-command-center-real-time-push.md). */
+function useCommandCenterStream(agentId: string) {
+  const { connect, disconnect, onStatusChange } = useSSE();
+  const [status, setStatus] = useState<SSEStatus>("disconnected");
+  const [positions, setPositions] = useState<{ groups: LivePositionGroup[]; skipped: LivePositionSkipped[] } | null>(
+    null,
+  );
+  const [prediction, setPrediction] = useState<IndexPredictionArtifact | null>(null);
+  const [news, setNews] = useState<IndexNewsImpactReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const baselineRef = useRef<LastSeenPrediction | null | undefined>(undefined);
+
+  useEffect(() => {
+    onStatusChange(setStatus);
+    connect(api.commandCenterStreamUrl(agentId, "NIFTY"), {
+      positions: (data) => {
+        setError(null);
+        setPositions({
+          groups: (data.groups as LivePositionGroup[]) ?? [],
+          skipped: (data.skipped as LivePositionSkipped[]) ?? [],
+        });
+      },
+      positions_error: (data) => setError(String(data.message ?? "positions stream error")),
+      prediction: (data) => {
+        setError(null);
+        const artifact = (data.artifact as IndexPredictionArtifact | null) ?? null;
+        if (baselineRef.current === undefined) baselineRef.current = readLastSeenPrediction();
+        setPrediction(artifact);
+        if (artifact?.as_of) {
+          writeLastSeenPrediction({
+            as_of: artifact.as_of,
+            expected_return_pct: artifact.prediction?.expected_return_pct ?? null,
+            range_low: artifact.prediction?.range?.low ?? null,
+            range_high: artifact.prediction?.range?.high ?? null,
+          });
+        }
+      },
+      prediction_error: (data) => setError(String(data.message ?? "prediction stream error")),
+      news: (data) => {
+        setError(null);
+        setNews((data.report as IndexNewsImpactReport | null) ?? null);
+      },
+      news_error: (data) => setError(String(data.message ?? "news stream error")),
+    });
+    return () => disconnect();
+  }, [agentId, connect, disconnect, onStatusChange]);
+
+  const revision = useMemo(() => {
+    const prev = baselineRef.current;
+    if (!prev || !prediction?.as_of || prev.as_of === prediction.as_of) return null;
+    const curRet = prediction.prediction?.expected_return_pct ?? null;
+    return {
+      prevAsOf: prev.as_of,
+      returnDeltaPct: curRet != null && prev.expected_return_pct != null ? curRet - prev.expected_return_pct : null,
+      prevRangeLow: prev.range_low,
+      prevRangeHigh: prev.range_high,
+    };
+    // baselineRef.current is a ref, deliberately excluded — only prediction.as_of changes this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prediction?.as_of, prediction?.prediction?.expected_return_pct]);
+
+  return { status, positions, prediction, news, error, revision };
+}
+
+function LiveDot({ status }: { status: SSEStatus }) {
+  return (
+    <span
+      className={cn(
+        "h-2 w-2 shrink-0 rounded-full",
+        status === "connected"
+          ? "bg-emerald-500"
+          : status === "reconnecting"
+            ? "animate-pulse bg-amber-500"
+            : "bg-muted-foreground/40",
+      )}
+      title={`Live feed: ${status}`}
+      aria-label={`Live feed: ${status}`}
+    />
+  );
+}
+
 /** Real expiry_days-derived progress bar, normalized against the longest current
  * expiry among open groups so bars are relatively comparable. Not a fabricated
  * "exit plan" figure — expiry_days is the only real distance-to-exit data this
@@ -88,51 +170,16 @@ function ExitTimelineRow({ group, maxDays }: { group: LivePositionGroup; maxDays
   );
 }
 
-function PnlPositionsPanel() {
-  const [agents, setAgents] = useState<AutonomousAgentInstance[]>([]);
-  const [agentId, setAgentId] = useState<string>("");
-  const [loading, setLoading] = useState(true);
-  const [groups, setGroups] = useState<LivePositionGroup[]>([]);
-  const [skipped, setSkipped] = useState<LivePositionSkipped[]>([]);
-  const [error, setError] = useState<string | null>(null);
+interface PnlPositionsPanelProps {
+  agents: AutonomousAgentInstance[];
+  agentId: string;
+  onAgentChange: (id: string) => void;
+  groups: LivePositionGroup[];
+  skipped: LivePositionSkipped[];
+  status: SSEStatus;
+}
 
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .listAutonomousAgents()
-      .then((res) => {
-        if (cancelled) return;
-        setAgents(res.agents);
-        if (res.agents.length > 0) setAgentId((prev) => prev || res.agents[0].id);
-      })
-      .catch(() => {
-        if (!cancelled) setError("Failed to load agents.");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const load = useCallback((id: string) => {
-    setLoading(true);
-    setError(null);
-    api
-      .getAgentLivePositions(id)
-      .then((res) => {
-        setGroups(res.groups);
-        setSkipped(res.skipped);
-      })
-      .catch(() => setError("Failed to load live positions for this agent."))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    if (!agentId) return;
-    load(agentId);
-    const timer = window.setInterval(() => load(agentId), POSITIONS_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [agentId, load]);
-
+function PnlPositionsPanel({ agents, agentId, onAgentChange, groups, skipped, status }: PnlPositionsPanelProps) {
   // trajectory[0] is today's real observed P&L per LivePositionGroup's documented shape.
   const totalPnl = useMemo(
     () => groups.reduce((sum, g) => sum + (g.trajectory[0]?.pnl_inr ?? 0), 0),
@@ -142,22 +189,26 @@ function PnlPositionsPanel() {
     () => groups.reduce((max, g) => Math.max(max, g.expiry_days), 0),
     [groups],
   );
+  const hasData = groups.length > 0 || skipped.length > 0;
 
   return (
     <div className="rounded-xl border border-border/60 bg-card p-2 shadow-sm">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <select
-          value={agentId}
-          onChange={(e) => setAgentId(e.target.value)}
-          className="rounded-md border bg-background px-2 py-1 text-xs"
-        >
-          {agents.length === 0 ? <option value="">No agents</option> : null}
-          {agents.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name || a.id}
-            </option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <LiveDot status={status} />
+          <select
+            value={agentId}
+            onChange={(e) => onAgentChange(e.target.value)}
+            className="rounded-md border bg-background px-2 py-1 text-xs"
+          >
+            {agents.length === 0 ? <option value="">No agents</option> : null}
+            {agents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name || a.id}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="flex items-center gap-2">
           {groups.length > 0 ? (
             <span
@@ -179,36 +230,16 @@ function PnlPositionsPanel() {
           >
             <ClipboardCheck className="h-3.5 w-3.5" />
           </Link>
-          <button
-            type="button"
-            onClick={() => agentId && load(agentId)}
-            disabled={!agentId || loading}
-            title="Refresh now"
-            aria-label="Refresh now"
-            className="rounded-md border bg-background p-1.5 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-          </button>
         </div>
       </div>
-
-      {error ? (
-        <div className="mb-2 rounded-lg border border-red-500/40 bg-red-500/5 p-2 text-xs text-red-600 dark:text-red-400">
-          {error}
-        </div>
-      ) : null}
 
       {!agentId ? (
         <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-3 text-center text-xs text-muted-foreground">
           No autonomous agents exist yet.
         </div>
-      ) : loading && groups.length === 0 && skipped.length === 0 ? (
+      ) : !hasData ? (
         <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-3 text-center text-xs text-muted-foreground">
-          Loading…
-        </div>
-      ) : groups.length === 0 && skipped.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-3 text-center text-xs text-muted-foreground">
-          No open positions for this agent.
+          {status === "connected" ? "No open positions for this agent." : "Connecting…"}
         </div>
       ) : (
         <div className="space-y-2">
@@ -245,21 +276,25 @@ function PnlPositionsPanel() {
   );
 }
 
-function EventsRangePanel() {
-  const [artifact, setArtifact] = useState<IndexPredictionArtifact | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+interface EventsRangePanelProps {
+  artifact: IndexPredictionArtifact | null;
+  status: SSEStatus;
+  revision: {
+    prevAsOf: string;
+    returnDeltaPct: number | null;
+    prevRangeLow: number | null;
+    prevRangeHigh: number | null;
+  } | null;
+}
+
+function EventsRangePanel({ artifact, status, revision }: EventsRangePanelProps) {
   const [priorDay, setPriorDay] = useState<{ day: string; bars: HubIndexHistoryBar[] } | null>(null);
-  // Captured once, from storage, the first time this component sees data — not re-read on
-  // every poll — so the "revised since you looked" comparison stays anchored to what this
-  // browser saw when the page was opened, not to the previous poll a minute ago.
-  const baselineRef = useRef<LastSeenPrediction | null | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
-    // Yesterday's closed session never changes, so this is a one-time fetch on mount, not
-    // part of the 60s prediction poll. "Yesterday" is resolved from the real recorded-days
-    // list (the most recent recorded day strictly before today, IST) rather than naive date
+    // Yesterday's closed session never changes, so this is a one-time fetch on mount — not
+    // part of the live stream. "Yesterday" is resolved from the real recorded-days list
+    // (the most recent recorded day strictly before today, IST) rather than naive date
     // arithmetic, so weekends/holidays resolve correctly to the actual last trading session.
     api
       .getHubIndexHistoryDays({ symbol: "NIFTY", exchange: "NSE_INDEX" })
@@ -289,36 +324,6 @@ function EventsRangePanel() {
     };
   }, []);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    api
-      .getIndexPrediction("NIFTY", EVENTS_HORIZON_DAYS)
-      .then((res) => {
-        const art = res.artifact ?? null;
-        if (baselineRef.current === undefined) {
-          baselineRef.current = readLastSeenPrediction();
-        }
-        setArtifact(art);
-        if (art?.as_of) {
-          writeLastSeenPrediction({
-            as_of: art.as_of,
-            expected_return_pct: art.prediction?.expected_return_pct ?? null,
-            range_low: art.prediction?.range?.low ?? null,
-            range_high: art.prediction?.range?.high ?? null,
-          });
-        }
-      })
-      .catch(() => setError("Failed to load Nifty prediction artifact."))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    load();
-    const timer = window.setInterval(load, PREDICTION_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [load]);
-
   const events7d: IndexUpcomingEvent[] = useMemo(
     () =>
       (artifact?.upcoming_events ?? []).filter(
@@ -335,49 +340,15 @@ function EventsRangePanel() {
     [artifact],
   );
 
-  const revision = useMemo(() => {
-    const prev = baselineRef.current;
-    if (!prev || !artifact?.as_of || prev.as_of === artifact.as_of) return null;
-    const curRet = artifact.prediction?.expected_return_pct ?? null;
-    return {
-      prevAsOf: prev.as_of,
-      returnDeltaPct: curRet != null && prev.expected_return_pct != null ? curRet - prev.expected_return_pct : null,
-      prevRangeLow: prev.range_low,
-      prevRangeHigh: prev.range_high,
-    };
-    // Only artifact.as_of actually changes this outcome once baselineRef is captured;
-    // baselineRef.current is intentionally excluded since refs don't participate in deps.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifact?.as_of, artifact?.prediction?.expected_return_pct]);
-
   return (
     <div className="rounded-xl border border-border/60 bg-card p-2 shadow-sm">
-      <div className="mb-2 flex items-center justify-end">
-        <button
-          type="button"
-          onClick={load}
-          disabled={loading}
-          title="Refresh now"
-          aria-label="Refresh now"
-          className="rounded-md border bg-background p-1.5 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-        >
-          <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-        </button>
+      <div className="mb-2 flex items-center gap-2">
+        <LiveDot status={status} />
       </div>
 
-      {error ? (
-        <div className="mb-2 rounded-lg border border-red-500/40 bg-red-500/5 p-2 text-xs text-red-600 dark:text-red-400">
-          {error}
-        </div>
-      ) : null}
-
-      {!artifact && loading ? (
+      {!artifact ? (
         <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-3 text-center text-xs text-muted-foreground">
-          Loading…
-        </div>
-      ) : !artifact ? (
-        <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-3 text-center text-xs text-muted-foreground">
-          No prediction artifact available yet.
+          {status === "connected" ? "No prediction artifact available yet." : "Connecting…"}
         </div>
       ) : (
         <div className="space-y-2">
@@ -426,15 +397,51 @@ function EventsRangePanel() {
 }
 
 export function CommandCenter() {
+  const [agents, setAgents] = useState<AutonomousAgentInstance[]>([]);
+  const [agentId, setAgentId] = useState<string>("");
+
+  useEffect(() => {
+    let cancelled = false;
+    // One-time metadata fetch (which agents exist) — not something that needs to ride the
+    // live stream; the stream itself starts once an agentId is picked below.
+    api
+      .listAutonomousAgents()
+      .then((res) => {
+        if (cancelled) return;
+        setAgents(res.agents);
+        if (res.agents.length > 0) setAgentId((prev) => prev || res.agents[0].id);
+      })
+      .catch(() => {
+        /* PnlPositionsPanel's own empty state covers "no agents" honestly */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const { status, positions, prediction, news, error, revision } = useCommandCenterStream(agentId);
+
   return (
     <div className="mx-auto min-h-screen max-w-none space-y-2 bg-background p-3 text-foreground">
+      {error ? (
+        <div className="rounded-lg border border-red-500/40 bg-red-500/5 p-2 text-xs text-red-600 dark:text-red-400">
+          {error}
+        </div>
+      ) : null}
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[2fr_1fr]">
         <div className="space-y-2">
-          <PnlPositionsPanel />
-          <EventsRangePanel />
+          <PnlPositionsPanel
+            agents={agents}
+            agentId={agentId}
+            onAgentChange={setAgentId}
+            groups={positions?.groups ?? []}
+            skipped={positions?.skipped ?? []}
+            status={status}
+          />
+          <EventsRangePanel artifact={prediction} status={status} revision={revision} />
         </div>
         <div className="rounded-xl border border-border/60 bg-card p-2 shadow-sm">
-          <NewsImpactPanel horizonDays={EVENTS_HORIZON_DAYS} />
+          <NewsImpactPanel horizonDays={EVENTS_HORIZON_DAYS} externalReport={news} />
         </div>
       </div>
     </div>
