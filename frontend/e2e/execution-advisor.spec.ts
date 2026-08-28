@@ -114,6 +114,14 @@ test.describe('Execution Advisor — render baseline (live API)', () => {
     await expect(page.getByText('Execution Advisor', { exact: true })).toBeVisible({
       timeout: 15_000,
     })
+    // Wait for the live /execution-advisor/positions fetch to land
+    // before asserting the empty-state text — otherwise the page
+    // is in the initial loading state (no "No open positions."
+    // text rendered yet) and the assertion races with the fetch.
+    await page.waitForResponse(
+      (r) => r.url().includes('/execution-advisor/positions') && r.request().method() === 'GET',
+      { timeout: 15_000 },
+    )
 
     if (live.count === 0) {
       await expect(page.getByText('No open positions.')).toBeVisible({ timeout: 10_000 })

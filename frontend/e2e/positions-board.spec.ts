@@ -76,22 +76,35 @@ test.describe('Positions Board — render baseline (live API)', () => {
     // OK).
     await expect(page.getByRole('button', { name: /Refresh now/i })).toBeVisible()
 
-    // The <select> is seeded with one <option> per live agent. When
-    // the account is empty, the page renders a "No agents" fallback
-    // option; when populated, one option per live agent.
+    // Wait for the agent list to land. The page issues
+    // GET /autonomous-agents on mount and only seeds the <select>
+    // with the response — race against the network call to avoid
+    // asserting against the empty-state option that renders before
+    // the fetch resolves.
+    await page.waitForResponse(
+      (r) => r.url().endsWith('/autonomous-agents') && r.request().method() === 'GET',
+      { timeout: 15_000 },
+    )
+
     const select = page.locator('select')
-    const optionCount = await select.locator('option').count()
     if (live.agents.length === 0) {
       await expect(select.locator('option', { hasText: 'No agents' })).toHaveCount(1)
     } else {
-      // First option's value matches a real agent id (the page
-      // seeds `agentId` to `agents[0].id` on mount).
+      // Page seeds `agentId` to `agents[0].id` on mount. Once the
+      // /board/positions/<id> fetch lands, the select is populated
+      // with one <option> per live agent — and the first option's
+      // value matches `agents[0].id`.
+      await page.waitForResponse(
+        (r) => /\/board\/positions\/[^/]+$/.test(r.url()) && r.request().method() === 'GET',
+        { timeout: 15_000 },
+      )
       const firstOptionValue = await select.locator('option').first().getAttribute('value')
       expect(
         firstOptionValue,
         `first <option> value (${firstOptionValue}) must be one of the live agent ids (${live.agents.map((a) => a.id).join(',')})`,
       ).toBe(live.agents[0].id)
     }
+    const optionCount = await select.locator('option').count()
     expect(optionCount, `<select> option count`).toBeGreaterThanOrEqual(1)
 
     // No React error boundary rendered.
@@ -135,11 +148,17 @@ test.describe('Positions Board — interactions (live API)', () => {
 
     await page.goto('/positions-board')
     const select = page.locator('select')
-    await expect(select.locator('option').first()).toBeVisible({ timeout: 15_000 })
     await page.waitForResponse(
       (r) => /\/board\/positions\/[^/]+$/.test(r.url()) && r.request().method() === 'GET',
       { timeout: 15_000 },
     )
+    // Native <option> elements are "hidden" per Playwright's
+    // toBeVisible (they only become visible when the dropdown
+    // opens); the option-count assertion + the selectOption call
+    // below are the substantive checks. We assert the option
+    // count instead of visibility.
+    await expect(select.locator('option').first()).toHaveCount(1, { timeout: 15_000 })
+    expect(await select.locator('option').count()).toBeGreaterThanOrEqual(1)
 
     // Switch to the second agent.
     await select.selectOption(live.agents[1].id)
