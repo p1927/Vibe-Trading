@@ -21,6 +21,51 @@ import { cn } from "@/lib/utils";
 
 const EVENTS_HORIZON_DAYS = 7;
 
+type DailyBandRow = { days_ahead: number; p10: number; p50: number; p90: number };
+
+/** Fill every day 0..horizonDays by piecewise-linear interpolation between the forecast
+ * fan's sparse real per-horizon points (e.g. 1/3/5/10/21 trading days), anchored at `spot`
+ * for day 0. `IndexEventsForecastChart` only uses a `dailyBand` when it covers every day in
+ * its range (see its own `bandByDay` check) — the fan alone (3-5 points inside a 7-day
+ * window) wouldn't pass that, so this expansion is what actually makes the real fan usable
+ * by the existing chart component without changing the chart itself. Interpolating between
+ * multiple real, independently-retrained-per-horizon anchor points is still real data, and
+ * strictly more granular than `daily_range_band`'s own GBM interpolation between just the
+ * two terminal endpoints of a single call. */
+function interpolateFanToDailyBand(
+  fanBand: DailyBandRow[],
+  spot: number,
+  horizonDays: number,
+): DailyBandRow[] | undefined {
+  if (!fanBand || fanBand.length === 0 || !Number.isFinite(spot) || spot <= 0) return undefined;
+  const anchors = [{ days_ahead: 0, p10: spot, p50: spot, p90: spot }, ...fanBand]
+    .filter((row, i, arr) => arr.findIndex((other) => other.days_ahead === row.days_ahead) === i)
+    .sort((a, b) => a.days_ahead - b.days_ahead);
+  if (anchors.length < 2) return undefined;
+
+  const rows: DailyBandRow[] = [];
+  for (let d = 0; d <= horizonDays; d++) {
+    let lo = anchors[0];
+    let hi = anchors[anchors.length - 1];
+    for (let i = 0; i < anchors.length - 1; i++) {
+      if (anchors[i].days_ahead <= d && anchors[i + 1].days_ahead >= d) {
+        lo = anchors[i];
+        hi = anchors[i + 1];
+        break;
+      }
+    }
+    const span = hi.days_ahead - lo.days_ahead;
+    const t = span === 0 ? 0 : (d - lo.days_ahead) / span;
+    rows.push({
+      days_ahead: d,
+      p10: lo.p10 + (hi.p10 - lo.p10) * t,
+      p50: lo.p50 + (hi.p50 - lo.p50) * t,
+      p90: lo.p90 + (hi.p90 - lo.p90) * t,
+    });
+  }
+  return rows;
+}
+
 function fmtInr(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return v.toLocaleString("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
@@ -332,13 +377,23 @@ function EventsRangePanel({ artifact, status, revision }: EventsRangePanelProps)
     [artifact],
   );
 
-  // Real per-day band, sliced to this panel's 7-day window — the backend artifact's own
-  // pipeline horizon (commonly 14d) covers more days than this dashboard shows; slicing to
-  // a real band's first week is honest (still real data), unlike fabricating a 7-day one.
-  const dailyBand7d = useMemo(
-    () => artifact?.prediction?.daily_range_band?.filter((row) => row.days_ahead <= EVENTS_HORIZON_DAYS),
-    [artifact],
-  );
+  // Prefer the real multi-horizon forecast fan (`forecast_nifty_fan` — independently
+  // retrained per horizon) over `daily_range_band` (a GBM interpolation between the single
+  // headline range's own terminal endpoints, kept as a fallback for artifacts predating the
+  // fan wiring or a hub dir with no fan ever persisted yet). Both are sliced to this panel's
+  // 7-day window — the backend artifact's own pipeline horizon (commonly 14d) covers more
+  // days than this dashboard shows; slicing to a real band's first week is honest (still
+  // real data), unlike fabricating a 7-day one. See
+  // .claude/backlog/items/2026-08-26-wire-nifty-forecast-fan-into-consumers.md.
+  const dailyBand7d = useMemo(() => {
+    const fanBand = artifact?.prediction?.forecast_fan?.band;
+    const spot = artifact?.spot;
+    if (fanBand && fanBand.length > 0 && spot != null) {
+      const interpolated = interpolateFanToDailyBand(fanBand, spot, EVENTS_HORIZON_DAYS);
+      if (interpolated) return interpolated;
+    }
+    return artifact?.prediction?.daily_range_band?.filter((row) => row.days_ahead <= EVENTS_HORIZON_DAYS);
+  }, [artifact]);
 
   return (
     <div className="rounded-xl border border-border/60 bg-card p-2 shadow-sm">

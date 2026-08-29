@@ -3270,6 +3270,17 @@ export interface PlanPrediction {
    * ±1 MAE terminal endpoints — see `compute_daily_range_band` in predictor.py. One row
    * per trading day 0..horizon.days; absent on artifacts predating this field. */
   daily_range_band?: Array<{ days_ahead: number; p10: number; p50: number; p90: number }>;
+  /** Real multi-horizon forecast fan (`nifty_forecast_fan.forecast_nifty_fan()`,
+   * independently retrained per horizon — not `daily_range_band`'s GBM interpolation),
+   * loaded from the most recently persisted `append_prediction_fan()` ledger rows. Sparser
+   * (one point per fan horizon: 1/3/5/10/21 trading days by default, not one per day) but
+   * real. Absent when no fan has ever been persisted for this ticker. See
+   * .claude/backlog/items/2026-08-26-wire-nifty-forecast-fan-into-consumers.md. */
+  forecast_fan?: {
+    fan_id: string;
+    predicted_at: string;
+    band: Array<{ days_ahead: number; p10: number; p50: number; p90: number }>;
+  } | null;
   equation?: {
     form?: string;
     coefficients?: Record<string, number>;

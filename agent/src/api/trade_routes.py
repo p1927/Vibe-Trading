@@ -1333,6 +1333,32 @@ def _index_artifact_degraded_reason(artifact: Dict[str, Any] | None) -> str | No
     return "Index prediction incomplete: no view/contributors available."
 
 
+def _attach_latest_forecast_fan(artifact: dict[str, Any] | None, ticker: str) -> None:
+    """Mutate ``artifact["prediction"]["forecast_fan"]`` in place with the most recently
+    persisted `nifty_forecast_fan` band, when one exists.
+
+    Shared by both index-prediction read paths (`get_index_prediction` below and the
+    command-center SSE stream's own `load_hub_plan_artifact` poll) — the hub-cached artifact
+    itself never carries fan data (`aggregator.py` persists the fan straight to the
+    prediction ledger, not into the hub JSON blob), so every reader of the cached artifact
+    needs this same enrichment step rather than just one of them.
+    See .claude/backlog/items/2026-08-26-wire-nifty-forecast-fan-into-consumers.md.
+    """
+    if not isinstance(artifact, dict) or not isinstance(artifact.get("prediction"), dict):
+        return
+    try:
+        from trade_integrations.dataflows.index_research.nifty_forecast_fan import (
+            load_latest_fan_band,
+        )
+
+        fan_band = load_latest_fan_band(ticker=ticker)
+    except Exception:
+        logger.exception("index-prediction: failed to load latest forecast fan for %s", ticker)
+        return
+    if fan_band:
+        artifact["prediction"]["forecast_fan"] = fan_band
+
+
 @trade_router.get("/index-prediction", response_model=IndexPredictionResponse)
 def get_index_prediction(
     ticker: str = "NIFTY",
@@ -1361,17 +1387,7 @@ def get_index_prediction(
         return IndexPredictionResponse(status="not_found", ticker=key, message="No index research")
     if horizon_days is not None and artifact.get("horizon", {}).get("days") != horizon_days:
         artifact["_horizon_mismatch"] = True
-    try:
-        from trade_integrations.dataflows.index_research.nifty_forecast_fan import (
-            load_latest_fan_band,
-        )
-
-        fan_band = load_latest_fan_band(ticker=key)
-    except Exception:
-        logger.exception("index-prediction: failed to load latest forecast fan for %s", key)
-        fan_band = None
-    if fan_band and isinstance(artifact.get("prediction"), dict):
-        artifact["prediction"]["forecast_fan"] = fan_band
+    _attach_latest_forecast_fan(artifact, key)
     return IndexPredictionResponse(
         status="ok",
         ticker=key,
@@ -3613,6 +3629,7 @@ async def _command_center_event_stream(agent_id: str, ticker: str, request: Requ
                 from src.trade.hub_bridge import load_hub_plan_artifact
 
                 artifact = load_hub_plan_artifact(ticker, "index")
+                _attach_latest_forecast_fan(artifact, ticker)
                 snapshot = _command_center_snapshot_hash(artifact)
                 if snapshot != last_prediction_snapshot:
                     last_prediction_snapshot = snapshot
