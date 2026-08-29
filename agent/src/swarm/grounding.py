@@ -102,6 +102,12 @@ _BARE_TICKER_STOPWORDS = frozenset({
     # geography / venues / index & data providers
     "US", "USA", "UK", "EU", "HK", "CN", "JP", "NYSE", "AMEX", "SSE", "SZSE",
     "HKEX", "TSX", "TSXV", "SPX", "NDX", "DJI", "DJIA", "HSI", "CSI", "FTSE", "MSCI", "VIX",
+    # bare index names within the 2-5 char pattern window (longer ones like
+    # BANKNIFTY/SENSEX/FINNIFTY/NIKKEI already fall outside the regex).
+    # Yahoo's real symbol for each is suffix/caret-prefixed (^NSEI, ^GDAXI,
+    # ^FCHI, ^IBEX, ^KS11) — promoting the bare name to "<NAME>.US" is always
+    # wrong, same class of bug as the NIFTY -> Yahoo-404 case this fixes.
+    "NIFTY", "NSE", "BSE", "DAX", "CAC", "IBEX", "KOSPI",
     # instruments / structures
     "ETF", "ETN", "ADR", "IPO", "REIT", "BOND", "SWAP", "PERP",
     # macro / institutions

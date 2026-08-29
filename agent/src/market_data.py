@@ -53,6 +53,16 @@ _SOURCE_PATTERNS = [
 
 def detect_source(code: str) -> str:
     """Infer the best loader source for a normalized symbol."""
+    # Bare India index names (NIFTY, BANKNIFTY, SENSEX, ...) carry no
+    # suffix, so none of the suffix-keyed patterns below match them and they
+    # fell through to the "tushare" (China) default — wrong vendor for an
+    # India index. Checked first, same as _detect_market's equivalent guard
+    # in backtest/engines/_market_hooks.py, so a bare index name routes
+    # through stock_simulator like its suffixed (.NS/.BO) siblings instead.
+    from backtest.india_market_bridge import is_india_equity
+
+    if is_india_equity(code):
+        return "stock_simulator"
     for pattern, source in _SOURCE_PATTERNS:
         if pattern.match(code):
             return source

@@ -17,6 +17,7 @@ from typing import Dict, List
 
 import pandas as pd
 
+from backtest.india_market_bridge import is_india_equity
 from backtest.models import Position
 
 
@@ -148,6 +149,15 @@ def _detect_market(code: str) -> str:
         Bare 1-5 letter alphabetic tickers resolve to ``us_equity``;
         any other unknown format defaults to ``a_share``.
     """
+    # Bare India index names (NIFTY, BANKNIFTY, SENSEX, ...) are also bare
+    # 1-5 letter alphabetic strings, so without this check they'd be caught
+    # by the ``us_equity`` fallback pattern below and routed to Yahoo/
+    # yfinance under their literal (wrong) name — Yahoo's real symbol for
+    # NIFTY is ``^NSEI``, not ``NIFTY``. Checked before the pattern table so
+    # it wins over the bare-ticker fallback without disturbing any suffixed
+    # match (``.NS``/``.BO`` already resolve to india_equity on their own).
+    if is_india_equity(code):
+        return "india_equity"
     for pattern, market in _MARKET_PATTERNS:
         if pattern.match(code):
             return market
