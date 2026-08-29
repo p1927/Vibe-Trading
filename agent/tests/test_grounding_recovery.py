@@ -186,6 +186,30 @@ class TestRecoveryAction:
         assert ledger.identity_status == "conflicting"
         assert ledger.recovery_action(validation) is None
 
+    def test_fabricated_resolution_after_recovery_round_is_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression for
+        .claude/backlog/items/2026-08-29-autonomous-agent-retry-fix-not-live-effective.md:
+        once a recovery round has told the model to call a tool and lock
+        identity, a draft that narrates "identity locked" with no real
+        ``ingest_tool_result`` behind it must still be rejected -- it isn't
+        exempt just because the ledger's identity map happens to be empty.
+        """
+        ledger = _ledger(tmp_path)
+        first = ledger.validate_final_answer("机器人ETF 现价 1.171。")
+        assert ledger.recovery_action(first) == "search_symbol"
+        ledger.record_recovery("search_symbol")
+
+        # No ingest_tool_result call: identity is still genuinely unresolved.
+        fabricated = ledger.validate_final_answer(
+            "Grounding recovery — identity lock. Found: 机器人ETF -> 562500.SS. "
+            "Identity is now locked."
+        )
+
+        assert fabricated.valid is False
+        assert any(issue["code"] == "identity_not_locked" for issue in fabricated.issues)
+
     def test_symbol_resolution_budget_is_bounded(self, tmp_path: Path) -> None:
         ledger = _ledger(tmp_path)
         broken = ledger.validate_final_answer("机器人ETF 现价 1.171。")
