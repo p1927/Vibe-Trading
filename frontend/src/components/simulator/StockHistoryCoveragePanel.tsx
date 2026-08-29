@@ -155,6 +155,60 @@ function bucketLabel(bucket: string): string {
 
 type ViewMode = "week" | "year";
 
+/** Bucket-name category prefixes shared by every non-India market's
+ *  cross-market factor buckets (`coverage.py`'s
+ *  `_resolve_global_index_ohlcv_*`/`_resolve_flow_of_funds_*`/etc. all
+ *  emit `f"{category}_{country.lower()}_{...}"`). Used by
+ *  `countryFilter` to scope the panel to one market's own buckets when
+ *  mounted outside the India tab. */
+const COUNTRY_BUCKET_CATEGORIES = [
+  "global_index_ohlcv",
+  "flow_of_funds",
+  "valuation",
+  "volatility",
+  "policy",
+  "economy",
+] as const;
+
+function bucketMatchesCountry(bucket: string, country: string): boolean {
+  const c = country.toLowerCase();
+  return COUNTRY_BUCKET_CATEGORIES.some(
+    (cat) => bucket === `${cat}_${c}` || bucket.startsWith(`${cat}_${c}_`),
+  );
+}
+
+/** Restrict a coverage response to one market's own buckets, recomputing
+ *  the per-day/week-level completeness fields (`is_complete`,
+ *  `missing`/`missing_days`) over just that subset — the backend's
+ *  original values are computed over the *full* bucket universe, so
+ *  reusing them unfiltered would report a market as "incomplete" because
+ *  of some unrelated market's missing bucket. No-op when `country` is
+ *  undefined. */
+function filterCoverageByCountry(
+  resp: HubStockHistoryCoverageResponse,
+  country?: string,
+): HubStockHistoryCoverageResponse {
+  if (!country) return resp;
+  const matches = (b: string) => bucketMatchesCountry(b, country);
+  const days = resp.days.map((day) => {
+    const entries = Object.entries(day.buckets).filter(([k]) => matches(k));
+    const buckets = Object.fromEntries(entries);
+    const missing = entries.filter(([, s]) => !s.present).map(([k]) => k);
+    const present = entries.filter(([, s]) => s.present).map(([k]) => k);
+    return { ...day, buckets, missing, present, is_complete: missing.length === 0 };
+  });
+  const missing_days = days
+    .filter((d) => d.is_weekday && !d.is_complete)
+    .map((d) => d.day);
+  return {
+    ...resp,
+    bucket_labels: resp.bucket_labels.filter(matches),
+    days,
+    missing_days,
+    is_complete: missing_days.length === 0,
+  };
+}
+
 export interface StockHistoryCoveragePanelProps {
   /** Initial week start (any date in the week); defaults to this week. */
   initialWeekStart?: string;
@@ -164,6 +218,15 @@ export interface StockHistoryCoveragePanelProps {
   symbol?: string;
   /** Extra classes for the outer wrapper. */
   className?: string;
+  /** When set (a `market_registry` code, e.g. "JP", "CN", "US" —
+   *  case-insensitive), scopes the panel to that market's own
+   *  `global_index_ohlcv_*`/`flow_of_funds_*`/`valuation_*`/
+   *  `volatility_*`/`policy_*`/`economy_*` buckets only, so it can be
+   *  mounted on a non-India market tab without showing every other
+   *  market's (and India's own NIFTY-specific) buckets in the grid and
+   *  filter dropdown. Leave unset for the India tab's original
+   *  all-buckets behavior. */
+  countryFilter?: string;
 }
 
 export function StockHistoryCoveragePanel({
@@ -171,6 +234,7 @@ export function StockHistoryCoveragePanel({
   includeOptional = false,
   symbol = "NIFTY",
   className,
+  countryFilter,
 }: StockHistoryCoveragePanelProps) {
   const [view, setView] = useState<ViewMode>("week");
   const [weekStart, setWeekStart] = useState<Date>(() => {
@@ -224,7 +288,7 @@ export function StockHistoryCoveragePanel({
         setError(resp.error ?? "coverage request failed");
         setReport(null);
       } else {
-        setReport(resp);
+        setReport(filterCoverageByCountry(resp, countryFilter));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -232,7 +296,7 @@ export function StockHistoryCoveragePanel({
     } finally {
       setLoading(false);
     }
-  }, [weekStartIso, symbol, includeOptional]);
+  }, [weekStartIso, symbol, includeOptional, countryFilter]);
 
   useEffect(() => {
     void fetchCoverage();
@@ -274,7 +338,7 @@ export function StockHistoryCoveragePanel({
         // the grid by leaving them out of `allDays`.
         continue;
       }
-      const resp = r.value;
+      const resp = filterCoverageByCountry(r.value, countryFilter);
       if (resp.status !== "ok") {
         if (!firstError) firstError = resp.error ?? "coverage request failed";
         continue;
@@ -309,7 +373,7 @@ export function StockHistoryCoveragePanel({
       if (firstError) setYearError(firstError);
     }
     setYearLoading(false);
-  }, [yearEnd, symbol, includeOptional]);
+  }, [yearEnd, symbol, includeOptional, countryFilter]);
 
   useEffect(() => {
     if (view !== "year") return;
@@ -365,7 +429,7 @@ export function StockHistoryCoveragePanel({
           result,
         });
         if (resp.coverage_after) {
-          setReport(resp.coverage_after);
+          setReport(filterCoverageByCountry(resp.coverage_after, countryFilter));
         } else {
           await fetchCoverage();
         }
@@ -380,7 +444,7 @@ export function StockHistoryCoveragePanel({
         });
       }
     },
-    [weekStartIso, symbol, includeOptional, fetchCoverage],
+    [weekStartIso, symbol, includeOptional, fetchCoverage, countryFilter],
   );
 
   const shiftWeek = useCallback((deltaDays: number) => {

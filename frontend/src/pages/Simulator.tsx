@@ -987,6 +987,19 @@ export function Simulator() {
           <StatCard title="Factor coverage">
             <MarketFactorCoveragePanel country={marketTab} />
           </StatCard>
+          <StatCard title="Bucket coverage">
+            <p className="mb-3 text-[11px] text-muted-foreground">
+              Per-week `global_index_ohlcv`/`flow_of_funds`/`valuation`/`volatility`/
+              `policy`/`economy` bucket availability for {COUNTRY_LABELS[marketTab] ?? marketTab},
+              scoped from the same stock-history coverage grid India's tab uses. White cells =
+              data missing; click a cell to backfill it via the registered writer.
+            </p>
+            <StockHistoryCoveragePanel
+              key={marketTab}
+              includeOptional
+              countryFilter={marketTab}
+            />
+          </StatCard>
           <StatCard title="Sector Indices">
             <SectorIndicesPanel country={marketTab} label={COUNTRY_LABELS[marketTab] ?? marketTab} />
           </StatCard>
