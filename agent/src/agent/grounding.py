@@ -2085,19 +2085,9 @@ class GroundingLedger:
         # so a screening run loaded its skill and was then refused a conclusion.
         # Consumers remain blocked on ambiguous in ``authorize_tool_call``, so
         # such a run still cannot fetch a quote to misattribute.
-        # ``self._identities`` truthy is right for a first draft (see above),
-        # but once a recovery round has already told the model "call a tool
-        # and lock identity before answering" (``record_recovery`` bumped
-        # ``self._recovery_rounds``), a still-empty ``self._identities`` is no
-        # longer "never named an instrument" -- it means the requested tool
-        # call never actually happened. Without this branch, a draft that
-        # narrates a fabricated resolution ("Found: NIFTY -> NIFTY@NSE_INDEX",
-        # no real tool_call behind it) passes this check for the same reason a
-        # legitimately tool-free answer would, and slips through unrejected.
-        # See .claude/backlog/items/2026-08-29-autonomous-agent-retry-fix-not-live-effective.md.
         if (
             self._identity_required
-            and (self._identities or self._recovery_rounds > 0)
+            and self._identities
             and status in {"unresolved", "conflicting", "invalidated"}
         ):
             issues.append(
