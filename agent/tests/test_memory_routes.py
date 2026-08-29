@@ -190,3 +190,47 @@ def test_diff_rejects_invalid_sha(client: TestClient, memory_dir: Path) -> None:
         params={"from": "--upload-pack=evil", "to": "HEAD"},
     )
     assert response.status_code == 400
+
+
+def test_invalidate_cache_is_a_noop_when_fts_disabled(client: TestClient) -> None:
+    """FTS is off by default (VT_MEMORY_FTS_INDEX unset in tests) — the route must still
+    succeed, just reporting nothing reindexed rather than erroring."""
+    _add_entry(name="cache-test", content="some content")
+
+    response = client.post("/memory/cache/invalidate")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "reindexed": 0}
+
+
+def test_invalidate_cache_rebuilds_fts_index(
+    client: TestClient, memory_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import src.memory.search_index as si
+    from src.config.accessor import reset_env_config
+
+    original_shared = si._shared_index
+    si._shared_index = None
+    monkeypatch.setattr(si, "_DEFAULT_DB_PATH", tmp_path / "test_fts.db")
+    monkeypatch.setenv("VT_MEMORY_FTS_INDEX", "1")
+    reset_env_config()
+    try:
+        entry_id = _add_entry(name="rebuild-me", content="rebuild content")
+
+        response = client.post("/memory/cache/invalidate")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok", "reindexed": 1}
+
+        from src.memory.persistent import PersistentMemory
+
+        recalled = PersistentMemory().find_relevant("rebuild content")
+        assert any(e.id == entry_id for e in recalled)
+    finally:
+        reset_env_config()
+        if si._shared_index is not None:
+            try:
+                si._shared_index.close()
+            except Exception:
+                pass
+        si._shared_index = original_shared

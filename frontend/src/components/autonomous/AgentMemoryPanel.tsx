@@ -377,6 +377,23 @@ export function AgentMemoryPanel({ agentId }: { agentId: string }) {
     loadList();
   }, [loadList]);
 
+  const [invalidating, setInvalidating] = useState(false);
+  const invalidateCache = useCallback(() => {
+    setInvalidating(true);
+    api
+      .invalidateMemoryCache()
+      .then((res) => {
+        toast.success(
+          res.reindexed > 0
+            ? `Search index rebuilt (${res.reindexed} ${res.reindexed === 1 ? "entry" : "entries"}).`
+            : "Cache invalidated.",
+        );
+        loadList();
+      })
+      .catch(() => toast.error("Failed to invalidate cache."))
+      .finally(() => setInvalidating(false));
+  }, [loadList]);
+
   return (
     <div className="grid h-full min-h-0 grid-cols-1 gap-3 p-3 md:grid-cols-[minmax(0,320px)_1fr]">
       <div className="flex min-h-0 flex-col gap-2 overflow-auto">
@@ -384,13 +401,24 @@ export function AgentMemoryPanel({ agentId }: { agentId: string }) {
           <h3 className="text-sm font-semibold text-foreground">
             Memory {entries ? `(${entries.length})` : ""}
           </h3>
-          <button
-            type="button"
-            onClick={loadList}
-            className="rounded-lg border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            Refresh
-          </button>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={loadList}
+              className="rounded-lg border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Refresh
+            </button>
+            <button
+              type="button"
+              disabled={invalidating}
+              onClick={invalidateCache}
+              title="Force a full search-index rebuild from disk"
+              className="rounded-lg border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            >
+              {invalidating ? "Invalidating…" : "Invalidate cache"}
+            </button>
+          </div>
         </div>
         {loading && <div className="text-sm text-muted-foreground">Loading…</div>}
         {error && <div className="text-sm text-red-600 dark:text-red-400">{error}</div>}

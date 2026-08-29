@@ -319,6 +319,32 @@ class PersistentMemory:
         """Return all persisted memory entries, filename-sorted."""
         return self._scan_entries()
 
+    def rebuild_search_index(self) -> int:
+        """Force a full FTS reindex from the current on-disk state.
+
+        Every mutation through `add()`/`update_entry()`/`archive_entry()`
+        already keeps the FTS index in sync incrementally, so this is not on
+        the normal write path. It exists as an explicit, on-demand escape
+        hatch for a human curating memory: after editing entries directly on
+        disk outside this class, or just to confirm the index reflects
+        reality after a batch of changes, rather than trusting incremental
+        updates stayed consistent. A no-op (returns 0) when FTS is disabled.
+        """
+        from src.config.accessor import get_env_config
+        if not get_env_config().memory.fts_index_enabled:
+            return 0
+        from src.memory.search_index import get_shared_index
+
+        entries = self._scan_entries()
+        entries_data = [
+            (e.id, e.title, e.description, " ".join(e.keywords), e.body)
+            for e in entries
+        ]
+        index = get_shared_index()
+        count = index.rebuild_all(entries_data)
+        index._auto_rebuilt = True
+        return count
+
     def find(self, name: str) -> Optional[MemoryEntry]:
         """Resolve a memory by exact title, then by on-disk filename stem."""
         needle = name.strip()

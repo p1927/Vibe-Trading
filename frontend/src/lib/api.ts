@@ -712,6 +712,38 @@ export const api = {
     request<ScheduledRun>(`/scheduled-runs/${encodeURIComponent(id)}/pause`, { method: "POST" }),
   resumeScheduledRun: (id: string) =>
     request<ScheduledRun>(`/scheduled-runs/${encodeURIComponent(id)}/resume`, { method: "POST" }),
+  cancelScheduledRun: (id: string) =>
+    request<ScheduledRun>(`/scheduled-runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+  // Fires a job immediately without changing its paused/enabled state.
+  // 409s if the job is paused or already running.
+  triggerScheduledRun: (id: string) =>
+    request<ScheduledRun>(`/scheduled-runs/${encodeURIComponent(id)}/trigger`, { method: "POST" }),
+  // Live-log-tail for one job's in-flight run — see LiveLogTail.tsx. Ticket-
+  // authed like the other SSE endpoints (EventSource can't send a header).
+  scheduledRunStreamUrl: (id: string) =>
+    withAuthTicket(`${BASE}/scheduled-runs/${encodeURIComponent(id)}/stream`),
+  // Cross-service scheduler entries beyond this process's own jobs: today
+  // stock_simulator's recorder categories (read-only) and openalgo's five
+  // scheduler instances (pause/resume). A down/unconfigured source degrades
+  // to an empty list plus a `sources.<name>` status, never a failed request
+  // — see scheduler_registry_routes.py's module docstring.
+  listSchedulerRegistry: (signal?: AbortSignal) =>
+    request<SchedulerRegistryResponse>("/scheduler-registry", { signal }),
+  // Only openalgo entries (source === "openalgo") set controls.pause/resume
+  // true today; `source` here is that entry's `section` (openalgo DTOs use
+  // the scheduler name — "flow"/"historify"/"strategy"/"chartink"/
+  // "python_strategy" — as both), and `jobId` is entry.id with the
+  // "C:<source>:" prefix stripped.
+  pauseSchedulerRegistryEntry: (source: string, jobId: string) =>
+    request<{ status: string }>(
+      `/scheduler-registry/openalgo/${encodeURIComponent(source)}/${encodeURIComponent(jobId)}/pause`,
+      { method: "POST" },
+    ),
+  resumeSchedulerRegistryEntry: (source: string, jobId: string) =>
+    request<{ status: string }>(
+      `/scheduler-registry/openalgo/${encodeURIComponent(source)}/${encodeURIComponent(jobId)}/resume`,
+      { method: "POST" },
+    ),
   // Global scheduler dispatch loop always boots paused; a session's Resume
   // click is the only thing that starts it, and it never persists across
   // a restart (matches the autonomous-agent pause-on-boot model).
@@ -1080,6 +1112,10 @@ export const api = {
     request<MemoryDiffResponse>(
       `/memory/entries/${encodeURIComponent(entryId)}/diff?from=${encodeURIComponent(fromSha)}&to=${encodeURIComponent(toSha)}`,
     ),
+  invalidateMemoryCache: () =>
+    request<{ status: string; reindexed: number }>("/memory/cache/invalidate", {
+      method: "POST",
+    }),
 
   listWatches: (params: { sessionId?: string; agentId?: string }) => {
     const q = new URLSearchParams();
@@ -1797,6 +1833,14 @@ export const api = {
     request<IndexPredictionJobsResponse>(`/trade/index-prediction/jobs/${encodeURIComponent(jobId)}/resume`, {
       method: "POST",
     }),
+  cancelIndexPredictionJob: (jobId: string) =>
+    request<IndexPredictionJobsResponse>(`/trade/index-prediction/jobs/${encodeURIComponent(jobId)}/cancel`, {
+      method: "POST",
+    }),
+  triggerIndexPredictionJob: (jobId: string) =>
+    request<IndexPredictionJobsResponse>(`/trade/index-prediction/jobs/${encodeURIComponent(jobId)}/trigger`, {
+      method: "POST",
+    }),
   getCaptureRegistry: (entityId = "NIFTY") =>
     request<CaptureRegistryResponse>(`/trade/capture-registry?entity_id=${encodeURIComponent(entityId)}`),
   updateCaptureRegistry: (body: CaptureRegistryUpdateRequest) =>
@@ -2019,6 +2063,10 @@ export interface ScheduledRun {
   last_error: string | null;
   failure_kind: string | null;
   paused: boolean;
+  // Non-null only when `paused` was set by the system (e.g. hot-reload/
+  // crash recovery) rather than by the user — lets the UI show "auto-paused
+  // (restart)" instead of a plain "paused" someone would have to investigate.
+  auto_paused_reason: string | null;
   config: Record<string, unknown>;
   timezone: string | null;
   // Delivery is opt-in per monitor: a null channel means results stay in the
@@ -2031,6 +2079,45 @@ export interface ScheduledRun {
   // The latest run's parsed verdict, embedded with its predecessor so the list
   // renders a delta in one query. Null until a completed run records one.
   last_verdict: VerdictRecord | null;
+  // Grouping key for the Scheduler tab's section strip, derived server-side
+  // from config.job_type ("prediction", "options", "trade_data", "hub",
+  // "autonomous_agent", "recording", or "general" for an ad-hoc job).
+  section: string;
+}
+
+// A cross-service scheduler entry: one stock_simulator recorder category
+// (read-only, `controls` all false) or one openalgo APScheduler job
+// (pause/resume only) — see the unified-scheduler-registry backlog item.
+export interface SchedulerRegistryEntry {
+  id: string;
+  source: string;
+  section: string;
+  label: string;
+  description: string | null;
+  schedule_kind: string;
+  schedule_display: string;
+  enabled: boolean;
+  status: string;
+  cancel_requested: boolean;
+  next_run_at: number | null;
+  last_run_at: number | null;
+  last_error: string | null;
+  auto_paused_reason: string | null;
+  supports_live_log: boolean;
+  live_log_stream_url: string | null;
+  controls: {
+    pause: boolean;
+    resume: boolean;
+    cancel: boolean;
+    delete: boolean;
+    trigger_now: boolean;
+  };
+}
+
+export interface SchedulerRegistryResponse {
+  status: string;
+  entries: SchedulerRegistryEntry[];
+  sources: Record<string, { status: string; error?: string }>;
 }
 
 export interface CreateScheduledRunRequest {
@@ -4633,6 +4720,7 @@ export interface IndexPredictionJob {
   schedule?: string;
   status?: string;
   paused?: boolean;
+  auto_paused_reason?: string | null;
   stale_running?: boolean;
   enabled?: boolean;
   job_type?: string;
@@ -4908,6 +4996,8 @@ export interface HubStatusPayload {
     status?: string;
     last_error_code?: string;
   }>;
+  searxng_blocked_engines?: string[];
+  data_warnings?: string[];
   news_events_migration?: {
     needed?: boolean;
     state?: Record<string, unknown>;

@@ -169,6 +169,18 @@ def get_memory_entry_history(
     )
 
 
+@memory_router.post("/cache/invalidate", dependencies=[Depends(require_local_or_auth)])
+def invalidate_memory_cache() -> Dict[str, Any]:
+    """Force a full FTS search-index rebuild from the current on-disk state.
+
+    The write path (update/archive above) already keeps the index in sync
+    incrementally; this is an explicit escape hatch for after editing memory
+    files directly on disk outside the API, or just to confirm the index
+    reflects reality after reviewing a batch of entries."""
+    count = _get_memory().rebuild_search_index()
+    return {"status": "ok", "reindexed": count}
+
+
 @memory_router.get("/entries/{entry_id}/diff", response_model=MemoryDiffResponse)
 def get_memory_entry_diff(
     entry_id: str,
