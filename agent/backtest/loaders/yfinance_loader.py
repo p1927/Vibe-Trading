@@ -33,6 +33,29 @@ logger = logging.getLogger(__name__)
 # other yfinance call in the process indefinitely, not just its own.
 _HARD_TIMEOUT_SECONDS = 20
 
+# Bare global index tickers -> Yahoo's caret-prefixed symbol. Reached only as
+# a last-resort fallback (india_equity's chain tries stock_simulator first,
+# same for other markets' dedicated loaders) when the primary source has no
+# coverage for the requested range — but without this map a bare "NIFTY"
+# would still 404 here under its literal (wrong) name, same root cause as the
+# _detect_market/_market_hooks.py classification bug this loader sits behind.
+_INDEX_SYMBOL_MAP: Dict[str, str] = {
+    "NIFTY": "^NSEI",
+    "NIFTY50": "^NSEI",
+    "BANKNIFTY": "^NSEBANK",
+    "SENSEX": "^BSESN",
+    "SPX": "^GSPC",
+    "NDX": "^NDX",
+    "DJI": "^DJI",
+    "VIX": "^VIX",
+    "DAX": "^GDAXI",
+    "CAC": "^FCHI",
+    "FTSE": "^FTSE",
+    "HSI": "^HSI",
+    "KOSPI": "^KS11",
+    "NIKKEI": "^N225",
+}
+
 
 def _run_with_hard_timeout(fn, *args, **kwargs):
     """Bound the caller's wait on ``fn`` independent of ``fn``'s own timeout handling.
@@ -184,6 +207,8 @@ def _to_yfinance_symbol(code: str) -> str:
         yfinance-compatible symbol.
     """
     upper = code.strip().upper()
+    if upper in _INDEX_SYMBOL_MAP:
+        return _INDEX_SYMBOL_MAP[upper]
     if upper.endswith(".US"):
         return upper[:-3]
     if upper.endswith(".HK"):

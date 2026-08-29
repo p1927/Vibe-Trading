@@ -64,6 +64,27 @@ _DEFAULT_MIN_INTERVAL_S = 0.6
 # The columns Yahoo packs into indicators.quote[0], in our output field order.
 _QUOTE_FIELDS = ("open", "high", "low", "close", "volume")
 
+# Bare global index tickers -> Yahoo's caret-prefixed symbol. Without this,
+# a bare "NIFTY" (or DAX/CAC/etc) would be passed through unchanged per the
+# "anything else passes through" rule above and 404 under its literal name —
+# same root cause as the yfinance_loader.py map this mirrors.
+_INDEX_SYMBOL_MAP = {
+    "NIFTY": "^NSEI",
+    "NIFTY50": "^NSEI",
+    "BANKNIFTY": "^NSEBANK",
+    "SENSEX": "^BSESN",
+    "SPX": "^GSPC",
+    "NDX": "^NDX",
+    "DJI": "^DJI",
+    "VIX": "^VIX",
+    "DAX": "^GDAXI",
+    "CAC": "^FCHI",
+    "FTSE": "^FTSE",
+    "HSI": "^HSI",
+    "KOSPI": "^KS11",
+    "NIKKEI": "^N225",
+}
+
 
 def _min_interval() -> float:
     """Resolve the per-call minimum spacing, honoring the env override."""
@@ -85,6 +106,8 @@ def map_symbol(symbol: str) -> str:
     """
     cleaned = symbol.strip()
     upper = cleaned.upper()
+    if upper in _INDEX_SYMBOL_MAP:
+        return _INDEX_SYMBOL_MAP[upper]
     if upper.endswith(".US"):
         return cleaned[: -len(".US")]
     if upper.endswith(".HK"):
