@@ -500,7 +500,17 @@ def serve_main(argv: list[str] | None = None) -> int:
             ]
             subprocess.run(cmd, cwd=str(agent_dir))
         else:
-            uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+            # Same reasoning as the --reload branch's --timeout-graceful-shutdown
+            # above: uvicorn's default (None) waits forever for every open
+            # connection to close on its own, and a long-lived SSE stream (e.g.
+            # /trade/command-center/stream) never does — this branch is what
+            # `trade heal`/`trade up` actually launch (no --reload), and hung
+            # exactly this way twice live during 2026-08-30 scheduler testing:
+            # alive process, no listening socket, requiring a hard kill.
+            uvicorn.run(
+                app, host=args.host, port=args.port, log_level="info",
+                timeout_graceful_shutdown=3,
+            )
     finally:
         if vite_proc:
             vite_proc.terminate()
