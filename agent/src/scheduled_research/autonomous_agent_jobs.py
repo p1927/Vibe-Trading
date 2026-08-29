@@ -281,6 +281,12 @@ def finalize_infra_heal(agent_id: str) -> None:
 
 
 async def dispatch_autonomous_job(job: ScheduledResearchJob) -> None:
+    from src.scheduled_research.run_log_buffer import run_logged
+
+    await run_logged(job, _dispatch_autonomous_job_inner, run_in_thread=False)
+
+
+async def _dispatch_autonomous_job_inner(job: ScheduledResearchJob) -> None:
     _ensure_trade_integrations_on_path()
     from trade_integrations.autonomous_agents.watch import dispatch_full_reasoning, run_watch_tick
 

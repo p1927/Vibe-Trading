@@ -71,3 +71,64 @@ def test_index_plan_refresh_stale_threshold_matches_executor(tmp_path: Path) -> 
     store = _store(tmp_path)
     store.upsert(job)
     assert recover_persisted_scheduler_jobs(store=store, mode="stale") == 1
+
+
+def test_stack_boot_recovery_sets_auto_paused_reason(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    now_ms = int(time.time() * 1000)
+    threshold = stale_running_ms_for(_running_job("x"))
+    store.upsert(_running_job("stale", last_run_at=now_ms - threshold - 1_000))
+
+    recover_scheduler_jobs_on_stack_boot(store)
+
+    saved = store.get("stale")
+    assert saved is not None
+    assert saved.paused is True
+    assert saved.auto_paused_reason == "auto-paused: recovered on stack boot (stale running)"
+
+
+def test_stack_shutdown_recovery_sets_auto_paused_reason(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    now_ms = int(time.time() * 1000)
+    store.upsert(_running_job("a", last_run_at=now_ms - 1_000))
+
+    recover_scheduler_jobs_on_stack_shutdown(store)
+
+    saved = store.get("a")
+    assert saved is not None
+    assert saved.paused is True
+    assert saved.auto_paused_reason == "auto-paused: recovered on stack shutdown"
+
+
+def test_recovery_without_auto_pause_does_not_set_paused(tmp_path: Path) -> None:
+    """A plain recovery call (auto_pause=False, the default) must never
+    itself set paused/auto_paused_reason — only the boot/shutdown wrappers
+    opt into that."""
+    store = _store(tmp_path)
+    job = _running_job("poll", last_run_at=0)
+    store.upsert(job)
+
+    recover_persisted_scheduler_jobs(store=store, mode="all_running")
+
+    saved = store.get("poll")
+    assert saved is not None
+    assert saved.status == JobStatus.PENDING
+    assert saved.paused is False
+    assert saved.auto_paused_reason is None
+
+
+def test_resume_clears_auto_paused_reason_set_by_system_recovery(tmp_path: Path) -> None:
+    from src.scheduled_research.pause_control import set_job_enabled
+
+    store = _store(tmp_path)
+    now_ms = int(time.time() * 1000)
+    store.upsert(_running_job("a", last_run_at=now_ms - 1_000))
+    recover_scheduler_jobs_on_stack_shutdown(store)
+    assert store.get("a").auto_paused_reason is not None  # type: ignore[union-attr]
+
+    set_job_enabled("a", True, store=store)
+
+    saved = store.get("a")
+    assert saved is not None
+    assert saved.paused is False
+    assert saved.auto_paused_reason is None

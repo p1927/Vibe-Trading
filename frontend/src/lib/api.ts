@@ -718,6 +718,9 @@ export const api = {
   // 409s if the job is paused or already running.
   triggerScheduledRun: (id: string) =>
     request<ScheduledRun>(`/scheduled-runs/${encodeURIComponent(id)}/trigger`, { method: "POST" }),
+  // Read-only: description + best-effort live preview, safe to refetch on every expand.
+  getScheduledRunPreview: (id: string) =>
+    request<ScheduledJobPreview>(`/scheduled-runs/${encodeURIComponent(id)}/preview`),
   // Live-log-tail for one job's in-flight run — see LiveLogTail.tsx. Ticket-
   // authed like the other SSE endpoints (EventSource can't send a header).
   scheduledRunStreamUrl: (id: string) =>
@@ -2083,6 +2086,16 @@ export interface ScheduledRun {
   // from config.job_type ("prediction", "options", "trade_data", "hub",
   // "autonomous_agent", "recording", or "general" for an ad-hoc job).
   section: string;
+}
+
+// Plain-English description + best-effort live preview for one job, fetched
+// on-demand when its "Details" row is expanded. See ScheduledJobDetailPanel.
+export interface ScheduledJobPreview {
+  description: string;
+  preview_available: boolean;
+  preview_items: unknown[];
+  preview_note: string | null;
+  preview_error: string | null;
 }
 
 // A cross-service scheduler entry: one stock_simulator recorder category

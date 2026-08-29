@@ -13,6 +13,12 @@ from src.scheduled_research.index_jobs import (
     register_default_index_jobs,
 )
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob
+from src.scheduled_research.pause_control import (
+    JobAlreadyRunningError,
+    JobPausedError,
+    set_job_enabled,
+    trigger_job_now,
+)
 from src.scheduled_research.store import ScheduledResearchJobStore
 
 JOB_LABELS: dict[str, str] = {
@@ -163,7 +169,7 @@ def _wake_executor() -> None:
 
 def _serialize_job(job: ScheduledResearchJob) -> dict[str, Any]:
     job_type = str(job.config.get("job_type") or "")
-    paused = job.status == JobStatus.CANCELLED
+    paused = job.paused
     now_ms = int(time.time() * 1000)
     stale_running = is_job_stale_running(job, now_ms)
     return {
@@ -172,6 +178,7 @@ def _serialize_job(job: ScheduledResearchJob) -> dict[str, Any]:
         "schedule": job.schedule,
         "status": job.status.value,
         "paused": paused,
+        "auto_paused_reason": job.auto_paused_reason,
         "stale_running": stale_running,
         "enabled": not paused and job.status != JobStatus.FAILED,
         "job_type": job_type,
@@ -213,27 +220,78 @@ def list_index_prediction_jobs(store: ScheduledResearchJobStore | None = None) -
 
 
 def pause_index_prediction_job(job_id: str, store: ScheduledResearchJobStore | None = None) -> dict[str, Any]:
+    """Pause the job's recurring schedule.
+
+    Goes through the shared ``set_job_enabled`` mutation path (sets
+    ``paused``, never ``status``) so this can never diverge from the
+    generic Scheduler tab's pause/resume.
+    """
     store = store or ScheduledResearchJobStore()
     job = store.get(job_id)
     if job is None or str(job.config.get("job_type") or "") not in INDEX_JOB_TYPES:
         return {"status": "error", "message": f"index job {job_id} not found"}
-    job.status = JobStatus.CANCELLED
-    store.upsert(job)
+    job = set_job_enabled(job_id, False, store=store)
     return {"status": "ok", "job": _serialize_job(job)}
 
 
 def resume_index_prediction_job(job_id: str, store: ScheduledResearchJobStore | None = None) -> dict[str, Any]:
+    """Resume the job's recurring schedule.
+
+    Clears ``paused``/``auto_paused_reason`` via ``set_job_enabled``. If the
+    job isn't currently RUNNING, this also clears any failure state and
+    schedules an immediate retry (the pre-existing "resume doubles as
+    recovery" behavior for a FAILED job) — but a live run is never demoted
+    back to PENDING out from under itself.
+    """
     store = store or ScheduledResearchJobStore()
     job = store.get(job_id)
     if job is None or str(job.config.get("job_type") or "") not in INDEX_JOB_TYPES:
         return {"status": "error", "message": f"index job {job_id} not found"}
-    now_ms = int(time.time() * 1000)
-    job.status = JobStatus.PENDING
-    job.next_run_at = now_ms
-    job.last_error = None
-    job.consecutive_failures = 0
-    store.upsert(job)
+    job = set_job_enabled(job_id, True, store=store)
+    if job.status != JobStatus.RUNNING:
+        now_ms = int(time.time() * 1000)
+        job.status = JobStatus.PENDING
+        job.next_run_at = now_ms
+        job.last_error = None
+        job.consecutive_failures = 0
+        store.upsert(job)
     _wake_executor()
+    return {"status": "ok", "job": _serialize_job(job)}
+
+
+def trigger_index_prediction_job(job_id: str, store: ScheduledResearchJobStore | None = None) -> dict[str, Any]:
+    """Fire this job immediately, without changing its enabled/paused state.
+
+    This is the Prediction tab's "run now" action — it does not enable a
+    paused job (full schedule control lives on the Scheduler tab), so it
+    errors if the job is currently paused or already running.
+    """
+    store = store or ScheduledResearchJobStore()
+    job = store.get(job_id)
+    if job is None or str(job.config.get("job_type") or "") not in INDEX_JOB_TYPES:
+        return {"status": "error", "message": f"index job {job_id} not found"}
+    try:
+        job = trigger_job_now(job_id, store=store)
+    except JobPausedError:
+        return {"status": "error", "message": f"index job {job_id} is paused; resume it in the Scheduler tab first"}
+    except JobAlreadyRunningError:
+        return {"status": "error", "message": f"index job {job_id} is already running"}
+    _wake_executor()
+    return {"status": "ok", "job": _serialize_job(job)}
+
+
+def cancel_index_prediction_job(job_id: str, store: ScheduledResearchJobStore | None = None) -> dict[str, Any]:
+    """Cancel the job's currently running execution without pausing its schedule."""
+    from src.scheduled_research.pause_control import JobNotRunningError, cancel_running_job
+
+    store = store or ScheduledResearchJobStore()
+    job = store.get(job_id)
+    if job is None or str(job.config.get("job_type") or "") not in INDEX_JOB_TYPES:
+        return {"status": "error", "message": f"index job {job_id} not found"}
+    try:
+        job = cancel_running_job(job_id, store=store)
+    except JobNotRunningError as exc:
+        return {"status": "error", "message": str(exc)}
     return {"status": "ok", "job": _serialize_job(job)}
 
 

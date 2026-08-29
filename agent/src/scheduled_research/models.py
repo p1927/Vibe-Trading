@@ -356,6 +356,10 @@ class ScheduledResearchJob:
         paused: When ``True``, this job is skipped by the executor's due-check
             without mutating ``next_run_at``, so its original cadence resumes
             unchanged the moment it is unpaused.
+        auto_paused_reason: Non-``None`` only when ``paused`` was set by the
+            system (e.g. stale-running recovery on stack boot/shutdown)
+            rather than by a user action, so the UI can tell the two apart.
+            Always cleared on resume, regardless of who paused the job.
         last_result_summary: Opaque dict summarizing the most recent
             successful dispatch's outcome, or ``None`` when no completed run
             has produced one yet. Populated by the executor from the job's
@@ -380,6 +384,7 @@ class ScheduledResearchJob:
     delivery: DeliveryRecord = field(default_factory=DeliveryRecord)
     last_verdict: Optional[VerdictRecord] = None
     paused: bool = False
+    auto_paused_reason: Optional[str] = None
     last_result_summary: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -407,6 +412,7 @@ class ScheduledResearchJob:
             "delivery": self.delivery.to_dict(),
             "last_verdict": self.last_verdict.to_dict() if self.last_verdict else None,
             "paused": self.paused,
+            "auto_paused_reason": self.auto_paused_reason,
             "last_result_summary": self.last_result_summary,
         }
 
@@ -478,6 +484,9 @@ class ScheduledResearchJob:
         paused = data.get("paused", False)
         if not isinstance(paused, bool):
             raise TypeError("'paused' must be a boolean")
+        auto_paused_reason = data.get("auto_paused_reason")
+        if auto_paused_reason is not None and not isinstance(auto_paused_reason, str):
+            raise TypeError("'auto_paused_reason' must be a string or null")
         raw_last_result_summary = data.get("last_result_summary")
         last_result_summary = (
             raw_last_result_summary if isinstance(raw_last_result_summary, dict) else None
@@ -500,5 +509,6 @@ class ScheduledResearchJob:
             delivery=DeliveryRecord.from_dict(data.get("delivery")),
             last_verdict=_verdict_record_or_none(data.get("last_verdict"), job_id),
             paused=paused,
+            auto_paused_reason=auto_paused_reason,
             last_result_summary=last_result_summary,
         )

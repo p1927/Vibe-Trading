@@ -19,8 +19,20 @@ logger = logging.getLogger(__name__)
 RecoverMode = Literal["stale", "all_running"]
 
 
-def _advance_recovered_job(job: ScheduledResearchJob, now_ms: int, *, tick_ms: int = 60_000) -> None:
+def _advance_recovered_job(
+    job: ScheduledResearchJob,
+    now_ms: int,
+    *,
+    tick_ms: int = 60_000,
+    auto_pause_reason: str | None = None,
+) -> None:
     job.status = JobStatus.PENDING
+    if auto_pause_reason and not job.paused:
+        # A process death mid-run is never a user's intent to pause — mark it
+        # distinguishably so the UI can show "auto-paused (restart)" instead
+        # of a plain "paused" a person would otherwise have to investigate.
+        job.paused = True
+        job.auto_paused_reason = auto_pause_reason
     try:
         job.next_run_at = next_due(job.schedule, now_ms)
     except Exception:
@@ -37,6 +49,7 @@ def recover_persisted_scheduler_jobs(
     *,
     mode: RecoverMode = "stale",
     reason: str = "",
+    auto_pause: bool = False,
 ) -> int:
     """Reset persisted RUNNING jobs so stack restarts do not inherit hung state.
 
@@ -45,6 +58,11 @@ def recover_persisted_scheduler_jobs(
         mode: ``stale`` — only jobs past per-type stale threshold;
               ``all_running`` — every RUNNING job (shutdown cleanup).
         reason: Optional note stored in ``last_error`` when empty.
+        auto_pause: When ``True``, also pause each recovered job's schedule
+            and stamp ``auto_paused_reason`` with ``reason`` — used for the
+            boot/shutdown recovery paths, where a stale/interrupted RUNNING
+            job is exactly the signature of a hot-reload or crash, not a
+            user decision to stop the schedule.
     """
     store = store or ScheduledResearchJobStore()
     now_ms = int(time.time() * 1000)
@@ -55,7 +73,11 @@ def recover_persisted_scheduler_jobs(
             continue
         if mode == "stale" and not is_job_stale_running(job, now_ms):
             continue
-        _advance_recovered_job(job, now_ms)
+        _advance_recovered_job(
+            job,
+            now_ms,
+            auto_pause_reason=(f"auto-paused: {reason}" if auto_pause and reason else None),
+        )
         if reason and not job.last_error:
             job.last_error = reason
         recovered += 1
@@ -76,6 +98,7 @@ def recover_scheduler_jobs_on_stack_boot(store: ScheduledResearchJobStore | None
         store,
         mode="stale",
         reason="recovered on stack boot (stale running)",
+        auto_pause=True,
     )
     if count:
         logger.info("stack boot recovered %d stale scheduled research job(s)", count)
@@ -88,6 +111,7 @@ def recover_scheduler_jobs_on_stack_shutdown(store: ScheduledResearchJobStore | 
         store,
         mode="all_running",
         reason="recovered on stack shutdown",
+        auto_pause=True,
     )
     if count:
         logger.info("stack shutdown recovered %d scheduled research job(s) from running", count)

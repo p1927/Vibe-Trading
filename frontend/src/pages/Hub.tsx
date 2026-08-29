@@ -983,6 +983,18 @@ export function Hub() {
         </div>
       ) : null}
 
+      {(hub?.data_warnings?.length ?? 0) > 0 ? (
+        <div
+          role="status"
+          className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
+        >
+          <p className="font-medium">Data source degradation</p>
+          <ul className="mt-1 list-disc space-y-1 pl-4 text-[13px] leading-relaxed opacity-90">
+            {hub?.data_warnings?.map((warning, idx) => <li key={idx}>{warning}</li>)}
+          </ul>
+        </div>
+      ) : null}
+
       {loading && !hub ? (
         <div className="flex items-center gap-2 text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />

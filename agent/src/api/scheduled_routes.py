@@ -5,6 +5,7 @@ Mounted by ``agent/api_server.py`` via ``register_scheduled_routes(app, ...)``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import sys as _sys
@@ -12,7 +13,8 @@ import time
 import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.responses import Response
 
@@ -28,10 +30,15 @@ logger = logging.getLogger(__name__)
 _SCHEDULED_RESEARCH_SCHEDULER_ENV = "VIBE_TRADING_ENABLE_SCHEDULER"
 _SCHEDULED_RESEARCH_TRUE_VALUES = {"1", "true", "yes", "on"}
 
-# Mirrors ``_SAFE_PATH_PARAM_RE`` in src/api/helpers.py, which the delete route
-# enforces on the job id. Kept in sync so a job can never be created under an
-# id the delete route refuses.
-_SAFE_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+# Deliberately broader than ``_SAFE_PATH_PARAM_RE`` in src/api/helpers.py (which
+# every *other* route module's path params are validated against): internally
+# generated job ids can contain a colon (e.g. recording_wake_jobs' namespaced
+# ``recording_wake:<uuid>``), so job-id path params in this module validate
+# against this pattern instead of the generic cross-module helper. Every
+# ``{job_id}`` route below (delete/pause/resume/cancel/trigger/stream) must use
+# ``_validate_job_id_path_param``, not ``_host_validate_path_param``, so a job
+# can never be created under an id one of those routes would then refuse.
+_SAFE_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_:-]{1,128}$")
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +318,7 @@ class ScheduledRunResponse(BaseModel):
     status: str
     created_at: int
     paused: bool = False
+    auto_paused_reason: Optional[str] = None
     last_run_at: Optional[int] = None
     consecutive_failures: int = 0
     last_error: Optional[str] = None
@@ -323,6 +331,17 @@ class ScheduledRunResponse(BaseModel):
     delivery_error: Optional[str] = None
     delivery_updated_at: Optional[int] = None
     last_verdict: Optional[Dict[str, Any]] = None
+    section: str = "general"
+
+
+class ScheduledJobPreviewResponse(BaseModel):
+    """Plain-English description + best-effort live preview for one job."""
+
+    description: str
+    preview_available: bool
+    preview_items: List[Any] = Field(default_factory=list)
+    preview_note: Optional[str] = None
+    preview_error: Optional[str] = None
 
 
 def _job_to_response(job: ScheduledResearchJob) -> "ScheduledRunResponse":
@@ -338,6 +357,8 @@ def _job_to_response(job: ScheduledResearchJob) -> "ScheduledRunResponse":
     Returns:
         The response model for that job.
     """
+    from src.scheduled_research.sections import job_section
+
     payload = job.to_dict()
     delivery = payload.pop("delivery", {}) or {}
     last_verdict = payload.pop("last_verdict", None)
@@ -347,6 +368,7 @@ def _job_to_response(job: ScheduledResearchJob) -> "ScheduledRunResponse":
         delivery_status=delivery.get("status", "none"),
         delivery_error=delivery.get("error"),
         delivery_updated_at=delivery.get("updated_at"),
+        section=job_section(str(job.config.get("job_type") or "")),
     )
 
 
@@ -357,14 +379,66 @@ def _job_to_response(job: ScheduledResearchJob) -> "ScheduledRunResponse":
 AuthDep = Callable[..., Awaitable[Any] | Any]
 
 
+_RUN_LOG_POLL_SECONDS = 0.5
+_RUN_LOG_HEARTBEAT_SECONDS = 15.0
+
+
+def _run_log_sse_frame(event: str, data: Dict[str, Any]) -> str:
+    import json
+
+    payload = json.dumps(data, ensure_ascii=False, default=str)
+    return f"event: {event}\ndata: {payload}\n\n"
+
+
+async def _scheduled_run_log_stream(job_id: str, request: Request):
+    """Replay the job's buffered logs, then poll until it leaves RUNNING.
+
+    Mirrors ``_index_prediction_run_event_stream``'s replay-then-poll shape
+    (trade_routes.py), backed by the bounded in-memory
+    ``run_log_buffer`` instead of a persisted job-record field.
+    """
+    import time as time_mod
+
+    from src.scheduled_research.models import JobStatus
+    from src.scheduled_research.run_log_buffer import get_logs_since
+
+    store = _get_scheduled_research_store()
+    last_seq = 0
+    last_emit = time_mod.monotonic()
+    while True:
+        if await request.is_disconnected():
+            return
+
+        job = store.get(job_id)
+        if job is None:
+            yield _run_log_sse_frame("error", {"message": "job not found"})
+            return
+
+        for entry in get_logs_since(job_id, last_seq):
+            yield _run_log_sse_frame("log", entry)
+            last_seq = entry["seq"]
+            last_emit = time_mod.monotonic()
+
+        if job.status != JobStatus.RUNNING:
+            yield _run_log_sse_frame("status", {"status": job.status.value})
+            return
+
+        if time_mod.monotonic() - last_emit >= _RUN_LOG_HEARTBEAT_SECONDS:
+            yield ": keepalive\n\n"
+            last_emit = time_mod.monotonic()
+
+        await asyncio.sleep(_RUN_LOG_POLL_SECONDS)
+
+
 def register_scheduled_routes(
     app: FastAPI,
     require_auth: AuthDep | None = None,
+    require_event_stream_auth: AuthDep | None = None,
 ) -> None:
     """Mount the scheduled routes onto ``app``.
 
-    Resolves ``require_auth`` from the host ``api_server`` module via
-    ``sys.modules`` when not passed explicitly.
+    Resolves ``require_auth``/``require_event_stream_auth`` from the host
+    ``api_server`` module via ``sys.modules`` when not passed explicitly.
     """
     host = _sys.modules.get("api_server") or _sys.modules.get("agent.api_server")
 
@@ -376,10 +450,24 @@ def register_scheduled_routes(
 
     if require_auth is None:
         require_auth = host.require_auth
+    if require_event_stream_auth is None:
+        require_event_stream_auth = host.require_event_stream_auth
 
     def _host_validate_path_param(value: str, kind: str) -> None:
         h = _sys.modules.get("api_server") or _sys.modules.get("agent.api_server")
         h._validate_path_param(value, kind)
+
+    def _validate_job_id_path_param(job_id: str) -> None:
+        """Validate a ``{job_id}`` path param against ``_SAFE_JOB_ID_RE``.
+
+        Use this, not ``_host_validate_path_param``, for every job-id route
+        in this module — the generic cross-module helper's pattern doesn't
+        allow the colon internally-generated ids like ``recording_wake:*``
+        use, which would make such a job impossible to pause/cancel/trigger/
+        delete/stream through this API even though it was created successfully.
+        """
+        if not _SAFE_JOB_ID_RE.fullmatch(job_id or ""):
+            raise HTTPException(status_code=400, detail="invalid job_id")
 
     # --- Routes ---
 
@@ -524,7 +612,7 @@ def register_scheduled_routes(
     )
     async def delete_scheduled_run(job_id: str) -> Response:
         """Cancel (delete) a scheduled research job by id."""
-        _host_validate_path_param(job_id, "job_id")
+        _validate_job_id_path_param(job_id)
         removed = _get_scheduled_research_store().delete(job_id)
         if not removed:
             raise HTTPException(
@@ -533,15 +621,15 @@ def register_scheduled_routes(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     def _set_job_paused(job_id: str, paused: bool) -> ScheduledRunResponse:
-        _host_validate_path_param(job_id, "job_id")
+        from src.scheduled_research.pause_control import set_job_enabled
+
+        _validate_job_id_path_param(job_id)
         store = _get_scheduled_research_store()
-        job = store.get(job_id)
+        job = set_job_enabled(job_id, not paused, store=store)
         if job is None:
             raise HTTPException(
                 status_code=404, detail=f"scheduled run {job_id} not found"
             )
-        job.paused = paused
-        store.upsert(job)
         return ScheduledRunResponse(**job.to_dict())
 
     @app.post(
@@ -553,7 +641,9 @@ def register_scheduled_routes(
         """Pause a single scheduled job without changing its schedule or config.
 
         The job is skipped by the executor's due-check until resumed; its
-        ``next_run_at`` is left untouched.
+        ``next_run_at`` is left untouched. Goes through the single shared
+        ``set_job_enabled`` mutation path so this can never diverge from the
+        prediction-jobs panel's pause/resume.
         """
         return _set_job_paused(job_id, True)
 
@@ -565,6 +655,139 @@ def register_scheduled_routes(
     async def resume_scheduled_run(job_id: str) -> ScheduledRunResponse:
         """Resume a single paused scheduled job on its existing cadence."""
         return _set_job_paused(job_id, False)
+
+    @app.post(
+        "/scheduled-runs/{job_id}/cancel",
+        response_model=ScheduledRunResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def cancel_scheduled_run(job_id: str) -> ScheduledRunResponse:
+        """Cancel the job's currently running execution.
+
+        Distinct from pausing: this only affects the in-flight run (sets
+        ``status = CANCELLED``) and leaves ``paused`` untouched, so the
+        job's future schedule is unaffected. Best-effort/cooperative — it
+        sets a ``_cancel_requested`` scratch flag in ``config`` that a
+        dispatch coroutine may poll between stages, the same scratch-channel
+        pattern already used for ``_last_result_summary``; it does not
+        preemptively interrupt a dispatch already in flight.
+        """
+        from src.scheduled_research.pause_control import (
+            JobNotRunningError,
+            cancel_running_job,
+        )
+
+        _validate_job_id_path_param(job_id)
+        store = _get_scheduled_research_store()
+        try:
+            job = cancel_running_job(job_id, store=store)
+        except JobNotRunningError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if job is None:
+            raise HTTPException(
+                status_code=404, detail=f"scheduled run {job_id} not found"
+            )
+        return _job_to_response(job)
+
+    @app.post(
+        "/scheduled-runs/{job_id}/trigger",
+        response_model=ScheduledRunResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def trigger_scheduled_run(job_id: str) -> ScheduledRunResponse:
+        """Fire this job immediately without changing its paused/enabled state.
+
+        Errors 409 if the job is paused (resume it first) or already
+        running. Goes through the shared ``trigger_job_now`` mutation path,
+        same pattern as pause/resume/cancel above.
+        """
+        from src.scheduled_research.pause_control import (
+            JobAlreadyRunningError,
+            JobPausedError,
+            trigger_job_now,
+        )
+
+        _validate_job_id_path_param(job_id)
+        store = _get_scheduled_research_store()
+        try:
+            job = trigger_job_now(job_id, store=store)
+        except (JobPausedError, JobAlreadyRunningError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if job is None:
+            raise HTTPException(
+                status_code=404, detail=f"scheduled run {job_id} not found"
+            )
+        executor = _get_scheduled_research_executor()
+        wake = getattr(executor, "wake", None)
+        if callable(wake):
+            wake()
+        return _job_to_response(job)
+
+    @app.get(
+        "/scheduled-runs/{job_id}/preview",
+        response_model=ScheduledJobPreviewResponse,
+        dependencies=[Depends(require_auth)],
+    )
+    async def get_scheduled_run_preview(job_id: str) -> ScheduledJobPreviewResponse:
+        """Plain-English description + best-effort live preview for one job.
+
+        Read-only: never calls the job's real ``run_*_job`` function. A
+        preview that can't be cheaply computed for this job type still
+        200s with ``preview_available=False`` rather than 404/500ing, and a
+        preview callable that raises degrades the same way with
+        ``preview_error`` set instead of failing the whole panel.
+        """
+        from src.scheduled_research.job_details import job_type_detail
+
+        _validate_job_id_path_param(job_id)
+        job = _get_scheduled_research_store().get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"scheduled run {job_id} not found")
+
+        job_type = str(job.config.get("job_type") or "")
+        detail = job_type_detail(job_type)
+        if detail.preview is None:
+            return ScheduledJobPreviewResponse(description=detail.description, preview_available=False)
+        try:
+            result = detail.preview(job.config)
+            return ScheduledJobPreviewResponse(
+                description=detail.description,
+                preview_available=True,
+                preview_items=result.get("items", []),
+                preview_note=result.get("note"),
+            )
+        except Exception as exc:  # noqa: BLE001 - degrade gracefully, never 500 the panel
+            logger.exception("scheduled run preview failed for job_type=%s", job_type)
+            return ScheduledJobPreviewResponse(
+                description=detail.description,
+                preview_available=False,
+                preview_error=str(exc),
+            )
+
+    @app.get(
+        "/scheduled-runs/{job_id}/stream",
+        dependencies=[Depends(require_event_stream_auth)],
+    )
+    async def stream_scheduled_run_logs(job_id: str, request: Request) -> StreamingResponse:
+        """SSE: live-log-tail for one job's in-flight run.
+
+        Emits ``log`` events for buffered output, then a terminal ``status``
+        event once the job leaves RUNNING (including "was never running" for
+        a row expanded before/after its run). Ticket-authed like the other
+        SSE endpoints — an ``EventSource`` can't send an Authorization header.
+        """
+        _validate_job_id_path_param(job_id)
+        if _get_scheduled_research_store().get(job_id) is None:
+            raise HTTPException(status_code=404, detail=f"scheduled run {job_id} not found")
+        return StreamingResponse(
+            _scheduled_run_log_stream(job_id, request),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     # --- Playbook templates ---
     #

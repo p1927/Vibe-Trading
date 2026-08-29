@@ -403,7 +403,9 @@ def dispatch_options_job_sync(job: ScheduledResearchJob) -> None:
 
 async def dispatch_options_job(job: ScheduledResearchJob) -> None:
     """Run an options job without blocking the asyncio event loop."""
-    await asyncio.to_thread(dispatch_options_job_sync, job)
+    from src.scheduled_research.run_log_buffer import run_logged
+
+    await run_logged(job, dispatch_options_job_sync)
 
 
 def register_default_options_jobs(store) -> int:

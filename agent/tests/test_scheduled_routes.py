@@ -197,6 +197,41 @@ def test_delete_rejects_unsafe_job_id(
     assert response.status_code == 400
 
 
+def test_job_id_routes_accept_a_colon_namespaced_id(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    """recording_wake_jobs namespaces its ids as ``recording_wake:<uuid>`` —
+    every job-id route must accept the colon, not just create/list/stream."""
+    job_id = "recording_wake:3d53a1871aa743769672e32f8abb91e3"
+    _seed(store, id=job_id, status=JobStatus.RUNNING)
+
+    assert client.post(f"/scheduled-runs/{job_id}/cancel").status_code == 200
+    assert client.post(f"/scheduled-runs/{job_id}/pause").status_code == 200
+    assert client.post(f"/scheduled-runs/{job_id}/resume").status_code == 200
+    assert client.post(f"/scheduled-runs/{job_id}/trigger").status_code == 200
+    assert client.delete(f"/scheduled-runs/{job_id}").status_code == 204
+
+
+def test_stream_route_accepts_a_colon_namespaced_id(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    job_id = "recording_wake:3d53a1871aa743769672e32f8abb91e3"
+    _seed(store, id=job_id)
+
+    with client.stream("GET", f"/scheduled-runs/{job_id}/stream") as response:
+        assert response.status_code == 200
+
+
+def test_job_id_routes_still_reject_a_path_traversal_shaped_id(
+    client: TestClient,
+):
+    # Confirms tightening the pattern to allow ':' didn't also open up '/'
+    # or '..' — still a single safe path segment, just a wider charset.
+    response = client.post("/scheduled-runs/../etc/pause")
+
+    assert response.status_code in (400, 404)
+
+
 def test_pause_sets_paused_without_touching_schedule(
     client: TestClient, store: ScheduledResearchJobStore
 ):
@@ -232,6 +267,256 @@ def test_pause_unknown_job_returns_404(client: TestClient):
     response = client.post("/scheduled-runs/never-existed/pause")
 
     assert response.status_code == 404
+
+
+def test_cancel_running_job_sets_cancelled_status_leaves_paused_untouched(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    _seed(store, id="cancel-me", status=JobStatus.RUNNING)
+
+    response = client.post("/scheduled-runs/cancel-me/cancel")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "cancelled"
+    assert body["paused"] is False
+    stored = store.get("cancel-me")
+    assert stored is not None
+    assert stored.status == JobStatus.CANCELLED
+    assert stored.paused is False
+    assert stored.last_error == "cancelled by user"
+
+
+def test_cancel_non_running_job_returns_409(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    _seed(store, id="idle-job", status=JobStatus.PENDING)
+
+    response = client.post("/scheduled-runs/idle-job/cancel")
+
+    assert response.status_code == 409
+
+
+def test_cancel_unknown_job_returns_404(client: TestClient):
+    response = client.post("/scheduled-runs/never-existed/cancel")
+
+    assert response.status_code == 404
+
+
+def test_trigger_sets_next_run_at_to_now_without_changing_status(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    _seed(store, id="trigger-me", next_run_at=9_999_999_999_000, status=JobStatus.PENDING)
+
+    response = client.post("/scheduled-runs/trigger-me/trigger")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "pending"
+    assert body["next_run_at"] < 9_999_999_999_000
+    stored = store.get("trigger-me")
+    assert stored is not None
+    assert stored.next_run_at < 9_999_999_999_000
+    assert stored.status == JobStatus.PENDING
+
+
+def test_trigger_paused_job_returns_409(client: TestClient, store: ScheduledResearchJobStore):
+    _seed(store, id="paused-job", status=JobStatus.PENDING)
+    job = store.get("paused-job")
+    assert job is not None
+    job.paused = True
+    store.upsert(job)
+
+    response = client.post("/scheduled-runs/paused-job/trigger")
+
+    assert response.status_code == 409
+    assert "paused" in response.json()["detail"]
+
+
+def test_trigger_already_running_job_returns_409(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    _seed(store, id="running-job", status=JobStatus.RUNNING)
+
+    response = client.post("/scheduled-runs/running-job/trigger")
+
+    assert response.status_code == 409
+    assert "already running" in response.json()["detail"]
+
+
+def test_trigger_unknown_job_returns_404(client: TestClient):
+    response = client.post("/scheduled-runs/never-existed/trigger")
+
+    assert response.status_code == 404
+
+
+def test_trigger_wakes_executor(
+    client: TestClient, store: ScheduledResearchJobStore, monkeypatch: pytest.MonkeyPatch
+):
+    from unittest import mock
+
+    _seed(store, id="wake-me", status=JobStatus.PENDING)
+
+    stub_executor = mock.Mock()
+    monkeypatch.setattr(
+        scheduled_routes, "_get_scheduled_research_executor", lambda: stub_executor
+    )
+
+    response = client.post("/scheduled-runs/wake-me/trigger")
+
+    assert response.status_code == 200
+    stub_executor.wake.assert_called_once()
+
+
+def test_pause_and_resume_share_the_single_mutation_helper(
+    client: TestClient, store: ScheduledResearchJobStore, monkeypatch: pytest.MonkeyPatch
+):
+    """Both the generic route and the prediction-jobs module must call the
+    same ``set_job_enabled`` helper, so the two surfaces can never disagree
+    about a job's pause state again."""
+    from src.scheduled_research import pause_control
+    from src.trade import index_prediction_jobs
+
+    _seed(
+        store,
+        id="index-shared",
+        config={"job_type": "index_factor_snapshot"},
+    )
+
+    calls: list[tuple[str, bool]] = []
+    original = pause_control.set_job_enabled
+
+    def spy(job_id: str, enabled: bool, *, store):
+        calls.append((job_id, enabled))
+        return original(job_id, enabled, store=store)
+
+    monkeypatch.setattr(pause_control, "set_job_enabled", spy)
+    monkeypatch.setattr(index_prediction_jobs, "set_job_enabled", spy)
+
+    client.post("/scheduled-runs/index-shared/pause")
+    index_prediction_jobs.resume_index_prediction_job("index-shared", store=store)
+
+    assert ("index-shared", False) in calls
+    assert ("index-shared", True) in calls
+    stored = store.get("index-shared")
+    assert stored is not None
+
+
+def test_trigger_shares_the_single_mutation_helper(
+    client: TestClient, store: ScheduledResearchJobStore, monkeypatch: pytest.MonkeyPatch
+):
+    """Both the generic route and the prediction-jobs trigger-now action
+    must call the same ``trigger_job_now`` helper, so they can never
+    diverge on what "run now" actually does to a job."""
+    from src.scheduled_research import pause_control
+    from src.trade import index_prediction_jobs
+
+    _seed(store, id="trigger-shared", config={"job_type": "index_factor_snapshot"})
+    _seed(store, id="trigger-shared-2", config={"job_type": "index_factor_snapshot"})
+
+    calls: list[str] = []
+    original = pause_control.trigger_job_now
+
+    def spy(job_id: str, *, store):
+        calls.append(job_id)
+        return original(job_id, store=store)
+
+    monkeypatch.setattr(pause_control, "trigger_job_now", spy)
+    monkeypatch.setattr(index_prediction_jobs, "trigger_job_now", spy)
+
+    client.post("/scheduled-runs/trigger-shared/trigger")
+    index_prediction_jobs.trigger_index_prediction_job("trigger-shared-2", store=store)
+
+    assert "trigger-shared" in calls
+    assert "trigger-shared-2" in calls
+
+
+def test_index_prediction_pause_uses_paused_field_not_status(
+    store: ScheduledResearchJobStore,
+):
+    from src.trade.index_prediction_jobs import (
+        _serialize_job,
+        pause_index_prediction_job,
+        resume_index_prediction_job,
+    )
+
+    job = _seed(
+        store,
+        id="index-pause-me",
+        config={"job_type": "index_factor_snapshot"},
+        status=JobStatus.PENDING,
+    )
+
+    result = pause_index_prediction_job(job.id, store=store)
+    assert result["status"] == "ok"
+    stored = store.get(job.id)
+    assert stored is not None
+    assert stored.paused is True
+    assert stored.status == JobStatus.PENDING  # never overloaded as CANCELLED
+    assert _serialize_job(stored)["paused"] is True
+
+    result = resume_index_prediction_job(job.id, store=store)
+    assert result["status"] == "ok"
+    stored = store.get(job.id)
+    assert stored is not None
+    assert stored.paused is False
+
+
+def test_index_prediction_resume_does_not_demote_a_running_job(
+    store: ScheduledResearchJobStore,
+):
+    from src.trade.index_prediction_jobs import resume_index_prediction_job
+
+    job = _seed(
+        store,
+        id="index-running",
+        config={"job_type": "index_factor_snapshot"},
+        status=JobStatus.RUNNING,
+    )
+    job.paused = True
+    store.upsert(job)
+
+    resume_index_prediction_job(job.id, store=store)
+
+    stored = store.get(job.id)
+    assert stored is not None
+    assert stored.paused is False
+    assert stored.status == JobStatus.RUNNING  # not forced back to PENDING
+
+
+def test_list_includes_section_derived_from_job_type(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    _seed(store, id="ad-hoc", config={})
+    _seed(store, id="index-job", config={"job_type": "index_factor_snapshot"})
+    _seed(store, id="options-job", config={"job_type": "options_plan_refresh"})
+    _seed(store, id="hub-job", config={"job_type": "hub_morning_calibration"})
+
+    body = {row["id"]: row for row in client.get("/scheduled-runs").json()}
+
+    assert body["ad-hoc"]["section"] == "general"
+    assert body["index-job"]["section"] == "prediction"
+    assert body["options-job"]["section"] == "options"
+    assert body["hub-job"]["section"] == "hub"
+
+
+def test_index_prediction_cancel_running_job(store: ScheduledResearchJobStore):
+    from src.trade.index_prediction_jobs import cancel_index_prediction_job
+
+    job = _seed(
+        store,
+        id="index-cancel-me",
+        config={"job_type": "index_factor_snapshot"},
+        status=JobStatus.RUNNING,
+    )
+
+    result = cancel_index_prediction_job(job.id, store=store)
+
+    assert result["status"] == "ok"
+    stored = store.get(job.id)
+    assert stored is not None
+    assert stored.status == JobStatus.CANCELLED
+    assert stored.paused is False
 def test_create_with_timezone_echoes_and_persists(
     client: TestClient, store: ScheduledResearchJobStore
 ):
@@ -486,3 +771,145 @@ def test_list_omits_verdict_when_never_recorded(
     assert response.status_code == 200
     (row,) = response.json()
     assert row["last_verdict"] is None
+
+
+# --- GET /scheduled-runs/{job_id}/stream (step 6, live-log-tail SSE) -------
+
+def _parse_sse_events(body: str) -> list[tuple[str, str]]:
+    """Parse ``event: <name>\\ndata: <json>\\n\\n`` frames into (event, data) pairs."""
+    events: list[tuple[str, str]] = []
+    for block in body.split("\n\n"):
+        if not block.strip():
+            continue
+        event_name = None
+        data = None
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                event_name = line[len("event: ") :]
+            elif line.startswith("data: "):
+                data = line[len("data: ") :]
+        if event_name is not None and data is not None:
+            events.append((event_name, data))
+    return events
+
+
+def test_stream_unknown_job_returns_404(client: TestClient):
+    response = client.get("/scheduled-runs/does-not-exist/stream")
+    assert response.status_code == 404
+
+
+def test_stream_replays_buffered_logs_then_emits_terminal_status(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    from src.scheduled_research import run_log_buffer
+
+    _seed(store, id="job-done", status=JobStatus.COMPLETED)
+    run_log_buffer.clear_logs("job-done")
+    run_log_buffer.append_log("job-done", "starting (index_research)")
+    run_log_buffer.append_log("job-done", "completed")
+
+    response = client.get("/scheduled-runs/job-done/stream")
+
+    assert response.status_code == 200
+    events = _parse_sse_events(response.text)
+    assert [name for name, _ in events] == ["log", "log", "status"]
+    assert "starting" in events[0][1]
+    assert "completed" in events[1][1]
+    import json as _json
+
+    assert _json.loads(events[2][1]) == {"status": "completed"}
+
+
+def test_stream_with_no_buffered_logs_emits_only_terminal_status(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    _seed(store, id="job-pending", status=JobStatus.PENDING)
+
+    response = client.get("/scheduled-runs/job-pending/stream")
+
+    assert response.status_code == 200
+    events = _parse_sse_events(response.text)
+    assert [name for name, _ in events] == ["status"]
+
+
+def test_preview_unknown_job_returns_404(client: TestClient):
+    response = client.get("/scheduled-runs/never-existed/preview")
+
+    assert response.status_code == 404
+
+
+def test_preview_no_job_type_returns_generic_description(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    _seed(store, id="ad-hoc-monitor", config={})
+
+    response = client.get("/scheduled-runs/ad-hoc-monitor/preview")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["preview_available"] is False
+    assert body["description"]
+    assert body["preview_items"] == []
+
+
+def test_preview_returns_description_only_for_job_type_without_preview(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    _seed(store, id="options-plan", config={"job_type": "options_plan_refresh"})
+
+    response = client.get("/scheduled-runs/options-plan/preview")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["preview_available"] is False
+    assert body["preview_error"] is None
+    assert body["description"]
+    assert body["preview_items"] == []
+
+
+def test_preview_hub_news_ingest_returns_resolved_rss_urls(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    _seed(
+        store,
+        id="nifty-news-light",
+        config={
+            "job_type": "hub_news_ingest",
+            "market": "IN",
+            "ticker": "NIFTY",
+            "mode": "light",
+        },
+    )
+
+    response = client.get("/scheduled-runs/nifty-news-light/preview")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["preview_available"] is True
+    assert body["preview_error"] is None
+    assert body["preview_items"], "expected at least one resolved RSS URL"
+    assert all(item.startswith("http") for item in body["preview_items"])
+    assert "mode=light" in body["preview_note"]
+
+
+def test_preview_degrades_gracefully_when_preview_callable_raises(
+    client: TestClient, store: ScheduledResearchJobStore, monkeypatch: pytest.MonkeyPatch
+):
+    from src.scheduled_research import job_details
+
+    def _boom(_config: dict) -> dict:
+        raise RuntimeError("registry file unreadable")
+
+    monkeypatch.setitem(
+        job_details._JOB_DETAILS,
+        "hub_capture_factor_snapshot",
+        job_details.JobTypeDetail("Captures factor snapshots.", preview=_boom),
+    )
+    _seed(store, id="factor-snap", config={"job_type": "hub_capture_factor_snapshot"})
+
+    response = client.get("/scheduled-runs/factor-snap/preview")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["preview_available"] is False
+    assert body["preview_error"] and "registry file unreadable" in body["preview_error"]

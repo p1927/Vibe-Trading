@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { Pause, Play, RefreshCw } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Play, RefreshCw, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   api,
@@ -120,20 +121,31 @@ export function PredictionScheduledJobsPanel() {
     void load();
   }, [load]);
 
-  const toggle = async (job: IndexPredictionJob) => {
+  const trigger = async (job: IndexPredictionJob) => {
     const id = job.id;
     if (!id) return;
     setBusyId(id);
     setError(null);
     try {
-      if (job.paused || job.status === "cancelled" || job.status === "failed") {
-        await api.resumeIndexPredictionJob(id);
-      } else {
-        await api.pauseIndexPredictionJob(id);
-      }
+      await api.triggerIndexPredictionJob(id);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Job update failed");
+      setError(err instanceof Error ? err.message : "Trigger failed");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const cancelRun = async (job: IndexPredictionJob) => {
+    const id = job.id;
+    if (!id) return;
+    setBusyId(id);
+    setError(null);
+    try {
+      await api.cancelIndexPredictionJob(id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Cancel failed");
     } finally {
       setBusyId(null);
     }
@@ -147,7 +159,12 @@ export function PredictionScheduledJobsPanel() {
             Scheduled jobs (prediction pipeline)
           </p>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Cron jobs that refresh factors, archive research, and retrain the model. Pause any job you do not need.
+            Cron jobs that refresh factors, archive research, and retrain the model. Trigger a run or cancel one in
+            progress — pause, resume, and schedule editing live on the{" "}
+            <Link to="/scheduled?section=prediction" className="underline hover:no-underline">
+              Scheduler tab
+            </Link>
+            .
           </p>
         </div>
         <button
@@ -216,17 +233,17 @@ export function PredictionScheduledJobsPanel() {
       ) : (
         <div className="space-y-2">
           {jobs.map((job) => {
-            const paused = job.paused || job.status === "cancelled";
+            const paused = Boolean(job.paused);
+            const running = job.status === "running";
             const failed = job.status === "failed";
             const staleRunning = Boolean(job.stale_running);
-            const showResume = paused || failed;
             const statusLabel = staleRunning ? "running (stale)" : job.status;
             return (
               <div
                 key={job.id}
                 className={cn(
                   "flex flex-col gap-2 rounded-lg border px-3 py-2 sm:flex-row sm:items-center sm:justify-between",
-                  showResume && "opacity-70",
+                  paused && "opacity-70",
                   (failed || staleRunning) && "border-red-500/30",
                 )}
               >
@@ -240,7 +257,8 @@ export function PredictionScheduledJobsPanel() {
                     )}
                   >
                     {job.schedule} · next {fmtNextRun(job.next_run_at)} · {statusLabel}
-                    {failed ? " — click Resume to re-enable polling" : ""}
+                    {paused ? (job.auto_paused_reason ? " — auto-paused (restart)" : " — paused") : ""}
+                    {failed ? " — click Run now to retry" : ""}
                     {staleRunning ? " — stuck RUNNING; reload API or wait for stale recovery" : ""}
                   </p>
                   {job.last_error ? (
@@ -265,20 +283,34 @@ export function PredictionScheduledJobsPanel() {
                     </p>
                   ) : null}
                 </div>
-                <button
-                  type="button"
-                  disabled={busyId === job.id}
-                  onClick={() => void toggle(job)}
-                  className={cn(
-                    "inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[10px]",
-                    showResume
-                      ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-400"
-                      : "border-amber-500/40 text-amber-800 dark:text-amber-300",
-                  )}
-                >
-                  {showResume ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
-                  {showResume ? "Resume" : "Pause"}
-                </button>
+                {running ? (
+                  <button
+                    type="button"
+                    disabled={busyId === job.id}
+                    onClick={() => void cancelRun(job)}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-amber-500/40 px-2 py-1 text-[10px] text-amber-800 dark:text-amber-300"
+                  >
+                    <Square className="h-3 w-3" />
+                    Cancel
+                  </button>
+                ) : paused ? (
+                  <Link
+                    to="/scheduled?section=prediction"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted/50"
+                  >
+                    Resume in Scheduler
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={busyId === job.id}
+                    onClick={() => void trigger(job)}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-500/40 px-2 py-1 text-[10px] text-emerald-700 dark:text-emerald-400"
+                  >
+                    <Play className="h-3 w-3" />
+                    Run now
+                  </button>
+                )}
               </div>
             );
           })}

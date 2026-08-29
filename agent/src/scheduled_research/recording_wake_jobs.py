@@ -38,6 +38,12 @@ async def dispatch_recording_wake_job(job) -> None:
     log a warning. The scheduled-research executor then marks the
     job COMPLETED either way (single-shot semantics).
     """
+    from src.scheduled_research.run_log_buffer import run_logged
+
+    await run_logged(job, _dispatch_recording_wake_job_inner, run_in_thread=False)
+
+
+async def _dispatch_recording_wake_job_inner(job) -> None:
     from src.trade.recording_jobs import wake_recording_job
 
     config = getattr(job, "config", None) or {}

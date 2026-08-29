@@ -351,6 +351,10 @@ try_register_openbb_routes(app)
 from src.api.scheduled_routes import register_scheduled_routes  # noqa: E402
 register_scheduled_routes(app)
 
+# --- Unified scheduler registry (cross-service, Mechanism A stays on /scheduled-runs) ---
+from src.api.scheduler_registry_routes import register_scheduler_registry_routes  # noqa: E402
+register_scheduler_registry_routes(app)
+
 from src.api.scheduled_routes import (  # noqa: E402, F401
     CreateRunFromPlaybookRequest,
     CreateScheduledRunRequest,

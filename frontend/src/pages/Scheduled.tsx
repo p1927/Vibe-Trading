@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { CalendarClock, Loader2, Plus, Trash2 } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { CalendarClock, ChevronDown, ChevronRight, Loader2, Pause, Play, Plus, Square, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, ApiError, type ScheduledRun } from "@/lib/api";
+import { api, ApiError, type ScheduledRun, type SchedulerRegistryEntry } from "@/lib/api";
+import { LiveLogTail } from "@/components/scheduler/LiveLogTail";
+import { ScheduledJobDetailPanel } from "@/components/scheduler/ScheduledJobDetailPanel";
+import { StatusPill } from "@/components/scheduler/StatusPill";
+import { JobsPanel } from "@/components/scheduler/JobsPanel";
 import {
   describeCadence,
   formatIntervalMs,
@@ -16,6 +21,47 @@ const labelClass = "text-sm font-medium";
 const hintClass = "text-xs text-muted-foreground";
 
 const POLL_MS = 15_000;
+
+// Mirrors the section keys computed server-side in
+// scheduled_research/sections.py (job_section) — kept in the same order the
+// tab strip renders them.
+const SECTION_ORDER = [
+  "prediction",
+  "hub",
+  "options",
+  "trade_data",
+  "autonomous_agent",
+  "recording",
+  "general",
+] as const;
+
+const SECTION_LABELS: Record<string, string> = {
+  prediction: "Prediction",
+  hub: "Hub / News",
+  options: "Options",
+  trade_data: "Trade Data",
+  autonomous_agent: "Autonomous Agent",
+  recording: "Recording",
+  general: "General",
+  // openalgo's five scheduler instances (Mechanism C) — see
+  // openalgo/services/scheduler_registry_service.py's VALID_SOURCES.
+  flow: "Flow",
+  historify: "Historify",
+  strategy: "Strategy",
+  chartink: "Chartink",
+  python_strategy: "Python Strategy",
+};
+
+// Recorder sections are dynamic (one per stock_simulator market:
+// "recorder:us", "recorder:eu", ...), not a fixed set like Mechanism A's —
+// derive a display label instead of hardcoding one per market.
+function sectionLabel(section: string): string {
+  if (SECTION_LABELS[section]) return SECTION_LABELS[section];
+  if (section.startsWith("recorder:")) {
+    return `Recorder (${section.slice("recorder:".length).toUpperCase()})`;
+  }
+  return section;
+}
 
 type DaysChoice = "every" | "weekdays";
 type ComposerMode = "time" | "advanced";
@@ -56,30 +102,41 @@ function formatInZone(epochMs: number, zone: string, locale: string): string {
   }
 }
 
-function StatusPill({ label, tone }: { label: string; tone: "success" | "danger" | "warning" | "neutral" }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded px-2 py-0.5 text-xs font-medium",
-        tone === "success" && "bg-success/10 text-success",
-        tone === "danger" && "bg-danger/10 text-danger",
-        tone === "warning" && "bg-warning/10 text-warning",
-        tone === "neutral" && "bg-muted text-muted-foreground",
-      )}
-    >
-      {label}
-    </span>
-  );
-}
-
 export function Scheduled() {
   const { t, i18n } = useTranslation();
   const locale = i18n.language;
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [runs, setRuns] = useState<ScheduledRun[]>([]);
+  // Read-only cross-service entries (Mechanism B/C — today just
+  // stock_simulator's recorder categories). Kept separate from `runs`
+  // rather than merged into one shape, since these have no pause/resume/
+  // delete/cancel controls yet.
+  const [registryEntries, setRegistryEntries] = useState<SchedulerRegistryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  // At most one row's live-log-tail is mounted at a time — expanding a
+  // second row collapses the first, so only one SSE connection is ever open.
+  const [expandedLogKey, setExpandedLogKey] = useState<string | null>(null);
+  // Kept separate from expandedLogKey — live-log-tail and job details are
+  // independent panels, so both may be open on the same row at once.
+  const [expandedDetailKey, setExpandedDetailKey] = useState<string | null>(null);
+  // "all" plus whatever section the URL asked for (e.g. a deep link from the
+  // Prediction tab's panel); an unknown/stale section value just falls back
+  // to showing every run rather than an empty list.
+  const [activeSection, setActiveSection] = useState<string>(
+    () => searchParams.get("section") || "all",
+  );
+  // "Scheduler" (configuration, grouped by section) vs "Jobs" (runtime
+  // monitoring — running first, live logs, pause/cancel/run-now). Orthogonal
+  // to activeSection: its own `?view=` query param, same pattern.
+  const [viewMode, setViewMode] = useState<"scheduler" | "jobs">(
+    () => (searchParams.get("view") === "jobs" ? "jobs" : "scheduler"),
+  );
+  const [bulkResumeBusy, setBulkResumeBusy] = useState(false);
 
   const [prompt, setPrompt] = useState("");
   const [mode, setMode] = useState<ComposerMode>("time");
@@ -109,9 +166,15 @@ export function Scheduled() {
     refreshController.current = controller;
     const seq = ++refreshSeq.current;
     try {
-      const rows = await api.listScheduledRuns(controller.signal);
+      const [rows, registry] = await Promise.all([
+        api.listScheduledRuns(controller.signal),
+        // A down/unconfigured cross-service source must never break the
+        // page's own job list — degrade to "no extra rows" instead.
+        api.listSchedulerRegistry(controller.signal).catch(() => null),
+      ]);
       if (seq !== refreshSeq.current) return;
       setRuns(rows);
+      setRegistryEntries(registry?.entries ?? []);
       setListError(null);
     } catch (error) {
       if (seq !== refreshSeq.current || controller.signal.aborted) return;
@@ -195,6 +258,99 @@ export function Scheduled() {
     }
   }
 
+  async function handleTogglePause(run: ScheduledRun) {
+    setBusyId(run.id);
+    setActionError(null);
+    try {
+      if (run.paused) {
+        await api.resumeScheduledRun(run.id);
+      } else {
+        await api.pauseScheduledRun(run.id);
+      }
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof ApiError ? error.message : String(error));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleToggleRegistryPause(entry: SchedulerRegistryEntry) {
+    // openalgo entries are the only ones with controls.pause/resume today;
+    // `entry.section` is that entry's scheduler source ("flow", "historify",
+    // "strategy", "chartink", "python_strategy"), and the raw job id is
+    // entry.id with the "C:<source>:" prefix stripped.
+    const source = entry.section;
+    const jobId = entry.id.slice(`C:${source}:`.length);
+    setBusyId(entry.id);
+    setActionError(null);
+    try {
+      if (entry.enabled) {
+        await api.pauseSchedulerRegistryEntry(source, jobId);
+      } else {
+        await api.resumeSchedulerRegistryEntry(source, jobId);
+      }
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof ApiError ? error.message : String(error));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleCancelRun(run: ScheduledRun) {
+    setBusyId(run.id);
+    setActionError(null);
+    try {
+      await api.cancelScheduledRun(run.id);
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof ApiError ? error.message : String(error));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleTriggerRun(run: ScheduledRun) {
+    setBusyId(run.id);
+    setActionError(null);
+    try {
+      await api.triggerScheduledRun(run.id);
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof ApiError ? error.message : String(error));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  // The first *bulk* action in this file — deliberately uses Promise.allSettled
+  // (not the single-call try/catch every other handler here uses) so one
+  // failing job doesn't block the rest of a hot-reload's auto-paused jobs
+  // from resuming.
+  async function handleResumeAllAutoPaused() {
+    const targets = runs.filter((r) => r.paused && r.auto_paused_reason);
+    if (targets.length === 0) return;
+    setBulkResumeBusy(true);
+    setActionError(null);
+    try {
+      const results = await Promise.allSettled(targets.map((r) => api.resumeScheduledRun(r.id)));
+      const failed = results.filter((r) => r.status === "rejected").length;
+      if (failed > 0) {
+        setActionError(
+          t("scheduled.resumeAllPartialFailure", {
+            resumed: targets.length - failed,
+            total: targets.length,
+            failed,
+          }),
+        );
+      }
+      await refresh();
+    } finally {
+      setBulkResumeBusy(false);
+    }
+  }
+
   function cadenceLabel(run: ScheduledRun): string {
     const cadence = describeCadence(run.schedule);
     switch (cadence.kind) {
@@ -274,6 +430,72 @@ export function Scheduled() {
     }
   }
 
+  function selectViewMode(mode: "scheduler" | "jobs") {
+    setViewMode(mode);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (mode === "scheduler") {
+          next.delete("view");
+        } else {
+          next.set("view", mode);
+        }
+        return next;
+      },
+      { replace: true },
+    );
+  }
+
+  function selectSection(section: string) {
+    setActiveSection(section);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (section === "all") {
+          next.delete("section");
+        } else {
+          next.set("section", section);
+        }
+        return next;
+      },
+      { replace: true },
+    );
+  }
+
+  const sectionCounts = new Map<string, number>();
+  for (const run of runs) {
+    sectionCounts.set(run.section, (sectionCounts.get(run.section) ?? 0) + 1);
+  }
+  for (const entry of registryEntries) {
+    sectionCounts.set(entry.section, (sectionCounts.get(entry.section) ?? 0) + 1);
+  }
+  const recorderSections = [...sectionCounts.keys()]
+    .filter((section) => section.startsWith("recorder:"))
+    .sort();
+  // openalgo's five scheduler sources ("flow", "historify", "strategy",
+  // "chartink", "python_strategy") are dynamic too — any section outside
+  // Mechanism A's fixed SECTION_ORDER and stock_simulator's "recorder:*"
+  // prefix is one of these.
+  const openalgoSections = [...sectionCounts.keys()]
+    .filter(
+      (section) =>
+        !(SECTION_ORDER as readonly string[]).includes(section) &&
+        !section.startsWith("recorder:"),
+    )
+    .sort();
+  const visibleSections = [
+    ...SECTION_ORDER.filter((section) => sectionCounts.has(section)),
+    ...recorderSections,
+    ...openalgoSections,
+  ];
+  const totalCount = runs.length + registryEntries.length;
+  const filteredRuns =
+    activeSection === "all" ? runs : runs.filter((run) => run.section === activeSection);
+  const filteredRegistryEntries =
+    activeSection === "all"
+      ? registryEntries
+      : registryEntries.filter((entry) => entry.section === activeSection);
+
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
       <header className="flex items-center gap-3">
@@ -284,6 +506,60 @@ export function Scheduled() {
         </div>
       </header>
 
+      <div className="flex gap-1.5" role="tablist" aria-label={t("scheduled.viewModeLabel")}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewMode === "scheduler"}
+          onClick={() => selectViewMode("scheduler")}
+          className={cn(
+            "rounded-full border px-3 py-1 text-xs transition",
+            viewMode === "scheduler"
+              ? "border-primary bg-primary/10 text-primary"
+              : "text-muted-foreground hover:bg-muted",
+          )}
+        >
+          {t("scheduled.viewScheduler")}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewMode === "jobs"}
+          onClick={() => selectViewMode("jobs")}
+          className={cn(
+            "rounded-full border px-3 py-1 text-xs transition",
+            viewMode === "jobs"
+              ? "border-primary bg-primary/10 text-primary"
+              : "text-muted-foreground hover:bg-muted",
+          )}
+        >
+          {t("scheduled.viewJobs")}
+        </button>
+      </div>
+
+      {viewMode === "jobs" && (
+        <JobsPanel
+          runs={runs}
+          registryEntries={registryEntries}
+          busyId={busyId}
+          bulkResumeBusy={bulkResumeBusy}
+          actionError={actionError}
+          expandedLogKey={expandedLogKey}
+          setExpandedLogKey={setExpandedLogKey}
+          onTogglePause={handleTogglePause}
+          onToggleRegistryPause={handleToggleRegistryPause}
+          onCancelRun={handleCancelRun}
+          onTriggerRun={handleTriggerRun}
+          onResumeAllAutoPaused={handleResumeAllAutoPaused}
+          streamUrlFor={(run) => () => api.scheduledRunStreamUrl(run.id)}
+          formatNextRun={(run) =>
+            t("scheduled.nextRun", { when: formatInZone(run.next_run_at, displayZone(run), locale) })
+          }
+        />
+      )}
+
+      {viewMode === "scheduler" && (
+      <>
       <form onSubmit={handleCreate} className="space-y-4 rounded-lg border bg-card p-4">
         <div className="space-y-1.5">
           <label htmlFor="scheduled-prompt" className={labelClass}>
@@ -429,6 +705,42 @@ export function Scheduled() {
         </div>
       </form>
 
+      {!loading && totalCount > 0 && (
+        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter by section">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeSection === "all"}
+            onClick={() => selectSection("all")}
+            className={cn(
+              "rounded-full border px-3 py-1 text-xs transition",
+              activeSection === "all"
+                ? "border-primary bg-primary/10 text-primary"
+                : "text-muted-foreground hover:bg-muted",
+            )}
+          >
+            All ({totalCount})
+          </button>
+          {visibleSections.map((section) => (
+            <button
+              key={section}
+              type="button"
+              role="tab"
+              aria-selected={activeSection === section}
+              onClick={() => selectSection(section)}
+              className={cn(
+                "rounded-full border px-3 py-1 text-xs transition",
+                activeSection === section
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:bg-muted",
+              )}
+            >
+              {sectionLabel(section)} ({sectionCounts.get(section)})
+            </button>
+          ))}
+        </div>
+      )}
+
       <section aria-label={t("scheduled.listTitle")} className="rounded-lg border bg-card">
         {loading ? (
           <div className="flex items-center justify-center gap-2 p-8 text-sm text-muted-foreground">
@@ -446,8 +758,12 @@ export function Scheduled() {
               {t("scheduled.retry")}
             </button>
           </div>
-        ) : runs.length === 0 ? (
+        ) : totalCount === 0 ? (
           <p className="p-8 text-center text-sm text-muted-foreground">{t("scheduled.empty")}</p>
+        ) : filteredRuns.length === 0 && filteredRegistryEntries.length === 0 ? (
+          <p className="p-8 text-center text-sm text-muted-foreground">
+            No scheduled runs in {sectionLabel(activeSection)}.
+          </p>
         ) : (
           <>
           {listError && (
@@ -455,8 +771,13 @@ export function Scheduled() {
               {listError}
             </p>
           )}
+          {actionError && (
+            <p role="alert" className="border-b px-4 py-2 text-xs text-danger">
+              {actionError}
+            </p>
+          )}
           <ul className="divide-y">
-            {runs.map((run) => {
+            {filteredRuns.map((run) => {
               const status = statusLabel(run);
               const zone = displayZone(run);
               return (
@@ -466,6 +787,13 @@ export function Scheduled() {
                       <span className="font-medium">{cadenceLabel(run)}</span>
                       <span className={hintClass}>{zone}</span>
                       <StatusPill label={status.label} tone={status.tone} />
+                      {run.paused && run.auto_paused_reason ? (
+                        <span title={run.auto_paused_reason}>
+                          <StatusPill label={t("scheduled.autoPaused")} tone="warning" />
+                        </span>
+                      ) : run.paused ? (
+                        <StatusPill label={t("scheduled.jobPaused")} tone="neutral" />
+                      ) : null}
                     </div>
                     <p className="truncate text-sm text-muted-foreground">{run.prompt}</p>
                     <p className={hintClass}>
@@ -521,23 +849,162 @@ export function Scheduled() {
                       </button>
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => setPendingDelete(run.id)}
-                      aria-label={t("scheduled.deleteAria", { prompt: run.prompt })}
-                      className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                      {t("scheduled.delete")}
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      {run.status === "running" && (
+                        <button
+                          type="button"
+                          disabled={busyId === run.id}
+                          onClick={() => void handleCancelRun(run)}
+                          aria-label={t("scheduled.cancelRunAria", { prompt: run.prompt })}
+                          className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <Square className="h-3.5 w-3.5" aria-hidden />
+                          {t("scheduled.cancelRun")}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={busyId === run.id}
+                        onClick={() => void handleTogglePause(run)}
+                        aria-label={
+                          run.paused
+                            ? t("scheduled.resumeJobAria", { prompt: run.prompt })
+                            : t("scheduled.pauseJobAria", { prompt: run.prompt })
+                        }
+                        className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {run.paused ? (
+                          <Play className="h-3.5 w-3.5" aria-hidden />
+                        ) : (
+                          <Pause className="h-3.5 w-3.5" aria-hidden />
+                        )}
+                        {run.paused ? t("scheduled.resumeJob") : t("scheduled.pauseJob")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPendingDelete(run.id)}
+                        aria-label={t("scheduled.deleteAria", { prompt: run.prompt })}
+                        className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                        {t("scheduled.delete")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedLogKey((prev) => (prev === run.id ? null : run.id))
+                        }
+                        aria-expanded={expandedLogKey === run.id}
+                        aria-label={t("scheduled.toggleLiveLog", { prompt: run.prompt })}
+                        className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
+                      >
+                        {expandedLogKey === run.id ? (
+                          <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                        ) : (
+                          <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                        )}
+                        {t("scheduled.liveLog")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedDetailKey((prev) => (prev === run.id ? null : run.id))
+                        }
+                        aria-expanded={expandedDetailKey === run.id}
+                        aria-label={t("scheduled.toggleDetailsAria", { prompt: run.prompt })}
+                        className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
+                      >
+                        {expandedDetailKey === run.id ? (
+                          <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                        ) : (
+                          <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                        )}
+                        {t("scheduled.viewDetails")}
+                      </button>
+                    </div>
                   )}
+                  {expandedLogKey === run.id && (
+                    <LiveLogTail streamUrl={() => api.scheduledRunStreamUrl(run.id)} />
+                  )}
+                  {expandedDetailKey === run.id && <ScheduledJobDetailPanel jobId={run.id} />}
                 </li>
               );
             })}
           </ul>
+          {filteredRegistryEntries.length > 0 && (
+            <ul className="divide-y border-t">
+              {filteredRegistryEntries.map((entry) => (
+                <li key={entry.id} className="flex flex-wrap items-start gap-3 p-4">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{entry.label}</span>
+                      <StatusPill
+                        label={entry.enabled ? "Active" : "Off"}
+                        tone={entry.enabled ? "success" : "neutral"}
+                      />
+                      {!entry.controls.pause && !entry.controls.resume && (
+                        <span className={hintClass}>read-only</span>
+                      )}
+                    </div>
+                    <p className={hintClass}>{entry.schedule_display}</p>
+                    {entry.next_run_at != null && (
+                      <p className={hintClass}>
+                        {t("scheduled.nextRun", {
+                          when: formatInZone(entry.next_run_at, "UTC", locale),
+                        })}
+                      </p>
+                    )}
+                  </div>
+                  {(entry.controls.pause || entry.controls.resume) && (
+                    <button
+                      type="button"
+                      disabled={busyId === entry.id}
+                      onClick={() => void handleToggleRegistryPause(entry)}
+                      aria-label={
+                        entry.enabled
+                          ? t("scheduled.pauseJobAria", { prompt: entry.label })
+                          : t("scheduled.resumeJobAria", { prompt: entry.label })
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {entry.enabled ? (
+                        <Pause className="h-3.5 w-3.5" aria-hidden />
+                      ) : (
+                        <Play className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                      {entry.enabled ? t("scheduled.pauseJob") : t("scheduled.resumeJob")}
+                    </button>
+                  )}
+                  {entry.supports_live_log && entry.live_log_stream_url && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedLogKey((prev) => (prev === entry.id ? null : entry.id))
+                      }
+                      aria-expanded={expandedLogKey === entry.id}
+                      aria-label={t("scheduled.toggleLiveLog", { prompt: entry.label })}
+                      className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
+                    >
+                      {expandedLogKey === entry.id ? (
+                        <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                      {t("scheduled.liveLog")}
+                    </button>
+                  )}
+                  {expandedLogKey === entry.id && entry.live_log_stream_url && (
+                    <LiveLogTail streamUrl={() => Promise.resolve(entry.live_log_stream_url!)} />
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
           </>
         )}
       </section>
+      </>
+      )}
     </div>
   );
 }

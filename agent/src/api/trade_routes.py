@@ -4893,7 +4893,7 @@ def pause_index_prediction_job(
     job_id: str,
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexPredictionJobsResponse:
-    """Pause one index prediction cron job (sets status cancelled)."""
+    """Pause one index prediction cron job's recurring schedule."""
     try:
         from src.trade.index_prediction_jobs import pause_index_prediction_job
         from src.trade.hub_bridge import ensure_trade_stack_path
@@ -4942,6 +4942,54 @@ def recover_index_prediction_job_route(
         payload = recover_index_prediction_job(job_id)
     except Exception as exc:
         logger.exception("recover index job %s failed", job_id)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if payload.get("status") == "error":
+        return IndexPredictionJobsResponse(status="error", message=str(payload.get("message") or "not found"))
+    return IndexPredictionJobsResponse(status="ok", job=payload.get("job"))
+
+
+@trade_router.post("/index-prediction/jobs/{job_id}/trigger", response_model=IndexPredictionJobsResponse)
+def trigger_index_prediction_job_route(
+    job_id: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexPredictionJobsResponse:
+    """Fire an index prediction cron job immediately (the Prediction tab's "run now").
+
+    Does not enable a paused job — full schedule control lives on the
+    Scheduler tab.
+    """
+    try:
+        from src.trade.index_prediction_jobs import trigger_index_prediction_job
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        payload = trigger_index_prediction_job(job_id)
+    except Exception as exc:
+        logger.exception("trigger index job %s failed", job_id)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if payload.get("status") == "error":
+        return IndexPredictionJobsResponse(status="error", message=str(payload.get("message") or "not found"))
+    return IndexPredictionJobsResponse(status="ok", job=payload.get("job"))
+
+
+@trade_router.post("/index-prediction/jobs/{job_id}/cancel", response_model=IndexPredictionJobsResponse)
+def cancel_index_prediction_job_route(
+    job_id: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> IndexPredictionJobsResponse:
+    """Cancel an index prediction cron job's currently running execution.
+
+    Distinct from pause: only aborts the in-flight run, leaves the
+    recurring schedule untouched.
+    """
+    try:
+        from src.trade.index_prediction_jobs import cancel_index_prediction_job
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        payload = cancel_index_prediction_job(job_id)
+    except Exception as exc:
+        logger.exception("cancel index job %s failed", job_id)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if payload.get("status") == "error":
         return IndexPredictionJobsResponse(status="error", message=str(payload.get("message") or "not found"))

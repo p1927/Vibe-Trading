@@ -84,7 +84,9 @@ def dispatch_hub_capture_job_sync(job: ScheduledResearchJob) -> None:
 
 
 async def dispatch_hub_capture_job(job: ScheduledResearchJob) -> None:
-    await asyncio.to_thread(dispatch_hub_capture_job_sync, job)
+    from src.scheduled_research.run_log_buffer import run_logged
+
+    await run_logged(job, dispatch_hub_capture_job_sync)
 
 
 def register_default_hub_capture_jobs(store: ScheduledResearchJobStore) -> int:
