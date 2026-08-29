@@ -475,6 +475,19 @@ def serve_main(argv: list[str] | None = None) -> int:
                 "--log-level",
                 "info",
                 "--reload",
+                # Without this, uvicorn's graceful shutdown on each reload
+                # waits forever (asyncio.wait_for(..., timeout=None)) for
+                # every open connection to close on its own — see
+                # uvicorn/server.py's Server.shutdown()/_wait_tasks_to_complete().
+                # A long-lived SSE stream (e.g. /trade/command-center/stream)
+                # never closes itself, so every reload after one of those
+                # connects hangs at "Waiting for connections to close." and
+                # never comes back up. This bounds the wait so uvicorn cancels
+                # the stuck connection's task and finishes the reload instead
+                # of hanging indefinitely; a real in-flight request has a few
+                # seconds to finish normally first.
+                "--timeout-graceful-shutdown",
+                "3",
                 *reload_dir_args,
             ]
             subprocess.run(cmd, cwd=str(agent_dir))
