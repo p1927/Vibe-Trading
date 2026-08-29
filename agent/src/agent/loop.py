@@ -1071,6 +1071,7 @@ class AgentLoop:
         self._previous_summary = ""
         self._session_id = session_id
         self._session_config: dict[str, Any] = dict(session_config or {})
+        self._forced_tool_call_retry_used = False
         self._compact_policy = _resolve_compact_policy(user_message, session_config)
         self._auto_compact_count = 0
         self._emergency_compact_used = False
@@ -1478,6 +1479,41 @@ class AgentLoop:
 
                 if not response.has_tool_calls:
                     final_content = response.content or ""
+                    if (
+                        final_content
+                        and iteration == 1
+                        and not self._forced_tool_call_retry_used
+                    ):
+                        try:
+                            from src.trade.hub_bridge import requires_first_answer_tool_call
+                            must_call_tool = requires_first_answer_tool_call(
+                                user_message, self._session_config
+                            )
+                        except ImportError:
+                            must_call_tool = False
+                        if must_call_tool:
+                            self._forced_tool_call_retry_used = True
+                            trace.write(
+                                {"type": "forced_tool_call_retry", "iter": current_iter}
+                            )
+                            messages.append(
+                                {"role": "assistant", "content": final_content}
+                            )
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "[SYSTEM] This turn requires at least one real tool "
+                                        "call before a final answer. A prior conclusion -- "
+                                        "from memory or this conversation's own history -- is "
+                                        "not sufficient on its own, no matter how confident it "
+                                        "reads. Call the relevant tool(s) now and base your "
+                                        "answer on their actual results."
+                                    ),
+                                }
+                            )
+                            final_content = ""
+                            continue
                     if not final_content:
                         reasoning = str(getattr(response, "reasoning_content", None) or "").strip()
                         if reasoning and empty_model_response_iter is None:

@@ -37,6 +37,28 @@ _OPERATOR_RETRY_RE = re.compile(r"\bretry\b|\btry again\b", re.IGNORECASE)
 def _is_operator_retry_message(content: str) -> bool:
     return bool(_OPERATOR_RETRY_RE.search(content or ""))
 
+
+def requires_first_answer_tool_call(user_message: str, session_config: dict[str, Any] | None) -> bool:
+    """True if this turn must call a real tool before its first answer is accepted.
+
+    Two prior, softer countermeasures for the same failure both proved
+    insufficient live: an instruction telling the model to re-verify a prior
+    conclusion (it still didn't), and a content-based grounding check that
+    only caught one narrow narrative shape (a fabricated identity lock) while
+    missing the actual observed pattern (a fabricated multi-tool results
+    table with no numeric claim to flag). Both were reverted -- see
+    .claude/backlog/items/2026-08-29-autonomous-agent-retry-fix-not-live-effective.md.
+    This is a hard, content-blind requirement instead: an operator-retry turn
+    in an autonomous-agent session must make at least one real tool call
+    before its first answer is accepted, full stop -- no classifier to fool.
+    """
+    from src.trade.session_context import is_autonomous_agent_session
+
+    return is_autonomous_agent_session(dict(session_config or {})) and _is_operator_retry_message(
+        user_message
+    )
+
+
 session_widget_emitted: dict[str, dict[str, float]] = {}
 WIDGET_EMIT_DEDUP_SECONDS = 10 * 60
 
