@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import json
 import logging
-import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -25,16 +24,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# A recalled memory whose title/description reads like an infra outage/error
-# report (a NameError, a "backend broken" note, a crash) is a snapshot of
-# system state at write time, not a durable fact — the underlying fault may
-# already be fixed. Past a short window it gets an explicit "reverify before
-# trusting" wrapper instead of being injected as plain, implicitly-current
-# context (see .claude/backlog/items/2026-08-29-autonomous-agent-retry-fix-not-live-effective.md).
-# `PersistentMemory.add()` now refuses to save new entries matching this
-# pattern at all (the write-side "tether"); this read-side check still covers
-# entries written before that guard existed.
-_STALE_OUTAGE_MEMORY_SECONDS = 2 * 3600.0
 
 # Post-backtest attribution thresholds (Sharpe/MaxDD bands, ≥60-day OLS window,
 # holding-period buckets, p≤0.05 significance) follow standard industry and
@@ -378,13 +367,9 @@ class ContextBuilder:
         """True if `entry` reads like an infra outage/error report older than
         the trust window — a candidate for the staleness wrapper, not silent
         injection as current fact."""
-        from src.memory.persistent import OUTAGE_MEMORY_RE
+        from src.memory.outage_staleness import is_stale_outage_entry
 
-        text = f"{entry.title} {entry.description}"
-        if not OUTAGE_MEMORY_RE.search(text):
-            return False
-        age = time.time() - entry.created_at
-        return age > _STALE_OUTAGE_MEMORY_SECONDS
+        return is_stale_outage_entry(entry.title, entry.description, entry.created_at)
 
     def build_messages(self, user_message: str, history: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
         """Build full message list.
@@ -417,15 +402,13 @@ class ContextBuilder:
                 except Exception:
                     pass
                 if recalls:
+                    from src.memory.outage_staleness import UNVERIFIED_RECALL_SUFFIX
+
                     lines = []
                     for r in recalls:
                         line = f"- **{r.title}** ({r.memory_type}): {r.body[:500]}"
                         if self._is_stale_outage_memory(r):
-                            line += (
-                                " [UNVERIFIED — this describes a past infra failure and may be "
-                                "stale; call the relevant tool to re-check current state before "
-                                "treating it as still true]"
-                            )
+                            line += UNVERIFIED_RECALL_SUFFIX
                         lines.append(line)
                     recall_block = "\n".join(lines)
                     enriched = (
