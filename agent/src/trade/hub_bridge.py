@@ -37,33 +37,6 @@ _OPERATOR_RETRY_RE = re.compile(r"\bretry\b|\btry again\b", re.IGNORECASE)
 def _is_operator_retry_message(content: str) -> bool:
     return bool(_OPERATOR_RETRY_RE.search(content or ""))
 
-
-# Fixing the fresh-context gap above (_is_operator_retry_message) turned out
-# not to be sufficient on its own: a retry turn can still have a stale
-# "backend is broken" conclusion available from *conversation history* (its
-# own earlier turn in the same session) even when this turn's own injected
-# [agent_context] block is completely clean. Confirmed live: an agent with
-# such history in tool_trail: [] (zero tool calls) restated a fabricated
-# NameError verbatim despite a clean prefetch block, while a brand-new
-# session with no history and the identical retry wording called real tools
-# and reported a genuine result. The model leans on *any* available prior
-# conclusion -- memory, history, or otherwise -- instead of re-verifying, on
-# turns explicitly asking it to. This instruction is the general
-# countermeasure: it doesn't try to detect what in history is stale (a
-# content classifier tuned for terse memory titles false-positives heavily
-# on ordinary tool-error chatter in a long session), it just makes retry
-# turns unconditionally demand a fresh check.
-# See .claude/backlog/items/2026-08-29-autonomous-agent-retry-fix-not-live-effective.md.
-_OPERATOR_RETRY_REVERIFY_INSTRUCTION = (
-    "\n\n[operator-retry instruction] This turn was flagged as a retry request. "
-    "If a prior turn in this conversation, or a recalled memory, already concluded "
-    "that a tool or backend is broken, that conclusion may be stale -- it is never "
-    "automatically re-verified. Call the relevant tool(s) again this turn before "
-    "restating any such conclusion. Only report a failure if a tool call you "
-    "actually make this turn fails; do not repeat a past failure claim without a "
-    "fresh call backing it."
-)
-
 session_widget_emitted: dict[str, dict[str, float]] = {}
 WIDGET_EMIT_DEDUP_SECONDS = 10 * 60
 
@@ -802,10 +775,7 @@ def prefetch_autonomous_context(
             # portfolio_greeks/live_pop/etc. snapshot a retry needs to actually
             # re-check prior tool failures against, not just repeat them from memory.
             turn_kind = "strategy_revision"
-        context_str = format_autonomous_context_for_prefetch(agent=agent, turn_kind=turn_kind)
-        if _is_operator_retry_message(content):
-            context_str += _OPERATOR_RETRY_REVERIFY_INSTRUCTION
-        return context_str
+        return format_autonomous_context_for_prefetch(agent=agent, turn_kind=turn_kind)
     except Exception:
         logger.exception("Autonomous context prefetch failed for %s", agent_id)
         return ""
