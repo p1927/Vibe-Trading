@@ -293,7 +293,10 @@ def pause_agent(
 
 
 @autonomous_router.post("/{agent_id}/resume")
-def resume_agent(agent_id: str) -> Dict[str, Any]:
+def resume_agent(
+    agent_id: str,
+    _auth: None = Depends(require_local_or_auth),
+) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.proposals import resume_autonomous_agent
     from trade_integrations.autonomous_agents.store import get_agent, save_agent
     from src.scheduled_research.autonomous_agent_jobs import finalize_infra_heal, register_agent_jobs
