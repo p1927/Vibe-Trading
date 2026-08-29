@@ -2369,7 +2369,21 @@ def get_index_track_scoreboard(
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
-        history_days = max(days, 730)
+        # [[2026-08-29-strategy-promotion-default-history-window-too-short-for-low-frequency-candidates]]:
+        # a refresh must never silently shrink an already-cached wider window back down to the
+        # 730-day floor. `scoreboard_needs_refresh`'s own `history_days` check already treats a
+        # cached report with a WIDER history_days than requested as fresh (no unnecessary
+        # re-run) — but nothing previously stopped a plain `refresh=True` call (e.g. the
+        # frontend's "Refresh" button, which always sends `days=730`) from unconditionally
+        # re-running at the narrow default and overwriting a deliberately wide (e.g.
+        # `days=5000`, run once to give a low-frequency strategy like mean_reversion enough
+        # day-paired bootstrap samples — see the item for the real n_pairs-vs-window numbers)
+        # cached scoreboard with a narrower one. Folding in the cached report's own
+        # `history_days` here makes a wide window "sticky": once achieved (by any explicit wide
+        # request), every ordinary refresh preserves it instead of regressing it, with zero
+        # change to the cheap default path when no wide run has ever happened.
+        cached_history_days = int((load_scoreboard(key) or {}).get("history_days") or 0)
+        history_days = max(days, 730, cached_history_days)
         if cache_only:
             report = load_scoreboard(key)
             report = normalize_scoreboard_report(report or {"status": "empty", "ticker": key})
