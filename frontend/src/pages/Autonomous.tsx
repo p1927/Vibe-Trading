@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { api, type AutonomousAgentInstance } from "@/lib/api";
 import { AutonomousAgentHub } from "@/components/autonomous/AutonomousAgentHub";
+import { AgentMemoryPanel } from "@/components/autonomous/AgentMemoryPanel";
 import { PlanApprovalBanner } from "@/components/autonomous/PlanApprovalBanner";
 import { WatchersLiveProvider } from "@/components/research/WatchersPanel";
 import { cn } from "@/lib/utils";
@@ -153,6 +154,18 @@ export function Autonomous() {
   const sessionId = searchParams.get("session");
   const agentId = searchParams.get("agent");
   const isOrchestrator = agentId === "orchestrator" || searchParams.get("create") === "1";
+  const view = searchParams.get("view") === "memory" ? "memory" : "chat";
+  const setView = useCallback(
+    (next: "chat" | "memory") => {
+      setSearchParams((prev) => {
+        const params = new URLSearchParams(prev);
+        if (next === "chat") params.delete("view");
+        else params.set("view", next);
+        return params;
+      });
+    },
+    [setSearchParams],
+  );
   const [agent, setAgent] = useState<AutonomousAgentInstance | null>(null);
   const [agentLoadState, setAgentLoadState] = useState<AutonomousAgentLoadState>("idle");
   const agentLoadGenRef = useRef(0);
@@ -295,11 +308,45 @@ export function Autonomous() {
             Back to agents
           </button>
           <span className="text-sm font-medium text-foreground">{title}</span>
-          {agent && !isDraftView && <AgentRuntimeStrip agent={agent} />}
+          {!isDraftView && agentId && (
+            <div className="flex shrink-0 gap-1">
+              <button
+                type="button"
+                onClick={() => setView("chat")}
+                className={cn(
+                  "rounded-lg border px-2 py-1 text-xs font-medium",
+                  view === "chat"
+                    ? "border-primary/60 bg-primary/5 text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                Chat
+              </button>
+              <button
+                type="button"
+                onClick={() => setView("memory")}
+                className={cn(
+                  "rounded-lg border px-2 py-1 text-xs font-medium",
+                  view === "memory"
+                    ? "border-primary/60 bg-primary/5 text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                Memory
+              </button>
+            </div>
+          )}
+          {agent && !isDraftView && view === "chat" && <AgentRuntimeStrip agent={agent} />}
         </header>
-        {sharesWatchersWithDrawer && agent ? (
+        {view === "memory" && agentId ? (
+          <div className="min-h-0 flex-1">
+            <AgentMemoryPanel agentId={agentId} />
+          </div>
+        ) : sharesWatchersWithDrawer && agent ? (
           <WatchersLiveProvider agentId={agent.id}>{agentDetail}</WatchersLiveProvider>
-        ) : agentDetail}
+        ) : (
+          agentDetail
+        )}
       </div>
     );
   }

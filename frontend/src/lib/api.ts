@@ -1054,6 +1054,33 @@ export const api = {
       method: "POST",
     }),
 
+  listAgentMemory: (params: { agentId?: string; memoryType?: string; unscopedOnly?: boolean }) => {
+    const q = new URLSearchParams();
+    if (params.agentId) q.set("agent_id", params.agentId);
+    if (params.memoryType) q.set("memory_type", params.memoryType);
+    if (params.unscopedOnly) q.set("unscoped_only", "true");
+    const qs = q.toString();
+    return request<MemoryEntryListResponse>(`/memory/entries${qs ? `?${qs}` : ""}`);
+  },
+  getMemoryEntry: (entryId: string) =>
+    request<MemoryEntryDetail>(`/memory/entries/${encodeURIComponent(entryId)}`),
+  updateMemoryEntry: (entryId: string, body: { body?: string; description?: string }) =>
+    request<MemoryEntryDetail>(`/memory/entries/${encodeURIComponent(entryId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  archiveMemoryEntry: (entryId: string) =>
+    request<{ status: string; id: string; action: string }>(
+      `/memory/entries/${encodeURIComponent(entryId)}`,
+      { method: "DELETE" },
+    ),
+  getMemoryEntryHistory: (entryId: string) =>
+    request<MemoryHistoryResponse>(`/memory/entries/${encodeURIComponent(entryId)}/history`),
+  getMemoryEntryDiff: (entryId: string, fromSha: string, toSha: string) =>
+    request<MemoryDiffResponse>(
+      `/memory/entries/${encodeURIComponent(entryId)}/diff?from=${encodeURIComponent(fromSha)}&to=${encodeURIComponent(toSha)}`,
+    ),
+
   listWatches: (params: { sessionId?: string; agentId?: string }) => {
     const q = new URLSearchParams();
     if (params.agentId) {
@@ -5983,6 +6010,46 @@ export interface AutonomousAgentThesis {
   confidence?: number;
   rationale?: string;
   updated_at?: string;
+}
+
+export interface MemoryEntrySummary {
+  id: string;
+  title: string;
+  description: string;
+  memory_type: string;
+  agent_id: string | null;
+  created_at: number;
+  updated_at: number;
+  quality_score: number;
+  access_count: number;
+  importance: number;
+  compression_level: string;
+}
+
+export interface MemoryEntryDetail extends MemoryEntrySummary {
+  body: string;
+}
+
+export interface MemoryEntryListResponse {
+  entries: MemoryEntrySummary[];
+}
+
+export interface MemoryCommitInfo {
+  sha: string;
+  date: string;
+  message: string;
+}
+
+export interface MemoryHistoryResponse {
+  entry_id: string;
+  commits: MemoryCommitInfo[];
+}
+
+export interface MemoryDiffResponse {
+  entry_id: string;
+  from_sha: string;
+  to_sha: string;
+  diff: string;
 }
 
 export interface AutonomousAgentInstance {
