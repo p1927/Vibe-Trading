@@ -1361,6 +1361,17 @@ def get_index_prediction(
         return IndexPredictionResponse(status="not_found", ticker=key, message="No index research")
     if horizon_days is not None and artifact.get("horizon", {}).get("days") != horizon_days:
         artifact["_horizon_mismatch"] = True
+    try:
+        from trade_integrations.dataflows.index_research.nifty_forecast_fan import (
+            load_latest_fan_band,
+        )
+
+        fan_band = load_latest_fan_band(ticker=key)
+    except Exception:
+        logger.exception("index-prediction: failed to load latest forecast fan for %s", key)
+        fan_band = None
+    if fan_band and isinstance(artifact.get("prediction"), dict):
+        artifact["prediction"]["forecast_fan"] = fan_band
     return IndexPredictionResponse(
         status="ok",
         ticker=key,
