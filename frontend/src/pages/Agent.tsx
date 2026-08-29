@@ -26,7 +26,6 @@ import { toast } from "sonner";
 import { useAgentStore, type AgentActivity, type AgentMessageMeta, type StoredAgentMessage } from "@/stores/agent";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useSSE } from "@/hooks/useSSE";
-import { useThrottledValue } from "@/hooks/useThrottledValue";
 import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type AgentAudit, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource, type AutonomousAgentProposal, type AutonomousAgentInstance, type TradingConnectorsResponse, type LLMSettings } from "@/lib/api";
 import { isReportWorthyRun } from "@/lib/runReports";
 import { buildToolTimelineMessages } from "@/pages/agentToolTimeline";
@@ -567,7 +566,6 @@ export function Agent({
 
   const messages = useAgentStore(s => s.messages);
   const streamingText = useAgentStore(s => s.streamingText);
-  const throttledStreamingText = useThrottledValue(streamingText);
   const status = useAgentStore(s => s.status);
   const sessionId = useAgentStore(s => s.sessionId);
   const activity = useAgentStore(s => s.activity);
@@ -2721,9 +2719,6 @@ export function Agent({
                     <Loader2 className="h-3 w-3 animate-spin text-primary shrink-0" />
                     <span>{t('agent.reasoning')}</span>
                   </div>
-                )}
-                {streamingText && (
-                  <MarkdownContent content={throttledStreamingText} showCursor />
                 )}
                 {toolCalls.length > 0 && (
                   <ToolProgressIndicator toolCalls={toolCalls} />
