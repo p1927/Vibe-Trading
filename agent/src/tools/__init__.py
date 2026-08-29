@@ -170,10 +170,11 @@ def build_registry(
                 if (session_config or {}).get("e2e_integration_test"):
                     logger.info("Tool %s disabled for e2e_integration_test session", cls.name)
                     continue
+                agent_id = str((session_config or {}).get("autonomous_agent_id") or "").strip() or None
                 if persistent_memory is not None:
-                    registry.register(cls(memory=persistent_memory))
+                    registry.register(cls(memory=persistent_memory, agent_id=agent_id))
                 else:
-                    registry.register(cls())
+                    registry.register(cls(agent_id=agent_id))
             elif cls in session_injected_classes:
                 registry.register(cls(default_session_id=session_id, event_callback=event_callback))
             elif cls is SwarmTool:

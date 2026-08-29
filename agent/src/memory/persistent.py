@@ -134,6 +134,7 @@ class MemoryEntry:
     body: str
     modified_at: float
     id: str = ""
+    agent_id: str | None = None
     created_at: float = 0.0
     updated_at: float = 0.0
     keywords: tuple[str, ...] = ()
@@ -260,6 +261,8 @@ class PersistentMemory:
 
             category = _coerce_str(meta.get("category"), default="")
             compression_level = _coerce_str(meta.get("compression_level"), default="raw")
+            agent_id_raw = meta.get("agent_id")
+            agent_id = str(agent_id_raw).strip() or None if agent_id_raw else None
 
             qs = meta.get("quality_score", 0.5)
             try:
@@ -296,6 +299,7 @@ class PersistentMemory:
                     body=body[:MAX_ENTRY_CHARS],
                     modified_at=mtime,
                     id=entry_id,
+                    agent_id=agent_id,
                     created_at=created,
                     updated_at=updated,
                     keywords=keywords,
@@ -340,6 +344,8 @@ class PersistentMemory:
                 logger.warning("Failed to remove memory entry %s: %s", entry.path, exc)
                 return False
             self._rebuild_index()
+            from src.memory.versioning import commit as _git_commit
+            _git_commit(self._dir, [entry.path, self._index_path], f"remove: {entry.title}")
 
         from src.config.accessor import get_env_config
 
@@ -482,6 +488,7 @@ class PersistentMemory:
         content: str,
         memory_type: str = "project",
         description: str = "",
+        agent_id: str | None = None,
     ) -> Optional[Path]:
         """Save a new memory entry and update the index."""
         if _is_quality_enabled() and self.is_duplicate(name, description, content):
@@ -533,6 +540,7 @@ class PersistentMemory:
             f"description: {safe_desc}\n"
             f"type: {memory_type}\n"
             f"id: {entry_id}\n"
+            f"agent_id: {agent_id or ''}\n"
             f"created_at: {now_iso}\n"
             f"updated_at: {now_iso}\n"
             f"keywords: []\n"
@@ -553,6 +561,8 @@ class PersistentMemory:
                 )
             path.write_text(frontmatter, encoding="utf-8")
             self._update_index(stripped_name, filename, description or stripped_name)
+            from src.memory.versioning import commit as _git_commit
+            _git_commit(self._dir, [path, self._index_path], f"add: {stripped_name}")
 
             if get_env_config().memory.links_enabled:
                 try:
@@ -606,6 +616,8 @@ class PersistentMemory:
                         logger.warning("remove(%s): lock timeout", name)
                     entry.path.unlink(missing_ok=True)
                     self._rebuild_index()
+                    from src.memory.versioning import commit as _git_commit
+                    _git_commit(self._dir, [entry.path, self._index_path], f"remove: {entry.title}")
 
                 if get_env_config().memory.fts_index_enabled:
                     try:

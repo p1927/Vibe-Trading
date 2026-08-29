@@ -152,6 +152,8 @@ class MemoryLifecycle:
                 )
                 self._update_frontmatter_field(entry.path, "updated_at", _now_iso())
                 self._session_deltas[name] = current + delta
+                from src.memory.versioning import commit as _git_commit
+                _git_commit(self.memory_dir, [entry.path], f"reinforce: {name} ({event})")
                 return True
             except (FileNotFoundError, IOError) as exc:
                 logger.warning("reinforce(%s) skipped: %s", name, exc)
@@ -294,6 +296,9 @@ class MemoryLifecycle:
                 logger.warning("GC action(%s, %s) failed: %s", entry.title, action, exc)
                 return
 
+            from src.memory.versioning import commit as _git_commit
+            _git_commit(self.memory_dir, [entry.path, dest], f"gc: {action} {entry.title}")
+
         # Rebuild index after removal
         self._memory._rebuild_index()
 
@@ -368,6 +373,10 @@ class MemoryLifecycle:
                 tmp_path = entry.path.with_suffix(entry.path.suffix + ".tmp")
                 tmp_path.write_text("\n".join(new_lines), encoding="utf-8")
                 os.replace(tmp_path, entry.path)
+                from src.memory.versioning import commit as _git_commit
+                _git_commit(
+                    self.memory_dir, [entry.path], f"compress: {entry.title} -> {target_level}"
+                )
             except (FileNotFoundError, IOError) as exc:
                 logger.warning(
                     "_write_compressed(%s) failed: %s", entry.title, exc

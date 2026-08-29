@@ -65,14 +65,17 @@ class RememberTool(BaseTool):
     }
     repeatable = True
 
-    def __init__(self, memory: PersistentMemory | None = None) -> None:
+    def __init__(self, memory: PersistentMemory | None = None, agent_id: str | None = None) -> None:
         """Initialize RememberTool.
 
         Args:
             memory: PersistentMemory instance (auto-created if omitted).
+            agent_id: Autonomous agent id this session belongs to, if any. Tagged onto
+                every entry this tool saves so memory can later be scoped/viewed per agent.
         """
         self._memory = memory or PersistentMemory()
         self._lifecycle = MemoryLifecycle(self._memory)
+        self._agent_id = agent_id
 
     def execute(self, **kwargs: Any) -> str:
         """Execute a memory action.
@@ -104,7 +107,9 @@ class RememberTool(BaseTool):
             )
         memory_type = kwargs.get("memory_type", "project")
         try:
-            path = self._memory.add(title, content, memory_type, description=title)
+            path = self._memory.add(
+                title, content, memory_type, description=title, agent_id=self._agent_id
+            )
         except ValueError as exc:
             return json.dumps({"status": "error", "error": str(exc)})
         if path is None:

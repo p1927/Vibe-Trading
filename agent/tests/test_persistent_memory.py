@@ -290,6 +290,89 @@ class TestAdd:
 # ---------------------------------------------------------------------------
 
 
+class TestAgentId:
+    def test_agent_id_round_trips_through_add_and_scan(self, tmp_path: Path) -> None:
+        pm = PersistentMemory(memory_dir=tmp_path)
+        pm.add("scoped-mem", "body", "project", agent_id="aa_test123")
+        entries = pm.list_entries()
+        entry = next(e for e in entries if e.title == "scoped-mem")
+        assert entry.agent_id == "aa_test123"
+
+    def test_agent_id_written_to_frontmatter(self, tmp_path: Path) -> None:
+        pm = PersistentMemory(memory_dir=tmp_path)
+        path = pm.add("scoped-mem2", "body", "project", agent_id="aa_test456")
+        assert "agent_id: aa_test456" in path.read_text(encoding="utf-8")
+
+    def test_missing_agent_id_defaults_to_none(self, tmp_path: Path) -> None:
+        pm = PersistentMemory(memory_dir=tmp_path)
+        pm.add("unscoped-mem", "body", "project")
+        entries = pm.list_entries()
+        entry = next(e for e in entries if e.title == "unscoped-mem")
+        assert entry.agent_id is None
+
+    def test_legacy_file_with_no_agent_id_field_parses_to_none(self, tmp_path: Path) -> None:
+        # Simulates a pre-existing entry written before this field existed --
+        # no `agent_id:` line in frontmatter at all.
+        legacy = tmp_path / "project_legacy.md"
+        legacy.write_text(
+            "---\nname: legacy\ndescription: old entry\ntype: project\nid: abc123\n"
+            "created_at: 2026-08-01T00:00:00\nupdated_at: 2026-08-01T00:00:00\n"
+            "keywords: []\nquality_score: 0.5\naccess_count: 0\n"
+            "last_accessed: 2026-08-01T00:00:00\nimportance: 0.5\nrelated_memories: []\n"
+            "category: project\ncompression_level: raw\n---\n\nold body\n",
+            encoding="utf-8",
+        )
+        pm = PersistentMemory(memory_dir=tmp_path)
+        entries = pm.list_entries()
+        entry = next(e for e in entries if e.title == "legacy")
+        assert entry.agent_id is None
+
+    def test_find_relevant_unaffected_by_agent_id(self, tmp_path: Path) -> None:
+        pm = PersistentMemory(memory_dir=tmp_path)
+        pm.add("searchable-mem", "unique needle content", "project", agent_id="aa_x")
+        results = pm.find_relevant("needle")
+        assert any(e.title == "searchable-mem" for e in results)
+
+
+class TestGitVersioning:
+    def test_add_creates_repo_and_commit(self, tmp_path: Path) -> None:
+        pm = PersistentMemory(memory_dir=tmp_path)
+        from src.memory.versioning import ensure_repo
+
+        ensure_repo(tmp_path)
+        pm.add("versioned-mem", "body", "project")
+        import subprocess
+
+        log = subprocess.run(
+            ["git", "log", "--oneline"], cwd=tmp_path, capture_output=True, text=True
+        )
+        assert log.returncode == 0
+        # v0 checkpoint commit + this add's commit
+        assert len(log.stdout.strip().splitlines()) >= 2
+
+    def test_commit_is_best_effort_without_repo(self, tmp_path: Path) -> None:
+        # No ensure_repo() call -- add() must still succeed with no git repo present.
+        pm = PersistentMemory(memory_dir=tmp_path)
+        path = pm.add("no-repo-mem", "body", "project")
+        assert path.exists()
+        assert not (tmp_path / ".git").exists()
+
+    def test_remove_commits_deletion(self, tmp_path: Path) -> None:
+        from src.memory.versioning import ensure_repo
+
+        pm = PersistentMemory(memory_dir=tmp_path)
+        pm.add("to-remove", "body", "project")
+        ensure_repo(tmp_path)
+        pm.add("another", "body2", "project")
+        assert pm.remove("another") is True
+        import subprocess
+
+        log = subprocess.run(
+            ["git", "log", "--oneline"], cwd=tmp_path, capture_output=True, text=True
+        )
+        assert "remove: another" in log.stdout
+
+
 class TestFindRelevant:
     def test_basic_search(self, tmp_path: Path) -> None:
         pm = PersistentMemory(memory_dir=tmp_path)
