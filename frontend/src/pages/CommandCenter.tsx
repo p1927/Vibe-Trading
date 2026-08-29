@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ClipboardCheck, History } from "lucide-react";
+import { ClipboardCheck, Gauge, History } from "lucide-react";
 import {
   api,
   type AutonomousAgentInstance,
@@ -66,6 +66,25 @@ function interpolateFanToDailyBand(
   return rows;
 }
 
+/** Pick the fan point closest to `targetDays` (defaults to this panel's 7-day horizon) — the
+ * fan's own horizons (1/3/5/10/21 by default) rarely land exactly on 7, so this is the
+ * closest real anchor rather than an interpolated one, kept deliberately simple/honest for a
+ * single headline number. */
+function pickHeadlineFanPoint(band: DailyBandRow[] | undefined, targetDays = 7): DailyBandRow | undefined {
+  if (!band || band.length === 0) return undefined;
+  return band.reduce((best, row) =>
+    Math.abs(row.days_ahead - targetDays) < Math.abs(best.days_ahead - targetDays) ? row : best,
+  );
+}
+
+/** Spread as a percent of the median (p50) — the fan's own p10/p90 half-width is a genuine
+ * per-run uncertainty measure (see `forecast_nifty_fan`'s own docstring on this), not a
+ * derived/fabricated confidence score. */
+function fanSpreadPct(point: DailyBandRow | undefined): number | null {
+  if (!point || !Number.isFinite(point.p50) || point.p50 === 0) return null;
+  return ((point.p90 - point.p10) / point.p50) * 100;
+}
+
 function fmtInr(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return v.toLocaleString("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
@@ -93,6 +112,22 @@ interface LastSeenPrediction {
   expected_return_pct: number | null;
   range_low: number | null;
   range_high: number | null;
+  /** Real `date|label` keys for the 7-day-window upcoming events this page rendered last
+   * visit — lets a fresh page load diff "which events are new since I last looked" without
+   * duplicating `EventsRangePanel`'s own filtering logic. Optional/absent on an
+   * older-shape stored snapshot (pre-dates this field) — treated as "no prior event
+   * baseline" rather than a parse error. */
+  eventKeys?: string[];
+}
+
+function eventKeyFor(ev: IndexUpcomingEvent): string {
+  return `${ev.date ?? ""}|${ev.label ?? ev.event_type ?? ""}`;
+}
+
+function events7dKeys(artifact: IndexPredictionArtifact | null): string[] {
+  return (artifact?.upcoming_events ?? [])
+    .filter((e) => e.days_from_now != null && e.days_from_now >= 0 && e.days_from_now <= EVENTS_HORIZON_DAYS)
+    .map(eventKeyFor);
 }
 
 function readLastSeenPrediction(): LastSeenPrediction | null {
@@ -149,6 +184,7 @@ function useCommandCenterStream(agentId: string) {
             expected_return_pct: artifact.prediction?.expected_return_pct ?? null,
             range_low: artifact.prediction?.range?.low ?? null,
             range_high: artifact.prediction?.range?.high ?? null,
+            eventKeys: events7dKeys(artifact),
           });
         }
       },
@@ -176,7 +212,24 @@ function useCommandCenterStream(agentId: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prediction?.as_of, prediction?.prediction?.expected_return_pct]);
 
-  return { status, positions, prediction, news, error, revision };
+  // "What changed since I last looked" for events specifically — the shipped
+  // prediction-revised-indicator (`revision` above) already covers expected-return/range
+  // revisions; this covers the real, separable gap its own closing note flagged (new
+  // upcoming events), using the same frozen-at-mount baseline comparison and the same real
+  // `IndexPredictionArtifact.upcoming_events` data the events strip already renders from —
+  // no new data source. `null` (not an empty Set) when there's no prior baseline to diff
+  // against (first-ever visit, or an old-shape stored snapshot with no `eventKeys`), so the
+  // UI can tell "nothing new" apart from "can't tell yet".
+  const newEventKeys = useMemo(() => {
+    const prev = baselineRef.current;
+    if (!prev?.eventKeys) return null;
+    const current = events7dKeys(prediction);
+    const added = current.filter((k) => !prev.eventKeys!.includes(k));
+    return new Set(added);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prediction]);
+
+  return { status, positions, prediction, news, error, revision, newEventKeys };
 }
 
 function LiveDot({ status }: { status: SSEStatus }) {
@@ -330,9 +383,10 @@ interface EventsRangePanelProps {
     prevRangeLow: number | null;
     prevRangeHigh: number | null;
   } | null;
+  newEventKeys: Set<string> | null;
 }
 
-function EventsRangePanel({ artifact, status, revision }: EventsRangePanelProps) {
+function EventsRangePanel({ artifact, status, revision, newEventKeys }: EventsRangePanelProps) {
   const [priorDay, setPriorDay] = useState<{ day: string; bars: HubIndexHistoryBar[] } | null>(null);
 
   useEffect(() => {
@@ -395,6 +449,38 @@ function EventsRangePanel({ artifact, status, revision }: EventsRangePanelProps)
     return artifact?.prediction?.daily_range_band?.filter((row) => row.days_ahead <= EVENTS_HORIZON_DAYS);
   }, [artifact]);
 
+  // Confidence/uncertainty indicator: the forecast fan's own p10/p90 spread at the horizon
+  // closest to this panel's 7-day window, compared against the same real measurement from
+  // the previous persisted fan run (when one exists). Real per-run data either way — never a
+  // fabricated "confidence score". See .claude/backlog/items/
+  // 2026-08-27-unified-trading-command-center-dashboard.md's "confidence/uncertainty
+  // indicator" candidate panel.
+  const uncertainty = useMemo(() => {
+    const fan = artifact?.prediction?.forecast_fan;
+    if (!fan || !fan.band || fan.band.length === 0) return null;
+    const current = pickHeadlineFanPoint(fan.band, EVENTS_HORIZON_DAYS);
+    const currentSpreadPct = fanSpreadPct(current);
+    if (current == null || currentSpreadPct == null) return null;
+
+    const previous = fan.previous?.band ? pickHeadlineFanPoint(fan.previous.band, EVENTS_HORIZON_DAYS) : undefined;
+    const previousSpreadPct = fanSpreadPct(previous);
+
+    return {
+      daysAhead: current.days_ahead,
+      spreadPct: currentSpreadPct,
+      predictedAt: fan.predicted_at,
+      previous:
+        previous != null && previousSpreadPct != null
+          ? {
+              daysAhead: previous.days_ahead,
+              spreadPct: previousSpreadPct,
+              predictedAt: fan.previous?.predicted_at ?? null,
+              deltaPct: currentSpreadPct - previousSpreadPct,
+            }
+          : null,
+    };
+  }, [artifact]);
+
   return (
     <div className="rounded-xl border border-border/60 bg-card p-2 shadow-sm">
       <div className="mb-2 flex items-center gap-2">
@@ -419,18 +505,70 @@ function EventsRangePanel({ artifact, status, revision }: EventsRangePanelProps)
             </div>
           ) : null}
 
+          {uncertainty ? (
+            <div
+              className="flex items-center gap-1.5 rounded-lg border border-border/50 bg-muted/10 px-2 py-1 text-xs text-muted-foreground"
+              title={`Forecast fan p10–p90 spread at +${uncertainty.daysAhead}d, as of ${new Date(uncertainty.predictedAt).toLocaleString()}${
+                uncertainty.previous
+                  ? ` — previous run ${new Date(uncertainty.previous.predictedAt ?? "").toLocaleString()} at +${uncertainty.previous.daysAhead}d`
+                  : ""
+              }`}
+            >
+              <Gauge className="h-3.5 w-3.5 shrink-0" />
+              <span>
+                Uncertainty (+{uncertainty.daysAhead}d): ±{(uncertainty.spreadPct / 2).toFixed(1)}%
+              </span>
+              {uncertainty.previous ? (
+                <span
+                  className={cn(
+                    "font-medium",
+                    uncertainty.previous.deltaPct > 0.05
+                      ? "text-amber-600 dark:text-amber-400"
+                      : uncertainty.previous.deltaPct < -0.05
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "",
+                  )}
+                >
+                  {uncertainty.previous.deltaPct > 0.05
+                    ? "widened"
+                    : uncertainty.previous.deltaPct < -0.05
+                      ? "tightened"
+                      : "unchanged"}{" "}
+                  vs prior run
+                </span>
+              ) : (
+                <span className="italic">no prior run to compare yet</span>
+              )}
+            </div>
+          ) : null}
+
           {events7d.length > 0 ? (
             <div className="flex gap-1.5 overflow-x-auto pb-1">
-              {events7d.map((ev, i) => (
-                <div
-                  key={`${ev.date ?? i}-${ev.label ?? i}`}
-                  className="flex w-32 shrink-0 flex-col gap-0.5 rounded-md border border-border/50 bg-muted/10 px-2 py-1 text-[11px]"
-                  title={[ev.label, ev.category ?? ev.event_type, ev.symbol, ev.impact].filter(Boolean).join(" · ")}
-                >
-                  <span className="font-mono text-muted-foreground">+{ev.days_from_now}d</span>
-                  <span className="truncate font-medium">{ev.label ?? ev.event_type ?? "Event"}</span>
-                </div>
-              ))}
+              {events7d.map((ev, i) => {
+                const isNew = newEventKeys?.has(eventKeyFor(ev)) ?? false;
+                return (
+                  <div
+                    key={`${ev.date ?? i}-${ev.label ?? i}`}
+                    className={cn(
+                      "flex w-32 shrink-0 flex-col gap-0.5 rounded-md border px-2 py-1 text-[11px]",
+                      isNew
+                        ? "border-sky-500/50 bg-sky-500/10"
+                        : "border-border/50 bg-muted/10",
+                    )}
+                    title={[ev.label, ev.category ?? ev.event_type, ev.symbol, ev.impact].filter(Boolean).join(" · ")}
+                  >
+                    <span className="flex items-center justify-between gap-1">
+                      <span className="font-mono text-muted-foreground">+{ev.days_from_now}d</span>
+                      {isNew ? (
+                        <span className="rounded bg-sky-500/20 px-1 text-[9px] font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-400">
+                          New
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="truncate font-medium">{ev.label ?? ev.event_type ?? "Event"}</span>
+                  </div>
+                );
+              })}
             </div>
           ) : null}
 
@@ -474,7 +612,7 @@ export function CommandCenter() {
     };
   }, []);
 
-  const { status, positions, prediction, news, error, revision } = useCommandCenterStream(agentId);
+  const { status, positions, prediction, news, error, revision, newEventKeys } = useCommandCenterStream(agentId);
 
   return (
     <div className="mx-auto min-h-screen max-w-none space-y-2 bg-background p-3 text-foreground">
@@ -493,7 +631,7 @@ export function CommandCenter() {
             skipped={positions?.skipped ?? []}
             status={status}
           />
-          <EventsRangePanel artifact={prediction} status={status} revision={revision} />
+          <EventsRangePanel artifact={prediction} status={status} revision={revision} newEventKeys={newEventKeys} />
         </div>
         <div className="rounded-xl border border-border/60 bg-card p-2 shadow-sm">
           <NewsImpactPanel horizonDays={EVENTS_HORIZON_DAYS} externalReport={news} />

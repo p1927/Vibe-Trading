@@ -3280,6 +3280,15 @@ export interface PlanPrediction {
     fan_id: string;
     predicted_at: string;
     band: Array<{ days_ahead: number; p10: number; p50: number; p90: number }>;
+    /** The second-most-recently-persisted fan (same shape), or `null` when this is the only
+     * fan ever persisted for this ticker. A genuine "how has the model's own uncertainty
+     * band moved since the prior run" comparison — never a synthetic/fabricated lookup. See
+     * `load_latest_fan_band()` in nifty_forecast_fan.py. */
+    previous?: {
+      fan_id: string;
+      predicted_at: string;
+      band: Array<{ days_ahead: number; p10: number; p50: number; p90: number }>;
+    } | null;
   } | null;
   equation?: {
     form?: string;
