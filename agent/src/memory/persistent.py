@@ -123,6 +123,23 @@ _NON_LATIN_SCRIPT_RANGES = (
 _TOKEN_RE = re.compile(rf"[a-zA-Z0-9]{{2,}}|[{_NON_LATIN_SCRIPT_RANGES}]")
 _SLUG_DISALLOWED_RE = re.compile(rf"[^a-z0-9_\-{_NON_LATIN_SCRIPT_RANGES}]")
 
+# A memory whose name/description reads like a point-in-time infra outage or
+# tool-error report (a NameError, a "backend broken" note, a crash) is not a
+# durable fact worth persisting across sessions — it's a snapshot of system
+# state that may already be stale by the time it's recalled. `add()` rejects
+# these outright rather than letting them accumulate: a future turn confidently
+# restating a long-resolved outage from stale memory (instead of re-checking
+# with a live tool call) is exactly the failure this closes off at the source.
+# Shared with ContextBuilder's read-side staleness wrapper in
+# `src/agent/context.py`, which still applies to entries written before this
+# check existed. See
+# .claude/backlog/items/2026-08-29-autonomous-agent-retry-fix-not-live-effective.md.
+OUTAGE_MEMORY_RE = re.compile(
+    r"\b(nameerror|not defined|traceback|exception|crash(?:ed)?|broken|outage|"
+    r"unavailable|fail(?:ed|ure)?|still active|down)\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class MemoryEntry:
@@ -612,6 +629,16 @@ class PersistentMemory:
             raise ValueError("memory name must not be empty or whitespace-only")
         if memory_type not in MEMORY_TYPES:
             raise ValueError(f"memory_type must be one of: {', '.join(MEMORY_TYPES)}")
+        if OUTAGE_MEMORY_RE.search(f"{stripped_name} {description} {content}"):
+            raise ValueError(
+                "refused: this reads like a point-in-time infra outage/tool-error report "
+                "(NameError, 'backend broken', a crash, ...), not a durable fact. Persistent "
+                "memory survives across sessions and is never re-verified once saved, so a "
+                "saved outage note gets treated as still-true long after the fault may be "
+                "fixed. Do not save transient tool failures here — mention the failure in "
+                "this turn's own reply instead, and re-check with a live tool call on the "
+                "next turn rather than relying on a saved note."
+            )
 
         slug = _SLUG_DISALLOWED_RE.sub("_", stripped_name.lower())[:60]
         if slug.strip("_") == "":

@@ -47,6 +47,40 @@ class TestSave:
         assert result["status"] == "error"
 
 
+class TestSaveRejectsOutageReports:
+    """Regression coverage for the write-side half of
+    .claude/backlog/items/2026-08-29-autonomous-agent-retry-fix-not-live-effective.md: a
+    point-in-time infra outage/tool-error report must never be persisted as a durable
+    cross-session memory in the first place."""
+
+    def test_nameerror_report_refused(self, tool: RememberTool) -> None:
+        result = json.loads(
+            tool.execute(
+                action="save",
+                title="OpenAlgo backend os NameError still active on 29AUG26",
+                content="every backend endpoint returns name 'os' is not defined",
+            )
+        )
+        assert result["status"] == "error"
+        assert "refused" in result["error"]
+
+    def test_backend_broken_report_refused(self, tool: RememberTool) -> None:
+        result = json.loads(
+            tool.execute(action="save", title="status", content="backend broken, all calls failing")
+        )
+        assert result["status"] == "error"
+
+    def test_ordinary_project_note_still_saves(self, tool: RememberTool) -> None:
+        result = json.loads(
+            tool.execute(
+                action="save",
+                title="NIFTY identity resolver",
+                content="Use ticker=NIFTY not ^NSEI for record_autonomous_decision",
+            )
+        )
+        assert result["status"] == "ok"
+
+
 # ---------------------------------------------------------------------------
 # recall
 # ---------------------------------------------------------------------------
