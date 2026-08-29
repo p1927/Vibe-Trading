@@ -314,6 +314,10 @@ app.include_router(advisory_router)
 from src.api.positions_routes import positions_router  # noqa: E402
 app.include_router(positions_router)
 
+# --- Agent memory viewing/curation (2026-08-29-memory-management-http-api) ---
+from src.api.memory_routes import memory_router  # noqa: E402
+app.include_router(memory_router)
+
 # --- Alpha Zoo ---
 from src.api.alpha_routes import register_alpha_routes  # noqa: E402
 register_alpha_routes(app)

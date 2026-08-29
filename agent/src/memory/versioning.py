@@ -9,10 +9,27 @@ Deliberately best-effort: a git failure must never block a memory write.
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{4,40}$")
+
+
+class VersioningError(RuntimeError):
+    """A git history/diff read failed. Unlike commit()/ensure_repo() (best-effort, used on the
+    write path), these are read operations the API layer needs to translate into a real HTTP
+    error rather than silently swallow."""
+
+
+def _validate_sha(sha: str) -> str:
+    """Reject anything that isn't a plain hex commit id, so a caller-supplied sha can never be
+    interpreted as a git option (e.g. a string starting with "-")."""
+    if not _SHA_RE.match(sha):
+        raise VersioningError(f"invalid commit sha: {sha!r}")
+    return sha
 
 
 def ensure_repo(memory_dir: Path) -> None:
@@ -61,3 +78,58 @@ def commit(memory_dir: Path, paths: list[Path], message: str) -> None:
         )
     except Exception:
         logger.debug("memory versioning: commit failed", exc_info=True)
+
+
+def log_for_path(memory_dir: Path, path: Path, *, limit: int = 50) -> list[dict]:
+    """Commit history for one file, newest first: [{sha, date, message}, ...]. Empty list if
+    the file has no history (no repo yet, or never committed)."""
+    if not (memory_dir / ".git").exists():
+        return []
+    rel = str(path.relative_to(memory_dir))
+    fmt = "%H%x1f%ad%x1f%s"
+    result = subprocess.run(
+        [
+            "git", "log", f"--max-count={max(1, int(limit))}", "--follow",
+            f"--pretty=format:{fmt}", "--date=iso-strict", "--", rel,
+        ],
+        cwd=memory_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise VersioningError(result.stderr.strip() or "git log failed")
+    commits = []
+    for line in result.stdout.splitlines():
+        if not line:
+            continue
+        sha, date, message = line.split("\x1f", 2)
+        commits.append({"sha": sha, "date": date, "message": message})
+    return commits
+
+
+def show_at(memory_dir: Path, path: Path, sha: str) -> str:
+    """Full file content as of a given commit."""
+    sha = _validate_sha(sha)
+    rel = str(path.relative_to(memory_dir))
+    result = subprocess.run(
+        ["git", "show", f"{sha}:{rel}"], cwd=memory_dir, capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise VersioningError(result.stderr.strip() or "git show failed")
+    return result.stdout
+
+
+def diff_between(memory_dir: Path, path: Path, from_sha: str, to_sha: str) -> str:
+    """Unified diff of one file between two commits."""
+    from_sha = _validate_sha(from_sha)
+    to_sha = _validate_sha(to_sha)
+    rel = str(path.relative_to(memory_dir))
+    result = subprocess.run(
+        ["git", "diff", from_sha, to_sha, "--", rel],
+        cwd=memory_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise VersioningError(result.stderr.strip() or "git diff failed")
+    return result.stdout

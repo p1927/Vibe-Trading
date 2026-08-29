@@ -1,0 +1,192 @@
+"""TestClient coverage for `memory_routes.py` (`/memory/*`) —
+2026-08-29-memory-management-http-api.
+
+`test_router_is_mounted_on_the_app` mirrors `test_positions_routes.py`'s own regression test
+for the "router defined but never `include_router`'d" bug.
+"""
+
+from __future__ import annotations
+
+import tempfile
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+import api_server
+import src.memory.persistent as persistent_module
+
+
+@pytest.fixture
+def memory_dir(monkeypatch: pytest.MonkeyPatch) -> Path:
+    tmp = Path(tempfile.mkdtemp(prefix="memory_routes_test_"))
+    monkeypatch.setattr(persistent_module, "MEMORY_BASE", tmp)
+    return tmp
+
+
+@pytest.fixture
+def client(memory_dir: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    monkeypatch.setattr(api_server, "_API_KEY", "")
+    return TestClient(api_server.app, client=("127.0.0.1", 50000))
+
+
+def _add_entry(**kwargs) -> str:
+    from src.memory.persistent import PersistentMemory
+
+    pm = PersistentMemory()
+    defaults = dict(name="test entry", content="test body", memory_type="project")
+    defaults.update(kwargs)
+    path = pm.add(**defaults)
+    entry = next(e for e in pm.list_entries() if e.path == path)
+    return entry.id
+
+
+def test_router_is_mounted_on_the_app(client: TestClient) -> None:
+    response = client.get("/memory/entries")
+    assert response.status_code != 404, (
+        "GET /memory/entries returned 404 — memory_router is not mounted on the app. Check "
+        "api_server.py includes `from src.api.memory_routes import memory_router` + "
+        "`app.include_router(memory_router)`."
+    )
+    assert response.status_code == 200
+
+
+def test_list_entries_empty(client: TestClient) -> None:
+    response = client.get("/memory/entries")
+    assert response.status_code == 200
+    assert response.json() == {"entries": []}
+
+
+def test_list_entries_filters_by_agent_id(client: TestClient) -> None:
+    _add_entry(name="scoped", agent_id="aa_1")
+    _add_entry(name="other-scoped", agent_id="aa_2")
+    _add_entry(name="unscoped")
+
+    response = client.get("/memory/entries", params={"agent_id": "aa_1"})
+    assert response.status_code == 200
+    titles = [e["title"] for e in response.json()["entries"]]
+    assert titles == ["scoped"]
+
+
+def test_list_entries_unscoped_only(client: TestClient) -> None:
+    _add_entry(name="scoped", agent_id="aa_1")
+    _add_entry(name="unscoped")
+
+    response = client.get("/memory/entries", params={"unscoped_only": True})
+    titles = [e["title"] for e in response.json()["entries"]]
+    assert titles == ["unscoped"]
+
+
+def test_get_entry_detail_includes_body(client: TestClient) -> None:
+    entry_id = _add_entry(name="detail-test", content="the full body text")
+    response = client.get(f"/memory/entries/{entry_id}")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["title"] == "detail-test"
+    assert "the full body text" in body["body"]
+
+
+def test_get_entry_unknown_id_is_404(client: TestClient) -> None:
+    response = client.get("/memory/entries/deadbe")
+    assert response.status_code == 404
+
+
+def test_patch_entry_updates_body(client: TestClient, memory_dir: Path) -> None:
+    entry_id = _add_entry(name="editable", content="original body")
+
+    response = client.patch(f"/memory/entries/{entry_id}", json={"body": "edited body"})
+
+    assert response.status_code == 200
+    assert response.json()["body"] == "edited body"
+    # Persisted to disk, not just the response.
+    files = list(memory_dir.glob("*.md"))
+    text = next(f.read_text() for f in files if f.name != "MEMORY.md")
+    assert "edited body" in text
+    assert "original body" not in text
+
+
+def test_patch_entry_requires_body_or_description(client: TestClient) -> None:
+    entry_id = _add_entry(name="editable2")
+    response = client.patch(f"/memory/entries/{entry_id}", json={})
+    assert response.status_code == 400
+
+
+def test_delete_entry_archives_and_hides_from_list(client: TestClient, memory_dir: Path) -> None:
+    entry_id = _add_entry(name="to-clear")
+
+    response = client.delete(f"/memory/entries/{entry_id}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    # No longer in the active list...
+    list_response = client.get("/memory/entries")
+    assert list_response.json() == {"entries": []}
+    # ...but preserved under archive/, not destroyed.
+    archived = list((memory_dir / "archive").glob("*.md"))
+    assert len(archived) == 1
+
+
+def test_delete_unknown_entry_is_404(client: TestClient) -> None:
+    response = client.delete("/memory/entries/deadbe")
+    assert response.status_code == 404
+
+
+def test_history_returns_commits_after_git_init(client: TestClient, memory_dir: Path) -> None:
+    from src.memory.versioning import ensure_repo
+
+    entry_id = _add_entry(name="versioned")
+    ensure_repo(memory_dir)
+    # A second write after the repo exists produces a real commit for this file.
+    from src.memory.persistent import PersistentMemory
+
+    pm = PersistentMemory()
+    entry = pm.find_by_id(entry_id)
+    pm.update_entry(entry, body="v2 body")
+
+    response = client.get(f"/memory/entries/{entry_id}/history")
+    assert response.status_code == 200
+    commits = response.json()["commits"]
+    assert len(commits) >= 1
+    assert any("versioned" in c["message"] or "edit" in c["message"] for c in commits)
+
+
+def test_history_empty_without_git_repo(client: TestClient) -> None:
+    entry_id = _add_entry(name="no-git-yet")
+    response = client.get(f"/memory/entries/{entry_id}/history")
+    assert response.status_code == 200
+    assert response.json()["commits"] == []
+
+
+def test_diff_between_commits(client: TestClient, memory_dir: Path) -> None:
+    from src.memory.versioning import ensure_repo
+    from src.memory.persistent import PersistentMemory
+
+    entry_id = _add_entry(name="diffable", content="version one")
+    ensure_repo(memory_dir)
+    pm = PersistentMemory()
+    entry = pm.find_by_id(entry_id)
+    pm.update_entry(entry, body="version two")
+
+    history = client.get(f"/memory/entries/{entry_id}/history").json()["commits"]
+    assert len(history) >= 2
+    newest, oldest = history[0]["sha"], history[-1]["sha"]
+
+    response = client.get(
+        f"/memory/entries/{entry_id}/diff", params={"from": oldest, "to": newest}
+    )
+    assert response.status_code == 200
+    diff_text = response.json()["diff"]
+    assert "version one" in diff_text or "version two" in diff_text
+
+
+def test_diff_rejects_invalid_sha(client: TestClient, memory_dir: Path) -> None:
+    from src.memory.versioning import ensure_repo
+
+    entry_id = _add_entry(name="bad-sha-test")
+    ensure_repo(memory_dir)
+
+    response = client.get(
+        f"/memory/entries/{entry_id}/diff",
+        params={"from": "--upload-pack=evil", "to": "HEAD"},
+    )
+    assert response.status_code == 400

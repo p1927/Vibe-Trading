@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import os
 import re
 import sys
 import time as _time
@@ -332,6 +333,113 @@ class PersistentMemory:
             if stem == needle or stem.endswith(f"_{needle}"):
                 return entry
         return None
+
+    def find_by_id(self, entry_id: str) -> Optional[MemoryEntry]:
+        """Resolve a memory by its stable 6-char id (survives a title edit, unlike find())."""
+        needle = entry_id.strip()
+        if not needle:
+            return None
+        for entry in self._scan_entries():
+            if entry.id == needle:
+                return entry
+        return None
+
+    def update_entry(
+        self, entry: MemoryEntry, *, body: str | None = None, description: str | None = None
+    ) -> bool:
+        """Human-edit an existing entry's body/description in place.
+
+        Same atomic tmp-file + os.replace write as MemoryLifecycle._write_compressed, but for a
+        deliberate human curation edit rather than an automatic compression pass -- git-commits
+        as "edit: <title>" and re-indexes the FTS entry so search stays in sync with the edit.
+        """
+        try:
+            text = entry.path.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning("update_entry(%s) failed: %s", entry.title, exc)
+            return False
+        lines = text.split("\n")
+        if not lines or lines[0].strip() != "---":
+            return False
+        end_idx = None
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "---":
+                end_idx = i
+                break
+        if end_idx is None:
+            return False
+
+        now_iso = _time.strftime("%Y-%m-%dT%H:%M:%S", _time.gmtime())
+        updated_found = False
+        for i in range(1, end_idx):
+            if lines[i].startswith("updated_at:"):
+                lines[i] = f"updated_at: {now_iso}"
+                updated_found = True
+            elif description is not None and lines[i].startswith("description:"):
+                safe_desc = description.replace("\n", " ").replace("\r", " ")
+                lines[i] = f"description: {safe_desc}"
+        if not updated_found:
+            lines.insert(end_idx, f"updated_at: {now_iso}")
+            end_idx += 1
+
+        new_body = _truncate_body(_sanitize_body(body)) if body is not None else entry.body
+        new_lines = lines[: end_idx + 1]
+        new_lines.append("")
+        new_lines.append(new_body)
+
+        with memory_lock(self._dir) as acquired:
+            if not acquired:
+                logger.warning("update_entry(%s): lock timeout", entry.title)
+                return False
+            tmp_path = entry.path.with_suffix(entry.path.suffix + ".tmp")
+            tmp_path.write_text("\n".join(new_lines), encoding="utf-8")
+            os.replace(tmp_path, entry.path)
+            from src.memory.versioning import commit as _git_commit
+            _git_commit(self._dir, [entry.path], f"edit: {entry.title}")
+
+        from src.config.accessor import get_env_config
+        if get_env_config().memory.fts_index_enabled:
+            try:
+                from src.memory.search_index import get_shared_index
+                get_shared_index().index_entry(
+                    entry_id=entry.id,
+                    title=entry.title,
+                    description=description if description is not None else entry.description,
+                    keywords="",
+                    body=new_body,
+                )
+            except Exception:
+                logger.debug("FTS5 index_entry failed during update", exc_info=True)
+        return True
+
+    def archive_entry(self, entry: MemoryEntry) -> bool:
+        """Soft-delete: move to archive/ rather than unlink. Git history (and the archive/
+        directory itself) preserve the content, so this is a reviewable "clear from active
+        memory" action, not a destructive one."""
+        archive_dir = self._dir / "archive"
+        archive_dir.mkdir(exist_ok=True)
+        dest = archive_dir / entry.path.name
+        with memory_lock(self._dir) as acquired:
+            if not acquired:
+                logger.warning("archive_entry(%s): lock timeout", entry.title)
+                return False
+            try:
+                entry.path.rename(dest)
+            except OSError as exc:
+                logger.warning("archive_entry(%s) failed: %s", entry.title, exc)
+                return False
+            self._rebuild_index()
+            from src.memory.versioning import commit as _git_commit
+            _git_commit(self._dir, [entry.path, dest, self._index_path], f"archive: {entry.title}")
+
+        from src.config.accessor import get_env_config
+        if get_env_config().memory.fts_index_enabled:
+            try:
+                from src.memory.search_index import get_shared_index
+                get_shared_index().remove_entry(entry.id)
+            except Exception:
+                logger.debug("FTS5 remove_entry failed during archive", exc_info=True)
+        return True
 
     def remove_entry(self, entry: MemoryEntry) -> bool:
         """Delete a resolved entry without re-scanning to find it again."""
