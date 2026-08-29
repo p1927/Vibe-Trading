@@ -20,7 +20,6 @@ from src.config.accessor import get_env_config
 
 logger = logging.getLogger(__name__)
 
-_WATCHDOG_INTERVAL_SECONDS = float(get_env_config().trade.job_watchdog_interval_seconds)
 _watchdog_thread: threading.Thread | None = None
 _watchdog_stop = threading.Event()
 _watchdog_lock = threading.RLock()
@@ -67,9 +66,11 @@ def start_job_watchdog(interval_seconds: float | None = None) -> None:
         if _watchdog_thread is not None and _watchdog_thread.is_alive():
             return
         _watchdog_stop.clear()
+        if interval_seconds is None:
+            interval_seconds = float(get_env_config().trade.job_watchdog_interval_seconds)
         _watchdog_thread = threading.Thread(
             target=_watchdog_loop,
-            args=(interval_seconds if interval_seconds is not None else _WATCHDOG_INTERVAL_SECONDS,),
+            args=(interval_seconds,),
             name="job-watchdog",
             daemon=True,
         )
