@@ -299,8 +299,25 @@ def run_preflight(console: Optional[Console] = None) -> List[CheckResult]:
 
     from src.preflight_checks import check_environment, check_prediction_ml
 
-    checks = [
-        check_environment,
+    # check_environment() must run to completion before anything else: it
+    # calls bootstrap_environment(), which is the authoritative env loader
+    # and sets a global "already bootstrapped" flag other code (notably
+    # _check_llm_provider()'s legacy _ensure_dotenv() path) checks to decide
+    # whether to skip its own, independent .env reload. That flag isn't
+    # synchronized against bootstrap_environment()'s own lock from the
+    # outside — sequentially this was never a problem (check_environment was
+    # always first in the list, so the flag was always already True by the
+    # time anything else looked at it), but running every check concurrently
+    # let _check_llm_provider check the flag *while* check_environment was
+    # still mid-bootstrap, see it as not-yet-done, and independently reload
+    # config from a different env snapshot — observed live as the LLM
+    # provider check resolving to the wrong provider ("openai", unconfigured)
+    # despite .env correctly specifying another one. Run this one check
+    # first, synchronously (cheap — no network I/O, unlike the rest), then
+    # parallelize everything else once bootstrap is guaranteed complete.
+    environment_result = check_environment()
+
+    remaining_checks = [
         _check_llm_provider,
         check_prediction_ml,
         _check_okx,
@@ -313,7 +330,7 @@ def run_preflight(console: Optional[Console] = None) -> List[CheckResult]:
 
     from src.preflight_parallel import run_checks_concurrently
 
-    results: List[CheckResult] = run_checks_concurrently(checks)
+    results: List[CheckResult] = [environment_result] + run_checks_concurrently(remaining_checks)
 
     # Build display table
     table = Table(show_header=False, show_edge=False, padding=(0, 1), expand=False)
