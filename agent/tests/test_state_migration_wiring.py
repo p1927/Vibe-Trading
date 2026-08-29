@@ -55,6 +55,7 @@ def test_api_startup_runs_migration(
 
     monkeypatch.setattr("src.preflight.run_preflight", lambda console: None)
     monkeypatch.setattr(api_server, "_start_scheduled_research_executor", lambda: None)
+    monkeypatch.setattr("src.trade.job_watchdog.start_job_watchdog", lambda: None)
     monkeypatch.setattr(
         "src.config.accessor.get_env_config",
         lambda: type(
@@ -108,6 +109,8 @@ def test_api_lifespan_preserves_startup_and_shutdown_order(
     monkeypatch.setattr(api_server, "_start_channel_runtime", start_channels)
     monkeypatch.setattr(api_server, "_stop_channel_runtime", stop_channels)
     monkeypatch.setattr(api_server, "_stop_scheduled_research_executor", stop_scheduler)
+    monkeypatch.setattr("src.trade.job_watchdog.start_job_watchdog", lambda: None)
+    monkeypatch.setattr("src.trade.job_watchdog.stop_job_watchdog", lambda: None)
     monkeypatch.setattr(
         "src.config.accessor.get_env_config",
         lambda: type(
