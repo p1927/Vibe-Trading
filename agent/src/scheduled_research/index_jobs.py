@@ -222,7 +222,6 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
 
     from trade_integrations.dataflows.index_research.pipeline_cancel import check_pipeline_cancel
 
-    check_pipeline_cancel()
     cfg = config or {}
     ticker = str(cfg.get("ticker") or "NIFTY").strip().upper()
     try:
@@ -234,6 +233,8 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
             return {"skipped": True, "reason": "manual_run_active", "ticker": ticker}
     except Exception as exc:
         logger.debug("manual run active check skipped: %s", exc)
+
+    check_pipeline_cancel()
 
     snapshot_date = cfg.get("snapshot_date")
     if not snapshot_date:
