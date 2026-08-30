@@ -1438,7 +1438,9 @@ def get_index_prediction_factors(
 ) -> IndexFactorCatalogResponse:
     """Return catalog of macro, technical, bottom-up, and model factors."""
     try:
-        from trade_integrations.dataflows.index_research.factor_catalog import list_factor_catalog
+        from trade_integrations.dataflows.index_research.pipeline_stage_catalog import (
+            list_factor_catalog,
+        )
 
         payload = list_factor_catalog()
         return IndexFactorCatalogResponse(status="ok", **payload)
