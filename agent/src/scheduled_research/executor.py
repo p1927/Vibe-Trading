@@ -242,6 +242,7 @@ class ScheduledResearchExecutor:
         max_consecutive_failures: int | None = None,
         retry_base_delay_ms: int | None = None,
         retry_max_delay_ms: int | None = None,
+        dispatch_concurrency: int | None = None,
         briefing_reader: "BriefingReader | None" = None,
         channel_sender: "ChannelSender | None" = None,
         delivery_lease_ms: int = DEFAULT_DELIVERY_LEASE_MS,
@@ -258,6 +259,16 @@ class ScheduledResearchExecutor:
                 becomes terminal. Defaults to environment configuration.
             retry_base_delay_ms: Base delay for exponential retry backoff.
             retry_max_delay_ms: Upper bound for exponential retry backoff.
+            dispatch_concurrency: Max number of due jobs dispatched at once
+                per tick. Defaults to environment configuration. Jobs are
+                independent records keyed by id in the store, and every store
+                mutation (``upsert``/``load``/``save``) is a plain synchronous
+                call with no internal ``await`` — so it always runs to
+                completion atomically on the single asyncio event loop before
+                any other task's code can run, regardless of how many
+                dispatches are in flight concurrently. Bounding this above 1
+                only overlaps the slow part (the awaited dispatch itself, e.g.
+                network calls), not the store writes.
             briefing_reader: Callable returning ``(terminal_status, text)`` for
                 a session, or ``None`` while its run is still in flight. Both
                 collaborators are injected rather than imported so the outbox
@@ -271,7 +282,7 @@ class ScheduledResearchExecutor:
             ValueError: If the retry policy is invalid.
         """
         tuning = None
-        if None in (max_consecutive_failures, retry_base_delay_ms, retry_max_delay_ms):
+        if None in (max_consecutive_failures, retry_base_delay_ms, retry_max_delay_ms, dispatch_concurrency):
             tuning = get_env_config().agent_tuning
         self._store = store
         self._dispatch = dispatch
@@ -298,12 +309,19 @@ class ScheduledResearchExecutor:
             if retry_max_delay_ms is not None
             else tuning.vibe_trading_scheduler_retry_max_delay_ms
         )
+        self._dispatch_concurrency = (
+            dispatch_concurrency
+            if dispatch_concurrency is not None
+            else tuning.vibe_trading_scheduler_dispatch_concurrency
+        )
         if self._max_consecutive_failures < 1:
             raise ValueError("max_consecutive_failures must be at least 1")
         if self._retry_base_delay_ms < 0:
             raise ValueError("retry_base_delay_ms must be non-negative")
         if self._retry_max_delay_ms < self._retry_base_delay_ms:
             raise ValueError("retry_max_delay_ms must be at least retry_base_delay_ms")
+        if self._dispatch_concurrency < 1:
+            raise ValueError("dispatch_concurrency must be at least 1")
         self._task: asyncio.Task | None = None
         self._wakeup: asyncio.Event | None = None
         self._stopping = False
@@ -439,15 +457,32 @@ class ScheduledResearchExecutor:
             (job for job in self._store.load().values() if is_due(job, now)),
             key=lambda job: job.next_run_at,
         )
-        for job in jobs:
-            # One job's unexpected persistence/lifecycle error must not starve
-            # every job sorted after it, tick after tick.
-            try:
-                await self._run_job(job, now)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.error("scheduled research job %s failed its run cycle", job.id, exc_info=True)
+        # Dispatch up to _dispatch_concurrency jobs at once instead of
+        # strictly one at a time: a burst of simultaneously-due jobs
+        # (routine on overlapping cron cadences, not just a mass manual
+        # trigger) used to queue behind whichever job the executor happened
+        # to be awaiting, even when that job was slow only because of a
+        # network call and shared nothing else with the others. Safe to
+        # overlap because every store mutation a job performs (marking
+        # RUNNING, persisting completion) is a synchronous call with no
+        # internal ``await`` — it always runs to completion atomically on
+        # this single event loop, so concurrent dispatches never interleave
+        # their store writes even though their dispatch awaits overlap.
+        semaphore = asyncio.Semaphore(self._dispatch_concurrency)
+
+        async def _run_job_bounded(job: ScheduledResearchJob) -> None:
+            async with semaphore:
+                # One job's unexpected persistence/lifecycle error must not
+                # starve every other job in this tick.
+                try:
+                    await self._run_job(job, now)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.error("scheduled research job %s failed its run cycle", job.id, exc_info=True)
+
+        if jobs:
+            await asyncio.gather(*(_run_job_bounded(job) for job in jobs))
 
         # The sweep is what makes delivery correct; the event hook only makes
         # it prompt. A briefing whose hook was lost to a restart, a crash

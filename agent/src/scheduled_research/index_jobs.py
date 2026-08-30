@@ -48,6 +48,15 @@ JOB_TYPE_HUB_NEWS_INGEST = "hub_news_ingest"
 # See 2026-08-27-scheduler-dispatch-timeouts.
 _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS = 90 * 60 * 1000
 _HUB_NEWS_ENTITY_DRAIN_DISPATCH_TIMEOUT_MS = 40 * 60 * 1000
+# "light"/"tight" ingest jobs never got their own override and fell back to
+# staleness.py's generic 10-min hub_news_ingest default. Live-verified
+# 2026-08-30: nifty-hub-news-ingest-tight failed 3 consecutive runs at exactly
+# that 10-min cap, and per-market light-mode runs (us/jp/cn/ru) were already
+# observed completing anywhere from ~1min to ~9min. "-tight" clones "-light"'s
+# config verbatim but fires every 5min instead of light's slower cadence, so
+# it has the least margin. Sized with 2x headroom over the observed ~9-10min
+# ceiling. See 2026-08-30-hub-news-ingest-tight-light-dispatch-timeout-undersized.
+_HUB_NEWS_LIGHT_TIGHT_INGEST_DISPATCH_TIMEOUT_MS = 20 * 60 * 1000
 JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP = "stock_history_coverage_sweep"
 JOB_TYPE_NEWS_QUALITY_EVAL = "news_quality_eval"
 JOB_TYPE_NEWS_DEDUP_QUALITY_EVAL = "news_dedup_quality_eval"
@@ -1101,6 +1110,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "ticker": "NIFTY",
                 "sources": get_env_config().trade.hub_news_light_sources,
                 "lookback_days": 1,
+                "dispatch_timeout_ms": _HUB_NEWS_LIGHT_TIGHT_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         ScheduledResearchJob(
@@ -1172,6 +1182,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "market": "US",
                 "sources": get_env_config().trade.hub_news_light_sources,
                 "lookback_days": 1,
+                "dispatch_timeout_ms": _HUB_NEWS_LIGHT_TIGHT_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         # No dedicated "us-hub-news-entity" job: nifty-hub-news-entity already
@@ -1221,6 +1232,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "market": "JP",
                 "sources": get_env_config().trade.hub_news_light_sources,
                 "lookback_days": 1,
+                "dispatch_timeout_ms": _HUB_NEWS_LIGHT_TIGHT_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         # Same reasoning as US: no dedicated "jp-hub-news-entity" job needed —
@@ -1265,6 +1277,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "market": "CN",
                 "sources": get_env_config().trade.hub_news_light_sources,
                 "lookback_days": 1,
+                "dispatch_timeout_ms": _HUB_NEWS_LIGHT_TIGHT_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         # Same reasoning as US/JP: no dedicated "cn-hub-news-entity" job needed —
@@ -1315,6 +1328,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "market": "RU",
                 "sources": get_env_config().trade.hub_news_light_sources,
                 "lookback_days": 1,
+                "dispatch_timeout_ms": _HUB_NEWS_LIGHT_TIGHT_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         # Same reasoning as US/JP/CN: no dedicated "ru-hub-news-entity" job needed —
@@ -1363,6 +1377,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "market": "ME",
                 "sources": get_env_config().trade.hub_news_light_sources,
                 "lookback_days": 1,
+                "dispatch_timeout_ms": _HUB_NEWS_LIGHT_TIGHT_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         # Same reasoning as US/JP/CN/RU: no dedicated "me-hub-news-entity" job needed —
@@ -1411,6 +1426,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "market": "LATAM",
                 "sources": get_env_config().trade.hub_news_light_sources,
                 "lookback_days": 1,
+                "dispatch_timeout_ms": _HUB_NEWS_LIGHT_TIGHT_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         # Same reasoning as US/JP/CN/RU/ME: no dedicated "latam-hub-news-entity" job
@@ -1461,6 +1477,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "market": "EU",
                 "sources": get_env_config().trade.hub_news_light_sources,
                 "lookback_days": 1,
+                "dispatch_timeout_ms": _HUB_NEWS_LIGHT_TIGHT_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
         # Same reasoning as US/JP/CN/RU/ME/LATAM: no dedicated "eu-hub-news-entity" job

@@ -391,6 +391,9 @@ class AgentTuningConfig(_EnvBase):
     vibe_trading_scheduler_retry_max_delay_ms: int = Field(
         alias="VIBE_TRADING_SCHEDULER_RETRY_MAX_DELAY_MS", default=3_600_000,
     )
+    vibe_trading_scheduler_dispatch_concurrency: int = Field(
+        alias="VIBE_TRADING_SCHEDULER_DISPATCH_CONCURRENCY", default=4,
+    )
     vibe_trading_channels_auto_start: EnvBool = Field(
         alias="VIBE_TRADING_CHANNELS_AUTO_START", default=False,
     )
