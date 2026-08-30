@@ -26,10 +26,20 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 def _isolated_job_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Give each test a private in-memory + on-disk job store."""
+    """Give each test a private in-memory + on-disk job store.
+
+    Also pins TRADE_STACK_ROOT to tmp_path so run_index_factor_snapshot_job's
+    check_pipeline_cancel() (which resolves its cancel-flag path off that env
+    var) reads/writes under this test's private directory instead of the
+    real repo's log/index_prediction_jobs/ — a stray real cancel flag left
+    behind by another test previously made this suite's manual-run-active
+    guard unreachable. See
+    .claude/backlog/items/2026-08-27-pipeline-cancel-test-pollution.md.
+    """
     monkeypatch.setattr(run_jobs, "INDEX_PREDICTION_RUN_JOBS", {})
     monkeypatch.setattr(run_jobs, "_ACTIVE_BY_TICKER", {})
     monkeypatch.setattr("src.trade.hub_bridge.trade_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("TRADE_STACK_ROOT", str(tmp_path))
     yield
 
 

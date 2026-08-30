@@ -598,7 +598,17 @@ def test_periodic_stale_running_recovery(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_dispatch_timeout_marks_completed_and_unblocks_next_job(tmp_path: Path) -> None:
+def test_dispatch_timeout_marks_completed_and_unblocks_next_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A dispatch timeout for an index_* job cooperatively cancels in-flight
+    # pipeline work via pipeline_cancel.request_pipeline_cancel(), which
+    # writes log/index_prediction_jobs/_pipeline_cancel.json under
+    # TRADE_STACK_ROOT. Pin that root to this test's tmp_path so the real
+    # repo's log directory is never touched and no stray cancel flag can
+    # leak into other tests (see
+    # .claude/backlog/items/2026-08-27-pipeline-cancel-test-pollution.md).
+    monkeypatch.setenv("TRADE_STACK_ROOT", str(tmp_path))
     store = _store(tmp_path)
     slow = _job("slow", schedule="1000", next_run_at=10)
     slow.config = {"job_type": "index_plan_refresh", "dispatch_timeout_ms": 50}
