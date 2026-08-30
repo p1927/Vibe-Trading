@@ -1690,9 +1690,41 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         logger.warning("hub news pipeline job sync failed: %s", exc)
 
     for job in defaults:
-        if store.get(job.id) is not None:
+        existing = store.get(job.id)
+        if existing is None:
+            store.upsert(job)
+            created += 1
+            logger.info("registered default index research job %s (%s)", job.id, job.schedule)
             continue
-        store.upsert(job)
-        created += 1
-        logger.info("registered default index research job %s (%s)", job.id, job.schedule)
+
+        # Reconcile code-defined fields (schedule, prompt, config) into an
+        # already-registered job. Without this, a code change to a job's
+        # schedule or config (e.g. a dispatch_timeout_ms override, a cadence
+        # widen) never reaches any deployment where the job id was already
+        # present in the store — it silently landed as a no-op. Runtime state
+        # (status, last_run_at, consecutive_failures, next_run_at, paused,
+        # delivery, etc.) is untouched; only the fields this function itself
+        # defines are reconciled. `config` is merged rather than replaced so
+        # executor-injected scratch keys (e.g. `_timed_out`,
+        # `_last_result_summary`) survive across boots.
+        # See 2026-08-31-default-job-registration-never-updates-existing-jobs.
+        merged_config = dict(existing.config)
+        merged_config.update(job.config)
+        if (
+            existing.schedule == job.schedule
+            and existing.prompt == job.prompt
+            and existing.config == merged_config
+        ):
+            continue
+        store.upsert(
+            dataclasses.replace(
+                existing,
+                schedule=job.schedule,
+                prompt=job.prompt,
+                config=merged_config,
+            )
+        )
+        logger.info(
+            "reconciled default index research job %s (schedule=%s)", job.id, job.schedule
+        )
     return created

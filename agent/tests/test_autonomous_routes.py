@@ -84,6 +84,84 @@ def test_pnl_history_for_unknown_agent_is_a_client_error(client: TestClient) -> 
     assert 400 <= response.status_code < 500
 
 
+def _save_test_agent(agent_id: str) -> None:
+    from trade_integrations.autonomous_agents.store import save_agent
+
+    save_agent(
+        {
+            "id": agent_id,
+            "type": "autonomous_agent.instance",
+            "name": "test agent",
+            "status": "running",
+            "vibe_session_id": "sess-1",
+            "symbols": ["NIFTY"],
+            "execution_market": "IN",
+            "execution_backend": "paper",
+            "schedules": {},
+        }
+    )
+
+
+def test_exit_evaluation_post_for_unknown_agent_is_a_client_error(client: TestClient) -> None:
+    response = client.post(
+        "/autonomous-agents/does-not-exist/exit-evaluations",
+        json={"ticker": "NIFTY", "exit_decision_at": "2026-08-20T10:00:00+00:00"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_exit_evaluation_get_for_unknown_agent_is_a_client_error(client: TestClient) -> None:
+    response = client.get("/autonomous-agents/does-not-exist/exit-evaluations")
+
+    assert response.status_code == 404
+
+
+def test_exit_evaluation_post_records_and_get_lists_it(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No Authorization header sent — loopback bypass, same as
+    `test_clear_all_agents_succeeds_via_loopback_auth` above."""
+    from trade_integrations.dataflows.news_hub_bridge import replay_gate
+    from trade_integrations.stock_simulator.client import StockSimulatorClient
+
+    agent_id = "agent-exit-eval"
+    _save_test_agent(agent_id)
+
+    def fake_get_quote(self, symbol, exchange, *, force_live=False):
+        assert force_live is True
+        return {"status": "ok", "mode": "live", "data": {"ltp": 25200.0}}
+
+    monkeypatch.setattr(StockSimulatorClient, "get_quote", fake_get_quote)
+    monkeypatch.setattr(
+        replay_gate,
+        "current_headlines",
+        lambda **kw: [{"title": "rate cut", "actual_impact": {"nifty_points": 30.0}}],
+    )
+
+    response = client.post(
+        f"/autonomous-agents/{agent_id}/exit-evaluations",
+        json={
+            "ticker": "NIFTY",
+            "exit_decision_at": "2026-08-20T10:00:00+00:00",
+            "exit_rationale": "target hit",
+            "exit_direction": "LONG",
+            "reference_price": 25000.0,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["verdict"] == "early_exit"
+    assert body["news_alignment"] == "consistent"
+
+    list_response = client.get(f"/autonomous-agents/{agent_id}/exit-evaluations")
+    assert list_response.status_code == 200
+    evaluations = list_response.json()["evaluations"]
+    assert len(evaluations) == 1
+    assert evaluations[0]["exit_decision_at"] == "2026-08-20T10:00:00+00:00"
+
+
 def test_drafts_get_is_explicitly_not_allowed(client: TestClient) -> None:
     """GET /drafts is deliberately blocked (405) — only POST creates a draft. Regression for
     the route's own explicit `raise HTTPException(405, ...)` contract."""
