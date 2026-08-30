@@ -246,6 +246,7 @@ def record_exit_evaluation_route(
 
 @autonomous_router.get("/{agent_id}/exit-evaluations")
 def list_exit_evaluations_route(agent_id: str) -> Dict[str, Any]:
+    import numpy as np
     import pandas as pd
 
     from trade_integrations.autonomous_agents.exit_evaluation_ledger import load_exit_evaluations
@@ -257,7 +258,14 @@ def list_exit_evaluations_route(agent_id: str) -> Dict[str, Any]:
     # NaN (unscored numeric fields like reference_price/price_move_pct) isn't valid JSON —
     # normalize to None before serializing.
     series = series.astype(object).where(pd.notnull(series), None)
-    return {"agent_id": agent_id, "evaluations": series.to_dict("records")}
+    records = series.to_dict("records")
+    for record in records:
+        # A list-valued column (real_headlines_sample) round-trips through parquet as a
+        # numpy.ndarray, which pydantic/FastAPI can't JSON-serialize.
+        for key, value in record.items():
+            if isinstance(value, np.ndarray):
+                record[key] = value.tolist()
+    return {"agent_id": agent_id, "evaluations": records}
 
 
 @autonomous_router.post("/commit")

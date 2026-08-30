@@ -58,14 +58,21 @@ def is_dst_eval_scheduler_enabled(value: str | None = None) -> bool:
 
 
 def run_recorder_dst_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Shell out to pytest: the ``@given(...)`` Hypothesis tests have no direct callable."""
+    """Shell out to pytest: the ``@given(...)`` Hypothesis tests have no direct callable.
+
+    Uses the root repo's own ``.venv`` (where ``yfinance``/``tradingagents``/pytest all live),
+    not ``sys.executable`` — the vibetrading agent server that dispatches this job runs under
+    ``vibetrading/.venv``, a separate, narrower environment that doesn't have pytest at all.
+    """
     root = trade_repo_root()
     if root is None:
         return {"status": "error", "error": "trade repo root not found", "had_errors": True}
+    venv_python = root / ".venv" / "bin" / "python3"
+    python_bin = str(venv_python) if venv_python.is_file() else sys.executable
     try:
         proc = subprocess.run(
             [
-                sys.executable, "-m", "pytest", "tests/test_recorder_dst_lite.py",
+                python_bin, "-m", "pytest", "tests/test_recorder_dst_lite.py",
                 "-m", "recorder_dst", "-q", "--timeout=120",
             ],
             cwd=str(root),
