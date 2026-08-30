@@ -45,7 +45,13 @@ import { trackConsoleErrors } from './helpers/apiMock'
  * per PROTOCOL.md.
  */
 
-const VIBE_API_ORIGIN = 'http://localhost:8899'
+// Pin to IPv4. On macOS dev stacks the Vibe backend binds 127.0.0.1 only;
+// Node's DNS resolver picks ::1 first for "localhost" and gets
+// ECONNREFUSED intermittently (50/50 in our runs). Same pitfall as the
+// Python urllib issue documented in tests/test_user_journeys.py, and as
+// fixed for scheduled.spec.ts — see
+// .claude/backlog/items/2026-08-30-vibetrading-e2e-ipv6-loopback-trap.md
+const VIBE_API_ORIGIN = 'http://127.0.0.1:8899'
 
 type WikiEntry = {
   score: number
@@ -221,7 +227,7 @@ test.describe('Knowledge Engine — interaction (live API)', () => {
 
     // Verify the URL contains the right host + path (no SPA fallback
     // intercepted the request and the live backend answered).
-    expect(strategiesRequestUrl).toMatch(/^http:\/\/localhost:8899\/knowledge\/strategies/)
+    expect(strategiesRequestUrl).toMatch(/^http:\/\/127\.0\.0\.1:8899\/knowledge\/strategies/)
 
     // The market-view filter input is rendered on this tab.
     await expect(

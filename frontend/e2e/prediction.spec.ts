@@ -37,7 +37,13 @@ import { expect, test } from '@playwright/test'
  * `2026-08-27-prediction-tab-fail-loud-not-silent-fallback` umbrella.
  */
 
-const VIBE_API_ORIGIN = 'http://localhost:8899'
+// Pin to IPv4. On macOS dev stacks the Vibe backend binds 127.0.0.1 only;
+// Node's DNS resolver picks ::1 first for "localhost" and gets
+// ECONNREFUSED intermittently (50/50 in our runs). Same pitfall as the
+// Python urllib issue documented in tests/test_user_journeys.py, and as
+// fixed for scheduled.spec.ts — see
+// .claude/backlog/items/2026-08-30-vibetrading-e2e-ipv6-loopback-trap.md
+const VIBE_API_ORIGIN = 'http://127.0.0.1:8899'
 
 /**
  * Read the live /trade/index-prediction response — what the Prediction
