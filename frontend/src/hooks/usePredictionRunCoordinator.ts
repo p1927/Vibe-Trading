@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import {
   api,
+  ApiError,
   streamIndexPredictionJob,
   type IndexPredictionRunJobSnapshot,
 } from "@/lib/api";
@@ -45,12 +46,32 @@ function hydrateLogsFromSnapshot(snapshot: IndexPredictionRunJobSnapshot | null 
   }
 }
 
+/**
+ * Result of a job-snapshot lookup, distinguishing "the backend definitively
+ * says this job_id is invalid/gone" (404/400 — the stored id is stale and
+ * must be cleared) from a transient failure (network error — the caller
+ * should not treat the stored id as confirmed-dead just because one probe
+ * failed).
+ */
+type JobSnapshotResult =
+  | { kind: "found"; snapshot: IndexPredictionRunJobSnapshot }
+  | { kind: "not_found" }
+  | { kind: "error" };
+
 async function fetchJobSnapshot(jobId: string): Promise<IndexPredictionRunJobSnapshot | null> {
+  const result = await fetchJobSnapshotResult(jobId);
+  return result.kind === "found" ? result.snapshot : null;
+}
+
+async function fetchJobSnapshotResult(jobId: string): Promise<JobSnapshotResult> {
   try {
     const res = await api.getIndexPredictionRunJob(jobId);
-    return res.job ?? null;
-  } catch {
-    return null;
+    return res.job ? { kind: "found", snapshot: res.job } : { kind: "not_found" };
+  } catch (e) {
+    if (e instanceof ApiError && (e.status === 404 || e.status === 400)) {
+      return { kind: "not_found" };
+    }
+    return { kind: "error" };
   }
 }
 
@@ -94,25 +115,23 @@ export function usePredictionRunCoordinator(ticker = "NIFTY") {
       const controller = new AbortController();
       abortRef.current = controller;
 
-      const store = usePredictionRunStore.getState();
-      store.setRunning(true);
-      store.setRunJobId(jobId);
-      store.setReattached(Boolean(options?.reattach));
-      writeStoredRunJobId(tickerKey, jobId);
-
-      if (options?.clearLogs !== false) {
-        store.setPipelineLogs([]);
-      }
-
-      const snapshot = await fetchJobSnapshot(jobId);
+      // Validate the job before ever showing "running" — a stored/candidate
+      // job_id (from sessionStorage or a caller's own guess) may point at a
+      // job that has already finished, errored, or never existed. Only a
+      // definitive not-found/invalid response is treated as stale; a
+      // transient lookup error falls through and is treated as active so a
+      // genuinely in-flight job (or a job just created by this same call)
+      // isn't dropped because of one flaky probe.
+      const result = await fetchJobSnapshotResult(jobId);
       if (gen !== attachGenRef.current) return;
-      if (snapshot?.logs?.length && options?.clearLogs === false) {
-        usePredictionRunStore.getState().setPipelineLogs(snapshot.logs);
-      } else if (snapshot?.logs?.length && options?.reattach) {
-        hydrateLogsFromSnapshot(snapshot);
+
+      if (result.kind === "not_found") {
+        clearStoredRunJobId(tickerKey);
+        usePredictionRunStore.getState().finishRun();
+        return;
       }
 
-      const skipLogsBefore = usePredictionRunStore.getState().getLogCount();
+      const snapshot = result.kind === "found" ? result.snapshot : null;
 
       if (snapshot && !ACTIVE_JOB_STATUSES.has(snapshot.status)) {
         if ((snapshot.status === "done" || snapshot.status === "done_with_warnings") && snapshot.artifact) {
@@ -134,6 +153,23 @@ export function usePredictionRunCoordinator(ticker = "NIFTY") {
         usePredictionRunStore.getState().finishRun();
         return;
       }
+
+      const store = usePredictionRunStore.getState();
+      store.setRunning(true);
+      store.setRunJobId(jobId);
+      store.setReattached(Boolean(options?.reattach));
+      writeStoredRunJobId(tickerKey, jobId);
+
+      if (options?.clearLogs !== false) {
+        store.setPipelineLogs([]);
+      }
+      if (snapshot?.logs?.length && options?.clearLogs === false) {
+        usePredictionRunStore.getState().setPipelineLogs(snapshot.logs);
+      } else if (snapshot?.logs?.length && options?.reattach) {
+        hydrateLogsFromSnapshot(snapshot);
+      }
+
+      const skipLogsBefore = usePredictionRunStore.getState().getLogCount();
 
       try {
         await streamIndexPredictionJob(
@@ -192,8 +228,13 @@ export function usePredictionRunCoordinator(ticker = "NIFTY") {
           await attachToJob(tickerKey, job.job_id, gen, { reattach: true, clearLogs: false });
           return;
         }
-        clearStoredRunJobId(tickerKey);
 
+        // The ticker-wide active-run lookup found nothing, but a
+        // per-tab stored job_id might still be a real, active job the
+        // active-run index hasn't caught up with yet (or one it doesn't
+        // track) — check it directly before deciding it's stale. Clearing
+        // sessionStorage here unconditionally, before this check, would
+        // make the check below permanently unreachable.
         const stored = readStoredRunJobId(tickerKey);
         if (stored) {
           const snapshot = await fetchJobSnapshot(stored);
@@ -203,8 +244,8 @@ export function usePredictionRunCoordinator(ticker = "NIFTY") {
             await attachToJob(tickerKey, snapshot.job_id, gen, { reattach: true, clearLogs: false });
             return;
           }
-          clearStoredRunJobId(tickerKey);
         }
+        clearStoredRunJobId(tickerKey);
       } catch {
         const stored = readStoredRunJobId(tickerKey);
         if (stored) {
