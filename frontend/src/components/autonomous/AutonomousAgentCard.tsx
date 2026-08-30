@@ -67,6 +67,12 @@ function executionContextLabel(ctx: AutonomousAgentExecutionContext | null | und
   return `${ctx.broker} · ${mode} · ${region}`;
 }
 
+function formatRecheckInterval(sec: number): string {
+  if (sec < 3600) return `${Math.round(sec / 60)}m`;
+  if (sec < 86_400) return `${Math.round(sec / 3600)}h`;
+  return `${Math.round(sec / 86_400)}d`;
+}
+
 interface Props {
   agent: AutonomousAgentInstance;
   onOpen: () => void;
@@ -83,7 +89,11 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
   const lastDecision = (runtime?.last_decision || agent.last_decision) as {
     decision?: string;
     confidence?: number;
+    rationale?: string;
+    next_check?: { conditions?: string[]; min_recheck_sec?: number } | null;
   } | null;
+  const isHold = lastDecision?.decision?.toUpperCase() === "HOLD";
+  const nextCheck = isHold ? lastDecision?.next_check : null;
   const confidence = agent.thesis?.confidence ?? lastDecision?.confidence;
   const executionLabel = executionContextLabel(runtime?.execution_context);
   const watchStrategy = runtime?.watch_strategy ?? agent.thesis?.strategy;
@@ -275,6 +285,20 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
           {agent.thesis?.rationale && (
             <p className="text-muted-foreground line-clamp-3">{agent.thesis.rationale}</p>
           )}
+          {isHold && lastDecision?.rationale && (
+            <p className="text-muted-foreground line-clamp-3">
+              <span className="font-medium text-foreground/80">Hold: </span>
+              {lastDecision.rationale}
+            </p>
+          )}
+          {nextCheck?.conditions?.length ? (
+            <p className="text-muted-foreground">
+              <span className="font-medium text-foreground/80">Next check: </span>
+              {nextCheck.conditions.join(", ")}
+              {nextCheck.min_recheck_sec != null &&
+                ` (min ${formatRecheckInterval(nextCheck.min_recheck_sec)})`}
+            </p>
+          ) : null}
           <p className="text-muted-foreground">{agent.mandate}</p>
           {runtime?.market_open != null && (
             <p className="text-muted-foreground">
