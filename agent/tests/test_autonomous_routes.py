@@ -90,3 +90,51 @@ def test_drafts_get_is_explicitly_not_allowed(client: TestClient) -> None:
     response = client.get("/autonomous-agents/drafts")
 
     assert response.status_code == 405
+
+
+def test_resume_reschedules_a_failed_bootstrap(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test for
+    `.claude/backlog/items/2026-08-29-failed-bootstrap-not-retried-on-resume.md`:
+    resuming an agent left with `bootstrap_status=="failed"` (e.g. a user-paused agent
+    whose bootstrap was force-failed by `_fail_stuck_bootstrap`, or a plain bootstrap.py
+    timeout/exception) must explicitly re-schedule bootstrap — `resume_autonomous_agent`
+    only flips `status` back to `"running"` and nothing else revisits a terminal
+    `bootstrap_status`.
+    """
+    from trade_integrations.autonomous_agents.store import save_agent
+    import src.scheduled_research.autonomous_bootstrap as autonomous_bootstrap
+
+    agent_id = "agent-failed-bootstrap"
+    save_agent(
+        {
+            "id": agent_id,
+            "type": "autonomous_agent.instance",
+            "name": "test agent",
+            "status": "paused",
+            "pause_reason": "user",
+            "bootstrap_status": "failed",
+            "bootstrap_error": "bootstrap timed out after 300s",
+            "vibe_session_id": "sess-1",
+            "symbols": ["RELIANCE"],
+            "execution_market": "IN",
+            "execution_backend": "paper",
+            "schedules": {},
+        }
+    )
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        autonomous_bootstrap,
+        "schedule_agent_bootstrap",
+        lambda aid: calls.append(aid) or True,
+    )
+
+    response = client.post(f"/autonomous-agents/{agent_id}/resume")
+
+    assert response.status_code == 200, response.text
+    assert calls == [agent_id], (
+        "resuming an agent with bootstrap_status=='failed' did not call "
+        "schedule_agent_bootstrap — the bootstrap will never retry"
+    )

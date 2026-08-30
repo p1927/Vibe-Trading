@@ -326,6 +326,17 @@ def resume_agent(
                         agent["bootstrap_status"] = "pending"
                         save_agent(agent)
                     schedule_agent_bootstrap(agent_id)
+                elif bootstrap == "failed":
+                    # A bootstrap that failed outright (timeout/exception in
+                    # bootstrap.py, or force-failed by _fail_stuck_bootstrap
+                    # while the agent was paused/stopped) is a terminal state
+                    # that nothing else retries — resuming an agent left in
+                    # this state must explicitly kick bootstrap back off,
+                    # same as the infra-heal path above already does.
+                    # bootstrap_agent() itself accepts bootstrap_status
+                    # "failed" and resets it to "running", so no manual
+                    # reset is needed here.
+                    schedule_agent_bootstrap(agent_id)
         return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
