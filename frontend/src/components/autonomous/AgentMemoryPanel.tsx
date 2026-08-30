@@ -18,6 +18,13 @@ function fmtDate(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toLocaleString();
 }
 
+function fmtAge(epochSeconds: number): string {
+  if (!epochSeconds) return "—";
+  const days = (Date.now() / 1000 - epochSeconds) / 86400;
+  if (days < 1) return "<1d ago";
+  return `${Math.floor(days)}d ago`;
+}
+
 function EntryRow({
   entry,
   selected,
@@ -48,9 +55,18 @@ function EntryRow({
       <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
         <span>updated {fmtDate(entry.updated_at)}</span>
         <span>·</span>
-        <span>importance {entry.importance.toFixed(2)}</span>
+        <span
+          className={cn(entry.importance < 0.2 && "font-medium text-amber-700 dark:text-amber-300")}
+          title="Ebbinghaus-decay importance score — quality_score decayed by time since last access, boosted by access_count"
+        >
+          importance {entry.importance.toFixed(2)}
+        </span>
         <span>·</span>
-        <span>accessed {entry.access_count}×</span>
+        <span title="Human-assigned quality score at write time">
+          quality {entry.quality_score.toFixed(2)}
+        </span>
+        <span>·</span>
+        <span>accessed {entry.access_count}× (last {fmtAge(entry.last_accessed)})</span>
         {entry.agent_id == null && (
           <span className="rounded border border-amber-500/40 px-1 py-0.5 text-amber-700 dark:text-amber-300">
             unscoped / legacy
@@ -317,6 +333,12 @@ function EntryDetail({
   );
 }
 
+const SORT_OPTIONS: Array<{ value: "updated" | "importance" | "last_accessed"; label: string }> = [
+  { value: "updated", label: "Recently updated" },
+  { value: "importance", label: "Lowest importance first (find stale)" },
+  { value: "last_accessed", label: "Least recently accessed first" },
+];
+
 export function AgentMemoryPanel({ agentId }: { agentId: string }) {
   const [entries, setEntries] = useState<MemoryEntrySummary[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -326,16 +348,17 @@ export function AgentMemoryPanel({ agentId }: { agentId: string }) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [detailRetryToken, setDetailRetryToken] = useState(0);
+  const [sort, setSort] = useState<"updated" | "importance" | "last_accessed">("updated");
 
   const loadList = useCallback(() => {
     setLoading(true);
     setError(null);
     api
-      .listAgentMemory({ agentId })
+      .listAgentMemory({ agentId, sort })
       .then((res) => setEntries(res.entries))
       .catch(() => setError("Failed to load memory entries for this agent."))
       .finally(() => setLoading(false));
-  }, [agentId]);
+  }, [agentId, sort]);
 
   useEffect(() => {
     loadList();
@@ -402,6 +425,18 @@ export function AgentMemoryPanel({ agentId }: { agentId: string }) {
             Memory {entries ? `(${entries.length})` : ""}
           </h3>
           <div className="flex gap-1">
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as typeof sort)}
+              className="rounded-lg border bg-card px-2 py-1 text-xs text-muted-foreground"
+              title="Sort — surfaces low-importance / long-unaccessed entries for staleness review"
+            >
+              {SORT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               onClick={loadList}

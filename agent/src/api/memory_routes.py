@@ -29,6 +29,7 @@ class MemoryEntrySummary(BaseModel):
     agent_id: Optional[str] = None
     created_at: float
     updated_at: float
+    last_accessed: float
     quality_score: float
     access_count: int
     importance: float
@@ -75,6 +76,7 @@ def _to_summary(entry: Any) -> MemoryEntrySummary:
         agent_id=entry.agent_id,
         created_at=entry.created_at,
         updated_at=entry.updated_at,
+        last_accessed=entry.last_accessed,
         quality_score=entry.quality_score,
         access_count=entry.access_count,
         importance=entry.importance,
@@ -99,13 +101,25 @@ def _find_or_404(entry_id: str):
     return entry
 
 
+_SORT_KEYS = {
+    "updated": (lambda e: e.updated_at, True),
+    "importance": (lambda e: e.importance, False),
+    "last_accessed": (lambda e: e.last_accessed, False),
+}
+
+
 @memory_router.get("/entries", response_model=MemoryEntryListResponse)
 def list_memory_entries(
     agent_id: Optional[str] = Query(None, description="Filter to one agent's entries"),
     memory_type: Optional[str] = Query(None, description="Filter by memory_type"),
     unscoped_only: bool = Query(False, description="Only entries with no agent_id (legacy)"),
+    sort: str = Query(
+        "updated",
+        description="'updated' (newest first, default), 'importance' or 'last_accessed' "
+        "(lowest/oldest first — surfaces stale entries for human review)",
+    ),
 ) -> MemoryEntryListResponse:
-    """List memory entries, optionally scoped to one agent. Sorted newest-updated first."""
+    """List memory entries, optionally scoped to one agent."""
     entries = _get_memory().list_entries()
     if agent_id:
         entries = [e for e in entries if e.agent_id == agent_id]
@@ -113,7 +127,8 @@ def list_memory_entries(
         entries = [e for e in entries if e.agent_id is None]
     if memory_type:
         entries = [e for e in entries if e.memory_type == memory_type]
-    entries = sorted(entries, key=lambda e: e.updated_at, reverse=True)
+    key, reverse = _SORT_KEYS.get(sort, _SORT_KEYS["updated"])
+    entries = sorted(entries, key=key, reverse=reverse)
     return MemoryEntryListResponse(entries=[_to_summary(e) for e in entries])
 
 

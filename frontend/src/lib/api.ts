@@ -1089,11 +1089,17 @@ export const api = {
       method: "POST",
     }),
 
-  listAgentMemory: (params: { agentId?: string; memoryType?: string; unscopedOnly?: boolean }) => {
+  listAgentMemory: (params: {
+    agentId?: string;
+    memoryType?: string;
+    unscopedOnly?: boolean;
+    sort?: "updated" | "importance" | "last_accessed";
+  }) => {
     const q = new URLSearchParams();
     if (params.agentId) q.set("agent_id", params.agentId);
     if (params.memoryType) q.set("memory_type", params.memoryType);
     if (params.unscopedOnly) q.set("unscoped_only", "true");
+    if (params.sort) q.set("sort", params.sort);
     const qs = q.toString();
     return request<MemoryEntryListResponse>(`/memory/entries${qs ? `?${qs}` : ""}`);
   },
@@ -6123,6 +6129,7 @@ export interface MemoryEntrySummary {
   agent_id: string | null;
   created_at: number;
   updated_at: number;
+  last_accessed: number;
   quality_score: number;
   access_count: number;
   importance: number;
