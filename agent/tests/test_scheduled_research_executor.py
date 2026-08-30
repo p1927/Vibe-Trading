@@ -641,6 +641,62 @@ def test_dispatch_timeout_marks_completed_and_unblocks_next_job(
     assert fast_saved.status == JobStatus.COMPLETED
 
 
+def test_due_jobs_dispatch_concurrently_up_to_the_configured_bound(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    for i in range(3):
+        store.upsert(_job(f"job-{i}", schedule="1000", next_run_at=10, created_at=i))
+
+    in_flight = 0
+    max_in_flight = 0
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        nonlocal in_flight, max_in_flight
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        await asyncio.sleep(0.05)
+        in_flight -= 1
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(store, dispatch, dispatch_concurrency=3)
+        await executor.tick(100)
+
+    asyncio.run(scenario())
+
+    # All three were due in the same tick and share nothing but the store;
+    # bounded concurrency should overlap their awaited dispatches instead of
+    # forcing job N+1 to wait for job N to fully finish.
+    assert max_in_flight == 3
+    for i in range(3):
+        saved = store.get(f"job-{i}")
+        assert saved is not None
+        assert saved.status == JobStatus.COMPLETED
+        assert saved.last_run_at == 100
+
+
+def test_concurrent_dispatch_does_not_corrupt_other_jobs_store_state(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    for i in range(5):
+        store.upsert(_job(f"job-{i}", schedule="1000", next_run_at=10, created_at=i))
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        # Stagger completion order so writes land interleaved, not in the
+        # order jobs were dispatched.
+        await asyncio.sleep(0.01 * (5 - int(job.id.split("-")[1])))
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(store, dispatch, dispatch_concurrency=5)
+        await executor.tick(100)
+
+    asyncio.run(scenario())
+
+    for i in range(5):
+        saved = store.get(f"job-{i}")
+        assert saved is not None
+        assert saved.status == JobStatus.COMPLETED
+        assert saved.last_run_at == 100
+        assert saved.consecutive_failures == 0
+
+
 def test_index_plan_refresh_uses_shorter_stale_threshold(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
