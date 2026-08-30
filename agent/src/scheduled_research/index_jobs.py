@@ -1647,7 +1647,18 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     # load), just a much shorter interval. Per-market news timeline density for
     # 2026-08-27-market-news-timeline-recording; dedup against already-drained refs
     # is handled by news_staging_store.enqueue_raw_ref's merged-ledger check.
-    tight_cron = os.environ.get("HUB_NEWS_TIGHT_INGEST_CRON", "*/5 * * * *").strip() or "*/5 * * * *"
+    #
+    # Default cadence widened from */5 to */15 (2026-08-30): at every-5-minutes across
+    # 8 markets, runs were piling up in the executor's strictly-serial dispatch queue
+    # (see 2026-08-30-scheduler-sequential-dispatch-drains-slowly) and individual runs
+    # were blowing past the 10-min hub_news_ingest budget
+    # (2026-08-30-hub-news-ingest-tight-light-dispatch-timeout-undersized) — raising
+    # the timeout papers over the queue backup rather than fixing it, so instead this
+    # reduces how often a fresh batch of 8 markets' tight jobs can become
+    # simultaneously due, cutting worst-case queue depth ahead of any one run to a
+    # third of what it was. Still far denser than -light's default 4-hour cadence, so
+    # the tight job still serves its per-market timeline-density purpose.
+    tight_cron = os.environ.get("HUB_NEWS_TIGHT_INGEST_CRON", "*/15 * * * *").strip() or "*/15 * * * *"
     validate_schedule(tight_cron)
     tight_jobs = []
     for job in defaults:
