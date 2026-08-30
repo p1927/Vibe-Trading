@@ -108,6 +108,24 @@ def _job_age_seconds(job: dict[str, Any]) -> float:
     return max(0.0, datetime.now(timezone.utc).timestamp() - created)
 
 
+def _run_age_seconds(job: dict[str, Any]) -> float:
+    """Elapsed time since the job actually started *running*.
+
+    Unlike :func:`_job_age_seconds` (measured from ``created_at``, stamped
+    once at job creation), this measures from ``run_started_at`` — stamped
+    by :func:`mark_running` when the job transitions into ``running``.
+    For a ``wait_for_open`` job, ``created_at`` can be hours to days before
+    the deferred wait actually releases, so the wall-clock-budget check
+    (which is about "how long has this recording actually been running")
+    must use this instead. Falls back to ``created_at`` for jobs written
+    before ``run_started_at`` existed, or if it was somehow never stamped.
+    """
+    started = _parse_iso_timestamp(str(job.get("run_started_at") or ""))
+    if started is not None:
+        return max(0.0, datetime.now(timezone.utc).timestamp() - started)
+    return _job_age_seconds(job)
+
+
 def reconcile_queued_job(job_id: str) -> bool:
     job = _get_job_record(job_id)
     if job is None:
@@ -135,7 +153,7 @@ def reconcile_stale_job(job_id: str) -> bool:
         return False
     if not worker_alive(job):
         return False
-    wall_age = _job_age_seconds(job)
+    wall_age = _run_age_seconds(job)
     if wall_age > _WALL_CLOCK_SECONDS:
         fail_job(
             job_id,
@@ -239,6 +257,7 @@ def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
         "wait_for_open": bool(job.get("wait_for_open")),
         "next_open_at": job.get("next_open_at"),
         "created_at": job.get("created_at"),
+        "run_started_at": job.get("run_started_at"),
         "logs": list(job.get("logs") or []),
         "session_date": job.get("session_date"),
         "result": job.get("result"),
@@ -426,6 +445,7 @@ def _job_snapshot(job: dict[str, Any], *, include_logs: bool = True) -> dict[str
         # a "waiting" log entry until after the wake fires).
         "next_open_at": job.get("next_open_at"),
         "created_at": job.get("created_at"),
+        "run_started_at": job.get("run_started_at"),
         "session_date": job.get("session_date"),
         "error": job.get("error"),
     }
@@ -648,6 +668,7 @@ def start_job(
             ),
             "wait_for_open": bool(wait_for_open),
             "created_at": _now_iso(),
+            "run_started_at": None,
             "logs": [],
             "session_date": None,
             "result": None,
@@ -766,6 +787,7 @@ def mark_running(job_id: str) -> None:
             return False
         if status in {"queued", "waiting_for_open"}:
             job["status"] = "running"
+            job["run_started_at"] = _now_iso()
         return True
 
     job = _mutate_job_on_disk(job_id, mutator)
@@ -865,6 +887,7 @@ def append_log(job_id: str, entry: dict[str, Any]) -> None:
             return False
         if job.get("status") == "queued":
             job["status"] = "running"
+            job["run_started_at"] = _now_iso()
         job.setdefault("logs", []).append(dict(entry))
         return True
 
