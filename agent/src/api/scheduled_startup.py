@@ -83,6 +83,10 @@ def boot_scheduled_research_stack(get_store) -> None:
         is_hub_capture_scheduler_enabled,
         register_default_hub_capture_jobs,
     )
+    from src.scheduled_research.dst_eval_jobs import (
+        is_dst_eval_scheduler_enabled,
+        register_default_dst_eval_jobs,
+    )
 
     if is_index_scheduler_enabled():
         register_default_index_jobs(get_store())
@@ -94,6 +98,8 @@ def boot_scheduled_research_stack(get_store) -> None:
         register_default_trade_data_jobs(get_store())
     if is_hub_capture_scheduler_enabled():
         register_default_hub_capture_jobs(get_store())
+    if is_dst_eval_scheduler_enabled():
+        register_default_dst_eval_jobs(get_store())
     register_persisted_autonomous_agent_jobs()
     # Recording-wake poller: unlike the general executor below, this starts
     # unconditionally (not gated by the scheduler enable/resume flag) — see

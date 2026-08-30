@@ -104,18 +104,26 @@ def test_reconcile_preserves_executor_injected_config_scratch_keys(tmp_path):
 
 @pytest.mark.unit
 def test_reconcile_is_noop_when_nothing_drifted(tmp_path, monkeypatch):
-    """A second registration pass with no code changes must not rewrite the store."""
+    """A second registration pass with no code changes must not rewrite the store.
+
+    Scoped to this test's own store *instance* (not the class) — a global
+    class-level patch would also intercept the unrelated internal store
+    ``sync_scheduled_jobs_from_config()`` opens against the sandboxed test
+    HOME (see agent/tests/conftest.py), which legitimately re-upserts its own
+    handful of job ids on every call and would make this test flaky for
+    reasons that have nothing to do with the reconciliation logic under test.
+    """
     store = ScheduledResearchJobStore(tmp_path / "jobs.json")
     index_jobs.register_default_index_jobs(store)
 
     calls = []
-    original_upsert = ScheduledResearchJobStore.upsert
+    original_upsert = store.upsert
 
-    def _tracking_upsert(self, job: ScheduledResearchJob, *, validate: bool = True) -> None:
+    def _tracking_upsert(job: ScheduledResearchJob, *, validate: bool = True) -> None:
         calls.append(job.id)
-        return original_upsert(self, job, validate=validate)
+        return original_upsert(job, validate=validate)
 
-    monkeypatch.setattr(ScheduledResearchJobStore, "upsert", _tracking_upsert)
+    monkeypatch.setattr(store, "upsert", _tracking_upsert)
 
     created = index_jobs.register_default_index_jobs(store)
 

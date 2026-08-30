@@ -29,6 +29,12 @@ from .capture_jobs import (
     JOB_TYPE_HUB_CAPTURE_FACTOR_SNAPSHOT,
     JOB_TYPE_HUB_CAPTURE_INTRADAY,
 )
+from .dst_eval_jobs import (
+    JOB_TYPE_AUTONOMOUS_AGENTS_EVAL,
+    JOB_TYPE_INDEX_RESEARCH_EVAL,
+    JOB_TYPE_PREDICTION_EVAL,
+    JOB_TYPE_RECORDER_DST,
+)
 from .hub_calibration_jobs import (
     JOB_TYPE_HUB_EVENING_MAINTENANCE,
     JOB_TYPE_HUB_MORNING_CALIBRATION,
@@ -227,6 +233,18 @@ _JOB_DETAILS: Dict[str, JobTypeDetail] = {
     JOB_TYPE_STRATEGY_REVIEW: JobTypeDetail("Autonomous agent: reviews an open strategy."),
     JOB_TYPE_RECORDING_WAKE: JobTypeDetail(
         "Wakes a paused 'wait for market open' recording job and resumes its worker."
+    ),
+    JOB_TYPE_RECORDER_DST: JobTypeDetail(
+        "Runs the recorder_dst Hypothesis property-test suite via pytest (local-only, no CI)."
+    ),
+    JOB_TYPE_PREDICTION_EVAL: JobTypeDetail(
+        "Runs the prediction_eval golden-backtest MLflow eval (local-only, no CI)."
+    ),
+    JOB_TYPE_INDEX_RESEARCH_EVAL: JobTypeDetail(
+        "Runs the index_research_eval golden-dataset MLflow evals (local-only, no CI)."
+    ),
+    JOB_TYPE_AUTONOMOUS_AGENTS_EVAL: JobTypeDetail(
+        "Runs the autonomous_agents_eval golden-dataset MLflow evals (local-only, no CI)."
     ),
 }
 
