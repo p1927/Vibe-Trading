@@ -195,7 +195,14 @@ async def shutdown_scheduled_research_stack(get_store, executor: Any) -> None:
     except Exception:
         logger.exception("failed to recover scheduler jobs on API shutdown")
     if executor is not None:
-        await executor.stop()
+        # Process-restart interruption, not a deliberate user pause: mark any
+        # job this shutdown catches mid-RUNNING as auto-paused with a clear
+        # reason so `GET /scheduled-runs` can distinguish it from a real hang
+        # without cross-referencing log/vibe-api.log (see
+        # 2026-09-02-vibetrading-dev-reload-thrashing.md).
+        await executor.stop(
+            auto_pause_reason="auto-paused: process restart (executor shutdown)"
+        )
     try:
         from src.trade.recording_wait_scheduler import stop_recording_wake_poller
 

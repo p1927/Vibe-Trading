@@ -372,16 +372,26 @@ class ScheduledResearchExecutor:
         if self._wakeup is not None:
             self._wakeup.set()
 
-    async def stop(self) -> None:
+    async def stop(self, *, auto_pause_reason: str | None = None) -> None:
         """Stop the background loop and wait for it to finish.
 
         Idempotent. When disabled or not started, this is a no-op.
+
+        Args:
+            auto_pause_reason: When set, any job caught mid-``RUNNING`` by this
+                shutdown is also marked ``paused`` with this reason (see
+                :meth:`recover_all_running_on_shutdown`) so it reads as a
+                process-restart interruption rather than a real hang. Leave
+                ``None`` for a deliberate user-initiated pause (the dispatch
+                loop stopping is the user's intent here, not a crash — each
+                job should stay eligible to fire again once resumed rather
+                than needing an explicit unpause).
         """
         if not self._enabled:
             return
         logger.info("scheduled research executor stopping…")
         self._stopping = True
-        self.recover_all_running_on_shutdown(self._now_fn())
+        self.recover_all_running_on_shutdown(self._now_fn(), auto_pause_reason=auto_pause_reason)
         watchdog = self._watchdog_task
         if watchdog is not None:
             watchdog.cancel()
@@ -408,8 +418,21 @@ class ScheduledResearchExecutor:
         self._reset_runtime_state()
         logger.info("scheduled research executor stopped")
 
-    def recover_all_running_on_shutdown(self, now_ms: int | None = None) -> int:
-        """Reset every RUNNING job to pending for clean executor shutdown."""
+    def recover_all_running_on_shutdown(
+        self, now_ms: int | None = None, *, auto_pause_reason: str | None = None
+    ) -> int:
+        """Reset every RUNNING job to pending for clean executor shutdown.
+
+        Args:
+            now_ms: Optional explicit reference time.
+            auto_pause_reason: When set, also stamp each recovered job
+                ``paused=True``/``auto_paused_reason=<this>`` — the same
+                distinguishing marker ``lifecycle.recover_persisted_scheduler_jobs``
+                uses for boot/shutdown recovery — so a process-restart
+                interruption reads differently from a job that just happens to
+                be ``pending``, without cross-referencing the API log. Left
+                unset for a plain user-initiated pause (see :meth:`stop`).
+        """
         now = self._now_fn() if now_ms is None else now_ms
         jobs = self._store.load()
         recovered = 0
@@ -429,6 +452,9 @@ class ScheduledResearchExecutor:
                 _advance.next_run_at = now + self._tick_interval_ms
             if not _advance.last_error:
                 _advance.last_error = "recovered on executor shutdown"
+            if auto_pause_reason and not _advance.paused:
+                _advance.paused = True
+                _advance.auto_paused_reason = auto_pause_reason
             recovered += 1
             logger.warning(
                 "recovering scheduled research job %s on executor shutdown (next_run_at=%s)",

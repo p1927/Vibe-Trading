@@ -578,6 +578,66 @@ def test_disabled_executor_start_stop_are_noops(tmp_path: Path) -> None:
     assert store.get("job-001").status == JobStatus.PENDING  # type: ignore[union-attr]
 
 
+def test_shutdown_recovery_with_reason_marks_job_auto_paused_distinguishably(
+    tmp_path: Path,
+) -> None:
+    """A process-restart interruption must read differently from a real hang.
+
+    ``stop(auto_pause_reason=...)`` (used by the process-shutdown path, see
+    ``scheduled_startup.shutdown_scheduled_research_stack``) should stamp the
+    recovered job ``paused=True``/``auto_paused_reason=<reason>`` on top of
+    the existing ``status=PENDING``/``last_error`` reset, so
+    ``GET /scheduled-runs`` can tell "interrupted by a restart" apart from
+    "still actually running" without cross-referencing the API log.
+    """
+    store = _store(tmp_path)
+    store.upsert(_job(status=JobStatus.RUNNING, next_run_at=1000))
+    calls: list[str] = []
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        calls.append(job.id)
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(store, dispatch, now_fn=lambda: 5000)
+        await executor.stop(
+            auto_pause_reason="auto-paused: process restart (executor shutdown)"
+        )
+
+    asyncio.run(scenario())
+
+    saved = store.get("job-001")
+    assert saved is not None
+    assert saved.status == JobStatus.PENDING
+    assert saved.paused is True
+    assert saved.auto_paused_reason == "auto-paused: process restart (executor shutdown)"
+    assert saved.last_error == "recovered on executor shutdown"
+
+
+def test_shutdown_recovery_without_reason_leaves_job_unpaused(tmp_path: Path) -> None:
+    """A deliberate user pause (POST .../scheduler/pause) must not auto-pause jobs.
+
+    The dispatch loop stopping here is the user's own intent, not a crash —
+    each job should stay eligible to fire again once the loop is resumed,
+    not require an explicit per-job unpause.
+    """
+    store = _store(tmp_path)
+    store.upsert(_job(status=JobStatus.RUNNING, next_run_at=1000))
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        pass
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(store, dispatch, now_fn=lambda: 5000)
+        await executor.stop()
+
+    asyncio.run(scenario())
+
+    saved = store.get("job-001")
+    assert saved is not None
+    assert saved.status == JobStatus.PENDING
+    assert saved.paused is False
+    assert saved.auto_paused_reason is None
+
 
 def test_periodic_stale_running_recovery(tmp_path: Path) -> None:
     store = _store(tmp_path)
