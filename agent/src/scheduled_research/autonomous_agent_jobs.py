@@ -19,6 +19,7 @@ JOB_TYPE_QUANT = "autonomous_agent_quant"
 JOB_TYPE_INFRA_HEAL = "autonomous_agent_infra_heal"
 JOB_TYPE_NEWS = "autonomous_agent_news"
 JOB_TYPE_STRATEGY_REVIEW = "autonomous_agent_strategy_review"
+JOB_TYPE_STRATEGY_SNAPSHOT = "autonomous_agent_strategy_snapshot"
 AUTONOMOUS_JOB_TYPES = frozenset(
     {
         JOB_TYPE_WATCH,
@@ -27,6 +28,7 @@ AUTONOMOUS_JOB_TYPES = frozenset(
         JOB_TYPE_INFRA_HEAL,
         JOB_TYPE_NEWS,
         JOB_TYPE_STRATEGY_REVIEW,
+        JOB_TYPE_STRATEGY_SNAPSHOT,
     }
 )
 
@@ -105,6 +107,10 @@ def _news_job_id(agent_id: str) -> str:
 
 def _strategy_review_job_id(agent_id: str) -> str:
     return f"{agent_id}-strategy-review"
+
+
+def _strategy_snapshot_job_id(agent_id: str) -> str:
+    return f"{agent_id}-strategy-snapshot"
 
 
 def register_infra_heal_job(agent_id: str) -> None:
@@ -247,6 +253,23 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
                 config={"job_type": JOB_TYPE_STRATEGY_REVIEW, "autonomous_agent_id": agent_id},
             )
         )
+        # Own (tighter) cadence than strategy_review_ms — see
+        # [[2026-08-31-strategy-snapshot-cadence-tied-to-review-tick]]: the rolling
+        # thesis-evolution series wants to sample as often as watch_ms, not be capped by
+        # strategy_review_ms's slower cadence (which also drives pnl-snapshot/shadow-pnl-sync/
+        # lifecycle-sync, none of which want to run more often).
+        strategy_snapshot_ms = str(int(schedules.get("strategy_snapshot_ms") or watch_ms))
+        store.upsert(
+            ScheduledResearchJob(
+                id=_strategy_snapshot_job_id(agent_id),
+                prompt=f"Strategy snapshot tick for {agent.get('name') or agent_id}",
+                schedule=strategy_snapshot_ms,
+                next_run_at=now_ms + int(strategy_snapshot_ms),
+                status=JobStatus.PENDING,
+                created_at=now_ms,
+                config={"job_type": JOB_TYPE_STRATEGY_SNAPSHOT, "autonomous_agent_id": agent_id},
+            )
+        )
     logger.info("registered autonomous jobs for %s", agent_id)
 
 
@@ -262,6 +285,7 @@ def unregister_agent_jobs(agent_id: str) -> dict[str, bool]:
         _infra_heal_job_id(agent_id): store.delete(_infra_heal_job_id(agent_id)),
         _news_job_id(agent_id): store.delete(_news_job_id(agent_id)),
         _strategy_review_job_id(agent_id): store.delete(_strategy_review_job_id(agent_id)),
+        _strategy_snapshot_job_id(agent_id): store.delete(_strategy_snapshot_job_id(agent_id)),
     }
 
 
@@ -332,6 +356,11 @@ async def _dispatch_autonomous_job_inner(job: ScheduledResearchJob) -> None:
         from trade_integrations.autonomous_agents.strategy_review import run_strategy_review_tick
 
         await asyncio.to_thread(run_strategy_review_tick, agent_id)
+        return
+    if job_type == JOB_TYPE_STRATEGY_SNAPSHOT:
+        from trade_integrations.autonomous_agents.strategy_review import run_strategy_snapshot_tick
+
+        await asyncio.to_thread(run_strategy_snapshot_tick, agent_id)
         return
     if job_type == JOB_TYPE_RESEARCH:
         if get_env_config().trade.autonomous_research_on_schedule.strip().lower() not in {

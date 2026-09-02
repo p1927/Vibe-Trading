@@ -23,6 +23,7 @@ from .autonomous_agent_jobs import (
     JOB_TYPE_QUANT,
     JOB_TYPE_RESEARCH as JOB_TYPE_AUTONOMOUS_RESEARCH,
     JOB_TYPE_STRATEGY_REVIEW,
+    JOB_TYPE_STRATEGY_SNAPSHOT,
     JOB_TYPE_WATCH,
 )
 from .capture_jobs import (
@@ -241,6 +242,9 @@ _JOB_DETAILS: Dict[str, JobTypeDetail] = {
     JOB_TYPE_INFRA_HEAL: JobTypeDetail("Autonomous agent: runs an infrastructure self-heal pass."),
     JOB_TYPE_AUTONOMOUS_NEWS: JobTypeDetail("Autonomous agent: runs a news-driven pass."),
     JOB_TYPE_STRATEGY_REVIEW: JobTypeDetail("Autonomous agent: reviews an open strategy."),
+    JOB_TYPE_STRATEGY_SNAPSHOT: JobTypeDetail(
+        "Autonomous agent: records a rolling thesis-evolution snapshot."
+    ),
     JOB_TYPE_RECORDING_WAKE: JobTypeDetail(
         "Wakes a paused 'wait for market open' recording job and resumes its worker."
     ),
