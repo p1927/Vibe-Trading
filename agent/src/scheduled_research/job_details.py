@@ -91,8 +91,8 @@ def _preview_hub_news_ingest(config: Dict[str, Any]) -> Dict[str, Any]:
         _apply_light_source_guard,
         _parse_sources,
     )
+    from trade_integrations.dataflows.news_hub_bridge import get_pipeline_config
     from trade_integrations.dataflows.rss_feeds import _resolve_url, get_sentiment_rss_feeds
-    from trade_integrations.hub_storage.news_pipeline_config import load_news_pipeline_config
 
     mode = str(config.get("mode") or "full").strip().lower()
     market = str(config.get("market") or "IN").strip().upper()
@@ -100,8 +100,8 @@ def _preview_hub_news_ingest(config: Dict[str, Any]) -> Dict[str, Any]:
     sources_cfg = config.get("sources")
 
     if sources_cfg is None or sources_cfg == "default":
-        cfg = load_news_pipeline_config()
-        sources_cfg = cfg.light_ingest_sources if mode == "light" else cfg.full_ingest_sources
+        cfg = get_pipeline_config()
+        sources_cfg = cfg["light_ingest_sources"] if mode == "light" else cfg["full_ingest_sources"]
 
     selected = _apply_light_source_guard(_parse_sources(sources_cfg), ingest_mode=mode)
     feeds = get_sentiment_rss_feeds(market)

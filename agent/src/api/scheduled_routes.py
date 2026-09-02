@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import sys as _sys
 import time
@@ -332,6 +333,7 @@ class ScheduledRunResponse(BaseModel):
     delivery_updated_at: Optional[int] = None
     last_verdict: Optional[Dict[str, Any]] = None
     section: str = "general"
+    dispatch_blocked_reason: Optional[str] = None
 
 
 class ScheduledJobPreviewResponse(BaseModel):
@@ -372,6 +374,35 @@ def _job_to_response(job: ScheduledResearchJob) -> "ScheduledRunResponse":
         delivery_error=delivery.get("error"),
         delivery_updated_at=delivery.get("updated_at"),
         section=job_section(str(job.config.get("job_type") or "")),
+        dispatch_blocked_reason=_dispatch_blocked_reason(job),
+    )
+
+
+def _dispatch_blocked_reason(job: ScheduledResearchJob) -> Optional[str]:
+    """Surface why a due, unpaused job will never actually dispatch on this
+    process — a release-exclusive data-collection job type on a non-release
+    tier is otherwise indistinguishable from a healthy pending job (see
+    .claude/backlog/items/2026-09-02-collection-job-dispatch-blocked-no-diagnostic-signal.md).
+    Returns None when nothing is blocking it (including "not due yet" — this
+    is about dispatch eligibility, not scheduling)."""
+    from src.scheduled_research.executor import is_due
+    from src.scheduled_research.job_tier_policy import (
+        collection_job_dispatch_enabled,
+        is_collection_job,
+    )
+
+    now_ms = int(time.time() * 1000)
+    if not is_due(job, now_ms):
+        return None
+    job_type = str((job.config or {}).get("job_type") or "")
+    if not is_collection_job(job_type):
+        return None
+    stack_profile = os.environ.get("STACK_PROFILE", "dev")
+    if collection_job_dispatch_enabled(stack_profile):
+        return None
+    return (
+        f"data-collection job type {job_type!r} cannot dispatch on this tier "
+        f"(STACK_PROFILE={stack_profile!r}); it will only fire on the release tier"
     )
 
 
@@ -700,12 +731,15 @@ def register_scheduled_routes(
     async def trigger_scheduled_run(job_id: str) -> ScheduledRunResponse:
         """Fire this job immediately without changing its paused/enabled state.
 
-        Errors 409 if the job is paused (resume it first) or already
-        running. Goes through the shared ``trigger_job_now`` mutation path,
-        same pattern as pause/resume/cancel above.
+        Errors 409 if the job is paused (resume it first), already running,
+        or is a release-exclusive data-collection job type triggered outside
+        the release tier (see job_tier_policy.py — a 200 here would silently
+        never actually dispatch). Goes through the shared ``trigger_job_now``
+        mutation path, same pattern as pause/resume/cancel above.
         """
         from src.scheduled_research.pause_control import (
             JobAlreadyRunningError,
+            JobCollectionDispatchBlockedError,
             JobPausedError,
             trigger_job_now,
         )
@@ -714,7 +748,7 @@ def register_scheduled_routes(
         store = _get_scheduled_research_store()
         try:
             job = trigger_job_now(job_id, store=store)
-        except (JobPausedError, JobAlreadyRunningError) as exc:
+        except (JobPausedError, JobAlreadyRunningError, JobCollectionDispatchBlockedError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if job is None:
             raise HTTPException(

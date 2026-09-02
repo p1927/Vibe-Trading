@@ -11,6 +11,7 @@ import pytest
 from src.scheduled_research.executor import (
     ScheduledResearchExecutor,
     defer_fresh_registrations,
+    dispatch_concurrency_for_job_type,
     dispatch_timeout_ms_for,
     is_due,
     is_job_stale_running,
@@ -699,6 +700,134 @@ def test_concurrent_dispatch_does_not_corrupt_other_jobs_store_state(tmp_path: P
         assert saved.status == JobStatus.COMPLETED
         assert saved.last_run_at == 100
         assert saved.consecutive_failures == 0
+
+
+def test_job_type_concurrency_sub_limit_bounds_that_type_independently(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A job type with a configured concurrency override is capped tighter
+    than the global ``dispatch_concurrency``, even when the global cap alone
+    would allow more of that type to run at once."""
+    monkeypatch.setenv("SCHEDULED_RESEARCH_DISPATCH_CONCURRENCY_HUB_NEWS_INGEST", "2")
+    monkeypatch.setenv("STACK_PROFILE", "release")
+    store = _store(tmp_path)
+    for i in range(4):
+        job = _job(f"ingest-{i}", schedule="1000", next_run_at=10, created_at=i)
+        job.config = {"job_type": "hub_news_ingest"}
+        store.upsert(job)
+
+    in_flight = 0
+    max_in_flight = 0
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        nonlocal in_flight, max_in_flight
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        await asyncio.sleep(0.05)
+        in_flight -= 1
+
+    async def scenario() -> None:
+        # Global cap of 4 would allow all 4 to run at once; the per-type
+        # override of 2 (set via env above) must still bind tighter.
+        executor = ScheduledResearchExecutor(store, dispatch, dispatch_concurrency=4)
+        await executor.tick(100)
+
+    asyncio.run(scenario())
+
+    assert max_in_flight == 2
+    for i in range(4):
+        saved = store.get(f"ingest-{i}")
+        assert saved is not None
+        assert saved.status == JobStatus.COMPLETED
+        assert saved.consecutive_failures == 0
+
+
+def test_job_type_concurrency_wait_does_not_burn_dispatch_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Queueing behind a type-mate must not count against a job's own
+    ``dispatch_timeout_ms`` — only actual dispatch work should. With a
+    type cap of 1, the third job here waits ~0.1s before it even starts;
+    if that wait wrongly counted against its 80ms timeout it would fail as
+    a TimeoutError instead of completing."""
+    monkeypatch.setenv("SCHEDULED_RESEARCH_DISPATCH_CONCURRENCY_HUB_NEWS_INGEST", "1")
+    monkeypatch.setenv("STACK_PROFILE", "release")
+    store = _store(tmp_path)
+    for i in range(3):
+        job = _job(f"ingest-{i}", schedule="1000", next_run_at=10, created_at=i)
+        job.config = {"job_type": "hub_news_ingest", "dispatch_timeout_ms": 80}
+        store.upsert(job)
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        await asyncio.sleep(0.05)
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(store, dispatch, dispatch_concurrency=4)
+        await executor.tick(100)
+
+    asyncio.run(scenario())
+
+    for i in range(3):
+        saved = store.get(f"ingest-{i}")
+        assert saved is not None
+        assert saved.status == JobStatus.COMPLETED
+        assert saved.consecutive_failures == 0
+        assert saved.failure_kind is None
+
+
+def test_job_type_concurrency_does_not_throttle_other_job_types(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A concurrency override on one job type must not slow down a
+    differently-typed job dispatched in the same tick."""
+    monkeypatch.setenv("SCHEDULED_RESEARCH_DISPATCH_CONCURRENCY_HUB_NEWS_INGEST", "1")
+    monkeypatch.setenv("STACK_PROFILE", "release")
+    store = _store(tmp_path)
+    for i in range(2):
+        job = _job(f"ingest-{i}", schedule="1000", next_run_at=10, created_at=i)
+        job.config = {"job_type": "hub_news_ingest"}
+        store.upsert(job)
+    other = _job("other", schedule="1000", next_run_at=10, created_at=99)
+    other.config = {"job_type": "index_plan_refresh"}
+    store.upsert(other)
+
+    started_at: dict[str, float] = {}
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        started_at[job.id] = asyncio.get_event_loop().time()
+        await asyncio.sleep(0.05)
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(store, dispatch, dispatch_concurrency=4)
+        await executor.tick(100)
+
+    asyncio.run(scenario())
+
+    # "other" is a different job type with no override — it must start
+    # immediately, not wait behind the throttled hub_news_ingest pair.
+    assert started_at["other"] == pytest.approx(min(started_at.values()), abs=0.01)
+    for job_id in ("ingest-0", "ingest-1", "other"):
+        saved = store.get(job_id)
+        assert saved is not None
+        assert saved.status == JobStatus.COMPLETED
+
+
+def test_dispatch_concurrency_for_job_type_defaults() -> None:
+    assert dispatch_concurrency_for_job_type("hub_news_ingest") == 2
+    assert dispatch_concurrency_for_job_type("index_plan_refresh") is None
+    assert dispatch_concurrency_for_job_type("") is None
+
+
+def test_dispatch_concurrency_for_job_type_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SCHEDULED_RESEARCH_DISPATCH_CONCURRENCY_HUB_NEWS_INGEST", "5")
+    assert dispatch_concurrency_for_job_type("hub_news_ingest") == 5
+
+
+def test_dispatch_concurrency_for_job_type_ignores_invalid_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SCHEDULED_RESEARCH_DISPATCH_CONCURRENCY_HUB_NEWS_INGEST", "not-a-number")
+    assert dispatch_concurrency_for_job_type("hub_news_ingest") == 2
+    monkeypatch.setenv("SCHEDULED_RESEARCH_DISPATCH_CONCURRENCY_HUB_NEWS_INGEST", "0")
+    assert dispatch_concurrency_for_job_type("hub_news_ingest") == 2
 
 
 def test_index_plan_refresh_uses_shorter_stale_threshold(

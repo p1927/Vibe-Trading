@@ -11,9 +11,11 @@ site must go through :func:`set_job_enabled` so that can't happen again.
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Optional
 
+from .job_tier_policy import collection_job_dispatch_enabled, is_collection_job
 from .models import JobStatus, ScheduledResearchJob
 from .store import ScheduledResearchJobStore
 
@@ -28,6 +30,16 @@ class JobPausedError(ValueError):
 
 class JobAlreadyRunningError(ValueError):
     """Raised when trigger-now is attempted on a job already RUNNING."""
+
+
+class JobCollectionDispatchBlockedError(ValueError):
+    """Raised when trigger-now is attempted on a release-exclusive collection
+    job outside the release tier (see job_tier_policy.py). Distinct from
+    JobPausedError/JobAlreadyRunningError: setting next_run_at to "now" here
+    would silently never fire — the executor's tick loop excludes this job
+    type on this profile entirely (executor.py's _collection_dispatch_blocked),
+    with no error and no log line, so the caller needs a real signal instead
+    of a 200 that looks like it worked."""
 
 
 def set_job_enabled(
@@ -123,6 +135,8 @@ def trigger_job_now(
     Raises:
         JobPausedError: If the job is currently paused.
         JobAlreadyRunningError: If the job is currently RUNNING.
+        JobCollectionDispatchBlockedError: If this job type is release-exclusive
+            and this process isn't running under STACK_PROFILE=release.
     """
     job = store.get(job_id)
     if job is None:
@@ -131,6 +145,14 @@ def trigger_job_now(
         raise JobPausedError(f"job {job_id} is paused; resume it before triggering")
     if job.status == JobStatus.RUNNING:
         raise JobAlreadyRunningError(f"job {job_id} is already running")
+    job_type = str((job.config or {}).get("job_type") or "")
+    stack_profile = os.environ.get("STACK_PROFILE", "dev")
+    if is_collection_job(job_type) and not collection_job_dispatch_enabled(stack_profile):
+        raise JobCollectionDispatchBlockedError(
+            f"job {job_id} is a data-collection job type ({job_type!r}) and cannot dispatch "
+            f"on this tier (STACK_PROFILE={stack_profile!r}); trigger it against the release "
+            "tier instead"
+        )
     job.next_run_at = int(time.time() * 1000)
     store.upsert(job)
     return job

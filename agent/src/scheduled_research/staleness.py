@@ -13,6 +13,7 @@ and external importers (``lifecycle.py``, ``index_prediction_jobs.py``,
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 from src.config.accessor import get_env_config
@@ -47,6 +48,23 @@ _JOB_DISPATCH_TIMEOUT_MS: dict[str, int] = {
     "hub_news_ingest": 10 * 60 * 1000,
 }
 _INDEX_JOB_DISPATCH_TIMEOUT_MS = 30 * 60 * 1000
+
+# Per-job-type sub-limit on top of the executor's own global
+# dispatch_concurrency (see ``ScheduledResearchExecutor.tick``). Only
+# ``hub_news_ingest`` is listed today: live-verified 2026-09-02 that running
+# more than ~2-3 markets' worth of it concurrently (all contending for the
+# same local resources — the JSONL staging store's process-wide
+# ``threading.RLock``, and the single local LLM-Wiki server every ingest run
+# gates on) makes each individual run slow enough to blow past its own
+# per-job ``dispatch_timeout_ms`` budget, even the 90-minute one on the
+# ``-full`` variant — a genuine correctness problem (real work aborted mid-run
+# and retried, not just slow), not merely a performance one. A job type not
+# listed here is bounded only by the global cap, unchanged from before this
+# existed. See [[2026-08-30-scheduler-sequential-dispatch-drains-slowly]].
+_JOB_TYPE_DISPATCH_CONCURRENCY: dict[str, int] = {
+    "hub_news_ingest": 2,
+}
+_JOB_TYPE_DISPATCH_CONCURRENCY_ENV_PREFIX = "SCHEDULED_RESEARCH_DISPATCH_CONCURRENCY_"
 
 
 def _autonomous_watch_target_running(job: ScheduledResearchJob) -> bool:
@@ -229,6 +247,28 @@ def dispatch_timeout_ms_for(job: ScheduledResearchJob) -> int:
         return max(60_000, int(raw_env))
     except ValueError:
         return DEFAULT_DISPATCH_TIMEOUT_MS
+
+
+def dispatch_concurrency_for_job_type(job_type: str) -> int | None:
+    """Return this job type's own concurrency sub-limit, or ``None`` if unbounded beyond the global cap.
+
+    Checked via ``SCHEDULED_RESEARCH_DISPATCH_CONCURRENCY_<JOB_TYPE>`` (uppercased job_type)
+    first, then :data:`_JOB_TYPE_DISPATCH_CONCURRENCY`. A job type with no entry in either
+    place returns ``None`` — it is bounded only by
+    :attr:`ScheduledResearchExecutor._dispatch_concurrency`, unchanged from before this existed.
+    """
+    if not job_type:
+        return None
+    env_name = _JOB_TYPE_DISPATCH_CONCURRENCY_ENV_PREFIX + job_type.upper()
+    raw_env = os.getenv(env_name, "").strip()
+    if raw_env:
+        try:
+            parsed = int(raw_env)
+        except ValueError:
+            parsed = 0
+        if parsed > 0:
+            return parsed
+    return _JOB_TYPE_DISPATCH_CONCURRENCY.get(job_type)
 
 
 def _request_pipeline_cancel_on_dispatch_timeout(job_id: str, job_type: str) -> None:

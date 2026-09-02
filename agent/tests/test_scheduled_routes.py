@@ -350,6 +350,39 @@ def test_trigger_unknown_job_returns_404(client: TestClient):
     assert response.status_code == 404
 
 
+def test_trigger_collection_job_outside_release_returns_409(
+    client: TestClient, store: ScheduledResearchJobStore, monkeypatch: pytest.MonkeyPatch
+):
+    """A release-exclusive data-collection job type can't dispatch on this tier —
+    see .claude/backlog/items/2026-09-02-collection-job-dispatch-blocked-no-diagnostic-signal.md.
+    Setting next_run_at to "now" here would silently never fire, so this must be a real error,
+    not a 200 that looks like a successful trigger."""
+    monkeypatch.delenv("STACK_PROFILE", raising=False)
+    _seed(store, id="collection-job", config={"job_type": "hub_news_ingest"})
+
+    response = client.post("/scheduled-runs/collection-job/trigger")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "hub_news_ingest" in detail
+    assert "release" in detail
+    stored = store.get("collection-job")
+    assert stored is not None
+    assert stored.next_run_at == 1_700_000_000_000  # unchanged from _seed's default
+
+
+def test_trigger_collection_job_under_release_succeeds(
+    client: TestClient, store: ScheduledResearchJobStore, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("STACK_PROFILE", "release")
+    _seed(store, id="collection-job", config={"job_type": "hub_news_ingest"}, next_run_at=9_999_999_999_000)
+
+    response = client.post("/scheduled-runs/collection-job/trigger")
+
+    assert response.status_code == 200
+    assert response.json()["next_run_at"] < 9_999_999_999_000
+
+
 def test_trigger_wakes_executor(
     client: TestClient, store: ScheduledResearchJobStore, monkeypatch: pytest.MonkeyPatch
 ):
@@ -411,8 +444,11 @@ def test_trigger_shares_the_single_mutation_helper(
     from src.scheduled_research import pause_control
     from src.trade import index_prediction_jobs
 
-    _seed(store, id="trigger-shared", config={"job_type": "index_factor_snapshot"})
-    _seed(store, id="trigger-shared-2", config={"job_type": "index_factor_snapshot"})
+    # job_type must be in INDEX_JOB_TYPES (trigger_index_prediction_job's own gate)
+    # but outside COLLECTION_JOB_TYPES (trigger_job_now's release-tier gate) —
+    # news_quality_eval is both: an index job type, but QA/eval, not collection.
+    _seed(store, id="trigger-shared", config={"job_type": "news_quality_eval"})
+    _seed(store, id="trigger-shared-2", config={"job_type": "news_quality_eval"})
 
     calls: list[str] = []
     original = pause_control.trigger_job_now
@@ -498,6 +534,66 @@ def test_list_includes_section_derived_from_job_type(
     assert body["index-job"]["section"] == "prediction"
     assert body["options-job"]["section"] == "options"
     assert body["hub-job"]["section"] == "hub"
+
+
+def test_list_surfaces_dispatch_blocked_reason_for_due_collection_job(
+    client: TestClient, store: ScheduledResearchJobStore, monkeypatch: pytest.MonkeyPatch
+):
+    """A due, unpaused collection-type job on a non-release tier otherwise looks identical to a
+    healthy pending job — see
+    .claude/backlog/items/2026-09-02-collection-job-dispatch-blocked-no-diagnostic-signal.md."""
+    monkeypatch.delenv("STACK_PROFILE", raising=False)
+    _seed(
+        store,
+        id="blocked-job",
+        config={"job_type": "hub_news_ingest"},
+        next_run_at=0,  # due
+    )
+
+    body = {row["id"]: row for row in client.get("/scheduled-runs").json()}
+
+    reason = body["blocked-job"]["dispatch_blocked_reason"]
+    assert reason is not None
+    assert "hub_news_ingest" in reason
+    assert "release" in reason
+
+
+def test_list_omits_dispatch_blocked_reason_when_not_due(
+    client: TestClient, store: ScheduledResearchJobStore, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.delenv("STACK_PROFILE", raising=False)
+    _seed(
+        store,
+        id="not-due-yet",
+        config={"job_type": "hub_news_ingest"},
+        next_run_at=9_999_999_999_000,
+    )
+
+    body = {row["id"]: row for row in client.get("/scheduled-runs").json()}
+
+    assert body["not-due-yet"]["dispatch_blocked_reason"] is None
+
+
+def test_list_omits_dispatch_blocked_reason_under_release(
+    client: TestClient, store: ScheduledResearchJobStore, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("STACK_PROFILE", "release")
+    _seed(store, id="release-job", config={"job_type": "hub_news_ingest"}, next_run_at=0)
+
+    body = {row["id"]: row for row in client.get("/scheduled-runs").json()}
+
+    assert body["release-job"]["dispatch_blocked_reason"] is None
+
+
+def test_list_omits_dispatch_blocked_reason_for_non_collection_job(
+    client: TestClient, store: ScheduledResearchJobStore, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.delenv("STACK_PROFILE", raising=False)
+    _seed(store, id="ad-hoc-due", config={}, next_run_at=0)
+
+    body = {row["id"]: row for row in client.get("/scheduled-runs").json()}
+
+    assert body["ad-hoc-due"]["dispatch_blocked_reason"] is None
 
 
 def test_index_prediction_cancel_running_job(store: ScheduledResearchJobStore):

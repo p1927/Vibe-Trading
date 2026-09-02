@@ -59,6 +59,7 @@ from src.scheduled_research.staleness import (
     _watchdog_buffer_ms,
     _watchdog_interval_ms,
     defer_fresh_registrations,
+    dispatch_concurrency_for_job_type,
     dispatch_timeout_ms_for,
     is_job_stale_running,
     stale_running_ms_for,
@@ -487,8 +488,41 @@ class ScheduledResearchExecutor:
         # this single event loop, so concurrent dispatches never interleave
         # their store writes even though their dispatch awaits overlap.
         semaphore = asyncio.Semaphore(self._dispatch_concurrency)
+        # A second, narrower gate for job types that contend on a shared
+        # external resource beyond just "the event loop is busy" (see
+        # dispatch_concurrency_for_job_type's docstring — hub_news_ingest
+        # is the live-verified case: 2026-09-02-hub-news-ingest-tight-light-
+        # dispatch-timeout-undersized's Attempts log). Built fresh per tick
+        # from only the job types actually due right now — cheap, and safe
+        # because ticks never overlap (``_run`` awaits each ``tick()`` fully
+        # before starting the next), so a semaphore never needs to survive
+        # past the ``gather`` below that owns its lifetime.
+        type_semaphores: dict[str, asyncio.Semaphore] = {}
+        for job in jobs:
+            job_type = str(job.config.get("job_type") or "")
+            if job_type in type_semaphores:
+                continue
+            cap = dispatch_concurrency_for_job_type(job_type)
+            if cap is not None:
+                type_semaphores[job_type] = asyncio.Semaphore(cap)
 
         async def _run_job_bounded(job: ScheduledResearchJob) -> None:
+            job_type = str(job.config.get("job_type") or "")
+            type_semaphore = type_semaphores.get(job_type)
+            # Acquire the narrower type-gate first (if any) so a job waiting
+            # on it doesn't also occupy one of the scarcer global slots while
+            # it waits — and, critically, this wait happens before
+            # ``_run_job`` marks the job RUNNING and starts its own
+            # ``dispatch_timeout_ms`` clock, so queueing behind a type-mate
+            # never counts against that budget or gets the queued job itself
+            # cancelled. It only pays for the *work*, not the *wait*.
+            if type_semaphore is not None:
+                async with type_semaphore:
+                    await _dispatch_one(job)
+            else:
+                await _dispatch_one(job)
+
+        async def _dispatch_one(job: ScheduledResearchJob) -> None:
             async with semaphore:
                 # One job's unexpected persistence/lifecycle error must not
                 # starve every other job in this tick.
