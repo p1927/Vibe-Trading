@@ -27,6 +27,7 @@ from src.scheduled_research.models import (
     validate_schedule,
     validate_timezone,
 )
+from src.scheduled_research.job_tier_policy import collection_job_dispatch_enabled, is_collection_job
 from src.scheduled_research.store import ScheduledResearchJobStore
 # Stale-run detection and watchdog tuning live in staleness.py (a file we
 # fully own) and are re-exported here so this module's existing internal
@@ -144,6 +145,18 @@ def is_due(job: ScheduledResearchJob, now_ms: int) -> bool:
     if job.delivery.status in {DeliveryStatus.PENDING, DeliveryStatus.SENDING}:
         return False
     return job.next_run_at <= now_ms
+
+
+def _collection_dispatch_blocked(job: ScheduledResearchJob) -> bool:
+    """True if *job* is a data-collection job type and this process isn't
+    ``STACK_PROFILE=release`` — see job_tier_policy.py for the full rationale (this mirrors
+    stock_simulator's `_live_capture_enabled()` gate: release is the sole active collector,
+    dev must not independently dispatch the same collection work). Read once per call, not
+    cached, so a STACK_PROFILE change takes effect without needing a process restart."""
+    job_type = str((job.config or {}).get("job_type") or "")
+    if not is_collection_job(job_type):
+        return False
+    return not collection_job_dispatch_enabled(os.environ.get("STACK_PROFILE", "dev"))
 
 
 def _persisted_error(exc: Exception) -> str:
@@ -454,7 +467,11 @@ class ScheduledResearchExecutor:
         self.recover_stale_running(now, startup=True)
         self.recover_stale_running(now, startup=False)
         jobs = sorted(
-            (job for job in self._store.load().values() if is_due(job, now)),
+            (
+                job
+                for job in self._store.load().values()
+                if is_due(job, now) and not _collection_dispatch_blocked(job)
+            ),
             key=lambda job: job.next_run_at,
         )
         # Dispatch up to _dispatch_concurrency jobs at once instead of

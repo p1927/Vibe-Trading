@@ -609,6 +609,10 @@ def test_dispatch_timeout_marks_completed_and_unblocks_next_job(
     # leak into other tests (see
     # .claude/backlog/items/2026-08-27-pipeline-cancel-test-pollution.md).
     monkeypatch.setenv("TRADE_STACK_ROOT", str(tmp_path))
+    # index_plan_refresh is a collection-type job (job_tier_policy.py) — gated to
+    # STACK_PROFILE=release only. This test is about dispatch-timeout handling, not tier
+    # gating, so pin the profile to release rather than pick a non-collection job_type.
+    monkeypatch.setenv("STACK_PROFILE", "release")
     store = _store(tmp_path)
     slow = _job("slow", schedule="1000", next_run_at=10)
     slow.config = {"job_type": "index_plan_refresh", "dispatch_timeout_ms": 50}
@@ -946,7 +950,9 @@ def test_defer_startup_backlog_defers_autonomous_watch_when_agent_not_running(
     assert saved.status == JobStatus.PENDING
 
 
-def test_running_job_with_no_last_run_at_is_not_stale(tmp_path: Path) -> None:
+def test_running_job_with_no_last_run_at_is_not_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Regression: a freshly dispatched job with a fresh last_run_at must
     survive the watchdog until completion can persist.
 
@@ -960,6 +966,10 @@ def test_running_job_with_no_last_run_at_is_not_stale(tmp_path: Path) -> None:
     fix stamps ``last_run_at = now_ms`` BEFORE the dispatch await so the
     watchdog sees a fresh timestamp.
     """
+    # hub_news_entity is a collection-type job (job_tier_policy.py) — gated to
+    # STACK_PROFILE=release only. This test is about watchdog/staleness handling, not tier
+    # gating, so pin the profile to release rather than pick a non-collection job_type.
+    monkeypatch.setenv("STACK_PROFILE", "release")
     store = _store(tmp_path)
     # A PENDING job with a 30-day-old last_run_at — the watchdog would
     # previously have flagged this stale on the first watchdog tick after
