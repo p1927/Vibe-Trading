@@ -30,16 +30,19 @@ def _clear_service_lock() -> None:
     """Remove the vibetrading-agent service lock before each test.
 
     `acquire_service_lock` (integrations/trade_integrations/service_lock.py)
-    only releases its lock via `atexit`, keyed by PID. Every test in this
-    file calls `serve_main` in-process, under the same pytest PID, so once
-    one test acquires the lock the next one sees its own (still-alive) PID
-    holding it and refuses to start — unrelated to what each test is
-    actually asserting. Clear it up front so each test starts unlocked.
+    only releases its lock via `atexit`, keyed by PID (and now also by port —
+    see that module's docstring). Every test in this file calls `serve_main`
+    in-process, under the same pytest PID, so once one test acquires the
+    lock the next one sees its own (still-alive) PID holding it and refuses
+    to start — unrelated to what each test is actually asserting. Clear
+    every port-keyed lock file for this service up front (glob, not a single
+    fixed name) so each test starts unlocked regardless of which port it
+    binds to.
     """
     from trade_integrations.service_lock import _lock_dir
 
-    lock_path = _lock_dir() / "vibetrading-agent.lock"
-    lock_path.unlink(missing_ok=True)
+    for lock_path in _lock_dir().glob("vibetrading-agent*.lock"):
+        lock_path.unlink(missing_ok=True)
 
 
 @pytest.mark.unit
