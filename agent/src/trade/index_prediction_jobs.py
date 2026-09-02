@@ -201,7 +201,7 @@ def list_index_prediction_jobs(store: ScheduledResearchJobStore | None = None) -
     register_default_index_jobs(store)
     jobs = [
         job
-        for job in store.list_jobs()
+        for job in store.load().values()
         if str(job.config.get("job_type") or "") in INDEX_JOB_TYPES
     ]
     jobs.sort(key=lambda j: j.id)

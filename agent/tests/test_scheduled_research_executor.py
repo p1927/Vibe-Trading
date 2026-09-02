@@ -1270,13 +1270,13 @@ def test_executor_marks_job_failed_when_timezone_unresolvable(tmp_path: Path) ->
 
 
 def test_tick_continues_past_a_job_whose_lifecycle_write_raises(tmp_path: Path) -> None:
-    class ExplodingUpsertStore(ScheduledResearchJobStore):
-        def upsert(self, job: ScheduledResearchJob, *, validate: bool = True) -> None:
-            if job.id == "bad":
+    class ExplodingLifecycleWriteStore(ScheduledResearchJobStore):
+        def update_run_state(self, job_id: str, **state_fields):
+            if job_id == "bad":
                 raise RuntimeError("disk full")
-            super().upsert(job, validate=validate)
+            return super().update_run_state(job_id, **state_fields)
 
-    store = ExplodingUpsertStore(path=tmp_path / "jobs.json")
+    store = ExplodingLifecycleWriteStore(path=tmp_path / "jobs.json")
     good_store = ScheduledResearchJobStore(path=tmp_path / "jobs.json")
     good_store.save({j.id: j for j in (_job("bad", next_run_at=10), _job("good", next_run_at=20))})
     calls: list[str] = []

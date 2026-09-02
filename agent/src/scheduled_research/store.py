@@ -25,7 +25,38 @@ from src.scheduled_research.models import ScheduledResearchJob, validate_schedul
 logger = logging.getLogger(__name__)
 
 _STORE_FILENAME = "scheduled_research_jobs.json"
-_SCHEMA_VERSION = 1
+#: Bumped 1->2 when each job record's on-disk shape switched from flat to
+#: nested `definition`/`state` (see `ScheduledResearchJob.to_dict`). Purely
+#: informational today — `load()` doesn't branch on it, since `from_dict`
+#: already accepts both shapes and every record self-migrates to the new one
+#: on its next write.
+_SCHEMA_VERSION = 2
+
+#: Fields `update_run_state` is allowed to patch. Covers both the executor's
+#: lifecycle fields (status, timing, delivery, verdict, config-as-scratch) and
+#: pause_control's ownership fields (paused, auto_paused_reason) — each caller
+#: passes only the subset it actually owns, which is what keeps one writer
+#: from clobbering the other's concurrent change (see `update_run_state`).
+#: `config` is included even though it also carries user-authored definition
+#: parameters: the executor uses it as scratch space too (`_timed_out`,
+#: `_last_result_summary`, `_cancel_requested`) and must persist those pops in
+#: the same write as the lifecycle fields they accompany.
+RUN_STATE_FIELDS = frozenset(
+    {
+        "status",
+        "next_run_at",
+        "last_run_at",
+        "consecutive_failures",
+        "last_error",
+        "failure_kind",
+        "delivery",
+        "last_verdict",
+        "paused",
+        "auto_paused_reason",
+        "last_result_summary",
+        "config",
+    }
+)
 
 
 def _default_store_path() -> Path:
@@ -179,6 +210,44 @@ class ScheduledResearchJobStore:
         jobs = self.load()
         jobs[job.id] = job
         self.save(jobs)
+
+    def update_run_state(self, job_id: str, **state_fields) -> Optional[ScheduledResearchJob]:
+        """Patch only the named run-state fields of one job.
+
+        Unlike :meth:`upsert`, which replaces the entire record with whatever
+        the caller's in-memory copy holds, this re-reads the job fresh from
+        disk immediately before writing and only overwrites the given fields
+        — every field the caller did not name (in particular ``paused``/
+        ``auto_paused_reason`` when the executor is the caller, or the
+        lifecycle fields when :mod:`pause_control` is the caller) is left
+        exactly as it is on disk. This is what stops a lifecycle write from a
+        long-running dispatch from silently reverting a pause/resume click
+        that landed while that dispatch was in flight, and vice versa.
+
+        Args:
+            job_id: The job to patch.
+            **state_fields: Field name -> new value. Every key must be in
+                :data:`RUN_STATE_FIELDS`.
+
+        Returns:
+            The updated job, or ``None`` if *job_id* no longer exists (deleted
+            or replaced by a concurrent write).
+
+        Raises:
+            ValueError: A key in *state_fields* is not a run-state field.
+            CorruptStoreError: When the existing store cannot be parsed.
+        """
+        unknown = set(state_fields) - RUN_STATE_FIELDS
+        if unknown:
+            raise ValueError(f"not run-state fields: {sorted(unknown)}")
+        jobs = self.load()
+        job = jobs.get(job_id)
+        if job is None:
+            return None
+        for key, value in state_fields.items():
+            setattr(job, key, value)
+        self.save(jobs)
+        return job
 
     def get(self, job_id: str) -> Optional[ScheduledResearchJob]:
         """Return a job by id, or ``None`` when it does not exist.

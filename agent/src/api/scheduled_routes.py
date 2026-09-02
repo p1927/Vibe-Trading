@@ -347,9 +347,12 @@ class ScheduledJobPreviewResponse(BaseModel):
 def _job_to_response(job: ScheduledResearchJob) -> "ScheduledRunResponse":
     """Flatten a job for the wire, delivery record included.
 
-    ``to_dict`` nests the outbox row; the API keeps it flat because the list
-    view reads it per row and a nested object would make every consumer reach
-    through a key that means nothing to them.
+    ``to_dict`` nests both the storage-boundary ``definition``/``state``
+    split and the outbox row inside ``state``; the API keeps everything flat
+    because the list view reads each field directly per row and a nested
+    object would make every consumer reach through a key that means nothing
+    to them. ``to_flat_dict`` undoes the definition/state nesting; the
+    delivery/verdict un-nesting below is this function's own, on top of that.
 
     Args:
         job: The stored job.
@@ -359,7 +362,7 @@ def _job_to_response(job: ScheduledResearchJob) -> "ScheduledRunResponse":
     """
     from src.scheduled_research.sections import job_section
 
-    payload = job.to_dict()
+    payload = job.to_flat_dict()
     delivery = payload.pop("delivery", {}) or {}
     last_verdict = payload.pop("last_verdict", None)
     return ScheduledRunResponse(
@@ -597,7 +600,7 @@ def register_scheduled_routes(
     )
     async def list_scheduled_runs(
         status_filter: Optional[str] = Query(None, alias="status"),
-        limit: int = Query(50, ge=1, le=200),
+        limit: int = Query(200, ge=1, le=200),
     ) -> List[ScheduledRunResponse]:
         """List scheduled research jobs, optionally filtered by status."""
         jobs = _get_scheduled_research_store().list_jobs(
@@ -630,7 +633,7 @@ def register_scheduled_routes(
             raise HTTPException(
                 status_code=404, detail=f"scheduled run {job_id} not found"
             )
-        return ScheduledRunResponse(**job.to_dict())
+        return ScheduledRunResponse(**job.to_flat_dict())
 
     @app.post(
         "/scheduled-runs/{job_id}/pause",

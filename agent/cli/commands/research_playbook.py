@@ -609,7 +609,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
             return 1
 
     if getattr(args, "playbook_json", False):
-        payload = job.to_dict()
+        payload = job.to_flat_dict()
         payload["dry_run"] = dry_run
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0

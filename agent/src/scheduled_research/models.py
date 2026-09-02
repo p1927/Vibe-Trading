@@ -391,37 +391,69 @@ class ScheduledResearchJob:
         """Serialize to a plain JSON-serializable dict.
 
         Returns:
-            A dict containing all job fields, with ``status`` as its string
-            value.
+            A dict with top-level ``id``/``created_at`` (immutable record
+            identity) plus nested ``definition`` (how to run the job) and
+            ``state`` (everything the executor/pause-control mutate) objects.
+            One JSON record per job, same as before — only the internal shape
+            changed to make the two kinds of field visually and structurally
+            distinct on disk, matching how the store already scopes writes
+            between them (see `ScheduledResearchJobStore.update_run_state`).
         """
         return {
             "id": self.id,
-            "prompt": self.prompt,
-            "schedule": self.schedule,
-            "next_run_at": self.next_run_at,
-            "status": self.status.value,
             "created_at": self.created_at,
-            "last_run_at": self.last_run_at,
-            "consecutive_failures": self.consecutive_failures,
-            "last_error": self.last_error,
-            "failure_kind": self.failure_kind,
-            "config": self.config,
-            "timezone": self.timezone,
-            "delivery_channel": self.delivery_channel,
-            "delivery_target": self.delivery_target,
-            "delivery": self.delivery.to_dict(),
-            "last_verdict": self.last_verdict.to_dict() if self.last_verdict else None,
-            "paused": self.paused,
-            "auto_paused_reason": self.auto_paused_reason,
-            "last_result_summary": self.last_result_summary,
+            "definition": {
+                "prompt": self.prompt,
+                "schedule": self.schedule,
+                "config": self.config,
+                "timezone": self.timezone,
+                "delivery_channel": self.delivery_channel,
+                "delivery_target": self.delivery_target,
+            },
+            "state": {
+                "next_run_at": self.next_run_at,
+                "status": self.status.value,
+                "last_run_at": self.last_run_at,
+                "consecutive_failures": self.consecutive_failures,
+                "last_error": self.last_error,
+                "failure_kind": self.failure_kind,
+                "delivery": self.delivery.to_dict(),
+                "last_verdict": self.last_verdict.to_dict() if self.last_verdict else None,
+                "paused": self.paused,
+                "auto_paused_reason": self.auto_paused_reason,
+                "last_result_summary": self.last_result_summary,
+            },
         }
+
+    def to_flat_dict(self) -> Dict[str, Any]:
+        """Serialize to the pre-split flat shape API responses are built from.
+
+        `ScheduledRunResponse` and friends spread this dict as keyword
+        arguments (``**job.to_flat_dict()``), so their field names are the
+        flat attribute names, not the persistence boundary's nested
+        ``definition``/``state`` split — that split is an on-disk storage
+        concern (see :meth:`to_dict`), not an API contract, so it must not
+        leak into responses the frontend already depends on.
+        """
+        nested = self.to_dict()
+        flat: Dict[str, Any] = {"id": nested["id"], "created_at": nested["created_at"]}
+        flat.update(nested["definition"])
+        flat.update(nested["state"])
+        return flat
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ScheduledResearchJob":
         """Reconstruct a job from a plain dict.
 
+        Accepts both the current nested ``definition``/``state`` shape (see
+        :meth:`to_dict`) and the flat pre-split shape every record on disk
+        used before this method existed — a record is only ever rewritten in
+        the new shape on its next natural write (any `upsert`/
+        `update_run_state`), so old records must keep loading exactly as they
+        did until that happens.
+
         Args:
-            data: A raw dict as produced by :meth:`to_dict`.
+            data: A raw dict as produced by :meth:`to_dict`, in either shape.
 
         Returns:
             The reconstructed ``ScheduledResearchJob``.
@@ -431,6 +463,15 @@ class ScheduledResearchJob:
             TypeError: If a field has the wrong type.
             ValueError: If ``status`` is not a recognized ``JobStatus`` value.
         """
+        definition = data.get("definition")
+        state = data.get("state")
+        if isinstance(definition, dict) or isinstance(state, dict):
+            flat: Dict[str, Any] = {"id": data.get("id"), "created_at": data.get("created_at")}
+            if isinstance(definition, dict):
+                flat.update(definition)
+            if isinstance(state, dict):
+                flat.update(state)
+            data = flat
         job_id = data["id"]
         prompt = data["prompt"]
         schedule = data["schedule"]

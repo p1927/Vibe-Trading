@@ -173,8 +173,7 @@ def cmd_alpha_list(args: argparse.Namespace) -> int:
     """``vibe-trading alpha list [--zoo X] [--theme Y] [--universe Z]``.
 
     Supports ``--limit N`` (default 50) and ``--json`` for machine-readable
-    output. ``--include-load-errors`` (alias: ``--show-failed``) appends a
-    registry health block.
+    output. ``--include-load-errors`` appends a registry health block.
     """
     try:
         reg = Registry()
@@ -207,7 +206,7 @@ def cmd_alpha_list(args: argparse.Namespace) -> int:
                     }
                 )
             print(json.dumps(records, indent=2, default=str))
-            if _include_load_errors(args):
+            if getattr(args, "include_load_errors", False):
                 _print_load_errors(reg)
             return 0
 
@@ -247,7 +246,7 @@ def cmd_alpha_list(args: argparse.Namespace) -> int:
             if truncated:
                 print(f"[showing {len(ids)} of {total}]")
 
-        if _include_load_errors(args):
+        if getattr(args, "include_load_errors", False):
             _print_load_errors(reg)
 
         if ids:
@@ -261,11 +260,6 @@ def cmd_alpha_list(args: argparse.Namespace) -> int:
         return 0
     except Exception as exc:  # noqa: BLE001
         return _handle_exception(args, "alpha list failed", exc)
-
-
-def _include_load_errors(args: argparse.Namespace) -> bool:
-    """Honour both the new flag name and the deprecated alias."""
-    return bool(getattr(args, "include_load_errors", False) or getattr(args, "show_failed", False))
 
 
 def _print_load_errors(reg: Registry) -> None:
@@ -973,12 +967,6 @@ def add_subparser(subparsers: Any) -> argparse.ArgumentParser:
         dest="include_load_errors",
         action="store_true",
         help="Also print load errors from registry.health()",
-    )
-    p_list.add_argument(
-        "--show-failed",
-        dest="show_failed",
-        action="store_true",
-        help="(deprecated) alias for --include-load-errors",
     )
 
     p_show = alpha_sub.add_parser("show", help="Show alpha metadata and source code")

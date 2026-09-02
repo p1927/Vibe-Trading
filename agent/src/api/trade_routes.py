@@ -752,7 +752,7 @@ class AutoRecordRequest(BaseModel):
     underlyings: List[str] = Field(default_factory=lambda: ["NIFTY", "BANKNIFTY", "SENSEX"])
     equities: List[str] = Field(default_factory=list)
     include_nifty50_constituents: bool = False
-    poll_interval_s: int = 10
+    poll_interval_s: int = 10                       # legacy; used only when category_intervals is None
     category_intervals: Dict[str, int] | None = None
     equity_intervals: Dict[str, int] | None = None
     ws_throttle_hz: float | None = None
@@ -773,7 +773,7 @@ class RecordingJobSnapshot(BaseModel):
     status: str
     underlyings: List[str] = Field(default_factory=list)
     equities: List[str] = Field(default_factory=list)
-    poll_interval_s: int = 10
+    poll_interval_s: int = 10                       # legacy; reflects whichever request created the job, ignored when category_intervals is set
     category_intervals: Dict[str, int] | None = None
     equity_intervals: Dict[str, int] | None = None
     ws_throttle_hz: float | None = None

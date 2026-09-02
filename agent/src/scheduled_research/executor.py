@@ -275,7 +275,8 @@ class ScheduledResearchExecutor:
             dispatch_concurrency: Max number of due jobs dispatched at once
                 per tick. Defaults to environment configuration. Jobs are
                 independent records keyed by id in the store, and every store
-                mutation (``upsert``/``load``/``save``) is a plain synchronous
+                mutation (``upsert``/``update_run_state``/``load``/``save``) is
+                a plain synchronous
                 call with no internal ``await`` — so it always runs to
                 completion atomically on the single asyncio event loop before
                 any other task's code can run, regardless of how many
@@ -688,7 +689,16 @@ class ScheduledResearchExecutor:
             # dispatch racing a concurrent mutation, but nothing has been
             # dispatched (or awaited) yet here, so no race window exists and
             # the RUNNING-only guard would just discard this write.
-            self._store.upsert(job, validate=False)
+            # update_run_state (not upsert): names only the lifecycle fields
+            # this branch changed, so a pause/resume click landing in the same
+            # instant is never reverted by this write.
+            self._store.update_run_state(
+                job.id,
+                status=job.status,
+                failure_kind=job.failure_kind,
+                last_error=job.last_error,
+                last_run_at=job.last_run_at,
+            )
             return
 
         if job.last_error and any(marker in job.last_error for marker in _RECOVERY_ERROR_MARKERS):
@@ -707,9 +717,15 @@ class ScheduledResearchExecutor:
         # leaving ``last_run_at`` frozen at the old timestamp even though the
         # job ran successfully.
         job.last_run_at = now_ms
-        # Lifecycle writes bypass validation: this record is already persisted,
-        # and a write that cannot land would strand the job mid-flight.
-        self._store.upsert(job, validate=False)
+        # update_run_state (not upsert): a pause/resume click landing between
+        # this write and the completion write at the end of this method must
+        # survive both, not just be re-clobbered by whichever fires last.
+        self._store.update_run_state(
+            job.id,
+            status=job.status,
+            last_run_at=job.last_run_at,
+            last_error=job.last_error,
+        )
 
         timeout_ms = dispatch_timeout_ms_for(job)
         job_type = str(job.config.get("job_type") or "unknown")
@@ -988,7 +1004,7 @@ class ScheduledResearchExecutor:
                 continue
             current.delivery.status = DeliveryStatus.SENDING
             current.delivery.updated_at = now
-            self._store.upsert(current, validate=False)
+            self._store.update_run_state(current.id, delivery=current.delivery)
 
             try:
                 await self._channel_sender(job.delivery_channel, job.delivery_target, text)
@@ -1010,7 +1026,9 @@ class ScheduledResearchExecutor:
                 or current.last_verdict.session_id != current.delivery.session_id
             ):
                 self._record_verdict_on(current, current.delivery.session_id, text, now)
-            self._store.upsert(current, validate=False)
+            self._store.update_run_state(
+                current.id, delivery=current.delivery, last_verdict=current.last_verdict
+            )
             changed += 1
         return changed
 
@@ -1062,7 +1080,7 @@ class ScheduledResearchExecutor:
         if status != "completed":
             return 0
         self._record_verdict_on(job, session_id, text, now_ms)
-        self._store.upsert(job, validate=False)
+        self._store.update_run_state(job.id, last_verdict=job.last_verdict)
         return 1
 
     def _mark_delivery_failed(
@@ -1084,10 +1102,10 @@ class ScheduledResearchExecutor:
             job.delivery.attempts += 1
             if job.delivery.attempts < self._max_consecutive_failures:
                 job.delivery.status = DeliveryStatus.PENDING
-                self._store.upsert(job, validate=False)
+                self._store.update_run_state(job.id, delivery=job.delivery)
                 return
         job.delivery.status = DeliveryStatus.FAILED
-        self._store.upsert(job, validate=False)
+        self._store.update_run_state(job.id, delivery=job.delivery)
 
     def _retry_delay_ms(self, consecutive_failures: int) -> int:
         """Return bounded exponential backoff for a dispatch failure count."""
@@ -1136,4 +1154,21 @@ class ScheduledResearchExecutor:
                 current.status.value,
             )
             return
-        self._store.upsert(job, validate=False)
+        # update_run_state (not upsert): `job` is the snapshot dispatch started
+        # from, so writing it back whole would silently revert `current`'s
+        # `paused`/`auto_paused_reason` if a pause/resume click landed while
+        # this dispatch was in flight. Naming only the fields this run cycle
+        # actually owns keeps that click intact.
+        self._store.update_run_state(
+            job.id,
+            status=job.status,
+            next_run_at=job.next_run_at,
+            last_run_at=job.last_run_at,
+            consecutive_failures=job.consecutive_failures,
+            last_error=job.last_error,
+            failure_kind=job.failure_kind,
+            delivery=job.delivery,
+            last_verdict=job.last_verdict,
+            last_result_summary=job.last_result_summary,
+            config=job.config,
+        )

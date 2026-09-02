@@ -300,7 +300,7 @@ class TestScheduledResearchJobStore:
     def test_legacy_record_without_timezone_loads_as_none(self, tmp_path: Path) -> None:
         store_path = tmp_path / "jobs.json"
         legacy = _make_job("legacy-tz").to_dict()
-        legacy.pop("timezone")
+        legacy["definition"].pop("timezone")
         store_path.write_text(
             json.dumps({"schema_version": 1, "jobs": [legacy]}), encoding="utf-8"
         )
@@ -331,14 +331,14 @@ class TestScheduledResearchJobStore:
         # Loading must never raise: the store quarantines the entire file when
         # one record fails, so an unusable value falls back to UTC semantics.
         raw = _make_job("tz-type").to_dict()
-        raw["timezone"] = 13
+        raw["definition"]["timezone"] = 13
         assert ScheduledResearchJob.from_dict(raw).timezone is None
 
     def test_from_dict_normalizes_blank_timezone_to_none(self) -> None:
         # A blank string must load as None so every loaded record satisfies
         # the shape check the store re-runs on executor lifecycle writes.
         raw = _make_job("tz-blank-load").to_dict()
-        raw["timezone"] = "   "
+        raw["definition"]["timezone"] = "   "
         assert ScheduledResearchJob.from_dict(raw).timezone is None
 
     def test_retry_state_round_trips_and_legacy_jobs_get_defaults(self, tmp_path: Path) -> None:
@@ -358,7 +358,7 @@ class TestScheduledResearchJobStore:
 
         legacy = _make_job("legacy").to_dict()
         for field in ("consecutive_failures", "last_error", "failure_kind"):
-            legacy.pop(field)
+            legacy["state"].pop(field)
         store_path.write_text(
             json.dumps({"schema_version": 1, "jobs": [legacy]}),
             encoding="utf-8",
@@ -385,7 +385,7 @@ class TestLegacyTimezoneValues:
         store_path = tmp_path / "jobs.json"
         good = _make_job("good").to_dict()
         bad = _make_job("bad").to_dict()
-        bad["timezone"] = 123
+        bad["definition"]["timezone"] = 123
         store_path.write_text(
             json.dumps({"schema_version": 1, "jobs": [good, bad]}), encoding="utf-8"
         )
@@ -397,3 +397,119 @@ class TestLegacyTimezoneValues:
         assert jobs["good"].timezone is None
         assert store_path.exists()  # not quarantined
         assert not list(tmp_path.glob("*.corrupt-*"))
+
+
+class TestDefinitionStateSplitShape:
+    """`to_dict`/`from_dict`'s nested definition/state envelope."""
+
+    def test_to_dict_nests_definition_and_state(self) -> None:
+        job = _make_job("shape-1")
+        job.config = {"job_type": "index_research"}
+        job.timezone = "Asia/Kolkata"
+        job.status = JobStatus.RUNNING
+        job.paused = True
+        raw = job.to_dict()
+
+        assert set(raw) == {"id", "created_at", "definition", "state"}
+        assert raw["definition"] == {
+            "prompt": job.prompt,
+            "schedule": job.schedule,
+            "config": {"job_type": "index_research"},
+            "timezone": "Asia/Kolkata",
+            "delivery_channel": None,
+            "delivery_target": None,
+        }
+        assert raw["state"]["status"] == "running"
+        assert raw["state"]["paused"] is True
+
+    def test_from_dict_round_trips_nested_shape(self) -> None:
+        job = _make_job("shape-2")
+        job.consecutive_failures = 3
+        job.paused = True
+        job.auto_paused_reason = "stale-recovery"
+        restored = ScheduledResearchJob.from_dict(job.to_dict())
+        assert restored == job
+
+    def test_from_dict_still_accepts_pre_split_flat_shape(self) -> None:
+        # Every record persisted before this split used a flat dict — old
+        # records on disk must keep loading exactly as they did until their
+        # next natural write rewrites them in the nested shape.
+        job = _make_job("shape-legacy")
+        nested = job.to_dict()
+        flat = {"id": nested["id"], "created_at": nested["created_at"]}
+        flat.update(nested["definition"])
+        flat.update(nested["state"])
+        assert "definition" not in flat and "state" not in flat
+
+        restored = ScheduledResearchJob.from_dict(flat)
+        assert restored == job
+
+    def test_store_upsert_self_migrates_legacy_flat_record_to_nested(self, tmp_path: Path) -> None:
+        store_path = tmp_path / "jobs.json"
+        job = _make_job("self-migrate")
+        nested = job.to_dict()
+        flat = {"id": nested["id"], "created_at": nested["created_at"]}
+        flat.update(nested["definition"])
+        flat.update(nested["state"])
+        store_path.write_text(json.dumps({"schema_version": 1, "jobs": [flat]}), encoding="utf-8")
+
+        store = ScheduledResearchJobStore(path=store_path)
+        loaded = store.get("self-migrate")
+        assert loaded is not None
+        store.upsert(loaded)
+
+        on_disk = json.loads(store_path.read_text(encoding="utf-8"))
+        assert "definition" in on_disk["jobs"][0]
+        assert "state" in on_disk["jobs"][0]
+
+
+class TestUpdateRunState:
+    def test_patches_only_named_fields(self, tmp_path: Path) -> None:
+        store = ScheduledResearchJobStore(path=tmp_path / "jobs.json")
+        job = _make_job("patch-1")
+        job.prompt = "original prompt"
+        store.upsert(job)
+
+        updated = store.update_run_state(
+            "patch-1", status=JobStatus.RUNNING, last_run_at=12345
+        )
+        assert updated is not None
+        assert updated.status == JobStatus.RUNNING
+        assert updated.last_run_at == 12345
+        assert updated.prompt == "original prompt"  # untouched definition field
+
+        fetched = store.get("patch-1")
+        assert fetched is not None
+        assert fetched.status == JobStatus.RUNNING
+        assert fetched.prompt == "original prompt"
+
+    def test_does_not_clobber_a_concurrent_pause_toggle(self, tmp_path: Path) -> None:
+        # The bug this method exists to prevent: a long-running dispatch's
+        # in-memory job snapshot must not silently revert a pause/resume
+        # click that landed on disk while that dispatch was in flight.
+        store = ScheduledResearchJobStore(path=tmp_path / "jobs.json")
+        job = _make_job("patch-2")
+        store.upsert(job)
+
+        # Simulates a concurrent pause landing mid-dispatch.
+        paused = store.get("patch-2")
+        assert paused is not None
+        paused.paused = True
+        store.upsert(paused)
+
+        # The executor's completion write only names lifecycle fields.
+        result = store.update_run_state("patch-2", status=JobStatus.COMPLETED)
+        assert result is not None
+        assert result.status == JobStatus.COMPLETED
+        assert result.paused is True  # not reverted
+
+    def test_rejects_unknown_field(self, tmp_path: Path) -> None:
+        store = ScheduledResearchJobStore(path=tmp_path / "jobs.json")
+        job = _make_job("patch-3")
+        store.upsert(job)
+        with pytest.raises(ValueError, match="prompt"):
+            store.update_run_state("patch-3", prompt="not a run-state field")
+
+    def test_returns_none_for_missing_job(self, tmp_path: Path) -> None:
+        store = ScheduledResearchJobStore(path=tmp_path / "jobs.json")
+        assert store.update_run_state("does-not-exist", status=JobStatus.FAILED) is None
