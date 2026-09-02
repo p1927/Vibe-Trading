@@ -626,6 +626,14 @@ class TradeConfig(_EnvBase):
         alias="HUB_EVENING_MAINTENANCE_CRON", default="35 18 * * *",
     )
 
+    # --- scheduled_research/financial_knowledge_jobs.py ---------------------
+    financial_knowledge_enable_scheduler: str = Field(
+        alias="FINANCIAL_KNOWLEDGE_ENABLE_SCHEDULER", default="",
+    )
+    financial_knowledge_curator_cron: str = Field(
+        alias="FINANCIAL_KNOWLEDGE_CURATOR_CRON", default="0 7 * * *",
+    )
+
     # --- scheduled_research/dst_eval_jobs.py --------------------------------
     dst_eval_enable_scheduler: str = Field(alias="DST_EVAL_ENABLE_SCHEDULER", default="")
     recorder_dst_cron: str = Field(alias="RECORDER_DST_CRON", default="30 2 * * *")
@@ -657,6 +665,9 @@ class TradeConfig(_EnvBase):
     )
     pump_dump_proxy_cron: str = Field(
         alias="PUMP_DUMP_PROXY_CRON", default="50 15 * * 1-5",
+    )
+    futures_positioning_cron: str = Field(
+        alias="FUTURES_POSITIONING_CRON", default="30 17 * * 1-5",
     )
     max_pain_bhavcopy_cron: str = Field(
         alias="MAX_PAIN_BHAVCOPY_CRON", default="30 17 * * 1-5",

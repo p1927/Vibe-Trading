@@ -28,6 +28,7 @@ const POLL_MS = 15_000;
 const SECTION_ORDER = [
   "prediction",
   "hub",
+  "knowledge",
   "options",
   "trade_data",
   "autonomous_agent",
@@ -38,6 +39,7 @@ const SECTION_ORDER = [
 const SECTION_LABELS: Record<string, string> = {
   prediction: "Prediction",
   hub: "Hub / News",
+  knowledge: "Financial Knowledge",
   options: "Options",
   trade_data: "Trade Data",
   autonomous_agent: "Autonomous Agent",

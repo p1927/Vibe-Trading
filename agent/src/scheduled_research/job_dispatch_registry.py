@@ -46,6 +46,15 @@ def _load_hub_calibration():
     return HUB_CALIBRATION_JOB_TYPES, dispatch_hub_calibration_job
 
 
+def _load_financial_knowledge():
+    from src.scheduled_research.financial_knowledge_jobs import (
+        FINANCIAL_KNOWLEDGE_JOB_TYPES,
+        dispatch_financial_knowledge_job,
+    )
+
+    return FINANCIAL_KNOWLEDGE_JOB_TYPES, dispatch_financial_knowledge_job
+
+
 def _load_hub_capture():
     from src.scheduled_research.capture_jobs import HUB_CAPTURE_JOB_TYPES, dispatch_hub_capture_job
 
@@ -83,6 +92,7 @@ _DISPATCH_LOADERS: tuple[Callable[[], tuple[frozenset, Callable[..., Awaitable[N
     _load_options,
     _load_trade_data,
     _load_hub_calibration,
+    _load_financial_knowledge,
     _load_hub_capture,
     _load_autonomous,
     _load_recording_wake,

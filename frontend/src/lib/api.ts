@@ -18,6 +18,7 @@ import type {
   NewsDerivedConceptsResponse,
   FactorDetailResponse,
   FactorListResponse,
+  FinancialKnowledgeStatusResponse,
   StrategyListResponse,
   TrackRecordResponse,
   WikiListResponse,
@@ -1018,6 +1019,10 @@ export const api = {
       `/knowledge/factors/${encodeURIComponent(factorKey)}?${new URLSearchParams({ market }).toString()}`,
       { cache: "no-store" },
     ),
+  getFinancialKnowledgeStatus: () =>
+    request<FinancialKnowledgeStatusResponse>("/knowledge/financial-knowledge/status", {
+      cache: "no-store",
+    }),
   getKnowledgeFactors: (category?: string) => {
     const q = new URLSearchParams();
     if (category) q.set("category", category);
@@ -3776,6 +3781,8 @@ export interface AutoRecordRequest {
   enabled: boolean;
   underlyings?: string[];
   equities?: string[];
+  /** @deprecated Kept for callers that haven't migrated yet. Ignored
+   * when ``category_intervals`` is provided. */
   poll_interval_s?: number;
   category_intervals?: Record<string, number>;
   equity_intervals?: Record<string, number>;
@@ -3811,6 +3818,8 @@ export interface RecordingJobSnapshot {
   job_id: string;
   status: string;
   underlyings?: string[];
+  /** @deprecated Reflects whichever request created the job. Ignored
+   * when ``category_intervals`` is set. */
   poll_interval_s?: number;
   category_intervals?: Record<string, number> | null;
   ws_throttle_hz?: number | null;

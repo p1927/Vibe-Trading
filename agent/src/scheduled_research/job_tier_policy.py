@@ -34,6 +34,9 @@ from src.scheduled_research.capture_jobs import (
     JOB_TYPE_HUB_CAPTURE_FACTOR_SNAPSHOT,
     JOB_TYPE_HUB_CAPTURE_INTRADAY,
 )
+from src.scheduled_research.financial_knowledge_jobs import (
+    JOB_TYPE_FINANCIAL_KNOWLEDGE_CURATOR,
+)
 from src.scheduled_research.hub_calibration_jobs import (
     JOB_TYPE_HUB_EVENING_MAINTENANCE,
     JOB_TYPE_HUB_MORNING_CALIBRATION,
@@ -96,6 +99,7 @@ COLLECTION_JOB_TYPES: frozenset[str] = frozenset(
         JOB_TYPE_NSE_MACRO_REFRESH,
         JOB_TYPE_NSE_REPO_CONSISTENCY,
         JOB_TYPE_RESEARCH_HISTORY_ARCHIVE,
+        JOB_TYPE_FINANCIAL_KNOWLEDGE_CURATOR,
     }
 )
 

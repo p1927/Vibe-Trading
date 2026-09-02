@@ -35,6 +35,7 @@ from .dst_eval_jobs import (
     JOB_TYPE_PREDICTION_EVAL,
     JOB_TYPE_RECORDER_DST,
 )
+from .financial_knowledge_jobs import JOB_TYPE_FINANCIAL_KNOWLEDGE_CURATOR
 from .hub_calibration_jobs import (
     JOB_TYPE_HUB_EVENING_MAINTENANCE,
     JOB_TYPE_HUB_MORNING_CALIBRATION,
@@ -56,6 +57,7 @@ from .index_jobs import (
     JOB_TYPE_NEWS_QUALITY_EVAL,
     JOB_TYPE_OI_SNAPSHOT,
     JOB_TYPE_PUMP_DUMP_PROXY,
+    JOB_TYPE_FUTURES_POSITIONING,
     JOB_TYPE_QUANTILE_FORECAST_LEDGER_PUSH,
     JOB_TYPE_REINFERENCE_TICK,
     JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP,
@@ -160,6 +162,11 @@ _JOB_DETAILS: Dict[str, JobTypeDetail] = {
         "Drains the news staging queue into distilled hub events, or (in maintenance mode) "
         "runs heavier entity/wiki repair and backfill."
     ),
+    JOB_TYPE_FINANCIAL_KNOWLEDGE_CURATOR: JobTypeDetail(
+        "Curates the financial-knowledge corpus: LLM-judges raw sources as worth keeping, "
+        "flags undistilled wiki pages, triggers the LLM-Wiki app's ingest, and reports "
+        "corpus size/growth."
+    ),
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT: JobTypeDetail(
         "Captures a snapshot of index-level prediction factors."
     ),
@@ -192,6 +199,9 @@ _JOB_DETAILS: Dict[str, JobTypeDetail] = {
         "fusion forecast."
     ),
     JOB_TYPE_PUMP_DUMP_PROXY: JobTypeDetail("Computes a pump/dump proxy signal."),
+    JOB_TYPE_FUTURES_POSITIONING: JobTypeDetail(
+        "Persists one day's raw NSE F&O futures-OI rows (index + per-stock)."
+    ),
     JOB_TYPE_MAX_PAIN_BHAVCOPY: JobTypeDetail(
         "Backfills max-pain history for a trading day from bhavcopy data."
     ),

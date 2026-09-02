@@ -121,3 +121,61 @@ export interface FactorDetailResponse {
   calibration_note: string;
   error?: string;
 }
+
+/**
+ * financial-knowledge corpus curator (Part B of
+ * .claude/backlog/items/2026-09-02-wiki-lifecycle-knowledge-bridge.md) — mirrors
+ * `trade_integrations.knowledge_engine.curator.run_financial_knowledge_curation`'s
+ * report shape verbatim.
+ */
+export interface FlaggedSource {
+  path: string;
+  reason: string;
+}
+
+export interface FlaggedWikiPage {
+  path: string;
+  lines: number;
+}
+
+export interface CorpusSizeBucket {
+  files: number;
+  bytes: number;
+  files_delta: number;
+  bytes_delta: number;
+}
+
+export interface FinancialKnowledgeCuratorReport {
+  ok: boolean;
+  skipped?: boolean;
+  reason?: string;
+  ran_at: string;
+  sources?: {
+    judged: number;
+    remaining: number;
+    flagged: FlaggedSource[];
+    flagged_count: number;
+  };
+  distillation?: {
+    scanned: number;
+    flagged: FlaggedWikiPage[];
+    flagged_count: number;
+    line_threshold: number;
+  };
+  ingest?: {
+    ok: boolean;
+    skipped?: boolean;
+    reason?: string;
+    error?: string;
+  };
+  growth?: {
+    buckets: Record<string, CorpusSizeBucket>;
+  };
+}
+
+export interface FinancialKnowledgeStatusResponse {
+  ok: boolean;
+  has_run: boolean;
+  report: FinancialKnowledgeCuratorReport | null;
+  error?: string;
+}

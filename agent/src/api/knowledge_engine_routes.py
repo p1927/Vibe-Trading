@@ -22,6 +22,10 @@ Routes (auth via the caller-supplied ``require_auth`` dependency):
 - ``GET /knowledge/track-record``        — realized forecast accuracy and optional strategy P&L
 - ``GET /knowledge/factors``             — event-factor taxonomy, optionally by category
 - ``GET /knowledge/factors/{factor_key}`` — one factor's pedagogy and calibration context
+- ``GET /knowledge/financial-knowledge/status`` — latest corpus curator report (Part B of
+  .claude/backlog/items/2026-09-02-wiki-lifecycle-knowledge-bridge.md): flagged raw sources,
+  flagged undistilled wiki pages, size/growth. Reads the last persisted run, never recomputes
+  live (a live run would pay for an LLM-judge batch on every page load).
 
 Error surface: an unexpected exception inside a query call → 502 with a
 generic envelope (never leaks a stack frame). A missing wiki slug → 200 with
@@ -171,6 +175,21 @@ def register_knowledge_engine_routes(app: FastAPI, require_auth: AuthDep | None 
             logger.exception("knowledge event-factor query failed")
             return JSONResponse(status_code=502, content={"ok": False, "error": "factor taxonomy unavailable"})
         return {"ok": True, "count": len(results), "results": results}
+
+    @app.get("/knowledge/financial-knowledge/status", dependencies=[Depends(require_auth)])
+    async def knowledge_financial_knowledge_status() -> Response:
+        try:
+            from trade_integrations.knowledge_engine.curator import load_last_report
+
+            report = await asyncio.to_thread(load_last_report)
+        except Exception:  # noqa: BLE001 — never leak a stack frame to clients
+            logger.exception("financial-knowledge curator status fetch failed")
+            return JSONResponse(
+                status_code=502, content={"ok": False, "error": "curator status unavailable"}
+            )
+        if report is None:
+            return {"ok": True, "has_run": False, "report": None}
+        return {"ok": True, "has_run": True, "report": report}
 
     @app.get("/knowledge/factors/{factor_key}", dependencies=[Depends(require_auth)])
     async def knowledge_factor(

@@ -83,6 +83,10 @@ def boot_scheduled_research_stack(get_store) -> None:
         is_hub_capture_scheduler_enabled,
         register_default_hub_capture_jobs,
     )
+    from src.scheduled_research.financial_knowledge_jobs import (
+        is_financial_knowledge_scheduler_enabled,
+        register_default_financial_knowledge_jobs,
+    )
     from src.scheduled_research.dst_eval_jobs import (
         is_dst_eval_scheduler_enabled,
         register_default_dst_eval_jobs,
@@ -98,6 +102,8 @@ def boot_scheduled_research_stack(get_store) -> None:
         register_default_trade_data_jobs(get_store())
     if is_hub_capture_scheduler_enabled():
         register_default_hub_capture_jobs(get_store())
+    if is_financial_knowledge_scheduler_enabled():
+        register_default_financial_knowledge_jobs(get_store())
     if is_dst_eval_scheduler_enabled():
         register_default_dst_eval_jobs(get_store())
     register_persisted_autonomous_agent_jobs()
