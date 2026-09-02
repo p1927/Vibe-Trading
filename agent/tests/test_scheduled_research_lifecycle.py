@@ -132,3 +132,61 @@ def test_resume_clears_auto_paused_reason_set_by_system_recovery(tmp_path: Path)
     assert saved is not None
     assert saved.paused is False
     assert saved.auto_paused_reason is None
+
+
+def test_resume_unsticks_a_terminal_failed_job(tmp_path: Path) -> None:
+    """A job that reached terminal FAILED (max consecutive_failures) must be
+    resumable, not permanently excluded from is_due(). Resuming resets it to
+    PENDING with consecutive_failures/failure_kind cleared."""
+    from src.scheduled_research.pause_control import set_job_enabled
+
+    store = _store(tmp_path)
+    job = ScheduledResearchJob(
+        id="stuck",
+        prompt="test",
+        schedule="1000",
+        next_run_at=0,
+        status=JobStatus.FAILED,
+        created_at=0,
+        consecutive_failures=3,
+        failure_kind="dispatch",
+        last_error="TimeoutError: dispatch timed out after 1200000ms",
+    )
+    store.upsert(job)
+
+    set_job_enabled("stuck", True, store=store)
+
+    saved = store.get("stuck")
+    assert saved is not None
+    assert saved.status == JobStatus.PENDING
+    assert saved.consecutive_failures == 0
+    assert saved.failure_kind is None
+    assert saved.paused is False
+    # last_error is deliberately left alone — it's useful history of what
+    # went wrong last time, only the state blocking re-dispatch is cleared.
+    assert saved.last_error == "TimeoutError: dispatch timed out after 1200000ms"
+
+
+def test_resume_does_not_touch_status_of_a_non_failed_job(tmp_path: Path) -> None:
+    """A merely-paused, healthy job's status must be untouched by resume —
+    only the terminal-FAILED case gets the extra reset."""
+    from src.scheduled_research.pause_control import set_job_enabled
+
+    store = _store(tmp_path)
+    job = ScheduledResearchJob(
+        id="healthy",
+        prompt="test",
+        schedule="1000",
+        next_run_at=0,
+        status=JobStatus.COMPLETED,
+        created_at=0,
+        paused=True,
+    )
+    store.upsert(job)
+
+    set_job_enabled("healthy", True, store=store)
+
+    saved = store.get("healthy")
+    assert saved is not None
+    assert saved.status == JobStatus.COMPLETED
+    assert saved.paused is False

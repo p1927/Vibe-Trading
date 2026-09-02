@@ -146,6 +146,9 @@ async def _run_startup_preflight() -> None:
     if svc is not None and hasattr(svc, "event_bus"):
         svc.event_bus.set_loop(loop)
 
+    from src.scheduled_research.gil_tuning import tune_gil_switch_interval_for_scheduler
+
+    tune_gil_switch_interval_for_scheduler()
     _start_scheduled_research_executor()
     from src.trade.job_watchdog import start_job_watchdog
 

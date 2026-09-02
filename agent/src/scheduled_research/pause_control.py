@@ -56,6 +56,20 @@ def set_job_enabled(
     ``auto_paused_reason`` regardless of whether the pause was user- or
     system-initiated.
 
+    Enabling a job that is currently ``FAILED`` (terminal — reached after
+    ``max_consecutive_failures`` retries, see ``executor.py``'s
+    ``is_due()``, which explicitly excludes ``FAILED`` from ever being
+    picked up again) also resets it to ``PENDING`` with
+    ``consecutive_failures``/``failure_kind`` cleared. Without this, a
+    resumed job that happened to be FAILED stayed permanently invisible to
+    the scheduler — ``paused`` would read ``False`` (looking "resumed" in
+    the API/UI) while ``is_due()`` silently kept excluding it forever, with
+    no path back except a direct store edit. Live-observed 2026-09-02: see
+    [[2026-08-30-scheduler-sequential-dispatch-drains-slowly]]. A job that
+    is merely ``PENDING``/``COMPLETED`` is untouched by this — only the
+    terminal-FAILED case gets the extra reset, so ordinary pause/resume of
+    a healthy job keeps working exactly as before.
+
     Args:
         job_id: The job to update.
         enabled: ``True`` to resume, ``False`` to pause.
@@ -70,6 +84,10 @@ def set_job_enabled(
     job.paused = not enabled
     if enabled:
         job.auto_paused_reason = None
+        if job.status == JobStatus.FAILED:
+            job.status = JobStatus.PENDING
+            job.consecutive_failures = 0
+            job.failure_kind = None
     store.upsert(job)
     return job
 
