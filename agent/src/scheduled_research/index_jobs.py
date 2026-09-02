@@ -64,6 +64,7 @@ JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH = "global_macro_eod_refresh"
 JOB_TYPE_OI_SNAPSHOT = "oi_snapshot"
 JOB_TYPE_REINFERENCE_TICK = "reinference_tick"
 JOB_TYPE_PUMP_DUMP_PROXY = "pump_dump_proxy"
+JOB_TYPE_FUTURES_POSITIONING = "futures_positioning"
 JOB_TYPE_MAX_PAIN_BHAVCOPY = "max_pain_bhavcopy"
 JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT = "constituent_volume_snapshot"
 JOB_TYPE_FORECAST_PLATFORM_RETRAIN = "forecast_platform_retrain"
@@ -84,6 +85,7 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_OI_SNAPSHOT,
     JOB_TYPE_REINFERENCE_TICK,
     JOB_TYPE_PUMP_DUMP_PROXY,
+    JOB_TYPE_FUTURES_POSITIONING,
     JOB_TYPE_MAX_PAIN_BHAVCOPY,
     JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT,
     JOB_TYPE_FORECAST_PLATFORM_RETRAIN,
@@ -678,6 +680,33 @@ def run_pump_dump_proxy_job(config: dict[str, Any] | None = None) -> dict[str, A
     )
 
 
+def run_futures_positioning_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Daily post-close raw futures-OI persistence (Phase 2 step 9 of
+    [[2026-09-02-futures-positioning-factor-pipeline]]), same shape as
+    ``run_max_pain_bhavcopy_job``/``run_pump_dump_proxy_job`` — a missed/
+    no-data day (weekend, holiday, bhavcopy not yet published) is expected
+    and persisted as-is (``status: "no_data"``) rather than skipped, so this
+    accumulator's day-coverage stays honestly visible, same discipline as
+    every other daily accumulator in this file.
+
+    Persists one day's raw futures rows via
+    ``futures_positioning_store.persist_futures_day`` (never re-fetches or
+    re-implements that logic here). Uses IST "today" as the default trading
+    day, same convention ``run_max_pain_bhavcopy_job`` already uses, since
+    NSE's F&O bhavcopy is published against IST trading days.
+    """
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.dataflows.index_research.futures_positioning_store import (
+        persist_futures_day,
+    )
+
+    cfg = config or {}
+    trading_day = cfg.get("trading_day") or (
+        datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    )
+    return persist_futures_day(trading_day)
+
+
 def run_max_pain_bhavcopy_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Daily post-close max-pain reconstruction from NSE's F&O bhavcopy
     (module 2 step 4's retroactive complement — see
@@ -932,6 +961,11 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         _attach_job_result_summary(job, summary)
         logger.info("pump-dump proxy capture completed for job %s: %s", job.id, summary)
         return
+    if job_type == JOB_TYPE_FUTURES_POSITIONING:
+        summary = run_futures_positioning_job(job.config)
+        _attach_job_result_summary(job, summary)
+        logger.info("futures positioning capture completed for job %s: %s", job.id, summary)
+        return
     if job_type == JOB_TYPE_MAX_PAIN_BHAVCOPY:
         summary = run_max_pain_bhavcopy_job(job.config)
         _attach_job_result_summary(job, summary)
@@ -969,6 +1003,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     oi_snapshot_cron = _cfg.oi_snapshot_cron.strip()
     reinference_tick_cron = _cfg.reinference_tick_cron.strip()
     pump_dump_proxy_cron = _cfg.pump_dump_proxy_cron.strip()
+    futures_positioning_cron = _cfg.futures_positioning_cron.strip()
     max_pain_bhavcopy_cron = _cfg.max_pain_bhavcopy_cron.strip()
     constituent_volume_snapshot_cron = _cfg.constituent_volume_snapshot_cron.strip()
     validate_schedule(snapshot_cron)
@@ -980,6 +1015,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     validate_schedule(oi_snapshot_cron)
     validate_schedule(reinference_tick_cron)
     validate_schedule(pump_dump_proxy_cron)
+    validate_schedule(futures_positioning_cron)
     validate_schedule(max_pain_bhavcopy_cron)
     validate_schedule(constituent_volume_snapshot_cron)
 
@@ -1573,6 +1609,21 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             config={
                 "job_type": JOB_TYPE_PUMP_DUMP_PROXY,
                 "symbol": "NIFTY",
+            },
+        ),
+        ScheduledResearchJob(
+            id="nifty-futures-positioning",
+            prompt=(
+                "Daily post-close raw NIFTY futures-OI persistence from NSE's F&O bhavcopy "
+                "(accumulates history for the short-buildup-then-unwind detector)"
+            ),
+            schedule=futures_positioning_cron,
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            timezone="Asia/Kolkata",
+            config={
+                "job_type": JOB_TYPE_FUTURES_POSITIONING,
             },
         ),
         ScheduledResearchJob(
