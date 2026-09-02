@@ -337,7 +337,12 @@ class TestRestAuth:
 
         for route in routes:
             calls = {dep.call for dep in route.dependant.dependencies}
-            assert api_server.require_auth in calls, route.path
+            if route.path.endswith("/stream"):
+                # SSE routes can't send an Authorization header (EventSource
+                # limitation), so they use ticket-based auth instead.
+                assert api_server.require_event_stream_auth in calls, route.path
+            else:
+                assert api_server.require_auth in calls, route.path
 
     @pytest.mark.parametrize(
         ("method", "path"),
