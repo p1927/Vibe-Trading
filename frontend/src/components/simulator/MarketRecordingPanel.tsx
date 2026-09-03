@@ -1,39 +1,27 @@
 import { useCallback, useEffect, useState } from "react";
 import { Disc, Square } from "lucide-react";
-import { api, type TickRecordingJob } from "@/lib/api";
+import { api, type GlobalMacroUiCard, type TickRecordingJob } from "@/lib/api";
 
-/** `kind="fx"` tick-recording pool — `tick_recorder._fx_symbols()`'s 6 USD-anchored pairs
- * (the backend default when `symbols` is omitted) plus the 7 cross-market money-flow/
- * risk-appetite factors added to `global_macro_store` (2026-08-23, "Nifty 50 prediction gaps"
- * pass — dollar strength, broad EM risk appetite, 3 Asian EM peer indices, credit-spread proxy).
- * Both groups are plain `global_macro_store` series names and record identically via
- * `tick_recorder._poll_fx` -> `StockHistory.live_macro_spot(series=symbol)`; the split below is
- * only for the checklist's grouping, not a backend distinction. Still a hand-maintained list,
- * NOT yet reading `GlobalMarketsPanel.tsx`'s registry-driven `api.getGlobalMacroUiCards()` (see
- * .claude/backlog/items/2026-09-03-global-factors-registry-not-wired-to-consumers.md and its
- * follow-up item for this file) — no shared import today because that endpoint also lists
- * EOD-only factors (gold/oil/VIX/US10Y) that have no live spot and so can't be tick-recorded
- * here, and the checklist's LIVE-only filtering isn't done yet. */
-const FX_DEFAULT_SYMBOLS: { key: string; name: string }[] = [
-  { key: "usd_inr", name: "USD/INR" },
-  { key: "usd_cny", name: "USD/CNY" },
-  { key: "usd_jpy", name: "USD/JPY" },
-  { key: "usd_rub", name: "USD/RUB" },
-  { key: "usd_sar", name: "USD/SAR" },
-  { key: "usd_brl", name: "USD/BRL" },
-];
-
-const FX_MONEY_FLOW_SYMBOLS: { key: string; name: string }[] = [
-  { key: "dxy", name: "US Dollar Index (DXY)" },
-  { key: "msci_em", name: "MSCI Emerging Markets (EEM)" },
-  { key: "kospi", name: "Korea (KOSPI)" },
-  { key: "taiex", name: "Taiwan (TAIEX)" },
-  { key: "jci_indonesia", name: "Indonesia (JCI)" },
-  { key: "hyg", name: "US High Yield Bond ETF (HYG)" },
-  { key: "lqd", name: "US Investment Grade Bond ETF (LQD)" },
-];
-
-const FX_SYMBOL_OPTIONS = [...FX_DEFAULT_SYMBOLS, ...FX_MONEY_FLOW_SYMBOLS];
+/** `kind="fx"` tick-recording pool — every `factors/catalog.py`-registered `market="GLOBAL"`/
+ * FX-pair factor with a real live-spot source, fetched from `api.getGlobalMacroUiCards()`
+ * (the same registry-driven endpoint `GlobalMarketsPanel.tsx` already uses) instead of a
+ * hand-maintained list — closes
+ * .claude/backlog/items/2026-09-03-market-recording-panel-fx-list-not-registry-driven.md.
+ * `card.live_spot_series !== null` is the tick-recordable filter (checked live 2026-09-03:
+ * only `us_10y`/`vix_daily` have no live spot among the `global` cards — every other GLOBAL/
+ * currency card does, including several the old hardcoded list never had:
+ * gold/oil_brent_daily/oil_wti_daily/copper/natural_gas/baltic_dry_freight). The `currency` vs
+ * `global` array split from the API response is reused directly for this checklist's own
+ * two-group layout (USD-anchored pairs vs. cross-market money-flow factors) — same grouping the
+ * old hardcoded `FX_DEFAULT_SYMBOLS`/`FX_MONEY_FLOW_SYMBOLS` split had, just sourced live now.
+ * Both groups record identically via `tick_recorder._poll_fx` ->
+ * `StockHistory.live_macro_spot(series=symbol)` — the split is a UI grouping choice only, not a
+ * backend distinction, same as before this refactor. */
+function liveSpotOnly(cards: GlobalMacroUiCard[]): { key: string; name: string }[] {
+  return cards
+    .filter((c) => c.live_spot_series !== null)
+    .map((c) => ({ key: c.key, name: c.name }));
+}
 
 /** Start/stop UI for `stock_simulator`'s tick-recording jobs (append-only ticks into the
  * generic `market_ticks` table), scoped to one market tab. `kind="index"` records a country's
@@ -52,14 +40,14 @@ export function MarketRecordingPanel({
 }) {
   const [jobs, setJobs] = useState<TickRecordingJob[]>([]);
   const [intervalSeconds, setIntervalSeconds] = useState(30);
-  // Only meaningful for kind="fx" — mirrors `tick_recorder._fx_symbols()`'s default (the 6
-  // USD-anchored pairs) so unchecking nothing preserves today's default-start behavior; the 7
-  // money-flow factors start unchecked since they're new and opt-in.
-  const [selectedSymbols, setSelectedSymbols] = useState<Set<string>>(
-    () => new Set(FX_DEFAULT_SYMBOLS.map((s) => s.key)),
-  );
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [fxDefaultSymbols, setFxDefaultSymbols] = useState<{ key: string; name: string }[]>([]);
+  const [fxMoneyFlowSymbols, setFxMoneyFlowSymbols] = useState<{ key: string; name: string }[]>([]);
+  // Only meaningful for kind="fx" — mirrors `tick_recorder._fx_symbols()`'s default (the
+  // USD-anchored currency pairs) so unchecking nothing preserves today's default-start
+  // behavior; the money-flow factors start unchecked since they're opt-in. Seeded once the
+  // registry-driven card lists arrive below (empty at mount, unlike the old hardcoded-list
+  // version — a checked/default set can't exist before the API response lands).
+  const [selectedSymbols, setSelectedSymbols] = useState<Set<string>>(new Set());
 
   const toggleSymbol = (key: string) => {
     setSelectedSymbols((prev) => {
@@ -69,6 +57,23 @@ export function MarketRecordingPanel({
       return next;
     });
   };
+
+  useEffect(() => {
+    if (kind !== "fx") return;
+    api
+      .getGlobalMacroUiCards()
+      .then((res) => {
+        const currency = liveSpotOnly(res.data.currency);
+        const moneyFlow = liveSpotOnly(res.data.global);
+        setFxDefaultSymbols(currency);
+        setFxMoneyFlowSymbols(moneyFlow);
+        setSelectedSymbols(new Set(currency.map((s) => s.key)));
+      })
+      .catch(() => {});
+  }, [kind]);
+
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     api
@@ -93,9 +98,9 @@ export function MarketRecordingPanel({
       await api.startMarketTickRecording({
         kind,
         country: kind === "index" ? country : undefined,
-        // Explicit for fx so the checklist (including any of the 7 money-flow factors) is
+        // Explicit for fx so the checklist (including any selected money-flow factors) is
         // what actually gets recorded — omitting this would fall back to the backend's
-        // implicit 6-currency-pair default and silently drop the checklist's selection.
+        // implicit currency-pair-only default and silently drop the checklist's selection.
         symbols: kind === "fx" ? Array.from(selectedSymbols) : undefined,
         interval_seconds: intervalSeconds,
       });
@@ -126,7 +131,7 @@ export function MarketRecordingPanel({
         <div className="space-y-1.5">
           <p className="text-[11px] text-muted-foreground">Symbols to record</p>
           <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-            {FX_SYMBOL_OPTIONS.map((s) => (
+            {[...fxDefaultSymbols, ...fxMoneyFlowSymbols].map((s) => (
               <label key={s.key} className="flex items-center gap-1.5 text-xs">
                 <input
                   type="checkbox"
