@@ -4379,6 +4379,16 @@ def list_market_global_macro_refreshable_series(
     return _run_control(lambda c: c.list_eod_refreshable_series())
 
 
+@trade_router.get("/markets/global_macro/ui_cards")
+def get_market_global_macro_ui_cards(
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    """Card metadata for `GlobalMarketsPanel.tsx`'s GLOBAL/CURRENCY tabs, generated from the
+    factor registry — registered before `/markets/global_macro/{series}` below for the same
+    routing reason as `refreshable_series` above."""
+    return _run_control(lambda c: c.get_global_macro_ui_cards())
+
+
 @trade_router.get("/markets/global_macro/{series}")
 def get_market_global_macro(
     series: str,

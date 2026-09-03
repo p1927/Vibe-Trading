@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type GlobalMacroRow, type MarketRegistryEntry } from "@/lib/api";
+import { api, type GlobalMacroRow, type GlobalMacroUiCard, type MarketRegistryEntry } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { IndexCard } from "./IndexCard";
 import { fetchMarketBundle, findBundleEntry } from "./marketBundleCache";
@@ -21,38 +21,17 @@ export const COUNTRY_LABELS: Record<string, string> = {
 // have no index-card grid of their own — and Multi-Market (cross-market simultaneous replay).
 const TAB_ORDER = ["IN", "US", "CN", "JP", "RU", "ME", "LATAM", "EU", "CURRENCY", "GLOBAL", "ECONOMY", "MULTI"];
 
-// USD-anchored FX pairs — `global_macro_store.LIVE_SPOT_SYMBOLS`/`SERIES_SCHEMA` keys, one per
-// non-USD `market_registry` market (`market_registry.fx_series()`'s series names).
-const CURRENCY_FACTORS: { key: string; name: string }[] = [
-  { key: "usd_inr", name: "USD/INR" },
-  { key: "usd_cny", name: "USD/CNY" },
-  { key: "usd_jpy", name: "USD/JPY" },
-  { key: "usd_rub", name: "USD/RUB" },
-  { key: "usd_sar", name: "USD/SAR" },
-  { key: "usd_brl", name: "USD/BRL" },
-];
+// CURRENCY/GLOBAL tab card lists used to be hand-maintained here (and drifted out of sync with
+// `factors/catalog.py` — see .claude/backlog/items/2026-09-03-global-factors-registry-not-wired-to-consumers.md).
+// Both now come from `api.getGlobalMacroUiCards()`, which is generated backend-side from the
+// factor registry + `market_registry.py` (`StockHistory.global_market_ui_cards()`) — see
+// `emptyUiCards`'s fetch below.
+interface UiCards {
+  global: GlobalMacroUiCard[];
+  currency: GlobalMacroUiCard[];
+}
 
-// Cross-market factors from `global_macro_store` — genuinely global (not one country's), so they
-// live outside the per-country tabs. `liveSpotSeries` is null where `LIVE_SPOT_SYMBOLS` has no
-// entry (vix_daily/us_10y are EOD-history-only, same as the non-India country tabs) — note gold/
-// oil's live-spot key drops the `_daily` suffix the historical series key carries.
-const GLOBAL_FACTORS: { key: string; name: string; liveSpotSeries: string | null; field: string }[] = [
-  { key: "gold", name: "Gold", liveSpotSeries: "gold", field: "price" },
-  { key: "oil_brent_daily", name: "Oil (Brent)", liveSpotSeries: "oil_brent", field: "price" },
-  { key: "oil_wti_daily", name: "Oil (WTI)", liveSpotSeries: "oil_wti", field: "price" },
-  { key: "vix_daily", name: "VIX", liveSpotSeries: null, field: "close" },
-  { key: "us_10y", name: "US 10Y Yield", liveSpotSeries: null, field: "rate" },
-  // Cross-market money-flow/risk-appetite factors (2026-08-23, "what's limiting Nifty 50
-  // prediction" gap pass) — the signals FII/FPI capital rotates on: dollar strength, broad EM
-  // risk appetite, 3 EM peer markets India's FII flows compete with, and a credit-spread proxy.
-  { key: "dxy", name: "US Dollar Index (DXY)", liveSpotSeries: "dxy", field: "price" },
-  { key: "msci_em", name: "MSCI Emerging Markets (EEM)", liveSpotSeries: "msci_em", field: "price" },
-  { key: "kospi", name: "Korea (KOSPI)", liveSpotSeries: "kospi", field: "price" },
-  { key: "taiex", name: "Taiwan (TAIEX)", liveSpotSeries: "taiex", field: "price" },
-  { key: "jci_indonesia", name: "Indonesia (JCI)", liveSpotSeries: "jci_indonesia", field: "price" },
-  { key: "hyg", name: "US High Yield Bond ETF (HYG)", liveSpotSeries: "hyg", field: "price" },
-  { key: "lqd", name: "US Investment Grade Bond ETF (LQD)", liveSpotSeries: "lqd", field: "price" },
-];
+const EMPTY_UI_CARDS: UiCards = { global: [], currency: [] };
 
 // India's headline indices aren't served by the `/trade/markets/{country}/...`
 // dispatch (the backend rejects country="IN" there — it has its own dedicated
@@ -100,12 +79,18 @@ export function GlobalMarketsPanel({
   const [registry, setRegistry] = useState<MarketRegistryEntry[]>([]);
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [cards, setCards] = useState<CardState[]>([]);
+  const [uiCards, setUiCards] = useState<UiCards>(EMPTY_UI_CARDS);
+  const [uiCardsError, setUiCardsError] = useState<string | null>(null);
 
   useEffect(() => {
     api
       .getMarketRegistry()
       .then((res) => setRegistry(res.markets))
       .catch((err) => setRegistryError(err instanceof Error ? err.message : String(err)));
+    api
+      .getGlobalMacroUiCards()
+      .then((res) => setUiCards(res.data))
+      .catch((err) => setUiCardsError(err instanceof Error ? err.message : String(err)));
   }, []);
 
   const loadIndia = useCallback(() => {
@@ -195,53 +180,21 @@ export function GlobalMarketsPanel({
     [registry],
   );
 
-  const loadCurrencies = useCallback(() => {
+  // Shared by loadCurrencies/loadGlobal — both tabs' cards are `global_macro_store` series that
+  // read the same way (live-spot-if-any + history), differing only in which card list feeds them.
+  const loadMacroCards = useCallback((factors: GlobalMacroUiCard[]) => {
     setCards((prev) =>
-      CURRENCY_FACTORS.map((f) => {
+      factors.map((f) => {
         const existing = prev.find((c) => c.key === f.key);
-        return existing
-          ? { ...existing, loading: true, error: null }
-          : { key: f.key, name: f.name, price: null, change: null, changePct: null, sparkline: [], badge: "LIVE", loading: true, error: null };
-      }),
-    );
-    CURRENCY_FACTORS.forEach((f) => {
-      Promise.all([
-        api.getGlobalMacroLiveSpot(f.key),
-        api.getGlobalMacroHistory(f.key, { field: "rate" }),
-      ])
-        .then(([spotRes, histRes]) => {
-          const rows: GlobalMacroRow[] = Array.isArray(histRes.data) ? histRes.data : [];
-          const closes = rows.map((r) => r.value).filter((v): v is number => typeof v === "number");
-          const liveValue = spotRes.data?.value ?? null;
-          const price = liveValue ?? (closes.length ? closes[closes.length - 1] : null);
-          const prevClose = liveValue != null
-            ? (closes.length ? closes[closes.length - 1] : null)
-            : (closes.length > 1 ? closes[closes.length - 2] : null);
-          const { change, changePct } = deriveChange(price, prevClose);
-          setCards((prev) =>
-            prev.map((c) => (c.key === f.key ? { ...c, price, change, changePct, sparkline: closes.slice(-30), loading: false } : c)),
-          );
-        })
-        .catch((err) => {
-          const message = err instanceof Error ? err.message : String(err);
-          setCards((prev) => prev.map((c) => (c.key === f.key ? { ...c, loading: false, error: message } : c)));
-        });
-    });
-  }, []);
-
-  const loadGlobal = useCallback(() => {
-    setCards((prev) =>
-      GLOBAL_FACTORS.map((f) => {
-        const existing = prev.find((c) => c.key === f.key);
-        const badge = f.liveSpotSeries ? "LIVE" : "EOD";
+        const badge = f.live_spot_series ? "LIVE" : "EOD";
         return existing
           ? { ...existing, loading: true, error: null }
           : { key: f.key, name: f.name, price: null, change: null, changePct: null, sparkline: [], badge, loading: true, error: null };
       }),
     );
-    GLOBAL_FACTORS.forEach((f) => {
+    factors.forEach((f) => {
       const historyPromise = api.getGlobalMacroHistory(f.key, { field: f.field });
-      const spotPromise = f.liveSpotSeries ? api.getGlobalMacroLiveSpot(f.liveSpotSeries) : Promise.resolve(null);
+      const spotPromise = f.live_spot_series ? api.getGlobalMacroLiveSpot(f.live_spot_series) : Promise.resolve(null);
       Promise.all([spotPromise, historyPromise])
         .then(([spotRes, histRes]) => {
           const rows: GlobalMacroRow[] = Array.isArray(histRes.data) ? histRes.data : [];
@@ -267,6 +220,9 @@ export function GlobalMarketsPanel({
     });
   }, []);
 
+  const loadCurrencies = useCallback(() => loadMacroCards(uiCards.currency), [loadMacroCards, uiCards.currency]);
+  const loadGlobal = useCallback(() => loadMacroCards(uiCards.global), [loadMacroCards, uiCards.global]);
+
   const reload = useCallback(() => {
     if (activeTab === "CURRENCY") loadCurrencies();
     else if (activeTab === "GLOBAL") loadGlobal();
@@ -277,10 +233,12 @@ export function GlobalMarketsPanel({
 
   useEffect(() => {
     if (activeTab === "CURRENCY") {
+      if (uiCards.currency.length === 0) return;
       loadCurrencies();
       return;
     }
     if (activeTab === "GLOBAL") {
+      if (uiCards.global.length === 0) return;
       loadGlobal();
       return;
     }
@@ -303,7 +261,7 @@ export function GlobalMarketsPanel({
     if (registry.length === 0) return;
     loadCountry(activeTab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, registry]);
+  }, [activeTab, registry, uiCards]);
 
   useEffect(() => {
     const interval = window.setInterval(reload, 30_000);
@@ -336,6 +294,7 @@ export function GlobalMarketsPanel({
         ))}
       </div>
       {registryError && <p className="mt-2 text-[11px] text-destructive">{registryError}</p>}
+      {uiCardsError && <p className="mt-2 text-[11px] text-destructive">{uiCardsError}</p>}
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {cards.map((c) => (
           <IndexCard

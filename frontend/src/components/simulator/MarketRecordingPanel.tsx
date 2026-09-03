@@ -8,10 +8,12 @@ import { api, type TickRecordingJob } from "@/lib/api";
  * pass — dollar strength, broad EM risk appetite, 3 Asian EM peer indices, credit-spread proxy).
  * Both groups are plain `global_macro_store` series names and record identically via
  * `tick_recorder._poll_fx` -> `StockHistory.live_macro_spot(series=symbol)`; the split below is
- * only for the checklist's grouping, not a backend distinction. Kept in sync by hand with
- * `GlobalMarketsPanel.tsx`'s `CURRENCY_FACTORS`/`GLOBAL_FACTORS` (money-flow subset) — no shared
- * import because that module also lists EOD-only factors (gold/oil/VIX/US10Y) that have no live
- * spot and so can't be tick-recorded here. */
+ * only for the checklist's grouping, not a backend distinction. Still a hand-maintained list,
+ * NOT yet reading `GlobalMarketsPanel.tsx`'s registry-driven `api.getGlobalMacroUiCards()` (see
+ * .claude/backlog/items/2026-09-03-global-factors-registry-not-wired-to-consumers.md and its
+ * follow-up item for this file) — no shared import today because that endpoint also lists
+ * EOD-only factors (gold/oil/VIX/US10Y) that have no live spot and so can't be tick-recorded
+ * here, and the checklist's LIVE-only filtering isn't done yet. */
 const FX_DEFAULT_SYMBOLS: { key: string; name: string }[] = [
   { key: "usd_inr", name: "USD/INR" },
   { key: "usd_cny", name: "USD/CNY" },

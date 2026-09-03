@@ -1541,6 +1541,10 @@ export const api = {
         force_refresh: opts?.force_refresh ? "1" : undefined,
       })}`,
     ),
+  // Registry-driven card metadata for `GlobalMarketsPanel.tsx`'s GLOBAL/CURRENCY tabs — see
+  // `StockHistory.global_market_ui_cards()`'s docstring for the shape and how it's assembled.
+  getGlobalMacroUiCards: () =>
+    request<GlobalMacroUiCardsResponse>("/trade/markets/global_macro/ui_cards"),
   // Tick recording for non-India markets (`kind: "index"` for a country's headline indices,
   // `kind: "fx"` for USD-anchored currency pairs) — fronts `stock_simulator`'s
   // `/tick_recording/*` routes via `StockSimulatorClient`. In-memory job state on the simulator
@@ -4208,6 +4212,21 @@ export interface GlobalMacroRow {
 export interface GlobalMacroHistoryResponse {
   status: string;
   data: GlobalMacroRow[];
+}
+
+export interface GlobalMacroUiCard {
+  key: string;
+  name: string;
+  field: string;
+  live_spot_series: string | null;
+}
+
+export interface GlobalMacroUiCardsResponse {
+  status: string;
+  data: {
+    global: GlobalMacroUiCard[];
+    currency: GlobalMacroUiCard[];
+  };
 }
 
 export interface MarketPolicyFactorsResponse {
