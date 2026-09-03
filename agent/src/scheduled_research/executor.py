@@ -618,6 +618,16 @@ class ScheduledResearchExecutor:
         After a crash or long downtime many cron jobs share ``next_run_at`` in
         the past. The first executor tick would otherwise run them back-to-back
         and spike memory in the Vibe API process.
+
+        A job that is currently tier-eligible to dispatch (i.e. not blocked by
+        ``_collection_dispatch_blocked`` — a non-collection job, or a collection
+        job on the release tier) is left alone instead: its ``next_run_at``
+        stays in the past so the executor's normal tick loop picks it up and
+        dispatches it on the very next tick, subject to that loop's own
+        existing concurrency/pacing limits. Deferring is reserved for jobs that
+        cannot dispatch right now anyway (dispatch-blocked collection jobs, or
+        an ``autonomous_agent_watch`` with no running agent) — pushing those
+        forward would just fail or be pointless.
         """
         if self._startup_backlog_deferred:
             return 0
@@ -643,6 +653,10 @@ class ScheduledResearchExecutor:
                         "deferring autonomous_agent_watch for %s: no running agent",
                         job.id,
                     )
+                continue
+            if not _collection_dispatch_blocked(job):
+                # Tier-eligible right now: leave next_run_at in the past so the
+                # normal tick loop dispatches it starting the very next tick.
                 continue
             try:
                 job.next_run_at = next_due(job.schedule, now)

@@ -1139,6 +1139,63 @@ def test_defer_startup_backlog_defers_autonomous_watch_when_agent_not_running(
     assert saved.status == JobStatus.PENDING
 
 
+def test_defer_startup_backlog_leaves_eligible_job_overdue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An overdue PENDING job that IS tier-eligible to dispatch right now must
+    NOT be pushed forward by ``defer_startup_backlog`` — its ``next_run_at``
+    stays in the past so the executor's normal tick loop dispatches it on the
+    very next tick, instead of silently deferring it to tomorrow forever.
+    """
+    monkeypatch.delenv("STACK_PROFILE", raising=False)
+    store = _store(tmp_path)
+    # A job_type outside COLLECTION_JOB_TYPES (job_tier_policy.py) is never
+    # dispatch-blocked regardless of STACK_PROFILE, so it is unambiguously
+    # tier-eligible here even on the dev tier.
+    job = _job("eligible", schedule="0 6 * * *", next_run_at=10)
+    job.config = {"job_type": "some_non_collection_job"}
+    store.upsert(job)
+
+    executor = ScheduledResearchExecutor(
+        store,
+        lambda j: asyncio.sleep(0),
+        now_fn=lambda: 50,
+    )
+    deferred = executor.defer_startup_backlog(50)
+
+    assert deferred == 0
+    saved = store.get("eligible")
+    assert saved is not None
+    assert saved.next_run_at == 10, "eligible overdue job must be left for the next tick to dispatch"
+
+
+def test_defer_startup_backlog_still_defers_dispatch_blocked_collection_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dispatch-blocked collection job (e.g. dev tier, STACK_PROFILE unset)
+    must still be pushed forward as before — dispatching would fail/be
+    pointless on this tier, so the pre-fix defer-forward behaviour is correct
+    and must not regress.
+    """
+    monkeypatch.delenv("STACK_PROFILE", raising=False)
+    store = _store(tmp_path)
+    job = _job("blocked", schedule="0 6 * * *", next_run_at=10)
+    job.config = {"job_type": "hub_news_entity"}
+    store.upsert(job)
+
+    executor = ScheduledResearchExecutor(
+        store,
+        lambda j: asyncio.sleep(0),
+        now_fn=lambda: 50,
+    )
+    deferred = executor.defer_startup_backlog(50)
+
+    assert deferred == 1
+    saved = store.get("blocked")
+    assert saved is not None
+    assert saved.next_run_at > 50, "dispatch-blocked job must still be deferred to its next schedule slot"
+
+
 def test_running_job_with_no_last_run_at_is_not_stale(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
