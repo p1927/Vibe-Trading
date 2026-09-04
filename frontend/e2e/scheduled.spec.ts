@@ -47,7 +47,12 @@ import { hasErrorBoundary, trackConsoleErrors } from './helpers/apiMock'
  * the browser.
  */
 
-const VIBE_API_ORIGIN = 'http://localhost:8899'
+// Pin to IPv4. On macOS dev stacks the Vibe backend binds 127.0.0.1 only;
+// Node's DNS resolver picks ::1 first for "localhost" and gets
+// ECONNREFUSED intermittently (50/50 in our runs). Same pitfall as the
+// Python urllib issue documented in tests/test_user_journeys.py — the
+// fix is identical: use the literal IPv4 loopback, not the name.
+const VIBE_API_ORIGIN = 'http://127.0.0.1:8899'
 
 type SchedulerStatus = {
   enabled: boolean
@@ -83,6 +88,12 @@ async function fetchLiveScheduledRuns(
 }
 
 test.describe('Scheduled Jobs — render baseline (live API)', () => {
+  // 60s headroom: cold Vite + React mount under a shared dev stack with
+  // other agents hitting the same box has been observed to take 25-30s
+  // before the page's first paint, plus another few seconds for the
+  // scheduled-runs fetch to settle. Default 30s is too tight.
+  test.setTimeout(60_000)
+
   test('mounts the page with the real /scheduled-runs response and no console errors', async ({
     page,
     request,
