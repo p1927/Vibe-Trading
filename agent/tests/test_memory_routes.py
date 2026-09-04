@@ -77,6 +77,35 @@ def test_list_entries_unscoped_only(client: TestClient) -> None:
     assert titles == ["unscoped"]
 
 
+def test_list_entries_includes_staleness_signals(client: TestClient) -> None:
+    _add_entry(name="signal-test")
+    response = client.get("/memory/entries")
+    entry = response.json()["entries"][0]
+    for field in ("last_accessed", "quality_score", "access_count", "importance"):
+        assert field in entry
+
+
+def test_list_entries_sort_importance_ascending(client: TestClient, memory_dir: Path) -> None:
+    def _write(name: str, quality_score: float) -> None:
+        (memory_dir / f"{name}.md").write_text(
+            "---\n"
+            f"name: {name}\n"
+            "description: test\n"
+            "type: project\n"
+            f"quality_score: {quality_score}\n"
+            "access_count: 0\n"
+            "---\n\nbody\n",
+            encoding="utf-8",
+        )
+
+    _write("high-quality", 0.9)
+    _write("low-quality", 0.1)
+
+    response = client.get("/memory/entries", params={"sort": "importance"})
+    titles = [e["title"] for e in response.json()["entries"]]
+    assert titles == ["low-quality", "high-quality"]
+
+
 def test_get_entry_detail_includes_body(client: TestClient) -> None:
     entry_id = _add_entry(name="detail-test", content="the full body text")
     response = client.get(f"/memory/entries/{entry_id}")
