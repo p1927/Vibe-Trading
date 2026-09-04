@@ -213,6 +213,8 @@
     "resumeJob": "Resume",
     "pauseJobAria": "Pause scheduled run for {{prompt}}",
     "resumeJobAria": "Resume scheduled run for {{prompt}}",
+    "runNow": "Run now",
+    "runNowAria": "Run {{prompt}} now",
     "liveLog": "Logs",
     "toggleLiveLog": "Toggle live logs for {{prompt}}",
     "liveLogConnecting": "Connecting...",

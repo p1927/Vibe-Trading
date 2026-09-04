@@ -29,6 +29,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
       listSchedulerRegistry: vi.fn(),
       pauseSchedulerRegistryEntry: vi.fn(),
       resumeSchedulerRegistryEntry: vi.fn(),
+      triggerSchedulerRegistryEntry: vi.fn(),
+      pauseStockSimSchedulerEntry: vi.fn(),
+      resumeStockSimSchedulerEntry: vi.fn(),
+      triggerStockSimSchedulerEntry: vi.fn(),
       scheduledRunStreamUrl: vi.fn(),
     },
   };
@@ -46,6 +50,10 @@ const mocked = api as unknown as {
   listSchedulerRegistry: ReturnType<typeof vi.fn>;
   pauseSchedulerRegistryEntry: ReturnType<typeof vi.fn>;
   resumeSchedulerRegistryEntry: ReturnType<typeof vi.fn>;
+  triggerSchedulerRegistryEntry: ReturnType<typeof vi.fn>;
+  pauseStockSimSchedulerEntry: ReturnType<typeof vi.fn>;
+  resumeStockSimSchedulerEntry: ReturnType<typeof vi.fn>;
+  triggerStockSimSchedulerEntry: ReturnType<typeof vi.fn>;
   scheduledRunStreamUrl: ReturnType<typeof vi.fn>;
 };
 
@@ -649,6 +657,86 @@ describe("cross-service registry entries (Mechanism B)", () => {
     await screen.findByText("us/index");
     expect(screen.queryByRole("button", { name: /Toggle live logs/i })).not.toBeInTheDocument();
   });
+
+  it("shows Pause for an active, pausable stock_simulator category", async () => {
+    mocked.listSchedulerRegistry.mockResolvedValue({
+      status: "ok",
+      entries: [registryEntry({ controls: { pause: true, resume: false, cancel: false, delete: false, trigger_now: true } })],
+      sources: { stock_simulator: { status: "ok" } },
+    });
+    renderScheduled();
+
+    expect(await screen.findByRole("button", { name: /pause/i })).toBeInTheDocument();
+    expect(screen.queryByText("read-only")).not.toBeInTheDocument();
+  });
+
+  it("pausing an active stock_simulator category calls the API with the full composite id, not a stripped one", async () => {
+    mocked.listSchedulerRegistry.mockResolvedValue({
+      status: "ok",
+      entries: [registryEntry({ controls: { pause: true, resume: false, cancel: false, delete: false, trigger_now: true } })],
+      sources: { stock_simulator: { status: "ok" } },
+    });
+    mocked.pauseStockSimSchedulerEntry.mockResolvedValue({ status: "ok" });
+    renderScheduled();
+
+    fireEvent.click(await screen.findByRole("button", { name: /pause/i }));
+
+    await waitFor(() => {
+      expect(mocked.pauseStockSimSchedulerEntry).toHaveBeenCalledWith("B:recorder:us:index");
+    });
+    expect(mocked.pauseSchedulerRegistryEntry).not.toHaveBeenCalled();
+  });
+
+  it("resuming a paused stock_simulator category calls the resume API", async () => {
+    mocked.listSchedulerRegistry.mockResolvedValue({
+      status: "ok",
+      entries: [
+        registryEntry({
+          enabled: false,
+          status: "paused",
+          schedule_display: "paused (was every 300s)",
+          controls: { pause: false, resume: true, cancel: false, delete: false, trigger_now: false },
+        }),
+      ],
+      sources: { stock_simulator: { status: "ok" } },
+    });
+    mocked.resumeStockSimSchedulerEntry.mockResolvedValue({ status: "ok" });
+    renderScheduled();
+
+    fireEvent.click(await screen.findByRole("button", { name: /resume/i }));
+
+    await waitFor(() => {
+      expect(mocked.resumeStockSimSchedulerEntry).toHaveBeenCalledWith("B:recorder:us:index");
+    });
+  });
+
+  it("shows and dispatches Run now for a triggerable stock_simulator category", async () => {
+    mocked.listSchedulerRegistry.mockResolvedValue({
+      status: "ok",
+      entries: [registryEntry({ controls: { pause: true, resume: false, cancel: false, delete: false, trigger_now: true } })],
+      sources: { stock_simulator: { status: "ok" } },
+    });
+    mocked.triggerStockSimSchedulerEntry.mockResolvedValue({ status: "ok" });
+    renderScheduled();
+
+    fireEvent.click(await screen.findByRole("button", { name: /run.*now/i }));
+
+    await waitFor(() => {
+      expect(mocked.triggerStockSimSchedulerEntry).toHaveBeenCalledWith("B:recorder:us:index");
+    });
+  });
+
+  it("does not show Run now when trigger_now is false", async () => {
+    mocked.listSchedulerRegistry.mockResolvedValue({
+      status: "ok",
+      entries: [registryEntry()],
+      sources: { stock_simulator: { status: "ok" } },
+    });
+    renderScheduled();
+
+    await screen.findByText("us/index");
+    expect(screen.queryByRole("button", { name: /run.*now/i })).not.toBeInTheDocument();
+  });
 });
 
 function openalgoEntry(overrides: Partial<SchedulerRegistryEntry> = {}): SchedulerRegistryEntry {
@@ -719,6 +807,22 @@ describe("cross-service registry entries (Mechanism C)", () => {
 
     await waitFor(() => {
       expect(mocked.resumeSchedulerRegistryEntry).toHaveBeenCalledWith("historify", "sched_2");
+    });
+  });
+
+  it("triggering an openalgo job calls the trigger API with the raw source and job id", async () => {
+    mocked.listSchedulerRegistry.mockResolvedValue({
+      status: "ok",
+      entries: [openalgoEntry({ controls: { pause: true, resume: true, cancel: false, delete: false, trigger_now: true } })],
+      sources: { openalgo: { status: "ok" } },
+    });
+    mocked.triggerSchedulerRegistryEntry.mockResolvedValue({ status: "ok" });
+    renderScheduled();
+
+    fireEvent.click(await screen.findByRole("button", { name: /run.*now/i }));
+
+    await waitFor(() => {
+      expect(mocked.triggerSchedulerRegistryEntry).toHaveBeenCalledWith("flow", "wf_1");
     });
   });
 

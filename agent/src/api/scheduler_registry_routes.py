@@ -3,12 +3,21 @@
 ``GET /scheduler-registry`` fans out to every scheduler mechanism the
 Scheduler tab wants to show beyond vibetrading's own engine (Mechanism A,
 served by ``GET /scheduled-runs`` — unchanged, not duplicated here):
-stock_simulator's recorder poll-spec (Mechanism B, read-only) and openalgo's
-five independent APScheduler instances (Mechanism C, read/pause/resume). Each
-source is queried independently with a short timeout so a down/unreachable
-service degrades that source to an empty list plus a `sources.<name>` status
-entry, never a failed request — see
+stock_simulator's recorder categories (Mechanism B) and openalgo's five
+independent APScheduler instances (Mechanism C). Each source is queried
+independently with a short timeout so a down/unreachable service degrades
+that source to an empty list plus a `sources.<name>` status entry, never a
+failed request — see
 .claude/backlog/items/2026-08-29-unified-scheduler-registry.md.
+
+Both mechanisms now support pause/resume/trigger-now (2026-09-04, see
+.claude/backlog/items/2026-09-04-vibetrading-scheduler-registry-dashboard-gaps.md):
+Mechanism B via `StockSimulatorClient.{pause,resume,trigger_scheduler_job_now}`
+(job_id is the entry's full `id`, e.g. `B:recorder:us:options` — no
+splitting, unlike Mechanism C) and Mechanism C via
+`OpenAlgoClient.{pause,resume,trigger}_scheduler_job(_now)` (source + the raw
+job id with the `C:<source>:` prefix stripped, same convention
+`_openalgo_entries()` already uses for its live-log-url stamping above).
 """
 
 from __future__ import annotations
@@ -176,5 +185,96 @@ def register_scheduler_registry_routes(
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except Exception as exc:
             logger.exception("scheduler-registry: failed to resume openalgo job %s/%s", source, job_id)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"status": "ok"}
+
+    @app.post(
+        "/scheduler-registry/openalgo/{source}/{job_id}/trigger",
+        dependencies=[Depends(require_auth)],
+    )
+    async def scheduler_registry_openalgo_trigger(source: str, job_id: str) -> Dict[str, Any]:
+        try:
+            from trade_integrations.execution.openalgo_client import OpenAlgoClient
+
+            await asyncio.to_thread(OpenAlgoClient().trigger_scheduler_job_now, source, job_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.exception("scheduler-registry: failed to trigger openalgo job %s/%s", source, job_id)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"status": "ok"}
+
+    @app.post(
+        "/scheduler-registry/stock-simulator/{job_id}/pause",
+        dependencies=[Depends(require_auth)],
+    )
+    async def scheduler_registry_stock_simulator_pause(job_id: str) -> Dict[str, Any]:
+        try:
+            from trade_integrations.stock_simulator.client import (
+                StockSimulatorClient,
+                StockSimulatorClientError,
+            )
+
+            client = StockSimulatorClient()
+            if not client.is_configured:
+                raise HTTPException(status_code=503, detail="stock_simulator not configured")
+            await asyncio.to_thread(client.pause_scheduler_job, job_id)
+        except StockSimulatorClientError as exc:
+            status = exc.status_code if exc.status_code and exc.status_code < 500 else 502
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("scheduler-registry: failed to pause stock_simulator job %s", job_id)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"status": "ok"}
+
+    @app.post(
+        "/scheduler-registry/stock-simulator/{job_id}/resume",
+        dependencies=[Depends(require_auth)],
+    )
+    async def scheduler_registry_stock_simulator_resume(job_id: str) -> Dict[str, Any]:
+        try:
+            from trade_integrations.stock_simulator.client import (
+                StockSimulatorClient,
+                StockSimulatorClientError,
+            )
+
+            client = StockSimulatorClient()
+            if not client.is_configured:
+                raise HTTPException(status_code=503, detail="stock_simulator not configured")
+            await asyncio.to_thread(client.resume_scheduler_job, job_id)
+        except StockSimulatorClientError as exc:
+            status = exc.status_code if exc.status_code and exc.status_code < 500 else 502
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("scheduler-registry: failed to resume stock_simulator job %s", job_id)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"status": "ok"}
+
+    @app.post(
+        "/scheduler-registry/stock-simulator/{job_id}/trigger-now",
+        dependencies=[Depends(require_auth)],
+    )
+    async def scheduler_registry_stock_simulator_trigger(job_id: str) -> Dict[str, Any]:
+        try:
+            from trade_integrations.stock_simulator.client import (
+                StockSimulatorClient,
+                StockSimulatorClientError,
+            )
+
+            client = StockSimulatorClient()
+            if not client.is_configured:
+                raise HTTPException(status_code=503, detail="stock_simulator not configured")
+            await asyncio.to_thread(client.trigger_scheduler_job_now, job_id)
+        except StockSimulatorClientError as exc:
+            status = exc.status_code if exc.status_code and exc.status_code < 500 else 502
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("scheduler-registry: failed to trigger stock_simulator job %s", job_id)
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return {"status": "ok"}

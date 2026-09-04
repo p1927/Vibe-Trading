@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
-import { CalendarClock, ChevronDown, ChevronRight, Loader2, Pause, Play, Plus, Square, Trash2 } from "lucide-react";
+import { CalendarClock, ChevronDown, ChevronRight, Loader2, Pause, Play, Plus, Square, Trash2, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, ApiError, type ScheduledRun, type SchedulerRegistryEntry } from "@/lib/api";
 import { LiveLogTail } from "@/components/scheduler/LiveLogTail";
@@ -278,19 +278,48 @@ export function Scheduled() {
   }
 
   async function handleToggleRegistryPause(entry: SchedulerRegistryEntry) {
-    // openalgo entries are the only ones with controls.pause/resume today;
-    // `entry.section` is that entry's scheduler source ("flow", "historify",
-    // "strategy", "chartink", "python_strategy"), and the raw job id is
-    // entry.id with the "C:<source>:" prefix stripped.
-    const source = entry.section;
-    const jobId = entry.id.slice(`C:${source}:`.length);
     setBusyId(entry.id);
     setActionError(null);
     try {
-      if (entry.enabled) {
-        await api.pauseSchedulerRegistryEntry(source, jobId);
+      if (entry.source === "stock_simulator") {
+        // stock_simulator's job id is already the full
+        // "B:recorder:<name>:<category>" id — no splitting needed.
+        if (entry.enabled) {
+          await api.pauseStockSimSchedulerEntry(entry.id);
+        } else {
+          await api.resumeStockSimSchedulerEntry(entry.id);
+        }
       } else {
-        await api.resumeSchedulerRegistryEntry(source, jobId);
+        // openalgo: `entry.section` is that entry's scheduler source
+        // ("flow", "historify", "strategy", "chartink", "python_strategy"),
+        // and the raw job id is entry.id with the "C:<source>:" prefix
+        // stripped.
+        const source = entry.section;
+        const jobId = entry.id.slice(`C:${source}:`.length);
+        if (entry.enabled) {
+          await api.pauseSchedulerRegistryEntry(source, jobId);
+        } else {
+          await api.resumeSchedulerRegistryEntry(source, jobId);
+        }
+      }
+      await refresh();
+    } catch (error) {
+      setActionError(error instanceof ApiError ? error.message : String(error));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleTriggerRegistryEntry(entry: SchedulerRegistryEntry) {
+    setBusyId(entry.id);
+    setActionError(null);
+    try {
+      if (entry.source === "stock_simulator") {
+        await api.triggerStockSimSchedulerEntry(entry.id);
+      } else {
+        const source = entry.section;
+        const jobId = entry.id.slice(`C:${source}:`.length);
+        await api.triggerSchedulerRegistryEntry(source, jobId);
       }
       await refresh();
     } catch (error) {
@@ -944,9 +973,11 @@ export function Scheduled() {
                         label={entry.enabled ? "Active" : "Off"}
                         tone={entry.enabled ? "success" : "neutral"}
                       />
-                      {!entry.controls.pause && !entry.controls.resume && (
-                        <span className={hintClass}>read-only</span>
-                      )}
+                      {!entry.controls.pause &&
+                        !entry.controls.resume &&
+                        !entry.controls.trigger_now && (
+                          <span className={hintClass}>read-only</span>
+                        )}
                     </div>
                     <p className={hintClass}>{entry.schedule_display}</p>
                     {entry.next_run_at != null && (
@@ -975,6 +1006,18 @@ export function Scheduled() {
                         <Play className="h-3.5 w-3.5" aria-hidden />
                       )}
                       {entry.enabled ? t("scheduled.pauseJob") : t("scheduled.resumeJob")}
+                    </button>
+                  )}
+                  {entry.controls.trigger_now && (
+                    <button
+                      type="button"
+                      disabled={busyId === entry.id}
+                      onClick={() => void handleTriggerRegistryEntry(entry)}
+                      aria-label={t("scheduled.runNowAria", { prompt: entry.label })}
+                      className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <Zap className="h-3.5 w-3.5" aria-hidden />
+                      {t("scheduled.runNow")}
                     </button>
                   )}
                   {entry.supports_live_log && entry.live_log_stream_url && (

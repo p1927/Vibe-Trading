@@ -224,6 +224,171 @@ def test_scheduler_registry_openalgo_pause_unconfigured_returns_503(
     assert response.status_code == 503
 
 
+def test_scheduler_registry_openalgo_trigger_calls_client(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    from trade_integrations.execution import openalgo_client as openalgo_client_module
+
+    calls = []
+    monkeypatch.setattr(
+        openalgo_client_module.OpenAlgoClient,
+        "__init__",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        openalgo_client_module.OpenAlgoClient,
+        "trigger_scheduler_job_now",
+        lambda self, source, job_id: calls.append((source, job_id)),
+    )
+
+    response = client.post("/scheduler-registry/openalgo/flow/wf_1/trigger")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    assert calls == [("flow", "wf_1")]
+
+
+def test_scheduler_registry_openalgo_trigger_paused_job_propagates_error(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    from trade_integrations.execution import openalgo_client as openalgo_client_module
+
+    def raise_paused(self, source, job_id):
+        raise RuntimeError("Job is paused — resume it before triggering")
+
+    monkeypatch.setattr(openalgo_client_module.OpenAlgoClient, "__init__", lambda self: None)
+    monkeypatch.setattr(
+        openalgo_client_module.OpenAlgoClient, "trigger_scheduler_job_now", raise_paused
+    )
+
+    response = client.post("/scheduler-registry/openalgo/flow/wf_1/trigger")
+
+    # RuntimeError is also what OpenAlgoClient()'s "not configured" guard
+    # raises, so this route's existing except-order maps it to 503 too —
+    # consistent with pause/resume's identical behavior above.
+    assert response.status_code == 503
+    assert "paused" in response.json()["detail"]
+
+
+def test_scheduler_registry_stock_simulator_pause_calls_client(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    from trade_integrations.stock_simulator import client as stock_simulator_client_module
+
+    calls = []
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            pass
+
+        is_configured = True
+
+        def pause_scheduler_job(self, job_id: str):
+            calls.append(job_id)
+
+    monkeypatch.setattr(stock_simulator_client_module, "StockSimulatorClient", _FakeClient)
+
+    response = client.post("/scheduler-registry/stock-simulator/B:recorder:us:index/pause")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    assert calls == ["B:recorder:us:index"]
+
+
+def test_scheduler_registry_stock_simulator_resume_calls_client(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    from trade_integrations.stock_simulator import client as stock_simulator_client_module
+
+    calls = []
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            pass
+
+        is_configured = True
+
+        def resume_scheduler_job(self, job_id: str):
+            calls.append(job_id)
+
+    monkeypatch.setattr(stock_simulator_client_module, "StockSimulatorClient", _FakeClient)
+
+    response = client.post("/scheduler-registry/stock-simulator/B:recorder:us:index/resume")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    assert calls == ["B:recorder:us:index"]
+
+
+def test_scheduler_registry_stock_simulator_trigger_calls_client(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    from trade_integrations.stock_simulator import client as stock_simulator_client_module
+
+    calls = []
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            pass
+
+        is_configured = True
+
+        def trigger_scheduler_job_now(self, job_id: str):
+            calls.append(job_id)
+
+    monkeypatch.setattr(stock_simulator_client_module, "StockSimulatorClient", _FakeClient)
+
+    response = client.post("/scheduler-registry/stock-simulator/B:recorder:us:index/trigger-now")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    assert calls == ["B:recorder:us:index"]
+
+
+def test_scheduler_registry_stock_simulator_pause_unconfigured_returns_503(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    from trade_integrations.stock_simulator import client as stock_simulator_client_module
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            pass
+
+        is_configured = False
+
+    monkeypatch.setattr(stock_simulator_client_module, "StockSimulatorClient", _FakeClient)
+
+    response = client.post("/scheduler-registry/stock-simulator/B:recorder:us:index/pause")
+
+    assert response.status_code == 503
+
+
+def test_scheduler_registry_stock_simulator_trigger_paused_job_propagates_409(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    from trade_integrations.stock_simulator import client as stock_simulator_client_module
+    from trade_integrations.stock_simulator.client import StockSimulatorClientError
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            pass
+
+        is_configured = True
+
+        def trigger_scheduler_job_now(self, job_id: str):
+            raise StockSimulatorClientError(
+                f"could not trigger {job_id!r} (unknown recorder/category, or currently paused)",
+                status_code=409,
+            )
+
+    monkeypatch.setattr(stock_simulator_client_module, "StockSimulatorClient", _FakeClient)
+
+    response = client.post("/scheduler-registry/stock-simulator/B:recorder:us:index/trigger-now")
+
+    assert response.status_code == 409
+    assert "paused" in response.json()["detail"]
+
+
 def test_stock_simulator_entries_stamps_live_log_stream_url(monkeypatch: pytest.MonkeyPatch):
     """`scheduler_introspection.py`'s DTO leaves `live_log_stream_url` as None
     (it doesn't know its own externally-reachable host) — `_stock_simulator_entries`

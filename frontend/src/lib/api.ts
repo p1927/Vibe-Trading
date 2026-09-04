@@ -727,14 +727,13 @@ export const api = {
   scheduledRunStreamUrl: (id: string) =>
     withAuthTicket(`${BASE}/scheduled-runs/${encodeURIComponent(id)}/stream`),
   // Cross-service scheduler entries beyond this process's own jobs: today
-  // stock_simulator's recorder categories (read-only) and openalgo's five
-  // scheduler instances (pause/resume). A down/unconfigured source degrades
-  // to an empty list plus a `sources.<name>` status, never a failed request
-  // — see scheduler_registry_routes.py's module docstring.
+  // stock_simulator's recorder categories and openalgo's five scheduler
+  // instances, both pause/resume/trigger-now capable. A down/unconfigured
+  // source degrades to an empty list plus a `sources.<name>` status, never a
+  // failed request — see scheduler_registry_routes.py's module docstring.
   listSchedulerRegistry: (signal?: AbortSignal) =>
     request<SchedulerRegistryResponse>("/scheduler-registry", { signal }),
-  // Only openalgo entries (source === "openalgo") set controls.pause/resume
-  // true today; `source` here is that entry's `section` (openalgo DTOs use
+  // openalgo entries: `source` is that entry's `section` (openalgo DTOs use
   // the scheduler name — "flow"/"historify"/"strategy"/"chartink"/
   // "python_strategy" — as both), and `jobId` is entry.id with the
   // "C:<source>:" prefix stripped.
@@ -746,6 +745,28 @@ export const api = {
   resumeSchedulerRegistryEntry: (source: string, jobId: string) =>
     request<{ status: string }>(
       `/scheduler-registry/openalgo/${encodeURIComponent(source)}/${encodeURIComponent(jobId)}/resume`,
+      { method: "POST" },
+    ),
+  triggerSchedulerRegistryEntry: (source: string, jobId: string) =>
+    request<{ status: string }>(
+      `/scheduler-registry/openalgo/${encodeURIComponent(source)}/${encodeURIComponent(jobId)}/trigger`,
+      { method: "POST" },
+    ),
+  // stock_simulator entries: `jobId` is entry.id used as-is (the full
+  // "B:recorder:<name>:<category>" id) — no splitting, unlike openalgo above.
+  pauseStockSimSchedulerEntry: (jobId: string) =>
+    request<{ status: string }>(
+      `/scheduler-registry/stock-simulator/${encodeURIComponent(jobId)}/pause`,
+      { method: "POST" },
+    ),
+  resumeStockSimSchedulerEntry: (jobId: string) =>
+    request<{ status: string }>(
+      `/scheduler-registry/stock-simulator/${encodeURIComponent(jobId)}/resume`,
+      { method: "POST" },
+    ),
+  triggerStockSimSchedulerEntry: (jobId: string) =>
+    request<{ status: string }>(
+      `/scheduler-registry/stock-simulator/${encodeURIComponent(jobId)}/trigger-now`,
       { method: "POST" },
     ),
   // Global scheduler dispatch loop always boots paused; a session's Resume
@@ -2107,9 +2128,10 @@ export interface ScheduledJobPreview {
   preview_error: string | null;
 }
 
-// A cross-service scheduler entry: one stock_simulator recorder category
-// (read-only, `controls` all false) or one openalgo APScheduler job
-// (pause/resume only) — see the unified-scheduler-registry backlog item.
+// A cross-service scheduler entry: one stock_simulator recorder category or
+// one openalgo APScheduler job, both pause/resume/trigger_now capable per
+// their own `controls` flags — see the unified-scheduler-registry backlog
+// item and 2026-09-04-vibetrading-scheduler-registry-dashboard-gaps.
 export interface SchedulerRegistryEntry {
   id: string;
   source: string;
