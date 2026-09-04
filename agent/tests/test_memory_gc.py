@@ -228,6 +228,64 @@ class TestRunGC:
         assert "compression_level: daily" in after
 
 
+class TestExecuteGcActionHierarchyCollision:
+    """Same H-MEM filename-collision fix as archive_entry(), applied to GC.
+
+    Under H-MEM, entry_path lives at <memory_dir>/<category>/<slug>.md with
+    no category prefix in the filename, so two entries sharing a slug in
+    different categories (e.g. user/shared-gc.md and project/shared-gc.md)
+    must not collide at the same flat archive/<slug>.md destination.
+    _execute_gc_action() routes both its "archive" and "delete" (write-then-
+    unlink backup) branches through
+    src/memory/hierarchy.py::archive_destination, same fix as
+    PersistentMemory.archive_entry() and CompressionPipeline.archive_original().
+    """
+
+    def test_archive_action_separates_by_category(
+        self, tmp_path: Path, monkeypatch,
+    ) -> None:
+        monkeypatch.setenv("VT_MEMORY_HIERARCHY", "1")
+        pm = PersistentMemory(memory_dir=tmp_path)
+        pm.add("shared-gc", "user category content", "user")
+        pm.add("shared-gc", "project category content", "project")
+        entries = {e.category: e for e in pm.list_entries()}
+
+        lc = MemoryLifecycle(pm)
+        lc._execute_gc_action(entries["user"], "archive")
+        lc._execute_gc_action(entries["project"], "archive")
+
+        archive_dir = tmp_path / "archive"
+        assert sorted(p.name for p in archive_dir.iterdir()) == ["project", "user"]
+        assert "user category content" in (
+            archive_dir / "user" / "shared-gc.md"
+        ).read_text(encoding="utf-8")
+        assert "project category content" in (
+            archive_dir / "project" / "shared-gc.md"
+        ).read_text(encoding="utf-8")
+
+    def test_delete_action_backup_separates_by_category(
+        self, tmp_path: Path, monkeypatch,
+    ) -> None:
+        monkeypatch.setenv("VT_MEMORY_HIERARCHY", "1")
+        pm = PersistentMemory(memory_dir=tmp_path)
+        pm.add("shared-gc2", "user category content", "user")
+        pm.add("shared-gc2", "project category content", "project")
+        entries = {e.category: e for e in pm.list_entries()}
+
+        lc = MemoryLifecycle(pm)
+        lc._execute_gc_action(entries["user"], "delete")
+        lc._execute_gc_action(entries["project"], "delete")
+
+        archive_dir = tmp_path / "archive"
+        assert sorted(p.name for p in archive_dir.iterdir()) == ["project", "user"]
+        assert "user category content" in (
+            archive_dir / "user" / "shared-gc2.md"
+        ).read_text(encoding="utf-8")
+        assert "project category content" in (
+            archive_dir / "project" / "shared-gc2.md"
+        ).read_text(encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # 2. find_relevant importance weighting
 # ---------------------------------------------------------------------------

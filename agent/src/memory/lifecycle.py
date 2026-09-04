@@ -276,18 +276,19 @@ class MemoryLifecycle:
 
     def _execute_gc_action(self, entry: MemoryEntry, action: str) -> None:
         """Execute a GC action (archive or delete) on an entry."""
+        from src.memory.hierarchy import archive_destination
         archive_dir = self.memory_dir / "archive"
         archive_dir.mkdir(exist_ok=True)
+        dest = archive_destination(self.memory_dir, archive_dir, entry.path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
 
         with memory_lock(self.memory_dir) as acquired:
             if not acquired:
                 return
             try:
                 if action == "archive":
-                    dest = archive_dir / entry.path.name
                     entry.path.rename(dest)
                 elif action == "delete":
-                    dest = archive_dir / entry.path.name
                     dest.write_text(
                         entry.path.read_text(encoding="utf-8"), encoding="utf-8"
                     )

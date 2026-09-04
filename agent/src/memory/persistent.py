@@ -442,9 +442,11 @@ class PersistentMemory:
         """Soft-delete: move to archive/ rather than unlink. Git history (and the archive/
         directory itself) preserve the content, so this is a reviewable "clear from active
         memory" action, not a destructive one."""
+        from src.memory.hierarchy import archive_destination
         archive_dir = self._dir / "archive"
         archive_dir.mkdir(exist_ok=True)
-        dest = archive_dir / entry.path.name
+        dest = archive_destination(self._dir, archive_dir, entry.path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
         with memory_lock(self._dir) as acquired:
             if not acquired:
                 logger.warning("archive_entry(%s): lock timeout", entry.title)

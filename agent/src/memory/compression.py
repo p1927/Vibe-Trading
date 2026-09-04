@@ -269,8 +269,11 @@ class CompressionPipeline:
             return None
 
         try:
-            self._archive_dir.mkdir(parents=True, exist_ok=True)
-            archive_path = self._archive_dir / entry_path.name
+            from src.memory.hierarchy import archive_destination
+            archive_path = archive_destination(
+                self._memory_dir, self._archive_dir, entry_path
+            )
+            archive_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = archive_path.with_suffix(archive_path.suffix + ".tmp")
 
             # Atomic copy: write to tmp then rename
@@ -282,9 +285,10 @@ class CompressionPipeline:
         except OSError as exc:
             logger.error("Archive failed for %s: %s", entry_path, exc)
             # Clean up tmp file if it exists
-            tmp_path = (self._archive_dir / entry_path.name).with_suffix(
-                entry_path.suffix + ".tmp"
-            )
+            from src.memory.hierarchy import archive_destination
+            tmp_path = archive_destination(
+                self._memory_dir, self._archive_dir, entry_path
+            ).with_suffix(entry_path.suffix + ".tmp")
             if tmp_path.exists():
                 try:
                     tmp_path.unlink()

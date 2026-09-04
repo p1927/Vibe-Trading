@@ -433,3 +433,31 @@ class MemoryHierarchy:
         except OSError as exc:
             logger.error("Migration failed for %s: %s", file_path.name, exc)
             return None
+
+
+def archive_destination(base_dir: Path, archive_dir: Path, source_path: Path) -> Path:
+    """Compute the archive destination for ``source_path``, mirroring its category.
+
+    Under the flat layout (``source_path`` lives directly in ``base_dir``) this is
+    just ``archive_dir / source_path.name`` — unchanged, existing behavior.
+
+    Under H-MEM (``source_path`` lives in ``base_dir/{category}``), filenames are
+    bare slugs with no category prefix, so two entries with the same title in
+    different categories (e.g. ``user/shared-title.md`` and
+    ``project/shared-title.md``) would otherwise collide at the same flat
+    ``archive/shared-title.md`` destination and silently clobber each other. To
+    avoid that, such entries are archived into a matching ``archive/{category}/``
+    subdirectory instead: ``archive_dir / category / source_path.name``.
+
+    Callers are responsible for creating the returned path's parent directory
+    (e.g. ``dest.parent.mkdir(parents=True, exist_ok=True)``) before using it.
+    """
+    try:
+        parent = source_path.parent.resolve()
+        base = base_dir.resolve()
+    except OSError:
+        parent = source_path.parent
+        base = base_dir
+    if parent != base and parent.name in CATEGORIES:
+        return archive_dir / parent.name / source_path.name
+    return archive_dir / source_path.name

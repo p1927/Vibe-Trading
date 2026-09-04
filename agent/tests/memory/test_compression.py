@@ -201,6 +201,38 @@ class TestApplyCompression:
         assert len(result) < len(_LONG_CONTENT)
 
 
+class TestArchiveOriginalHierarchyCollision:
+    def test_same_filename_different_categories_archive_into_separate_subdirs(
+        self, tmp_path: Path,
+    ) -> None:
+        """Under H-MEM, entry_path lives at <memory_dir>/<category>/<slug>.md
+        with no category prefix in the filename, so two entries with the same
+        slug in different categories (e.g. user/shared-note.md and
+        project/shared-note.md) must not collide at a single flat
+        archive/shared-note.md destination -- archive_original() routes them
+        into matching archive/{category}/ subdirs instead
+        (src/memory/hierarchy.py::archive_destination), same fix as
+        PersistentMemory.archive_entry() and MemoryLifecycle._execute_gc_action().
+        """
+        pipeline = CompressionPipeline(tmp_path)
+        user_path = _make_entry_file(
+            tmp_path / "user" / "shared-note.md", content="user category original"
+        )
+        project_path = _make_entry_file(
+            tmp_path / "project" / "shared-note.md", content="project category original"
+        )
+
+        user_archived = pipeline.archive_original(user_path)
+        project_archived = pipeline.archive_original(project_path)
+
+        assert user_archived == tmp_path / "archive" / "user" / "shared-note.md"
+        assert project_archived == tmp_path / "archive" / "project" / "shared-note.md"
+        assert user_archived.read_text(encoding="utf-8") == "user category original"
+        assert (
+            project_archived.read_text(encoding="utf-8") == "project category original"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Tests: compute_tfidf
 # ---------------------------------------------------------------------------
