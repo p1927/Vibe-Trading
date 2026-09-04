@@ -243,9 +243,13 @@ export function Compare() {
   const [rightCurve, setRightCurve] = useState<EquityPoint[]>([]);
   const [leftLoading, setLeftLoading] = useState(false);
   const [rightLoading, setRightLoading] = useState(false);
+  const [leftError, setLeftError] = useState<string | null>(null);
+  const [rightError, setRightError] = useState<string | null>(null);
   const [rebase, setRebase] = useState(true);
   const leftRequestGeneration = useRef(0);
   const rightRequestGeneration = useRef(0);
+  const [leftRetryToken, setLeftRetryToken] = useState(0);
+  const [rightRetryToken, setRightRetryToken] = useState(0);
 
   useEffect(() => {
     api.listRuns().then((items) => {
@@ -261,6 +265,7 @@ export function Compare() {
     const generation = ++leftRequestGeneration.current;
     setLeftData(null);
     setLeftCurve([]);
+    setLeftError(null);
 
     if (!leftId) {
       setLeftLoading(false);
@@ -277,7 +282,9 @@ export function Compare() {
       if (leftRequestGeneration.current === generation) {
         setLeftData(null);
         setLeftCurve([]);
-        toast.error(error instanceof Error ? error.message : i18n.t("compare.loadError"));
+        const message = error instanceof Error ? error.message : i18n.t("compare.loadError");
+        setLeftError(message);
+        toast.error(message);
       }
     }).finally(() => {
       if (leftRequestGeneration.current === generation) setLeftLoading(false);
@@ -286,12 +293,13 @@ export function Compare() {
     return () => {
       if (leftRequestGeneration.current === generation) leftRequestGeneration.current += 1;
     };
-  }, [leftId]);
+  }, [leftId, leftRetryToken]);
 
   useEffect(() => {
     const generation = ++rightRequestGeneration.current;
     setRightData(null);
     setRightCurve([]);
+    setRightError(null);
 
     if (!rightId) {
       setRightLoading(false);
@@ -308,7 +316,9 @@ export function Compare() {
       if (rightRequestGeneration.current === generation) {
         setRightData(null);
         setRightCurve([]);
-        toast.error(error instanceof Error ? error.message : i18n.t("compare.loadError"));
+        const message = error instanceof Error ? error.message : i18n.t("compare.loadError");
+        setRightError(message);
+        toast.error(message);
       }
     }).finally(() => {
       if (rightRequestGeneration.current === generation) setRightLoading(false);
@@ -317,12 +327,13 @@ export function Compare() {
     return () => {
       if (rightRequestGeneration.current === generation) rightRequestGeneration.current += 1;
     };
-  }, [rightId]);
+  }, [rightId, rightRetryToken]);
 
   const leftRun = runs.find((r) => r.run_id === leftId);
   const rightRun = runs.find((r) => r.run_id === rightId);
   const loading = leftLoading || rightLoading;
   const hasData = Boolean(leftData || rightData);
+  const hasError = Boolean(leftError || rightError);
 
   return (
     <div className="mx-auto max-w-5xl p-8 space-y-6">
@@ -356,6 +367,41 @@ export function Compare() {
           </select>
         </div>
       </div>
+
+      {/* Persistent error state — a toast alone disappears and leaves this page
+          looking like nothing was ever selected, hiding a real load failure. */}
+      {!loading && hasError && (
+        <div className="space-y-2">
+          {leftError && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-red-500/40 bg-red-500/5 p-3 text-sm">
+              <span className="text-red-600 dark:text-red-400">
+                {i18n.t("compare.baseline")}: {leftError}
+              </span>
+              <button
+                type="button"
+                onClick={() => setLeftRetryToken((n) => n + 1)}
+                className="rounded-lg border px-3 py-1.5 text-xs font-medium"
+              >
+                {i18n.t("common.retry", { defaultValue: "Retry" })}
+              </button>
+            </div>
+          )}
+          {rightError && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-red-500/40 bg-red-500/5 p-3 text-sm">
+              <span className="text-red-600 dark:text-red-400">
+                {i18n.t("compare.compare")}: {rightError}
+              </span>
+              <button
+                type="button"
+                onClick={() => setRightRetryToken((n) => n + 1)}
+                className="rounded-lg border px-3 py-1.5 text-xs font-medium"
+              >
+                {i18n.t("common.retry", { defaultValue: "Retry" })}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Loading state — show skeletons while a selected run's data is in flight */}
       {loading && !hasData && (
@@ -475,7 +521,7 @@ export function Compare() {
         </div>
       )}
 
-      {!hasData && !loading && (
+      {!hasData && !loading && !hasError && (
         <div className="text-center py-16 text-muted-foreground">
           <GitCompare className="h-12 w-12 mx-auto mb-3 opacity-20" />
           <p className="text-sm">{i18n.t("compare.selectTwoRuns")}</p>

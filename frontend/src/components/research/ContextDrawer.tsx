@@ -52,6 +52,8 @@ export function ContextDrawer({
 
   const [localPlan, setLocalPlan] = useState<HubPlanArtifact | null>(planArtifact ?? null);
   const [loadingPlan, setLoadingPlan] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planRetryToken, setPlanRetryToken] = useState(0);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, drawerOpen ? "expanded" : "collapsed");
@@ -86,20 +88,23 @@ export function ContextDrawer({
     if (!ticker || planArtifact) return;
     let cancelled = false;
     setLoadingPlan(true);
+    setPlanError(null);
     api
       .getHubPlan(ticker, assetType)
       .then((res) => {
         if (cancelled) return;
         if (res.status === "ok" && res.artifact) setLocalPlan(res.artifact);
       })
-      .catch(() => {})
+      .catch(() => {
+        if (!cancelled) setPlanError("Failed to load hub research for this symbol.");
+      })
       .finally(() => {
         if (!cancelled) setLoadingPlan(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [ticker, assetType, planArtifact]);
+  }, [ticker, assetType, planArtifact, planRetryToken]);
 
   const runDebate = useCallback(async () => {
     if (!ticker) return;
@@ -212,7 +217,19 @@ export function ContextDrawer({
                   {ticker && localPlan && (
                     <ResearchContextPanel underlying={localPlan.underlying || ticker} artifact={localPlan} />
                   )}
-                  {ticker && !loadingPlan && !localPlan && (
+                  {ticker && !loadingPlan && !localPlan && planError && (
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] text-destructive">{planError}</p>
+                      <button
+                        type="button"
+                        onClick={() => setPlanRetryToken((n) => n + 1)}
+                        className="rounded-lg border px-2 py-1 text-[11px] font-medium"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
+                  {ticker && !loadingPlan && !localPlan && !planError && (
                     <p className="text-[11px] text-muted-foreground">
                       No hub plan yet — ask about strategies and the agent will generate one.
                     </p>

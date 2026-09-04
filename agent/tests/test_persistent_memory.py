@@ -290,6 +290,48 @@ class TestAdd:
 # ---------------------------------------------------------------------------
 
 
+class TestArchiveEntryHierarchyCollision:
+    def test_same_slug_different_categories_collide_in_archive(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Two entries sharing a title but living in different H-MEM category
+        subdirs produce the same filename (route_entry() uses the bare slug
+        with no category prefix), e.g. user/shared-title.md and
+        project/shared-title.md. archive_entry() moves an entry to
+        archive/<same filename>, with no uniqueness check, so archiving the
+        second entry silently overwrites the first entry's archived content
+        via entry.path.rename(dest) -- real data loss, not merely a naming
+        quirk. This pins the actual current (buggy) behavior rather than
+        assuming safety.
+        """
+        monkeypatch.setenv("VT_MEMORY_HIERARCHY", "1")
+        pm = PersistentMemory(memory_dir=tmp_path)
+
+        pm.add("shared-title", "content from user category", "user")
+        pm.add("shared-title", "content from project category", "project")
+
+        entries = {e.category: e for e in pm.list_entries()}
+        assert set(entries) == {"user", "project"}
+
+        user_entry = entries["user"]
+        project_entry = entries["project"]
+        # Same leaf filename, different category subdirectories.
+        assert user_entry.path.name == project_entry.path.name == "shared-title.md"
+        assert user_entry.path.parent != project_entry.path.parent
+
+        assert pm.archive_entry(user_entry) is True
+        assert pm.archive_entry(project_entry) is True
+
+        archive_dir = tmp_path / "archive"
+        archived_files = sorted(p.name for p in archive_dir.iterdir())
+        # BUG: both entries collapsed into a single archived file -- the
+        # "user" category's archived content is silently gone.
+        assert archived_files == ["shared-title.md"]
+        surviving = (archive_dir / "shared-title.md").read_text(encoding="utf-8")
+        assert "content from project category" in surviving
+        assert "content from user category" not in surviving
+
+
 class TestAgentId:
     def test_agent_id_round_trips_through_add_and_scan(self, tmp_path: Path) -> None:
         pm = PersistentMemory(memory_dir=tmp_path)

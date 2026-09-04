@@ -120,6 +120,7 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
   const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -132,8 +133,10 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
       });
       setAgents(rows);
       setStackHealth(res.stack_health);
+      setLoadError(null);
     } catch (err) {
       console.warn("Failed to load autonomous agents", err);
+      setLoadError(err instanceof Error ? err.message : "Failed to load agents.");
     } finally {
       setLoading(false);
     }
@@ -338,7 +341,20 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
           <div className="col-span-full text-sm text-muted-foreground">Loading agents…</div>
         )}
 
-        {!loading && agents.length === 0 && (
+        {!loading && loadError && (
+          <div className="col-span-full flex flex-col items-start gap-2 rounded-xl border border-red-500/40 bg-red-500/5 p-4 text-sm">
+            <span className="text-red-600 dark:text-red-400">{loadError}</span>
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="rounded-lg border px-3 py-1.5 text-xs font-medium"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {!loading && !loadError && agents.length === 0 && (
           <div className="col-span-full flex items-center gap-2 rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">
             <Radio className="h-4 w-4" />
             No agents yet — click Create agent to get started.
