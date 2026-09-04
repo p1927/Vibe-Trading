@@ -62,6 +62,24 @@ export const MACRO_EXTENDED_KEYS = [
   "nifty_supertrend",
   "nifty_keltner_pct_b",
   "index_sentiment_news",
+  // 16 registry-catalogued market="GLOBAL"/FX-pair factors (2026-09-03) — mirrors
+  // ridge_keys.py's MACRO_FACTOR_KEYS tail exactly, see that file for provenance.
+  "dxy",
+  "msci_em",
+  "kospi",
+  "taiex",
+  "jci_indonesia",
+  "hyg",
+  "lqd",
+  "copper",
+  "natural_gas",
+  "baltic_dry_freight",
+  "usd_cny",
+  "usd_jpy",
+  "usd_rub",
+  "usd_sar",
+  "usd_brl",
+  "usd_eur",
 ] as const;
 
 /** Full Ridge feature universe for UI verification — keep in sync with factor_matrix.py. */
