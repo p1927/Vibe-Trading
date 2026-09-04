@@ -1,6 +1,18 @@
+# Docker's default json-file log driver has no size cap on its own; x-logging
+# bounds every service's stdout/stderr log here so a runaway process can't fill
+# the host disk unnoticed (see the Trade repo's docker-compose.stack.yml for
+# the same fix, and the 2026-09-04 stock-simulator.log 23.6GB incident that
+# prompted the broader audit).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
   vibe-trading:
     build: .
+    logging: *default-logging
     ports:
       - "127.0.0.1:8899:8899"
     env_file:
@@ -68,6 +80,7 @@ services:
   frontend:
     image: node:22@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37  # node:22 digest resolved 2026-07-28
     working_dir: /app
+    logging: *default-logging
     ports:
       - "127.0.0.1:5899:5899"
     volumes:

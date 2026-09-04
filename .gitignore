@@ -73,7 +73,13 @@ docs/screenshots/boot.png
 data/minutes/
 data/overnight*.log
 data/*.log
+data/*.log.*
 data/test_write.txt
+
+# Rotated log files anywhere in this tree (matches the openalgo fork's
+# fix after a rotated log there — stack-openalgo.log.1 — grew to 238MB
+# uncommitted and got rejected by GitHub's file-size limit, 2026-09-04).
+*.log.*
 
 # NSE_REPLAY_DATA_ROOT should always resolve to the repo-root data/ tree.
 # A relative-path/cwd mismatch (recorder subprocess vs. main API process)
