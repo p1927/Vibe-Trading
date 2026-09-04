@@ -100,7 +100,12 @@ class TestForcedToolCallRetry:
         assert "Research status confirmed ok." in result["content"]
 
     def test_only_forces_once_per_run(self, tmp_path: Path) -> None:
-        """A model that keeps refusing to call a tool must not loop forever."""
+        """A model that keeps refusing to call a tool must not loop forever -- it only gets
+        retried once. Live-tested 2026-08-30 (see the backlog item's Attempts log): a model can
+        satisfy the forced retry by narrating a fabricated "tool called -> result" table in prose
+        instead of making a real tool call, which `has_tool_calls` alone can't catch. The second
+        consecutive no-tool-call answer must NOT be passed through verbatim -- it's replaced with
+        an honest failure notice instead of accepted as fact."""
         tool = _EchoTool()
         llm = _ScriptedLLM(
             [
@@ -117,7 +122,34 @@ class TestForcedToolCallRetry:
 
         assert tool.calls == 0
         assert result["status"] == "success"
-        assert "Still broken" in result["content"]
+        assert "Still broken" not in result["content"]
+        assert "could not complete real tool verification" in result["content"]
+
+    def test_exhaustion_writes_trace_event(self, tmp_path: Path) -> None:
+        tool = _EchoTool()
+        llm = _ScriptedLLM(
+            [
+                _Response(content="Backend broken."),
+                _Response(content="Still broken, fabricated tool table here."),
+            ]
+        )
+        agent = _agent(tmp_path, llm, tool)
+
+        agent.run(
+            "Please retry now.",
+            session_config={"session_kind": "autonomous_agent"},
+        )
+
+        import json
+
+        trace_path = Path(agent.memory.run_dir) / "trace.jsonl"
+        events = [
+            json.loads(line).get("type")
+            for line in trace_path.read_text().splitlines()
+            if line.strip()
+        ]
+        assert "forced_tool_call_retry" in events
+        assert "forced_tool_call_retry_exhausted" in events
 
     def test_non_autonomous_session_is_not_gated(self, tmp_path: Path) -> None:
         tool = _EchoTool()

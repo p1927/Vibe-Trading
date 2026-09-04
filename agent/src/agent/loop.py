@@ -1072,6 +1072,7 @@ class AgentLoop:
         self._session_id = session_id
         self._session_config: dict[str, Any] = dict(session_config or {})
         self._forced_tool_call_retry_used = False
+        self._awaiting_forced_retry_verification = False
         self._compact_policy = _resolve_compact_policy(user_message, session_config)
         self._auto_compact_count = 0
         self._emergency_compact_used = False
@@ -1493,6 +1494,7 @@ class AgentLoop:
                             must_call_tool = False
                         if must_call_tool:
                             self._forced_tool_call_retry_used = True
+                            self._awaiting_forced_retry_verification = True
                             trace.write(
                                 {"type": "forced_tool_call_retry", "iter": current_iter}
                             )
@@ -1514,6 +1516,32 @@ class AgentLoop:
                             )
                             final_content = ""
                             continue
+                    elif final_content and self._awaiting_forced_retry_verification:
+                        # The forced retry above (bounded to once per run) already fired for
+                        # this turn, and the model's *very next* answer -- the direct response
+                        # to that retry instruction -- still made zero real tool calls. Confirmed
+                        # live (see
+                        # .claude/backlog/items/2026-08-29-autonomous-agent-retry-fix-not-live-effective.md)
+                        # that a model can satisfy "answer again" by narrating a fabricated
+                        # "tool called -> result" table in prose instead of an actual tool call,
+                        # which the has_tool_calls check alone can't see through. Rather than try
+                        # to detect that fabrication in the text (two earlier content-based
+                        # attempts on this exact bug were each live-disproven), this is
+                        # content-blind like the retry itself: a second consecutive no-tool-call
+                        # answer on a turn that required one is never trustworthy enough to hand
+                        # to the user as-is, so it's replaced with an honest failure notice
+                        # instead of accepted verbatim.
+                        self._awaiting_forced_retry_verification = False
+                        trace.write(
+                            {"type": "forced_tool_call_retry_exhausted", "iter": current_iter}
+                        )
+                        final_content = (
+                            "I could not complete real tool verification for this request, "
+                            "even after retrying. I'm not confident enough in unverified "
+                            "information (from memory or prior conversation) to report it as "
+                            "current fact -- please retry, or check the underlying tools/backend "
+                            "directly."
+                        )
                     if not final_content:
                         reasoning = str(getattr(response, "reasoning_content", None) or "").strip()
                         if reasoning and empty_model_response_iter is None:
@@ -1765,6 +1793,11 @@ class AgentLoop:
                     )
                     react_trace.append({"type": "answer", "content": final_content[:500]})
                     break
+
+                # A real tool call satisfies the forced-retry requirement -- this response has
+                # tool calls, so it never entered the `if not response.has_tool_calls:` block
+                # above at all.
+                self._awaiting_forced_retry_verification = False
 
                 assistant_message = context.format_assistant_tool_calls(
                     response.tool_calls,
