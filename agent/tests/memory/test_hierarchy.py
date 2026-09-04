@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from src.memory.hierarchy import CATEGORIES, MemoryHierarchy
+from src.memory.hierarchy import CATEGORIES, MemoryHierarchy, archive_destination
 
 
 # ---------------------------------------------------------------------------
@@ -181,3 +181,60 @@ class TestMigrateFlatEntry:
         result = h.migrate_flat_entry(src, "nonexistent")
         assert result is None
         assert src.exists()
+
+
+class TestArchiveDestination:
+    """archive_destination() disambiguates archived filenames by category to
+    avoid the H-MEM collision (2026-09-05-archive-entry-hierarchy-collision):
+    bare-slug filenames with no category prefix mean two entries with the
+    same title in different category subdirs would otherwise land at the
+    identical flat archive/<name> destination and clobber each other."""
+
+    def test_flat_entry_archives_directly_under_archive_dir(
+        self, tmp_path: Path
+    ) -> None:
+        base_dir = tmp_path
+        archive_dir = base_dir / "archive"
+        source = base_dir / "note.md"
+
+        dest = archive_destination(base_dir, archive_dir, source)
+
+        assert dest == archive_dir / "note.md"
+
+    def test_category_entry_archives_into_matching_subdir(
+        self, tmp_path: Path
+    ) -> None:
+        base_dir = tmp_path
+        archive_dir = base_dir / "archive"
+        source = base_dir / "user" / "shared-title.md"
+
+        dest = archive_destination(base_dir, archive_dir, source)
+
+        assert dest == archive_dir / "user" / "shared-title.md"
+
+    def test_different_categories_same_filename_do_not_collide(
+        self, tmp_path: Path
+    ) -> None:
+        base_dir = tmp_path
+        archive_dir = base_dir / "archive"
+        user_source = base_dir / "user" / "shared-title.md"
+        project_source = base_dir / "project" / "shared-title.md"
+
+        user_dest = archive_destination(base_dir, archive_dir, user_source)
+        project_dest = archive_destination(base_dir, archive_dir, project_source)
+
+        assert user_dest != project_dest
+        assert user_dest == archive_dir / "user" / "shared-title.md"
+        assert project_dest == archive_dir / "project" / "shared-title.md"
+
+    def test_unknown_subdir_name_treated_as_flat(self, tmp_path: Path) -> None:
+        """A path in a directory that isn't a known category (e.g. a stray
+        subdir some other mechanism created) falls back to the flat
+        destination rather than guessing at a category name."""
+        base_dir = tmp_path
+        archive_dir = base_dir / "archive"
+        source = base_dir / "not_a_category" / "note.md"
+
+        dest = archive_destination(base_dir, archive_dir, source)
+
+        assert dest == archive_dir / "note.md"
