@@ -3108,8 +3108,13 @@ class AgentLoop:
         body = messages[1:]
 
         # Token-budget tail: size messages with their tool-call arguments so
-        # oversized tool calls are folded instead of hiding in the tail.
-        cut_idx = _tail_cut_index(body)
+        # oversized tool calls are folded instead of hiding in the tail. Pass
+        # our per-instance tail budget explicitly -- upstream's extraction of
+        # this computation into _tail_cut_index() defaults its `budget` param
+        # to the module-level TAIL_TOKEN_BUDGET constant, which would silently
+        # ignore self._tail_token_budget (fork-only, set in run()/tests to
+        # make the tail budget configurable per attempt).
+        cut_idx = _tail_cut_index(body, self._tail_token_budget)
 
         head = body[:cut_idx]
         tail = body[cut_idx:]

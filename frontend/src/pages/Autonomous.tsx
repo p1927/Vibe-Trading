@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { api, type AutonomousAgentInstance } from "@/lib/api";

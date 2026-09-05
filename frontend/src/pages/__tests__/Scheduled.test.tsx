@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { Scheduled } from "@/pages/Scheduled";
 import { ApiError, api, type ScheduledRun, type SchedulerRegistryEntry, type VerdictRecord } from "@/lib/api";
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { Loader2, OctagonX, Plus, Radio, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, api, autonomousDeleteErrorMessage, type AutonomousAgentInstance, type AutonomousStackHealth, type LiveStatus } from "@/lib/api";

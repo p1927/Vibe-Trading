@@ -666,6 +666,7 @@
     "haltConnectorTitle": "Instantly halt OAuth live runtime activity (Robinhood / IBKR)",
     "haltConnector": "Halt OAuth live runtime",
     "moreOptions": "More options",
+    "uploadPdf": "Upload PDF",
     "researchGoal": "Research Goal",
     "agentSwarm": "Agent Swarm",
     "attachmentChip": "Attachment",

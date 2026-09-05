@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { Play, RefreshCw, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {

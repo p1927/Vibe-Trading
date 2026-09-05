@@ -1,4 +1,4 @@
-import { isRouteErrorResponse, useRouteError, Link } from "react-router-dom";
+import { isRouteErrorResponse, useRouteError, Link } from "react-router";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 
 export function RouteErrorFallback() {

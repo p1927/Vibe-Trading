@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import { AlertTriangle } from "lucide-react";
 import { PredictionControls } from "@/components/prediction/PredictionControls";
 import { PredictionSummary } from "@/components/prediction/PredictionSummary";

@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import type { ConstituentSignal } from "@/lib/api";
 import { ConstituentDetailPanel } from "@/components/prediction/ConstituentDetailPanel";
 

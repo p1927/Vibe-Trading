@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import { CalendarClock, ChevronDown, ChevronRight, Loader2, Pause, Play, Plus, Square, Trash2, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, ApiError, type ScheduledRun, type SchedulerRegistryEntry } from "@/lib/api";
