@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type { ExternalPredictionRecord } from "@/lib/api";
@@ -54,7 +54,7 @@ export function ExternalPredictionChart({ record, sourceName, height = 220 }: Pr
 
   useEffect(() => {
     if (!ref.current || !hasData) return;
-    const chart = echarts.init(ref.current, dark ? "dark" : undefined);
+    const chart = initEChart(ref.current, dark ? "dark" : undefined);
     const color =
       record.direction === "bullish"
         ? "#22c55e"

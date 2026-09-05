@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type { IndexTrackChartPayload } from "@/lib/api";
@@ -21,7 +21,7 @@ export function NiftyCloseScoreboardChart({ chart, height = 220 }: Props) {
 
   useEffect(() => {
     if (!ref.current || !chart?.nifty_close_series?.length) return;
-    const instance = echarts.init(ref.current, dark ? "dark" : undefined);
+    const instance = initEChart(ref.current, dark ? "dark" : undefined);
     const series = chart.nifty_close_series;
     const dates = series.map((p) => p.date);
     const closes = series.map((p) => p.close);

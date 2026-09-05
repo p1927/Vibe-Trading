@@ -6,11 +6,12 @@ import { PositionsTab } from "../PositionsTab";
 
 vi.mock("@/lib/echarts", () => ({
   echarts: { init: vi.fn() },
+  initEChart: vi.fn(),
   CHART_GROUP: "quant-charts",
   connectCharts: vi.fn(),
 }));
 
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 
 interface FakeChart {
   setOption: Mock;
@@ -112,11 +113,11 @@ function sectorMapResponse(body: Record<string, unknown>): Response {
 describe("PositionsTab", () => {
   beforeEach(() => {
     charts.length = 0;
-    vi.mocked(echarts.init).mockImplementation((() => {
+    vi.mocked(initEChart).mockImplementation((() => {
       const chart: FakeChart = { setOption: vi.fn(), resize: vi.fn(), dispose: vi.fn(), group: "" };
       charts.push(chart);
       return chart;
-    }) as typeof echarts.init);
+    }) as typeof initEChart);
   });
 
   afterEach(() => {

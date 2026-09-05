@@ -38,7 +38,7 @@ import {
   type AlphaBenchTopRow,
   type AlphaCompareResult,
 } from "@/lib/api";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useThemeDark } from "@/lib/theme-store";
 
@@ -988,7 +988,7 @@ function ResultPanel({ result }: { result: AlphaBenchResult }) {
   useEffect(() => {
     if (!chartRef.current) return;
     const theme = getChartTheme();
-    const chart = echarts.init(chartRef.current);
+    const chart = initEChart(chartRef.current);
     const themes = Object.keys(result.by_theme || {}).sort();
     const aliveSeries = themes.map((k) => result.by_theme[k].alive);
     const reversedSeries = themes.map((k) => result.by_theme[k].reversed);

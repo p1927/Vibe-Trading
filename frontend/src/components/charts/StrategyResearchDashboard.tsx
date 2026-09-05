@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { CalendarRange, Database, FlaskConical } from "lucide-react";
 import i18n from "@/i18n";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useThemeDark } from "@/lib/theme-store";
 import type { RunData } from "@/lib/api";
@@ -139,7 +139,7 @@ export function StrategyResearchDashboard({ run }: { run: RunData }) {
   useEffect(() => {
     const nodes = [navRef.current, riskRef.current, tradesRef.current];
     if (nodes.some((node) => !node)) return;
-    const charts = nodes.map((node) => echarts.init(node!));
+    const charts = nodes.map((node) => initEChart(node!));
     const [navChart, riskChart, tradeChart] = charts;
     const theme = getChartTheme();
     const axis = {

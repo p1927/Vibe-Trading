@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { getChartTheme } from "@/lib/chart-theme";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { useThemeDark } from "@/lib/theme-store";
 
 interface Props {
@@ -32,7 +32,7 @@ export function DistributionChart({
   useEffect(() => {
     if (!ref.current || samples.length === 0) return;
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
 
     let lo = Math.min(markerValue, ...samples);
     let hi = Math.max(markerValue, ...samples);

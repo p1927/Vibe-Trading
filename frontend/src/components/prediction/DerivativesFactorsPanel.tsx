@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { api, type IndexFactorHistoryPoint } from "@/lib/api";
@@ -184,7 +184,7 @@ export function DerivativesFactorsPanel({ days = 365, onLoadState }: Props) {
 
   useEffect(() => {
     if (!ref.current || !chartOption) return;
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
     chart.setOption(chartOption);
     const onResize = () => chart.resize();
     window.addEventListener("resize", onResize);

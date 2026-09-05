@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import i18n from "@/i18n";
 import type { CorrelationRegimeResponse } from "@/lib/api";
 import { getChartTheme } from "@/lib/chart-theme";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { useDarkMode } from "@/hooks/useDarkMode";
 
 interface Props {
@@ -17,7 +17,7 @@ export function RegimeTimeline({ data, height = 260 }: Props) {
   useEffect(() => {
     if (!ref.current || data.dates.length === 0) return;
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
 
     const { dates, density, smoothed, episodes, params } = data;
     const densityName = i18n.t("correlation.regimeDensity");

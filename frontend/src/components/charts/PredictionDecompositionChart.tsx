@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type { IndexPredictionHistoryRow } from "@/lib/api";
@@ -33,7 +33,7 @@ export function PredictionDecompositionChart({ rows, height = 200 }: Props) {
   useEffect(() => {
     if (!ref.current || !sorted.length) return;
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
     const bottom = sorted.map((r) => Number(r.bottom_up_return_pct ?? 0));
     const macro = sorted.map((r) => Number(r.macro_delta_pct ?? 0));
 

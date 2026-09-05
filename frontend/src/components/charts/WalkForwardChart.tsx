@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import i18n from "@/i18n";
 import type { ValidationData } from "@/lib/api";
 import { getChartTheme } from "@/lib/chart-theme";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { useThemeDark } from "@/lib/theme-store";
 
 type WalkForwardWindow = NonNullable<ValidationData["walk_forward"]>["windows"][number];
@@ -20,7 +20,7 @@ export function WalkForwardChart({ windows, height = 200 }: Props) {
   useEffect(() => {
     if (!ref.current || windows.length === 0) return;
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
 
     const returnName = i18n.t("validation.return");
     const sharpeName = i18n.t("reports.sharpe");

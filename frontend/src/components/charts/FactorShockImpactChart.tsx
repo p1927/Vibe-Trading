@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type { IndexSimulationResult } from "@/lib/api";
@@ -182,7 +182,7 @@ export function FactorShockImpactChart({
 
   useEffect(() => {
     if (!ref.current || !option) return;
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
     chart.setOption(option);
     const ro = new ResizeObserver(() => chart.resize());
     ro.observe(ref.current);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type { IndexPredictionHistoryRow } from "@/lib/api";
@@ -26,7 +26,7 @@ export function IndexForecastReturnChart({ rows, height = 200 }: Props) {
   useEffect(() => {
     if (!ref.current || !sorted.length) return;
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
     const labels = sorted.map((r) => fmtDate(r.predicted_at));
     const returns = sorted.map((r) => r.expected_return_pct);
     const actuals = sorted.map((r) =>

@@ -6,7 +6,7 @@ import type { PriceBar, TradeMarker, IndicatorPoint } from "@/lib/api";
 import { calcMA, calcBOLL, calcMACD, calcRSI, calcKDJ, calcEMA } from "@/lib/indicators";
 import { getChartTheme } from "@/lib/chart-theme";
 import { abbreviateNum } from "@/lib/formatters";
-import { echarts, CHART_GROUP, connectCharts } from "@/lib/echarts";
+import { echarts, initEChart, CHART_GROUP, connectCharts } from "@/lib/echarts";
 import { escapeHtml } from "@/lib/escapeHtml";
 import { useThemeDark } from "@/lib/theme-store";
 
@@ -88,7 +88,7 @@ export function CandlestickChart({ data, markers, indicators, height = 500 }: Pr
   // Init chart instance — only on mount/unmount and dark mode change
   useEffect(() => {
     if (!containerRef.current || data.length === 0) return;
-    const chart = echarts.init(containerRef.current);
+    const chart = initEChart(containerRef.current);
     chart.group = CHART_GROUP;
     connectCharts();
     chartRef.current = chart;

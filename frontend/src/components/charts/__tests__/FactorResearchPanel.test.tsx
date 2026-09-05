@@ -10,6 +10,7 @@ vi.mock("@/lib/echarts", () => ({
   echarts: {
     init: vi.fn(() => ({ setOption: vi.fn(), resize: vi.fn(), dispose: vi.fn(), group: "" })),
   },
+  initEChart: vi.fn(() => ({ setOption: vi.fn(), resize: vi.fn(), dispose: vi.fn(), group: "" })),
 }));
 
 vi.mock("../CorrelationMatrix", () => ({

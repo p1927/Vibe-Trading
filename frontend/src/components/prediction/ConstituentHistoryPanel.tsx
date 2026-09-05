@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { api, type ConstituentHistoryPoint } from "@/lib/api";
@@ -55,7 +55,7 @@ export function ConstituentHistoryPanel({ symbol, weight, days = 90 }: Props) {
   useEffect(() => {
     if (!ref.current || !points.length) return;
     const theme = getChartTheme();
-    const chart = echarts.init(ref.current, undefined, { renderer: "canvas" });
+    const chart = initEChart(ref.current, undefined, { renderer: "canvas" });
     chart.setOption({
       backgroundColor: "transparent",
       grid: { left: 40, right: 12, top: 24, bottom: 28 },

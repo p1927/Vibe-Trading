@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type { ExternalPredictionSnapshot } from "@/lib/api";
@@ -80,7 +80,7 @@ export function ExternalPredictionsComparisonChart({ snapshot, horizonDays, heig
 
   useEffect(() => {
     if (!ref.current || !labels.length) return;
-    const chart = echarts.init(ref.current, dark ? "dark" : undefined);
+    const chart = initEChart(ref.current, dark ? "dark" : undefined);
     chart.setOption({
       backgroundColor: "transparent",
       title: {

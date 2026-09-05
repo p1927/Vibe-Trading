@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { DayMoveCauses } from "@/components/prediction/DayMoveCauses";
@@ -102,7 +102,7 @@ export function NiftyHistoricalChart({ series = [], majorDrawdowns = [], height 
   useEffect(() => {
     if (!ref.current || !series.length) return;
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
 
     const labels = series.map((p) => p.date.slice(5));
     const closes = series.map((p) => p.close);

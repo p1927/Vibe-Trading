@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BarChart3, Grid3x3, LineChart, Sigma } from "lucide-react";
-import { echarts } from "@/lib/echarts";
+import { echarts, initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useThemeDark } from "@/lib/theme-store";
 import { cn } from "@/lib/utils";
@@ -121,7 +121,7 @@ export function FactorResearchPanel({ report }: { report: FactorReportPayload })
     const nodes: HTMLDivElement[] = [];
 
     if (icRef.current && icRows.length > 0) {
-      const icChart = echarts.init(icRef.current);
+      const icChart = initEChart(icRef.current);
       icChart.setOption({
         backgroundColor: "transparent",
         tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
@@ -164,7 +164,7 @@ export function FactorResearchPanel({ report }: { report: FactorReportPayload })
     }
 
     if (equityRef.current && equityData.rows.length > 0 && equityData.columns.length > 0) {
-      const equityChart = echarts.init(equityRef.current);
+      const equityChart = initEChart(equityRef.current);
       equityChart.setOption({
         backgroundColor: "transparent",
         tooltip: { trigger: "axis" },

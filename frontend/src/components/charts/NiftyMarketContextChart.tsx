@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type { IndexFactorHistoryPoint } from "@/lib/api";
@@ -32,7 +32,7 @@ export function NiftyMarketContextChart({ series = [], forecastTarget, height = 
   useEffect(() => {
     if (!ref.current || !closes.length) return;
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
     const labels = closes.map((r) => r.date.slice(5));
     const values = closes.map((r) => r.close);
 

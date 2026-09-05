@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import type { RefObject } from "react";
 import type { EChartsCoreOption } from "echarts/core";
-import { echarts, CHART_GROUP, connectCharts } from "@/lib/echarts";
+import { initEChart, CHART_GROUP, connectCharts } from "@/lib/echarts";
 import { useThemeDark } from "@/lib/theme-store";
 
 /**
@@ -23,7 +23,7 @@ export function useChartLifecycle(
   const dark = useThemeDark();
   useEffect(() => {
     if (!ref.current) return;
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
     chart.group = CHART_GROUP;
     connectCharts();
     chart.setOption(buildOption());

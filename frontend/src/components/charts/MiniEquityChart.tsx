@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useThemeDark } from "@/lib/theme-store";
 
@@ -15,7 +15,7 @@ export function MiniEquityChart({ data, height = 80 }: Props) {
   useEffect(() => {
     if (!ref.current || data.length < 2) return;
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
 
     const values = data.map(d => Number(d.equity));
     const positive = values[values.length - 1] >= values[0];

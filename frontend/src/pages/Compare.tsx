@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { GitCompare, ArrowLeftRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type RunListItem, type RunData, type EquityPoint } from "@/lib/api";
-import { echarts, CHART_GROUP, connectCharts } from "@/lib/echarts";
+import { initEChart, CHART_GROUP, connectCharts } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useThemeDark } from "@/lib/theme-store";
 import { SkeletonChart, SkeletonMetrics } from "@/components/common/Skeleton";
@@ -126,7 +126,7 @@ function EquityChartOverlay({ leftCurve, rightCurve, leftLabel, rightLabel, reba
     if (leftCurve.length === 0 && rightCurve.length === 0) return;
 
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
     chart.group = CHART_GROUP;
     connectCharts();
 

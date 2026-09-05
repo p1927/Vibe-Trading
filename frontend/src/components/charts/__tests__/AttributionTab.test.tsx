@@ -6,11 +6,12 @@ import { AttributionTab } from "../AttributionTab";
 
 vi.mock("@/lib/echarts", () => ({
   echarts: { init: vi.fn() },
+  initEChart: vi.fn(),
   CHART_GROUP: "quant-charts",
   connectCharts: vi.fn(),
 }));
 
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 
 function makeRun(): RunData {
   return {
@@ -77,12 +78,12 @@ const fullPayload: AttributionResponse = {
 
 describe("AttributionTab", () => {
   beforeEach(() => {
-    vi.mocked(echarts.init).mockImplementation((() => ({
+    vi.mocked(initEChart).mockImplementation((() => ({
       setOption: vi.fn(),
       resize: vi.fn(),
       dispose: vi.fn(),
       group: "",
-    })) as unknown as typeof echarts.init);
+    })) as unknown as typeof initEChart);
   });
 
   it("shows a loading state while the attribution payload is fetched", () => {

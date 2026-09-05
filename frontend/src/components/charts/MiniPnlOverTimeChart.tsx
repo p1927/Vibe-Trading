@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 
@@ -21,7 +21,7 @@ export function MiniPnlOverTimeChart({ samples, height = 100 }: Props) {
   useEffect(() => {
     if (!ref.current || samples.length < 2) return;
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
     const days = samples.map((s) => Number(s.days_to_expiry ?? 0));
     const pnls = samples.map((s) => Number(s.net_pnl ?? s.pnl ?? 0));
     const lastPnl = pnls[pnls.length - 1] ?? 0;

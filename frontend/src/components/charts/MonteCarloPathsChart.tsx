@@ -3,7 +3,7 @@ import i18n from "@/i18n";
 import type { MonteCarloEquityPaths } from "@/lib/api";
 import { getChartTheme } from "@/lib/chart-theme";
 import { abbreviateNum } from "@/lib/formatters";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { useThemeDark } from "@/lib/theme-store";
 
 interface Props {
@@ -24,7 +24,7 @@ export function MonteCarloPathsChart({ paths, height = 260 }: Props) {
   useEffect(() => {
     if (!ref.current || paths.steps.length === 0) return;
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
 
     const actualLabel = i18n.t("validation.actualLabel");
     const medianLabel = i18n.t("validation.medianLabel");

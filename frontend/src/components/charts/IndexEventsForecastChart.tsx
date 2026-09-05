@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type { IndexScenario, IndexUpcomingEvent } from "@/lib/api";
@@ -125,7 +125,7 @@ export function IndexEventsForecastChart({
   useEffect(() => {
     if (!ref.current || spot <= 0) return;
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
 
     const eventMarks = upcomingEvents.flatMap((e) => {
       const day = e.days_from_now;

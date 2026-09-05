@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type { IndexFactorHistoryPoint } from "@/lib/api";
@@ -86,7 +86,7 @@ export function IndexFactorTimelineChart({
   useEffect(() => {
     if (!ref.current || !wide.length || !keys.length) return;
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
 
     const legendNames = [
       ...(hasNifty ? ["Nifty 50"] : []),

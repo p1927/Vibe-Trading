@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type { HubIndexHistoryBar } from "@/lib/api";
@@ -41,7 +41,7 @@ export function PriorDayPriceStrip({ day, bars, currentSpot, height = 90 }: Prop
   useEffect(() => {
     if (!ref.current || bars.length === 0) return;
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
     const up = last != null && first != null && last >= first;
     chart.setOption({
       backgroundColor: "transparent",

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type { IndexPredictionHistoryRow } from "@/lib/api";
@@ -28,7 +28,7 @@ export function IndexForecastLevelChart({ rows, horizonDays = 14, height = 240 }
   useEffect(() => {
     if (!ref.current || sorted.length < 2) return;
     const t = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
     const labels = sorted.map((r) => fmtDate(r.predicted_at));
     const implied = sorted.map((r) => r.implied_level);
     const bandBase = sorted.map((r) => r.range_low);
