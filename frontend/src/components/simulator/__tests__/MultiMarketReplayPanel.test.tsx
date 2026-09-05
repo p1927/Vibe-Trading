@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MultiMarketReplayPanel } from "../MultiMarketReplayPanel";
 
+const MockApiError = vi.hoisted(() => class MockApiError extends Error {});
+
 const apiMock = vi.hoisted(() => ({
   getMarketRegistry: vi.fn(),
   getMultiMarketStatus: vi.fn(),
@@ -19,7 +21,7 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock("@/lib/api", () => ({
   api: apiMock,
-  ApiError: class ApiError extends Error {},
+  ApiError: MockApiError,
 }));
 
 function recordingEntry(overrides: Record<string, unknown> = {}) {
@@ -161,7 +163,10 @@ describe("MultiMarketReplayPanel", () => {
       render(<MultiMarketReplayPanel />);
 
       await waitFor(() => expect(screen.getByText("2/3 active")).toBeInTheDocument());
-      expect(screen.getByText("US")).toBeInTheDocument();
+      // "US" also appears as a checkbox label in the arm-controls below — scope
+      // to the market-group heading (a <p>) rather than asserting uniqueness.
+      const usHeadings = screen.getAllByText("US").filter((el) => el.tagName === "P");
+      expect(usHeadings.length).toBe(1);
       expect(screen.getByText("India — Economy")).toBeInTheDocument();
       expect(screen.getByText("default: off")).toBeInTheDocument();
     });
@@ -204,7 +209,9 @@ describe("MultiMarketReplayPanel", () => {
         entries: [recordingEntry()],
         sources: {},
       });
-      apiMock.pauseStockSimSchedulerEntry.mockRejectedValue(new Error("could not pause (already paused)"));
+      apiMock.pauseStockSimSchedulerEntry.mockRejectedValue(
+        new MockApiError("could not pause (already paused)"),
+      );
 
       render(<MultiMarketReplayPanel />);
 
