@@ -15,6 +15,7 @@ import { PnlForecastBandChart } from "@/components/board/PnlForecastBandChart";
 import { IndexEventsForecastChart } from "@/components/charts/IndexEventsForecastChart";
 import { PriorDayPriceStrip } from "@/components/charts/PriorDayPriceStrip";
 import { NewsImpactPanel } from "@/components/prediction/NewsImpactPanel";
+import { EventsCalendar } from "@/components/news/EventsCalendar";
 import { useSSE, type SSEStatus } from "@/hooks/useSSE";
 import { safeGet, safeSet } from "@/lib/storage";
 import { cn } from "@/lib/utils";
@@ -542,35 +543,10 @@ function EventsRangePanel({ artifact, status, revision, newEventKeys }: EventsRa
             </div>
           ) : null}
 
-          {events7d.length > 0 ? (
-            <div className="flex gap-1.5 overflow-x-auto pb-1">
-              {events7d.map((ev, i) => {
-                const isNew = newEventKeys?.has(eventKeyFor(ev)) ?? false;
-                return (
-                  <div
-                    key={`${ev.date ?? i}-${ev.label ?? i}`}
-                    className={cn(
-                      "flex w-32 shrink-0 flex-col gap-0.5 rounded-md border px-2 py-1 text-[11px]",
-                      isNew
-                        ? "border-sky-500/50 bg-sky-500/10"
-                        : "border-border/50 bg-muted/10",
-                    )}
-                    title={[ev.label, ev.category ?? ev.event_type, ev.symbol, ev.impact].filter(Boolean).join(" · ")}
-                  >
-                    <span className="flex items-center justify-between gap-1">
-                      <span className="font-mono text-muted-foreground">+{ev.days_from_now}d</span>
-                      {isNew ? (
-                        <span className="rounded bg-sky-500/20 px-1 text-[9px] font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-400">
-                          New
-                        </span>
-                      ) : null}
-                    </span>
-                    <span className="truncate font-medium">{ev.label ?? ev.event_type ?? "Event"}</span>
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
+          <EventsCalendar
+            structuralEvents={artifact?.upcoming_events ?? []}
+            isNewStructuralEvent={(ev) => newEventKeys?.has(eventKeyFor(ev)) ?? false}
+          />
 
           <PriorDayPriceStrip day={priorDay?.day ?? null} bars={priorDay?.bars ?? []} currentSpot={artifact.spot} height={64} />
           <IndexEventsForecastChart

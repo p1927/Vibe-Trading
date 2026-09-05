@@ -1,8 +1,8 @@
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { api, type HubNewsCalendarEvent } from "@/lib/api";
+import { api, type HubNewsCalendarEvent, type IndexUpcomingEvent } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { EventDetailPanel } from "@/components/news/EventDetailPanel";
+import { EventDetailPanel, type CalendarEventItem } from "@/components/news/EventDetailPanel";
 
 const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_LABELS = [
@@ -22,22 +22,37 @@ function parseEventDate(value?: string): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-function verificationDotClass(status?: string): string {
-  const value = (status || "").toLowerCase();
+function itemLabel(item: CalendarEventItem): string {
+  return item.kind === "news" ? item.data.event || "Event" : item.data.label || item.data.event_type || "Event";
+}
+
+function itemSubLabel(item: CalendarEventItem): string | null {
+  return item.kind === "news" ? item.data.type || null : item.data.category || item.data.event_type || null;
+}
+
+function dotClass(item: CalendarEventItem): string {
+  if (item.kind === "calendar") return "bg-sky-500";
+  const value = (item.data.verification_status || "").toLowerCase();
   if (value === "calendar_corroborated") return "bg-emerald-500";
   if (value === "multi_source") return "bg-blue-500";
   return "bg-amber-500";
 }
 
-export function EventsCalendar() {
+export function EventsCalendar({
+  structuralEvents = [],
+  isNewStructuralEvent,
+}: {
+  structuralEvents?: IndexUpcomingEvent[];
+  isNewStructuralEvent?: (event: IndexUpcomingEvent) => boolean;
+}) {
   const [selectedDate, setSelectedDate] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), now.getDate());
   });
-  const [events, setEvents] = useState<HubNewsCalendarEvent[]>([]);
+  const [newsEvents, setNewsEvents] = useState<HubNewsCalendarEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedEvent, setSelectedEvent] = useState<HubNewsCalendarEvent | null>(null);
+  const [selectedItem, setSelectedItem] = useState<CalendarEventItem | null>(null);
 
   const weekStart = useMemo(() => {
     const start = new Date(selectedDate);
@@ -63,7 +78,7 @@ export function EventsCalendar() {
       .getHubNewsEventsCalendar({ start, end })
       .then((res) => {
         if (cancelled) return;
-        setEvents(res.events || []);
+        setNewsEvents(res.events || []);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -77,26 +92,41 @@ export function EventsCalendar() {
     };
   }, [weekDays]);
 
+  const allItems = useMemo<CalendarEventItem[]>(() => {
+    const news: CalendarEventItem[] = newsEvents.map((data, idx) => ({
+      kind: "news",
+      key: `news-${data.date || "undated"}-${idx}`,
+      data,
+    }));
+    const structural: CalendarEventItem[] = structuralEvents.map((data, idx) => ({
+      kind: "calendar",
+      key: `cal-${data.date || "undated"}-${idx}`,
+      data,
+    }));
+    return [...news, ...structural];
+  }, [newsEvents, structuralEvents]);
+
   const eventsByDate = useMemo(() => {
-    const map = new Map<string, HubNewsCalendarEvent[]>();
-    const undated: HubNewsCalendarEvent[] = [];
-    for (const event of events) {
-      const parsed = parseEventDate(event.date);
+    const map = new Map<string, CalendarEventItem[]>();
+    const undated: CalendarEventItem[] = [];
+    for (const item of allItems) {
+      const rawDate = item.kind === "news" ? item.data.date : item.data.date;
+      const parsed = parseEventDate(rawDate);
       if (!parsed) {
-        undated.push(event);
+        undated.push(item);
         continue;
       }
       const key = toIsoDate(parsed);
       const list = map.get(key) ?? [];
-      list.push(event);
+      list.push(item);
       map.set(key, list);
     }
     return { map, undated };
-  }, [events]);
+  }, [allItems]);
 
   const today = toIsoDate(new Date());
   const selectedKey = toIsoDate(selectedDate);
-  const selectedDayEvents = eventsByDate.map.get(selectedKey) ?? [];
+  const selectedDayItems = eventsByDate.map.get(selectedKey) ?? [];
 
   const goToDay = (deltaDays: number) => {
     setSelectedDate((d) => {
@@ -152,7 +182,7 @@ export function EventsCalendar() {
       <div className="grid grid-cols-7 gap-1.5">
         {weekDays.map((day) => {
           const key = toIsoDate(day);
-          const dayEvents = eventsByDate.map.get(key) ?? [];
+          const dayItems = eventsByDate.map.get(key) ?? [];
           const isSelected = key === selectedKey;
           return (
             <button
@@ -171,13 +201,10 @@ export function EventsCalendar() {
               <span className={cn("text-[13px] tabular-nums font-medium", isSelected && "text-primary")}>
                 {day.getDate()}
               </span>
-              {dayEvents.length ? (
+              {dayItems.length ? (
                 <span className="flex items-center gap-0.5">
-                  {dayEvents.slice(0, 3).map((event, idx) => (
-                    <span
-                      key={idx}
-                      className={cn("h-1.5 w-1.5 rounded-full", verificationDotClass(event.verification_status))}
-                    />
+                  {dayItems.slice(0, 3).map((item) => (
+                    <span key={item.key} className={cn("h-1.5 w-1.5 rounded-full", dotClass(item))} />
                   ))}
                 </span>
               ) : (
@@ -189,33 +216,33 @@ export function EventsCalendar() {
       </div>
 
       <div className="mt-3 space-y-1.5">
-        {selectedDayEvents.length ? (
-          selectedDayEvents.map((event, idx) => (
+        {selectedDayItems.length ? (
+          selectedDayItems.map((item) => (
             <button
-              key={idx}
+              key={item.key}
               type="button"
-              onClick={() => setSelectedEvent(event)}
+              onClick={() => setSelectedItem(item)}
               className="flex w-full items-start gap-2 rounded-lg border bg-background px-2.5 py-2 text-left hover:bg-muted/40"
             >
-              <span
-                className={cn(
-                  "mt-1 h-1.5 w-1.5 shrink-0 rounded-full",
-                  verificationDotClass(event.verification_status),
-                )}
-              />
+              <span className={cn("mt-1 h-1.5 w-1.5 shrink-0 rounded-full", dotClass(item))} />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[12px] font-medium text-foreground">
-                  {event.event || "Event"}
+                <span className="flex items-center gap-1.5">
+                  <span className="block truncate text-[12px] font-medium text-foreground">{itemLabel(item)}</span>
+                  {item.kind === "calendar" && isNewStructuralEvent?.(item.data) ? (
+                    <span className="shrink-0 rounded bg-sky-500/20 px-1 text-[9px] font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-400">
+                      New
+                    </span>
+                  ) : null}
                 </span>
-                {event.type ? (
-                  <span className="text-[10px] text-muted-foreground">{event.type}</span>
+                {itemSubLabel(item) ? (
+                  <span className="text-[10px] text-muted-foreground">{itemSubLabel(item)}</span>
                 ) : null}
               </span>
             </button>
           ))
         ) : (
           <p className="rounded-lg border border-dashed bg-muted/20 px-4 py-6 text-center text-[12px] text-muted-foreground">
-            {loading ? "Loading events…" : "No extracted events for this date."}
+            {loading ? "Loading events…" : "No events for this date."}
           </p>
         )}
       </div>
@@ -226,24 +253,22 @@ export function EventsCalendar() {
             Undated events this week ({eventsByDate.undated.length})
           </p>
           <div className="flex flex-wrap gap-1.5">
-            {eventsByDate.undated.map((event, idx) => (
+            {eventsByDate.undated.map((item) => (
               <button
-                key={idx}
+                key={item.key}
                 type="button"
-                onClick={() => setSelectedEvent(event)}
+                onClick={() => setSelectedItem(item)}
                 className="flex items-center gap-1 rounded-full border bg-muted/10 px-2 py-1 text-[11px] hover:bg-muted/40"
               >
-                <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", verificationDotClass(event.verification_status))} />
-                {event.event || event.timeline_phrase || "Event"}
+                <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", dotClass(item))} />
+                {itemLabel(item)}
               </button>
             ))}
           </div>
         </div>
       ) : null}
 
-      {selectedEvent ? (
-        <EventDetailPanel event={selectedEvent} onClose={() => setSelectedEvent(null)} />
-      ) : null}
+      {selectedItem ? <EventDetailPanel item={selectedItem} onClose={() => setSelectedItem(null)} /> : null}
     </div>
   );
 }
