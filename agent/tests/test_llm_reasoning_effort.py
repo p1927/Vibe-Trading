@@ -495,22 +495,13 @@ class TestAnthropicNativeProvider:
 
 
 class TestRelayOptIn:
-    """OpenRouter/Requesty keep the pre-existing extra_body opt-in."""
+    """Requesty keeps the pre-existing extra_body opt-in.
 
-    def test_openrouter_keeps_extra_body_and_no_top_level_field(self) -> None:
-        kwargs = _capture_kwargs(
-            {
-                "LANGCHAIN_PROVIDER": "openrouter",
-                "OPENROUTER_API_KEY": "or-test",
-                "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
-                "LANGCHAIN_MODEL_NAME": "deepseek/deepseek-v4-pro",
-                "LANGCHAIN_REASONING_EFFORT": "high",
-                "LANGCHAIN_USE_RESPONSES_API": "false",
-            }
-        )
-
-        assert kwargs["extra_body"] == {"reasoning": {"effort": "high"}}
-        assert kwargs["reasoning_effort"] is None
+    (An equivalent "openrouter" case previously lived here — removed 2026-09-05:
+    Trade policy now disables OpenRouter as an LLM provider entirely, see
+    src/providers/openrouter_gate.py. Requesty shares the identical
+    capability shape, so it alone still covers this relay-opt-in behavior.)
+    """
 
     def test_requesty_keeps_extra_body_and_no_top_level_field(self) -> None:
         kwargs = _capture_kwargs(

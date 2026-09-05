@@ -157,19 +157,26 @@ def test_openrouter_async_stream_ignores_non_ascii_ambient_headers() -> None:
 
 
 def test_build_rejects_non_ascii_openrouter_api_key_before_transport() -> None:
-    """A malformed Bearer credential should name its setting without leaking it."""
+    """A malformed Bearer credential should name its setting without leaking it.
+
+    Uses "requesty" rather than "openrouter" as the test vehicle — Trade
+    policy (2026-09-05) disables OpenRouter as an LLM provider entirely (see
+    src/providers/openrouter_gate.py); "requesty" shares the identical
+    OpenAI-compatible-relay capability shape, so this still exercises the
+    same credential-validation path via build_llm().
+    """
     import src.providers.llm as llm_mod
 
     env = {
-        "LANGCHAIN_PROVIDER": "openrouter",
+        "LANGCHAIN_PROVIDER": "requesty",
         "LANGCHAIN_MODEL_NAME": "deepseek/deepseek-v4-pro",
-        "OPENROUTER_API_KEY": f"{'x' * 3062}à",
-        "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
+        "REQUESTY_API_KEY": f"{'x' * 3062}à",
+        "REQUESTY_BASE_URL": "https://router.requesty.ai/v1",
     }
     try:
         with patch.object(llm_mod, "_dotenv_loaded", True):
             with patch.dict(os.environ, env, clear=True):
-                with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY.*non-ASCII") as excinfo:
+                with pytest.raises(RuntimeError, match="REQUESTY_API_KEY.*non-ASCII") as excinfo:
                     build_llm()
     finally:
         reset_env_config()
@@ -178,7 +185,12 @@ def test_build_rejects_non_ascii_openrouter_api_key_before_transport() -> None:
 
 
 def test_build_passes_openrouter_credentials_explicitly() -> None:
-    """The relay client should retain the selected key for header restoration."""
+    """The relay client should retain the selected key for header restoration.
+
+    Uses "requesty" rather than "openrouter" as the test vehicle — see the
+    docstring on test_build_rejects_non_ascii_openrouter_api_key_before_transport
+    above for why.
+    """
     import src.providers.llm as llm_mod
 
     captured: dict[str, object] = {}
@@ -188,10 +200,10 @@ def test_build_passes_openrouter_credentials_explicitly() -> None:
             captured.update(kwargs)
 
     env = {
-        "LANGCHAIN_PROVIDER": "openrouter",
+        "LANGCHAIN_PROVIDER": "requesty",
         "LANGCHAIN_MODEL_NAME": "deepseek/deepseek-v4-pro",
-        "OPENROUTER_API_KEY": "sk-or-test",
-        "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
+        "REQUESTY_API_KEY": "sk-rq-test",
+        "REQUESTY_BASE_URL": "https://router.requesty.ai/v1",
     }
     try:
         with patch.object(llm_mod, "_dotenv_loaded", True):
@@ -201,10 +213,10 @@ def test_build_passes_openrouter_credentials_explicitly() -> None:
     finally:
         reset_env_config()
 
-    assert captured["api_key"] == "sk-or-test"
-    assert captured["base_url"] == "https://openrouter.ai/api/v1"
-    assert captured["vibe_provider"] == "openrouter"
-    assert captured["vibe_api_key"] == "sk-or-test"
+    assert captured["api_key"] == "sk-rq-test"
+    assert captured["base_url"] == "https://router.requesty.ai/v1"
+    assert captured["vibe_provider"] == "requesty"
+    assert captured["vibe_api_key"] == "sk-rq-test"
 
 
 def test_provider_doctor_reports_header_safety_without_values() -> None:

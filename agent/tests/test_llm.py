@@ -593,11 +593,16 @@ class TestReasoningEffortPassthrough:
         assert captured["extra_body"] is None
 
     def test_effort_medium_forwarded_as_extra_body(self) -> None:
+        # Uses "requesty" rather than "openrouter" as the test vehicle — Trade
+        # policy (2026-09-05) disables OpenRouter as an LLM provider entirely
+        # (see openrouter_gate.py); "requesty" shares the identical
+        # openrouter_reasoning_body capability shape in capabilities.py, so
+        # this still exercises the same extra_body.reasoning passthrough path.
         captured = self._capture(
             {
-                "LANGCHAIN_PROVIDER": "openrouter",
-                "OPENROUTER_API_KEY": "or-test",
-                "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
+                "LANGCHAIN_PROVIDER": "requesty",
+                "REQUESTY_API_KEY": "rq-test",
+                "REQUESTY_BASE_URL": "https://router.requesty.ai/v1",
                 "LANGCHAIN_MODEL_NAME": "moonshotai/kimi-k2-thinking",
                 "LANGCHAIN_REASONING_EFFORT": "medium",
                 "LANGCHAIN_USE_RESPONSES_API": "false",
@@ -608,9 +613,9 @@ class TestReasoningEffortPassthrough:
     def test_effort_case_insensitive(self) -> None:
         captured = self._capture(
             {
-                "LANGCHAIN_PROVIDER": "openrouter",
-                "OPENROUTER_API_KEY": "or-test",
-                "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
+                "LANGCHAIN_PROVIDER": "requesty",
+                "REQUESTY_API_KEY": "rq-test",
+                "REQUESTY_BASE_URL": "https://router.requesty.ai/v1",
                 "LANGCHAIN_MODEL_NAME": "moonshotai/kimi-k2-thinking",
                 "LANGCHAIN_REASONING_EFFORT": "HIGH",
                 "LANGCHAIN_USE_RESPONSES_API": "false",
