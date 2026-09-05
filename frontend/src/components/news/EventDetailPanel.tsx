@@ -1,10 +1,10 @@
 import { ExternalLink, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { HubNewsCalendarEvent, HubNewsImpactFigures, IndexUpcomingEvent } from "@/lib/api";
+import type { HistoricalUpcomingEvent, HubNewsCalendarEvent, HubNewsImpactFigures } from "@/lib/api";
 
 export type CalendarEventItem =
   | { kind: "news"; key: string; data: HubNewsCalendarEvent }
-  | { kind: "calendar"; key: string; data: IndexUpcomingEvent };
+  | { kind: "calendar"; key: string; data: HistoricalUpcomingEvent };
 
 function returnDirection(returnPct?: number): "up" | "down" | "flat" | null {
   if (returnPct === undefined || returnPct === null) return null;
@@ -235,7 +235,8 @@ function NewsEventDetail({ event }: { event: HubNewsCalendarEvent }) {
   );
 }
 
-function CalendarEventDetail({ event }: { event: IndexUpcomingEvent }) {
+function CalendarEventDetail({ event }: { event: HistoricalUpcomingEvent }) {
+  const outcome = event.market_outcome;
   return (
     <>
       <div>
@@ -286,10 +287,36 @@ function CalendarEventDetail({ event }: { event: IndexUpcomingEvent }) {
         ) : null}
       </div>
 
-      <p className="rounded-md border border-dashed bg-muted/10 px-2.5 py-2 text-[12px] text-muted-foreground">
-        This is a structured calendar entry (macro/earnings schedule), not a distilled news item —
-        no linked news-hub article or reconciled outcome is available for it.
-      </p>
+      {isPastDate(event.date) ? (
+        <div>
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Result
+          </p>
+          {outcome ? (
+            <div className="rounded-md border bg-muted/10 px-2.5 py-2 text-[12px]">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="text-muted-foreground">
+                  {outcome.reference_date} &rarr; {outcome.outcome_date} ({outcome.session_lag}{" "}
+                  session{outcome.session_lag === 1 ? "" : "s"} later):
+                </span>
+                <span className={cn("font-semibold tabular-nums", directionTone(returnDirection(outcome.return_pct)))}>
+                  {formatReturnPct(outcome.return_pct)}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <p className="rounded-md border border-dashed bg-muted/10 px-2.5 py-2 text-[12px] text-muted-foreground">
+              No recorded index history covers this event's date yet.
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="rounded-md border border-dashed bg-muted/10 px-2.5 py-2 text-[12px] text-muted-foreground">
+          This is a structured calendar entry (macro/earnings schedule), not a distilled news
+          item — it has no linked news-hub article. A market-outcome Result will appear here once
+          this date is in the past.
+        </p>
+      )}
     </>
   );
 }
