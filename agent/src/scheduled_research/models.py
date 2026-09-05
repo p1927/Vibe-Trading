@@ -412,15 +412,20 @@ class ScheduledResearchJob:
         """
         return {
             "id": self.id,
-<<<<<<< HEAD
             "created_at": self.created_at,
             "definition": {
                 "prompt": self.prompt,
                 "schedule": self.schedule,
+                "title": self.title,
+                "source_type": self.source_type,
+                "playbook_slug": self.playbook_slug,
+                "end_at": self.end_at,
                 "config": self.config,
                 "timezone": self.timezone,
                 "delivery_channel": self.delivery_channel,
                 "delivery_target": self.delivery_target,
+                "delivery_target_ref": self.delivery_target_ref,
+                "delivery_target_label": self.delivery_target_label,
             },
             "state": {
                 "next_run_at": self.next_run_at,
@@ -435,29 +440,6 @@ class ScheduledResearchJob:
                 "auto_paused_reason": self.auto_paused_reason,
                 "last_result_summary": self.last_result_summary,
             },
-=======
-            "prompt": self.prompt,
-            "schedule": self.schedule,
-            "title": self.title,
-            "source_type": self.source_type,
-            "playbook_slug": self.playbook_slug,
-            "end_at": self.end_at,
-            "next_run_at": self.next_run_at,
-            "status": self.status.value,
-            "created_at": self.created_at,
-            "last_run_at": self.last_run_at,
-            "consecutive_failures": self.consecutive_failures,
-            "last_error": self.last_error,
-            "failure_kind": self.failure_kind,
-            "config": self.config,
-            "timezone": self.timezone,
-            "delivery_channel": self.delivery_channel,
-            "delivery_target": self.delivery_target,
-            "delivery_target_ref": self.delivery_target_ref,
-            "delivery_target_label": self.delivery_target_label,
-            "delivery": self.delivery.to_dict(),
-            "last_verdict": self.last_verdict.to_dict() if self.last_verdict else None,
->>>>>>> upstream/main
         }
 
     def to_flat_dict(self) -> Dict[str, Any]:

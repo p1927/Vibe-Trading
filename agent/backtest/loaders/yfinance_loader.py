@@ -22,7 +22,6 @@ from backtest.loaders.registry import register
 
 logger = logging.getLogger(__name__)
 
-<<<<<<< HEAD
 # yfinance's own `timeout=` argument does not reliably bound a stuck
 # yf.download() call — see
 # 2026-08-25-yfinance-hang-outlasted-default-timeout-unexplained.md: the
@@ -170,8 +169,6 @@ def _patch_yfinance_cookie_lock() -> None:
 
 _patch_yfinance_cookie_lock()
 
-=======
->>>>>>> upstream/main
 _OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
 _COLUMN_RENAMES = {
     "Open": "open",

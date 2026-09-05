@@ -142,11 +142,8 @@ def is_due(job: ScheduledResearchJob, now_ms: int) -> bool:
     schedule shorter than that gap would otherwise re-dispatch onto the same
     row and overwrite it, orphaning the briefing a sweep still owes.
     """
-<<<<<<< HEAD
     if job.paused:
         return False
-    if job.status in {JobStatus.CANCELLED, JobStatus.RUNNING, JobStatus.FAILED}:
-=======
     if job.status in {
         JobStatus.CANCELLED,
         JobStatus.RUNNING,
@@ -155,7 +152,6 @@ def is_due(job: ScheduledResearchJob, now_ms: int) -> bool:
     }:
         return False
     if job.end_at is not None and now_ms > job.end_at:
->>>>>>> upstream/main
         return False
     if job.delivery.status in {DeliveryStatus.PENDING, DeliveryStatus.SENDING}:
         return False
@@ -494,7 +490,6 @@ class ScheduledResearchExecutor:
             now_ms: Optional explicit reference time. Defaults to ``now_fn``.
         """
         now = self._now_fn() if now_ms is None else now_ms
-<<<<<<< HEAD
         self._executor_tick_count += 1
         if self._executor_tick_count % 60 == 0:
             try:
@@ -509,9 +504,7 @@ class ScheduledResearchExecutor:
                 pass
         self.recover_stale_running(now, startup=True)
         self.recover_stale_running(now, startup=False)
-=======
         self._expire_elapsed_jobs(now)
->>>>>>> upstream/main
         jobs = sorted(
             (
                 job
@@ -586,10 +579,6 @@ class ScheduledResearchExecutor:
         # is picked up here on the next tick.
         await self.sweep_deliveries()
 
-<<<<<<< HEAD
-    def recover_stale_running(self, now_ms: int | None = None, *, startup: bool = False) -> int:
-        """Reset jobs left ``RUNNING`` after a crash or hung dispatch.
-=======
     def _expire_elapsed_jobs(self, now_ms: int) -> int:
         """Persist jobs whose configured end boundary has elapsed."""
         jobs = self._store.load()
@@ -610,9 +599,8 @@ class ScheduledResearchExecutor:
             self._store.save(jobs)
         return changed
 
-    def recover_stale_running(self) -> int:
-        """Reset jobs left ``RUNNING`` by a previous executor process.
->>>>>>> upstream/main
+    def recover_stale_running(self, now_ms: int | None = None, *, startup: bool = False) -> int:
+        """Reset jobs left ``RUNNING`` after a crash or hung dispatch.
 
         On startup (``startup=True``), recover every ``RUNNING`` job once per
         executor instance. On each tick (``startup=False``), recover only jobs

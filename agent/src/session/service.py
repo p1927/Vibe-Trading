@@ -14,11 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-<<<<<<< HEAD
 from src.config.accessor import get_env_config
-=======
 from src.session.checkpoint import ResponseCheckpoint
->>>>>>> upstream/main
 from src.session.events import EventBus
 from src.session.models import (
     Attempt,

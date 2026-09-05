@@ -13,12 +13,8 @@
     "runtime": "ランタイム",
     "scheduled": "スケジュール",
     "reports": "レポート",
-<<<<<<< HEAD
-    "alphaZoo": "Alpha Zoo",
-=======
     "portfolio": "ポートフォリオ",
     "alphaZoo": "アルファ・ライブラリ",
->>>>>>> upstream/main
     "settings": "設定",
     "autonomous": "Autonomous",
     "correlation": "相関行列",
@@ -229,11 +225,8 @@
     "schedulerStatusError": "Could not load scheduler status.",
     "jobPaused": "Paused",
     "delivery_sending": "{{channel}} へ配信中です",
-<<<<<<< HEAD
     "pauseJob": "Pause",
-=======
     "delivery_accepted": "{{channel}} が配信を受け付けました（プロバイダー受領確認なし）",
->>>>>>> upstream/main
     "delivery_sent": "{{channel}} へ配信しました",
     "delivery_failed": "{{channel}} へ配信できませんでした",
     "resumeJob": "Resume",

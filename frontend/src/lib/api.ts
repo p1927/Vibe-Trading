@@ -966,7 +966,6 @@ export const api = {
     request<ScheduledRun>("/scheduled-runs", { method: "POST", body: JSON.stringify(body) }),
   deleteScheduledRun: (id: string) =>
     request<void>(`/scheduled-runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
-<<<<<<< HEAD
   pauseScheduledRun: (id: string) =>
     request<ScheduledRun>(`/scheduled-runs/${encodeURIComponent(id)}/pause`, { method: "POST" }),
   resumeScheduledRun: (id: string) =>
@@ -1036,7 +1035,6 @@ export const api = {
     request<{ status: string; running: boolean }>("/scheduled-runs/scheduler/resume", { method: "POST" }),
   pauseScheduler: () =>
     request<{ status: string; running: boolean }>("/scheduled-runs/scheduler/pause", { method: "POST" }),
-=======
   commitScheduledResearchProposal: (proposalId: string) =>
     request<ScheduledResearchProposal>(
       `/scheduled-runs/proposals/${encodeURIComponent(proposalId)}/commit`,
@@ -1047,7 +1045,6 @@ export const api = {
       `/scheduled-runs/proposals/${encodeURIComponent(proposalId)}/discard`,
       { method: "POST" },
     ),
->>>>>>> upstream/main
   sendMessage: (sid: string, content: string) => request<{ message_id: string; attempt_id: string }>(`/sessions/${sid}/messages`, { method: "POST", body: JSON.stringify({ content }) }),
   cancelSession: (sid: string) => request<{ status: string }>(`/sessions/${sid}/cancel`, { method: "POST" }),
   getSessionMessages: (sid: string) => request<MessageItem[]>(`/sessions/${sid}/messages`),

@@ -65,13 +65,12 @@ class TestInferMarket:
         assert infer_market("TD.TO") == "ca_equity"
         assert infer_market("PNG.V") == "ca_equity"
 
-<<<<<<< HEAD
     def test_india_equity_suffixes(self):
         # Regression: infer_market() had zero India support, so the
         # Correlation Matrix could never recognize Indian tickers.
         assert infer_market("RELIANCE.NS") == "india_equity"
         assert infer_market("TCS.BO") == "india_equity"
-=======
+
     def test_precious_metals_classify_as_forex(self):
         # Bare 6-letter precious-metal symbols are spot / OTC markets. The
         # underlying asset is XAU / XAG / XPT / XPD (ISO 4217 metals); the
@@ -126,7 +125,6 @@ class TestInferMarket:
         assert infer_market("BTCUSDT") == "crypto"
         assert infer_market("ETHUSDT") == "crypto"
         assert infer_market("SOLUSDT") == "crypto"
->>>>>>> upstream/main
 
 
 class TestNormalizeSymbol:

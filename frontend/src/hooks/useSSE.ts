@@ -91,8 +91,7 @@ export function useSSE(config?: SSEConfig) {
       "attempt.cancelled",
       "message.received", "session.created",
       "goal.created", "goal.evidence", "goal.updated",
-<<<<<<< HEAD
-      "mandate.proposal", "mandate.committed", "live.halted", "live.resumed", "live.action",
+      "mandate.proposal", "mandate.committed", "scheduled_research.proposal", "live.halted", "live.resumed", "live.action",
       "autonomous_agent.proposal", "autonomous_agent.committed", "autonomous_agent.intent_updated",
       "autonomous_agent.plan_ready",
       "autonomous_agent.plan_approved", "session.promoted", "agent.action",
@@ -100,9 +99,6 @@ export function useSSE(config?: SSEConfig) {
       "plan.stale",
       "research.artifact", "research.debate",
       "provenance.source",
-=======
-      "mandate.proposal", "mandate.committed", "scheduled_research.proposal", "live.halted", "live.resumed", "live.action",
->>>>>>> upstream/main
       "heartbeat", "done",
       // Command Center dashboard stream (GET /trade/command-center/stream) — see
       // CommandCenter.tsx. Distinct from the agent-session event names above; this hook is

@@ -11,11 +11,8 @@ import {
   MarkLineComponent,
   MarkAreaComponent,
   VisualMapComponent,
-<<<<<<< HEAD
   TitleComponent,
-=======
   GraphicComponent,
->>>>>>> upstream/main
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 
@@ -24,12 +21,8 @@ echarts.use([
   GridComponent, TooltipComponent, LegendComponent,
   DataZoomComponent, MarkPointComponent,
   ToolboxComponent, MarkLineComponent, MarkAreaComponent,
-<<<<<<< HEAD
   VisualMapComponent, TitleComponent,
-=======
-  VisualMapComponent,
   GraphicComponent,
->>>>>>> upstream/main
   CanvasRenderer,
 ]);
 

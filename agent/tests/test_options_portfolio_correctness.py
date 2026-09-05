@@ -109,8 +109,8 @@ def test_daily_bar_annualization_still_finite() -> None:
     assert metrics["annual_return"] is not None
     assert np.isfinite(metrics["annual_return"])
     json.dumps(metrics, allow_nan=False)
-<<<<<<< HEAD
-=======
+
+
 def test_null_and_non_numeric_trade_pnl_handled_safely() -> None:
     """Trades containing pnl: None or non-numeric strings must not raise TypeError."""
     trades = [
@@ -167,4 +167,3 @@ def test_bars_per_year_none_on_degenerate_span_falls_back_to_default() -> None:
     metrics = _calc_options_metrics(equity, 100.0, [], bars_per_year=None)
     assert metrics["final_value"] == 99.0
     json.dumps(metrics, allow_nan=False)
->>>>>>> upstream/main

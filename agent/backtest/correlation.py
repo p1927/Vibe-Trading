@@ -49,10 +49,8 @@ def infer_market(code: str) -> str:
         return "ca_equity"
     if code_upper.endswith(".US"):
         return "us_equity"
-<<<<<<< HEAD
     if _is_india_equity(code_upper):
         return "india_equity"
-=======
     # Yahoo's continuous-front-month futures notation (``GC=F``, ``CL=F``,
     # ``SI=F``, ``HG=F``, ``MGC=F``). Mirrors the same pattern in
     # ``backtest.engines._market_hooks._MARKET_PATTERNS`` so this offline
@@ -70,7 +68,6 @@ def infer_market(code: str) -> str:
         code_upper,
     ):
         return "forex"
->>>>>>> upstream/main
     if code_upper.isdigit():
         if len(code_upper) == 6:
             return "a_share"

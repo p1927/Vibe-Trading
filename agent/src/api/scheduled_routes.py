@@ -394,9 +394,10 @@ def _job_to_response(job: ScheduledResearchJob) -> "ScheduledRunResponse":
         delivery_status=delivery.get("status", "none"),
         delivery_error=delivery.get("error"),
         delivery_updated_at=delivery.get("updated_at"),
-<<<<<<< HEAD
         section=job_section(str(job.config.get("job_type") or "")),
         dispatch_blocked_reason=_dispatch_blocked_reason(job),
+        delivery_attempts=delivery.get("attempts", 0),
+        delivery_provider_message_id=delivery.get("provider_message_id"),
     )
 
 
@@ -425,10 +426,6 @@ def _dispatch_blocked_reason(job: ScheduledResearchJob) -> Optional[str]:
     return (
         f"data-collection job type {job_type!r} cannot dispatch on this tier "
         f"(STACK_PROFILE={stack_profile!r}); it will only fire on the release tier"
-=======
-        delivery_attempts=delivery.get("attempts", 0),
-        delivery_provider_message_id=delivery.get("provider_message_id"),
->>>>>>> upstream/main
     )
 
 

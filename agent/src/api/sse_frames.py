@@ -22,6 +22,10 @@ _PROPOSAL_TOOL_NAME = "propose_mandate_profiles"
 _PROPOSAL_ID_RE = re.compile(r'"proposal_id"\s*:\s*"(mp_[0-9a-f]{32})"')
 _AUTONOMOUS_PROPOSAL_TOOL_NAME = "propose_autonomous_agent"
 _AUTONOMOUS_PROPOSAL_ID_RE = re.compile(r'"proposal_id"\s*:\s*"(aap_[0-9a-f]{32})"')
+_SCHEDULED_PROPOSAL_TOOL_NAME = "scheduled_research"
+_SCHEDULED_PROPOSAL_ID_RE = re.compile(
+    r'"proposal_id"\s*:\s*"(srp_[0-9a-f]{32})"'
+)
 
 
 def _load_full_proposal(proposal_id: str) -> Optional[Dict[str, Any]]:
@@ -63,6 +67,32 @@ def _mandate_proposal_frame_from_tool_result(event: Any) -> Optional[str]:
         session_id=getattr(event, "session_id", "") or "",
     )
     return frame.to_sse()
+
+
+def _scheduled_proposal_frame_from_tool_result(event: Any) -> Optional[str]:
+    """Build a deterministic scheduled-research confirmation SSE frame."""
+    data = getattr(event, "data", None)
+    if getattr(event, "event_type", None) != "tool_result" or not isinstance(data, dict):
+        return None
+    if data.get("tool") != _SCHEDULED_PROPOSAL_TOOL_NAME or data.get("status") != "ok":
+        return None
+    match = _SCHEDULED_PROPOSAL_ID_RE.search(str(data.get("preview") or ""))
+    if not match:
+        return None
+    try:
+        from src.scheduled_research.proposals import load_proposal
+
+        proposal = load_proposal(match.group(1))
+    except Exception:  # pragma: no cover - relay must never break the stream
+        logger.debug("scheduled proposal reload failed", exc_info=True)
+        return None
+    from src.session.events import SSEEvent
+
+    return SSEEvent(
+        event_type="scheduled_research.proposal",
+        data=proposal,
+        session_id=getattr(event, "session_id", "") or "",
+    ).to_sse()
 
 
 def _load_autonomous_proposal(proposal_id: str) -> Optional[Dict[str, Any]]:

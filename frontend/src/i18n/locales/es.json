@@ -225,11 +225,8 @@
     "schedulerStatusError": "Could not load scheduler status.",
     "jobPaused": "Paused",
     "delivery_sending": "Enviando el informe a {{channel}}",
-<<<<<<< HEAD
     "pauseJob": "Pause",
-=======
     "delivery_accepted": "Informe aceptado por {{channel}} (sin confirmación del proveedor)",
->>>>>>> upstream/main
     "delivery_sent": "Informe enviado a {{channel}}",
     "delivery_failed": "No se pudo enviar a {{channel}}",
     "resumeJob": "Resume",

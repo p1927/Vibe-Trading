@@ -1366,32 +1366,7 @@ class AgentLoop:
                     notif_text = "\n".join(f"[bg:{n['task_id']}] {n['status']}: {n['result']}" for n in notifs)
                     messages.append({"role": "user", "content": f"<background-results>\n{notif_text}\n</background-results>\n\n<system>Continue processing with the background results above.</system>"})
 
-<<<<<<< HEAD
                 self._apply_context_pressure_management(messages, run_dir, trace, iteration=current_iter)
-=======
-                # Estimate transcript size once; each compaction layer below
-                # escalates only when its own token threshold is crossed.
-                tokens = estimate_tokens(messages)
-
-                # Layer 1: microcompact — prune old tool results only under
-                # memory pressure, so short, low-pressure runs keep their full
-                # tool history available for the model to reference instead of
-                # having every result past the most recent few cleared.
-                if tokens > int(_token_threshold() * 0.5):
-                    self._microcompact_and_unblock(messages, trace, iteration)
-                    tokens = estimate_tokens(messages)
-
-                # Layer 2: context collapse (fold long text, zero API cost)
-                if tokens > int(_token_threshold() * 0.7):
-                    _context_collapse(messages)
-                    tokens = estimate_tokens(messages)
-
-                # Layer 3: auto_compact (token threshold exceeded)
-                _tok_threshold = _token_threshold()
-                if tokens > _tok_threshold:
-                    logger.info(f"Auto compact triggered: {tokens} tokens > {_tok_threshold}")
-                    self._auto_compact(messages, run_dir, trace, iteration=current_iter)
->>>>>>> upstream/main
 
                 logger.info(f"ReAct iteration {iteration}/{self.max_iterations}")
 
@@ -1539,8 +1514,14 @@ class AgentLoop:
                     thinking_chunks.clear()
                     reasoning_chars = 0
                     last_reasoning_emit = None
-<<<<<<< HEAD
-                    _time.sleep(_stream_retry_delay_s())
+                    # Wait on the cancel event, not time.sleep: the delay now
+                    # escalates to the configured cap (30s by default) and a
+                    # provider Retry-After can ask for that much on the first
+                    # failure. A blocking sleep would make Stop take that long
+                    # to be observed; the event returns the moment it is set.
+                    self._cancel_event.wait(retry_delay_s)
+                    if self._cancel_event.is_set():
+                        break
                     try:
                         response = self.llm.stream_chat(
                             messages,
@@ -1596,27 +1577,8 @@ class AgentLoop:
                             )
                         finally:
                             fallback_llm.close()
-=======
-                    # Wait on the cancel event, not time.sleep: the delay now
-                    # escalates to the configured cap (30s by default) and a
-                    # provider Retry-After can ask for that much on the first
-                    # failure. A blocking sleep would make Stop take that long
-                    # to be observed; the event returns the moment it is set.
-                    self._cancel_event.wait(retry_delay_s)
-                    if self._cancel_event.is_set():
-                        break
-                    response = self.llm.stream_chat(
-                        messages,
-                        tools=tool_defs,
-                        on_text_chunk=_on_text_chunk,
-                        on_reasoning_chunk=_on_reasoning_chunk,
-                        timeout=llm_timeout,
-                        idle_timeout_s=llm_timeout,
-                        should_cancel=self._cancel_event.is_set,
-                    )
                 else:
                     stream_failure_streak = 0
->>>>>>> upstream/main
 
                 # Cancelled mid-stream: discard this turn's partial response and
                 # end the run now, without executing any of its tool calls.
@@ -3074,7 +3036,7 @@ class AgentLoop:
         # available for the model to reference instead of having every
         # result past the most recent few cleared.
         if tokens > int(_token_threshold() * 0.5):
-            _microcompact(messages)
+            self._microcompact_and_unblock(messages, trace, iteration)
             tokens = estimate_tokens(messages)
 
         # Layer 2: context collapse (fold long text, zero API cost)
@@ -3145,27 +3107,9 @@ class AgentLoop:
         system_msg = messages[0]
         body = messages[1:]
 
-<<<<<<< HEAD
-        # Token-budget tail: walk backward to find how many recent messages to preserve
-        accumulated = 0
-        cut_idx = len(body)
-        for i in range(len(body) - 1, -1, -1):
-            content = body[i].get("content", "")
-            msg_tokens = (len(str(content)) // 4) + 10
-            if accumulated + msg_tokens > self._tail_token_budget:
-                cut_idx = i + 1
-                break
-            accumulated += msg_tokens
-            cut_idx = i
-
-        # Don't split in the middle of a tool_call/tool_result pair
-        while 0 < cut_idx < len(body) and body[cut_idx].get("role") == "tool":
-            cut_idx += 1
-=======
         # Token-budget tail: size messages with their tool-call arguments so
         # oversized tool calls are folded instead of hiding in the tail.
         cut_idx = _tail_cut_index(body)
->>>>>>> upstream/main
 
         head = body[:cut_idx]
         tail = body[cut_idx:]

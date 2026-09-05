@@ -381,8 +381,6 @@ def test_build_anthropic_uses_messages_api_proxy() -> None:
 
 
 # ---------------------------------------------------------------------------
-<<<<<<< HEAD
-=======
 # Anthropic temperature self-heal (next-gen models deprecate `temperature`)
 # ---------------------------------------------------------------------------
 
@@ -686,7 +684,6 @@ def test_openai_compat_agenerate_temperature_self_heals() -> None:
 
 
 # ---------------------------------------------------------------------------
->>>>>>> upstream/main
 # MiniMax temperature clamping
 # ---------------------------------------------------------------------------
 

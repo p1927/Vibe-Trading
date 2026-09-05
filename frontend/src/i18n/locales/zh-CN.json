@@ -225,11 +225,8 @@
     "schedulerStatusError": "Could not load scheduler status.",
     "jobPaused": "Paused",
     "delivery_sending": "正在推送到 {{channel}}",
-<<<<<<< HEAD
     "pauseJob": "Pause",
-=======
     "delivery_accepted": "已提交到 {{channel}}（无渠道回执）",
->>>>>>> upstream/main
     "delivery_sent": "已推送到 {{channel}}",
     "delivery_failed": "推送到 {{channel}} 失败",
     "resumeJob": "Resume",

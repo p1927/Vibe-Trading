@@ -205,140 +205,14 @@ def _get_goal_store():
 # _mandate_proposal_frame_from_tool_result / _live_action_frame_from_tool_result
 # directly from this module.
 
-<<<<<<< HEAD
 from src.api.sse_frames import (  # noqa: E402,F401
     _agent_audit_frame_from_tool_result,
     _autonomous_agent_proposal_frame_from_tool_result,
     _live_action_frame_from_tool_result,
     _mandate_proposal_frame_from_tool_result,
+    _scheduled_proposal_frame_from_tool_result,
     _trade_plan_widget_frame_from_tool_result,
 )
-=======
-_PROPOSAL_TOOL_NAME = "propose_mandate_profiles"
-_PROPOSAL_ID_RE = re.compile(r'"proposal_id"\s*:\s*"(mp_[0-9a-f]{32})"')
-_SCHEDULED_PROPOSAL_TOOL_NAME = "scheduled_research"
-_SCHEDULED_PROPOSAL_ID_RE = re.compile(
-    r'"proposal_id"\s*:\s*"(srp_[0-9a-f]{32})"'
-)
-
-
-def _load_full_proposal(proposal_id: str) -> Optional[Dict[str, Any]]:
-    """Reload a persisted mandate proposal by id, broker-agnostic."""
-    try:
-        from src.live.paths import live_root
-
-        for proposal_path in live_root().glob(f"*/proposals/{proposal_id}.json"):
-            try:
-                data = json.loads(proposal_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if isinstance(data, dict) and data.get("type") == "mandate.proposal":
-                return data
-    except Exception:  # pragma: no cover - relay must never break the stream
-        logger.debug("mandate.proposal reload failed for %s", proposal_id, exc_info=True)
-    return None
-
-
-def _mandate_proposal_frame_from_tool_result(event: Any) -> Optional[str]:
-    """Build a mandate.proposal SSE frame from a propose-tool tool_result."""
-    data = getattr(event, "data", None)
-    if getattr(event, "event_type", None) != "tool_result" or not isinstance(data, dict):
-        return None
-    if data.get("tool") != _PROPOSAL_TOOL_NAME or data.get("status") != "ok":
-        return None
-    match = _PROPOSAL_ID_RE.search(str(data.get("preview") or ""))
-    if not match:
-        return None
-    proposal = _load_full_proposal(match.group(1))
-    if proposal is None:
-        return None
-
-    from src.session.events import SSEEvent
-
-    frame = SSEEvent(
-        event_type="mandate.proposal",
-        data=proposal,
-        session_id=getattr(event, "session_id", "") or "",
-    )
-    return frame.to_sse()
-
-
-def _scheduled_proposal_frame_from_tool_result(event: Any) -> Optional[str]:
-    """Build a deterministic scheduled-research confirmation SSE frame."""
-    data = getattr(event, "data", None)
-    if getattr(event, "event_type", None) != "tool_result" or not isinstance(data, dict):
-        return None
-    if data.get("tool") != _SCHEDULED_PROPOSAL_TOOL_NAME or data.get("status") != "ok":
-        return None
-    match = _SCHEDULED_PROPOSAL_ID_RE.search(str(data.get("preview") or ""))
-    if not match:
-        return None
-    try:
-        from src.scheduled_research.proposals import load_proposal
-
-        proposal = load_proposal(match.group(1))
-    except Exception:  # pragma: no cover - relay must never break the stream
-        logger.debug("scheduled proposal reload failed", exc_info=True)
-        return None
-    from src.session.events import SSEEvent
-
-    return SSEEvent(
-        event_type="scheduled_research.proposal",
-        data=proposal,
-        session_id=getattr(event, "session_id", "") or "",
-    ).to_sse()
-
-
-_LIVE_ACTION_ID_RE = re.compile(r'"audit_id"\s*:\s*"(la_[0-9a-zA-Z]+)"')
-
-
-def _load_live_action_record(audit_id: str) -> Optional[Dict[str, Any]]:
-    """Reload a redacted live-action record from the ledger by audit_id."""
-    try:
-        from src.live.paths import live_root
-
-        ledger = live_root() / "audit.jsonl"
-        if not ledger.exists():
-            return None
-        for line in reversed(ledger.read_text(encoding="utf-8").splitlines()):
-            if audit_id not in line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(record, dict) and record.get("audit_id") == audit_id:
-                return record
-    except Exception:  # pragma: no cover - relay must never break the stream
-        logger.debug("live.action reload failed for %s", audit_id, exc_info=True)
-    return None
-
-
-def _live_action_frame_from_tool_result(event: Any) -> Optional[str]:
-    """Build a live.action SSE frame from an order-guard tool_result."""
-    data = getattr(event, "data", None)
-    if getattr(event, "event_type", None) != "tool_result" or not isinstance(data, dict):
-        return None
-    preview = str(data.get("preview") or "")
-    if '"live_action"' not in preview:
-        return None
-    match = _LIVE_ACTION_ID_RE.search(preview)
-    if not match:
-        return None
-    record = _load_live_action_record(match.group(1))
-    if record is None:
-        return None
-
-    from src.session.events import SSEEvent
-
-    frame = SSEEvent(
-        event_type="live.action",
-        data=record,
-        session_id=getattr(event, "session_id", "") or "",
-    )
-    return frame.to_sse()
-
->>>>>>> upstream/main
 
 
 # ============================================================================
@@ -892,15 +766,12 @@ def register_sessions_routes(app: FastAPI) -> None:
                 relayed = _mandate_proposal_frame_from_tool_result(event)
                 if relayed is not None:
                     yield relayed
-<<<<<<< HEAD
                 autonomous_proposal = _autonomous_agent_proposal_frame_from_tool_result(event)
                 if autonomous_proposal is not None:
                     yield autonomous_proposal
-=======
                 scheduled_relay = _scheduled_proposal_frame_from_tool_result(event)
                 if scheduled_relay is not None:
                     yield scheduled_relay
->>>>>>> upstream/main
                 live_action = _live_action_frame_from_tool_result(event)
                 if live_action is not None:
                     yield live_action

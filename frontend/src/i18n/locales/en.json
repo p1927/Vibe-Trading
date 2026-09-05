@@ -225,11 +225,8 @@
     "schedulerStatusError": "Could not load scheduler status.",
     "jobPaused": "Paused",
     "delivery_sending": "Sending the briefing to {{channel}}",
-<<<<<<< HEAD
     "pauseJob": "Pause",
-=======
     "delivery_accepted": "Briefing accepted by {{channel}} (no provider receipt)",
->>>>>>> upstream/main
     "delivery_sent": "Briefing delivered to {{channel}}",
     "delivery_failed": "Could not deliver to {{channel}}",
     "resumeJob": "Resume",

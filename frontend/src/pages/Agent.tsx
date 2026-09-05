@@ -26,15 +26,11 @@ import { toast } from "sonner";
 import { useAgentStore, type AgentActivity, type AgentMessageMeta, type StoredAgentMessage } from "@/stores/agent";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useSSE } from "@/hooks/useSSE";
-<<<<<<< HEAD
-import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type AgentAudit, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource, type AutonomousAgentProposal, type AutonomousAgentInstance, type TradingConnectorsResponse, type LLMSettings } from "@/lib/api";
-=======
-import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type ScheduledResearchProposal, type LiveAction, type LiveHalted, type LLMSettings } from "@/lib/api";
+import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type ScheduledResearchProposal, type LiveAction, type AgentAudit, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource, type AutonomousAgentProposal, type AutonomousAgentInstance, type TradingConnectorsResponse, type LLMSettings } from "@/lib/api";
 import {
   extractUploadedAttachments,
   prependUploadedAttachments,
 } from "@/lib/attachments";
->>>>>>> upstream/main
 import { isReportWorthyRun } from "@/lib/runReports";
 import { buildToolTimelineMessages } from "@/pages/agentToolTimeline";
 import type { AgentMessage, SwarmRunStatus, ToolCallEntry } from "@/types/agent";
@@ -45,7 +41,6 @@ import { ThinkingTimeline } from "@/components/chat/ThinkingTimeline";
 import { ConversationTimeline } from "@/components/chat/ConversationTimeline";
 import { ToolProgressIndicator } from "@/components/chat/ToolProgressIndicator";
 import { MandateProposalCard } from "@/components/chat/MandateProposalCard";
-<<<<<<< HEAD
 import { AutonomousAgentProposalCard } from "@/components/autonomous/AutonomousAgentProposalCard";
 import { OrchestratorWelcome } from "@/components/autonomous/OrchestratorWelcome";
 import { AutonomousSessionEmptyState } from "@/components/autonomous/AutonomousSessionEmptyState";
@@ -53,16 +48,14 @@ import { TradePlanWidgetCard } from "@/components/chat/TradePlanWidgetCard";
 import { ContextDrawer } from "@/components/research/ContextDrawer";
 import { ActivityLine } from "@/components/chat/ActivityLine";
 import { ModelRuntimeBar } from "@/components/chat/ModelRuntimeBar";
-import type { ComposerHandle } from "@/components/chat/Composer";
+import type { ComposerHandle, ComposerAttachment } from "@/components/chat/Composer";
 import {
   formatTradeWidgetContextBlock,
   getTradeWidgetAdjustment,
   isTradeWidgetModified,
 } from "@/lib/tradeWidgetContext";
 import { RunnerStatus } from "@/components/chat/RunnerStatus";
-=======
 import { ScheduledResearchProposalCard } from "@/components/chat/ScheduledResearchProposalCard";
->>>>>>> upstream/main
 import { SwarmStatusCard } from "@/components/chat/SwarmStatusCard";
 import {
   applySwarmEvent,
@@ -200,7 +193,6 @@ interface LiveActionItem {
   timestamp: number;
   action: LiveAction;
 }
-<<<<<<< HEAD
 interface AgentAuditItem {
   kind: "agent_audit";
   timestamp: number;
@@ -216,7 +208,12 @@ interface AutonomousProposalItem {
   timestamp: number;
   proposal: AutonomousAgentProposal;
 }
-type LiveItem = ProposalItem | LiveActionItem | AgentAuditItem | TradePlanWidgetItem | AutonomousProposalItem;
+interface ScheduledProposalItem {
+  kind: "scheduled_proposal";
+  timestamp: number;
+  proposal: ScheduledResearchProposal;
+}
+type LiveItem = ProposalItem | ScheduledProposalItem | LiveActionItem | AgentAuditItem | TradePlanWidgetItem | AutonomousProposalItem;
 
 function proposalSessionId(
   proposal: AutonomousAgentProposal,
@@ -350,14 +347,6 @@ function AgentAuditChip({ audit }: { audit: AgentAudit }) {
     </div>
   );
 }
-=======
-interface ScheduledProposalItem {
-  kind: "scheduled_proposal";
-  timestamp: number;
-  proposal: ScheduledResearchProposal;
-}
-type LiveItem = ProposalItem | ScheduledProposalItem | LiveActionItem;
->>>>>>> upstream/main
 
 function isCriterionStatusMet(status: string): boolean {
   return !["", "pending", "open", "unsatisfied"].includes(status.toLowerCase());
@@ -1912,22 +1901,6 @@ export function Agent({
         scrollToBottom();
       },
 
-<<<<<<< HEAD
-=======
-      "mandate.committed": (d) => {
-        touch();
-        const committed = d as unknown as MandateCommitted;
-        if (!committed.proposal_id) return;
-        setLiveItems((items) => items.map((item) => (
-          item.kind === "proposal" && item.proposal.proposal_id === committed.proposal_id
-            ? { ...item, committed }
-            : item
-        )));
-        // A fresh mandate may bring up the runner; refresh the runtime panel now.
-        liveRuntimeRef.current?.handleMandateCommitted();
-        scrollToBottom();
-      },
-
       "scheduled_research.proposal": (d) => {
         touch();
         const proposal = d as unknown as ScheduledResearchProposal;
@@ -1939,35 +1912,6 @@ export function Agent({
         scrollToBottom();
       },
 
-      "live.halted": (d) => {
-        touch();
-        const halted = d as unknown as LiveHalted;
-        // Preemptive kill switch: the server has cancelled resting orders and may have
-        // flattened positions (SPEC §7.5 #6). Reflect the halted state across surfaces;
-        // the RunnerStatus panel re-polls so its per-broker rows show "halted".
-        liveRuntimeRef.current?.handleHalted(halted);
-        toast.warning(t('agent.connectorHalted'));
-      },
-
-      "live.resumed": (d) => {
-        touch();
-        // Kill switch cleared via a privileged surface action (SPEC Consent §4);
-        // clear the halted banner and re-poll runtime status.
-        void d;
-        liveRuntimeRef.current?.handleResumed();
-        toast.success(t('agent.connectionRestored'));
-      },
-
-      "live.action": (d) => {
-        touch();
-        const action = d as unknown as LiveAction;
-        if (!action.kind) return;
-        setLiveItems((items) => [...items, { kind: "live_action", timestamp: Date.now(), action }]);
-        liveRuntimeRef.current?.handleLiveAction(action);
-        scrollToBottom();
-      },
-
->>>>>>> upstream/main
       heartbeat: () => {},
       reconnect: (d) => { act().setSseStatus("reconnecting", Number(d.attempt ?? 0)); },
     });
@@ -2174,16 +2118,11 @@ export function Agent({
     return sid;
   }, [setSearchParams, setupSSE]);
 
-<<<<<<< HEAD
-  const runPrompt = useCallback(async (prompt: string) => {
-    if (!prompt.trim() || status === "streaming") return;
-=======
   const runPrompt = useCallback(async (
     prompt: string,
     attachments: ComposerAttachment[] = [],
   ) => {
     if ((!prompt.trim() && attachments.length === 0) || status === "streaming") return;
->>>>>>> upstream/main
     clearStreamingView();
 
     if (goalComposerActive) {
@@ -2602,21 +2541,16 @@ export function Agent({
     });
     for (const item of liveItems) {
       const key = item.kind === "proposal"
-<<<<<<< HEAD
-        ? `lp_${item.proposal.proposal_id}`
-        : item.kind === "autonomous_proposal"
-          ? `ap_${item.proposal.proposal_id}`
-        : item.kind === "trade_plan_widget"
-          ? `tw_${item.widget.widget_id}`
-          : item.kind === "agent_audit"
-            ? `aa_${item.audit.audit_id || item.timestamp}`
-          : `la_${item.action.audit_id || item.timestamp}`;
-=======
         ? `${sessionId ?? "draft"}_lp_${item.proposal.proposal_id}`
         : item.kind === "scheduled_proposal"
           ? `${sessionId ?? "draft"}_srp_${item.proposal.proposal_id}`
+        : item.kind === "autonomous_proposal"
+          ? `${sessionId ?? "draft"}_ap_${item.proposal.proposal_id}`
+        : item.kind === "trade_plan_widget"
+          ? `${sessionId ?? "draft"}_tw_${item.widget.widget_id}`
+          : item.kind === "agent_audit"
+            ? `${sessionId ?? "draft"}_aa_${item.audit.audit_id || item.timestamp}`
           : `${sessionId ?? "draft"}_la_${item.action.audit_id || item.timestamp}`;
->>>>>>> upstream/main
       rows.push({ sort: item.timestamp, render: "live", item, key });
     }
     return rows.sort((a, b) => a.sort - b.sort);
@@ -2790,7 +2724,13 @@ export function Agent({
                   />
                 );
               }
-<<<<<<< HEAD
+              if (row.item.kind === "scheduled_proposal") {
+                return (
+                  <div key={row.key} className={shouldAnimate ? "msg-enter" : undefined}>
+                    <ScheduledResearchProposalCard proposal={row.item.proposal} />
+                  </div>
+                );
+              }
               if (row.item.kind === "autonomous_proposal") {
                 const ap = row.item;
                 return (
@@ -2836,21 +2776,11 @@ export function Agent({
               if (row.item.kind === "agent_audit") {
                 return <AgentAuditChip key={row.key} audit={row.item.audit} />;
               }
-              return <LiveActionChip key={row.key} action={row.item.action} />;
-=======
-              if (row.item.kind === "scheduled_proposal") {
-                return (
-                  <div key={row.key} className={shouldAnimate ? "msg-enter" : undefined}>
-                    <ScheduledResearchProposalCard proposal={row.item.proposal} />
-                  </div>
-                );
-              }
               return (
                 <div key={row.key} className={shouldAnimate ? "msg-enter" : undefined}>
                   <LiveActionChip action={row.item.action} />
                 </div>
               );
->>>>>>> upstream/main
             }
             const g = row.group;
             if (g.kind === "timeline") {
