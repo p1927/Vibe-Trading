@@ -1377,6 +1377,9 @@ def build_llm(
         raise RuntimeError("LANGCHAIN_MODEL_NAME is not set")
     temperature = get_env_config().llm.langchain_temperature
     provider = (provider or get_env_config().llm.langchain_provider).lower()
+    from src.providers.openrouter_gate import assert_not_openrouter
+
+    assert_not_openrouter(provider)
     caps = get_provider_capabilities(provider, name)
     if provider in {"openai-codex", "openai_codex"}:
         from src.providers.openai_codex import OpenAICodexLLM

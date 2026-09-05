@@ -76,6 +76,19 @@ def _check_llm_provider() -> CheckResult:
             critical=True,
         )
 
+    from src.providers.openrouter_gate import assert_not_openrouter
+
+    try:
+        assert_not_openrouter(provider)
+    except RuntimeError as exc:
+        return CheckResult(
+            name=f"LLM ({provider})",
+            status="error",
+            message=str(exc),
+            impact="agent cannot function",
+            critical=True,
+        )
+
     _sync_provider_env()
     diagnostics = provider_diagnostics()
     base_url = os.getenv("OPENAI_BASE_URL", "") or os.getenv("OPENAI_API_BASE", "")  # noqa: env-gate — diagnostic base URL fallback
