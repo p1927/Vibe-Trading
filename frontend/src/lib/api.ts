@@ -1929,6 +1929,18 @@ export const api = {
       { timeoutMs: 60_000 },
     );
   },
+  getIndexPredictionUpcomingEventsHistory: (
+    params: { start?: string; end?: string; ticker?: string } = {},
+  ) => {
+    const query = new URLSearchParams();
+    if (params.start) query.set("start", params.start);
+    if (params.end) query.set("end", params.end);
+    if (params.ticker) query.set("ticker", params.ticker);
+    const qs = query.toString();
+    return request<HistoricalUpcomingEventsResponse>(
+      `/trade/index-prediction/upcoming-events/history${qs ? `?${qs}` : ""}`,
+    );
+  },
   getModelAdapters: () => request<ModelAdaptersResponse>("/trade/model-adapters"),
   updateModelAdapter: (adapterId: string, body: ModelAdapterUpdate) =>
     request<ModelAdaptersResponse>(
@@ -3547,6 +3559,25 @@ export interface IndexUpcomingEvent {
   sector?: string;
   impact?: string;
   category?: string;
+}
+
+export interface IndexUpcomingEventOutcome {
+  reference_date?: string;
+  reference_close?: number;
+  outcome_date?: string;
+  outcome_close?: number;
+  return_pct?: number;
+  session_lag?: number;
+}
+
+export interface HistoricalUpcomingEvent extends IndexUpcomingEvent {
+  market_outcome?: IndexUpcomingEventOutcome | null;
+}
+
+export interface HistoricalUpcomingEventsResponse {
+  status: string;
+  events: HistoricalUpcomingEvent[];
+  message?: string;
 }
 
 export interface IndexSimulationResult {

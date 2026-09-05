@@ -546,6 +546,7 @@ function EventsRangePanel({ artifact, status, revision, newEventKeys }: EventsRa
           <EventsCalendar
             structuralEvents={artifact?.upcoming_events ?? []}
             isNewStructuralEvent={(ev) => newEventKeys?.has(eventKeyFor(ev)) ?? false}
+            includeStructuralHistory
           />
 
           <PriorDayPriceStrip day={priorDay?.day ?? null} bars={priorDay?.bars ?? []} currentSpot={artifact.spot} height={64} />

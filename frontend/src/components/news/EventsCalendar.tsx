@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { api, type HubNewsCalendarEvent, type IndexUpcomingEvent } from "@/lib/api";
+import { api, type HistoricalUpcomingEvent, type HubNewsCalendarEvent, type IndexUpcomingEvent } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { EventDetailPanel, type CalendarEventItem } from "@/components/news/EventDetailPanel";
 
@@ -41,15 +41,22 @@ function dotClass(item: CalendarEventItem): string {
 export function EventsCalendar({
   structuralEvents = [],
   isNewStructuralEvent,
+  includeStructuralHistory = false,
 }: {
   structuralEvents?: IndexUpcomingEvent[];
   isNewStructuralEvent?: (event: IndexUpcomingEvent) => boolean;
+  /** Also self-fetch past structural (RBI/FOMC/earnings/macro) events reconstructed from the
+   * index_research snapshot archive, each carrying a realized market-outcome when matured. Off
+   * by default so callers that only pass forward-looking `structuralEvents` (or none at all,
+   * like the Hub's news-only calendar) don't unexpectedly gain a second data source. */
+  includeStructuralHistory?: boolean;
 }) {
   const [selectedDate, setSelectedDate] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), now.getDate());
   });
   const [newsEvents, setNewsEvents] = useState<HubNewsCalendarEvent[]>([]);
+  const [historicalStructuralEvents, setHistoricalStructuralEvents] = useState<HistoricalUpcomingEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<CalendarEventItem | null>(null);
@@ -92,19 +99,54 @@ export function EventsCalendar({
     };
   }, [weekDays]);
 
+  useEffect(() => {
+    if (!includeStructuralHistory) {
+      setHistoricalStructuralEvents([]);
+      return;
+    }
+    let cancelled = false;
+    const start = toIsoDate(weekDays[0]);
+    const end = toIsoDate(weekDays[weekDays.length - 1]);
+    api
+      .getIndexPredictionUpcomingEventsHistory({ start, end })
+      .then((res) => {
+        if (cancelled) return;
+        setHistoricalStructuralEvents(res.events || []);
+      })
+      .catch(() => {
+        /* supplementary past-events source — the live forward-looking structuralEvents
+         * prop already renders fine without it, so fail silently here. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [weekDays, includeStructuralHistory]);
+
   const allItems = useMemo<CalendarEventItem[]>(() => {
     const news: CalendarEventItem[] = newsEvents.map((data, idx) => ({
       kind: "news",
       key: `news-${data.date || "undated"}-${idx}`,
       data,
     }));
-    const structural: CalendarEventItem[] = structuralEvents.map((data, idx) => ({
+
+    // Merge live forward-looking structural events with the archive-reconstructed historical
+    // ones, deduped by (date, label/event_type) — prefer the historical copy when both exist
+    // since only it carries a computed `market_outcome`.
+    const structuralByKey = new Map<string, IndexUpcomingEvent>();
+    for (const ev of structuralEvents) {
+      structuralByKey.set(`${ev.date || ""}|${ev.label || ev.event_type || ""}`, ev);
+    }
+    for (const ev of historicalStructuralEvents) {
+      structuralByKey.set(`${ev.date || ""}|${ev.label || ev.event_type || ""}`, ev);
+    }
+
+    const structural: CalendarEventItem[] = Array.from(structuralByKey.entries()).map(([key, data]) => ({
       kind: "calendar",
-      key: `cal-${data.date || "undated"}-${idx}`,
+      key: `cal-${key}`,
       data,
     }));
     return [...news, ...structural];
-  }, [newsEvents, structuralEvents]);
+  }, [newsEvents, structuralEvents, historicalStructuralEvents]);
 
   const eventsByDate = useMemo(() => {
     const map = new Map<string, CalendarEventItem[]>();

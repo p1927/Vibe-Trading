@@ -892,6 +892,34 @@ class IndexPredictionSnapshotsResponse(BaseModel):
     message: str = ""
 
 
+class IndexUpcomingEventOutcome(BaseModel):
+    reference_date: str | None = None
+    reference_close: float | None = None
+    outcome_date: str | None = None
+    outcome_close: float | None = None
+    return_pct: float | None = None
+    session_lag: int | None = None
+
+
+class HistoricalUpcomingEvent(BaseModel):
+    date: str | None = None
+    days_from_now: int | None = None
+    event_type: str | None = None
+    label: str | None = None
+    symbol: str | None = None
+    weight: float | None = None
+    sector: str | None = None
+    impact: str | None = None
+    category: str | None = None
+    market_outcome: IndexUpcomingEventOutcome | None = None
+
+
+class HistoricalUpcomingEventsResponse(BaseModel):
+    status: str = "ok"
+    events: List[HistoricalUpcomingEvent] = Field(default_factory=list)
+    message: str = ""
+
+
 class IndexBacktestResponse(BaseModel):
     status: str
     ticker: str = ""
@@ -5033,6 +5061,49 @@ def get_index_prediction_snapshots(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return IndexPredictionSnapshotsResponse(status="ok", ticker=key, snapshots=snapshots)
+
+
+_HISTORICAL_UPCOMING_EVENT_FIELDS = {
+    "date", "days_from_now", "event_type", "label", "symbol", "weight", "sector", "impact", "category",
+}
+
+
+@trade_router.get("/index-prediction/upcoming-events/history", response_model=HistoricalUpcomingEventsResponse)
+def get_index_prediction_upcoming_events_history(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    ticker: str = "NIFTY",
+    _auth: None = Depends(require_local_or_auth),
+) -> HistoricalUpcomingEventsResponse:
+    """Structural/calendar events (RBI/FOMC/earnings/macro) reconstructed from the
+    `index_research/history` snapshot archive, each with a realized market outcome attached
+    for dates that have already matured. See
+    .claude/backlog/items/2026-09-06-scheduled-calendar-event-outcome-tracking-gap.md."""
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from datetime import date as _date
+
+        from trade_integrations.dataflows.index_research.event_outcomes import compute_event_market_outcome
+        from trade_integrations.dataflows.index_research.snapshots import list_historical_upcoming_events
+
+        today = _date.today().isoformat()
+        rows = list_historical_upcoming_events(key, start=start, end=end)
+
+        events: List[HistoricalUpcomingEvent] = []
+        for row in rows:
+            outcome = None
+            event_date = row.get("date")
+            if event_date and event_date < today:
+                result = compute_event_market_outcome(event_date, symbol=key)
+                if result:
+                    outcome = IndexUpcomingEventOutcome(**result)
+            filtered = {k: v for k, v in row.items() if k in _HISTORICAL_UPCOMING_EVENT_FIELDS}
+            events.append(HistoricalUpcomingEvent(**filtered, market_outcome=outcome))
+
+        return HistoricalUpcomingEventsResponse(status="ok", events=events)
+    except Exception as exc:
+        logger.exception("index-prediction upcoming-events history failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @trade_router.get("/agent-debate", response_model=AgentDebateResponse)
