@@ -45,18 +45,32 @@ def test_env_example_default_provider_is_not_openrouter() -> None:
     assert "openrouter" not in active_providers
 
 
-def test_env_example_active_credentials_are_not_placeholders() -> None:
-    """No uncommented `*_API_KEY=`/`*_TOKEN=` line in the template may be a fake value.
+def test_env_example_active_llm_provider_credential_is_not_a_placeholder() -> None:
+    """If any `LANGCHAIN_PROVIDER=` line is ever active, its own credential must be real.
 
     Companion to the OpenRouter-specific check above: guards the general case (any
     provider, not just OpenRouter) from becoming an active default while still carrying
-    an unfilled template placeholder value.
+    an unfilled template placeholder value. Deliberately scoped to *LLM-provider*
+    credentials only — unrelated optional third-party fallback keys (e.g.
+    `TUSHARE_TOKEN=your-tushare-token`) are intentionally shipped as inert placeholders
+    and are already handled as non-critical `not_configured` by their own preflight check
+    (see `_check_tushare`), not by this LLM-provider-specific guard.
     """
+    from src.providers.capabilities import get_provider_capabilities
+
     active_lines = _active_env_example_lines()
-    for line in active_lines:
-        if "_API_KEY=" in line or "_TOKEN=" in line:
-            _, _, value = line.partition("=")
-            assert not preflight._is_placeholder_credential(value), line
+    active_values = dict(line.split("=", 1) for line in active_lines if "=" in line)
+    provider = active_values.get("LANGCHAIN_PROVIDER", "").strip()
+    if not provider:
+        return  # no active provider block — nothing to check
+    caps = get_provider_capabilities(provider, active_values.get("LANGCHAIN_MODEL_NAME", ""))
+    if not caps.api_key_env:
+        return  # provider requires no key (e.g. local/OAuth-based)
+    credential = active_values.get(caps.api_key_env, "")
+    assert not preflight._is_placeholder_credential(credential), (
+        f"{caps.api_key_env}={credential!r} is a template placeholder but "
+        f"LANGCHAIN_PROVIDER={provider!r} is active"
+    )
 
 
 def _configure_llm_preflight(monkeypatch) -> None:

@@ -2958,6 +2958,27 @@ def main():
     )
     args = parser.parse_args()
 
+    # Run the same authoritative env bootstrap api_server.py/cli/main.py run at
+    # startup (src.config.bootstrap.bootstrap_environment), so tools this server
+    # exposes that touch the LLM provider (e.g. run_swarm -> src.swarm.runtime ->
+    # src.providers.llm) get the same layered ~/.vibe-trading/.env -> trade/.env
+    # -> agent/.env precedence as every other entry point, instead of falling
+    # through to llm.py's legacy _ENV_CANDIDATES fallback (single-file,
+    # first-found-wins, operator-home-first) the first time such a tool runs.
+    # That fallback's precedence is the opposite of the "agent/.env is
+    # authoritative" decision recorded in
+    # .claude/backlog/archive/items/2026-09-03-vibe-agent-openrouter-default-config-drift.md
+    # — see .claude/backlog/items/2026-09-04-openrouter-broader-audit-and-env-precedence.md.
+    # Best-effort: a bootstrap failure must not block MCP tools that don't need
+    # an LLM provider at all (most of this server's 74 tools are read-only
+    # market-data/finance-math, not LLM-backed).
+    try:
+        from src.config.bootstrap import bootstrap_environment
+
+        bootstrap_environment()
+    except Exception:  # pragma: no cover — best-effort
+        logging.getLogger(__name__).warning("Env bootstrap failed", exc_info=True)
+
     # One-time move of pre-#904 code-relative state into the runtime root.
     # A failed migration must never block the server.
     try:

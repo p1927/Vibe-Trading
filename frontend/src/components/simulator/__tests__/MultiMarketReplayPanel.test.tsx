@@ -12,9 +12,39 @@ const apiMock = vi.hoisted(() => ({
   setMultiMarketReplaySpeed: vi.fn(),
   stopMultiMarketReplay: vi.fn(),
   getMultiMarketQuote: vi.fn(),
+  listSchedulerRegistry: vi.fn(),
+  pauseStockSimSchedulerEntry: vi.fn(),
+  resumeStockSimSchedulerEntry: vi.fn(),
 }));
 
-vi.mock("@/lib/api", () => ({ api: apiMock }));
+vi.mock("@/lib/api", () => ({
+  api: apiMock,
+  ApiError: class ApiError extends Error {},
+}));
+
+function recordingEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "B:recorder:us:index",
+    source: "stock_simulator",
+    section: "recorder:us",
+    label: "us/index",
+    description: null,
+    schedule_kind: "recorder_interval",
+    schedule_display: "every 300s (estimated)",
+    enabled: true,
+    status: "idle",
+    cancel_requested: false,
+    next_run_at: null,
+    last_run_at: null,
+    last_error: null,
+    auto_paused_reason: null,
+    supports_live_log: true,
+    live_log_stream_url: null,
+    persisted_default_enabled: null,
+    controls: { pause: true, resume: false, cancel: false, delete: false, trigger_now: true },
+    ...overrides,
+  };
+}
 
 const STATUS = {
   status: "ok",
@@ -37,6 +67,7 @@ describe("MultiMarketReplayPanel", () => {
       ],
     });
     apiMock.getMultiMarketStatus.mockRejectedValue(new Error("no session armed"));
+    apiMock.listSchedulerRegistry.mockResolvedValue({ status: "ok", entries: [], sources: {} });
   });
 
   afterEach(() => {
@@ -107,5 +138,90 @@ describe("MultiMarketReplayPanel", () => {
 
     await waitFor(() => expect(screen.getByText(/simulated.*interpolated open→close/i)).toBeInTheDocument());
     expect(screen.queryByText(/stale — held over/i)).not.toBeInTheDocument();
+  });
+
+  describe("Recording sub-section", () => {
+    it("groups recorder categories by market and shows the active count", async () => {
+      apiMock.listSchedulerRegistry.mockResolvedValue({
+        status: "ok",
+        entries: [
+          recordingEntry({ id: "B:recorder:us:index", section: "recorder:us", enabled: true }),
+          recordingEntry({
+            id: "B:recorder:us:policy",
+            section: "recorder:us",
+            enabled: false,
+            controls: { pause: false, resume: true, cancel: false, delete: false, trigger_now: false },
+            persisted_default_enabled: false,
+          }),
+          recordingEntry({ id: "B:recorder:in_economy:economy", section: "recorder:in_economy", enabled: true }),
+        ],
+        sources: {},
+      });
+
+      render(<MultiMarketReplayPanel />);
+
+      await waitFor(() => expect(screen.getByText("2/3 active")).toBeInTheDocument());
+      expect(screen.getByText("US")).toBeInTheDocument();
+      expect(screen.getByText("India — Economy")).toBeInTheDocument();
+      expect(screen.getByText("default: off")).toBeInTheDocument();
+    });
+
+    it("pauses an active category on click and refreshes its state", async () => {
+      apiMock.listSchedulerRegistry
+        .mockResolvedValueOnce({
+          status: "ok",
+          entries: [recordingEntry({ enabled: true, persisted_default_enabled: null })],
+          sources: {},
+        })
+        .mockResolvedValue({
+          status: "ok",
+          entries: [
+            recordingEntry({
+              enabled: false,
+              persisted_default_enabled: false,
+              controls: { pause: false, resume: true, cancel: false, delete: false, trigger_now: false },
+            }),
+          ],
+          sources: {},
+        });
+      apiMock.pauseStockSimSchedulerEntry.mockResolvedValue({ status: "ok" });
+
+      render(<MultiMarketReplayPanel />);
+
+      const pauseButton = await screen.findByRole("button", { name: /pause recording for us index/i });
+      fireEvent.click(pauseButton);
+
+      await waitFor(() =>
+        expect(apiMock.pauseStockSimSchedulerEntry).toHaveBeenCalledWith("B:recorder:us:index"),
+      );
+      await waitFor(() => expect(screen.getByText("default: off")).toBeInTheDocument());
+      expect(screen.getByRole("button", { name: /resume recording for us index/i })).toBeInTheDocument();
+    });
+
+    it("surfaces a failed toggle instead of silently doing nothing", async () => {
+      apiMock.listSchedulerRegistry.mockResolvedValue({
+        status: "ok",
+        entries: [recordingEntry()],
+        sources: {},
+      });
+      apiMock.pauseStockSimSchedulerEntry.mockRejectedValue(new Error("could not pause (already paused)"));
+
+      render(<MultiMarketReplayPanel />);
+
+      const pauseButton = await screen.findByRole("button", { name: /pause recording for us index/i });
+      fireEvent.click(pauseButton);
+
+      await waitFor(() => expect(screen.getByText(/could not pause/i)).toBeInTheDocument());
+    });
+
+    it("shows a clear empty state when no recorder categories are reported", async () => {
+      apiMock.listSchedulerRegistry.mockResolvedValue({ status: "ok", entries: [], sources: {} });
+
+      render(<MultiMarketReplayPanel />);
+
+      await waitFor(() =>
+        expect(screen.getByText(/no recorder categories reported/i)).toBeInTheDocument(),
+      );
+    });
   });
 });
