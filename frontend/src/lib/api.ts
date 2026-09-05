@@ -4930,6 +4930,13 @@ export interface HubNewsCalendarEventFactCheck {
   checked_at?: number;
 }
 
+export interface HubNewsImpactFigures {
+  return_pct?: number;
+  nifty_points?: number;
+  reconciled_at?: string;
+  [key: string]: unknown;
+}
+
 export interface HubNewsCalendarEventArticle {
   event_id?: string;
   title?: string;
@@ -4938,6 +4945,8 @@ export interface HubNewsCalendarEventArticle {
   source?: string;
   verification_status?: string;
   cause_indicators?: HubNewsCauseIndicator[];
+  predicted_impact?: HubNewsImpactFigures | null;
+  actual_impact?: HubNewsImpactFigures | null;
 }
 
 export interface HubNewsCalendarEvent {

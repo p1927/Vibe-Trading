@@ -1,6 +1,72 @@
 import { ExternalLink, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { HubNewsCalendarEvent } from "@/lib/api";
+import type { HubNewsCalendarEvent, HubNewsImpactFigures } from "@/lib/api";
+
+function returnDirection(returnPct?: number): "up" | "down" | "flat" | null {
+  if (returnPct === undefined || returnPct === null) return null;
+  if (returnPct > 0) return "up";
+  if (returnPct < 0) return "down";
+  return "flat";
+}
+
+function formatReturnPct(returnPct?: number): string | null {
+  if (returnPct === undefined || returnPct === null) return null;
+  const sign = returnPct > 0 ? "+" : "";
+  return `${sign}${returnPct.toFixed(2)}%`;
+}
+
+function directionTone(direction: "up" | "down" | "flat" | null): string {
+  if (direction === "up") return "text-emerald-700 dark:text-emerald-400";
+  if (direction === "down") return "text-red-700 dark:text-red-400";
+  return "text-muted-foreground";
+}
+
+function isPastDate(dateStr?: string): boolean {
+  if (!dateStr) return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr.trim());
+  if (!match) return false;
+  const d = new Date(parseInt(match[1], 10), parseInt(match[2], 10) - 1, parseInt(match[3], 10));
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return d.getTime() < today.getTime();
+}
+
+function EventResultBlock({
+  predicted,
+  actual,
+}: {
+  predicted?: HubNewsImpactFigures | null;
+  actual?: HubNewsImpactFigures | null;
+}) {
+  const actualReturn = actual?.return_pct as number | undefined;
+  const predictedReturn = predicted?.return_pct as number | undefined;
+  const hasActual = actualReturn !== undefined && actualReturn !== null;
+  const actualDirection = returnDirection(actualReturn);
+
+  if (!hasActual) {
+    return (
+      <p className="rounded-md border border-dashed bg-muted/10 px-2.5 py-2 text-[12px] text-muted-foreground">
+        Outcome not yet reconciled from the news hub for this event.
+      </p>
+    );
+  }
+
+  return (
+    <div className="rounded-md border bg-muted/10 px-2.5 py-2 text-[12px]">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-muted-foreground">Actual move:</span>
+        <span className={cn("font-semibold tabular-nums", directionTone(actualDirection))}>
+          {formatReturnPct(actualReturn)}
+        </span>
+        {predictedReturn !== undefined && predictedReturn !== null ? (
+          <span className="text-muted-foreground">
+            (predicted {formatReturnPct(predictedReturn)})
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 function dateConfidenceBadge(confidence?: string) {
   if (!confidence) return null;
@@ -126,6 +192,18 @@ export function EventDetailPanel({
                   <p className="mt-1.5 leading-snug text-foreground/80">{factCheck.reasoning}</p>
                 ) : null}
               </div>
+            </div>
+          ) : null}
+
+          {isPastDate(event.date) ? (
+            <div>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Result
+              </p>
+              <EventResultBlock
+                predicted={event.articles[0]?.predicted_impact}
+                actual={event.articles[0]?.actual_impact}
+              />
             </div>
           ) : null}
 

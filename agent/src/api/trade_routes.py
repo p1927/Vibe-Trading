@@ -1065,6 +1065,8 @@ class HubNewsCalendarEventArticle(BaseModel):
     publisher: str = ""
     source: str = ""
     verification_status: str = ""
+    predicted_impact: Dict[str, Any] | None = None
+    actual_impact: Dict[str, Any] | None = None
 
 
 class HubNewsCalendarEvent(BaseModel):
@@ -1710,6 +1712,8 @@ def get_hub_news_events_calendar(
                 publisher=str(first.get("publisher") or first.get("vendor") or ""),
                 source=str(raw.get("source") or first.get("vendor") or ""),
                 verification_status=str(raw.get("verification_status") or ""),
+                predicted_impact=(raw.get("predicted_impact") or None),
+                actual_impact=(raw.get("actual_impact") or None),
             )
 
         events: List[HubNewsCalendarEvent] = []

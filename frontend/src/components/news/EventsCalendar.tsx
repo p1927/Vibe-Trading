@@ -30,36 +30,35 @@ function verificationDotClass(status?: string): string {
 }
 
 export function EventsCalendar() {
-  const [monthCursor, setMonthCursor] = useState(() => {
+  const [selectedDate, setSelectedDate] = useState(() => {
     const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
   });
   const [events, setEvents] = useState<HubNewsCalendarEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<HubNewsCalendarEvent | null>(null);
 
-  const gridStart = useMemo(() => {
-    const first = new Date(monthCursor.getFullYear(), monthCursor.getMonth(), 1);
-    const start = new Date(first);
-    start.setDate(first.getDate() - first.getDay());
+  const weekStart = useMemo(() => {
+    const start = new Date(selectedDate);
+    start.setDate(selectedDate.getDate() - selectedDate.getDay());
     return start;
-  }, [monthCursor]);
+  }, [selectedDate]);
 
-  const gridDays = useMemo(() => {
-    return Array.from({ length: 42 }, (_, i) => {
-      const d = new Date(gridStart);
-      d.setDate(gridStart.getDate() + i);
+  const weekDays = useMemo(() => {
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(weekStart);
+      d.setDate(weekStart.getDate() + i);
       return d;
     });
-  }, [gridStart]);
+  }, [weekStart]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    const start = toIsoDate(gridDays[0]);
-    const end = toIsoDate(gridDays[gridDays.length - 1]);
+    const start = toIsoDate(weekDays[0]);
+    const end = toIsoDate(weekDays[weekDays.length - 1]);
     api
       .getHubNewsEventsCalendar({ start, end })
       .then((res) => {
@@ -76,7 +75,7 @@ export function EventsCalendar() {
     return () => {
       cancelled = true;
     };
-  }, [gridDays]);
+  }, [weekDays]);
 
   const eventsByDate = useMemo(() => {
     const map = new Map<string, HubNewsCalendarEvent[]>();
@@ -96,6 +95,16 @@ export function EventsCalendar() {
   }, [events]);
 
   const today = toIsoDate(new Date());
+  const selectedKey = toIsoDate(selectedDate);
+  const selectedDayEvents = eventsByDate.map.get(selectedKey) ?? [];
+
+  const goToDay = (deltaDays: number) => {
+    setSelectedDate((d) => {
+      const next = new Date(d);
+      next.setDate(d.getDate() + deltaDays);
+      return next;
+    });
+  };
 
   return (
     <div>
@@ -103,23 +112,33 @@ export function EventsCalendar() {
         <div className="flex items-center gap-1.5">
           <button
             type="button"
-            onClick={() => setMonthCursor((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))}
+            onClick={() => goToDay(-1)}
             className="rounded-md border p-1 hover:bg-muted/50"
-            aria-label="Previous month"
+            aria-label="Previous day"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
           </button>
-          <p className="min-w-[140px] text-center text-[12px] font-medium">
-            {MONTH_LABELS[monthCursor.getMonth()]} {monthCursor.getFullYear()}
+          <p className="min-w-[170px] text-center text-[12px] font-medium">
+            {DOW_LABELS[selectedDate.getDay()]}, {MONTH_LABELS[selectedDate.getMonth()]} {selectedDate.getDate()}{" "}
+            {selectedDate.getFullYear()}
           </p>
           <button
             type="button"
-            onClick={() => setMonthCursor((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))}
+            onClick={() => goToDay(1)}
             className="rounded-md border p-1 hover:bg-muted/50"
-            aria-label="Next month"
+            aria-label="Next day"
           >
             <ChevronRight className="h-3.5 w-3.5" />
           </button>
+          {selectedKey !== today ? (
+            <button
+              type="button"
+              onClick={() => setSelectedDate(new Date())}
+              className="ml-1 rounded-md border px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-muted/50"
+            >
+              Today
+            </button>
+          ) : null}
         </div>
         {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null}
       </div>
@@ -130,51 +149,81 @@ export function EventsCalendar() {
         </p>
       ) : null}
 
-      <div className="grid grid-cols-7 gap-px overflow-hidden rounded-lg border bg-border text-[11px]">
-        {DOW_LABELS.map((label) => (
-          <div key={label} className="bg-muted/40 px-1.5 py-1 text-center font-medium text-muted-foreground">
-            {label}
-          </div>
-        ))}
-        {gridDays.map((day) => {
+      <div className="grid grid-cols-7 gap-1.5">
+        {weekDays.map((day) => {
           const key = toIsoDate(day);
-          const inMonth = day.getMonth() === monthCursor.getMonth();
           const dayEvents = eventsByDate.map.get(key) ?? [];
-          const visible = dayEvents.slice(0, 3);
-          const overflow = dayEvents.length - visible.length;
+          const isSelected = key === selectedKey;
           return (
-            <div
+            <button
               key={key}
+              type="button"
+              onClick={() => setSelectedDate(day)}
               className={cn(
-                "min-h-[84px] space-y-1 bg-background p-1",
-                !inMonth && "bg-muted/10 text-muted-foreground",
-                key === today && "ring-1 ring-inset ring-primary",
+                "flex flex-col items-center gap-1 rounded-lg border px-1 py-1.5 text-center hover:bg-muted/50",
+                isSelected && "border-primary bg-primary/10",
+                key === today && !isSelected && "ring-1 ring-inset ring-primary/50",
               )}
             >
-              <p className={cn("px-0.5 text-[10px] tabular-nums", !inMonth && "opacity-50")}>{day.getDate()}</p>
-              {visible.map((event, idx) => (
-                <button
-                  key={`${key}-${idx}`}
-                  type="button"
-                  onClick={() => setSelectedEvent(event)}
-                  className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left hover:bg-muted/60"
-                >
-                  <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", verificationDotClass(event.verification_status))} />
-                  <span className="truncate">{event.event || "Event"}</span>
-                </button>
-              ))}
-              {overflow > 0 ? (
-                <p className="px-1 text-[10px] text-muted-foreground">+{overflow} more</p>
-              ) : null}
-            </div>
+              <span className="text-[9px] uppercase tracking-wide text-muted-foreground">
+                {DOW_LABELS[day.getDay()]}
+              </span>
+              <span className={cn("text-[13px] tabular-nums font-medium", isSelected && "text-primary")}>
+                {day.getDate()}
+              </span>
+              {dayEvents.length ? (
+                <span className="flex items-center gap-0.5">
+                  {dayEvents.slice(0, 3).map((event, idx) => (
+                    <span
+                      key={idx}
+                      className={cn("h-1.5 w-1.5 rounded-full", verificationDotClass(event.verification_status))}
+                    />
+                  ))}
+                </span>
+              ) : (
+                <span className="h-1.5" />
+              )}
+            </button>
           );
         })}
+      </div>
+
+      <div className="mt-3 space-y-1.5">
+        {selectedDayEvents.length ? (
+          selectedDayEvents.map((event, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => setSelectedEvent(event)}
+              className="flex w-full items-start gap-2 rounded-lg border bg-background px-2.5 py-2 text-left hover:bg-muted/40"
+            >
+              <span
+                className={cn(
+                  "mt-1 h-1.5 w-1.5 shrink-0 rounded-full",
+                  verificationDotClass(event.verification_status),
+                )}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[12px] font-medium text-foreground">
+                  {event.event || "Event"}
+                </span>
+                {event.type ? (
+                  <span className="text-[10px] text-muted-foreground">{event.type}</span>
+                ) : null}
+              </span>
+            </button>
+          ))
+        ) : (
+          <p className="rounded-lg border border-dashed bg-muted/20 px-4 py-6 text-center text-[12px] text-muted-foreground">
+            {loading ? "Loading events…" : "No extracted events for this date."}
+          </p>
+        )}
       </div>
 
       {eventsByDate.undated.length ? (
         <div className="mt-3">
           <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Undated events ({eventsByDate.undated.length})
+            Undated events this week ({eventsByDate.undated.length})
           </p>
           <div className="flex flex-wrap gap-1.5">
             {eventsByDate.undated.map((event, idx) => (
@@ -190,12 +239,6 @@ export function EventsCalendar() {
             ))}
           </div>
         </div>
-      ) : null}
-
-      {!loading && !events.length && !error ? (
-        <p className="mt-3 rounded-lg border border-dashed bg-muted/20 px-4 py-6 text-center text-[12px] text-muted-foreground">
-          No extracted future events in this window yet.
-        </p>
       ) : null}
 
       {selectedEvent ? (
