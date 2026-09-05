@@ -8,6 +8,7 @@ LLM provider failure is critical (blocks startup).
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from importlib.util import find_spec
 from typing import List, Optional
@@ -27,6 +28,27 @@ class CheckResult:
     message: str
     impact: str  # what breaks if this fails
     critical: bool = False
+
+
+# Matches the placeholder credential shapes used throughout
+# agent/.env.example (e.g. "sk-or-...here", "sk-xxx", "gsk_xxx", "xxx",
+# "your-tushare-token") so a freshly-copied template .env that was never
+# actually filled in fails loudly here, at startup, instead of surfacing
+# later as a slow TLS-timeout stall against a real provider endpoint with a
+# fake key. See:
+# .claude/backlog/archive/items/2026-09-03-vibe-agent-openrouter-default-config-drift.md
+# .claude/backlog/items/2026-09-04-openrouter-broader-audit-and-env-precedence.md
+_PLACEHOLDER_CREDENTIAL_RE = re.compile(
+    r"(^xxx$)|(xxx$)|(\.\.\.here$)|(^your[-_])", re.IGNORECASE
+)
+
+
+def _is_placeholder_credential(value: str) -> bool:
+    """Return True if ``value`` looks like an un-filled-in template credential."""
+    value = (value or "").strip()
+    if not value:
+        return False
+    return bool(_PLACEHOLDER_CREDENTIAL_RE.search(value))
 
 
 def _check_llm_provider() -> CheckResult:
@@ -119,6 +141,22 @@ def _check_llm_provider() -> CheckResult:
             status="not_configured",
             message=f"base URL not set for {provider} | {diag_hint}",
             impact="agent cannot function",
+            critical=True,
+        )
+
+    from src.providers.capabilities import get_llm_credentials
+
+    api_key = get_llm_credentials(provider, model).get("api_key", "")
+    if _is_placeholder_credential(api_key):
+        return CheckResult(
+            name=f"LLM ({provider})",
+            status="error",
+            message=(
+                f"credential for {provider} still looks like the .env.example "
+                f"placeholder — never actually configured | {diag_hint}"
+            ),
+            impact="agent cannot function (would otherwise stall on a slow "
+            "TLS/auth failure against the real endpoint)",
             critical=True,
         )
 

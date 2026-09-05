@@ -2155,6 +2155,13 @@ export interface SchedulerRegistryEntry {
   auto_paused_reason: string | null;
   supports_live_log: boolean;
   live_log_stream_url: string | null;
+  // stock_simulator entries only (openalgo entries omit this field, so it's
+  // undefined there): None/undefined = no explicit pause/resume choice ever
+  // persisted for this category (falls back to the recorder's own static
+  // config on restart); true/false = the last explicit choice, which is
+  // re-applied on the recorder's next restart. See
+  // scheduler_introspection.list_recorder_categories()'s own docstring.
+  persisted_default_enabled?: boolean | null;
   controls: {
     pause: boolean;
     resume: boolean;

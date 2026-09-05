@@ -1,14 +1,34 @@
-import { useCallback, useEffect, useState } from "react";
-import { Pause, Play, Square, Timer } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, Pause, Play, Square, Timer } from "lucide-react";
 import {
   api,
+  ApiError,
   type MarketRegistryEntry,
   type MultiMarketQuote,
   type MultiMarketStatusResponse,
+  type SchedulerRegistryEntry,
 } from "@/lib/api";
 import { COUNTRY_LABELS } from "./GlobalMarketsPanel";
 
 const ALL_MARKETS = ["IN", "US", "CN", "JP", "RU", "ME", "LATAM", "EU"];
+
+// Recorder-category polling cadence for the "Recording" sub-section below —
+// matches Scheduled.tsx's own POLL_MS for the same registry endpoint.
+const RECORDING_POLL_MS = 15_000;
+
+// stock_simulator's `register_recorder_scheduler(name, ...)` names ("in",
+// "us", "cn", "jp", "ru", "me", "latam", "eu", "in_economy" — see the
+// recorder/*_recorder.py modules) mostly match `COUNTRY_LABELS`' keys
+// uppercased, except "in_economy", which has no market tab of its own.
+function marketLabelForRecorder(recorderName: string): string {
+  if (recorderName === "in_economy") return "India — Economy";
+  return COUNTRY_LABELS[recorderName.toUpperCase()] ?? recorderName;
+}
+
+function recorderSortKey(recorderName: string): number {
+  const idx = ALL_MARKETS.indexOf(recorderName.toUpperCase());
+  return idx === -1 ? ALL_MARKETS.length : idx;
+}
 
 /** Cross-market simultaneous replay — one UTC master clock watching several markets at once,
  * fronting `stock_simulator`'s `/multi_market/*` routes. Real data behind this today is
@@ -28,6 +48,59 @@ export function MultiMarketReplayPanel() {
   const [quoteSymbol, setQuoteSymbol] = useState("");
   const [quote, setQuote] = useState<MultiMarketQuote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+
+  // "Recording" sub-section — independent of the arm/replay-clock state
+  // above: these are stock_simulator's always-on recorder-category
+  // schedulers (live capture loops), pausable/resumable per (recorder,
+  // category) via the scheduler-registry endpoint, with the last live
+  // pause/resume choice persisted as that category's default across a
+  // recorder restart. See
+  // .claude/backlog/items/2026-09-03-recorder-pause-resume-multi-market-ui.md.
+  const [recordingOpen, setRecordingOpen] = useState(true);
+  const [recordingEntries, setRecordingEntries] = useState<SchedulerRegistryEntry[]>([]);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [recordingBusyId, setRecordingBusyId] = useState<string | null>(null);
+  const recordingSeq = useRef(0);
+
+  const refreshRecording = useCallback(async () => {
+    const seq = ++recordingSeq.current;
+    try {
+      const res = await api.listSchedulerRegistry();
+      if (seq !== recordingSeq.current) return;
+      setRecordingEntries(
+        (res.entries ?? []).filter(
+          (entry) => entry.source === "stock_simulator" && entry.section.startsWith("recorder:"),
+        ),
+      );
+      setRecordingError(null);
+    } catch (err) {
+      if (seq !== recordingSeq.current) return;
+      setRecordingError(err instanceof ApiError ? err.message : "Failed to load recording status");
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshRecording();
+    const interval = window.setInterval(() => void refreshRecording(), RECORDING_POLL_MS);
+    return () => window.clearInterval(interval);
+  }, [refreshRecording]);
+
+  const toggleRecording = async (entry: SchedulerRegistryEntry) => {
+    setRecordingBusyId(entry.id);
+    setRecordingError(null);
+    try {
+      if (entry.enabled) {
+        await api.pauseStockSimSchedulerEntry(entry.id);
+      } else {
+        await api.resumeStockSimSchedulerEntry(entry.id);
+      }
+      await refreshRecording();
+    } catch (err) {
+      setRecordingError(err instanceof ApiError ? err.message : "Failed to change recording state");
+    } finally {
+      setRecordingBusyId(null);
+    }
+  };
 
   useEffect(() => {
     api.getMarketRegistry().then((res) => setRegistry(res.markets ?? [])).catch(() => {});
@@ -134,6 +207,14 @@ export function MultiMarketReplayPanel() {
 
   const quoteMarketIndices = registry.find((m) => m.code === quoteMarket)?.indices ?? [];
 
+  const recordingGroups = Object.entries(
+    recordingEntries.reduce<Record<string, SchedulerRegistryEntry[]>>((groups, entry) => {
+      const recorderName = entry.section.slice("recorder:".length);
+      (groups[recorderName] ??= []).push(entry);
+      return groups;
+    }, {}),
+  ).sort(([a], [b]) => recorderSortKey(a) - recorderSortKey(b) || a.localeCompare(b));
+
   return (
     <div className="space-y-4">
       <p className="text-[11px] text-muted-foreground">
@@ -144,6 +225,111 @@ export function MultiMarketReplayPanel() {
       </p>
 
       {error ? <p className="text-[11px] text-destructive">{error}</p> : null}
+
+      <div className="rounded-lg border bg-background/60">
+        <button
+          type="button"
+          onClick={() => setRecordingOpen((prev) => !prev)}
+          aria-expanded={recordingOpen}
+          className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left text-xs font-medium"
+        >
+          <span className="flex items-center gap-1.5">
+            {recordingOpen ? (
+              <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+            )}
+            Recording
+          </span>
+          <span className="text-[11px] font-normal text-muted-foreground">
+            {recordingEntries.filter((e) => e.enabled).length}/{recordingEntries.length} active
+          </span>
+        </button>
+        {recordingOpen ? (
+          <div className="space-y-3 border-t px-2.5 py-2.5">
+            <p className="text-[11px] text-muted-foreground">
+              Per-market, per-index on/off for the always-on background recorders that feed this
+              replay data — independent of the arm/pause controls below, which only affect an
+              already-armed replay session's clock. Toggling here pauses or resumes that
+              recorder category's live capture loop immediately and is remembered as its default,
+              so it stays off (or on) across a recorder restart.
+            </p>
+            {recordingError ? <p className="text-[11px] text-destructive">{recordingError}</p> : null}
+            {recordingGroups.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                No recorder categories reported — stock_simulator may be unreachable.
+              </p>
+            ) : (
+              <div className="space-y-2.5">
+                {recordingGroups.map(([recorderName, entries]) => (
+                  <div key={recorderName} className="rounded border bg-background/40 p-2">
+                    <p className="mb-1.5 text-[11px] font-medium">
+                      {marketLabelForRecorder(recorderName)}
+                    </p>
+                    <ul className="space-y-1">
+                      {entries
+                        .slice()
+                        .sort((a, b) => a.section.localeCompare(b.section) || a.id.localeCompare(b.id))
+                        .map((entry) => {
+                          const category = entry.id.split(":").pop() ?? entry.label;
+                          const defaultLabel =
+                            entry.persisted_default_enabled === true
+                              ? "default: on"
+                              : entry.persisted_default_enabled === false
+                                ? "default: off"
+                                : "default: unset";
+                          const canToggle = entry.controls.pause || entry.controls.resume;
+                          return (
+                            <li
+                              key={entry.id}
+                              className="flex flex-wrap items-center justify-between gap-2 text-[11px]"
+                            >
+                              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                                <span className="font-mono">{category}</span>
+                                <span
+                                  className={
+                                    entry.enabled
+                                      ? "rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-emerald-600"
+                                      : "rounded-full bg-muted px-1.5 py-0.5 text-muted-foreground"
+                                  }
+                                >
+                                  {entry.enabled ? "recording" : "off"}
+                                </span>
+                                <span className="text-muted-foreground">{defaultLabel}</span>
+                              </div>
+                              {canToggle ? (
+                                <button
+                                  type="button"
+                                  disabled={recordingBusyId === entry.id}
+                                  onClick={() => void toggleRecording(entry)}
+                                  aria-label={
+                                    entry.enabled
+                                      ? `Pause recording for ${marketLabelForRecorder(recorderName)} ${category}`
+                                      : `Resume recording for ${marketLabelForRecorder(recorderName)} ${category}`
+                                  }
+                                  className="inline-flex h-6 items-center gap-1 rounded border px-1.5 text-[11px] hover:bg-accent disabled:opacity-50"
+                                >
+                                  {entry.enabled ? (
+                                    <Pause className="h-3 w-3" aria-hidden />
+                                  ) : (
+                                    <Play className="h-3 w-3" aria-hidden />
+                                  )}
+                                  {entry.enabled ? "Pause" : "Resume"}
+                                </button>
+                              ) : (
+                                <span className="text-muted-foreground">read-only</span>
+                              )}
+                            </li>
+                          );
+                        })}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
 
       {!status ? (
         <div className="space-y-3">
