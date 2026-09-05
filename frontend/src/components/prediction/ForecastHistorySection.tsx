@@ -84,8 +84,11 @@ export function ForecastHistorySection({
               </tr>
             </thead>
             <tbody>
-              {[...daily].reverse().map((row) => (
-                <tr key={row.predicted_at} className="border-b border-border/40">
+              {[...daily].reverse().map((row, idx) => (
+                <tr
+                  key={`${row.predicted_at}:${row.horizon_days}:${idx}`}
+                  className="border-b border-border/40"
+                >
                   <td className="px-3 py-2 tabular-nums">{row.predicted_at.slice(0, 10)}</td>
                   <td className="px-3 py-2 tabular-nums">{fmtLevel(row.spot_at_prediction)}</td>
                   <td className="px-3 py-2 tabular-nums">{fmtLevel(row.implied_level)}</td>
@@ -125,8 +128,11 @@ export function ForecastHistorySection({
                 {[...intraday]
                   .sort((a, b) => b.predicted_at.localeCompare(a.predicted_at))
                   .slice(0, 30)
-                  .map((row) => (
-                    <tr key={row.predicted_at} className="border-b border-border/40">
+                  .map((row, idx) => (
+                    <tr
+                      key={`${row.predicted_at}:${row.horizon_days}:${idx}`}
+                      className="border-b border-border/40"
+                    >
                       <td className="py-1.5 pr-3 tabular-nums">{fmtTime(row.predicted_at)}</td>
                       <td className="py-1.5 pr-3 tabular-nums">{fmtLevel(row.spot_at_prediction)}</td>
                       <td className="py-1.5 pr-3 tabular-nums">{fmtLevel(row.implied_level)}</td>

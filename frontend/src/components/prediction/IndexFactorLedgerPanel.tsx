@@ -55,8 +55,11 @@ export function IndexFactorLedgerPanel({ daily, intraday = [], horizonDays = 14 
             </tr>
           </thead>
           <tbody>
-            {allRows.slice(0, 50).map((row) => (
-              <tr key={row.predicted_at} className="border-b border-border/40">
+            {allRows.slice(0, 50).map((row, idx) => (
+              <tr
+                key={`${row.predicted_at}:${row.horizon_days}:${idx}`}
+                className="border-b border-border/40"
+              >
                 <td className="py-1.5 pr-2 tabular-nums whitespace-nowrap">
                   {row.predicted_at.slice(0, 16).replace("T", " ")}
                 </td>
