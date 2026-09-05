@@ -26,7 +26,15 @@ import { toast } from "sonner";
 import { useAgentStore, type AgentActivity, type AgentMessageMeta, type StoredAgentMessage } from "@/stores/agent";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useSSE } from "@/hooks/useSSE";
+<<<<<<< HEAD
 import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type LiveAction, type AgentAudit, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource, type AutonomousAgentProposal, type AutonomousAgentInstance, type TradingConnectorsResponse, type LLMSettings } from "@/lib/api";
+=======
+import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type ScheduledResearchProposal, type LiveAction, type LiveHalted, type LLMSettings } from "@/lib/api";
+import {
+  extractUploadedAttachments,
+  prependUploadedAttachments,
+} from "@/lib/attachments";
+>>>>>>> upstream/main
 import { isReportWorthyRun } from "@/lib/runReports";
 import { buildToolTimelineMessages } from "@/pages/agentToolTimeline";
 import type { AgentMessage, SwarmRunStatus, ToolCallEntry } from "@/types/agent";
@@ -37,6 +45,7 @@ import { ThinkingTimeline } from "@/components/chat/ThinkingTimeline";
 import { ConversationTimeline } from "@/components/chat/ConversationTimeline";
 import { ToolProgressIndicator } from "@/components/chat/ToolProgressIndicator";
 import { MandateProposalCard } from "@/components/chat/MandateProposalCard";
+<<<<<<< HEAD
 import { AutonomousAgentProposalCard } from "@/components/autonomous/AutonomousAgentProposalCard";
 import { OrchestratorWelcome } from "@/components/autonomous/OrchestratorWelcome";
 import { AutonomousSessionEmptyState } from "@/components/autonomous/AutonomousSessionEmptyState";
@@ -51,6 +60,9 @@ import {
   isTradeWidgetModified,
 } from "@/lib/tradeWidgetContext";
 import { RunnerStatus } from "@/components/chat/RunnerStatus";
+=======
+import { ScheduledResearchProposalCard } from "@/components/chat/ScheduledResearchProposalCard";
+>>>>>>> upstream/main
 import { SwarmStatusCard } from "@/components/chat/SwarmStatusCard";
 import {
   applySwarmEvent,
@@ -142,14 +154,11 @@ function toDisplayPrompt(content: string): {
   content: string;
   meta?: AgentMessageMeta;
 } {
-  let display = content;
+  const extractedAttachments = extractUploadedAttachments(content);
+  let display = extractedAttachments.content;
   const meta: AgentMessageMeta = { requestText: content };
-  const attachmentMatch = display.match(
-    /^\[Uploaded file: (.+), path: [^\n]*\]\n\n/,
-  );
-  if (attachmentMatch) {
-    meta.attachment = { filename: attachmentMatch[1] };
-    display = display.slice(attachmentMatch[0].length);
+  if (extractedAttachments.filenames.length > 0) {
+    meta.attachments = extractedAttachments.filenames.map((filename) => ({ filename }));
   }
   if (display.startsWith(SWARM_PROMPT_PREFIX)) {
     meta.swarmMode = true;
@@ -191,6 +200,7 @@ interface LiveActionItem {
   timestamp: number;
   action: LiveAction;
 }
+<<<<<<< HEAD
 interface AgentAuditItem {
   kind: "agent_audit";
   timestamp: number;
@@ -340,6 +350,14 @@ function AgentAuditChip({ audit }: { audit: AgentAudit }) {
     </div>
   );
 }
+=======
+interface ScheduledProposalItem {
+  kind: "scheduled_proposal";
+  timestamp: number;
+  proposal: ScheduledResearchProposal;
+}
+type LiveItem = ProposalItem | ScheduledProposalItem | LiveActionItem;
+>>>>>>> upstream/main
 
 function isCriterionStatusMet(status: string): boolean {
   return !["", "pending", "open", "unsatisfied"].includes(status.toLowerCase());
@@ -980,6 +998,16 @@ export function Agent({
           };
         }
         const ts = new Date(m.created_at).getTime();
+        // The reply is committed when the attempt ends, so created_at is the
+        // end. The start comes from the persisted attempt start when present,
+        // else is backed out of the attempt's elapsed time; only legacy rows
+        // without either fall back to the first tool call.
+        const startedAtSec = typeof meta?.started_at === "number" ? meta.started_at : NaN;
+        const attemptStartedAt = Number.isFinite(startedAtSec) && startedAtSec > 0
+          ? startedAtSec * 1000
+          : elapsedMs != null
+            ? ts - elapsedMs
+            : undefined;
         const toolTimeline = m.role === "assistant"
           ? buildToolTimelineMessages(m.tool_trail ?? [], {
               fallbackTimestamp: ts,
@@ -990,6 +1018,7 @@ export function Agent({
                 : meta?.status === "cancelled"
                   ? "stopped"
                   : "done",
+              startedAt: attemptStartedAt,
               endedAt: ts,
             })
           : [];
@@ -1079,7 +1108,39 @@ export function Agent({
         }
       }
       if (genRef.current !== gen) return;
+      // A background session's SSE stream disconnects the moment you navigate
+      // away (doDisconnect() in the session-switch effect), so the
+      // session_completed event that would normally clear streamingSessionId
+      // never arrives -- the sidebar's "thinking" spinner for that session
+      // sticks around for the rest of the tab's life, even long after the
+      // turn actually finished. Reopening the session re-fetches its
+      // committed history right here; if the newest stored message is
+      // already the assistant's reply, the turn is done, so release the
+      // stale marker instead of leaving it dangling.
+      if (
+        act().streamingSessionId === sid
+        && msgs.length > 0
+        && msgs[msgs.length - 1].role === "assistant"
+      ) {
+        act().clearStreamingSession(sid);
+      }
       act().loadHistory(agentMsgs);
+      // The live activity is carried across a same-session re-mount so its
+      // clock survives, but if the attempt finished while we were away its
+      // committed reply is now in history: the durable row above supersedes
+      // the live one, which would otherwise sit at "Working" until the safety
+      // timeout fired.
+      const liveActivity = act().activity;
+      if (
+        liveActivity
+        && msgs.some((message) => (
+          message.role === "assistant"
+          && message.linked_attempt_id === liveActivity.attemptId
+        ))
+      ) {
+        useAgentStore.setState({ activity: null, toolCalls: [] });
+        if (act().status === "streaming") act().setStatus("idle");
+      }
       act().setSessionLoading(false);
       act().cacheSession(sid, agentMsgs);
       setRuntimeIdentity(latestRuntimeIdentity ?? {});
@@ -1180,8 +1241,15 @@ export function Agent({
         return false;
       }
       const current = store.activity;
+      // `attempt.started` carries the backend's wall-clock start (epoch
+      // seconds). On a replayed stream that is the original start, so the
+      // elapsed timer resumes from the truth rather than from reconnect time.
+      const startedAtSec = Number(data.started_at);
+      const startedAt = Number.isFinite(startedAtSec) && startedAtSec > 0
+        ? startedAtSec * 1000
+        : undefined;
       if (!current) {
-        store.startActivity(attemptId || `pending-${Date.now()}`);
+        store.startActivity(attemptId || `pending-${Date.now()}`, startedAt);
       } else if (
         attemptId &&
         current.attemptId !== attemptId &&
@@ -1189,7 +1257,7 @@ export function Agent({
       ) {
         store.setActivityAttemptId(attemptId);
       } else if (attemptId && current.attemptId !== attemptId) {
-        store.startActivity(attemptId);
+        store.startActivity(attemptId, startedAt);
       }
       act().setActivityState(state);
       return true;
@@ -1367,14 +1435,39 @@ export function Agent({
         }
         const streamedAnswer = act().streamingText + pendingTextRef.current;
         flushPendingStreamUpdate();
+        // No live activity means we never saw this attempt run (connected after
+        // the fact); rebuild its timing from the event rather than from now.
+        const eventStartedSec = Number(d.started_at);
+        const eventElapsedMs = Number(d.elapsed_ms);
+        const eventEndedSec = Number(d.ended_at);
+        const completedEndedAt = Number.isFinite(eventEndedSec) && eventEndedSec > 0
+          ? eventEndedSec * 1000
+          : Date.now();
+        const completedStartedAt = Number.isFinite(eventStartedSec) && eventStartedSec > 0
+          ? eventStartedSec * 1000
+          : Number.isFinite(eventElapsedMs) && eventElapsedMs > 0
+            ? completedEndedAt - eventElapsedMs
+            : undefined;
         if (!act().activity) {
-          act().startActivity(attemptId || `completed-${Date.now()}`);
+          act().startActivity(attemptId || `completed-${Date.now()}`, completedStartedAt);
         } else if (attemptId && act().activity?.attemptId !== attemptId) {
           act().setActivityAttemptId(attemptId);
         }
+        // A client that joined mid-attempt may have started its clock late; the
+        // backend's start is authoritative for the durable row.
+        const liveStart = act().activity?.startedAt;
+        if (
+          completedStartedAt !== undefined
+          && liveStart !== undefined
+          && completedStartedAt < liveStart
+        ) {
+          useAgentStore.setState((state) => ({
+            activity: state.activity ? { ...state.activity, startedAt: completedStartedAt } : null,
+          }));
+        }
         const s = act();
         const completedTools = s.activity?.steps ?? s.toolCalls;
-        const completedActivity = archiveActivity("done");
+        const completedActivity = archiveActivity("done", completedEndedAt);
         const completedAttemptId = completedActivity?.attemptId || attemptId;
         useAgentStore.setState((state) => ({
           messages: state.messages.filter(
@@ -1819,6 +1912,62 @@ export function Agent({
         scrollToBottom();
       },
 
+<<<<<<< HEAD
+=======
+      "mandate.committed": (d) => {
+        touch();
+        const committed = d as unknown as MandateCommitted;
+        if (!committed.proposal_id) return;
+        setLiveItems((items) => items.map((item) => (
+          item.kind === "proposal" && item.proposal.proposal_id === committed.proposal_id
+            ? { ...item, committed }
+            : item
+        )));
+        // A fresh mandate may bring up the runner; refresh the runtime panel now.
+        liveRuntimeRef.current?.handleMandateCommitted();
+        scrollToBottom();
+      },
+
+      "scheduled_research.proposal": (d) => {
+        touch();
+        const proposal = d as unknown as ScheduledResearchProposal;
+        if (!proposal.proposal_id || !proposal.job) return;
+        setLiveItems((items) => [
+          ...items,
+          { kind: "scheduled_proposal", timestamp: Date.now(), proposal },
+        ]);
+        scrollToBottom();
+      },
+
+      "live.halted": (d) => {
+        touch();
+        const halted = d as unknown as LiveHalted;
+        // Preemptive kill switch: the server has cancelled resting orders and may have
+        // flattened positions (SPEC §7.5 #6). Reflect the halted state across surfaces;
+        // the RunnerStatus panel re-polls so its per-broker rows show "halted".
+        liveRuntimeRef.current?.handleHalted(halted);
+        toast.warning(t('agent.connectorHalted'));
+      },
+
+      "live.resumed": (d) => {
+        touch();
+        // Kill switch cleared via a privileged surface action (SPEC Consent §4);
+        // clear the halted banner and re-poll runtime status.
+        void d;
+        liveRuntimeRef.current?.handleResumed();
+        toast.success(t('agent.connectionRestored'));
+      },
+
+      "live.action": (d) => {
+        touch();
+        const action = d as unknown as LiveAction;
+        if (!action.kind) return;
+        setLiveItems((items) => [...items, { kind: "live_action", timestamp: Date.now(), action }]);
+        liveRuntimeRef.current?.handleLiveAction(action);
+        scrollToBottom();
+      },
+
+>>>>>>> upstream/main
       heartbeat: () => {},
       reconnect: (d) => { act().setSseStatus("reconnecting", Number(d.attempt ?? 0)); },
     });
@@ -1863,7 +2012,18 @@ export function Agent({
       genRef.current = gen;
       setRuntimeIdentity({});
       const seed = curMsgs.length > 0 ? curMsgs : getCachedSession(urlSessionId);
+      // switchSession() drops the live activity so replay can rebuild its
+      // steps without duplicating them — but the attempt's start time is not
+      // something replay can restore once the ring buffer has rotated past
+      // `attempt.started`. Re-seed the still-running activity with its
+      // original startedAt so the elapsed clock does not restart at 0s.
+      const liveActivity = act().activity;
       switchSession(urlSessionId, seed);
+      if (liveActivity && liveActivity.endedAt === undefined) {
+        const store = act();
+        store.startActivity(liveActivity.attemptId, liveActivity.startedAt);
+        store.setActivityState(liveActivity.state);
+      }
       loadSessionMessages(urlSessionId, gen);
       setupSSE(urlSessionId);
     } else if (!urlSessionId && curSid) {
@@ -2014,8 +2174,16 @@ export function Agent({
     return sid;
   }, [setSearchParams, setupSSE]);
 
+<<<<<<< HEAD
   const runPrompt = useCallback(async (prompt: string) => {
     if (!prompt.trim() || status === "streaming") return;
+=======
+  const runPrompt = useCallback(async (
+    prompt: string,
+    attachments: ComposerAttachment[] = [],
+  ) => {
+    if ((!prompt.trim() && attachments.length === 0) || status === "streaming") return;
+>>>>>>> upstream/main
     clearStreamingView();
 
     if (goalComposerActive) {
@@ -2063,9 +2231,9 @@ export function Agent({
       finalPrompt = `${SWARM_PROMPT_PREFIX}${prompt}`;
     }
 
-    if (attachment) {
-      messageMeta.attachment = { filename: attachment.filename };
-      finalPrompt = `[Uploaded file: ${attachment.filename}, path: ${attachment.filePath}]\n\n${finalPrompt}`;
+    if (attachments.length > 0) {
+      messageMeta.attachments = attachments.map(({ filename }) => ({ filename }));
+      finalPrompt = prependUploadedAttachments(finalPrompt, attachments);
     }
     messageMeta.requestText = finalPrompt;
 
@@ -2089,7 +2257,9 @@ export function Agent({
     try {
       let sid = act().sessionId;
       if (!sid) {
-        const session = await api.createSession(prompt.slice(0, 50));
+        const sessionTitle = prompt.trim()
+          || attachments.map(({ filename }) => filename).join(", ");
+        const session = await api.createSession(sessionTitle.slice(0, 50));
         sid = session.session_id;
         act().setSessionId(sid);
         setSearchParams({ session: sid }, { replace: true });
@@ -2432,6 +2602,7 @@ export function Agent({
     });
     for (const item of liveItems) {
       const key = item.kind === "proposal"
+<<<<<<< HEAD
         ? `lp_${item.proposal.proposal_id}`
         : item.kind === "autonomous_proposal"
           ? `ap_${item.proposal.proposal_id}`
@@ -2440,6 +2611,12 @@ export function Agent({
           : item.kind === "agent_audit"
             ? `aa_${item.audit.audit_id || item.timestamp}`
           : `la_${item.action.audit_id || item.timestamp}`;
+=======
+        ? `${sessionId ?? "draft"}_lp_${item.proposal.proposal_id}`
+        : item.kind === "scheduled_proposal"
+          ? `${sessionId ?? "draft"}_srp_${item.proposal.proposal_id}`
+          : `${sessionId ?? "draft"}_la_${item.action.audit_id || item.timestamp}`;
+>>>>>>> upstream/main
       rows.push({ sort: item.timestamp, render: "live", item, key });
     }
     return rows.sort((a, b) => a.sort - b.sort);
@@ -2613,6 +2790,7 @@ export function Agent({
                   />
                 );
               }
+<<<<<<< HEAD
               if (row.item.kind === "autonomous_proposal") {
                 const ap = row.item;
                 return (
@@ -2659,6 +2837,20 @@ export function Agent({
                 return <AgentAuditChip key={row.key} audit={row.item.audit} />;
               }
               return <LiveActionChip key={row.key} action={row.item.action} />;
+=======
+              if (row.item.kind === "scheduled_proposal") {
+                return (
+                  <div key={row.key} className={shouldAnimate ? "msg-enter" : undefined}>
+                    <ScheduledResearchProposalCard proposal={row.item.proposal} />
+                  </div>
+                );
+              }
+              return (
+                <div key={row.key} className={shouldAnimate ? "msg-enter" : undefined}>
+                  <LiveActionChip action={row.item.action} />
+                </div>
+              );
+>>>>>>> upstream/main
             }
             const g = row.group;
             if (g.kind === "timeline") {

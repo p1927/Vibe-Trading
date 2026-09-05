@@ -5,7 +5,9 @@ ChatLLM is designed specifically for the AgentLoop ReAct cycle.
 
 from __future__ import annotations
 
+import asyncio
 import html
+import inspect
 import logging
 import os
 import re
@@ -152,6 +154,22 @@ class LLMResponse:
         return len(self.tool_calls) > 0
 
 
+def _extract_retry_after_s(original: Exception) -> Optional[float]:
+    """Return the provider-suggested Retry-After delay in seconds, if any."""
+    response = getattr(original, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    raw = headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0.0 else None
+
+
 class ProviderStreamError(RuntimeError):
     """Raised when provider streaming fails before a complete response."""
 
@@ -162,11 +180,17 @@ class ProviderStreamError(RuntimeError):
             provider: Effective provider name.
             model: Effective model name.
             original: Original exception from the stream path.
+
+        Attributes:
+            retry_after_s: Provider-suggested Retry-After delay in seconds,
+                extracted from the original exception's response headers when
+                present and parseable as a non-negative number; otherwise None.
         """
         self.provider = provider
         self.model = model
         self.original = original
         self.status_code: Optional[int] = getattr(original, "status_code", None)
+        self.retry_after_s: Optional[float] = _extract_retry_after_s(original)
         safe_message = _redact_provider_error(str(original))
         hint = ""
         lowered = safe_message.lower()
@@ -338,25 +362,87 @@ class ChatLLM:
         )
 
     def close(self) -> None:
-        """Best-effort release of the underlying provider HTTP client.
+        """Best-effort release of HTTP clients owned by this adapter.
 
-        The LangChain adapter (ChatOpenAI and its OpenAI-compatible
-        subclasses) owns a pooled ``httpx.Client`` that is not guaranteed to
-        be refcount-collected promptly — cyclic references can defer it to a
-        GC pass. Long-running callers (swarm workers build one ChatLLM per
-        task) must call this when the instance is done with, or sockets
-        accumulate in CLOSE-WAIT. Safe to call multiple times; providers
-        without a closeable client are a no-op.
+        LangChain may lend multiple adapters the same cached HTTPX clients.
+        Those process-scoped clients must remain open when one ``ChatLLM`` is
+        discarded. Only explicitly marked, Vibe-created clients are closed;
+        adapters without the ownership marker keep the legacy best-effort
+        behavior for compatibility.
         """
+        for label, client in self._close_candidates():
+            close_fn = getattr(client, "aclose", None)
+            if not callable(close_fn):
+                close_fn = getattr(client, "close", None)
+            if not callable(close_fn):
+                continue
+            try:
+                result = close_fn()
+                if inspect.isawaitable(result):
+                    self._run_or_schedule_close(result, label)
+            except Exception:
+                logger.debug("ChatLLM.close: failed to close %s", label, exc_info=True)
+
+    async def aclose(self) -> None:
+        """Asynchronously release HTTP clients owned by this adapter."""
+        for label, client in self._close_candidates():
+            close_fn = getattr(client, "aclose", None)
+            if not callable(close_fn):
+                close_fn = getattr(client, "close", None)
+            if not callable(close_fn):
+                continue
+            try:
+                result = close_fn()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                logger.debug("ChatLLM.aclose: failed to close %s", label, exc_info=True)
+
+    def _close_candidates(self) -> list[tuple[str, Any]]:
+        """Return unique clients this wrapper is responsible for closing."""
         llm = self._llm
-        for attr in ("root_client", "root_async_client", "client"):
-            client = getattr(llm, attr, None)
-            close_fn = getattr(client, "close", None)
-            if callable(close_fn):
-                try:
-                    close_fn()
-                except Exception:
-                    logger.debug("ChatLLM.close: failed to close %s", attr, exc_info=True)
+        if hasattr(llm, "_vibe_owned_http_clients"):
+            candidates = [
+                ("owned_http_client", client)
+                for client in llm._vibe_owned_http_clients
+            ]
+        else:
+            candidates = [
+                (attr, getattr(llm, attr, None))
+                for attr in ("root_client", "root_async_client", "client")
+            ]
+
+        unique: list[tuple[str, Any]] = []
+        seen: set[int] = set()
+        for label, client in candidates:
+            if client is None or id(client) in seen:
+                continue
+            seen.add(id(client))
+            unique.append((label, client))
+        return unique
+
+    @staticmethod
+    def _run_or_schedule_close(awaitable: Any, label: str) -> None:
+        """Consume an async close from either synchronous or async code."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(awaitable)
+            return
+
+        task = loop.create_task(awaitable)
+
+        def _log_failure(done: asyncio.Task[Any]) -> None:
+            try:
+                done.result()
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                logger.debug(
+                    "ChatLLM.close: async close failed for %s", label, exc_info=True
+                )
+
+        task.add_done_callback(_log_failure)
 
     def build_fallback(self) -> Optional["ChatLLM"]:
         """Build a cross-provider fallback ChatLLM for this call only, or None.

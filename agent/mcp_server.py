@@ -79,7 +79,6 @@ from src.market_data import (
     DEFAULT_MAX_ROWS,
     cap_rows,
     detect_source,
-    fetch_market_data_json,
     get_loader,
 )
 
@@ -255,9 +254,7 @@ class _HostGuardMiddleware:
             if not any(_host_matches(normalized, pattern) for pattern in self.allowed_hosts):
                 from starlette.responses import PlainTextResponse
 
-                await PlainTextResponse("Invalid host header", status_code=400)(
-                    scope, receive, send
-                )
+                await PlainTextResponse("Invalid host header", status_code=400)(scope, receive, send)
                 return
         await self.app(scope, receive, send)
 
@@ -284,9 +281,7 @@ class _OriginGuardMiddleware:
             if not _origin_allowed(origin, self.allowed_hosts):
                 from starlette.responses import PlainTextResponse
 
-                await PlainTextResponse("Origin not allowed", status_code=403)(
-                    scope, receive, send
-                )
+                await PlainTextResponse("Origin not allowed", status_code=403)(scope, receive, send)
                 return
         await self.app(scope, receive, send)
 
@@ -352,19 +347,29 @@ def _get_goal_store():
 _mcp_session_id: str | None = None
 
 
-def _resolve_session_id(session_id: str = "") -> str:
-    """Resolve the goal session, defaulting to this server process's session.
+def _resolve_session_id(session_id: str = "", ctx: Context | None = None) -> str:
+    """Resolve the goal session: explicit id, then per-connection id, then
+    one id per server process.
 
     The in-process tool registry injects the host session and keeps
     ``session_id`` out of its required schema. MCP has no such injection point,
     so these tools used to mark the id required — asking the model to invent an
     internal identifier it has no way to know, the opposite contract from the
-    local path (#885). Default instead to one stable id per server process,
-    which is the closest MCP equivalent of a host-owned session, while still
-    honouring an explicit id from a client that tracks its own conversations.
+    local path (#885). Default instead to a session id, while still honouring
+    an explicit id from a client that tracks its own conversations.
+
+    A single server process can serve many concurrent MCP connections (the
+    http/sse transports this file documents), so the process-wide fallback on
+    its own would collapse every such caller onto one goal session. ``ctx``,
+    when available, carries FastMCP's own per-connection session id (the real
+    ``mcp-session-id`` header for StreamableHTTP, a cached id for the other
+    transports) and takes precedence over the process fallback for exactly
+    that reason.
 
     Args:
         session_id: Optional client-supplied session id.
+        ctx: Optional MCP request context; supplies a per-connection id when
+            the tool is invoked through a live MCP request.
 
     Returns:
         A non-empty session id.
@@ -372,6 +377,11 @@ def _resolve_session_id(session_id: str = "") -> str:
     global _mcp_session_id
     if cleaned := session_id.strip():
         return cleaned
+    if ctx is not None:
+        try:
+            return ctx.session_id
+        except RuntimeError:
+            pass
     if _mcp_session_id is None:
         import uuid
 
@@ -548,6 +558,7 @@ def start_research_goal(
     token_budget: int | None = None,
     turn_budget: int | None = None,
     time_budget_seconds: int | None = None,
+    ctx: Context | None = None,
 ) -> str:
     """Create or replace the current finance research goal for a session.
 
@@ -570,7 +581,7 @@ def start_research_goal(
     try:
         clean_criteria = _clean_list(criteria) or _default_goal_criteria()
         goal = _get_goal_store().replace_goal(
-            session_id=_resolve_session_id(session_id),
+            session_id=_resolve_session_id(session_id, ctx),
             objective=objective,
             criteria=clean_criteria,
             ui_summary=ui_summary,
@@ -588,7 +599,7 @@ def start_research_goal(
 
 
 @mcp.tool
-def get_research_goal(session_id: str = "") -> str:
+def get_research_goal(session_id: str = "", ctx: Context | None = None) -> str:
     """Return the current finance research goal snapshot for a session.
 
     Args:
@@ -596,7 +607,7 @@ def get_research_goal(session_id: str = "") -> str:
             its own sessions; this server then uses one id per process.
     """
     try:
-        snapshot = _get_goal_store().get_current_snapshot(_resolve_session_id(session_id))
+        snapshot = _get_goal_store().get_current_snapshot(_resolve_session_id(session_id, ctx))
     except ValueError as exc:
         return _json_error(str(exc), error_type="validation")
     if snapshot is None:
@@ -606,9 +617,9 @@ def get_research_goal(session_id: str = "") -> str:
 
 @mcp.tool
 def add_goal_evidence(
-    goal_id: str,
-    expected_goal_id: str,
     text: str,
+    goal_id: str = "",
+    expected_goal_id: str = "",
     session_id: str = "",
     criterion_id: str | None = None,
     claim_id: str | None = None,
@@ -629,13 +640,16 @@ def add_goal_evidence(
     confidence: str | None = None,
     caveat: str | None = None,
     contradicts_claim_ids: _lenient_str_list_opt = None,
+    ctx: Context | None = None,
 ) -> str:
     """Append traceable evidence to a finance research goal.
 
     Args:
-        goal_id: Goal being mutated.
-        expected_goal_id: Goal id captured before the tool/model turn started.
         text: Evidence note or result summary.
+        goal_id: Optional goal id. Defaults to the current goal for this
+            session.
+        expected_goal_id: Optional stale-write guard captured before the
+            tool/model turn started. Defaults to goal_id.
         session_id: Optional conversation id. Omit it unless the client tracks
             its own sessions; this server then uses one id per process.
         criterion_id: Optional criterion this evidence satisfies.
@@ -644,7 +658,9 @@ def add_goal_evidence(
         tool_call_id: Source tool call id for traceability; it does not verify evidence by itself.
         run_id: Vibe-Trading run id. It verifies evidence only when the run directory exists.
         source_provider: Data/provider name such as yfinance, OKX, tushare.
+            Defaults to "agent_tool" when omitted.
         source_type: Source category such as market_data, document, backtest.
+            Defaults to "tool_note" when omitted.
         source_uri: Optional source URL/path.
         symbol_universe: Symbols covered by the evidence.
         benchmark: Benchmark symbols covered by the evidence.
@@ -661,10 +677,20 @@ def add_goal_evidence(
     try:
         from src.goal import EvidenceInput, StaleGoalError
 
-        evidence = _get_goal_store().append_evidence(
-            session_id=_resolve_session_id(session_id),
-            goal_id=goal_id.strip(),
-            expected_goal_id=expected_goal_id.strip(),
+        store = _get_goal_store()
+        resolved_session_id = _resolve_session_id(session_id, ctx)
+        resolved_goal_id = goal_id.strip()
+        if not resolved_goal_id:
+            snapshot = store.get_current_snapshot(resolved_session_id)
+            if snapshot is None:
+                return _json_error("no current goal for this session", error_type="not_found")
+            resolved_goal_id = str(snapshot["goal"]["goal_id"])
+        resolved_expected_goal_id = expected_goal_id.strip() or resolved_goal_id
+
+        evidence = store.append_evidence(
+            session_id=resolved_session_id,
+            goal_id=resolved_goal_id,
+            expected_goal_id=resolved_expected_goal_id,
             evidence=EvidenceInput(
                 criterion_id=_blank_to_none(criterion_id),
                 claim_id=_blank_to_none(claim_id),
@@ -672,8 +698,8 @@ def add_goal_evidence(
                 text=text,
                 tool_call_id=_blank_to_none(tool_call_id),
                 run_id=_blank_to_none(run_id),
-                source_provider=_blank_to_none(source_provider),
-                source_type=_blank_to_none(source_type),
+                source_provider=_blank_to_none(source_provider) or "agent_tool",
+                source_type=_blank_to_none(source_type) or "tool_note",
                 source_uri=_blank_to_none(source_uri),
                 symbol_universe=_clean_list(symbol_universe),
                 benchmark=_clean_list(benchmark),
@@ -688,7 +714,7 @@ def add_goal_evidence(
                 contradicts_claim_ids=_clean_list(contradicts_claim_ids),
             ),
         )
-        snapshot = _get_goal_store().get_goal_snapshot(goal_id.strip())
+        snapshot = store.get_goal_snapshot(resolved_goal_id)
         if snapshot is None:
             return _json_error("Goal snapshot could not be reloaded")
         from dataclasses import asdict
@@ -702,12 +728,13 @@ def add_goal_evidence(
 
 @mcp.tool
 def update_research_goal_status(
-    goal_id: str,
-    expected_goal_id: str,
     status: str,
+    goal_id: str = "",
+    expected_goal_id: str = "",
     session_id: str = "",
     audit: _lenient_dict_list_opt = None,
     recap: str | None = None,
+    ctx: Context | None = None,
 ) -> str:
     """Update a finance research goal status after an audit.
 
@@ -716,9 +743,11 @@ def update_research_goal_status(
     required criterion and verified evidence for satisfied rows.
 
     Args:
-        goal_id: Goal being mutated.
-        expected_goal_id: Goal id captured before the tool/model turn started.
         status: Goal lifecycle status, e.g. complete, cancelled, blocked.
+        goal_id: Optional goal id. Defaults to the current goal for this
+            session.
+        expected_goal_id: Optional stale-write guard captured before the
+            tool/model turn started. Defaults to goal_id.
         session_id: Optional conversation id. Omit it unless the client tracks
             its own sessions; this server then uses one id per process.
         audit: Optional list of criterion audit rows.
@@ -727,15 +756,25 @@ def update_research_goal_status(
     try:
         from src.goal import GoalStatus, StaleGoalError
 
-        updated = _get_goal_store().update_status(
-            session_id=_resolve_session_id(session_id),
-            goal_id=goal_id.strip(),
-            expected_goal_id=expected_goal_id.strip(),
+        store = _get_goal_store()
+        resolved_session_id = _resolve_session_id(session_id, ctx)
+        resolved_goal_id = goal_id.strip()
+        if not resolved_goal_id:
+            snapshot = store.get_current_snapshot(resolved_session_id)
+            if snapshot is None:
+                return _json_error("no current goal for this session", error_type="not_found")
+            resolved_goal_id = str(snapshot["goal"]["goal_id"])
+        resolved_expected_goal_id = expected_goal_id.strip() or resolved_goal_id
+
+        updated = store.update_status(
+            session_id=resolved_session_id,
+            goal_id=resolved_goal_id,
+            expected_goal_id=resolved_expected_goal_id,
             status=GoalStatus(status),
             audit=_audit_rows_from_payload(audit),
             recap=_blank_to_none(recap),
         )
-        snapshot = _get_goal_store().get_goal_snapshot(updated.goal_id)
+        snapshot = store.get_goal_snapshot(updated.goal_id)
         if snapshot is None:
             return _json_error("Goal snapshot could not be reloaded")
         return _json_ok(goal=snapshot["goal"], snapshot=snapshot)
@@ -1276,9 +1315,7 @@ def get_strategy_evidence(strategy_id: str, regime: str | None = None) -> str:
 
 
 @mcp.tool
-def refresh_strategy_evidence(
-    manifest_path: str | None = None, runs: list | None = None
-) -> str:
+def refresh_strategy_evidence(manifest_path: str | None = None, runs: list | None = None) -> str:
     """Rebuild the strategy-discovery evidence cache from backtest run artifacts.
 
     WRITE tool with disposable-cache-only scope: it replaces the facade-owned
@@ -1315,6 +1352,7 @@ def refresh_strategy_evidence(
 def _trading_common_args(
     *,
     connection: str | None = None,
+    connection_id: str | None = None,
     host: str | None = None,
     port: int | None = None,
     client_id: int | None = None,
@@ -1324,6 +1362,8 @@ def _trading_common_args(
     payload: dict[str, Any] = {}
     if connection:
         payload["connection"] = connection
+    if connection_id:
+        payload["connection_id"] = connection_id
     if host:
         payload["host"] = host
     if port is not None:
@@ -1360,6 +1400,7 @@ def trading_select_connection(connection: str) -> str:
 @mcp.tool
 def trading_check(
     connection: str | None = None,
+    connection_id: str | None = None,
     host: str | None = None,
     port: int | None = None,
     client_id: int | None = None,
@@ -1373,6 +1414,7 @@ def trading_check(
 
     Args:
         connection: Optional profile id. Defaults to the selected profile.
+        connection_id: Optional local connection id whose OS-vault credentials are used.
         host: Optional local host override.
         port: Optional local socket port override.
         client_id: Optional local client id override.
@@ -1381,13 +1423,21 @@ def trading_check(
     registry = _get_registry()
     return registry.execute(
         "trading_check",
-        _trading_common_args(connection=connection, host=host, port=port, client_id=client_id, account=account),
+        _trading_common_args(
+            connection=connection,
+            connection_id=connection_id,
+            host=host,
+            port=port,
+            client_id=client_id,
+            account=account,
+        ),
     )
 
 
 @mcp.tool
 def trading_account(
     connection: str | None = None,
+    connection_id: str | None = None,
     host: str | None = None,
     port: int | None = None,
     client_id: int | None = None,
@@ -1397,6 +1447,7 @@ def trading_account(
 
     Args:
         connection: Optional profile id. Defaults to the selected profile.
+        connection_id: Optional local connection id whose OS-vault credentials are used.
         host: Optional local host override.
         port: Optional local socket port override.
         client_id: Optional local client id override.
@@ -1405,13 +1456,21 @@ def trading_account(
     registry = _get_registry()
     return registry.execute(
         "trading_account",
-        _trading_common_args(connection=connection, host=host, port=port, client_id=client_id, account=account),
+        _trading_common_args(
+            connection=connection,
+            connection_id=connection_id,
+            host=host,
+            port=port,
+            client_id=client_id,
+            account=account,
+        ),
     )
 
 
 @mcp.tool
 def trading_positions(
     connection: str | None = None,
+    connection_id: str | None = None,
     host: str | None = None,
     port: int | None = None,
     client_id: int | None = None,
@@ -1421,6 +1480,7 @@ def trading_positions(
 
     Args:
         connection: Optional profile id. Defaults to the selected profile.
+        connection_id: Optional local connection id whose OS-vault credentials are used.
         host: Optional local host override.
         port: Optional local socket port override.
         client_id: Optional local client id override.
@@ -1429,13 +1489,21 @@ def trading_positions(
     registry = _get_registry()
     return registry.execute(
         "trading_positions",
-        _trading_common_args(connection=connection, host=host, port=port, client_id=client_id, account=account),
+        _trading_common_args(
+            connection=connection,
+            connection_id=connection_id,
+            host=host,
+            port=port,
+            client_id=client_id,
+            account=account,
+        ),
     )
 
 
 @mcp.tool
 def trading_orders(
     connection: str | None = None,
+    connection_id: str | None = None,
     host: str | None = None,
     port: int | None = None,
     client_id: int | None = None,
@@ -1454,7 +1522,9 @@ def trading_orders(
         account: Optional account code filter.
         include_executions: Include recent executions when available.
     """
-    params = _trading_common_args(connection=connection, host=host, port=port, client_id=client_id, account=account)
+    params = _trading_common_args(
+        connection=connection, connection_id=connection_id, host=host, port=port, client_id=client_id, account=account
+    )
     params["include_executions"] = include_executions
     registry = _get_registry()
     return registry.execute("trading_orders", params)
@@ -1464,6 +1534,7 @@ def trading_orders(
 def trading_quote(
     symbol: str,
     connection: str | None = None,
+    connection_id: str | None = None,
     host: str | None = None,
     port: int | None = None,
     client_id: int | None = None,
@@ -1485,7 +1556,9 @@ def trading_quote(
         currency: Contract currency, default USD.
         sec_type: Security type, default STK.
     """
-    params = _trading_common_args(connection=connection, host=host, port=port, client_id=client_id, account=account)
+    params = _trading_common_args(
+        connection=connection, connection_id=connection_id, host=host, port=port, client_id=client_id, account=account
+    )
     params.update({"symbol": symbol, "exchange": exchange, "currency": currency, "sec_type": sec_type})
     registry = _get_registry()
     return registry.execute("trading_quote", params)
@@ -1495,6 +1568,7 @@ def trading_quote(
 def trading_history(
     symbol: str,
     connection: str | None = None,
+    connection_id: str | None = None,
     host: str | None = None,
     port: int | None = None,
     client_id: int | None = None,
@@ -1528,7 +1602,9 @@ def trading_history(
         period: Bar interval for SDK connectors (broker_sdk): 1m/5m/1h/1d/1w.
         limit: Number of bars for SDK connectors.
     """
-    params = _trading_common_args(connection=connection, host=host, port=port, client_id=client_id, account=account)
+    params = _trading_common_args(
+        connection=connection, connection_id=connection_id, host=host, port=port, client_id=client_id, account=account
+    )
     params.update(
         {
             "symbol": symbol,
@@ -1612,9 +1688,7 @@ async def run_swarm(
     runtime = SwarmRuntime(store=store, agent_config=agent_config)
 
     try:
-        run = runtime.start_run(
-            preset_name, variables, include_shell_tools=_include_shell_tools
-        )
+        run = runtime.start_run(preset_name, variables, include_shell_tools=_include_shell_tools)
     except FileNotFoundError as exc:
         return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False)
     except ValueError as exc:
@@ -1682,6 +1756,7 @@ async def run_swarm(
 # Market data tool
 # ---------------------------------------------------------------------------
 
+
 def _detect_source(code: str) -> str:
     return detect_source(code)
 
@@ -1746,16 +1821,29 @@ def get_market_data(
     single shares). Each symbol's ``_provenance.volume_unit`` states the unit
     of the returned rows ("lots" / "shares"; null = source undeclared) — read
     it before interpreting or comparing volume values across symbols/sources.
+
+    Price caliber: which source served a symbol decides what its prices mean
+    (some adjust for splits and dividends, others serve raw quotes). Each
+    symbol's ``_provenance.adjustment`` states the caliber ("raw" / "split" /
+    "split_dividend" / "na" / "unknown") — read it before comparing price
+    levels across symbols.
     """
-    return fetch_market_data_json(
-        codes=codes,
-        start_date=start_date,
-        end_date=end_date,
-        source=source,
-        interval=interval,
-        max_rows=max_rows,
-        loader_resolver=_get_loader,
-        include_provenance=True,
+    registry = _get_registry()
+    return registry.execute(
+        "get_market_data",
+        {
+            "codes": codes,
+            "start_date": start_date,
+            "end_date": end_date,
+            "source": source,
+            "interval": interval,
+            "max_rows": max_rows,
+            # Internal hook, not an agent-facing parameter: keeps the MCP
+            # surface resolving loaders through mcp_server._get_loader (the
+            # contract the regression tests and the server's own loader
+            # diagnostics rely on) instead of the tool's default resolver.
+            "loader_resolver": _get_loader,
+        },
     )
 
 
@@ -1981,7 +2069,12 @@ def get_sector_info(code: str | None = None, mode: str = "membership", limit: in
 
 
 @mcp.tool
-def get_research_reports(code: str, limit: int = 20) -> str:
+def get_research_reports(
+    code: str,
+    limit: int = 20,
+    beginTime: str | None = None,
+    endTime: str | None = None,
+) -> str:
     """Fetch mainland A-share sell-side research coverage and consensus forecasts.
 
     Returns recent broker research reports (title, brokerage, analyst, publish
@@ -1992,9 +2085,18 @@ def get_research_reports(code: str, limit: int = 20) -> str:
     Args:
         code: A-share symbol in <code>.<exchange> form (SH/SZ/BJ).
         limit: Maximum number of most-recent research reports to return.
+        beginTime: Earliest report publish date (inclusive), 'YYYYMMDD'.
+            Optional; defaults to the start of a trailing two-year window.
+        endTime: Latest report publish date (inclusive), 'YYYYMMDD'.
+            Optional; defaults to today.
     """
+    params: dict[str, Any] = {"code": code, "limit": limit}
+    if beginTime:
+        params["beginTime"] = beginTime
+    if endTime:
+        params["endTime"] = endTime
     registry = _get_registry()
-    return registry.execute("get_research_reports", {"code": code, "limit": limit})
+    return registry.execute("get_research_reports", params)
 
 
 @mcp.tool
@@ -2099,7 +2201,7 @@ def get_options_chain(ticker: str, expiration: int | None = None) -> str:
 
 @mcp.tool
 def get_stock_profile(ticker: str, sections: _lenient_str_list_opt = None) -> str:
-    """Fetch a read-only company profile for a US or HK listing (Yahoo Finance).
+    """Fetch a read-only company profile for a US, HK, or UK (LSE .L) listing (Yahoo Finance).
 
     Returns valuation key statistics, analyst price targets and
     earnings/revenue estimates, institutional and insider ownership, and the
@@ -2107,7 +2209,8 @@ def get_stock_profile(ticker: str, sections: _lenient_str_list_opt = None) -> st
     context, not for OHLCV price bars (use get_market_data).
 
     Args:
-        ticker: US (bare or .US suffix) or HK (zero-padded .HK code) symbol.
+        ticker: US (bare or .US suffix), HK (zero-padded .HK code), or
+            UK (LSE .L, e.g. VOD.L) symbol.
         sections: Profile sections to return, any of: key_stats, financials,
             earnings_trend, institution_ownership, insider_holders,
             recommendation_trend. Defaults to all sections.
@@ -2367,9 +2470,7 @@ def _mirrored_tool_classes() -> list[Any]:
         try:
             classes.append(getattr(import_module(module_path), class_name))
         except Exception:  # noqa: BLE001 - one unavailable module, not four
-            logger.exception(
-                "Tool module %s is unavailable; its MCP tool will be absent", module_path
-            )
+            logger.exception("Tool module %s is unavailable; its MCP tool will be absent", module_path)
     return classes
 
 
@@ -2457,8 +2558,7 @@ def _register_mirrored_tool(tool_cls: Any) -> bool:
     name = getattr(tool_cls, "name", "")
     if getattr(tool_cls, "is_readonly", False) is not True:
         logger.error(
-            "Refusing to expose non-read-only tool %r via MCP; only read-only "
-            "tools are ever surfaced.",
+            "Refusing to expose non-read-only tool %r via MCP; only read-only tools are ever surfaced.",
             name or tool_cls,
         )
         return False
@@ -2946,9 +3046,7 @@ def main():
         default="127.0.0.1",
         help="Network bind host for --transport sse / http (default: 127.0.0.1)",
     )
-    parser.add_argument(
-        "--port", type=int, default=8900, help="SSE/HTTP port (default: 8900)"
-    )
+    parser.add_argument("--port", type=int, default=8900, help="SSE/HTTP port (default: 8900)")
     parser.add_argument(
         "--enable-shell-tools",
         action="store_true",
@@ -2986,9 +3084,7 @@ def main():
 
         _migrate.migrate_legacy_state()
     except Exception:  # pragma: no cover — best-effort
-        logging.getLogger(__name__).warning(
-            "Legacy state migration failed", exc_info=True
-        )
+        logging.getLogger(__name__).warning("Legacy state migration failed", exc_info=True)
 
     _include_shell_tools = _resolve_include_shell_tools(args.enable_shell_tools)
     _registry = None
@@ -3005,9 +3101,7 @@ def main():
 
         from src.config.accessor import get_env_config
 
-        allowed_hosts = _parse_allowed_hosts(
-            get_env_config().api.vibe_trading_mcp_allowed_hosts
-        )
+        allowed_hosts = _parse_allowed_hosts(get_env_config().api.vibe_trading_mcp_allowed_hosts)
         transport = "streamable-http" if args.transport == "http" else "sse"
         app = _build_network_app(transport, allowed_hosts)
         uvicorn.run(app, host=args.host, port=args.port)

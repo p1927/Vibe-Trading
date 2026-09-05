@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -73,8 +74,47 @@ def _stream_retry_delay_s() -> float:
     return get_env_config().swarm.swarm_stream_retry_delay_s
 
 
+def _stream_retry_max_delay_s() -> float:
+    """Resolve the cap for the escalating stream-retry delay, robust to garbage.
+
+    Returns:
+        Upper bound in seconds for both the escalated exponential delay and a
+        provider-suggested ``Retry-After``. Configurable via
+        ``SWARM_STREAM_RETRY_MAX_DELAY_S``; a non-numeric value fails config
+        validation, mirroring the other swarm delay knobs.
+    """
+    from src.config.accessor import get_env_config
+
+    return get_env_config().swarm.swarm_stream_retry_max_delay_s
+
+
+def _escalated_stream_retry_delay_s(streak: int) -> float:
+    """Return the capped exponential delay for the one-based failure streak.
+
+    Doubles per consecutive retryable failure (1.0s, 2.0s, 4.0s, ...) so a
+    sustained provider outage backs off instead of burning the retry budget
+    at a constant cadence. The exponent is clamped at 62 (mirroring
+    ``src/swarm/runtime.py``'s worker-level backoff) and the result is capped
+    at ``_STREAM_RETRY_MAX_DELAY_S`` so a long outage never exceeds the
+    configured ceiling.
+
+    Args:
+        streak: Number of consecutive retryable stream failures including the
+            current one; values below 1 are treated as 1.
+
+    Returns:
+        Seconds to sleep before the stream retry, never negative.
+    """
+    ceiling = min(
+        _STREAM_RETRY_DELAY_S * (2 ** min(max(streak, 1) - 1, 62)),
+        _STREAM_RETRY_MAX_DELAY_S,
+    )
+    return max(ceiling, 0.0)
+
+
 _HEARTBEAT_INTERVAL_S = _heartbeat_interval_s()
 _STREAM_RETRY_DELAY_S = _stream_retry_delay_s()
+_STREAM_RETRY_MAX_DELAY_S = _stream_retry_max_delay_s()
 _MAX_TOKEN_ESTIMATE = 60_000
 
 
@@ -416,6 +456,7 @@ def run_worker(
     include_shell_tools: bool = False,
     grounding_block: str = "",
     agent_config: AgentConfig | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> WorkerResult:
     """Run one worker task, releasing the per-task LLM client on exit.
 
@@ -441,6 +482,13 @@ def run_worker(
             consumed by :func:`build_swarm_registry` to merge remote MCP
             tools with the local-tool pool before applying the agent's
             whitelist. ``None`` preserves the prior local-only behavior.
+        cancel_event: Optional cancellation signal from
+            :meth:`SwarmRuntime.cancel_run`. Checked at the top of each
+            ReAct iteration and passed into the LLM stream as
+            ``should_cancel``, mirroring ``AgentLoop``'s cooperative
+            cancellation contract: an in-flight LLM stream stops promptly
+            and that turn's tool calls are skipped; a tool call already
+            executing is not interrupted.
 
     Returns:
         WorkerResult with status, summary, artifacts, and iteration count.
@@ -458,6 +506,7 @@ def run_worker(
             include_shell_tools=include_shell_tools,
             grounding_block=grounding_block,
             agent_config=agent_config,
+            cancel_event=cancel_event,
         )
     finally:
         llm.close()
@@ -475,6 +524,7 @@ def _run_worker_impl(
     agent_config: AgentConfig | None = None,
     *,
     llm: ChatLLM,
+    cancel_event: threading.Event | None = None,
 ) -> WorkerResult:
     """Execute a single worker task using a lightweight ReAct loop.
 
@@ -504,6 +554,13 @@ def _run_worker_impl(
             consumed by :func:`build_swarm_registry` to merge remote MCP
             tools with the local-tool pool before applying the agent's
             whitelist. ``None`` preserves the prior local-only behavior.
+        cancel_event: Optional cancellation signal from
+            :meth:`SwarmRuntime.cancel_run`. Checked at the top of each
+            ReAct iteration and passed into the LLM stream as
+            ``should_cancel``, mirroring ``AgentLoop``'s cooperative
+            cancellation contract: an in-flight LLM stream stops promptly
+            and that turn's tool calls are skipped; a tool call already
+            executing is not interrupted.
 
     Returns:
         WorkerResult with status, summary, artifacts, and iteration count.
@@ -572,6 +629,7 @@ def _run_worker_impl(
     data_tool_calls = 0
     content_filter_count = 0
     consecutive_content_filter_count = 0
+    stream_failure_streak = 0
 
     for iteration in range(max_iterations):
         # Microcompact: clear old tool results to prevent token bloat
@@ -592,6 +650,26 @@ def _run_worker_impl(
             _persist_messages(artifact_dir, messages)
             return WorkerResult(
                 status="timeout",
+                summary=summary,
+                artifact_paths=_collect_artifacts(artifact_dir),
+                iterations=iteration,
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                content_filter_warnings=compute_content_filter_warnings(
+                    content_filter_count, iteration + 1,
+                ),
+            )
+
+        # Check cancellation — before dispatching this iteration's LLM call,
+        # so a cancel signalled between iterations never starts new work.
+        if cancel_event is not None and cancel_event.is_set():
+            cancelled_summary = last_assistant_content or f"Cancelled after {iteration} iterations"
+            summary = _resolve_summary(artifact_dir, cancelled_summary)
+            _emit(event_callback, "worker_cancelled", agent_id, task_id, {"iterations": iteration})
+            _write_summary(artifact_dir, summary)
+            _persist_messages(artifact_dir, messages)
+            return WorkerResult(
+                status="cancelled",
                 summary=summary,
                 artifact_paths=_collect_artifacts(artifact_dir),
                 iterations=iteration,
@@ -686,6 +764,9 @@ def _run_worker_impl(
                     ProviderStreamError: When provider streaming fails.
                 """
                 remaining_timeout = max(10, int(timeout - (time.monotonic() - t0)))
+                stream_kwargs: dict[str, Any] = {}
+                if cancel_event is not None:
+                    stream_kwargs["should_cancel"] = cancel_event.is_set
                 with HeartbeatTimer(
                     tool_name=f"llm:{agent_spec.model_name or 'default'}",
                     interval=_HEARTBEAT_INTERVAL_S,
@@ -696,30 +777,74 @@ def _run_worker_impl(
                         tools=tool_defs,
                         timeout=remaining_timeout,
                         on_text_chunk=_on_text_chunk,
+                        **stream_kwargs,
                     )
 
             # A transient mid-stream hiccup (connection reset) used to be
             # absorbed by ChatLLM's silent non-streaming fallback; it now
             # surfaces as ProviderStreamError, so retry the stream exactly
             # once before taking the existing failure path. Deterministic
-            # 4xx errors skip the retry and fail immediately.
+            # 4xx errors skip the retry and fail immediately. The delay
+            # escalates across consecutive retryable failures, honoring the
+            # provider's Retry-After header (bounded by the configured cap)
+            # when present. A successful retry does not reset the streak —
+            # only a clean first-attempt success does.
             try:
                 response = _stream_once()
             except ProviderStreamError as stream_exc:
                 if not stream_exc.retryable:
                     raise
+                stream_failure_streak += 1
+                retry_delay_s = (
+                    min(stream_exc.retry_after_s, _STREAM_RETRY_MAX_DELAY_S)
+                    if stream_exc.retry_after_s is not None
+                    else _escalated_stream_retry_delay_s(stream_failure_streak)
+                )
                 logger.warning(
                     "Provider stream failed for agent=%s task=%s iteration=%d "
-                    "(provider=%s model=%s); retrying once: %s",
+                    "(provider=%s model=%s); retrying once in %.2fs: %s",
                     agent_id,
                     task_id,
                     iteration,
                     stream_exc.provider,
                     stream_exc.model,
+                    retry_delay_s,
                     stream_exc,
                 )
-                time.sleep(_STREAM_RETRY_DELAY_S)
-                response = _stream_once()
+                # Wait on the cancel event, not time.sleep: the delay now
+                # escalates to the configured cap (30s by default) and a
+                # provider Retry-After can ask for that much on the first
+                # failure. A blocking sleep would hold a cancelled worker
+                # for the whole delay before the check below sees the flag.
+                if cancel_event is not None:
+                    cancel_event.wait(retry_delay_s)
+                else:
+                    time.sleep(retry_delay_s)
+                if cancel_event is None or not cancel_event.is_set():
+                    response = _stream_once()
+            else:
+                stream_failure_streak = 0
+
+            # Cancelled mid-stream: discard this turn's partial response and
+            # stop now, without executing any of its tool calls — mirrors
+            # AgentLoop's contract for the identical should_cancel signal.
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled_summary = last_assistant_content or f"Cancelled after {iteration} iterations"
+                summary = _resolve_summary(artifact_dir, cancelled_summary)
+                _emit(event_callback, "worker_cancelled", agent_id, task_id, {"iterations": iteration})
+                _write_summary(artifact_dir, summary)
+                _persist_messages(artifact_dir, messages)
+                return WorkerResult(
+                    status="cancelled",
+                    summary=summary,
+                    artifact_paths=_collect_artifacts(artifact_dir),
+                    iterations=iteration,
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    content_filter_warnings=compute_content_filter_warnings(
+                        content_filter_count, iteration + 1,
+                    ),
+                )
         except Exception as exc:
             error_msg = f"LLM call failed at iteration {iteration}: {exc}"
             logger.warning(error_msg)

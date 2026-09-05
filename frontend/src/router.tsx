@@ -32,6 +32,9 @@ const PositionsBoard = lazy(() =>
 const Reports = lazy(() =>
   import("@/pages/Reports").then((m) => ({ default: m.Reports })),
 );
+const Portfolio = lazy(() =>
+  import("@/pages/Portfolio").then((m) => ({ default: m.Portfolio })),
+);
 const Correlation = lazy(() =>
   import("@/pages/Correlation").then((m) => ({ default: m.Correlation })),
 );
@@ -103,6 +106,7 @@ export const router = createBrowserRouter([
       { path: "/runtime", element: wrap(Runtime) },
       { path: "/scheduled", element: wrap(Scheduled) },
       { path: "/reports", element: wrap(Reports) },
+      { path: "/portfolio", element: wrap(Portfolio) },
       { path: "/settings", element: wrap(Settings) },
       { path: "/model-adapters", element: wrap(ModelAdapters) },
       { path: "/runs/:runId", element: wrap(RunDetail) },

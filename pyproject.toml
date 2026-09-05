@@ -55,7 +55,10 @@ dependencies = [
     "pydantic>=2.0.0",
     "python-multipart>=0.0.18",
     "sse-starlette>=1.6.0",
-    "fastmcp>=2.14.0",
+    # 4.0.0 changed MCPError's constructor (message is now separate) and the
+    # session snapshot shape; tests construct it the 2.x way. Cap until the
+    # adaptation lands.
+    "fastmcp>=2.14.0,<4.0.0",
     "ddgs>=6.0.0",
     "jinja2>=3.1.0",
     "matplotlib>=3.7.0",
@@ -162,6 +165,13 @@ smc = [
     # macOS x86_64 wheel from 0.46 on: as a base dependency it turned every
     # Intel-Mac install into a source build that needs cmake (discussion #1035).
     "smartmoneyconcepts>=0.0.27",
+]
+keyring = [
+    # OS credential vault (Keychain / Credential Manager / Secret Service) for
+    # user-installed local read-only connector plugins. CredentialStore imports
+    # it lazily and raises an actionable hint naming this extra, so a base
+    # install stays lean for users who configure no local connector.
+    "keyring>=25.0.0",
 ]
 dingtalk = [
     "dingtalk-stream>=0.24.0",
