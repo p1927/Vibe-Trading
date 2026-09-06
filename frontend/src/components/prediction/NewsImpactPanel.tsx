@@ -51,10 +51,43 @@ function statusBadge(status?: string) {
   }
 }
 
-function formatPts(n?: number) {
+function formatPts(n?: number | null) {
   if (n == null || Number.isNaN(n)) return "—";
   const sign = n > 0 ? "+" : "";
   return `${sign}${n.toFixed(0)} pts`;
+}
+
+/** Machine-readable `no_forecast_reason` values emitted by news_impact_engine._no_forecast. */
+const NO_FORECAST_REASON_LABELS: Record<string, string> = {
+  uncalibrated_bucket: "no calibrated magnitude for this kind of story yet",
+  no_directional_cause_indicators: "no directional cause was extracted from the story",
+  direction_unresolved: "the extracted causes point in conflicting directions",
+  no_spot_or_primary_factor: "no index level or primary factor to score against",
+  calibration_lookup_failed: "the calibration lookup failed",
+  simulate_index_prediction_failed: "the index simulation failed",
+  ledger_row_had_no_forecast: "the stored ledger row carried no forecast",
+};
+
+function noForecastReasonLabel(reason?: string | null): string {
+  if (!reason) return "the engine declined to forecast (no reason recorded)";
+  return NO_FORECAST_REASON_LABELS[reason] ?? reason.replace(/_/g, " ");
+}
+
+/**
+ * True when the engine explicitly declined to forecast, per Decision 14 of
+ * 2026-09-06-news-impact-constant. Checked via `forecast_available === false` first (the
+ * unambiguous signal) and falling back to "both figures are null on a non-empty blob" for
+ * events stored before that field existed. Deliberately NOT `!predicted?.return_pct`: a
+ * genuine 0.0% forecast is falsy and is a real prediction, not a silence.
+ */
+function noForecast(predicted?: {
+  return_pct?: number | null;
+  nifty_points?: number | null;
+  forecast_available?: boolean;
+} | null): boolean {
+  if (!predicted) return false;
+  if (predicted.forecast_available === false) return true;
+  return predicted.return_pct == null && predicted.nifty_points == null;
 }
 
 function consensusBadge(consensus?: {
@@ -530,19 +563,35 @@ export function NewsImpactPanel({
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   <div className="rounded-lg bg-muted/40 px-3 py-2">
                     <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Model predicted</p>
-                    <p
-                      className={cn(
-                        "text-[14px] font-semibold tabular-nums",
-                        (predicted?.nifty_points ?? 0) < 0
-                          ? "text-red-600 dark:text-red-400"
-                          : "text-emerald-700 dark:text-emerald-400",
-                      )}
-                    >
-                      {formatPts(predicted?.nifty_points)}
-                      {predicted?.return_pct != null
-                        ? ` (${predicted.return_pct > 0 ? "+" : ""}${predicted.return_pct.toFixed(2)}%)`
-                        : ""}
-                    </p>
+                    {noForecast(predicted) ? (
+                      // Decision 14 of 2026-09-06-news-impact-constant: when the engine has
+                      // no calibrated number for this story's bucket it emits an explicit
+                      // null forecast with a reason instead of inventing one. Rendering that
+                      // through formatPts produced a green em-dash under "Model predicted",
+                      // indistinguishable from a zero or from a value still loading — which
+                      // is the exact misreading the decision exists to prevent. The absence
+                      // is the information, so say it in words and show the reason.
+                      <>
+                        <p className="text-[13px] font-semibold text-muted-foreground">No forecast</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {noForecastReasonLabel(predicted?.no_forecast_reason)}
+                        </p>
+                      </>
+                    ) : (
+                      <p
+                        className={cn(
+                          "text-[14px] font-semibold tabular-nums",
+                          (predicted?.nifty_points ?? 0) < 0
+                            ? "text-red-600 dark:text-red-400"
+                            : "text-emerald-700 dark:text-emerald-400",
+                        )}
+                      >
+                        {formatPts(predicted?.nifty_points)}
+                        {predicted?.return_pct != null
+                          ? ` (${predicted.return_pct > 0 ? "+" : ""}${predicted.return_pct.toFixed(2)}%)`
+                          : ""}
+                      </p>
+                    )}
                     <p className="text-[10px] text-muted-foreground">
                       Horizon: {item.horizon_trading_days ?? horizonDays} sessions
                       {item.maturity_date ? ` → ${item.maturity_date}` : ""}

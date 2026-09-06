@@ -5292,8 +5292,18 @@ export interface HubNewsCalendarEventFactCheck {
 }
 
 export interface HubNewsImpactFigures {
-  return_pct?: number;
-  nifty_points?: number;
+  // `return_pct`/`nifty_points` are nullable, not merely optional: since Decision 14 of
+  // 2026-09-06-news-impact-constant the engine emits an explicit *null* forecast with a
+  // machine-readable reason rather than a fabricated number when its calibration bucket has
+  // nothing learned. Typing these as plain `number` was a lie the compiler then propagated
+  // into `.toFixed()` call sites. `forecast_available === false` means "we ran and declined
+  // to forecast" — a different, louder statement than the field simply being absent, and it
+  // must be rendered as such rather than as a dash that reads like a zero.
+  return_pct?: number | null;
+  nifty_points?: number | null;
+  forecast_available?: boolean;
+  no_forecast_reason?: string | null;
+  model?: string;
   reconciled_at?: string;
   [key: string]: unknown;
 }
@@ -5937,14 +5947,20 @@ export interface NewsImpactItem {
   verification_status?: string;
   horizon_trading_days?: number;
   maturity_date?: string | null;
+  // See HubNewsImpactFigures above for why these are `number | null` and what
+  // `forecast_available: false` means (Decision 14, 2026-09-06-news-impact-constant).
   predicted?: {
-    return_pct?: number;
-    nifty_points?: number;
+    return_pct?: number | null;
+    nifty_points?: number | null;
+    forecast_available?: boolean;
+    no_forecast_reason?: string | null;
     model?: string;
   };
   predicted_impact?: {
-    return_pct?: number;
-    nifty_points?: number;
+    return_pct?: number | null;
+    nifty_points?: number | null;
+    forecast_available?: boolean;
+    no_forecast_reason?: string | null;
     model?: string;
   };
   actual?: {

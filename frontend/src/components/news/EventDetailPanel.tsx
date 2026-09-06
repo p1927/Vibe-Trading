@@ -6,17 +6,40 @@ export type CalendarEventItem =
   | { kind: "news"; key: string; data: HubNewsCalendarEvent }
   | { kind: "calendar"; key: string; data: HistoricalUpcomingEvent };
 
-function returnDirection(returnPct?: number): "up" | "down" | "flat" | null {
+function returnDirection(returnPct?: number | null): "up" | "down" | "flat" | null {
   if (returnPct === undefined || returnPct === null) return null;
   if (returnPct > 0) return "up";
   if (returnPct < 0) return "down";
   return "flat";
 }
 
-function formatReturnPct(returnPct?: number): string | null {
+function formatReturnPct(returnPct?: number | null): string | null {
   if (returnPct === undefined || returnPct === null) return null;
   const sign = returnPct > 0 ? "+" : "";
   return `${sign}${returnPct.toFixed(2)}%`;
+}
+
+/** Human label for news_impact_engine._no_forecast's machine-readable reason codes. */
+const NO_FORECAST_REASON_LABELS: Record<string, string> = {
+  uncalibrated_bucket: "no calibrated magnitude for this kind of story yet",
+  no_directional_cause_indicators: "no directional cause was extracted from the story",
+  direction_unresolved: "the extracted causes point in conflicting directions",
+  no_spot_or_primary_factor: "no index level or primary factor to score against",
+  calibration_lookup_failed: "the calibration lookup failed",
+  simulate_index_prediction_failed: "the index simulation failed",
+  ledger_row_had_no_forecast: "the stored ledger row carried no forecast",
+};
+
+function noForecastNote(predicted?: HubNewsImpactFigures | null): string | null {
+  if (!predicted) return null;
+  const declined =
+    predicted.forecast_available === false ||
+    (predicted.return_pct == null && predicted.nifty_points == null);
+  if (!declined) return null;
+  const reason = predicted.no_forecast_reason;
+  return reason
+    ? NO_FORECAST_REASON_LABELS[reason] ?? String(reason).replace(/_/g, " ")
+    : "the engine declined to forecast (no reason recorded)";
 }
 
 function directionTone(direction: "up" | "down" | "flat" | null): string {
@@ -42,15 +65,21 @@ function EventResultBlock({
   predicted?: HubNewsImpactFigures | null;
   actual?: HubNewsImpactFigures | null;
 }) {
-  const actualReturn = actual?.return_pct as number | undefined;
-  const predictedReturn = predicted?.return_pct as number | undefined;
+  const actualReturn = actual?.return_pct as number | null | undefined;
+  const predictedReturn = predicted?.return_pct as number | null | undefined;
   const hasActual = actualReturn !== undefined && actualReturn !== null;
   const actualDirection = returnDirection(actualReturn);
+  // Decision 14 of 2026-09-06-news-impact-constant. The old code simply omitted the
+  // "(predicted ...)" clause when the forecast was null, so a story the engine had
+  // explicitly refused to forecast looked identical to one that was never scored. Hiding
+  // the row is as misleading as printing a zero — the refusal is the finding.
+  const noForecast = noForecastNote(predicted);
 
   if (!hasActual) {
     return (
       <p className="rounded-md border border-dashed bg-muted/10 px-2.5 py-2 text-[12px] text-muted-foreground">
         Outcome not yet reconciled from the news hub for this event.
+        {noForecast ? ` No forecast was issued either — ${noForecast}.` : ""}
       </p>
     );
   }
@@ -66,6 +95,8 @@ function EventResultBlock({
           <span className="text-muted-foreground">
             (predicted {formatReturnPct(predictedReturn)})
           </span>
+        ) : noForecast ? (
+          <span className="text-muted-foreground">(no forecast was issued — {noForecast})</span>
         ) : null}
       </div>
     </div>

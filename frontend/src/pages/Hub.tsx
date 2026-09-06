@@ -92,10 +92,16 @@ function marketImpactBadge(status?: string) {
         ? "text-blue-700 dark:text-blue-400 bg-blue-500/10"
         : s === "claimed"
           ? "text-amber-700 dark:text-amber-400 bg-amber-500/10"
-          : "text-muted-foreground bg-muted";
+          : // An explicit "no_forecast" (Decision 14 of 2026-09-06-news-impact-constant:
+            // the engine ran and declined to predict) is a distinct state from "unverified"
+            // (nothing has looked at it yet), so it gets its own neutral-but-deliberate tone
+            // rather than sharing the do-nothing muted default.
+            s === "no_forecast"
+            ? "text-slate-700 dark:text-slate-300 bg-slate-500/10 ring-1 ring-slate-500/20"
+            : "text-muted-foreground bg-muted";
   return (
     <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium capitalize", tone)}>
-      {s}
+      {s === "no_forecast" ? "no forecast" : s}
     </span>
   );
 }
