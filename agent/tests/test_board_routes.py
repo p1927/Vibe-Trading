@@ -31,6 +31,13 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     same fragility pattern in a different test file."""
     tmp = Path(tempfile.mkdtemp(prefix="board_routes_test_"))
     monkeypatch.setenv("TRADE_STACK_HUB_DIR", str(tmp))
+    # Isolate MLflow too. Proposing a weight logs an MLflow run, and every call site uses a
+    # *relative* `sqlite:///mlflow.db`, so the db picked up depends on the working
+    # directory: from `vibetrading/` it resolves to a db at the installed schema, from
+    # `vibetrading/agent/` to a tracked one that is schema-*ahead* of installed mlflow, and
+    # the three proposal tests fail with a misleading "out-of-date schema" error. Note
+    # `mlflow db upgrade` is not the fix — that revision does not exist in this mlflow.
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", f"sqlite:///{tmp / 'mlflow.db'}")
     monkeypatch.setattr(api_server, "_API_KEY", "")
     return TestClient(api_server.app, client=("127.0.0.1", 50000))
 
