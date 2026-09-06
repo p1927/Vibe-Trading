@@ -32,7 +32,11 @@ def check_environment() -> CheckResult:
         f"index={'on' if index_on else 'off'} "
         f"monitor={'on' if monitor_on else 'off'}"
     )
-    executor_hint = "executor will start" if master else "executor skipped (master off)"
+    executor_hint = (
+        "executor starts paused; resume via POST /scheduled-runs/scheduler/resume"
+        if master
+        else "executor skipped (master off)"
+    )
 
     status = "ready"
     if not report.layers_loaded and not master and not index_on and not monitor_on:
