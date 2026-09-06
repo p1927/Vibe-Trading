@@ -79,6 +79,15 @@ def _load_recording_wake():
     return RECORDING_WAKE_JOB_TYPES, dispatch_recording_wake_job
 
 
+def _load_factor_health():
+    from src.scheduled_research.factor_health_jobs import (
+        FACTOR_HEALTH_JOB_TYPES,
+        dispatch_factor_health_job,
+    )
+
+    return FACTOR_HEALTH_JOB_TYPES, dispatch_factor_health_job
+
+
 def _load_dst_eval():
     from src.scheduled_research.dst_eval_jobs import DST_EVAL_JOB_TYPES, dispatch_dst_eval_job
 
@@ -97,6 +106,7 @@ _DISPATCH_LOADERS: tuple[Callable[[], tuple[frozenset, Callable[..., Awaitable[N
     _load_autonomous,
     _load_recording_wake,
     _load_dst_eval,
+    _load_factor_health,
 )
 
 
