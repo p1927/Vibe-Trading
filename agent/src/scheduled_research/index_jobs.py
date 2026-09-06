@@ -1381,7 +1381,11 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "job_type": JOB_TYPE_HUB_NEWS_INGEST,
                 "mode": "full",
                 "ticker": "TASI",
-                "market": "ME",
+                # D53 (Trade repo): `ME` was never a region — every unprefixed `ME` factor was
+                # Saudi's — so the market code is `SA` now. The job `id` is deliberately NOT
+                # renamed: it is the persisted key in the scheduled-job store, and changing it
+                # would orphan this job's run history and create a duplicate alongside it.
+                "market": "SA",
                 # No searxng: live-tested 2026-08-25, both TASI/Tadawul-themed
                 # queries returned total noise (Stack Overflow questions, Las
                 # Vegas Burger King locations — no relation to the query terms
@@ -1411,7 +1415,11 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "job_type": JOB_TYPE_HUB_NEWS_INGEST,
                 "mode": "light",
                 "ticker": "TASI",
-                "market": "ME",
+                # D53 (Trade repo): `ME` was never a region — every unprefixed `ME` factor was
+                # Saudi's — so the market code is `SA` now. The job `id` is deliberately NOT
+                # renamed: it is the persisted key in the scheduled-job store, and changing it
+                # would orphan this job's run history and create a duplicate alongside it.
+                "market": "SA",
                 "sources": get_env_config().trade.hub_news_light_sources,
                 "lookback_days": 1,
                 "dispatch_timeout_ms": _HUB_NEWS_LIGHT_TIGHT_INGEST_DISPATCH_TIMEOUT_MS,
@@ -1430,7 +1438,9 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "job_type": JOB_TYPE_HUB_NEWS_INGEST,
                 "mode": "full",
                 "ticker": "IBOVESPA",
-                "market": "LATAM",
+                # D53 (Trade repo): `LATAM` was Brazil. Job `id` kept for the same reason as the
+                # Saudi jobs above — it is a persisted store key, not a label.
+                "market": "BR",
                 # No searxng: live-tested 2026-08-25 — returned Reddit forum
                 # content with no relation to the query terms, including
                 # NSFW-adjacent results, worse than any other market's noise
@@ -1460,7 +1470,9 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "job_type": JOB_TYPE_HUB_NEWS_INGEST,
                 "mode": "light",
                 "ticker": "IBOVESPA",
-                "market": "LATAM",
+                # D53 (Trade repo): `LATAM` was Brazil. Job `id` kept for the same reason as the
+                # Saudi jobs above — it is a persisted store key, not a label.
+                "market": "BR",
                 "sources": get_env_config().trade.hub_news_light_sources,
                 "lookback_days": 1,
                 "dispatch_timeout_ms": _HUB_NEWS_LIGHT_TIGHT_INGEST_DISPATCH_TIMEOUT_MS,
@@ -1483,7 +1495,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "market": "EU",
                 # No searxng: not live-tested this pass (every other market's searxng
                 # attempt has failed or been skipped as redundant once a working
-                # rss/currents combo was found — see RU/ME/LATAM's own notes above).
+                # rss/currents combo was found — see RU/SA/BR's own notes above).
                 # Currents' plain country="de" query is near-empty/off-topic (2
                 # articles, one unrelated) same as JP/RU/ME's gap; keywords=
                 # ("DAX", "stocks") live-tested 2026-08-27 returns 10/10 clean, real
@@ -1517,7 +1529,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "dispatch_timeout_ms": _HUB_NEWS_LIGHT_TIGHT_INGEST_DISPATCH_TIMEOUT_MS,
             },
         ),
-        # Same reasoning as US/JP/CN/RU/ME/LATAM: no dedicated "eu-hub-news-entity" job
+        # Same reasoning as US/JP/CN/RU/SA/BR: no dedicated "eu-hub-news-entity" job
         # needed — nifty-hub-news-entity's pending-staging auto-discovery drains
         # EURO_STOXX_50 too.
         ScheduledResearchJob(

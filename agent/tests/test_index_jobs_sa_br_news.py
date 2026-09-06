@@ -4,7 +4,7 @@ ingestion-live.md).
 
 Both markets skip searxng entirely (near-total junk live-tested 2026-08-25 —
 Stack Overflow / Burger King noise for ME, Reddit content including
-NSFW-adjacent results for LATAM) and rely on rss + a single precise Currents
+NSFW-adjacent results for BR) and rely on rss + a single precise Currents
 keyword instead of the bare ticker (TASI/DFM/ADX/IBOVESPA are either too
 ambiguous alone or, combined with generic words, dilute into noise).
 """
@@ -27,14 +27,14 @@ def test_register_default_index_jobs_includes_me_news_ingest(tmp_path):
     assert full is not None
     assert full.config["job_type"] == index_jobs.JOB_TYPE_HUB_NEWS_INGEST
     assert full.config["ticker"] == "TASI"
-    assert full.config["market"] == "ME"
+    assert full.config["market"] == "SA"
     assert "searxng" not in full.config["sources"]
     assert full.config["currents_keywords"] == ["Tadawul"]
 
     light = store.get("me-hub-news-ingest-light")
     assert light is not None
     assert light.config["ticker"] == "TASI"
-    assert light.config["market"] == "ME"
+    assert light.config["market"] == "SA"
 
     assert store.get("me-hub-news-entity") is None
 
@@ -50,14 +50,14 @@ def test_register_default_index_jobs_includes_latam_news_ingest(tmp_path):
     assert full is not None
     assert full.config["job_type"] == index_jobs.JOB_TYPE_HUB_NEWS_INGEST
     assert full.config["ticker"] == "IBOVESPA"
-    assert full.config["market"] == "LATAM"
+    assert full.config["market"] == "BR"
     assert "searxng" not in full.config["sources"]
     assert full.config["currents_keywords"] == ["IBOVESPA"]
 
     light = store.get("latam-hub-news-ingest-light")
     assert light is not None
     assert light.config["ticker"] == "IBOVESPA"
-    assert light.config["market"] == "LATAM"
+    assert light.config["market"] == "BR"
 
     assert store.get("latam-hub-news-entity") is None
 
@@ -78,7 +78,7 @@ def test_run_hub_news_ingest_job_threads_me_market_and_keywords_through(monkeypa
     index_jobs.run_hub_news_ingest_job(
         {
             "ticker": "TASI",
-            "market": "ME",
+            "market": "SA",
             "mode": "full",
             "sources": "rss,currents",
             "currents_keywords": ["Tadawul"],
@@ -86,7 +86,7 @@ def test_run_hub_news_ingest_job_threads_me_market_and_keywords_through(monkeypa
     )
 
     assert captured["ticker"] == "TASI"
-    assert captured["market"] == "ME"
+    assert captured["market"] == "SA"
     assert captured["currents_keywords"] == ["Tadawul"]
 
 
@@ -106,7 +106,7 @@ def test_run_hub_news_ingest_job_threads_latam_market_and_keywords_through(monke
     index_jobs.run_hub_news_ingest_job(
         {
             "ticker": "IBOVESPA",
-            "market": "LATAM",
+            "market": "BR",
             "mode": "full",
             "sources": "rss,currents",
             "currents_keywords": ["IBOVESPA"],
@@ -114,5 +114,5 @@ def test_run_hub_news_ingest_job_threads_latam_market_and_keywords_through(monke
     )
 
     assert captured["ticker"] == "IBOVESPA"
-    assert captured["market"] == "LATAM"
+    assert captured["market"] == "BR"
     assert captured["currents_keywords"] == ["IBOVESPA"]
