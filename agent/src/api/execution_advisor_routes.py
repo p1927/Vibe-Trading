@@ -34,6 +34,23 @@ logger = logging.getLogger(__name__)
 AuthDep = Callable[..., Awaitable[Any] | Any]
 
 
+def _record_advisories_best_effort(advisories: list[dict[str, Any]]) -> None:
+    """Write the served advisories to the append-only ledger.
+
+    Best-effort by design: this route's contract is to return advice, and a hub-storage
+    hiccup must not turn a working advisory response into a 502. The failure is logged
+    rather than swallowed silently so a persistently failing ledger is still visible.
+    """
+    try:
+        from trade_integrations.dataflows.index_research.execution_advisor_ledger import (
+            record_advisories,
+        )
+
+        record_advisories(advisories)
+    except Exception:  # noqa: BLE001 — advice delivery must not depend on the ledger
+        logger.exception("execution advisor advisory ledger write failed")
+
+
 def register_execution_advisor_routes(app: FastAPI, require_auth: AuthDep | None = None) -> None:
     """Mount ``GET /execution-advisor/positions`` onto ``app``.
 
@@ -71,6 +88,10 @@ def register_execution_advisor_routes(app: FastAPI, require_auth: AuthDep | None
 
             advisories = await asyncio.to_thread(advise_positions)
             grouped = group_advisories_by_strategy(advisories)
+            # Persist what was actually served. The advisor itself keeps only a mutable
+            # FSM blob that is deleted when a position closes, so without this write no
+            # later pass can check an advisory against what the market then did.
+            await asyncio.to_thread(_record_advisories_best_effort, advisories)
         except Exception:  # noqa: BLE001 — never leak a stack frame to clients
             logger.exception("execution advisor positions failed")
             return JSONResponse(
