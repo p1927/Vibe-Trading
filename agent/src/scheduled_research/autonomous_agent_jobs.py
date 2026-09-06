@@ -113,6 +113,35 @@ def _strategy_snapshot_job_id(agent_id: str) -> str:
     return f"{agent_id}-strategy-snapshot"
 
 
+def agent_job_ids(agent_id: str) -> frozenset[str]:
+    """Every scheduler job id this module can mint for one agent.
+
+    Single source of truth for the job-id vocabulary: cleanup
+    (``trade_integrations.autonomous_agents.scheduler_cleanup.agent_scheduler_job_ids``)
+    derives from this function instead of hardcoding a second list, so adding a job type here
+    (a new ``JOB_TYPE_*`` constant plus an ``AUTONOMOUS_JOB_TYPES`` entry) cannot again leave
+    cleanup silently behind — see
+    ``.claude/backlog/items/2026-09-07-scheduler-cleanup-job-id-list-drift.md``.
+    """
+    watch_id, research_id, quant_id = _job_ids(agent_id)
+    ids = frozenset(
+        {
+            watch_id,
+            research_id,
+            quant_id,
+            _infra_heal_job_id(agent_id),
+            _news_job_id(agent_id),
+            _strategy_review_job_id(agent_id),
+            _strategy_snapshot_job_id(agent_id),
+        }
+    )
+    assert len(ids) == len(AUTONOMOUS_JOB_TYPES), (
+        "agent_job_ids() must mint exactly one id per AUTONOMOUS_JOB_TYPES entry; "
+        "a new JOB_TYPE_* was added without a matching id here."
+    )
+    return ids
+
+
 def register_infra_heal_job(agent_id: str) -> None:
     if not is_autonomous_scheduler_enabled():
         return
