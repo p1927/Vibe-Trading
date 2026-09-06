@@ -582,10 +582,22 @@ def run_stock_history_coverage_sweep_job(config: dict[str, Any] | None = None) -
     cfg = config or {}
     try:
         sh = StockHistory()
+        # Budget the sweep INSIDE the executor's dispatch timeout, so it finishes and reports
+        # rather than being killed. Measured 2026-09-07: this job was failing with
+        # `TimeoutError: dispatch timed out after 1800000ms` and had been for days, which is why
+        # the whole global index-history vertical stopped on 2026-08-29 and nothing wrote it for
+        # nine days -- a hung handler starved every bucket queued behind it, and a killed dispatch
+        # writes no summary at all, so there was nothing to read afterwards either.
+        #
+        # 20 minutes against a 30-minute dispatch timeout leaves room for `verify_after`'s
+        # coverage re-scan. Unreached buckets come back as an explicit TRUNCATED result, and the
+        # sweep now runs stalest-bucket-first so a short run spends its budget on the most
+        # behind data instead of always starving the same tail.
         summary = sh.backfill_into_week(
             week_start=india_trading_date_iso()[:10],
             include_optional=bool(cfg.get("include_optional", True)),
             verify_after=True,
+            budget_seconds=float(cfg.get("budget_seconds") or 1200.0),
         )
         return {
             "status": "error" if summary.had_errors else "ok",
