@@ -83,6 +83,43 @@ def _discover_subclasses() -> list[type[BaseTool]]:
     return classes
 
 
+def session_injected_classes() -> frozenset[type[BaseTool]]:
+    """Tool classes that need the host session id injected at registration time.
+
+    Each of these creates or mutates session-scoped state (a research goal, an
+    autonomous-agent proposal, a scheduled job) and the LLM has no way to know the
+    session id itself, so `build_registry` passes `default_session_id=session_id` only
+    to classes in this set (`elif cls in session_injected_classes(): ...` below) — every
+    other tool is registered with no arguments. A class that accepts
+    `default_session_id` but is missing from this set silently keeps it `None` forever;
+    see `.claude/backlog/items/2026-09-07-propose-tool-null-session-id.md`, which is
+    exactly that failure for `ProposeAutonomousAgentTool`. Extracted to a module-level
+    function (rather than a local inside `build_registry`) so it can be asserted on
+    directly instead of only indirectly through registry behavior.
+    """
+    from src.tools.autopilot_tool import RunResearchAutopilotTool
+    from src.tools.goal_tool import (
+        AddGoalEvidenceTool,
+        GetResearchGoalTool,
+        StartResearchGoalTool,
+        UpdateResearchGoalStatusTool,
+    )
+    from src.tools.propose_autonomous_agent_tool import ProposeAutonomousAgentTool
+    from src.tools.scheduled_research_tool import ScheduledResearchTool
+
+    return frozenset(
+        {
+            StartResearchGoalTool,
+            GetResearchGoalTool,
+            AddGoalEvidenceTool,
+            UpdateResearchGoalStatusTool,
+            RunResearchAutopilotTool,
+            ScheduledResearchTool,
+            ProposeAutonomousAgentTool,
+        }
+    )
+
+
 def build_registry(
     *,
     persistent_memory: "PersistentMemory | None" = None,
@@ -134,29 +171,10 @@ def build_registry(
         ToolRegistry containing all available local tools followed by any
         successfully discovered MCP tools.
     """
-    from src.tools.goal_tool import (
-        AddGoalEvidenceTool,
-        GetResearchGoalTool,
-        StartResearchGoalTool,
-        UpdateResearchGoalStatusTool,
-    )
-    from src.tools.autopilot_tool import RunResearchAutopilotTool
     from src.tools.remember_tool import RememberTool
     from src.tools.swarm_tool import SwarmTool
-    from src.tools.scheduled_research_tool import ScheduledResearchTool
 
-    goal_tool_classes = {
-        StartResearchGoalTool,
-        GetResearchGoalTool,
-        AddGoalEvidenceTool,
-        UpdateResearchGoalStatusTool,
-    }
-    # Tools that need the host session id injected: they create or mutate the
-    # session's research goal, and the LLM never knows the session id.
-    session_injected_classes = goal_tool_classes | {
-        RunResearchAutopilotTool,
-        ScheduledResearchTool,
-    }
+    session_injected = session_injected_classes()
     classes = _discover_subclasses()
     registry = ToolRegistry()
     for module_name, reason in _DISCOVERY_FAILURES.items():
@@ -179,7 +197,7 @@ def build_registry(
                     registry.register(cls(memory=persistent_memory, agent_id=agent_id))
                 else:
                     registry.register(cls(agent_id=agent_id))
-            elif cls in session_injected_classes:
+            elif cls in session_injected:
                 registry.register(cls(default_session_id=session_id, event_callback=event_callback))
             elif cls is SwarmTool:
                 registry.register(cls(include_shell_tools=include_shell_tools, event_callback=event_callback))
@@ -409,4 +427,9 @@ def _filter_registry(
     return filtered
 
 
-__all__ = ["build_registry", "build_filtered_registry", "build_swarm_registry"]
+__all__ = [
+    "build_registry",
+    "build_filtered_registry",
+    "build_swarm_registry",
+    "session_injected_classes",
+]

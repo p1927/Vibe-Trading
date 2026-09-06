@@ -91,8 +91,4 @@ class ProposeAutonomousAgentTool(BaseTool):
             allowed_instruments=kwargs.get("allowed_instruments"),
             orchestrator_session_id=session_id,
         )
-        if isinstance(result.get("proposal"), dict):
-            proposal = result["proposal"]
-            proposal["session_id"] = session_id
-            result["proposal"] = proposal
         return json.dumps(result, ensure_ascii=False, default=str)
