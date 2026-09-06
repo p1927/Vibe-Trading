@@ -58,6 +58,16 @@ def boot_scheduled_research_stack(get_store) -> None:
     except Exception:
         logger.exception("failed to boot-pause running autonomous agents")
     try:
+        from trade_integrations.autonomous_agents.recovery import run_autonomous_agent_recovery
+
+        # Reconciles real OpenAlgo position/order state per agent (in addition to
+        # the stale-streaming/bootstrap-finalize passes) so a crash between order
+        # placement and handoff persistence doesn't leave a live position with no
+        # active exit-monitoring. This had no production call site before.
+        run_autonomous_agent_recovery()
+    except Exception:
+        logger.exception("failed to run autonomous agent recovery on boot")
+    try:
         from src.scheduled_research.lifecycle import recover_scheduler_jobs_on_stack_boot
 
         recover_scheduler_jobs_on_stack_boot(get_store())
