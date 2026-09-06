@@ -319,7 +319,11 @@ class PlanApprovalRequest(BaseModel):
 
 
 @autonomous_router.post("/{agent_id}/approve-plan")
-def approve_plan_route(agent_id: str, body: PlanApprovalRequest | None = None) -> Dict[str, Any]:
+def approve_plan_route(
+    agent_id: str,
+    body: PlanApprovalRequest | None = None,
+    _auth: None = Depends(require_local_or_auth),
+) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.plan_approval import approve_agent_plan
     from trade_integrations.autonomous_agents.runtime_status import enrich_agent
 
@@ -339,7 +343,11 @@ def approve_plan_route(agent_id: str, body: PlanApprovalRequest | None = None) -
 
 
 @autonomous_router.post("/{agent_id}/reject-plan")
-def reject_plan_route(agent_id: str, body: PlanApprovalRequest) -> Dict[str, Any]:
+def reject_plan_route(
+    agent_id: str,
+    body: PlanApprovalRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.plan_approval import reject_agent_plan
     from trade_integrations.autonomous_agents.runtime_status import enrich_agent
 

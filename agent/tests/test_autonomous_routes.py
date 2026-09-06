@@ -216,3 +216,37 @@ def test_resume_reschedules_a_failed_bootstrap(
         "resuming an agent with bootstrap_status=='failed' did not call "
         "schedule_agent_bootstrap — the bootstrap will never retry"
     )
+
+
+def test_every_mutating_route_requires_local_or_auth() -> None:
+    """Mechanical regression test for
+    `.claude/backlog/items/2026-09-07-approve-plan-route-no-auth.md` (and the earlier
+    `.claude/backlog/archive/items/2026-08-29-resume-agent-missing-auth-guard.md`, which this
+    generalizes): every mutating route (POST/PUT/PATCH/DELETE) on `autonomous_router` must
+    depend on `require_local_or_auth`. A one-route-at-a-time hand fix has already let this same
+    bug through twice (`resume_agent`, then `approve_plan_route`/`reject_plan_route`) — this
+    test is the actual deliverable, so the *next* mutating route added to this router fails CI
+    if it silently omits the dependency.
+    """
+    from src.api.autonomous_routes import autonomous_router
+    from src.api.security import require_local_or_auth
+
+    mutating_methods = {"POST", "PUT", "PATCH", "DELETE"}
+    missing: list[str] = []
+
+    for route in autonomous_router.routes:
+        methods = getattr(route, "methods", None) or set()
+        if not (methods & mutating_methods):
+            continue
+        dependant = getattr(route, "dependant", None)
+        dependencies = getattr(dependant, "dependencies", []) if dependant else []
+        has_guard = any(
+            getattr(dep, "call", None) is require_local_or_auth for dep in dependencies
+        )
+        if not has_guard:
+            missing.append(f"{sorted(methods)} {route.path}")
+
+    assert not missing, (
+        "mutating route(s) on autonomous_router missing Depends(require_local_or_auth): "
+        f"{missing}"
+    )
