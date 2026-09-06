@@ -21,7 +21,18 @@ logger = logging.getLogger(__name__)
 
 
 def register_persisted_autonomous_agent_jobs() -> None:
-    """Re-register scheduler jobs for running autonomous agents after API restart."""
+    """Re-register scheduler jobs for running autonomous agents after API restart.
+
+    Checked 2026-09-07 as a possible third instance of the boot-recovery-neutered bug
+    (`status == "running"` filtered out every agent just force-paused by
+    `pause_running_agents_on_boot()` earlier in the same boot sequence) — it is not:
+    `register_agent_jobs` itself refuses to register anything for a `paused`/`stopped`
+    agent (`autonomous_agent_jobs.py`'s own `if status in {"paused", "stopped"}: return`),
+    so the outer filter here is redundant with, not a workaround defeating, that inner
+    guard. The real re-registration for a restart-paused agent happens correctly on
+    resume, once `status` is back to `running`. See
+    .claude/backlog/items/2026-09-07-boot-recovery-neutered.md.
+    """
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
