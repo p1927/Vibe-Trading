@@ -414,10 +414,16 @@ class TestDefinitionStateSplitShape:
         assert raw["definition"] == {
             "prompt": job.prompt,
             "schedule": job.schedule,
+            "title": "",
+            "source_type": "prompt",
+            "playbook_slug": None,
+            "end_at": None,
             "config": {"job_type": "index_research"},
             "timezone": "Asia/Kolkata",
             "delivery_channel": None,
             "delivery_target": None,
+            "delivery_target_ref": None,
+            "delivery_target_label": None,
         }
         assert raw["state"]["status"] == "running"
         assert raw["state"]["paused"] is True
