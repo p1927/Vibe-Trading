@@ -11,6 +11,7 @@ from src.scheduled_research.executor import (
     next_due,
     stale_running_ms_for,
 )
+from src.scheduled_research.job_tier_policy import is_safe_to_auto_resume
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob
 from src.scheduled_research.store import ScheduledResearchJobStore
 
@@ -73,10 +74,19 @@ def recover_persisted_scheduler_jobs(
             continue
         if mode == "stale" and not is_job_stale_running(job, now_ms):
             continue
+        # A read-only monitoring job is recovered UNPAUSED. Auto-pause protects against a job
+        # with half-applied side effects silently re-running; a health check has none, and
+        # pausing it means the stack stops being watched at exactly the moment it was restarted.
+        # `factor-health` was found auto-paused this way on 2026-09-07 -- the only paused job of
+        # 61 -- while 27 factors sat stale on disk and nothing reported it. See
+        # `job_tier_policy.is_safe_to_auto_resume`.
+        pause_this = auto_pause and not is_safe_to_auto_resume(
+            str((job.config or {}).get("job_type") or "")
+        )
         _advance_recovered_job(
             job,
             now_ms,
-            auto_pause_reason=(f"auto-paused: {reason}" if auto_pause and reason else None),
+            auto_pause_reason=(f"auto-paused: {reason}" if pause_this and reason else None),
         )
         if reason and not job.last_error:
             job.last_error = reason

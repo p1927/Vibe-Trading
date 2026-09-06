@@ -30,6 +30,10 @@ same boundary as OpenAlgo.
 
 from __future__ import annotations
 
+from src.scheduled_research.factor_health_jobs import (
+    JOB_TYPE_FACTOR_HEALTH,
+    JOB_TYPE_FACTOR_HEALTH_LIVE,
+)
 from src.scheduled_research.capture_jobs import (
     JOB_TYPE_HUB_CAPTURE_FACTOR_SNAPSHOT,
     JOB_TYPE_HUB_CAPTURE_INTRADAY,
@@ -115,3 +119,41 @@ def collection_job_dispatch_enabled(stack_profile: str) -> bool:
 
 def is_collection_job(job_type: str) -> bool:
     return job_type in COLLECTION_JOB_TYPES
+
+
+#: Job types that are **read-only and idempotent**, and therefore safe to recover to PENDING
+#: WITHOUT being auto-paused when the stack stops mid-run.
+#:
+#: Auto-pause on shutdown recovery exists to stop a job whose side effects may be half-applied
+#: from silently re-running (`lifecycle._advance_recovered_job`). That is right for a job that
+#: writes. It is actively harmful for a monitoring check, which has no side effects to half-apply
+#: and whose entire value is that it keeps running:
+#:
+#: Measured 2026-09-07 on release, `factor-health` was the **only paused job of 61**, with
+#: `auto_paused_reason: "auto-paused: recovered on stack shutdown"`. A daily check that scans the
+#: whole hub is disproportionately likely to be mid-run when a `trade release update` restarts the
+#: tier — so the monitor switched itself off precisely when the stack was being changed, which is
+#: when monitoring matters most. Nothing then noticed that the global index-history writer had been
+#: dead for nine days, or that 27 factors were stale on disk.
+#:
+#: Deliberately narrow: only the two factor-health types. They read the hub and the registry and
+#: raise on a regression; the live variant additionally makes read-only vendor calls. Every eval
+#: type is left OUT even though most are probably also safe — widening this set is a claim about
+#: each job's side effects that should be made per job, with evidence, not in bulk.
+#: See `.claude/backlog/items/2026-09-07-a-paused-health-job-is-a-silent-monitor.md`.
+SAFE_TO_AUTO_RESUME_JOB_TYPES = frozenset(
+    {
+        JOB_TYPE_FACTOR_HEALTH,
+        JOB_TYPE_FACTOR_HEALTH_LIVE,
+    }
+)
+
+
+def is_safe_to_auto_resume(job_type: str) -> bool:
+    """Whether shutdown/boot recovery may leave this job UNPAUSED.
+
+    A `False` answer is the safe default: an unknown job type keeps the existing auto-pause
+    behaviour, so this can only ever narrow the set of jobs that go silent, never widen the set
+    that re-runs unattended.
+    """
+    return job_type in SAFE_TO_AUTO_RESUME_JOB_TYPES
