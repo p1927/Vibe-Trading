@@ -2280,6 +2280,14 @@ export const api = {
     request<AgentBoardHindsightCurvesResponse>(
       `/board/agent/${encodeURIComponent(agentId)}/hindsight-curves`,
     ),
+  getAgentDecisionQuality: (agentId: string, horizon = "T+1d") =>
+    request<AgentDecisionQualityResponse>(
+      `/board/agent/${encodeURIComponent(agentId)}/decision-quality?horizon=${encodeURIComponent(horizon)}`,
+    ),
+  getAgentGradedDecisions: (agentId: string, horizon = "T+1d", limit = 100) =>
+    request<AgentGradedDecisionsResponse>(
+      `/board/agent/${encodeURIComponent(agentId)}/decisions?horizon=${encodeURIComponent(horizon)}&limit=${limit}`,
+    ),
   getModelVersionTimeline: (params: { agentId?: string; weightId?: string; windowDays?: number } = {}) => {
     const search = new URLSearchParams();
     if (params.agentId) search.set("agent_id", params.agentId);
@@ -6900,6 +6908,69 @@ export interface ToolTrailItem {
   preview?: string;
   call_id?: string;
   timestamp?: number;
+}
+
+// --- Decision-quality types — per-decision grading of the agent's judgement ---
+
+export interface AgentDecisionQualityMetrics {
+  horizon: string;
+  decisions_total: number;
+  decisions_scored: number;
+  /** Share of decisions that could not be judged. A rise here invalidates apparent
+   *  improvements in every metric below it, so it is always surfaced alongside them. */
+  unscored_coverage: number | null;
+  mean_regret_vs_candidates: number | null;
+  mean_regret_vs_oracle: number | null;
+  mean_divergence_vs_ledger_rec: number | null;
+  mean_action_value: number | null;
+  mean_realized_move_pct: number | null;
+  regret_free_rate: number | null;
+  win_rate: number | null;
+  confidence_brier: number | null;
+  confidence_sample_count: number | null;
+  reliability_bins?: unknown[];
+  by_decision_kind?: Record<string, number>;
+}
+
+export interface AgentDecisionQualityResponse {
+  agent_id: string;
+  horizon: string;
+  metrics: AgentDecisionQualityMetrics;
+}
+
+export interface AgentGradedDecision {
+  decision_id: string;
+  horizon: string;
+  evaluated_at: string | null;
+  ticker: string | null;
+  decision: string | null;
+  decision_at: string | null;
+  confidence: number | null;
+  spot_at_decision: number | null;
+  spot_at_horizon: number | null;
+  realized_move_pct: number | null;
+  actual_pnl_inr: number | null;
+  best_candidate_pnl_inr: number | null;
+  best_candidate_rank: number | null;
+  best_candidate_strategy: string | null;
+  regret_vs_candidates: number | null;
+  ledger_rec_pnl_inr: number | null;
+  divergence_vs_ledger_rec: number | null;
+  oracle_pnl_inr: number | null;
+  oracle_strategy: string | null;
+  regret_vs_oracle: number | null;
+  do_nothing_pnl_inr: number | null;
+  action_value: number | null;
+  /** "good" / "bad" / "neutral", or an `unscored_*` code naming the missing input. */
+  verdict: string | null;
+  was_good: boolean | null;
+  notes: string | null;
+}
+
+export interface AgentGradedDecisionsResponse {
+  agent_id: string;
+  horizon: string;
+  decisions: AgentGradedDecision[];
 }
 
 // --- Board 2 (Agent) types — 2026-08-25-dual-board-advisory-agent-ui ---

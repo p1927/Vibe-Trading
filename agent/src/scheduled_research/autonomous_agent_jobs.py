@@ -428,6 +428,18 @@ async def _dispatch_autonomous_job_inner(job: ScheduledResearchJob) -> None:
 
         summary = await asyncio.to_thread(sweep_pending_evaluations, agent_id=agent_id)
         logger.info("decision eval sweep for %s: %s", agent_id, summary)
+
+        # Emit improvement proposals from whatever the sweep just graded. Runs here
+        # rather than as its own job so the mechanism cannot end up built-but-never-run:
+        # it has guardrails of its own (minimum sample count, evidence watermark) and
+        # returns a status even when it proposes nothing, so a no-op is distinguishable
+        # from a job that never fired. Proposals are pending-only; a human promotes.
+        from trade_integrations.autonomous_agents.decision_eval_proposals import (
+            propose_from_decision_evaluations,
+        )
+
+        proposal = await asyncio.to_thread(propose_from_decision_evaluations, agent_id=agent_id)
+        logger.info("decision eval proposal for %s: %s", agent_id, proposal.get("status"))
         return
     if job_type == JOB_TYPE_RESEARCH:
         if get_env_config().trade.autonomous_research_on_schedule.strip().lower() not in {

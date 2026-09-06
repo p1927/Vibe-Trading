@@ -6,6 +6,8 @@ import {
   type AgentBoardSummary,
   type AgentBoardWealthCurvePoint,
   type AgentBoardHindsightCurve,
+  type AgentDecisionQualityMetrics,
+  type AgentGradedDecision,
   type AutonomousAgentInstance,
   type ModelVersionTimelineEntry,
   type PendingWeightProposal,
@@ -62,6 +64,8 @@ export function AgentBoard() {
   const [wealthPoints, setWealthPoints] = useState<AgentBoardWealthCurvePoint[]>([]);
   const [hindsight, setHindsight] = useState<AgentBoardHindsightSummary | null>(null);
   const [hindsightCurves, setHindsightCurves] = useState<AgentBoardHindsightCurve[]>([]);
+  const [decisionQuality, setDecisionQuality] = useState<AgentDecisionQualityMetrics | null>(null);
+  const [gradedDecisions, setGradedDecisions] = useState<AgentGradedDecision[]>([]);
   const [timeline, setTimeline] = useState<ModelVersionTimelineEntry[]>([]);
   const [proposals, setProposals] = useState<PendingWeightProposal[]>([]);
   const [appliedProposals, setAppliedProposals] = useState<PendingWeightProposal[]>([]);
@@ -104,13 +108,17 @@ export function AgentBoard() {
       api.getAgentBoardHindsight(id),
       api.getAgentBoardHindsightCurves(id),
       api.getModelVersionTimeline({ agentId: id }),
+      api.getAgentDecisionQuality(id),
+      api.getAgentGradedDecisions(id),
     ])
-      .then(([s, w, h, hc, t]) => {
+      .then(([s, w, h, hc, t, dq, gd]) => {
         setSummary(s);
         setWealthPoints(w.points);
         setHindsight(h);
         setHindsightCurves(hc.curves);
         setTimeline(t.timeline);
+        setDecisionQuality(dq.metrics);
+        setGradedDecisions(gd.decisions);
       })
       .catch(() => setError("Failed to load board data for this agent."))
       .finally(() => setLoading(false));
@@ -683,6 +691,131 @@ export function AgentBoard() {
                         <td className="px-3 py-2">{row.favored_winner_count}</td>
                         <td className="px-3 py-2">{row.favored_choice_count}</td>
                         <td className="px-3 py-2">{row.average_magnitude.toFixed(4)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : null}
+
+          <section className="space-y-2">
+            <h2 className="text-sm font-medium text-muted-foreground">
+              Decision quality — how well it decided, not just what it earned
+              {decisionQuality ? ` (${decisionQuality.horizon})` : ""}
+            </h2>
+            {!decisionQuality || decisionQuality.decisions_total === 0 ? (
+              <div className="rounded-xl border border-dashed border-border/60 bg-muted/10 p-4 text-center text-[11px] text-muted-foreground">
+                No decisions have been graded yet. Decisions become gradeable once their
+                horizon passes and market data for it lands.
+              </div>
+            ) : (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <StatCard
+                    label="Regret vs. candidates"
+                    value={fmtInr(decisionQuality.mean_regret_vs_candidates)}
+                    tone={
+                      decisionQuality.mean_regret_vs_candidates == null
+                        ? "neutral"
+                        : decisionQuality.mean_regret_vs_candidates > 0
+                          ? "down"
+                          : "up"
+                    }
+                  />
+                  <StatCard
+                    label="Action value vs. doing nothing"
+                    value={fmtInr(decisionQuality.mean_action_value)}
+                    tone={
+                      decisionQuality.mean_action_value == null
+                        ? "neutral"
+                        : decisionQuality.mean_action_value > 0
+                          ? "up"
+                          : "down"
+                    }
+                  />
+                  <StatCard
+                    label="Regret-free rate"
+                    value={fmtPct(decisionQuality.regret_free_rate)}
+                  />
+                  <StatCard
+                    label="Confidence Brier"
+                    value={
+                      decisionQuality.confidence_brier == null
+                        ? "—"
+                        : decisionQuality.confidence_brier.toFixed(3)
+                    }
+                  />
+                </div>
+                {decisionQuality.unscored_coverage != null &&
+                decisionQuality.unscored_coverage > 0 ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    {fmtPct(decisionQuality.unscored_coverage)} of decisions could not be
+                    graded ({decisionQuality.decisions_scored} of{" "}
+                    {decisionQuality.decisions_total} scored) — the numbers above cover only
+                    the graded ones.
+                  </p>
+                ) : null}
+              </>
+            )}
+          </section>
+
+          {gradedDecisions.length > 0 ? (
+            <section className="space-y-2">
+              <h2 className="text-sm font-medium text-muted-foreground">
+                Per-decision detail
+              </h2>
+              <div className="overflow-x-auto rounded-xl border bg-card">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b bg-muted/40 text-[11px] uppercase text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2">When</th>
+                      <th className="px-3 py-2">Decision</th>
+                      <th className="px-3 py-2">Conf.</th>
+                      <th className="px-3 py-2">Move</th>
+                      <th className="px-3 py-2">Actual</th>
+                      <th className="px-3 py-2">Best candidate</th>
+                      <th className="px-3 py-2">Ledger rec</th>
+                      <th className="px-3 py-2">Oracle</th>
+                      <th className="px-3 py-2">Verdict</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gradedDecisions.map((row) => (
+                      <tr key={`${row.decision_id}-${row.horizon}`} className="border-b last:border-0">
+                        <td className="px-3 py-2 whitespace-nowrap text-[11px] text-muted-foreground">
+                          {row.decision_at ? row.decision_at.slice(0, 16).replace("T", " ") : "—"}
+                        </td>
+                        <td className="px-3 py-2 font-medium">{row.decision ?? "—"}</td>
+                        <td className="px-3 py-2">
+                          {row.confidence == null ? "—" : `${row.confidence}%`}
+                        </td>
+                        <td className="px-3 py-2">
+                          {row.realized_move_pct == null
+                            ? "—"
+                            : `${row.realized_move_pct.toFixed(2)}%`}
+                        </td>
+                        <td className="px-3 py-2">{fmtInr(row.actual_pnl_inr)}</td>
+                        <td className="px-3 py-2">
+                          {fmtInr(row.best_candidate_pnl_inr)}
+                          {row.best_candidate_strategy ? (
+                            <span className="ml-1 text-[11px] text-muted-foreground">
+                              {row.best_candidate_strategy}
+                            </span>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-2">{fmtInr(row.ledger_rec_pnl_inr)}</td>
+                        <td className="px-3 py-2">{fmtInr(row.oracle_pnl_inr)}</td>
+                        <td
+                          className={cn(
+                            "px-3 py-2 text-[11px]",
+                            row.verdict === "good" && "text-emerald-600 dark:text-emerald-400",
+                            row.verdict === "bad" && "text-red-600 dark:text-red-400",
+                            row.verdict?.startsWith("unscored") && "text-muted-foreground",
+                          )}
+                        >
+                          {row.verdict ?? "—"}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

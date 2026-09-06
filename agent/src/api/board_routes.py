@@ -24,6 +24,7 @@ action the module's whole design requires.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -93,6 +94,51 @@ def get_agent_hindsight_curves(agent_id: str) -> Dict[str, Any]:
 
     _require_agent(agent_id)
     return {"agent_id": agent_id, "curves": multi_candidate_wealth_curves(agent_id)}
+
+
+@board_router.get("/agent/{agent_id}/decision-quality")
+def get_agent_decision_quality(agent_id: str, horizon: str = "T+1d") -> Dict[str, Any]:
+    """How well this agent *decided*, not just how much it earned.
+
+    Regret against the alternatives it itself ranked, against the prediction ledger's
+    recommendation, and against a bounded oracle — plus whether its stated confidence is
+    calibrated. `unscored_coverage` is included on purpose: without it, a rise in
+    ungradeable decisions reads as improving quality.
+    """
+    from trade_integrations.autonomous_agents.decision_quality_golden_eval import (
+        compute_decision_quality_metrics,
+    )
+
+    _require_agent(agent_id)
+    metrics = compute_decision_quality_metrics(agent_id=agent_id, horizon=horizon)
+    metrics.pop("scored_rows", None)
+    return {"agent_id": agent_id, "horizon": horizon, "metrics": metrics}
+
+
+@board_router.get("/agent/{agent_id}/decisions")
+def get_agent_graded_decisions(
+    agent_id: str, horizon: str = "T+1d", limit: int = 100
+) -> Dict[str, Any]:
+    """Per-decision drill-down behind the decision-quality rollup: every graded row with
+    all four tracks and its verdict, newest first.
+
+    Includes `unscored_*` rows rather than hiding them, so a reviewer can see which
+    decisions could not be judged and why.
+    """
+    from trade_integrations.autonomous_agents.decision_evaluation_ledger import (
+        load_decision_evaluations,
+    )
+
+    _require_agent(agent_id)
+    frame = load_decision_evaluations(agent_id, horizon=horizon)
+    if frame.empty:
+        return {"agent_id": agent_id, "horizon": horizon, "decisions": []}
+    rows = frame.sort_values("evaluated_at", ascending=False).head(max(1, limit))
+    return {
+        "agent_id": agent_id,
+        "horizon": horizon,
+        "decisions": json.loads(rows.to_json(orient="records", date_format="iso")),
+    }
 
 
 @board_router.get("/model-version-timeline")
