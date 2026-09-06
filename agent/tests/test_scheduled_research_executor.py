@@ -57,6 +57,11 @@ def _job(
     )
 
 
+async def _noop_dispatch(job: ScheduledResearchJob) -> None:
+    """Dispatch that does nothing — for tests about executor state, not job behaviour."""
+    return None
+
+
 def test_interval_job_fires_and_persists_completion(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.upsert(_job(schedule="5000", next_run_at=1000))
@@ -1582,3 +1587,87 @@ def test_lifecycle_writes_survive_a_schedule_the_grammar_now_rejects(tmp_path: P
     saved = store.get("legacy")
     assert saved is not None
     assert saved.status == JobStatus.FAILED
+
+
+def test_liveness_reports_overdue_when_running_still_true(tmp_path: Path) -> None:
+    """`running: true` must not be mistakable for liveness.
+
+    A 2026-09-07 live pass saw `{"enabled":true,"running":true}` across a 32-minute
+    window in which zero jobs dispatched, because `tick()` gathers only the jobs due at
+    its start and `_run` awaits it fully — one slow job holds the barrier for all others.
+    `max_overdue_seconds` is the field that catches that regardless of cause.
+    """
+    store = _store(tmp_path)
+    store.upsert(_job("stalled-job", schedule="5000", next_run_at=1_000))
+
+    executor = ScheduledResearchExecutor(store, _noop_dispatch)
+
+    # Never started, so is_running is False — but the overdue evidence is what matters,
+    # and it is available without the loop ever having run.
+    live = executor.liveness(now_ms=1_000 + 600_000)
+    assert live["running"] is False
+    assert live["max_overdue_seconds"] == 600.0
+    assert live["max_overdue_job_id"] == "stalled-job"
+    assert live["tick_count"] == 0
+    assert live["last_tick_completed_at"] is None
+    assert live["in_flight"] == []
+
+
+def test_liveness_records_tick_progress(tmp_path: Path) -> None:
+    """A completed tick stamps started/completed and leaves nothing in flight."""
+    store = _store(tmp_path)
+    store.upsert(_job("job-001", schedule="5000", next_run_at=1_000))
+
+    async def scenario() -> ScheduledResearchExecutor:
+        executor = ScheduledResearchExecutor(store, _noop_dispatch)
+        await executor.tick(1_500)
+        return executor
+
+    executor = asyncio.run(scenario())
+
+    live = executor.liveness(now_ms=1_500)
+    assert live["tick_count"] == 1
+    assert live["last_tick_started_at"] == 1_500
+    assert live["last_tick_completed_at"] is not None
+    assert live["in_flight"] == []
+    # The job was dispatched and rescheduled, so nothing is overdue any more.
+    assert live["max_overdue_seconds"] == 0
+
+
+def test_liveness_names_the_job_blocking_the_tick(tmp_path: Path) -> None:
+    """`in_flight` must name what a stalled tick is currently awaiting.
+
+    This is the difference between "the scheduler is wedged" and
+    "hub-evening-maintenance is 27 minutes into its 45-minute ceiling" — a distinction
+    that took a live investigation to establish the first time, because nothing exposed it.
+    """
+    store = _store(tmp_path)
+    store.upsert(_job("slow-job", schedule="5000", next_run_at=1_000))
+    seen: list[list[str]] = []
+
+    async def scenario() -> None:
+        async def dispatch(job: ScheduledResearchJob) -> None:
+            # Observe in_flight from *inside* the dispatch, i.e. while the tick is blocked.
+            seen.append(executor.liveness(now_ms=1_500)["in_flight"])
+
+        executor = ScheduledResearchExecutor(store, dispatch)
+        await executor.tick(1_500)
+
+    asyncio.run(scenario())
+
+    assert seen == [["slow-job"]]
+
+
+def test_liveness_survives_a_store_read_failure(tmp_path: Path) -> None:
+    """A store failure reports max_overdue_seconds=None, never a reassuring 0."""
+    store = _store(tmp_path)
+    executor = ScheduledResearchExecutor(store, _noop_dispatch)
+
+    def _boom() -> dict[str, ScheduledResearchJob]:
+        raise OSError("store unavailable")
+
+    executor._store.load = _boom  # type: ignore[method-assign]
+
+    live = executor.liveness(now_ms=1_000)
+    assert live["max_overdue_seconds"] is None
+    assert live["running"] is False

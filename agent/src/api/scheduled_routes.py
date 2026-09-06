@@ -536,11 +536,22 @@ def register_scheduled_routes(
         """Report whether the global scheduled-research executor is dispatching jobs.
 
         ``enabled`` reflects the static env-var gate (VIBE_TRADING_ENABLE_SCHEDULER);
-        ``running`` reflects whether the dispatch loop is actually active right now.
-        Every process boot starts with running=False regardless of prior session state.
+        ``running`` reflects whether the dispatch loop task exists and hasn't finished.
+        Every process boot starts with running=False regardless of prior session state —
+        only POST /scheduled-runs/scheduler/resume starts it, by design.
+
+        **``running`` is not a liveness signal and must not be read as one.** A tick parked
+        inside ``asyncio.gather`` on one long job keeps ``running: true`` while every other
+        job starves; a 2026-09-07 live pass saw exactly that for 32 minutes with zero
+        dispatches. The remaining fields are the evidence of actual progress —
+        ``max_overdue_seconds`` is the one that catches a stall regardless of its cause,
+        and ``in_flight`` names what the tick is currently blocked on.
         """
         executor = _get_scheduled_research_executor()
-        return {"enabled": _scheduled_research_scheduler_enabled(), "running": executor.is_running}
+        return {
+            "enabled": _scheduled_research_scheduler_enabled(),
+            **executor.liveness(),
+        }
 
     @app.post(
         "/scheduled-runs/scheduler/resume",

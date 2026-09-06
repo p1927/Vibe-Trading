@@ -124,11 +124,42 @@ from src.api.scheduled_routes import (  # noqa: E402
 )
 
 
+def _configure_process_logging() -> None:
+    """Attach a formatted root log handler so app loggers are not silently dropped.
+
+    Without this the root logger has no handler at all: uvicorn's ``log_level``
+    (``server_main.py``) configures only its own ``uvicorn.*`` loggers and leaves the
+    root untouched, so every ``logging.getLogger(__name__)`` in ``trade_integrations.*``
+    and ``src.*`` falls through to CPython's ``logging.lastResort`` — level WARNING, no
+    formatter. That made ``logger.info``/``logger.debug`` equivalent to ``pass`` process-wide
+    and emitted warnings as bare, prefix-less lines.
+
+    The cost of that was not theoretical: the 2026-09-06 audit's claim that restart
+    recovery never reconciles positions outlived its own fix purely because the fix's
+    success log was INFO (``scheduled_startup.py``'s "autonomous agent recovery: %s") and
+    therefore invisible. See ``docs/add/autonomous_agents.md`` § Honesty.
+
+    ``configure_trade_logging`` is idempotent, so calling it here (per worker, including
+    each ``--reload`` respawn) is safe.
+    """
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.observability.logging_config import configure_trade_logging
+
+        configure_trade_logging()
+    except Exception:  # pragma: no cover — logging must never block startup
+        logging.getLogger(__name__).warning("root logging configuration failed", exc_info=True)
+
+
 async def _run_startup_preflight() -> None:
     """Run preflight checks on server startup."""
     from src.preflight import run_preflight
 
     from src.config import migrate as _migrate
+
+    _configure_process_logging()
 
     try:
         _migrate.migrate_legacy_state()  # one-time pre-#904 state move; must never block startup

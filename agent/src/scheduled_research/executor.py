@@ -13,7 +13,7 @@ import logging
 import os
 import time
 from datetime import date, datetime, timedelta, timezone, tzinfo
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from src.config.accessor import get_env_config
@@ -354,11 +354,65 @@ class ScheduledResearchExecutor:
         self._startup_backlog_deferred = False
         self._watchdog_task: asyncio.Task | None = None
         self._executor_tick_count = 0
+        # Liveness evidence. ``is_running`` only says a Task object exists and hasn't
+        # finished — it stays True for a loop parked inside ``gather`` on one slow job
+        # while every other job starves. These three are the evidence that the loop is
+        # actually making progress; see ``liveness()`` and docs/add/autonomous_agents.md.
+        self._last_tick_started_ms: int | None = None
+        self._last_tick_completed_ms: int | None = None
+        self._in_flight_job_ids: set[str] = set()
 
     @property
     def is_running(self) -> bool:
         """Return whether the background loop task is active."""
         return self._task is not None and not self._task.done()
+
+    def liveness(self, now_ms: int | None = None) -> dict[str, Any]:
+        """Evidence that the dispatch loop is progressing, not merely alive.
+
+        ``is_running`` is not a liveness signal: a tick parked inside ``asyncio.gather``
+        on one long job holds the barrier for every other job (``tick`` gathers only the
+        jobs due at its start), so the loop reports healthy while dispatching nothing.
+        That is exactly what a 2026-09-07 live pass observed — ``running: true`` across a
+        32-minute window with zero dispatches and an agent's watch tick 25 minutes overdue.
+
+        ``max_overdue_seconds`` is the field that would have caught it: it is computed over
+        the whole store, so it rises whether the cause is a stalled tick, a stopped
+        executor, or a job nothing can dispatch.
+        """
+        now = self._now_fn() if now_ms is None else now_ms
+        max_overdue_ms = 0
+        overdue_job_id = ""
+        try:
+            for job in self._store.load().values():
+                if not is_due(job, now):
+                    continue
+                overdue = now - int(job.next_run_at or now)
+                if overdue > max_overdue_ms:
+                    max_overdue_ms = overdue
+                    overdue_job_id = str(job.id)
+        except Exception:
+            # Store read failure must not take down the health endpoint, but it must not
+            # be reported as "nothing overdue" either — None is distinguishable from 0.
+            logger.warning("liveness store read failed", exc_info=True)
+            return {
+                "running": self.is_running,
+                "tick_count": self._executor_tick_count,
+                "last_tick_started_at": self._last_tick_started_ms,
+                "last_tick_completed_at": self._last_tick_completed_ms,
+                "in_flight": sorted(self._in_flight_job_ids),
+                "max_overdue_seconds": None,
+                "max_overdue_job_id": "",
+            }
+        return {
+            "running": self.is_running,
+            "tick_count": self._executor_tick_count,
+            "last_tick_started_at": self._last_tick_started_ms,
+            "last_tick_completed_at": self._last_tick_completed_ms,
+            "in_flight": sorted(self._in_flight_job_ids),
+            "max_overdue_seconds": round(max_overdue_ms / 1000.0, 1),
+            "max_overdue_job_id": overdue_job_id,
+        }
 
     def start(self) -> None:
         """Start the background loop.
@@ -491,6 +545,7 @@ class ScheduledResearchExecutor:
         """
         now = self._now_fn() if now_ms is None else now_ms
         self._executor_tick_count += 1
+        self._last_tick_started_ms = now
         if self._executor_tick_count % 60 == 0:
             try:
                 from trade_integrations.observability.hooks import safe_emit
@@ -563,12 +618,21 @@ class ScheduledResearchExecutor:
             async with semaphore:
                 # One job's unexpected persistence/lifecycle error must not
                 # starve every other job in this tick.
+                #
+                # Tracked in _in_flight_job_ids for the whole await so ``liveness()``
+                # can name what the tick is currently blocked on — the difference
+                # between "the scheduler is wedged" and "hub-evening-maintenance is
+                # 27 minutes into its 45-minute ceiling", which took a live
+                # investigation to establish the first time.
+                self._in_flight_job_ids.add(str(job.id))
                 try:
                     await self._run_job(job, now)
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     logger.error("scheduled research job %s failed its run cycle", job.id, exc_info=True)
+                finally:
+                    self._in_flight_job_ids.discard(str(job.id))
 
         if jobs:
             await asyncio.gather(*(_run_job_bounded(job) for job in jobs))
@@ -578,6 +642,7 @@ class ScheduledResearchExecutor:
         # between "run finished" and "message sent", or a transient send error
         # is picked up here on the next tick.
         await self.sweep_deliveries()
+        self._last_tick_completed_ms = self._now_fn()
 
     def _expire_elapsed_jobs(self, now_ms: int) -> int:
         """Persist jobs whose configured end boundary has elapsed."""
