@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any
 
@@ -20,6 +21,7 @@ JOB_TYPE_INFRA_HEAL = "autonomous_agent_infra_heal"
 JOB_TYPE_NEWS = "autonomous_agent_news"
 JOB_TYPE_STRATEGY_REVIEW = "autonomous_agent_strategy_review"
 JOB_TYPE_STRATEGY_SNAPSHOT = "autonomous_agent_strategy_snapshot"
+JOB_TYPE_DECISION_EVAL = "autonomous_agent_decision_eval"
 AUTONOMOUS_JOB_TYPES = frozenset(
     {
         JOB_TYPE_WATCH,
@@ -29,12 +31,16 @@ AUTONOMOUS_JOB_TYPES = frozenset(
         JOB_TYPE_NEWS,
         JOB_TYPE_STRATEGY_REVIEW,
         JOB_TYPE_STRATEGY_SNAPSHOT,
+        JOB_TYPE_DECISION_EVAL,
     }
 )
 
 _INFRA_HEAL_MS = 60_000
 _NEWS_MS_DEFAULT = 900_000
 _STRATEGY_REVIEW_MS_DEFAULT = 1_800_000
+# Daily. Grading looks back at horizons measured in days, so a tighter cadence would
+# re-walk the same not-yet-matured decisions without producing any new verdict.
+_DECISION_EVAL_MS_DEFAULT = 86_400_000
 
 
 def is_autonomous_scheduler_enabled() -> bool:
@@ -113,6 +119,10 @@ def _strategy_snapshot_job_id(agent_id: str) -> str:
     return f"{agent_id}-strategy-snapshot"
 
 
+def _decision_eval_job_id(agent_id: str) -> str:
+    return f"{agent_id}-decision-eval"
+
+
 def agent_job_ids(agent_id: str) -> frozenset[str]:
     """Every scheduler job id this module can mint for one agent.
 
@@ -133,6 +143,7 @@ def agent_job_ids(agent_id: str) -> frozenset[str]:
             _news_job_id(agent_id),
             _strategy_review_job_id(agent_id),
             _strategy_snapshot_job_id(agent_id),
+            _decision_eval_job_id(agent_id),
         }
     )
     assert len(ids) == len(AUTONOMOUS_JOB_TYPES), (
@@ -299,6 +310,18 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
                 config={"job_type": JOB_TYPE_STRATEGY_SNAPSHOT, "autonomous_agent_id": agent_id},
             )
         )
+        decision_eval_ms = str(int(schedules.get("decision_eval_ms") or _DECISION_EVAL_MS_DEFAULT))
+        store.upsert(
+            ScheduledResearchJob(
+                id=_decision_eval_job_id(agent_id),
+                prompt=f"Decision evaluation sweep for {agent.get('name') or agent_id}",
+                schedule=decision_eval_ms,
+                next_run_at=now_ms + int(decision_eval_ms),
+                status=JobStatus.PENDING,
+                created_at=now_ms,
+                config={"job_type": JOB_TYPE_DECISION_EVAL, "autonomous_agent_id": agent_id},
+            )
+        )
     logger.info("registered autonomous jobs for %s", agent_id)
 
 
@@ -315,6 +338,7 @@ def unregister_agent_jobs(agent_id: str) -> dict[str, bool]:
         _news_job_id(agent_id): store.delete(_news_job_id(agent_id)),
         _strategy_review_job_id(agent_id): store.delete(_strategy_review_job_id(agent_id)),
         _strategy_snapshot_job_id(agent_id): store.delete(_strategy_snapshot_job_id(agent_id)),
+        _decision_eval_job_id(agent_id): store.delete(_decision_eval_job_id(agent_id)),
     }
 
 
@@ -390,6 +414,20 @@ async def _dispatch_autonomous_job_inner(job: ScheduledResearchJob) -> None:
         from trade_integrations.autonomous_agents.strategy_review import run_strategy_snapshot_tick
 
         await asyncio.to_thread(run_strategy_snapshot_tick, agent_id)
+        return
+    if job_type == JOB_TYPE_DECISION_EVAL:
+        # Gated to the release tier: this grading pass produces collected data, and
+        # release is the sole data collector (root CLAUDE.md). Dev reads the result via
+        # the shared hub rather than producing a second, divergent copy.
+        if os.environ.get("STACK_PROFILE", "").strip().lower() != "release":
+            logger.debug("decision eval skipped for %s — not the release tier", agent_id)
+            return
+        from trade_integrations.autonomous_agents.decision_evaluation import (
+            sweep_pending_evaluations,
+        )
+
+        summary = await asyncio.to_thread(sweep_pending_evaluations, agent_id=agent_id)
+        logger.info("decision eval sweep for %s: %s", agent_id, summary)
         return
     if job_type == JOB_TYPE_RESEARCH:
         if get_env_config().trade.autonomous_research_on_schedule.strip().lower() not in {
