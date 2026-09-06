@@ -142,6 +142,9 @@ def run_autonomous_agents_eval_job(config: dict[str, Any] | None = None) -> dict
     from trade_integrations.autonomous_agents.intent_extractor_golden_eval import (
         run_intent_extractor_golden_eval,
     )
+    from trade_integrations.autonomous_agents.decision_quality_golden_eval import (
+        run_decision_quality_golden_eval,
+    )
     from trade_integrations.autonomous_agents.outcome_ledger_golden_eval import (
         run_outcome_ledger_golden_eval,
     )
@@ -151,6 +154,11 @@ def run_autonomous_agents_eval_job(config: dict[str, Any] | None = None) -> dict
     for name, fn in (
         ("intent_extractor", run_intent_extractor_golden_eval),
         ("outcome_ledger", run_outcome_ledger_golden_eval),
+        # Per-decision judgement quality — regret against the alternatives the agent
+        # itself ranked, plus confidence calibration. Sits alongside outcome_ledger
+        # rather than replacing it: that one answers "did it make money", this one
+        # answers "did it decide well", and the two can move in opposite directions.
+        ("decision_quality", run_decision_quality_golden_eval),
     ):
         try:
             results[name] = fn()
