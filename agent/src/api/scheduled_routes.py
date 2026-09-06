@@ -546,6 +546,13 @@ def register_scheduled_routes(
         dispatches. The remaining fields are the evidence of actual progress —
         ``max_overdue_seconds`` is the one that catches a stall regardless of its cause,
         and ``in_flight`` names what the tick is currently blocked on.
+
+        The nested ``operational`` object reports the same fields for the operational
+        tier's own loop (``autonomous_agent_*``, ``recording_wake``,
+        ``options_position_monitor``) — split onto its own tick so a long collection-job
+        dispatch on the main loop can never hold an agent's watch/news/strategy-review
+        cadence hostage. See
+        .claude/backlog/items/2026-09-07-scheduler-tick-head-of-line-stall.md.
         """
         executor = _get_scheduled_research_executor()
         return {

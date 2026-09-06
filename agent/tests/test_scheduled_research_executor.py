@@ -1671,3 +1671,196 @@ def test_liveness_survives_a_store_read_failure(tmp_path: Path) -> None:
     live = executor.liveness(now_ms=1_000)
     assert live["max_overdue_seconds"] is None
     assert live["running"] is False
+
+
+def test_operational_tier_job_dispatches_on_its_own_tick_not_the_main_one() -> None:
+    """autonomous_agent_watch must be dispatched by `_operational_tick`, never by the
+    main `tick()` — the whole point of the split is that the main loop can never hold
+    it hostage. See .claude/backlog/items/2026-09-07-scheduler-tick-head-of-line-stall.md."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = ScheduledResearchJobStore(path=Path(tmp) / "jobs.json")
+        store.upsert(
+            ScheduledResearchJob(
+                id="aa-watch",
+                prompt="watch",
+                schedule="5000",
+                next_run_at=1_000,
+                status=JobStatus.PENDING,
+                created_at=0,
+                config={"job_type": "autonomous_agent_watch"},
+            )
+        )
+        store.upsert(_job("index-plan-refresh", schedule="5000", next_run_at=1_000))
+        dispatched: list[str] = []
+
+        async def dispatch(job: ScheduledResearchJob) -> None:
+            dispatched.append(job.id)
+
+        async def scenario() -> None:
+            executor = ScheduledResearchExecutor(store, dispatch)
+            await executor.tick(1_500)
+            assert dispatched == ["index-plan-refresh"]
+            await executor._operational_tick(1_500)
+            assert dispatched == ["index-plan-refresh", "aa-watch"]
+
+        asyncio.run(scenario())
+
+
+def test_main_tick_never_dispatches_operational_tier_jobs() -> None:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = ScheduledResearchJobStore(path=Path(tmp) / "jobs.json")
+        for job_type in ("autonomous_agent_watch", "recording_wake", "options_position_monitor"):
+            store.upsert(
+                ScheduledResearchJob(
+                    id=f"op-{job_type}",
+                    prompt="x",
+                    schedule="5000",
+                    next_run_at=1_000,
+                    status=JobStatus.PENDING,
+                    created_at=0,
+                    config={"job_type": job_type},
+                )
+            )
+        dispatched: list[str] = []
+
+        async def dispatch(job: ScheduledResearchJob) -> None:
+            dispatched.append(job.id)
+
+        async def scenario() -> None:
+            executor = ScheduledResearchExecutor(store, dispatch)
+            await executor.tick(1_500)
+
+        asyncio.run(scenario())
+
+        assert dispatched == []
+
+
+def test_operational_tick_never_dispatches_non_operational_jobs() -> None:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = ScheduledResearchJobStore(path=Path(tmp) / "jobs.json")
+        store.upsert(_job("hub-evening-maintenance", schedule="5000", next_run_at=1_000))
+        dispatched: list[str] = []
+
+        async def dispatch(job: ScheduledResearchJob) -> None:
+            dispatched.append(job.id)
+
+        async def scenario() -> None:
+            executor = ScheduledResearchExecutor(store, dispatch)
+            await executor._operational_tick(1_500)
+
+        asyncio.run(scenario())
+
+        assert dispatched == []
+
+
+def test_operational_tick_is_not_starved_by_a_long_main_tick_dispatch() -> None:
+    """The whole point of the split: a slow main-tick dispatch must not block the
+    operational tick from running to completion concurrently."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = ScheduledResearchJobStore(path=Path(tmp) / "jobs.json")
+        store.upsert(_job("slow-collection-job", schedule="5000", next_run_at=1_000))
+        store.upsert(
+            ScheduledResearchJob(
+                id="aa-watch",
+                prompt="watch",
+                schedule="5000",
+                next_run_at=1_000,
+                status=JobStatus.PENDING,
+                created_at=0,
+                config={"job_type": "autonomous_agent_watch"},
+            )
+        )
+        events: list[str] = []
+        slow_job_started = asyncio.Event()
+
+        async def dispatch(job: ScheduledResearchJob) -> None:
+            if job.id == "slow-collection-job":
+                slow_job_started.set()
+                events.append("slow-start")
+                await asyncio.sleep(0.2)
+                events.append("slow-end")
+            else:
+                events.append(f"{job.id}-dispatched")
+
+        async def scenario() -> None:
+            executor = ScheduledResearchExecutor(store, dispatch)
+            main = asyncio.create_task(executor.tick(1_500))
+            await slow_job_started.wait()
+            # The operational tick must complete well before the main tick's slow job does.
+            await asyncio.wait_for(executor._operational_tick(1_500), timeout=0.1)
+            await main
+
+        asyncio.run(scenario())
+
+        assert "aa-watch-dispatched" in events
+        assert events.index("aa-watch-dispatched") < events.index("slow-end")
+
+
+def test_liveness_operational_tier_reports_independently(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.upsert(
+        ScheduledResearchJob(
+            id="aa-watch",
+            prompt="watch",
+            schedule="5000",
+            next_run_at=1_000,
+            status=JobStatus.PENDING,
+            created_at=0,
+            config={"job_type": "autonomous_agent_watch"},
+        )
+    )
+
+    async def scenario() -> ScheduledResearchExecutor:
+        executor = ScheduledResearchExecutor(store, _noop_dispatch)
+        await executor._operational_tick(1_500)
+        return executor
+
+    executor = asyncio.run(scenario())
+
+    live = executor.liveness(now_ms=1_500)
+    operational = live["operational"]
+    assert operational["tick_count"] == 1
+    assert operational["last_tick_completed_at"] is not None
+    assert operational["in_flight"] == []
+    assert operational["max_overdue_seconds"] == 0
+    # The main tier's own counters must be untouched by an operational-only tick.
+    assert live["tick_count"] == 0
+
+
+def test_liveness_operational_tier_survives_store_read_failure(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    executor = ScheduledResearchExecutor(store, _noop_dispatch)
+
+    def _boom() -> dict[str, ScheduledResearchJob]:
+        raise OSError("store unavailable")
+
+    executor._store.load = _boom  # type: ignore[method-assign]
+
+    live = executor.liveness(now_ms=1_000)
+    assert live["operational"]["max_overdue_seconds"] is None
+
+
+def test_start_stop_manages_both_loops(tmp_path: Path) -> None:
+    """Both loops start and stop together — there is no independent control for the
+    operational tier, per the settled decision that nothing dispatches until the
+    operator explicitly resumes."""
+    store = _store(tmp_path)
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(store, _noop_dispatch, tick_interval_ms=10_000)
+        executor.start()
+        assert executor.is_running is True
+        assert executor.is_operational_running is True
+        await executor.stop()
+        assert executor.is_running is False
+        assert executor.is_operational_running is False
+
+    asyncio.run(scenario())

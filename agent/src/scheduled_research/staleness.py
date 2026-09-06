@@ -46,6 +46,23 @@ _JOB_DISPATCH_TIMEOUT_MS: dict[str, int] = {
     "index_factor_snapshot": 60 * 60 * 1000,
     "hub_news_entity": 20 * 60 * 1000,
     "hub_news_ingest": 10 * 60 * 1000,
+    # Every autonomous_agent_* type ran in 0.1-19s live (2026-09-07 recovery-batch
+    # measurement) yet had no entry here, so each one carried the 45-minute
+    # DEFAULT_DISPATCH_TIMEOUT_MS meant for genuinely long collection work — a stuck
+    # watch/research/quant call could hold the operational tier's own timeout budget
+    # for 45 minutes before the executor gave up on it. 5 minutes is generous headroom
+    # over the observed ceiling while still far below the collection-job defaults.
+    # See .claude/backlog/items/2026-09-07-scheduler-tick-head-of-line-stall.md.
+    "autonomous_agent_watch": 5 * 60 * 1000,
+    "autonomous_agent_research": 5 * 60 * 1000,
+    "autonomous_agent_quant": 5 * 60 * 1000,
+    "autonomous_agent_infra_heal": 5 * 60 * 1000,
+    "autonomous_agent_news": 5 * 60 * 1000,
+    "autonomous_agent_strategy_review": 5 * 60 * 1000,
+    "autonomous_agent_strategy_snapshot": 5 * 60 * 1000,
+    "autonomous_agent_decision_eval": 5 * 60 * 1000,
+    "recording_wake": 5 * 60 * 1000,
+    "options_position_monitor": 5 * 60 * 1000,
 }
 _INDEX_JOB_DISPATCH_TIMEOUT_MS = 30 * 60 * 1000
 

@@ -65,7 +65,12 @@ from src.scheduled_research.index_jobs import (
     JOB_TYPE_REINFERENCE_TICK,
     JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP,
 )
-from src.scheduled_research.options_jobs import JOB_TYPE_OPTIONS_PLAN_REFRESH
+from src.scheduled_research.options_jobs import (
+    JOB_TYPE_OPTIONS_PLAN_REFRESH,
+    JOB_TYPE_OPTIONS_POSITION_MONITOR,
+)
+from src.scheduled_research.recording_wake_jobs import JOB_TYPE_RECORDING_WAKE
+from src.scheduled_research.autonomous_agent_jobs import AUTONOMOUS_JOB_TYPES
 from src.scheduled_research.trade_data_jobs import (
     JOB_TYPE_NSE_MACRO_REFRESH,
     JOB_TYPE_NSE_REPO_CONSISTENCY,
@@ -157,3 +162,23 @@ def is_safe_to_auto_resume(job_type: str) -> bool:
     that re-runs unattended.
     """
     return job_type in SAFE_TO_AUTO_RESUME_JOB_TYPES
+
+
+# The genuinely operational/session-scoped types called out in this module's own docstring —
+# never collection work, dispatched fast (0.1-19s observed live) and on a short cadence an
+# autonomous agent actually depends on (autonomous_agent_watch's 7-minute default). Given their
+# own executor loop and tick barrier (`ScheduledResearchExecutor`'s `_run_operational`/
+# `_operational_tick`) so a long collection-job dispatch on the main loop can never hold them
+# hostage — see .claude/backlog/items/2026-09-07-scheduler-tick-head-of-line-stall.md, where a
+# single 31.4-minute hub_evening_maintenance run starved every autonomous agent's watch/news/
+# strategy-review cadence for the same duration because `tick()` is a barrier over ALL due jobs.
+OPERATIONAL_TIER_JOB_TYPES: frozenset[str] = frozenset(AUTONOMOUS_JOB_TYPES) | frozenset(
+    {
+        JOB_TYPE_RECORDING_WAKE,
+        JOB_TYPE_OPTIONS_POSITION_MONITOR,
+    }
+)
+
+
+def is_operational_tier_job(job_type: str) -> bool:
+    return job_type in OPERATIONAL_TIER_JOB_TYPES

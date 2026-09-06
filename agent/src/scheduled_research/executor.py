@@ -28,7 +28,11 @@ from src.scheduled_research.models import (
     validate_schedule,
     validate_timezone,
 )
-from src.scheduled_research.job_tier_policy import collection_job_dispatch_enabled, is_collection_job
+from src.scheduled_research.job_tier_policy import (
+    collection_job_dispatch_enabled,
+    is_collection_job,
+    is_operational_tier_job,
+)
 from src.scheduled_research.store import ScheduledResearchJobStore
 # Stale-run detection and watchdog tuning live in staleness.py (a file we
 # fully own) and are re-exported here so this module's existing internal
@@ -354,6 +358,17 @@ class ScheduledResearchExecutor:
         self._startup_backlog_deferred = False
         self._watchdog_task: asyncio.Task | None = None
         self._executor_tick_count = 0
+        # The operational tier's own loop/task, over the same store — see
+        # `_run_operational`/`_operational_tick`. Split from the main loop so a long
+        # collection-job dispatch can never hold an autonomous agent's watch/news/
+        # strategy-review cadence hostage (the head-of-line stall the main tick barrier
+        # causes). Starts and stops together with the main loop; never runs alone.
+        self._operational_task: asyncio.Task | None = None
+        self._operational_wakeup: asyncio.Event | None = None
+        self._operational_tick_count = 0
+        self._last_operational_tick_started_ms: int | None = None
+        self._last_operational_tick_completed_ms: int | None = None
+        self._operational_in_flight_job_ids: set[str] = set()
         # Liveness evidence. ``is_running`` only says a Task object exists and hasn't
         # finished — it stays True for a loop parked inside ``gather`` on one slow job
         # while every other job starves. These three are the evidence that the loop is
@@ -366,6 +381,11 @@ class ScheduledResearchExecutor:
     def is_running(self) -> bool:
         """Return whether the background loop task is active."""
         return self._task is not None and not self._task.done()
+
+    @property
+    def is_operational_running(self) -> bool:
+        """Return whether the operational tier's own loop task is active."""
+        return self._operational_task is not None and not self._operational_task.done()
 
     def liveness(self, now_ms: int | None = None) -> dict[str, Any]:
         """Evidence that the dispatch loop is progressing, not merely alive.
@@ -383,11 +403,19 @@ class ScheduledResearchExecutor:
         now = self._now_fn() if now_ms is None else now_ms
         max_overdue_ms = 0
         overdue_job_id = ""
+        operational_max_overdue_ms = 0
+        operational_overdue_job_id = ""
         try:
             for job in self._store.load().values():
                 if not is_due(job, now):
                     continue
                 overdue = now - int(job.next_run_at or now)
+                job_type = str((job.config or {}).get("job_type") or "")
+                if is_operational_tier_job(job_type):
+                    if overdue > operational_max_overdue_ms:
+                        operational_max_overdue_ms = overdue
+                        operational_overdue_job_id = str(job.id)
+                    continue
                 if overdue > max_overdue_ms:
                     max_overdue_ms = overdue
                     overdue_job_id = str(job.id)
@@ -403,6 +431,15 @@ class ScheduledResearchExecutor:
                 "in_flight": sorted(self._in_flight_job_ids),
                 "max_overdue_seconds": None,
                 "max_overdue_job_id": "",
+                "operational": {
+                    "running": self.is_operational_running,
+                    "tick_count": self._operational_tick_count,
+                    "last_tick_started_at": self._last_operational_tick_started_ms,
+                    "last_tick_completed_at": self._last_operational_tick_completed_ms,
+                    "in_flight": sorted(self._operational_in_flight_job_ids),
+                    "max_overdue_seconds": None,
+                    "max_overdue_job_id": "",
+                },
             }
         return {
             "running": self.is_running,
@@ -412,6 +449,20 @@ class ScheduledResearchExecutor:
             "in_flight": sorted(self._in_flight_job_ids),
             "max_overdue_seconds": round(max_overdue_ms / 1000.0, 1),
             "max_overdue_job_id": overdue_job_id,
+            # The operational tier (autonomous_agent_* + recording_wake +
+            # options_position_monitor) runs its own loop/tick, split from the main one
+            # above so it can never be starved by a long collection-job dispatch — see
+            # `_run_operational`/`_operational_tick` and
+            # .claude/backlog/items/2026-09-07-scheduler-tick-head-of-line-stall.md.
+            "operational": {
+                "running": self.is_operational_running,
+                "tick_count": self._operational_tick_count,
+                "last_tick_started_at": self._last_operational_tick_started_ms,
+                "last_tick_completed_at": self._last_operational_tick_completed_ms,
+                "in_flight": sorted(self._operational_in_flight_job_ids),
+                "max_overdue_seconds": round(operational_max_overdue_ms / 1000.0, 1),
+                "max_overdue_job_id": operational_overdue_job_id,
+            },
         }
 
     def start(self) -> None:
@@ -424,8 +475,15 @@ class ScheduledResearchExecutor:
         self._stopping = False
         self.recover_stale_running(self._now_fn(), startup=True)
         self._wakeup = asyncio.Event()
+        self._operational_wakeup = asyncio.Event()
         loop = asyncio.get_running_loop()
         self._task = loop.create_task(self._run(), name="scheduled-research-executor")
+        # Started together with the main loop, per the settled decision that nothing
+        # dispatches until the operator explicitly resumes — there is no independent
+        # start/stop for the operational tier.
+        self._operational_task = loop.create_task(
+            self._run_operational(), name="scheduled-research-executor-operational"
+        )
         self._watchdog_task = loop.create_task(
             self._stale_watchdog(),
             name="scheduled-research-stale-watchdog",
@@ -433,6 +491,8 @@ class ScheduledResearchExecutor:
 
     def wake(self) -> None:
         """Wake the executor loop for an immediate tick (e.g. after manual job recovery)."""
+        if self._operational_wakeup is not None:
+            self._operational_wakeup.set()
         if self._wakeup is not None:
             self._wakeup.set()
 
@@ -464,6 +524,16 @@ class ScheduledResearchExecutor:
             except asyncio.CancelledError:
                 pass
             self._watchdog_task = None
+        operational_task = self._operational_task
+        if operational_task is not None:
+            if self._operational_wakeup is not None:
+                self._operational_wakeup.set()
+            operational_task.cancel()
+            try:
+                await operational_task
+            except asyncio.CancelledError:
+                pass
+            self._operational_task = None
         task = self._task
         if task is None:
             self._reset_runtime_state()
@@ -536,6 +606,8 @@ class ScheduledResearchExecutor:
         self._startup_backlog_deferred = False
         if self._wakeup is not None:
             self._wakeup.set()
+        if self._operational_wakeup is not None:
+            self._operational_wakeup.set()
 
     async def tick(self, now_ms: int | None = None) -> None:
         """Run one poll/dispatch pass.
@@ -564,10 +636,64 @@ class ScheduledResearchExecutor:
             (
                 job
                 for job in self._store.load().values()
-                if is_due(job, now) and not _collection_dispatch_blocked(job)
+                if is_due(job, now)
+                and not _collection_dispatch_blocked(job)
+                # The operational tier (autonomous_agent_* + recording_wake +
+                # options_position_monitor) dispatches on its own loop/tick
+                # (`_operational_tick`) so a long collection-job dispatch on this main
+                # loop can never hold its cadence hostage — see
+                # `_run_operational` and
+                # .claude/backlog/items/2026-09-07-scheduler-tick-head-of-line-stall.md.
+                and not is_operational_tier_job(str(job.config.get("job_type") or ""))
             ),
             key=lambda job: job.next_run_at,
         )
+        await self._dispatch_due_jobs(jobs, now, in_flight=self._in_flight_job_ids)
+
+        # The sweep is what makes delivery correct; the event hook only makes
+        # it prompt. A briefing whose hook was lost to a restart, a crash
+        # between "run finished" and "message sent", or a transient send error
+        # is picked up here on the next tick.
+        await self.sweep_deliveries()
+        self._last_tick_completed_ms = self._now_fn()
+
+    async def _operational_tick(self, now_ms: int | None = None) -> None:
+        """Run one poll/dispatch pass over the operational tier only.
+
+        Deliberately does not repeat the main tick's store-wide maintenance
+        (`recover_stale_running`, `_expire_elapsed_jobs`, `sweep_deliveries`) — those
+        already cover the whole store regardless of which loop calls them, and running
+        them from both loops would only duplicate work, not add coverage. This loop
+        owns exactly one thing: dispatching operational-tier jobs on their own cadence,
+        immune to whatever the main loop's tick is currently blocked on.
+        """
+        now = self._now_fn() if now_ms is None else now_ms
+        self._operational_tick_count += 1
+        self._last_operational_tick_started_ms = now
+        jobs = sorted(
+            (
+                job
+                for job in self._store.load().values()
+                if is_due(job, now) and is_operational_tier_job(str(job.config.get("job_type") or ""))
+            ),
+            key=lambda job: job.next_run_at,
+        )
+        await self._dispatch_due_jobs(jobs, now, in_flight=self._operational_in_flight_job_ids)
+        self._last_operational_tick_completed_ms = self._now_fn()
+
+    async def _dispatch_due_jobs(
+        self,
+        jobs: list[ScheduledResearchJob],
+        now: int,
+        *,
+        in_flight: set[str],
+    ) -> None:
+        """Dispatch `jobs` (already filtered to due + tier-eligible) up to
+        `_dispatch_concurrency` at once, tracking in-flight ids in `in_flight` for
+        `liveness()`. Shared by the main tick and `_operational_tick` so both loops'
+        dispatch/concurrency semantics stay identical — only the job selection and the
+        in-flight set differ between them.
+        """
         # Dispatch up to _dispatch_concurrency jobs at once instead of
         # strictly one at a time: a burst of simultaneously-due jobs
         # (routine on overlapping cron cadences, not just a mass manual
@@ -578,7 +704,10 @@ class ScheduledResearchExecutor:
         # RUNNING, persisting completion) is a synchronous call with no
         # internal ``await`` — it always runs to completion atomically on
         # this single event loop, so concurrent dispatches never interleave
-        # their store writes even though their dispatch awaits overlap.
+        # their store writes even though their dispatch awaits overlap. The
+        # same argument holds across the main and operational loops' ticks
+        # running concurrently: there is still exactly one event loop, and
+        # no store mutation anywhere in this class awaits mid-write.
         semaphore = asyncio.Semaphore(self._dispatch_concurrency)
         # A second, narrower gate for job types that contend on a shared
         # external resource beyond just "the event loop is busy" (see
@@ -586,9 +715,10 @@ class ScheduledResearchExecutor:
         # is the live-verified case: 2026-09-02-hub-news-ingest-tight-light-
         # dispatch-timeout-undersized's Attempts log). Built fresh per tick
         # from only the job types actually due right now — cheap, and safe
-        # because ticks never overlap (``_run`` awaits each ``tick()`` fully
-        # before starting the next), so a semaphore never needs to survive
-        # past the ``gather`` below that owns its lifetime.
+        # because a tick's own dispatch fully drains before that same tick
+        # returns (each loop's ticks don't overlap with themselves), so a
+        # semaphore never needs to survive past the ``gather`` below that
+        # owns its lifetime.
         type_semaphores: dict[str, asyncio.Semaphore] = {}
         for job in jobs:
             job_type = str(job.config.get("job_type") or "")
@@ -619,12 +749,12 @@ class ScheduledResearchExecutor:
                 # One job's unexpected persistence/lifecycle error must not
                 # starve every other job in this tick.
                 #
-                # Tracked in _in_flight_job_ids for the whole await so ``liveness()``
+                # Tracked in `in_flight` for the whole await so ``liveness()``
                 # can name what the tick is currently blocked on — the difference
                 # between "the scheduler is wedged" and "hub-evening-maintenance is
                 # 27 minutes into its 45-minute ceiling", which took a live
                 # investigation to establish the first time.
-                self._in_flight_job_ids.add(str(job.id))
+                in_flight.add(str(job.id))
                 try:
                     await self._run_job(job, now)
                 except asyncio.CancelledError:
@@ -632,17 +762,10 @@ class ScheduledResearchExecutor:
                 except Exception:
                     logger.error("scheduled research job %s failed its run cycle", job.id, exc_info=True)
                 finally:
-                    self._in_flight_job_ids.discard(str(job.id))
+                    in_flight.discard(str(job.id))
 
         if jobs:
             await asyncio.gather(*(_run_job_bounded(job) for job in jobs))
-
-        # The sweep is what makes delivery correct; the event hook only makes
-        # it prompt. A briefing whose hook was lost to a restart, a crash
-        # between "run finished" and "message sent", or a transient send error
-        # is picked up here on the next tick.
-        await self.sweep_deliveries()
-        self._last_tick_completed_ms = self._now_fn()
 
     def _expire_elapsed_jobs(self, now_ms: int) -> int:
         """Persist jobs whose configured end boundary has elapsed."""
@@ -799,6 +922,29 @@ class ScheduledResearchExecutor:
                 break
             await self._sleep_or_wake(self._tick_interval_ms)
 
+    async def _run_operational(self) -> None:
+        """The operational tier's own poll loop, over the same store as `_run`.
+
+        Mirrors `_run` exactly except for which tick it calls and which wakeup event it
+        sleeps on — same tick interval, same grace period, same shutdown handling.
+        Deliberately does not call `defer_startup_backlog` a second time: that method is
+        idempotent (`self._startup_backlog_deferred` guards it) and the main loop's
+        `_run` already covers the whole store, operational jobs included.
+        """
+        grace_ms = _startup_grace_ms()
+        if grace_ms > 0:
+            await self._sleep_or_wake(grace_ms, event=self._operational_wakeup)
+        while not self._stopping:
+            try:
+                await self._operational_tick(self._now_fn())
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.error("scheduled research operational-tier tick failed", exc_info=True)
+            if self._stopping:
+                break
+            await self._sleep_or_wake(self._tick_interval_ms, event=self._operational_wakeup)
+
     async def _stale_watchdog(self) -> None:
         """Recover hung RUNNING jobs on a timer independent of tick completion."""
         interval_ms = _watchdog_interval_ms()
@@ -816,8 +962,8 @@ class ScheduledResearchExecutor:
             except Exception:
                 logger.error("scheduled research stale watchdog failed", exc_info=True)
 
-    async def _sleep_or_wake(self, sleep_ms: int) -> None:
-        wakeup = self._wakeup
+    async def _sleep_or_wake(self, sleep_ms: int, *, event: asyncio.Event | None = None) -> None:
+        wakeup = self._wakeup if event is None else event
         if wakeup is None:
             await asyncio.sleep(sleep_ms / 1000.0)
             return
