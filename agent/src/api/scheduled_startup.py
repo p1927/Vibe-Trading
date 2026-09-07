@@ -84,6 +84,22 @@ def boot_scheduled_research_stack(get_store) -> None:
         recover_scheduler_jobs_on_stack_boot(get_store())
     except Exception:
         logger.exception("failed to recover stale scheduler jobs on API startup")
+    try:
+        from src.scheduled_research.lifecycle import resume_jobs_auto_paused_by_shutdown
+
+        # A clean process boot means the shutdown/restart the auto-pause was guarding against
+        # has already completed successfully — the transient safety window is over, so any job
+        # only this process's own prior shutdown paused can resume. See
+        # .claude/backlog/items/2026-09-07-four-jobs-silently-paused-by-a-shutdown.md.
+        resumed = resume_jobs_auto_paused_by_shutdown(get_store())
+        if resumed:
+            logger.info(
+                "stack boot auto-resumed %d scheduled research job(s) paused by the prior "
+                "shutdown",
+                resumed,
+            )
+    except Exception:
+        logger.exception("failed to auto-resume shutdown-paused scheduler jobs on API startup")
     from src.scheduled_research.index_jobs import (
         is_index_scheduler_enabled,
         register_default_index_jobs,

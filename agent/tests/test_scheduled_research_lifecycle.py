@@ -10,6 +10,7 @@ from src.scheduled_research.lifecycle import (
     recover_persisted_scheduler_jobs,
     recover_scheduler_jobs_on_stack_boot,
     recover_scheduler_jobs_on_stack_shutdown,
+    resume_jobs_auto_paused_by_shutdown,
 )
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob
 from src.scheduled_research.store import ScheduledResearchJobStore
@@ -165,6 +166,79 @@ def test_resume_unsticks_a_terminal_failed_job(tmp_path: Path) -> None:
     # last_error is deliberately left alone — it's useful history of what
     # went wrong last time, only the state blocking re-dispatch is cleared.
     assert saved.last_error == "TimeoutError: dispatch timed out after 1200000ms"
+
+
+def test_resume_jobs_auto_paused_by_shutdown_resumes_shutdown_pause(tmp_path: Path) -> None:
+    """A job auto-paused by the shutdown-recovery path (the promotion-window safety
+    measure) must come back on the next successful boot, per
+    .claude/backlog/items/2026-09-07-four-jobs-silently-paused-by-a-shutdown.md."""
+    store = _store(tmp_path)
+    now_ms = int(time.time() * 1000)
+    store.upsert(_running_job("options-plan-refresh", last_run_at=now_ms - 1_000))
+
+    recover_scheduler_jobs_on_stack_shutdown(store)
+    paused = store.get("options-plan-refresh")
+    assert paused is not None
+    assert paused.paused is True
+    assert paused.auto_paused_reason == "auto-paused: recovered on stack shutdown"
+
+    resumed = resume_jobs_auto_paused_by_shutdown(store)
+    assert resumed == 1
+
+    saved = store.get("options-plan-refresh")
+    assert saved is not None
+    assert saved.paused is False
+    assert saved.auto_paused_reason is None
+
+
+def test_resume_jobs_auto_paused_by_shutdown_leaves_boot_stale_pause_alone(
+    tmp_path: Path,
+) -> None:
+    """A job auto-paused because it was found stuck RUNNING at boot (a crash, unknown
+    side effects) must NOT be auto-resumed -- only a shutdown-window pause is transient."""
+    store = _store(tmp_path)
+    now_ms = int(time.time() * 1000)
+    threshold = stale_running_ms_for(_running_job("x"))
+    store.upsert(_running_job("stale", last_run_at=now_ms - threshold - 1_000))
+
+    recover_scheduler_jobs_on_stack_boot(store)
+    paused = store.get("stale")
+    assert paused is not None
+    assert paused.auto_paused_reason == "auto-paused: recovered on stack boot (stale running)"
+
+    resumed = resume_jobs_auto_paused_by_shutdown(store)
+    assert resumed == 0
+
+    saved = store.get("stale")
+    assert saved is not None
+    assert saved.paused is True
+    assert saved.auto_paused_reason == "auto-paused: recovered on stack boot (stale running)"
+
+
+def test_resume_jobs_auto_paused_by_shutdown_leaves_operator_pause_alone(
+    tmp_path: Path,
+) -> None:
+    """A job an operator deliberately paused (paused=True, no auto_paused_reason) must
+    never be touched by the shutdown auto-resume sweep."""
+    from src.scheduled_research.pause_control import set_job_enabled
+
+    store = _store(tmp_path)
+    job = ScheduledResearchJob(
+        id="operator-paused",
+        prompt="test",
+        schedule="1000",
+        next_run_at=0,
+        status=JobStatus.PENDING,
+        created_at=0,
+    )
+    store.upsert(job)
+    set_job_enabled("operator-paused", False, store=store)
+    assert store.get("operator-paused").paused is True  # type: ignore[union-attr]
+    assert store.get("operator-paused").auto_paused_reason is None  # type: ignore[union-attr]
+
+    resumed = resume_jobs_auto_paused_by_shutdown(store)
+    assert resumed == 0
+    assert store.get("operator-paused").paused is True  # type: ignore[union-attr]
 
 
 def test_resume_does_not_touch_status_of_a_non_failed_job(tmp_path: Path) -> None:

@@ -19,6 +19,24 @@ logger = logging.getLogger(__name__)
 
 RecoverMode = Literal["stale", "all_running"]
 
+#: Exact ``reason`` strings passed to :func:`recover_persisted_scheduler_jobs` by the two
+#: shutdown-only call sites (``recover_scheduler_jobs_on_stack_shutdown`` below, and
+#: ``api/scheduled_startup.py``'s executor-shutdown pass). A job's ``auto_paused_reason`` is
+#: stamped as ``f"auto-paused: {reason}"`` — see ``_advance_recovered_job``.
+#:
+#: Deliberately does NOT include ``"recovered on stack boot (stale running)"``
+#: (``recover_scheduler_jobs_on_stack_boot``'s own reason): that pause is triggered by finding a
+#: job stuck RUNNING at boot, i.e. a crash with genuinely unknown/possibly-half-applied side
+#: effects, not a routine promotion window closing cleanly. Only a pause stamped with one of
+#: these two reasons is known to be a *transient* safety measure for the promotion/restart window
+#: itself — see `.claude/backlog/items/2026-09-07-four-jobs-silently-paused-by-a-shutdown.md`.
+SHUTDOWN_AUTO_PAUSE_REASONS = frozenset(
+    {
+        "recovered on stack shutdown",
+        "process restart (executor shutdown)",
+    }
+)
+
 
 def _advance_recovered_job(
     job: ScheduledResearchJob,
@@ -126,6 +144,59 @@ def recover_scheduler_jobs_on_stack_shutdown(store: ScheduledResearchJobStore | 
     if count:
         logger.info("stack shutdown recovered %d scheduled research job(s) from running", count)
     return count
+
+
+def resume_jobs_auto_paused_by_shutdown(
+    store: ScheduledResearchJobStore | None = None,
+) -> int:
+    """Auto-resume jobs that a stack shutdown/restart auto-paused, on the next successful boot.
+
+    The shutdown auto-pause (``recover_scheduler_jobs_on_stack_shutdown``, and the
+    executor-shutdown pass in ``api/scheduled_startup.py``) exists to stop a job with
+    half-applied side effects from silently re-running mid-restart — a transient safety measure
+    for the promotion/restart window, not a permanent operator decision. Before this, nothing
+    ever cleared it: a `*/5` or `*/15` collection job caught RUNNING by a routine
+    `trade release update` stayed paused across every subsequent restart forever, with no signal
+    beyond a JSON field nobody polled. See
+    `.claude/backlog/items/2026-09-07-four-jobs-silently-paused-by-a-shutdown.md`.
+
+    Only resumes a job whose ``auto_paused_reason`` exactly matches one of
+    :data:`SHUTDOWN_AUTO_PAUSE_REASONS` — i.e. one this process's own shutdown recovery paused.
+    A job an operator deliberately paused (``paused=True``, ``auto_paused_reason=None``) is never
+    touched, and neither is a job paused for a different system reason (e.g. found stuck RUNNING
+    at boot, a crash with genuinely unknown side effects) — resuming those blindly is exactly the
+    silent-re-run risk the auto-pause exists to prevent.
+
+    Runs via :func:`pause_control.set_job_enabled` so this is the same single mutation path every
+    other pause/resume call site uses, not a second writer of ``paused``/``auto_paused_reason``.
+
+    Args:
+        store: Job store (default singleton path).
+
+    Returns:
+        Count of jobs resumed.
+    """
+    from src.scheduled_research.pause_control import set_job_enabled
+
+    store = store or ScheduledResearchJobStore()
+    jobs = store.load()
+    resumed = 0
+    for job in jobs.values():
+        if not job.paused or not job.auto_paused_reason:
+            continue
+        reason = job.auto_paused_reason
+        if not any(
+            reason == f"auto-paused: {r}" for r in SHUTDOWN_AUTO_PAUSE_REASONS
+        ):
+            continue
+        set_job_enabled(job.id, True, store=store)
+        resumed += 1
+        logger.info(
+            "stack boot auto-resumed shutdown-paused scheduled research job %s (was: %r)",
+            job.id,
+            reason,
+        )
+    return resumed
 
 
 def stale_running_ms_for_job(job: ScheduledResearchJob) -> int:
