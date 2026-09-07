@@ -316,6 +316,7 @@ def build_mcp_tool_wrappers(
     local_server_name: str | None = None,
     client_factory: ClientFactory | None = None,
     max_list_tools_attempts: int = 2,
+    default_session_id: str | None = None,
 ) -> list["MCPRemoteTool"]:
     """Build local tool wrappers for a configured MCP server.
 
@@ -332,6 +333,12 @@ def build_mcp_tool_wrappers(
             interactive ``connector authorize`` bootstrap, where a retry would
             start a second OAuth callback server and orphan the user's
             in-progress sign-in.
+        default_session_id: Current host session id. A remote tool whose
+            schema declares a ``vibe_session_id`` parameter has it injected
+            at call time when the model omits it (mirrors the local ``run_dir``
+            normalization, since the model itself has no way to know the host
+            session id — see
+            ``.claude/backlog/items/2026-09-07-mcp-propose-tool-has-no-session-injection.md``).
 
     Returns:
         Local BaseTool wrappers for all enabled remote tools.
@@ -355,7 +362,10 @@ def build_mcp_tool_wrappers(
                 client_factory=client_factory,
                 max_list_tools_attempts=max_list_tools_attempts,
             )
-            return [MCPRemoteTool(adapter=adapter, spec=spec) for spec in cached_specs]
+            return [
+                MCPRemoteTool(adapter=adapter, spec=spec, default_session_id=default_session_id)
+                for spec in cached_specs
+            ]
 
     # --- Original logic (cache miss) ---
     adapter = MCPServerAdapter(
@@ -372,7 +382,10 @@ def build_mcp_tool_wrappers(
         with _MCP_SPECS_LOCK:
             _MCP_SPECS_CACHE[cache_key] = specs
 
-    return [MCPRemoteTool(adapter=adapter, spec=spec) for spec in specs]
+    return [
+        MCPRemoteTool(adapter=adapter, spec=spec, default_session_id=default_session_id)
+        for spec in specs
+    ]
 
 
 def make_mcp_tool_name(server_name: str, tool_name: str) -> str:
@@ -842,15 +855,26 @@ class MCPRemoteTool(BaseTool):
     repeatable = True
     is_readonly = False
 
-    def __init__(self, adapter: MCPServerAdapter, spec: MCPRemoteToolSpec) -> None:
+    def __init__(
+        self,
+        adapter: MCPServerAdapter,
+        spec: MCPRemoteToolSpec,
+        *,
+        default_session_id: str | None = None,
+    ) -> None:
         """Initialize a remote MCP tool wrapper.
 
         Args:
             adapter: Adapter used to invoke the remote server.
             spec: Resolved local metadata for the remote tool.
+            default_session_id: Current host session id, injected into the
+                call arguments as ``vibe_session_id`` when the remote tool's
+                schema declares that parameter and the model omits it. The
+                model has no way to know the host session id itself.
         """
         self._adapter = adapter
         self._spec = spec
+        self._default_session_id = default_session_id
         self.name = spec.local_name
         self.description = spec.description
         self.parameters = spec.parameters
@@ -866,10 +890,34 @@ class MCPRemoteTool(BaseTool):
         """
         payload = self._adapter.call_tool(
             self._spec.remote_name,
-            self._filter_arguments(kwargs),
+            self._filter_arguments(self._with_injected_session_id(kwargs)),
             local_name=self.name,
         )
         return json.dumps(payload, ensure_ascii=False, default=_json_default)
+
+    def _with_injected_session_id(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Fill in ``vibe_session_id`` when the remote tool declares it and needs it.
+
+        The LLM has no way to know the host session id, so any remote tool
+        that accepts a ``vibe_session_id`` parameter can only ever receive it
+        here, the same way ``run_dir`` is normalized into local tool calls.
+
+        Args:
+            arguments: Raw arguments from the local agent loop.
+
+        Returns:
+            Arguments with ``vibe_session_id`` filled in when applicable.
+        """
+        if not self._default_session_id:
+            return arguments
+        if "vibe_session_id" not in _collect_top_level_property_names(self.parameters):
+            return arguments
+        if arguments.get("vibe_session_id"):
+            return arguments
+
+        filled = dict(arguments)
+        filled["vibe_session_id"] = self._default_session_id
+        return filled
 
     def _filter_arguments(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Drop local-only arguments before forwarding to the remote tool.

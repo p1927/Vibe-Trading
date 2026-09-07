@@ -287,6 +287,126 @@ def test_remote_tool_execute_forwards_arguments_for_composed_schema() -> None:
     assert state["call_records"][0]["arguments"] == {"symbol": "AAPL"}
 
 
+def test_remote_tool_injects_default_session_id_when_model_omits_it() -> None:
+    """Regression for the mcp_openalgo_propose_autonomous_agent null-session-id bug.
+
+    A remote MCP tool whose schema declares ``vibe_session_id`` has no way for the
+    model to learn the host session id, so ``build_mcp_tool_wrappers`` must inject
+    ``default_session_id`` into the call the same way local tools get
+    ``default_session_id`` from ``session_injected_classes``. See
+    ``.claude/backlog/items/2026-09-07-mcp-propose-tool-has-no-session-injection.md``.
+    """
+    state = {
+        "list_calls": 0,
+        "call_calls": 0,
+        "call_records": [],
+        "list_outcomes": [[
+            mcp_types.Tool(
+                name="propose_autonomous_agent",
+                description="Propose an autonomous agent",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "symbols": {"type": "array", "items": {"type": "string"}},
+                        "vibe_session_id": {"type": "string"},
+                    },
+                    "required": ["symbols"],
+                },
+            )
+        ]],
+        "call_outcomes": [
+            CallToolResult(content=[], structured_content={"status": "ready"}, meta=None, data={"status": "ready"}),
+        ],
+    }
+
+    tool = build_mcp_tool_wrappers(
+        "openalgo",
+        _make_config(),
+        client_factory=_make_factory(state),
+        default_session_id="sess-abc123",
+    )[0]
+
+    assert tool.name == "mcp_openalgo_propose_autonomous_agent"
+
+    payload = json.loads(tool.execute(symbols=["NIFTY"]))
+
+    assert payload["status"] == "ok"
+    assert state["call_records"][0]["arguments"] == {
+        "symbols": ["NIFTY"],
+        "vibe_session_id": "sess-abc123",
+    }
+
+
+def test_remote_tool_does_not_override_an_explicit_session_id() -> None:
+    state = {
+        "list_calls": 0,
+        "call_calls": 0,
+        "call_records": [],
+        "list_outcomes": [[
+            mcp_types.Tool(
+                name="propose_autonomous_agent",
+                description="Propose an autonomous agent",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "symbols": {"type": "array", "items": {"type": "string"}},
+                        "vibe_session_id": {"type": "string"},
+                    },
+                    "required": ["symbols"],
+                },
+            )
+        ]],
+        "call_outcomes": [
+            CallToolResult(content=[], structured_content={"status": "ready"}, meta=None, data={"status": "ready"}),
+        ],
+    }
+
+    tool = build_mcp_tool_wrappers(
+        "openalgo",
+        _make_config(),
+        client_factory=_make_factory(state),
+        default_session_id="sess-abc123",
+    )[0]
+
+    tool.execute(symbols=["NIFTY"], vibe_session_id="sess-explicit")
+
+    assert state["call_records"][0]["arguments"]["vibe_session_id"] == "sess-explicit"
+
+
+def test_remote_tool_without_vibe_session_id_param_is_unaffected() -> None:
+    """A remote tool that has no ``vibe_session_id`` property is never touched."""
+    state = {
+        "list_calls": 0,
+        "call_calls": 0,
+        "call_records": [],
+        "list_outcomes": [[
+            mcp_types.Tool(
+                name="quote",
+                description="Quote lookup",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"symbol": {"type": "string"}},
+                    "required": ["symbol"],
+                },
+            )
+        ]],
+        "call_outcomes": [
+            CallToolResult(content=[], structured_content={"ok": True}, meta=None, data={"ok": True}),
+        ],
+    }
+
+    tool = build_mcp_tool_wrappers(
+        "demo",
+        _make_config(),
+        client_factory=_make_factory(state),
+        default_session_id="sess-abc123",
+    )[0]
+
+    tool.execute(symbol="AAPL")
+
+    assert state["call_records"][0]["arguments"] == {"symbol": "AAPL"}
+
+
 @dataclass
 class _RobinhoodPosition:
     """FastMCP-style generated dataclass nested in a Robinhood response."""

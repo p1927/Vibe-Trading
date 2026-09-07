@@ -290,6 +290,7 @@ def build_registry(
                     server_name,
                     server_config,
                     local_server_name=local_server_names[server_name],
+                    default_session_id=session_id,
                 )
                 if live:
                     wrappers = wrap_live_broker_tools(
