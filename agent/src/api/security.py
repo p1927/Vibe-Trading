@@ -27,17 +27,27 @@ from src.config.accessor import get_env_config
 # Constants
 # ============================================================================
 
+# Both tiers' UI origins. The release pair (5909 UI / 8909 API, and the 8090 release
+# gateway) must be listed alongside dev's: the frontend resolves an absolute API origin per
+# UI port (`apiBase.ts`, mirroring stack/ports.yaml), so a release UI call is genuinely
+# cross-origin and CORS-gated, where dev's had been allowed since this list was written.
+# Omitting them makes every release-tier API call fail with an opaque browser CORS error
+# rather than anything the server logs.
 _DEFAULT_CORS_ORIGINS: tuple[str, ...] = (
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:5899",
+    "http://localhost:5909",
     "http://localhost:8000",
     "http://localhost:8080",
+    "http://localhost:8090",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:5899",
+    "http://127.0.0.1:5909",
     "http://127.0.0.1:8000",
     "http://127.0.0.1:8080",
+    "http://127.0.0.1:8090",
 )
 
 _DEFAULT_LOOPBACK_HOSTS = frozenset({
