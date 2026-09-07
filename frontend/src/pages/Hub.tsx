@@ -705,6 +705,9 @@ export function Hub() {
   const constituentCache = hub?.constituent_cache;
   const capture = hub?.capture;
   const factorCoverage = hub?.factor_coverage;
+  // hub_news_pipeline_status()'s registry-gap counts, already carried by /trade/hub/status.
+  // Read here so the payload has an actual renderer rather than being transported and dropped.
+  const registryGapPending = hub?.news_pipeline?.factor_registry_gaps?.pending_count ?? 0;
 
   const newsPageMeta = data?.news_page;
 
@@ -1249,6 +1252,14 @@ export function Hub() {
               )}
             >
               {key === "pipeline" ? "Pipeline view" : key === "events" ? "Events" : "List"}
+              {/* Sourced from hub.news_pipeline (already on the wire from /trade/hub/status),
+                  not a second request -- the point is to show there is something to review
+                  without having to open the tab first. */}
+              {key === "pipeline" && registryGapPending > 0 ? (
+                <span className="ml-1.5 rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-200">
+                  {registryGapPending}
+                </span>
+              ) : null}
             </button>
           ))}
         </div>

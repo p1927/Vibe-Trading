@@ -5484,7 +5484,20 @@ export interface HubStatusPayload {
     mode?: string;
     stages?: Array<Record<string, unknown>>;
   };
-  news_pipeline?: Record<string, unknown>;
+  /**
+   * `hub_news_pipeline_status()` output. Reaches the browser on every /trade/hub/status call.
+   * Still largely untyped and unrendered -- see the backlog item on this payload being
+   * transported and discarded. `factor_registry_gaps` is typed because the Hub page renders a
+   * review badge from it.
+   */
+  news_pipeline?: Record<string, unknown> & {
+    factor_registry_gaps?: {
+      pending_count?: number;
+      accepted_count?: number;
+      ignored_count?: number;
+      error?: string;
+    };
+  };
   news_staging?: {
     entity_pipeline_enabled?: boolean;
     pipeline_paused?: boolean;
