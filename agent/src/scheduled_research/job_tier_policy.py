@@ -109,6 +109,19 @@ COLLECTION_JOB_TYPES: frozenset[str] = frozenset(
         JOB_TYPE_NSE_REPO_CONSISTENCY,
         JOB_TYPE_RESEARCH_HISTORY_ARCHIVE,
         JOB_TYPE_FINANCIAL_KNOWLEDGE_CURATOR,
+        # Literal, not a constant: no pipeline claims this job_type, so it falls
+        # through `try_dispatch_pipeline_job` to the legacy agent-prompt path and
+        # there is no handler module to import a constant from. The gate is
+        # applied in `executor.tick` against `config.job_type`, so it still binds
+        # on that path.
+        #
+        # Gated because it is external-vendor collection: a daily cron spawns a
+        # detached worker that fetches external forecasts per ticker/horizon.
+        # Confirmed running on DEV 2026-09-07 (`nifty-external-predictions-refresh`,
+        # status completed, last_run_at 18:35Z), which is exactly the independent
+        # dev collection `2026-09-02-release-sole-data-collector` removes.
+        # See .claude/backlog/items/2026-09-08-finish-e2e-and-data-defects-plan.md
+        "external_predictions_refresh",
     }
 )
 

@@ -57,6 +57,58 @@ def test_is_collection_job_classifies_known_types() -> None:
     assert is_collection_job("some_future_job_type_nobody_classified_yet") is False
 
 
+def test_external_predictions_refresh_is_gated() -> None:
+    """Daily cron spawning a detached worker that fetches external forecasts.
+
+    Confirmed running on DEV 2026-09-07 (`nifty-external-predictions-refresh`,
+    completed, last_run_at 18:35Z) — independent dev collection, which is what
+    2026-09-02-release-sole-data-collector removes. No pipeline claims this
+    job_type, so it dispatches via the legacy agent-prompt path; the gate binds
+    there too because executor.tick checks config.job_type before dispatch.
+    """
+    assert is_collection_job("external_predictions_refresh") is True
+
+
+def test_a_gated_job_is_blocked_even_with_no_registered_pipeline(monkeypatch) -> None:
+    """The gate must not depend on a typed handler existing."""
+    from src.scheduled_research.job_dispatch_registry import try_dispatch_pipeline_job
+
+    monkeypatch.delenv("STACK_PROFILE", raising=False)
+    job = _job("ext", job_type="external_predictions_refresh")
+    # No pipeline claims it — it would fall through to the agent-prompt path...
+    assert asyncio.run(try_dispatch_pipeline_job(job)) is False
+    # ...and the tier gate still blocks it.
+    assert _collection_dispatch_blocked(job) is True
+
+
+def test_factor_health_stays_ungated_on_purpose() -> None:
+    """Reviewed 2026-09-08 and deliberately NOT gated.
+
+    `factor_health` (daily) reads only what is already on disk and collects
+    nothing, and it is meaningful on both tiers precisely because each reads its
+    own TRADE_STACK_HUB_DIR — release's real hub, dev's mirror. Gating it would
+    blind dev to its own hub's drift. See factor_health_jobs.py's module docstring.
+    """
+    assert is_collection_job("factor_health") is False
+
+
+def test_factor_health_live_stays_ungated_on_purpose() -> None:
+    """Reviewed 2026-09-08 and deliberately kept ungated, despite vendor calls.
+
+    The weekly variant does hit external vendors, so gating it was considered.
+    Kept ungated because it *collects* nothing — it calls each RECORDED factor's
+    live source only to assert the source still answers, and stores no vendor
+    data. It is a health check, and dev needs to be able to run health checks
+    against live sources to test its own changes to them, the same rationale the
+    `*_eval` types are ungated under. The cost is one extra weekly read-only
+    vendor pass, which was judged smaller than blinding dev.
+
+    If this is ever revisited, the decision to change is "does dev need to
+    exercise the live-source path at all", not "does it touch a vendor".
+    """
+    assert is_collection_job("factor_health_live") is False
+
+
 def test_collection_job_types_is_nonempty_and_only_strings() -> None:
     assert len(COLLECTION_JOB_TYPES) >= 20
     assert all(isinstance(t, str) and t for t in COLLECTION_JOB_TYPES)
