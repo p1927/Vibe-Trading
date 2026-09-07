@@ -901,6 +901,22 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         summary = run_index_factor_snapshot_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("index factor snapshot completed for job %s: %s", job.id, summary)
+        if summary.get("had_errors"):
+            # `run_index_factor_snapshot_job` swallows every stage's own exception into
+            # `summary` so one bad stage doesn't stop the others -- but that means a real
+            # failure (e.g. `cold_tier_finalize` erroring on every run) was previously
+            # never surfaced past this point: the executor only counts a dispatch as
+            # failed when this function *raises*, so the job kept reporting
+            # `status: "completed"` / `consecutive_failures: 0` forever regardless of
+            # `summary["had_errors"]`. Raise here so the executor's normal
+            # exception-driven failure/backoff/consecutive_failures machinery (see
+            # `executor.py`'s `_dispatch` try/except) applies to this job type too. See
+            # [[2026-09-07-cold-tier-finalize-crashes-on-truncated-date]].
+            raise RuntimeError(
+                f"index factor snapshot for job {job.id} completed with errors: "
+                f"cold_tier_finalize={summary.get('cold_tier_finalize')!r} "
+                f"factor_enrichment={summary.get('factor_enrichment')!r}"
+            )
         return
     if job_type == JOB_TYPE_INDEX_RESEARCH:
         summary = run_index_research_job(job.config)
