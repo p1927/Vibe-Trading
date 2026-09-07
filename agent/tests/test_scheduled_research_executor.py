@@ -1621,6 +1621,118 @@ def test_liveness_reports_overdue_when_running_still_true(tmp_path: Path) -> Non
     assert live["in_flight"] == []
 
 
+def test_liveness_ignores_jobs_this_tier_cannot_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A collection job on dev is overdue by design; it must not read as a stalled scheduler.
+
+    `max_overdue_seconds` exists to answer "is the executor keeping up". A collection job on
+    a non-release profile is one the tier is *forbidden* to dispatch, so it sits permanently
+    past `next_run_at` and its age measures the tier gate, not the scheduler. Measured live
+    on dev 2026-09-07: `nifty-company-research-archive` at 415,707s and climbing, which made
+    `check_dev_ports.py` report the dev scheduler as stalled forever — pointing at the
+    head-of-line-stall item, a different problem entirely. A health check that cries wolf
+    permanently is worse than no check.
+    """
+    monkeypatch.setenv("STACK_PROFILE", "dev")
+    store = _store(tmp_path)
+    store.upsert(
+        ScheduledResearchJob(
+            id="company-research-archive",
+            prompt="archive",
+            schedule="5000",
+            next_run_at=1_000,
+            status=JobStatus.PENDING,
+            created_at=0,
+            config={"job_type": "company_research_archive"},
+        )
+    )
+
+    executor = ScheduledResearchExecutor(store, _noop_dispatch)
+    live = executor.liveness(now_ms=1_000 + 600_000)
+    assert live["max_overdue_seconds"] == 0
+    assert live["max_overdue_job_id"] == ""
+
+    # ...and on the tier that *is* allowed to run it, the same job is real evidence.
+    monkeypatch.setenv("STACK_PROFILE", "release")
+    live = executor.liveness(now_ms=1_000 + 600_000)
+    assert live["max_overdue_seconds"] == 600.0
+    assert live["max_overdue_job_id"] == "company-research-archive"
+
+
+def test_liveness_does_not_report_a_tier_blocked_job_as_stuck(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same exclusion must apply to `stuck_jobs`, or the false alarm just moves.
+
+    Collection jobs are held paused on dev because collection belongs to release. `is_stuck`
+    treats a paused, overdue job as a fault — correctly, in general — so on dev it named all
+    ten parked collection jobs as "fallen out of the schedule and will never fire again".
+    True of dev, and not a fault: there is nothing an operator on this tier can do about any
+    of them. On release the gate is open and they are reported exactly as before.
+    """
+    store = _store(tmp_path)
+    store.upsert(
+        ScheduledResearchJob(
+            id="hub-capture-intraday",
+            prompt="capture",
+            schedule="5000",
+            next_run_at=1_000,
+            status=JobStatus.COMPLETED,
+            created_at=0,
+            paused=True,
+            config={"job_type": "hub_capture_intraday"},
+        )
+    )
+
+    executor = ScheduledResearchExecutor(store, _noop_dispatch)
+
+    monkeypatch.setenv("STACK_PROFILE", "dev")
+    assert executor.liveness(now_ms=1_000 + 600_000)["stuck_jobs"] == []
+
+    monkeypatch.setenv("STACK_PROFILE", "release")
+    stuck = executor.liveness(now_ms=1_000 + 600_000)["stuck_jobs"]
+    assert [row["id"] for row in stuck] == ["hub-capture-intraday"]
+
+
+def test_liveness_still_reports_a_stuck_non_collection_job_on_dev(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exclusion is scoped to the tier gate, not to paused jobs in general."""
+    monkeypatch.setenv("STACK_PROFILE", "dev")
+    store = _store(tmp_path)
+    store.upsert(
+        ScheduledResearchJob(
+            id="options-position-monitor",
+            prompt="monitor",
+            schedule="5000",
+            next_run_at=1_000,
+            status=JobStatus.COMPLETED,
+            created_at=0,
+            paused=True,
+            config={"job_type": "options_position_monitor"},
+        )
+    )
+
+    executor = ScheduledResearchExecutor(store, _noop_dispatch)
+    stuck = executor.liveness(now_ms=1_000 + 600_000)["stuck_jobs"]
+    assert [row["id"] for row in stuck] == ["options-position-monitor"]
+
+
+def test_liveness_still_reports_a_non_collection_job_on_dev(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The tier exclusion must not silence ordinary jobs dev really does run."""
+    monkeypatch.setenv("STACK_PROFILE", "dev")
+    store = _store(tmp_path)
+    store.upsert(_job("stalled-job", schedule="5000", next_run_at=1_000))
+
+    executor = ScheduledResearchExecutor(store, _noop_dispatch)
+    live = executor.liveness(now_ms=1_000 + 600_000)
+    assert live["max_overdue_seconds"] == 600.0
+    assert live["max_overdue_job_id"] == "stalled-job"
+
+
 def test_liveness_records_tick_progress(tmp_path: Path) -> None:
     """A completed tick stamps started/completed and leaves nothing in flight."""
     store = _store(tmp_path)

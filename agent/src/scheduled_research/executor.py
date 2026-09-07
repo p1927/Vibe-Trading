@@ -401,6 +401,10 @@ class ScheduledResearchExecutor:
         ``max_overdue_seconds`` is the field that would have caught it: it rises whether the
         cause is a stalled tick or a stopped executor.
 
+        It is also computed only over jobs *this tier is allowed to dispatch*: a
+        collection job on a non-release profile is excluded, because it is permanently past
+        ``next_run_at`` by design and its age measures the tier gate, not the scheduler.
+
         It does **not** rise for a job nothing can dispatch, and an earlier version of this
         docstring claimed otherwise. It is computed over jobs ``is_due()`` accepts, and
         ``is_due()`` returns False for FAILED, EXPIRED, CANCELLED, RUNNING and paused jobs — so
@@ -423,6 +427,17 @@ class ScheduledResearchExecutor:
         stuck: list[dict[str, Any]] = []
         try:
             for job in self._store.load().values():
+                # A job this tier may not dispatch is excluded from *both* fault metrics
+                # below. On dev that is every collection job, and there is nothing an
+                # operator here can do about any of them: they are parked because collection
+                # belongs to release. Reporting them made the standing dev health check fail
+                # permanently — first through `max_overdue_seconds`, then, once that was
+                # fixed, through `stuck_jobs` naming the same ten jobs as "fallen out of the
+                # schedule and will never fire again". Both readings are true of dev and
+                # neither is a fault. On release, where these jobs really do run, the gate is
+                # open and every one of them is reported exactly as before.
+                if _collection_dispatch_blocked(job):
+                    continue
                 if stuck_jobs.is_stuck(job, now):
                     # Reported, never dispatched. Collected BEFORE the `is_due` filter below,
                     # precisely because `is_due` is what excludes these -- see stuck_jobs.py.
