@@ -47,6 +47,9 @@ from src.goal.context import (
     goal_progress_tuple,
 )
 from src.providers.chat import ChatLLM, LLMRuntimeSnapshot, ProviderStreamError
+from src.session.autonomous_proposal_context import (
+    inject_autonomous_proposal_session_context,
+)
 from src.session.news_scenario_profile import inject_news_scenario_session_context
 from src.providers.content_filter import (
     CONTENT_FILTER_SKIP_MESSAGE,
@@ -2513,6 +2516,11 @@ class AgentLoop:
                 tool_name=tc.name,
                 session_config=self._session_config,
             )
+            args = inject_autonomous_proposal_session_context(
+                args,
+                session_id=self._session_id,
+                tool_name=tc.name,
+            )
             redacted_args = redact_payload(args)
             event_args = {k: str(v)[:200] for k, v in redacted_args.items()}
             self._emit(
@@ -2565,6 +2573,11 @@ class AgentLoop:
             session_id=self._session_id,
             tool_name=tc.name,
             session_config=self._session_config,
+        )
+        args = inject_autonomous_proposal_session_context(
+            args,
+            session_id=self._session_id,
+            tool_name=tc.name,
         )
 
         redacted_args = redact_payload(args)
