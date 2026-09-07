@@ -171,6 +171,11 @@ def _compact_result_summary(result: dict[str, Any] | None) -> dict[str, Any]:
     return summary
 
 
+# Totals keys that represent real ingest progress. ``error`` is deliberately
+# excluded: a run that only produced errors has still collected nothing.
+_INGEST_PROGRESS_TOTALS = ("queued", "ingested", "verified", "created", "updated")
+
+
 def _attach_job_result_summary(job: ScheduledResearchJob, result: dict[str, Any] | None) -> None:
     summary = _compact_result_summary(result)
     if summary:
@@ -180,6 +185,27 @@ def _attach_job_result_summary(job: ScheduledResearchJob, result: dict[str, Any]
             **summary,
             "warning": "one or more pipeline stages reported errors",
         }
+
+
+def _hub_news_ingest_collected_nothing(summary: dict[str, Any] | None) -> bool:
+    """True when an ingest run was gated shut and produced no collection at all.
+
+    Both halves are required. ``blocked``/``pipeline_paused`` alone is not a
+    failure -- distillation can legitimately defer while collection still queues
+    refs -- and all-zero totals alone is not either, since a genuinely quiet
+    cycle (no new headlines since the last tick) is a normal, successful result.
+    It is the *conjunction* that means "a gate stopped this run before it did any
+    work", which is the case that must not read as ``completed``.
+    """
+    if not isinstance(summary, dict):
+        return False
+    gated = bool(summary.get("blocked")) or bool(summary.get("pipeline_paused"))
+    if not gated:
+        return False
+    totals = summary.get("totals")
+    if not isinstance(totals, dict):
+        return False
+    return not any(int(totals.get(key) or 0) for key in _INGEST_PROGRESS_TOTALS)
 
 
 def _index_factor_snapshot_had_errors(summary: dict[str, Any]) -> bool:
@@ -958,6 +984,23 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
         summary = run_hub_news_ingest_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("hub news ingest completed for job %s: %s", job.id, summary)
+        if _hub_news_ingest_collected_nothing(summary):
+            # A run that was gated shut (``blocked`` / ``pipeline_paused``) and
+            # collected literally nothing is not a success, but it returns a
+            # normal payload rather than raising -- so the executor used to record
+            # it as ``status: completed, consecutive_failures: 0``, visually
+            # identical to a real ingest. That is how NIFTY's daily ``full`` job
+            # reported four consecutive healthy-looking runs while collecting zero
+            # articles. Raise so the executor's ordinary failure/backoff/
+            # auto-pause machinery applies, exactly as the index-factor-snapshot
+            # branch above does for its own swallowed-error case. A genuinely
+            # quiet cycle is unaffected: it is not blocked/paused, so it does not
+            # match. See [[2026-09-07-decision-04-sweeps-never-executed]].
+            raise RuntimeError(
+                f"hub news ingest for job {job.id} collected nothing: "
+                f"pause_reason={summary.get('pause_reason')!r} "
+                f"blocked={summary.get('blocked')!r} totals={summary.get('totals')!r}"
+            )
         return
     if job_type == JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP:
         summary = run_stock_history_coverage_sweep_job(job.config)
