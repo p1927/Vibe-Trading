@@ -34,6 +34,8 @@ from src.scheduled_research.job_tier_policy import (
     is_operational_tier_job,
 )
 from src.scheduled_research.store import ScheduledResearchJobStore
+# Fork-only sidecar (docs/FORK_CONVENTIONS.md): the jobs `is_due()` cannot express.
+from src.scheduled_research import stuck_jobs
 # Stale-run detection and watchdog tuning live in staleness.py (a file we
 # fully own) and are re-exported here so this module's existing internal
 # call sites and external importers (lifecycle.py, index_prediction_jobs.py,
@@ -396,17 +398,35 @@ class ScheduledResearchExecutor:
         That is exactly what a 2026-09-07 live pass observed — ``running: true`` across a
         32-minute window with zero dispatches and an agent's watch tick 25 minutes overdue.
 
-        ``max_overdue_seconds`` is the field that would have caught it: it is computed over
-        the whole store, so it rises whether the cause is a stalled tick, a stopped
-        executor, or a job nothing can dispatch.
+        ``max_overdue_seconds`` is the field that would have caught it: it rises whether the
+        cause is a stalled tick or a stopped executor.
+
+        It does **not** rise for a job nothing can dispatch, and an earlier version of this
+        docstring claimed otherwise. It is computed over jobs ``is_due()`` accepts, and
+        ``is_due()`` returns False for FAILED, EXPIRED, CANCELLED, RUNNING and paused jobs — so
+        the two states that mean "this job is permanently dead" were precisely the two it could
+        not see. Measured 2026-09-07: ``nifty-hub-news-ingest-light``/``-tight`` sat **105 hours**
+        past ``next_run_at`` with ``status=failed`` while this endpoint reported
+        ``max_overdue_seconds: 6183`` against an unrelated healthy-but-slow job, and
+        ``check_dev_ports.py`` passed that reading for four days.
+
+        ``stuck_jobs``/``max_stuck_seconds`` close that hole without touching dispatch: they are
+        computed over ``is_stuck()``, the complement, so a terminal or paused job is reported as
+        a fault while still never being re-dispatched. See
+        ``.claude/backlog/items/2026-09-07-nothing-notices-an-overdue-scheduled-job.md``.
         """
         now = self._now_fn() if now_ms is None else now_ms
         max_overdue_ms = 0
         overdue_job_id = ""
         operational_max_overdue_ms = 0
         operational_overdue_job_id = ""
+        stuck: list[dict[str, Any]] = []
         try:
             for job in self._store.load().values():
+                if stuck_jobs.is_stuck(job, now):
+                    # Reported, never dispatched. Collected BEFORE the `is_due` filter below,
+                    # precisely because `is_due` is what excludes these -- see stuck_jobs.py.
+                    stuck.append(stuck_jobs.stuck_row(job, now))
                 if not is_due(job, now):
                     continue
                 overdue = now - int(job.next_run_at or now)
@@ -431,6 +451,7 @@ class ScheduledResearchExecutor:
                 "in_flight": sorted(self._in_flight_job_ids),
                 "max_overdue_seconds": None,
                 "max_overdue_job_id": "",
+                **stuck_jobs.UNKNOWN,
                 "operational": {
                     "running": self.is_operational_running,
                     "tick_count": self._operational_tick_count,
@@ -449,6 +470,7 @@ class ScheduledResearchExecutor:
             "in_flight": sorted(self._in_flight_job_ids),
             "max_overdue_seconds": round(max_overdue_ms / 1000.0, 1),
             "max_overdue_job_id": overdue_job_id,
+            **stuck_jobs.summarize(stuck),
             # The operational tier (autonomous_agent_* + recording_wake +
             # options_position_monitor) runs its own loop/tick, split from the main one
             # above so it can never be starved by a long collection-job dispatch — see
