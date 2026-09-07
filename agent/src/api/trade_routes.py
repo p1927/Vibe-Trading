@@ -1137,6 +1137,41 @@ class HubNewsDiscardResponse(BaseModel):
     message: str = ""
 
 
+class FactorRegistryGapCandidate(BaseModel):
+    candidate: str = ""
+    status: str = "pending"
+    distinct_ref_count: int = 0
+    occurrence_count: int = 0
+    first_seen: str | None = None
+    last_seen: str | None = None
+    sample_titles: list[str] = Field(default_factory=list)
+    note: str = ""
+    decided_at: str | None = None
+
+
+class FactorRegistryGapReviewResponse(BaseModel):
+    status: str = "ok"
+    # Verbatim from the facade. The UI renders this next to the Add action so the button cannot
+    # be read as "this factor now exists" — accepting queues a hand-written FactorSpec, it does
+    # not modify `factors.registry`.
+    accepted_means: str = ""
+    counts: Dict[str, int] = Field(default_factory=dict)
+    candidates: list[FactorRegistryGapCandidate] = Field(default_factory=list)
+    message: str = ""
+
+
+class FactorRegistryGapDecisionRequest(BaseModel):
+    candidate: str = ""
+    decision: str = ""  # accepted | ignored | reset
+    note: str = ""
+
+
+class FactorRegistryGapDecisionResponse(BaseModel):
+    status: str = "ok"
+    candidate: FactorRegistryGapCandidate | None = None
+    message: str = ""
+
+
 class HubNewsDiscardedListResponse(BaseModel):
     status: str = "ok"
     items: list[Dict[str, Any]] = Field(default_factory=list)
@@ -1950,6 +1985,72 @@ def run_hub_news_ingest_now(
         return HubStagingDrainResponse(status="ok", summary=summary)
     except Exception as exc:
         logger.exception("hub news ingest now failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.get("/hub/factor-registry-gaps", response_model=FactorRegistryGapReviewResponse)
+def get_factor_registry_gaps(
+    status: str | None = None,
+    limit: int = 100,
+    _auth: None = Depends(require_local_or_auth),
+) -> FactorRegistryGapReviewResponse:
+    """Factor names the news attribution pass could not place in `factors.registry`.
+
+    Refreshed at the end of every `process_staging_batch`, so this is a plain read — it does not
+    rescan or recompute. `status` filters to pending / accepted / ignored.
+    """
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.dataflows.news_hub_bridge import factor_registry_gap_review
+
+        payload = factor_registry_gap_review(status=status, limit=max(1, min(int(limit or 100), 500)))
+        return FactorRegistryGapReviewResponse(
+            status="ok",
+            accepted_means=str(payload.get("accepted_means") or ""),
+            counts={str(k): int(v) for k, v in (payload.get("counts") or {}).items()},
+            candidates=[FactorRegistryGapCandidate(**row) for row in (payload.get("candidates") or [])],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("factor registry gap review failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@trade_router.post("/hub/factor-registry-gaps/decision", response_model=FactorRegistryGapDecisionResponse)
+def decide_factor_registry_gap_route(
+    body: FactorRegistryGapDecisionRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> FactorRegistryGapDecisionResponse:
+    """Accept, ignore, or reset one registry-gap candidate.
+
+    `accepted` queues the name for a hand-written `FactorSpec`; it does **not** write anything
+    into `factors.registry`, which is built from Python source. Decisions are sticky — an
+    answered name does not return to `pending` when the pipeline sees it again.
+    """
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.dataflows.news_hub_bridge import decide_factor_registry_gap
+
+        entry = decide_factor_registry_gap(
+            str(body.candidate or ""),
+            str(body.decision or ""),
+            note=str(body.note or ""),
+        )
+        return FactorRegistryGapDecisionResponse(
+            status="ok",
+            candidate=FactorRegistryGapCandidate(**entry),
+        )
+    except ValueError as exc:
+        # A bad candidate/decision is the caller's error, not a server fault — a 502 here would
+        # look like the hub is down when the request was simply malformed.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("factor registry gap decision failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

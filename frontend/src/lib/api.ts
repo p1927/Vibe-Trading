@@ -2224,6 +2224,17 @@ export const api = {
       `/trade/hub/news-pipeline/maintenance?entity_id=${encodeURIComponent(entityId)}&lookback_days=${encodeURIComponent(String(lookbackDays))}`,
       { method: "POST" },
     ),
+  listFactorRegistryGaps: (status?: string, limit = 100) =>
+    request<FactorRegistryGapReviewResponse>(
+      `/trade/hub/factor-registry-gaps?limit=${encodeURIComponent(String(limit))}${
+        status ? `&status=${encodeURIComponent(status)}` : ""
+      }`,
+    ),
+  decideFactorRegistryGap: (body: FactorRegistryGapDecisionRequest) =>
+    request<FactorRegistryGapDecisionResponse>("/trade/hub/factor-registry-gaps/decision", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   discardHubNews: (body: HubNewsDiscardRequest) =>
     request<HubNewsDiscardResponse>("/trade/hub/news/discard", {
       method: "POST",
@@ -5687,6 +5698,42 @@ export interface ModelAdapterUpdate {
     jitter?: boolean;
     honor_retry_after?: boolean;
   };
+}
+
+export type FactorRegistryGapStatus = "pending" | "accepted" | "ignored";
+
+export interface FactorRegistryGapCandidate {
+  candidate: string;
+  status: FactorRegistryGapStatus | string;
+  distinct_ref_count?: number;
+  occurrence_count?: number;
+  first_seen?: string | null;
+  last_seen?: string | null;
+  sample_titles?: string[];
+  note?: string;
+  decided_at?: string | null;
+}
+
+export interface FactorRegistryGapReviewResponse {
+  status: string;
+  /** What "accepted" actually does. Rendered next to the Add action -- accepting queues a
+   * hand-written FactorSpec, it does not modify the factor registry. */
+  accepted_means?: string;
+  counts?: Record<string, number>;
+  candidates?: FactorRegistryGapCandidate[];
+  message?: string;
+}
+
+export interface FactorRegistryGapDecisionRequest {
+  candidate: string;
+  decision: "accepted" | "ignored" | "reset" | string;
+  note?: string;
+}
+
+export interface FactorRegistryGapDecisionResponse {
+  status: string;
+  candidate?: FactorRegistryGapCandidate;
+  message?: string;
 }
 
 export interface HubNewsDiscardRequest {
