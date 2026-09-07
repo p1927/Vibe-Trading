@@ -366,6 +366,76 @@ def test_stale_running_job_recovers_to_pending_and_fires_on_next_tick(tmp_path: 
     assert saved.next_run_at == 2000
 
 
+def test_recover_all_running_on_shutdown_resets_running_jobs(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.upsert(_job("job-001", schedule="1000", status=JobStatus.RUNNING, next_run_at=10))
+    executor = ScheduledResearchExecutor(store, _noop_dispatch)
+
+    recovered = executor.recover_all_running_on_shutdown(5000)
+
+    assert recovered == 1
+    saved = store.get("job-001")
+    assert saved is not None
+    assert saved.status == JobStatus.PENDING
+    assert saved.last_error == "recovered on executor shutdown"
+    assert saved.next_run_at == 6000  # next_due("1000", 5000)
+
+
+def test_recover_all_running_on_shutdown_stamps_auto_pause_reason(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    store.upsert(_job("job-001", schedule="1000", status=JobStatus.RUNNING, next_run_at=10))
+    executor = ScheduledResearchExecutor(store, _noop_dispatch)
+
+    executor.recover_all_running_on_shutdown(5000, auto_pause_reason="auto-paused: recovered on stack shutdown")
+
+    saved = store.get("job-001")
+    assert saved is not None
+    assert saved.paused is True
+    assert saved.auto_paused_reason == "auto-paused: recovered on stack shutdown"
+
+
+def test_recover_all_running_on_shutdown_does_not_clobber_concurrent_completion(tmp_path: Path) -> None:
+    """A job's own in-flight dispatch can complete (write COMPLETED via
+    update_run_state) in the window between shutdown recovery's initial
+    RUNNING listing and its per-job write. Regression test for
+    2026-09-07-executor-shutdown-recovery-can-revert-a-concurrent-completion:
+    the old implementation took one load() snapshot and wrote the whole
+    store back from it, silently reverting a completion that landed after
+    that snapshot but before the save(). The fix re-reads fresh immediately
+    before each job's write and skips any job no longer RUNNING there."""
+
+    class _StoreWithLateCompletion(ScheduledResearchJobStore):
+        def __init__(self, path: Path, job_id: str) -> None:
+            super().__init__(path=path)
+            self._job_id = job_id
+            self._load_count = 0
+
+        def load(self):  # type: ignore[override]
+            self._load_count += 1
+            if self._load_count == 2:
+                # Simulate the in-flight dispatch's own completion write
+                # landing between recovery's initial listing (load #1) and
+                # its per-job re-read (load #2) — before recovery's own
+                # save() call for this job.
+                jobs = super().load()
+                jobs[self._job_id].status = JobStatus.COMPLETED
+                jobs[self._job_id].last_error = None
+                self.save(jobs)
+            return super().load()
+
+    store = _StoreWithLateCompletion(tmp_path / "jobs.json", "job-001")
+    store.upsert(_job("job-001", schedule="1000", status=JobStatus.RUNNING, next_run_at=10))
+    executor = ScheduledResearchExecutor(store, _noop_dispatch)
+
+    recovered = executor.recover_all_running_on_shutdown(5000)
+
+    assert recovered == 0
+    saved = store.get("job-001")
+    assert saved is not None
+    assert saved.status == JobStatus.COMPLETED
+    assert saved.last_error is None
+
+
 def test_impossible_cron_marks_failed_and_tick_continues(tmp_path: Path) -> None:
     store = _store(tmp_path)
     now = _ms(2026, 2, 1, 0, 0)

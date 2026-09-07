@@ -603,36 +603,58 @@ class ScheduledResearchExecutor:
                 interruption reads differently from a job that just happens to
                 be ``pending``, without cross-referencing the API log. Left
                 unset for a plain user-initiated pause (see :meth:`stop`).
+
+        A job's own in-flight ``_run_job`` completion can land concurrently
+        with this call (``stop()`` cancels the dispatch task but does not
+        wait for its completion write — see 2026-09-07-
+        executor-shutdown-recovery-can-revert-a-concurrent-completion). The
+        original implementation took one ``load()`` snapshot, mutated it in
+        memory, and wrote the *entire* store back from that snapshot — if a
+        completion's targeted ``update_run_state()`` write landed in between,
+        this method's later whole-store ``save()`` silently clobbered it back
+        to the pre-completion state, discarding a genuinely successful run's
+        bookkeeping (the collected data itself was unaffected; only the job
+        record was reverted). Fixed by re-``load()``-ing fresh and
+        re-checking ``status == RUNNING`` immediately before each job's own
+        write, with no ``await`` in between — since this is asyncio
+        (cooperative, single-threaded), that leaves no point where another
+        coroutine's write can interleave, closing the race the same way
+        ``update_run_state()`` already does for the ordinary completion path.
         """
         now = self._now_fn() if now_ms is None else now_ms
-        jobs = self._store.load()
+        candidate_ids = [
+            job_id for job_id, job in self._store.load().items() if job.status == JobStatus.RUNNING
+        ]
         recovered = 0
-        for job in jobs.values():
-            if job.status != JobStatus.RUNNING:
+        for job_id in candidate_ids:
+            jobs = self._store.load()
+            job = jobs.get(job_id)
+            if job is None or job.status != JobStatus.RUNNING:
+                # Deleted, replaced, or already completed/failed by its own
+                # dispatch task between the listing above and here — that
+                # write owns the record now; do not touch it.
                 continue
-            _advance = job
-            _advance.status = JobStatus.PENDING
+            job.status = JobStatus.PENDING
             try:
-                _advance.next_run_at = next_due(job.schedule, now)
+                job.next_run_at = next_due(job.schedule, now)
             except Exception:
                 logger.warning(
                     "could not advance schedule for shutdown-recovered job %s; deferring one tick",
                     job.id,
                     exc_info=True,
                 )
-                _advance.next_run_at = now + self._tick_interval_ms
-            if not _advance.last_error:
-                _advance.last_error = "recovered on executor shutdown"
-            if auto_pause_reason and not _advance.paused:
-                _advance.paused = True
-                _advance.auto_paused_reason = auto_pause_reason
+                job.next_run_at = now + self._tick_interval_ms
+            if not job.last_error:
+                job.last_error = "recovered on executor shutdown"
+            if auto_pause_reason and not job.paused:
+                job.paused = True
+                job.auto_paused_reason = auto_pause_reason
             recovered += 1
             logger.warning(
                 "recovering scheduled research job %s on executor shutdown (next_run_at=%s)",
                 job.id,
-                _advance.next_run_at,
+                job.next_run_at,
             )
-        if recovered:
             self._store.save(jobs)
         return recovered
 
