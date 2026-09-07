@@ -124,81 +124,12 @@ from src.api.scheduled_routes import (  # noqa: E402
 )
 
 
-def _configure_process_logging() -> None:
-    """Attach a formatted root log handler so app loggers are not silently dropped.
-
-    Without this the root logger has no handler at all: uvicorn's ``log_level``
-    (``server_main.py``) configures only its own ``uvicorn.*`` loggers and leaves the
-    root untouched, so every ``logging.getLogger(__name__)`` in ``trade_integrations.*``
-    and ``src.*`` falls through to CPython's ``logging.lastResort`` — level WARNING, no
-    formatter. That made ``logger.info``/``logger.debug`` equivalent to ``pass`` process-wide
-    and emitted warnings as bare, prefix-less lines.
-
-    The cost of that was not theoretical: the 2026-09-06 audit's claim that restart
-    recovery never reconciles positions outlived its own fix purely because the fix's
-    success log was INFO (``scheduled_startup.py``'s "autonomous agent recovery: %s") and
-    therefore invisible. See ``docs/add/autonomous_agents.md`` § Honesty.
-
-    ``configure_trade_logging`` is idempotent, so calling it here (per worker, including
-    each ``--reload`` respawn) is safe.
-    """
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-
-        ensure_trade_stack_path()
-        from trade_integrations.observability.logging_config import configure_trade_logging
-
-        configure_trade_logging()
-    except Exception:  # pragma: no cover — logging must never block startup
-        logging.getLogger(__name__).warning("root logging configuration failed", exc_info=True)
-
-
-async def _run_startup_preflight() -> None:
-    """Run preflight checks on server startup."""
-    from src.preflight import run_preflight
-
-    from src.config import migrate as _migrate
-
-    _configure_process_logging()
-
-    try:
-        _migrate.migrate_legacy_state()  # one-time pre-#904 state move; must never block startup
-    except Exception:  # pragma: no cover — best-effort
-        logging.getLogger(__name__).warning("Legacy state migration failed", exc_info=True)
-    run_preflight(console)
-
-    import asyncio
-
-    from src.api.async_bridge import register_main_loop
-
-    loop = asyncio.get_running_loop()
-    register_main_loop(loop)
-    svc = _get_session_service()
-    if svc is not None and hasattr(svc, "event_bus"):
-        svc.event_bus.set_loop(loop)
-
-    from src.scheduled_research.gil_tuning import tune_gil_switch_interval_for_scheduler
-
-    tune_gil_switch_interval_for_scheduler()
-    _start_scheduled_research_executor()
-    from src.trade.job_watchdog import start_job_watchdog
-
-    start_job_watchdog()
-    from src.config.accessor import get_env_config
-
-    if get_env_config().agent_tuning.vibe_trading_channels_auto_start:
-        await _start_channel_runtime()
-
-
-async def _stop_scheduled_research_on_shutdown() -> None:
-    """Stop the scheduled research executor on server shutdown."""
-    from src.trade.job_watchdog import stop_job_watchdog
-
-    stop_job_watchdog()
-    try:
-        await _stop_channel_runtime()
-    finally:
-        await _stop_scheduled_research_executor()
+# --- Lifecycle (extracted to src/api/lifecycle.py; re-exported for test/monkeypatch access) ---
+from src.api.lifecycle import (  # noqa: F401, E402
+    _configure_process_logging,
+    _run_startup_preflight,
+    _stop_scheduled_research_on_shutdown,
+)
 
 
 @asynccontextmanager
