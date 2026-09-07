@@ -263,7 +263,12 @@ def test_transient_dispatch_failure_retries_then_success_resets_state(tmp_path: 
     assert saved.next_run_at == 2100
 
 
-def test_repeated_dispatch_failures_become_terminal_at_threshold(tmp_path: Path) -> None:
+def test_repeated_dispatch_failures_auto_pause_at_threshold(tmp_path: Path) -> None:
+    """A recurring job must not go terminal-FAILED on repeated dispatch
+    failures — that excludes it from is_due() forever with a next_run_at
+    frozen in the past and no health signal (see
+    2026-09-07-nifty-ingest-jobs-terminally-failed). It auto-pauses instead,
+    resumable through the ordinary enable/resume path."""
     store = _store(tmp_path)
     store.upsert(_job(schedule="1000", next_run_at=0))
     calls = 0
@@ -290,7 +295,10 @@ def test_repeated_dispatch_failures_become_terminal_at_threshold(tmp_path: Path)
     saved = store.get("job-001")
     assert saved is not None
     assert calls == 2
-    assert saved.status == JobStatus.FAILED
+    assert saved.status == JobStatus.PENDING
+    assert saved.paused is True
+    assert saved.auto_paused_reason is not None
+    assert "2 consecutive" in saved.auto_paused_reason
     assert saved.consecutive_failures == 2
     assert saved.failure_kind == "dispatch"
     assert saved.last_error == "ConnectionError: provider unavailable"

@@ -1197,6 +1197,7 @@ class ScheduledResearchExecutor:
             return
 
         job.next_run_at = scheduled_next_run
+        auto_paused = False
         if dispatch_error is None:
             job.status = (
                 JobStatus.EXPIRED
@@ -1210,7 +1211,32 @@ class ScheduledResearchExecutor:
             job.failure_kind = "dispatch"
             job.last_error = _persisted_error(dispatch_error)
             if job.consecutive_failures >= self._max_consecutive_failures:
-                job.status = JobStatus.FAILED
+                # A recurring job (every job in this store carries a schedule)
+                # must not go terminal here: JobStatus.FAILED is excluded from
+                # is_due() forever, which turns a transient dispatch outage
+                # into permanent silence with `next_run_at` frozen in the
+                # past and no health signal anywhere (see
+                # 2026-09-07-nifty-ingest-jobs-terminally-failed). Auto-pause
+                # instead, using the same paused/auto_paused_reason marker
+                # recover_all_running_on_shutdown() uses for shutdown
+                # recovery — already surfaced by check_dev_ports.py's stuck-job
+                # check and the operator UI, and already resumable via the
+                # ordinary enable/resume path in pause_control.set_job_enabled.
+                job.status = JobStatus.PENDING
+                job.paused = True
+                job.auto_paused_reason = (
+                    f"auto-paused: {job.consecutive_failures} consecutive "
+                    f"dispatch failures (last: {job.last_error})"
+                )
+                auto_paused = True
+                logger.error(
+                    "scheduled research job %s auto-paused after %d consecutive "
+                    "dispatch failures; resume manually after investigating "
+                    "(last_error=%s)",
+                    job.id,
+                    job.consecutive_failures,
+                    job.last_error,
+                )
             else:
                 job.status = JobStatus.PENDING
                 retry_delay = self._retry_delay_ms(job.consecutive_failures)
@@ -1224,7 +1250,7 @@ class ScheduledResearchExecutor:
                     self._max_consecutive_failures,
                     job.next_run_at,
                 )
-        self._persist_completion(job)
+        self._persist_completion(job, extra_fields={"paused": True, "auto_paused_reason": job.auto_paused_reason} if auto_paused else None)
 
     def _delivery_is_eligible(self, job: ScheduledResearchJob, now_ms: int) -> bool:
         """Whether this row is a sweep's to take.
@@ -1482,7 +1508,9 @@ class ScheduledResearchExecutor:
         """
         return current.id == job.id and current.created_at == job.created_at
 
-    def _persist_completion(self, job: ScheduledResearchJob) -> None:
+    def _persist_completion(
+        self, job: ScheduledResearchJob, extra_fields: dict | None = None
+    ) -> None:
         """Write a finished job back, unless it was changed during dispatch.
 
         Dispatch is awaited, so a concurrent DELETE or POST for the same id can
@@ -1490,6 +1518,15 @@ class ScheduledResearchExecutor:
         user cancelled it (do not resurrect), and if it is a different record
         (replaced via POST) let the new definition own its lifecycle. Only
         persist our completion when it still refers to the same scheduled run.
+
+        Args:
+            extra_fields: Additional run-state fields this run cycle owns
+                beyond the usual set below — currently only used to stamp
+                ``paused``/``auto_paused_reason`` when a repeated dispatch
+                failure auto-pauses the job (see the terminal-failure branch
+                in :meth:`_run_job`). ``None`` (the default) leaves those two
+                fields untouched, exactly as before, so an ordinary
+                completion cannot revert a concurrent pause/resume click.
         """
         if self._stopping:
             logger.info(
@@ -1528,4 +1565,5 @@ class ScheduledResearchExecutor:
             last_verdict=job.last_verdict,
             last_result_summary=job.last_result_summary,
             config=job.config,
+            **(extra_fields or {}),
         )
