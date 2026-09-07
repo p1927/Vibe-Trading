@@ -39,21 +39,18 @@ def notify_trade_plan_widget(session_id: str, widget: dict[str, Any]) -> None:
     agent_id = _resolve_agent_id(session_id)
     if not agent_id:
         return
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
+    from src.trade.hub_bridge import ensure_trade_stack_path
 
-        ensure_trade_stack_path()
-        from trade_integrations.autonomous_agents.plan_approval import on_trade_plan_widget_emitted
+    ensure_trade_stack_path()
+    from trade_integrations.autonomous_agents.plan_approval import on_trade_plan_widget_emitted
 
-        meta = widget.get("meta") if isinstance(widget.get("meta"), dict) else {}
-        revision_source = meta.get("revision_source")
-        on_trade_plan_widget_emitted(
-            agent_id,
-            widget_id,
-            revision_source=str(revision_source) if revision_source else None,
-        )
-    except Exception:
-        logger.debug("plan widget hook failed session=%s widget=%s", session_id, widget_id, exc_info=True)
+    meta = widget.get("meta") if isinstance(widget.get("meta"), dict) else {}
+    revision_source = meta.get("revision_source")
+    on_trade_plan_widget_emitted(
+        agent_id,
+        widget_id,
+        revision_source=str(revision_source) if revision_source else None,
+    )
 
 
 def mark_user_chat_turn(agent_id: str) -> None:
