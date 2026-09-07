@@ -19,6 +19,7 @@ from src.scheduled_research.executor import (
     scheduler_enabled_from_env,
     stale_running_ms_for,
 )
+from src.scheduled_research.index_jobs import HubNewsIngestCollectedNothingError
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob
 from src.scheduled_research.store import ScheduledResearchJobStore
 
@@ -303,6 +304,82 @@ def test_repeated_dispatch_failures_auto_pause_at_threshold(tmp_path: Path) -> N
     assert saved.failure_kind == "dispatch"
     assert saved.last_error == "ConnectionError: provider unavailable"
     assert saved.next_run_at == 2100
+
+
+def test_barren_collection_failures_never_auto_pause_however_many_in_a_row(
+    tmp_path: Path,
+) -> None:
+    """A barren hub-news ingest run is a real failure but never a terminal one.
+
+    Decided 2026-09-08 (see
+    .claude/backlog/items/2026-09-07-zero-total-ingest-failure-path-unobserved-in-production.md
+    § Decision): a run that a shut gate stopped before it collected anything
+    must increment ``consecutive_failures``, carry its own ``failure_kind`` and
+    take backoff — but must **not** trip the auto-pause that
+    ``test_repeated_dispatch_failures_auto_pause_at_threshold`` above asserts
+    for ordinary dispatch failures. The obvious way to hit the threshold with
+    it is a sustained LLM-Wiki outage, and auto-pausing the daily ingest on the
+    sole-collector tier for that is the same terminal-silencing shape
+    2026-09-07-nifty-ingest-jobs-terminally-failed was filed about, reached
+    from the opposite direction. This assertion *is* the narrowing; without it
+    the decision is undocumented in code.
+    """
+    store = _store(tmp_path)
+    store.upsert(_job(schedule="1000", next_run_at=0))
+    calls = 0
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        nonlocal calls
+        calls += 1
+        raise HubNewsIngestCollectedNothingError(
+            "hub news ingest for job job-001 collected nothing: "
+            "pause_reason='llm_wiki_unavailable' blocked=None "
+            "totals={'queued': 0, 'ingested': 0}"
+        )
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(
+            store,
+            dispatch,
+            max_consecutive_failures=2,
+            retry_base_delay_ms=0,
+            retry_max_delay_ms=0,
+        )
+        # One tick past the threshold: an ordinary dispatch failure would have
+        # been auto-paused (and so never dispatched again) by the third.
+        for now_ms in (100, 1100, 2100, 3100):
+            await executor.tick(now_ms)
+
+    asyncio.run(scenario())
+
+    saved = store.get("job-001")
+    assert saved is not None
+    assert calls == 4, "an auto-pause would have stopped dispatching after the threshold"
+    assert saved.status == JobStatus.PENDING
+    assert saved.paused is False
+    assert saved.auto_paused_reason is None
+    # Failure semantics still fully apply — only the terminal disable is exempt.
+    assert saved.consecutive_failures == 4
+    assert saved.failure_kind == "barren_collection"
+    assert saved.last_error is not None
+    assert "collected nothing" in saved.last_error
+
+
+def test_barren_collection_failure_kind_round_trips_through_the_store(
+    tmp_path: Path,
+) -> None:
+    """The new kind must survive persistence: ``from_dict`` validates
+    ``failure_kind`` against a fixed set and the store quarantines a whole file
+    when one record fails to load, so an unlisted kind would take every other
+    job down with it."""
+    store = _store(tmp_path)
+    job = _job()
+    job.failure_kind = "barren_collection"
+    store.upsert(job)
+
+    reloaded = _store(tmp_path).get("job-001")
+    assert reloaded is not None
+    assert reloaded.failure_kind == "barren_collection"
 
 
 def test_persisted_dispatch_error_is_redacted_and_bounded(tmp_path: Path) -> None:

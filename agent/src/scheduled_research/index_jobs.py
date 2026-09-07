@@ -187,6 +187,27 @@ def _attach_job_result_summary(job: ScheduledResearchJob, result: dict[str, Any]
         }
 
 
+class HubNewsIngestCollectedNothingError(RuntimeError):
+    """A hub-news ingest run was gated shut and collected literally nothing.
+
+    A real failure — it must increment ``consecutive_failures``, take backoff,
+    and alert — but deliberately *not* a terminal one. The executor excludes
+    this kind from its auto-pause-at-``max_consecutive_failures`` disable
+    (``executor.py``, ``failure_kind == "barren_collection"``), because the
+    obvious way to hit it three times running is a sustained LLM-Wiki outage,
+    and auto-pausing the daily ingest on the sole-collector tier for that is
+    the exact terminal-silencing shape
+    [[2026-09-07-nifty-ingest-jobs-terminally-failed]] was filed about,
+    reached from the opposite direction. Decided 2026-09-08 — see
+    .claude/backlog/items/2026-09-07-zero-total-ingest-failure-path-unobserved-in-production.md
+    § Decision.
+
+    Its own type (rather than a bare ``RuntimeError``) is what makes the case
+    distinguishable downstream: the executor keys the narrowing off
+    ``isinstance``, not off message text.
+    """
+
+
 def _hub_news_ingest_collected_nothing(summary: dict[str, Any] | None) -> bool:
     """True when an ingest run was gated shut and produced no collection at all.
 
@@ -1039,7 +1060,13 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
             # branch above does for its own swallowed-error case. A genuinely
             # quiet cycle is unaffected: it is not blocked/paused, so it does not
             # match. See [[2026-09-07-decision-04-sweeps-never-executed]].
-            raise RuntimeError(
+            #
+            # Its own exception type, not a bare RuntimeError: the executor
+            # records this as failure_kind "barren_collection" and exempts that
+            # kind from the terminal auto-pause, so a sustained gate outage
+            # cannot disable the collector. See
+            # HubNewsIngestCollectedNothingError above.
+            raise HubNewsIngestCollectedNothingError(
                 f"hub news ingest for job {job.id} collected nothing: "
                 f"pause_reason={summary.get('pause_reason')!r} "
                 f"blocked={summary.get('blocked')!r} totals={summary.get('totals')!r}"

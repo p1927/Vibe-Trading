@@ -41,7 +41,7 @@ def _ingest_job(tmp_path):
 def test_gated_zero_total_ingest_raises_so_executor_sees_a_failure(tmp_path, monkeypatch, summary):
     monkeypatch.setattr(index_jobs, "run_hub_news_ingest_job", lambda config=None: summary)
 
-    with pytest.raises(RuntimeError, match="collected nothing"):
+    with pytest.raises(index_jobs.HubNewsIngestCollectedNothingError, match="collected nothing"):
         index_jobs.dispatch_index_job_sync(_ingest_job(tmp_path))
 
 
@@ -79,7 +79,7 @@ def test_result_summary_is_still_recorded_on_the_failing_path(tmp_path, monkeypa
     monkeypatch.setattr(index_jobs, "run_hub_news_ingest_job", lambda config=None: summary)
     job = _ingest_job(tmp_path)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(index_jobs.HubNewsIngestCollectedNothingError):
         index_jobs.dispatch_index_job_sync(job)
 
     recorded = job.config.get(index_jobs.LAST_RESULT_CONFIG_KEY)

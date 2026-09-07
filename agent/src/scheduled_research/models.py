@@ -342,8 +342,14 @@ class ScheduledResearchJob:
         consecutive_failures: Number of consecutive dispatch failures. A
             successful dispatch resets it to zero.
         last_error: Redaction-safe diagnostic from the latest failed attempt.
-        failure_kind: ``"dispatch"`` for provider/session failures or
-            ``"schedule"`` when the schedule cannot be advanced.
+        failure_kind: ``"dispatch"`` for provider/session failures,
+            ``"schedule"`` when the schedule cannot be advanced, or
+            ``"barren_collection"`` for a hub-news ingest run a shut gate
+            stopped before it collected anything. The last is a real failure
+            (it increments ``consecutive_failures`` and takes backoff) that the
+            executor deliberately exempts from the terminal auto-pause, so a
+            sustained gate outage cannot disable the sole-collector tier's
+            daily ingest.
         config: Opaque dict for future backtest parameters.
         timezone: IANA timezone key the cron schedule is evaluated in, or
             ``None`` for UTC (the semantics every job had before this field
@@ -512,8 +518,14 @@ class ScheduledResearchJob:
         failure_kind = data.get("failure_kind")
         if last_error is not None and not isinstance(last_error, str):
             raise TypeError("'last_error' must be a string or null")
-        if failure_kind is not None and failure_kind not in {"dispatch", "schedule"}:
-            raise ValueError("'failure_kind' must be 'dispatch', 'schedule', or null")
+        if failure_kind is not None and failure_kind not in {
+            "dispatch",
+            "schedule",
+            "barren_collection",
+        }:
+            raise ValueError(
+                "'failure_kind' must be 'dispatch', 'schedule', 'barren_collection', or null"
+            )
         # Never raises: the store quarantines the whole file when a single
         # record fails to load, so an unusable timezone value degrades that
         # one job to UTC — the semantics it had before the field existed —

@@ -28,6 +28,7 @@ from src.scheduled_research.models import (
     validate_schedule,
     validate_timezone,
 )
+from src.scheduled_research.index_jobs import HubNewsIngestCollectedNothingError
 from src.scheduled_research.job_tier_policy import (
     collection_job_dispatch_enabled,
     is_collection_job,
@@ -1314,9 +1315,21 @@ class ScheduledResearchExecutor:
             if not was_cancelled:
                 job.last_error = None
         else:
-            job.failure_kind = "dispatch"
+            # A "barren collection" — a hub-news ingest run that a shut gate
+            # stopped before it collected anything — is a real failure (it
+            # increments consecutive_failures, takes backoff, and alerts like
+            # any other) but is deliberately never terminal. The obvious way to
+            # hit the threshold with it is a sustained LLM-Wiki outage, and
+            # auto-pausing the daily ingest on the sole-collector tier for that
+            # is the same terminal-silencing shape
+            # 2026-09-07-nifty-ingest-jobs-terminally-failed was filed about,
+            # arriving from the opposite direction. Decided 2026-09-08; see
+            # .claude/backlog/items/2026-09-07-zero-total-ingest-failure-path-unobserved-in-production.md
+            # § Decision. Only the auto-pause is exempted — nothing else.
+            barren_collection = isinstance(dispatch_error, HubNewsIngestCollectedNothingError)
+            job.failure_kind = "barren_collection" if barren_collection else "dispatch"
             job.last_error = _persisted_error(dispatch_error)
-            if job.consecutive_failures >= self._max_consecutive_failures:
+            if not barren_collection and job.consecutive_failures >= self._max_consecutive_failures:
                 # A recurring job (every job in this store carries a schedule)
                 # must not go terminal here: JobStatus.FAILED is excluded from
                 # is_due() forever, which turns a transient dispatch outage
@@ -1349,13 +1362,30 @@ class ScheduledResearchExecutor:
                 job.next_run_at = max(scheduled_next_run, now_ms + retry_delay)
                 if job.end_at is not None and job.next_run_at > job.end_at:
                     job.status = JobStatus.EXPIRED
-                logger.warning(
-                    "scheduled research job %s will retry after failure %d/%d at %d",
-                    job.id,
-                    job.consecutive_failures,
-                    self._max_consecutive_failures,
-                    job.next_run_at,
-                )
+                if barren_collection and job.consecutive_failures >= self._max_consecutive_failures:
+                    # Past the threshold and still retrying: say so explicitly
+                    # rather than printing a misleading "failure 4/2", so an
+                    # operator reading the log sees the exemption at work
+                    # instead of assuming the auto-pause silently broke.
+                    logger.error(
+                        "scheduled research job %s has collected nothing %d consecutive times "
+                        "(threshold %d); retrying at %d rather than auto-pausing — a barren "
+                        "collection is exempt from the terminal disable, so investigate the "
+                        "gate (last_error=%s)",
+                        job.id,
+                        job.consecutive_failures,
+                        self._max_consecutive_failures,
+                        job.next_run_at,
+                        job.last_error,
+                    )
+                else:
+                    logger.warning(
+                        "scheduled research job %s will retry after failure %d/%d at %d",
+                        job.id,
+                        job.consecutive_failures,
+                        self._max_consecutive_failures,
+                        job.next_run_at,
+                    )
         self._persist_completion(job, extra_fields={"paused": True, "auto_paused_reason": job.auto_paused_reason} if auto_paused else None)
 
     def _delivery_is_eligible(self, job: ScheduledResearchJob, now_ms: int) -> bool:
