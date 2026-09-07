@@ -1377,6 +1377,18 @@ export const api = {
       `/autonomous-agents/${encodeURIComponent(agentId)}/reject-plan`,
       { method: "POST", body: JSON.stringify({ note: note || "" }) },
     ),
+  getSimulationState: (agentId: string) =>
+    request<SimulationPromptState>(
+      `/autonomous-agents/${encodeURIComponent(agentId)}/simulation`,
+    ),
+  answerNextSimulation: (
+    agentId: string,
+    body: { configuration: NextSimulationChoice; consent_ack?: boolean; session_id?: string },
+  ) =>
+    request<NextSimulationResponse>(
+      `/autonomous-agents/${encodeURIComponent(agentId)}/next-simulation`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   clearAllAutonomousAgents: () =>
     request<ClearAllAutonomousAgentsResponse>("/autonomous-agents/clear-all", {
       method: "POST",
@@ -6678,7 +6690,12 @@ export interface AutonomousAgentInstance {
   type?: string;
   name: string;
   status: string;
-  pause_reason?: "user" | "infra" | null;
+  // "restart" is the force-pause every process start applies to running agents
+  // (proposals.py:pause_running_agents_on_boot) — it was missing here.
+  pause_reason?: "user" | "infra" | "restart" | null;
+  // Terminal-stop cause. "simulation_complete" means the replay pass ended; a stopped agent
+  // is never resumable, which is what distinguishes it from a restart-paused one.
+  stop_reason?: "user" | "simulation_complete" | string | null;
   infra_pending?: string[];
   vibe_session_id?: string;
   symbols: string[];
@@ -6703,6 +6720,42 @@ export interface AutonomousAgentInstance {
   watch_spec?: { rules?: Array<Record<string, unknown>>; strategy?: string };
   runtime?: AutonomousAgentRuntime;
   created_at?: string;
+}
+
+/** A replay pass is one simulation; when it ends the agent stops terminally and the human is
+ * asked whether to run the next one. See docs/add/autonomous_agents.md § "Simulation runs". */
+export type NextSimulationChoice = "same_configuration" | "new_configuration" | "decline";
+
+export interface SimulationPromptState {
+  agent_id: string;
+  found: boolean;
+  status?: string;
+  stop_reason?: string | null;
+  pause_reason?: string | null;
+  simulation_complete: boolean;
+  prompt_pending: boolean;
+  resumable?: boolean;
+  simulation_run_id?: string | null;
+  completed_run_id?: string | null;
+  next_run_id?: string | null;
+  completed_at?: string | null;
+  answered_at?: string | null;
+  answer?: string | null;
+  choices?: NextSimulationChoice[];
+  config?: Record<string, unknown>;
+  data_retained?: boolean;
+}
+
+export interface NextSimulationResponse {
+  status: string;
+  action: "started" | "prefill" | "declined";
+  agent_id?: string;
+  previous_agent_id?: string;
+  agent?: AutonomousAgentInstance;
+  vibe_session_id?: string;
+  config?: Record<string, unknown>;
+  message?: string;
+  data_retained?: boolean;
 }
 
 export interface AutonomousAgentProposal {

@@ -6,6 +6,7 @@ import { api, type AutonomousAgentInstance } from "@/lib/api";
 import { AutonomousAgentHub } from "@/components/autonomous/AutonomousAgentHub";
 import { AgentMemoryPanel } from "@/components/autonomous/AgentMemoryPanel";
 import { PlanApprovalBanner } from "@/components/autonomous/PlanApprovalBanner";
+import { NextSimulationPrompt } from "@/components/autonomous/NextSimulationPrompt";
 import { WatchersLiveProvider } from "@/components/research/WatchersPanel";
 import { cn } from "@/lib/utils";
 
@@ -273,6 +274,13 @@ export function Autonomous() {
       <>
         {agent && !isDraftView && !isObserveAgent(agent) && (
           <PlanApprovalBanner agent={agent} />
+        )}
+        {agent && !isDraftView && (
+          <NextSimulationPrompt
+            agent={agent}
+            onStarted={onAgentCommitted}
+            onRefresh={() => void loadAgent()}
+          />
         )}
         <div className="min-h-0 flex-1">
           <Suspense

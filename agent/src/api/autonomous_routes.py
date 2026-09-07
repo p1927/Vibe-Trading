@@ -497,3 +497,129 @@ def delete_agent_route(
         ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class NextSimulationRequest(BaseModel):
+    """Answer to the "run the next simulation?" prompt.
+
+    ``configuration`` is a choice of two real workflows plus declining, per
+    ``docs/add/autonomous_agents.md`` § "Simulation runs":
+
+    - ``same_configuration`` — re-run this exact configuration as a **new agent**. The change
+      under test is often outside the agent config entirely (other code, an added knowledge
+      base), so an identical configuration is then the correct experiment.
+    - ``new_configuration`` — returns the previous configuration as a prefill and creates
+      nothing; the human edits it through the normal proposal flow.
+    - ``decline`` — records the answer and stops there. The stopped agent and every record it
+      wrote are kept for comparison; archiving or deleting is a separate, explicit action.
+    """
+
+    configuration: str = Field("same_configuration")
+    consent_ack: bool = False
+    session_id: Optional[str] = None
+
+
+@autonomous_router.get("/{agent_id}/simulation")
+def simulation_state_route(agent_id: str) -> Dict[str, Any]:
+    """State the "run the next simulation?" prompt renders from. Read-only."""
+    from trade_integrations.autonomous_agents.simulation_lifecycle import simulation_prompt
+
+    state = simulation_prompt(agent_id)
+    if not state.get("found"):
+        raise HTTPException(status_code=404, detail="agent not found")
+    return state
+
+
+@autonomous_router.post("/{agent_id}/next-simulation")
+def next_simulation_route(
+    agent_id: str,
+    body: NextSimulationRequest | None = None,
+    _auth: None = Depends(require_local_or_auth),
+) -> Dict[str, Any]:
+    from trade_integrations.autonomous_agents.simulation_lifecycle import (
+        record_prompt_answer,
+        simulation_prompt,
+    )
+
+    req = body or NextSimulationRequest()
+    choice = str(req.configuration or "").strip() or "same_configuration"
+    state = simulation_prompt(agent_id)
+    if not state.get("found"):
+        raise HTTPException(status_code=404, detail="agent not found")
+    if not state.get("simulation_complete"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "simulation_not_complete",
+                "message": "this agent's simulation has not completed; nothing to continue from",
+                "status": state.get("status"),
+                "stop_reason": state.get("stop_reason"),
+            },
+        )
+    if choice not in {"same_configuration", "new_configuration", "decline"}:
+        raise HTTPException(status_code=400, detail=f"unknown configuration choice: {choice}")
+
+    record_prompt_answer(agent_id, choice)
+    config = state.get("config") or {}
+
+    if choice == "decline":
+        # Nothing is stopped further and nothing is deleted — the agent is already stopped
+        # and its records stay put for cross-simulation comparison.
+        return {"status": "ok", "action": "declined", "agent_id": agent_id, "data_retained": True}
+
+    if choice == "new_configuration":
+        return {
+            "status": "ok",
+            "action": "prefill",
+            "agent_id": agent_id,
+            "config": config,
+            "message": "edit and submit through the normal agent proposal flow",
+        }
+
+    if not req.consent_ack:
+        raise HTTPException(status_code=400, detail="consent_ack is required to start the next simulation")
+
+    svc = _session_service()
+    if svc is None:
+        raise HTTPException(status_code=503, detail="session runtime not enabled")
+
+    from trade_integrations.autonomous_agents.proposals import (
+        commit_autonomous_agent,
+        propose_autonomous_agent,
+    )
+    from src.scheduled_research.autonomous_agent_jobs import register_agent_jobs
+
+    try:
+        proposal = propose_autonomous_agent(**config)
+        proposal_id = str(proposal.get("proposal_id") or "")
+        if proposal.get("status") != "ready" or not proposal_id:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "proposal_not_ready",
+                    "message": "the previous configuration no longer forms a committable proposal",
+                    "proposal": proposal,
+                },
+            )
+        result = commit_autonomous_agent(
+            proposal_id=proposal_id,
+            consent_ack=True,
+            session_service=svc,
+            orchestrator_session_id=req.session_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    new_agent = result.get("agent") or {}
+    register_agent_jobs(new_agent)
+    if new_agent.get("id") and str(new_agent.get("status") or "") != "draft" and not result.get("infra_paused"):
+        from src.scheduled_research.autonomous_bootstrap import schedule_agent_bootstrap
+
+        schedule_agent_bootstrap(str(new_agent["id"]))
+    return {
+        "status": "ok",
+        "action": "started",
+        "previous_agent_id": agent_id,
+        "agent": new_agent,
+        "vibe_session_id": result.get("vibe_session_id"),
+    }

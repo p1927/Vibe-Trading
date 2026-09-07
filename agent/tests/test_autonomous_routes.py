@@ -250,3 +250,123 @@ def test_every_mutating_route_requires_local_or_auth() -> None:
         "mutating route(s) on autonomous_router missing Depends(require_local_or_auth): "
         f"{missing}"
     )
+
+
+# --- simulation completion prompt (Step G of the replay-epoch item) ---------------------
+#
+# A completed replay pass stops the agent terminally and the UI asks the human whether to run
+# the next simulation, with a choice of *same configuration* or *new configuration*. Declining
+# keeps every record. See `docs/add/autonomous_agents.md` § "Simulation runs".
+
+
+def _save_stopped_simulation(agent_id: str) -> None:
+    from trade_integrations.autonomous_agents.store import save_agent
+
+    save_agent(
+        {
+            "id": agent_id,
+            "type": "autonomous_agent.instance",
+            "name": "sim agent",
+            "status": "stopped",
+            "stop_reason": "simulation_complete",
+            "pause_reason": None,
+            "symbols": ["NIFTY"],
+            "mandate": "Paper trade NIFTY autonomously.",
+            "execution_market": "IN",
+            "constraints": {"mode": "paper", "budget_inr": 20000.0},
+            "simulation_run_id": "sim_abcabcabcabc_e1",
+            "simulation_completed_run_id": "sim_abcabcabcabc_e1",
+            "simulation_next_run_id": "sim_abcabcabcabc_e2",
+        }
+    )
+
+
+def test_simulation_state_reports_a_pending_prompt(client: TestClient) -> None:
+    _save_stopped_simulation("aa_route_sim1")
+
+    body = client.get("/autonomous-agents/aa_route_sim1/simulation").json()
+
+    assert body["simulation_complete"] is True
+    assert body["prompt_pending"] is True
+    assert body["resumable"] is False
+    assert body["choices"] == ["same_configuration", "new_configuration", "decline"]
+    assert body["config"]["symbols"] == ["NIFTY"]
+
+
+def test_simulation_state_404s_for_an_unknown_agent(client: TestClient) -> None:
+    assert client.get("/autonomous-agents/aa_missing/simulation").status_code == 404
+
+
+def test_next_simulation_rejects_an_agent_whose_pass_has_not_completed(client: TestClient) -> None:
+    """A restart-paused agent must never be offered the next-simulation prompt."""
+    from trade_integrations.autonomous_agents.store import save_agent
+
+    save_agent(
+        {
+            "id": "aa_route_sim2",
+            "type": "autonomous_agent.instance",
+            "name": "paused agent",
+            "status": "paused",
+            "pause_reason": "restart",
+            "symbols": ["NIFTY"],
+            "constraints": {"mode": "paper"},
+        }
+    )
+
+    response = client.post("/autonomous-agents/aa_route_sim2/next-simulation", json={"configuration": "decline"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "simulation_not_complete"
+
+
+def test_declining_keeps_the_agent_and_its_data(client: TestClient) -> None:
+    from trade_integrations.autonomous_agents.store import get_agent
+
+    _save_stopped_simulation("aa_route_sim3")
+
+    body = client.post(
+        "/autonomous-agents/aa_route_sim3/next-simulation", json={"configuration": "decline"}
+    ).json()
+
+    assert body["action"] == "declined"
+    assert body["data_retained"] is True
+    agent = get_agent("aa_route_sim3")
+    assert agent is not None and agent["status"] == "stopped"
+    assert client.get("/autonomous-agents/aa_route_sim3/simulation").json()["prompt_pending"] is False
+
+
+def test_new_configuration_returns_a_prefill_and_creates_nothing(client: TestClient) -> None:
+    from trade_integrations.autonomous_agents.store import list_agents
+
+    _save_stopped_simulation("aa_route_sim4")
+    before = len(list_agents())
+
+    body = client.post(
+        "/autonomous-agents/aa_route_sim4/next-simulation", json={"configuration": "new_configuration"}
+    ).json()
+
+    assert body["action"] == "prefill"
+    assert body["config"]["mandate"].startswith("Paper trade NIFTY")
+    assert len(list_agents()) == before
+
+
+def test_same_configuration_requires_consent(client: TestClient) -> None:
+    _save_stopped_simulation("aa_route_sim5")
+
+    response = client.post(
+        "/autonomous-agents/aa_route_sim5/next-simulation",
+        json={"configuration": "same_configuration", "consent_ack": False},
+    )
+
+    assert response.status_code == 400
+    assert "consent_ack" in str(response.json()["detail"])
+
+
+def test_unknown_configuration_choice_is_rejected(client: TestClient) -> None:
+    _save_stopped_simulation("aa_route_sim6")
+
+    response = client.post(
+        "/autonomous-agents/aa_route_sim6/next-simulation", json={"configuration": "resume"}
+    )
+
+    assert response.status_code == 400
