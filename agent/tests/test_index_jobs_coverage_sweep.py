@@ -24,10 +24,17 @@ def test_run_stock_history_coverage_sweep_job_calls_backfill_into_week(monkeypat
     calls = {}
 
     class _FakeStockHistory:
-        def backfill_into_week(self, *, week_start, include_optional, verify_after):
+        # Keep this signature in step with the real
+        # `StockHistory.backfill_into_week` -- an explicit keyword list here is the
+        # point of the test (it pins what the job actually passes), so a new
+        # parameter on the real method must be added here too. When it wasn't, the
+        # job's own `except Exception` swallowed the resulting TypeError and this
+        # test failed on a downstream assertion instead of on the real cause.
+        def backfill_into_week(self, *, week_start, include_optional, verify_after, budget_seconds):
             calls["week_start"] = week_start
             calls["include_optional"] = include_optional
             calls["verify_after"] = verify_after
+            calls["budget_seconds"] = budget_seconds
             return SimpleNamespace(had_errors=False, ok_count=5, failed_count=0, skipped_count=1)
 
     monkeypatch.setattr(
@@ -43,6 +50,9 @@ def test_run_stock_history_coverage_sweep_job_calls_backfill_into_week(monkeypat
     assert calls["include_optional"] is True
     assert calls["verify_after"] is True
     assert calls["week_start"] == "2026-08-18"
+    # Budgeted inside the executor's 30-minute dispatch timeout; see
+    # [[2026-09-07-coverage-sweep-times-out-and-stops-backfilling]].
+    assert calls["budget_seconds"] == 1200.0
     assert result["status"] == "ok"
     assert result["ok_count"] == 5
     assert result["had_errors"] is False
