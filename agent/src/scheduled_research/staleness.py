@@ -289,14 +289,28 @@ def dispatch_concurrency_for_job_type(job_type: str) -> int | None:
 
 
 def _request_pipeline_cancel_on_dispatch_timeout(job_id: str, job_type: str) -> None:
-    """Cooperatively stop in-flight index pipeline work after executor timeout."""
+    """Cooperatively stop in-flight pipeline work after an executor timeout.
+
+    Scoped to ``job_id``. It used to write the process-wide *global* cancel flag
+    instead, which made the whole mechanism a no-op in practice: every dispatch
+    starts by clearing that same global flag (``index_jobs.dispatch_index_job_sync``),
+    and the collection tier dispatches near-continuously, so the next due job
+    reliably erased this signal before the timed-out run reached its next
+    ``check_pipeline_cancel()`` checkpoint. Live-observed 2026-09-07 —
+    ``nifty-hub-news-ingest-full`` was recorded ``failed`` on a 90-minute timeout
+    and was still running, and still writing to the shared production hub,
+    24m44s later. ``asyncio.wait_for`` cannot stop it either: the work runs in an
+    ``asyncio.to_thread`` worker, and cancelling that await abandons the thread
+    rather than ending it, so this flag is the *only* thing that can stop it.
+    See .claude/backlog/items/2026-09-07-dispatch-timeout-cancel-flag-cleared-by-next-job.md.
+    """
     if not (job_type.startswith("index_") or job_type in _JOB_DISPATCH_TIMEOUT_MS):
         return
     try:
         from trade_integrations.dataflows.index_research.pipeline_cancel import request_pipeline_cancel
     except ImportError:
         return
-    request_pipeline_cancel(f"dispatch_timeout:{job_id}")
+    request_pipeline_cancel(f"dispatch_timeout:{job_id}", job_id=job_id)
 
 
 def _watchdog_interval_ms() -> int:

@@ -96,6 +96,15 @@ _MAX_PERSISTED_ERROR_CHARS = 1000
 #: process that is no longer running.
 DEFAULT_DELIVERY_LEASE_MS = 5 * 60 * 1000
 
+#: How long :meth:`ScheduledResearchExecutor.stop` waits for already-dispatched
+#: jobs to finish before it cancels them and recovers whatever is still RUNNING.
+#: Small on purpose — it exists to catch a dispatch that is *milliseconds* from
+#: its completion write, not to let a 90-minute ingest finish. Live-measured
+#: 2026-09-07: two real completions landed 13-24ms after shutdown began and were
+#: mislabelled for want of exactly this wait. A long grace here would instead
+#: stall the process shutdown that uvicorn is already timing out.
+DEFAULT_SHUTDOWN_DRAIN_GRACE_MS = 5_000
+
 NowFn = Callable[[], int]
 # A dispatcher may return the session id it enqueued into. Returning None keeps
 # the pre-delivery contract working unchanged.
@@ -276,6 +285,7 @@ class ScheduledResearchExecutor:
         briefing_reader: "BriefingReader | None" = None,
         channel_sender: "ChannelSender | None" = None,
         delivery_lease_ms: int = DEFAULT_DELIVERY_LEASE_MS,
+        shutdown_drain_grace_ms: int = DEFAULT_SHUTDOWN_DRAIN_GRACE_MS,
     ) -> None:
         """Initialize the executor.
 
@@ -320,6 +330,10 @@ class ScheduledResearchExecutor:
         self._briefing_reader = briefing_reader
         self._channel_sender = channel_sender
         self._delivery_lease_ms = delivery_lease_ms
+        self._shutdown_drain_grace_ms = max(0, int(shutdown_drain_grace_ms))
+        #: True only between shutdown recovery finalising the store and the next
+        #: start(). See the guard in :meth:`_persist_completion`.
+        self._shutdown_recovery_done = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._sweep_task: asyncio.Task | None = None
         self._tick_interval_ms = tick_interval_ms
@@ -510,6 +524,7 @@ class ScheduledResearchExecutor:
         if not self._enabled or self.is_running:
             return
         self._stopping = False
+        self._shutdown_recovery_done = False
         self.recover_stale_running(self._now_fn(), startup=True)
         self._wakeup = asyncio.Event()
         self._operational_wakeup = asyncio.Event()
@@ -552,7 +567,21 @@ class ScheduledResearchExecutor:
             return
         logger.info("scheduled research executor stopping…")
         self._stopping = True
-        self.recover_all_running_on_shutdown(self._now_fn(), auto_pause_reason=auto_pause_reason)
+        # Drain first, recover last. This used to recover *before* touching the
+        # dispatch tasks, so a job whose work finished milliseconds later found
+        # itself already marked PENDING and its own completion write stood down
+        # — a genuinely successful run permanently filed as "recovered on
+        # executor shutdown". Live-measured 2026-09-07: two real completions
+        # landed 13-24ms after this point. See .claude/backlog/items/
+        # 2026-09-07-shutdown-recovery-relabels-a-completed-run.md.
+        #
+        # Ordering it this way is only safe because recover_all_running_on_shutdown
+        # re-reads each job fresh and skips anything no longer RUNNING (see its
+        # docstring): a dispatch that lands during the drain is left alone, and
+        # one that is genuinely still running after the cancel below never wrote
+        # a completion at all (``_dispatch_one`` re-raises CancelledError), so it
+        # is still RUNNING and still gets recovered.
+        await self._drain_in_flight_dispatches()
         watchdog = self._watchdog_task
         if watchdog is not None:
             watchdog.cancel()
@@ -573,6 +602,10 @@ class ScheduledResearchExecutor:
             self._operational_task = None
         task = self._task
         if task is None:
+            self._shutdown_recovery_done = True
+            self.recover_all_running_on_shutdown(
+                self._now_fn(), auto_pause_reason=auto_pause_reason
+            )
             self._reset_runtime_state()
             return
         if self._wakeup is not None:
@@ -586,8 +619,44 @@ class ScheduledResearchExecutor:
         except asyncio.CancelledError:
             pass
         self._task = None
+        # Every dispatch task has now either written its own completion (during
+        # the drain above) or been cancelled without writing one. Whatever is
+        # still RUNNING in the store is therefore genuinely interrupted.
+        self._shutdown_recovery_done = True
+        self.recover_all_running_on_shutdown(self._now_fn(), auto_pause_reason=auto_pause_reason)
         self._reset_runtime_state()
         logger.info("scheduled research executor stopped")
+
+    async def _drain_in_flight_dispatches(self) -> None:
+        """Give already-dispatched jobs a bounded moment to finish before shutdown.
+
+        ``_dispatch_one`` discards a job's id from its in-flight set only in the
+        ``finally`` *after* ``_run_job`` returns, and ``_run_job`` writes its
+        completion synchronously before returning — so an empty in-flight set is
+        proof that every dispatch which was going to complete has already
+        persisted its result. That is the whole point: it lets :meth:`stop`
+        distinguish "finished just as we were stopping" from "genuinely
+        interrupted", instead of relabelling the former as the latter.
+
+        Bounded by ``shutdown_drain_grace_ms``. A long-running dispatch simply
+        outlasts the grace and is cancelled and recovered exactly as before —
+        this never holds shutdown open for a job's full dispatch budget.
+        """
+        grace_s = self._shutdown_drain_grace_ms / 1000.0
+        if grace_s <= 0:
+            return
+        deadline = time.monotonic() + grace_s
+        while self._in_flight_job_ids or self._operational_in_flight_job_ids:
+            if time.monotonic() >= deadline:
+                logger.info(
+                    "scheduled research shutdown: %d dispatch(es) still in flight after "
+                    "%dms grace, cancelling them (%s)",
+                    len(self._in_flight_job_ids) + len(self._operational_in_flight_job_ids),
+                    self._shutdown_drain_grace_ms,
+                    ", ".join(sorted(self._in_flight_job_ids | self._operational_in_flight_job_ids)),
+                )
+                return
+            await asyncio.sleep(0.01)
 
     def recover_all_running_on_shutdown(
         self, now_ms: int | None = None, *, auto_pause_reason: str | None = None
@@ -1565,9 +1634,23 @@ class ScheduledResearchExecutor:
                 fields untouched, exactly as before, so an ordinary
                 completion cannot revert a concurrent pause/resume click.
         """
-        if self._stopping:
+        # Deliberately keyed on "shutdown recovery has already finalised the
+        # store", not on "shutdown has begun". The guard used to be
+        # ``if self._stopping``, which threw away the verdict of *any* run
+        # finishing after ``stop()`` was entered — including one that finished
+        # milliseconds later and had genuinely succeeded. That is what filed two
+        # real, successful ingests (``had_work: True``) as
+        # ``recovered on executor shutdown`` on 2026-09-07. Between the start of
+        # ``stop()`` and its recovery call there is now a bounded drain
+        # (:meth:`_drain_in_flight_dispatches`) precisely so those completions
+        # can land, so discarding them there is exactly backwards. Once recovery
+        # *has* run, the ``current.status != JobStatus.RUNNING`` check below
+        # already rejects a late write on its own; this flag just makes that
+        # intent explicit and gives it a legible log line. See
+        # .claude/backlog/items/2026-09-07-shutdown-recovery-relabels-a-completed-run.md.
+        if self._shutdown_recovery_done:
             logger.info(
-                "scheduled research job %s finished during executor shutdown; skipping completion write",
+                "scheduled research job %s finished after shutdown recovery; skipping completion write",
                 job.id,
             )
             return

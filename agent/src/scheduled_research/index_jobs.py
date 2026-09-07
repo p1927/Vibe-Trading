@@ -915,13 +915,56 @@ def run_news_dedup_quality_eval_job(config: dict[str, Any] | None = None) -> dic
 
 
 def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
-    """Execute one index scheduled job synchronously."""
-    try:
-        from trade_integrations.dataflows.index_research.pipeline_cancel import clear_pipeline_cancel
+    """Execute one index scheduled job synchronously, under a job-scoped cancel flag.
 
-        clear_pipeline_cancel()
+    Binds this dispatch to ``job.id`` for the duration so a dispatch-timeout
+    cancel aimed at *this* job (``staleness._request_pipeline_cancel_on_dispatch_timeout``)
+    is the only one its ``check_pipeline_cancel()`` checkpoints can see, and so
+    starting this job cannot erase a cancel aimed at some other job still
+    running.
+
+    This used to call the unscoped ``clear_pipeline_cancel()``, wiping the
+    single process-wide flag on every dispatch. Since the collection tier
+    dispatches near-continuously, that reliably erased a timed-out job's cancel
+    seconds after it was set — the timed-out run then sailed past every later
+    checkpoint and kept burning search/LLM budget and writing to the shared hub
+    while the executor had already recorded it ``failed`` and scheduled a retry.
+    See .claude/backlog/items/2026-09-07-dispatch-timeout-cancel-flag-cleared-by-next-job.md.
+
+    The scoping pattern is the one ``trade/index_prediction_run_jobs.py`` already
+    uses for manual runs (clear own flag, bind, run, unbind, clear own flag) —
+    followed rather than reinvented. Clearing at *entry* matters as much as the
+    binding: it drops a stale flag left behind by a process that died mid-run,
+    which would otherwise cancel this job on every future dispatch forever.
+
+    ``_current_job_id`` is a ``ContextVar`` and this function runs inside
+    ``asyncio.to_thread`` (``run_log_buffer.run_logged``), which copies the
+    context per call — so concurrent dispatches each bind their own id without
+    seeing each other's.
+    """
+    try:
+        from trade_integrations.dataflows.index_research.pipeline_cancel import (
+            clear_pipeline_cancel,
+            set_pipeline_job_id,
+        )
     except ImportError:
-        pass
+        _dispatch_index_job_body(job)
+        return
+
+    clear_pipeline_cancel(job_id=job.id)
+    set_pipeline_job_id(job.id)
+    try:
+        _dispatch_index_job_body(job)
+    finally:
+        set_pipeline_job_id(None)
+        # This job is over, so its flag has no further reader; leaving it would
+        # cancel the job's *next* run instead. Deliberately does NOT touch the
+        # global flag, which is a stop-everything lever this job does not own.
+        clear_pipeline_cancel(job_id=job.id)
+
+
+def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
+    """Route one index scheduled job to its handler. See `dispatch_index_job_sync`."""
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_INDEX_FACTOR_SNAPSHOT:
         summary = run_index_factor_snapshot_job(job.config)
