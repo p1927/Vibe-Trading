@@ -22,6 +22,14 @@ const PROXY_PATHS = [
   "/trading",
   "/scheduled-runs",
   "/options",
+  "/board",
+  "/watches",
+  "/memory",
+  "/knowledge",
+  "/execution-advisor",
+  "/scheduler-registry",
+  "/skills",
+  "/system",
 ];
 
 export default defineConfig(({ mode }) => {
