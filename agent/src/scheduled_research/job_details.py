@@ -104,7 +104,9 @@ def _preview_hub_news_ingest(config: Dict[str, Any]) -> Dict[str, Any]:
         cfg = get_pipeline_config()
         sources_cfg = cfg["light_ingest_sources"] if mode == "light" else cfg["full_ingest_sources"]
 
-    selected = _apply_light_source_guard(_parse_sources(sources_cfg), ingest_mode=mode)
+    selected, _dropped_by_light_guard = _apply_light_source_guard(
+        _parse_sources(sources_cfg), ingest_mode=mode
+    )
     feeds = get_sentiment_rss_feeds(market)
     urls = [_resolve_url(f["url"], ticker) for f in feeds] if "rss" in selected else []
     other_sources = sorted(selected - {"rss"})
