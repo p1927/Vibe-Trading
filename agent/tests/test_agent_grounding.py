@@ -1209,6 +1209,49 @@ def test_agent_loop_rejects_then_corrects_ungrounded_final_answer(
     assert artifact["validations"][-1]["valid"] is True
 
 
+def test_answer_rejection_is_emitted_to_the_event_bus(tmp_path: Path) -> None:
+    """A rejected draft must be observable without reading trace.jsonl off disk.
+
+    `answer_rejected`/`grounding_recovery` were written only to the run's
+    trace file, so a caller polling /sessions/{id}/messages saw nothing at all
+    while a turn burned iterations revising an answer the grounding check kept
+    refusing: session `active`, message count unchanged, SSE silent. "Working"
+    and "dead" were indistinguishable from every API surface — diagnosing one
+    such turn live on 2026-09-07 required reading the session's trace.jsonl.
+    See .claude/backlog/items/2026-09-07-orchestrator-turn-never-surfaces-an-answer.md
+    """
+    registry = ToolRegistry()
+    registry.register(_ResolverTool(_resolver_payload()))
+    registry.register(_MarketTool(_market_payload()))
+    events: list[tuple[str, dict[str, Any]]] = []
+    agent = AgentLoop(
+        registry=registry,
+        llm=_CorrectingLLM(),
+        max_iterations=4,
+        event_callback=lambda event, data: events.append((event, data)),
+    )
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    agent.memory.run_dir = str(run_dir)
+
+    result = agent.run("请分析机器人ETF并给出买入价")
+    assert result["status"] == "success"
+
+    rejections = [data for event, data in events if event == "answer_rejected"]
+    assert rejections, "a rejected draft must reach the event bus, not only trace.jsonl"
+
+    payload = rejections[0]
+    assert "iter" in payload
+    assert payload["issue_codes"], "the reason for the rejection must travel with the event"
+    assert "numeric_claim_conflict" in payload["issue_codes"], (
+        "the code identifying WHY the draft was refused must survive into the event"
+    )
+    # Codes only: a full issue record embeds the offending ungrounded value, and
+    # this event may be rendered. Broadcasting it would reintroduce on the event
+    # bus exactly what withholding the draft prevents.
+    assert "0.881" not in json.dumps(payload, default=str)
+
+
 _SHORTLIST_QUERY = "A股低价高增长股票"
 _SHORTLIST_PAYLOAD = _resolver_payload(
     candidates=[

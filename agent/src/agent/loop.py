@@ -923,6 +923,24 @@ def _named_target_paths(text: str) -> list[Path]:
         seen.add(key)
         paths.append(p)
     return paths
+def _grounding_issue_codes(issues: Any) -> list[str]:
+    """Stable, value-free labels for a failed grounding validation.
+
+    Each issue carries the offending value alongside its code; only the code is
+    safe to broadcast. Falls back to the type name so an issue shape without a
+    ``code`` still produces a usable label rather than an empty event.
+    """
+    codes: list[str] = []
+    for issue in list(issues or [])[:8]:
+        code = ""
+        if isinstance(issue, dict):
+            code = str(issue.get("code") or "")
+        else:
+            code = str(getattr(issue, "code", "") or "")
+        codes.append(code[:80] if code else type(issue).__name__)
+    return codes
+
+
 def _normalize_tool_run_dir(args: dict[str, Any], memory_run_dir: str | None) -> dict[str, Any]:
     """Normalize ``run_dir`` in tool args to an absolute path when possible.
 
@@ -1854,6 +1872,36 @@ class AgentLoop:
                                     "issues": validation.issues,
                                 }
                             )
+                            # Surface the reject/recover cycle on the event bus,
+                            # not only in trace.jsonl on disk. Without this a
+                            # caller polling /sessions/{id}/messages sees exactly
+                            # nothing while the turn burns iterations revising an
+                            # answer the grounding check keeps refusing — the
+                            # session stays `active`, the message count stays at
+                            # the user's own message, and the SSE stream is
+                            # silent, so "working" and "dead" are indistinguishable
+                            # from every API surface. Observed live 2026-09-07:
+                            # diagnosing one such turn required reading
+                            # ~/.vibe-trading-release/sessions/<id>/trace.jsonl.
+                            # Issue strings are truncated — this is a progress
+                            # signal, not a second copy of the validation record.
+                            # See .claude/backlog/items/2026-09-07-orchestrator-turn-never-surfaces-an-answer.md
+                            self._emit(
+                                "answer_rejected",
+                                {
+                                    "iter": current_iter,
+                                    # Codes only. A full issue record embeds the
+                                    # offending ungrounded value (the very number
+                                    # the validator refused), and this event may
+                                    # be rendered by a UI — broadcasting it would
+                                    # reintroduce, on the event bus, exactly what
+                                    # withholding the draft prevents. The codes
+                                    # are what makes the cycle legible; the values
+                                    # stay in the run's own trace.
+                                    "issue_codes": _grounding_issue_codes(validation.issues),
+                                    "validation_count": self._grounding.validation_count,
+                                },
+                            )
                             messages.append(
                                 {"role": "assistant", "content": final_content}
                             )
@@ -1869,6 +1917,10 @@ class AgentLoop:
                                 )
                                 react_trace.append(
                                     {"type": "grounding_recovery", "action": recovery}
+                                )
+                                self._emit(
+                                    "grounding_recovery",
+                                    {"iter": current_iter, "action": str(recovery)[:200]},
                                 )
                                 messages.append(
                                     {
