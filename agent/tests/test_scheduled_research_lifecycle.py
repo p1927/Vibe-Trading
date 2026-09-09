@@ -135,6 +135,51 @@ def test_resume_clears_auto_paused_reason_set_by_system_recovery(tmp_path: Path)
     assert saved.auto_paused_reason is None
 
 
+def test_resume_clears_the_counter_on_an_auto_paused_job(tmp_path: Path) -> None:
+    """An AUTO-PAUSED job (paused + PENDING, the state executor.py sets at
+    max_consecutive_failures) must resume with a clean counter.
+
+    Regression for the case where the reset was gated on status == FAILED:
+    an auto-paused job is PENDING, so it resumed still carrying
+    consecutive_failures = 3 and the next single dispatch failure re-paused it
+    immediately (4 >= 3). Live-observed 2026-09-09 on four NIFTY jobs.
+    """
+    from src.scheduled_research.pause_control import set_job_enabled
+
+    store = _store(tmp_path)
+    job = ScheduledResearchJob(
+        id="auto-paused",
+        prompt="test",
+        schedule="1000",
+        next_run_at=0,
+        status=JobStatus.PENDING,
+        created_at=0,
+        paused=True,
+        consecutive_failures=3,
+        failure_kind="dispatch",
+        auto_paused_reason=(
+            "auto-paused: 3 consecutive dispatch failures "
+            "(last: TimeoutError: dispatch timed out after 1200000ms)"
+        ),
+        last_error="TimeoutError: dispatch timed out after 1200000ms",
+    )
+    store.upsert(job)
+
+    set_job_enabled("auto-paused", True, store=store)
+
+    saved = store.get("auto-paused")
+    assert saved is not None
+    assert saved.paused is False
+    assert saved.auto_paused_reason is None
+    # The point of the fix: without this the job re-pauses on its next failure.
+    assert saved.consecutive_failures == 0
+    assert saved.failure_kind is None
+    # Status was already PENDING and stays PENDING.
+    assert saved.status == JobStatus.PENDING
+    # last_error is deliberately preserved as history, same as the FAILED case.
+    assert saved.last_error == "TimeoutError: dispatch timed out after 1200000ms"
+
+
 def test_resume_unsticks_a_terminal_failed_job(tmp_path: Path) -> None:
     """A job that reached terminal FAILED (max consecutive_failures) must be
     resumable, not permanently excluded from is_due(). Resuming resets it to

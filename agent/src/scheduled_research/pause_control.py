@@ -56,19 +56,39 @@ def set_job_enabled(
     ``auto_paused_reason`` regardless of whether the pause was user- or
     system-initiated.
 
-    Enabling a job that is currently ``FAILED`` (terminal — reached after
-    ``max_consecutive_failures`` retries, see ``executor.py``'s
-    ``is_due()``, which explicitly excludes ``FAILED`` from ever being
-    picked up again) also resets it to ``PENDING`` with
-    ``consecutive_failures``/``failure_kind`` cleared. Without this, a
-    resumed job that happened to be FAILED stayed permanently invisible to
-    the scheduler — ``paused`` would read ``False`` (looking "resumed" in
-    the API/UI) while ``is_due()`` silently kept excluding it forever, with
-    no path back except a direct store edit. Live-observed 2026-09-02: see
-    [[2026-08-30-scheduler-sequential-dispatch-drains-slowly]]. A job that
-    is merely ``PENDING``/``COMPLETED`` is untouched by this — only the
-    terminal-FAILED case gets the extra reset, so ordinary pause/resume of
-    a healthy job keeps working exactly as before.
+    Enabling ALWAYS clears ``consecutive_failures``/``failure_kind``, so a
+    resumed job gets a genuinely clean slate. This is the whole point of a
+    manual resume: the operator has looked at the failure and decided to
+    try again.
+
+    This used to be done only for terminal-``FAILED`` jobs, which silently
+    stopped covering the common case once dispatch failures began
+    AUTO-PAUSING instead of failing terminally (``executor.py`` sets
+    ``status = PENDING`` + ``paused = True`` at
+    ``max_consecutive_failures``). An auto-paused job is ``PENDING``, not
+    ``FAILED``, so it was resumed still carrying
+    ``consecutive_failures = 3``: the very next dispatch failure hit
+    ``4 >= 3`` and re-paused it immediately, and only a *successful*
+    dispatch (``executor.py``, on the clean-dispatch branch) could ever
+    reset the counter. Nothing else could clear it — there was no endpoint
+    or function that reset the counter on a paused+``PENDING`` job — so
+    resume was effectively a no-op for exactly the jobs most in need of it.
+    Live-observed 2026-09-09 on four auto-paused NIFTY jobs: see
+    [[2026-09-09-nifty-jobs-auto-paused]].
+
+    The terminal-``FAILED`` case additionally resets ``status`` to
+    ``PENDING``, since ``is_due()`` excludes ``FAILED`` from ever being
+    picked up again. Without that, a resumed FAILED job stayed permanently
+    invisible to the scheduler — ``paused`` would read ``False`` (looking
+    "resumed" in the API/UI) while ``is_due()`` silently kept excluding it
+    forever. Live-observed 2026-09-02: see
+    [[2026-08-30-scheduler-sequential-dispatch-drains-slowly]].
+
+    Resuming a healthy job whose counter is already 0 is unchanged. Note
+    the auto-pause guard still applies afterwards: a job that keeps failing
+    is re-paused after another ``max_consecutive_failures`` dispatches, so
+    clearing the counter cannot turn a persistently broken job into an
+    infinite retry loop.
 
     Args:
         job_id: The job to update.
@@ -84,10 +104,10 @@ def set_job_enabled(
     job.paused = not enabled
     if enabled:
         job.auto_paused_reason = None
+        job.consecutive_failures = 0
+        job.failure_kind = None
         if job.status == JobStatus.FAILED:
             job.status = JobStatus.PENDING
-            job.consecutive_failures = 0
-            job.failure_kind = None
     store.upsert(job)
     return job
 
