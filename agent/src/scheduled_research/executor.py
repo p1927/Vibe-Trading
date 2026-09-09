@@ -72,6 +72,19 @@ from src.scheduled_research.staleness import (
     is_job_stale_running,
     stale_running_ms_for,
 )
+
+
+try:  # sidecar (docs/FORK_CONVENTIONS.md): Trade owns the budget mechanism, this fork calls it
+    from trade_integrations.job_deadline import job_deadline as _job_dispatch_budget
+except ImportError:  # pragma: no cover - standalone vibetrading install, outside the monorepo
+    from contextlib import contextmanager as _contextmanager
+
+    @_contextmanager
+    def _job_dispatch_budget(seconds):  # type: ignore[misc]
+        """No-op when this agent runs outside the Trade monorepo (its packaged CLI does)."""
+        yield
+
+
 from src.scheduled_research.verdict import (
     VerdictRecord,
     outcome_of,
@@ -1188,7 +1201,19 @@ class ScheduledResearchExecutor:
         session_id: str | None = None
         was_cancelled = False
         try:
-            session_id = await asyncio.wait_for(self._dispatch(job), timeout=timeout_ms / 1000.0)
+            # Bind this job's dispatch budget to the context BEFORE dispatching, so every LLM
+            # retry ladder underneath it bounds itself by what is left (sidecar:
+            # `trade_integrations.job_deadline`, per docs/FORK_CONVENTIONS.md — the logic lives in
+            # Trade, this file only calls it). `asyncio.wait_for` below abandons the AWAIT on
+            # timeout; it cannot stop work running in an `asyncio.to_thread` worker. Without a
+            # budget the abandoned work keeps retrying — measured: one provider ladder can run
+            # ~2.3 h inside a job whose ceiling was 20 minutes, which is how three India hub-news
+            # jobs reached three consecutive dispatch timeouts and auto-paused.
+            # See .claude/backlog/items/2026-09-07-collection-job-timeout-and-llm-deadline-hardening.md
+            with _job_dispatch_budget(timeout_ms / 1000.0):
+                session_id = await asyncio.wait_for(
+                    self._dispatch(job), timeout=timeout_ms / 1000.0
+                )
         except asyncio.TimeoutError:
             logger.error(
                 "scheduled research dispatch timed out for job %s after %sms",
