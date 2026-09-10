@@ -879,11 +879,9 @@ export function Hub() {
       const res = await api.updateHubNewsPipelineConfig({
         full_ingest_cron: pipelineDraft.full_ingest_cron,
         light_ingest_cron: pipelineDraft.light_ingest_cron,
-        light_ingest_enabled: pipelineDraft.light_ingest_enabled,
         entity_drain_cron: pipelineDraft.entity_drain_cron,
         entity_maintenance_cron: pipelineDraft.entity_maintenance_cron,
         entity_drain_continuous_cron: pipelineDraft.entity_drain_continuous_cron,
-        entity_drain_continuous_enabled: pipelineDraft.entity_drain_continuous_enabled,
         entity_backpressure_threshold: pipelineDraft.entity_backpressure_threshold,
         full_ingest_sources: pipelineDraft.full_ingest_sources,
         light_ingest_sources: pipelineDraft.light_ingest_sources,
@@ -1038,7 +1036,6 @@ export function Hub() {
               <RepeatIntervalPicker
                 value={pipelineDraft.light_ingest_cron ?? ""}
                 onChange={(v) => patchDraft({ light_ingest_cron: v })}
-                disabled={!pipelineDraft.light_ingest_enabled}
               />
             </label>
             <label className="space-y-1 text-sm">
@@ -1062,17 +1059,7 @@ export function Hub() {
               <RepeatIntervalPicker
                 value={pipelineDraft.entity_drain_continuous_cron ?? ""}
                 onChange={(v) => patchDraft({ entity_drain_continuous_cron: v })}
-                disabled={!pipelineDraft.entity_drain_continuous_enabled}
               />
-            </label>
-            <label className="flex items-center gap-2 self-end text-sm">
-              <input
-                type="checkbox"
-                checked={pipelineDraft.entity_drain_continuous_enabled ?? true}
-                onChange={(e) => patchDraft({ entity_drain_continuous_enabled: e.target.checked })}
-                className="rounded border-border"
-              />
-              Continuous drain enabled
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-[11px] text-muted-foreground">Batch size</span>
@@ -1096,15 +1083,6 @@ export function Hub() {
                 onChange={(e) => patchDraft({ cluster_threshold: parseFloat(e.target.value) || 0.8 })}
                 className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
               />
-            </label>
-            <label className="flex items-center gap-2 self-end text-sm">
-              <input
-                type="checkbox"
-                checked={pipelineDraft.light_ingest_enabled ?? true}
-                onChange={(e) => patchDraft({ light_ingest_enabled: e.target.checked })}
-                className="rounded border-border"
-              />
-              Light ingest enabled
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-[11px] text-muted-foreground">Full sources</span>
@@ -1210,7 +1188,7 @@ export function Hub() {
             </button>
             <button
               type="button"
-              disabled={busy !== null || !pipelineDraft.light_ingest_enabled}
+              disabled={busy !== null}
               onClick={() => void runIngest("light")}
               className="rounded-md border px-3 py-1.5 text-[12px] hover:bg-muted/50 disabled:opacity-50"
             >

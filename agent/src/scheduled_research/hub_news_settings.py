@@ -100,9 +100,3 @@ def apply_pipeline_settings(
         out.append(dataclasses.replace(job, schedule=schedule, config={**job.config, **overrides}))
     return out
 
-
-def light_ingest_enabled(settings: dict[str, Any] | None) -> bool:
-    """Whether the Hub switch keeps India's 4-hourly light ingest job. On when settings are absent."""
-    if settings is None:
-        return True
-    return bool(settings["light_ingest_enabled"])
