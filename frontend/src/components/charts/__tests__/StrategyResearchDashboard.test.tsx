@@ -9,9 +9,16 @@ import { echarts } from "@/lib/echarts";
 // indistinguishable from a broken page. It should instead point to the
 // Studio tab, which is where that run's actual numbers render.
 
-vi.mock("@/lib/echarts", () => ({
-  echarts: { init: vi.fn() },
-}));
+// The component creates charts via the `initEChart` wrapper (switched from a
+// bare `echarts.init` in 44cfd33d). The wrapper delegates to the mocked
+// `echarts.init`, so the beforeEach stub below still controls the fake chart.
+vi.mock("@/lib/echarts", () => {
+  const init = vi.fn();
+  return {
+    echarts: { init },
+    initEChart: vi.fn((dom: HTMLElement) => init(dom)),
+  };
+});
 
 function makeRun(overrides: Partial<RunData> = {}): RunData {
   return {

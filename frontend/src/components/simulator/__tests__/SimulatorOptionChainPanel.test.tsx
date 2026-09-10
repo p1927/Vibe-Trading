@@ -65,7 +65,10 @@ describe("SimulatorOptionChainPanel", () => {
       expect(screen.queryAllByText(/24,750/).length).toBeGreaterThan(0);
     });
     expect(screen.getByText(/2026-08-21/)).toBeInTheDocument();
-    expect(screen.getByText(/LTP 24,750/)).toBeInTheDocument();
+    // f1c5d755 (Groww-style header) replaced the "LTP 24,750" caption with a
+    // large headline spot figure. Target that headline span specifically, so
+    // the 24,750 strike cell can't satisfy this assertion.
+    expect(screen.getByText("24,750", { selector: "span.text-2xl" })).toBeInTheDocument();
   });
 
   it("shows the error message when the chain returns status=error", async () => {

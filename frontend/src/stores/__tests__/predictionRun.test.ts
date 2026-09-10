@@ -44,7 +44,17 @@ describe("beginRun / finishRun", () => {
   });
 });
 
+// Since 37225ee2, appendPipelineLog buffers entries and flushes them into
+// pipelineLogs in one batch after LOG_FLUSH_MS (200 ms). Fake timers let the
+// tests drive that flush.
 describe("pipeline logs", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("appendPipelineLog adds entries", () => {
     usePredictionRunStore.getState().appendPipelineLog({
       stage: "start",
@@ -52,6 +62,11 @@ describe("pipeline logs", () => {
       level: "info",
       at: "2026-01-01T00:00:00Z",
     });
+    // Buffered, not yet in state, but already counted.
+    expect(usePredictionRunStore.getState().pipelineLogs).toHaveLength(0);
+    expect(usePredictionRunStore.getState().getLogCount()).toBe(1);
+
+    vi.advanceTimersByTime(200);
     expect(usePredictionRunStore.getState().pipelineLogs).toHaveLength(1);
   });
 
@@ -63,6 +78,9 @@ describe("pipeline logs", () => {
       at: "2026-01-01T00:00:00Z",
     });
     usePredictionRunStore.getState().setPipelineLogs([]);
+    expect(usePredictionRunStore.getState().pipelineLogs).toEqual([]);
+    // The discarded buffered entry must not flush in later.
+    vi.advanceTimersByTime(200);
     expect(usePredictionRunStore.getState().pipelineLogs).toEqual([]);
   });
 });

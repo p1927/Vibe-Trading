@@ -37,7 +37,11 @@ describe("useDarkMode", () => {
 
   it("persists preference to localStorage on change", () => {
     const { result } = renderHook(() => useDarkMode());
-    expect(localStorage.getItem("qa-theme")).toBe("light");
+    // Since 71933ecf the hook writes only on an explicit toggle, never on
+    // mount. With nothing stored it keeps following the OS theme
+    // (onSystemChange ignores OS changes once a preference is stored), so
+    // writing the default on mount would pin it and stop OS changes applying.
+    expect(localStorage.getItem("qa-theme")).toBeNull();
 
     act(() => result.current.toggle());
     expect(localStorage.getItem("qa-theme")).toBe("dark");
