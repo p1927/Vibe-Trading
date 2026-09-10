@@ -5615,11 +5615,9 @@ export interface HubNewsPipelineConfig {
   ticker?: string;
   full_ingest_cron?: string;
   light_ingest_cron?: string;
-  light_ingest_enabled?: boolean;
   entity_drain_cron?: string;
   entity_maintenance_cron?: string;
   entity_drain_continuous_cron?: string;
-  entity_drain_continuous_enabled?: boolean;
   entity_backpressure_threshold?: number;
   full_ingest_sources?: string;
   light_ingest_sources?: string;
@@ -5645,7 +5643,6 @@ export interface HubNewsPipelineConfig {
       sources?: string;
       lookback_days?: number;
       cron?: string;
-      enabled?: boolean;
     };
   };
   scheduler_sync?: Record<string, unknown>;
@@ -5660,11 +5657,9 @@ export interface HubNewsPipelineConfigResponse {
 export interface HubNewsPipelineConfigUpdate {
   full_ingest_cron?: string;
   light_ingest_cron?: string;
-  light_ingest_enabled?: boolean;
   entity_drain_cron?: string;
   entity_maintenance_cron?: string;
   entity_drain_continuous_cron?: string;
-  entity_drain_continuous_enabled?: boolean;
   entity_backpressure_threshold?: number;
   full_ingest_sources?: string;
   light_ingest_sources?: string;

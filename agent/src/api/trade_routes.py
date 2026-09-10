@@ -1062,11 +1062,9 @@ class HubNewsPipelineConfigResponse(BaseModel):
 class HubNewsPipelineConfigUpdate(BaseModel):
     full_ingest_cron: str | None = None
     light_ingest_cron: str | None = None
-    light_ingest_enabled: bool | None = None
     entity_drain_cron: str | None = None
     entity_maintenance_cron: str | None = None
     entity_drain_continuous_cron: str | None = None
-    entity_drain_continuous_enabled: bool | None = None
     entity_backpressure_threshold: int | None = None
     full_ingest_sources: str | None = None
     light_ingest_sources: str | None = None
