@@ -1846,6 +1846,21 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             ),
         )
 
+    # India's settings-managed hub-news jobs take their settings-owned fields from the Hub
+    # news-pipeline settings, the same source sync_scheduled_jobs() applies below, so the
+    # reconcile loop no longer reverts a settings edit on every boot (sidecar
+    # hub_news_settings.py; 2026-09-11-light-ingest-toggle-undone-on-boot). A malformed cron in
+    # the settings keeps the code defaults and is logged, as the boot-time sync already does.
+    from src.scheduled_research import hub_news_settings
+
+    _ensure_trade_integrations_on_path()
+    pipeline_settings = hub_news_settings.load_pipeline_settings()
+    try:
+        defaults[:] = hub_news_settings.apply_pipeline_settings(defaults, pipeline_settings)
+    except ValueError as exc:
+        logger.error("hub news pipeline settings not applied to default jobs: %s", exc)
+        pipeline_settings = None
+
     # Tight-cadence variants: one per market's existing "-hub-news-ingest-light" job,
     # same config (RSS-only by default via hub_news_light_sources — no extra SearXNG
     # load), just a much shorter interval. Per-market news timeline density for
@@ -1883,6 +1898,13 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             )
         )
     defaults.extend(tight_jobs)
+
+    if not hub_news_settings.light_ingest_enabled(pipeline_settings):
+        # The Hub switch turns off India's 4-hourly job only. Its 15-minute clone was made above
+        # from the same definition and is kept, exactly as before this change (whether the switch
+        # should also govern -tight is open on the backlog item). Dropping it here is what stops
+        # the loop below re-creating the job the boot-time sync has just deleted.
+        defaults[:] = [job for job in defaults if job.id != hub_news_settings.LIGHT_JOB_ID]
 
     created = 0
     try:
