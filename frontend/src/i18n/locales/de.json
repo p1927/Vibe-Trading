@@ -301,7 +301,7 @@
     "unknown": "Unbekannt"
   },
   "connection": {
-    "reconnecting": "Verbindung wird wiederhergestellt …",
+    "reconnecting": "Verbindung unterbrochen, verbinde erneut (Versuch {{attempt}})…",
     "disconnected": "Verbindung verloren. Laden Sie die Seite neu, um wieder zu verbinden.",
     "reload": "Neu laden"
   },
