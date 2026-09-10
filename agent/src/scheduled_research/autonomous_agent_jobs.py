@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from typing import Any
 
@@ -416,12 +415,12 @@ async def _dispatch_autonomous_job_inner(job: ScheduledResearchJob) -> None:
         await asyncio.to_thread(run_strategy_snapshot_tick, agent_id)
         return
     if job_type == JOB_TYPE_DECISION_EVAL:
-        # Gated to the release tier: this grading pass produces collected data, and
-        # release is the sole data collector (root CLAUDE.md). Dev reads the result via
-        # the shared hub rather than producing a second, divergent copy.
-        if os.environ.get("STACK_PROFILE", "").strip().lower() != "release":
-            logger.debug("decision eval skipped for %s — not the release tier", agent_id)
-            return
+        # Runs on every tier (docs/DECISIONS.md D2). It used to return early unless
+        # STACK_PROFILE=release, but agents are created and tested in dev while release had
+        # none, so the tier holding the jobs refused to run them and the tier allowed to had
+        # no jobs: grading ran once, ever. Agent stores are per-tier, so the two tiers' sweeps
+        # cannot collide; what must stay release-only is which evidence backs the calibration
+        # artifact, and that is enforced there via each row's `stack_tier` stamp.
         from trade_integrations.autonomous_agents.decision_evaluation import (
             sweep_pending_evaluations,
         )
