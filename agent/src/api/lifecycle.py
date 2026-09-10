@@ -82,6 +82,9 @@ async def _run_startup_preflight() -> None:
     from src.scheduled_research.gil_tuning import tune_gil_switch_interval_for_scheduler
 
     tune_gil_switch_interval_for_scheduler()
+    from src.api.loop_stall_watchdog import start_loop_stall_watchdog
+
+    start_loop_stall_watchdog()
     _start_scheduled_research_executor()
     from src.trade.job_watchdog import start_job_watchdog
 
@@ -98,7 +101,10 @@ async def _stop_scheduled_research_on_shutdown() -> None:
     from src.api.channels_routes import _stop_channel_runtime
     from src.api.scheduled_routes import _stop_scheduled_research_executor
 
+    from src.api.loop_stall_watchdog import stop_loop_stall_watchdog
+
     stop_job_watchdog()
+    stop_loop_stall_watchdog()
     try:
         await _stop_channel_runtime()
     finally:
