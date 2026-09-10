@@ -39,7 +39,6 @@ import { WelcomeScreen } from "@/components/chat/WelcomeScreen";
 import { MarkdownContent, MessageBubble } from "@/components/chat/MessageBubble";
 import { ThinkingTimeline } from "@/components/chat/ThinkingTimeline";
 import { ConversationTimeline } from "@/components/chat/ConversationTimeline";
-import { ToolProgressIndicator } from "@/components/chat/ToolProgressIndicator";
 import { MandateProposalCard } from "@/components/chat/MandateProposalCard";
 import { AutonomousAgentProposalCard } from "@/components/autonomous/AutonomousAgentProposalCard";
 import { OrchestratorWelcome } from "@/components/autonomous/OrchestratorWelcome";
@@ -576,7 +575,6 @@ export function Agent({
   const status = useAgentStore(s => s.status);
   const sessionId = useAgentStore(s => s.sessionId);
   const activity = useAgentStore(s => s.activity);
-  const toolCalls = useAgentStore(s => s.toolCalls);
   const reasoningTail = useAgentStore(s => s.reasoningTail);
   const swarmRuns = useAgentStore(s => s.swarmRuns);
   const sessionLoading = useAgentStore(s => s.sessionLoading);
@@ -2841,9 +2839,6 @@ export function Agent({
                     <Loader2 className="h-3 w-3 animate-spin text-primary shrink-0" />
                     <span>{t('agent.reasoning')}</span>
                   </div>
-                )}
-                {toolCalls.length > 0 && (
-                  <ToolProgressIndicator toolCalls={toolCalls} />
                 )}
               </div>
             </div>

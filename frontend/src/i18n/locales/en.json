@@ -1318,7 +1318,7 @@
   },
   "swarmStatus": {
     "agents": "{{done}}/{{total}} agents",
-    "layer": "Layer {{current}}/{{total}}",
+    "layer": "Round {{current}} of {{total}}",
     "agent": "Agent",
     "status": "Status",
     "tool": "Tool",
@@ -1365,9 +1365,9 @@
     "copied": "Copied",
     "copy": "Copy",
     "copyFailed": "Copy failed. Select the text and press Ctrl+C.",
-    "timeoutHint": "Execution timed out. Try simplifying the strategy or reducing the number of assets.",
-    "apiFailedHint": "API call failed. Please retry later.",
-    "executionFailedHint": "Execution failed. Click to retry.",
+    "timeoutHint": "Timed out. Simplify the strategy or use fewer assets.",
+    "apiFailedHint": "API request failed. Try again shortly.",
+    "executionFailedHint": "Execution failed. Try again.",
     "retry": "Try again"
   },
   "pineViewer": {
