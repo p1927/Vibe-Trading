@@ -408,3 +408,80 @@ def test_attempt_records_and_round_trips_its_wall_clock_start():
     legacy = attempt.to_dict()
     del legacy["started_at"]
     assert Attempt.from_dict(legacy).started_at is None
+
+
+# ---------------------------------------------------------------------------
+# Re-prompting guards
+# ---------------------------------------------------------------------------
+
+
+async def _wait_released(service: SessionService, session_id: str) -> None:
+    for _ in range(500):
+        await asyncio.sleep(0.02)
+        if session_id not in service._inflight:
+            return
+    raise AssertionError("session claim never released")
+
+
+def test_resend_guard_can_start_its_follow_up_turn(tmp_path, monkeypatch):
+    """A guard's re-prompt claims the session, so it must run after the finished run lets go.
+
+    It ran inside the run's own claim, and every re-prompt from the decision,
+    bootstrap-finalize and orchestrator guards failed with SessionBusyError.
+    """
+    outcomes: list[str] = []
+
+    async def _guard(session_service, session_id, **kwargs):
+        del kwargs
+        if outcomes:
+            return False  # the follow-up turn completes too; re-prompt only once
+        try:
+            await session_service.send_message(session_id, "retry: record a decision")
+        except SessionBusyError:
+            outcomes.append("busy")
+            return False
+        outcomes.append("sent")
+        return True
+
+    monkeypatch.setattr("src.trade.autonomous_decision_guard.maybe_retry_autonomous_decision", _guard)
+
+    async def scenario() -> None:
+        service = _service(tmp_path, monkeypatch)
+        session = service.create_session(title="guard")
+        _stub_agent(service, monkeypatch, {"status": "success", "content": "ok"})
+
+        await service.send_message(session.session_id, "one")
+        for _ in range(500):
+            await asyncio.sleep(0.02)
+            if outcomes and session.session_id not in service._inflight:
+                break
+        await _wait_released(service, session.session_id)
+
+        assert outcomes == ["sent"]
+        contents = [m.content for m in service.store.get_messages(session.session_id)]
+        assert "retry: record a decision" in contents
+
+    asyncio.run(scenario())
+
+
+def test_failed_run_does_not_re_prompt(tmp_path, monkeypatch):
+    calls: list[str] = []
+
+    async def _guard(session_service, session_id, **kwargs):
+        del session_service, kwargs
+        calls.append(session_id)
+        return False
+
+    monkeypatch.setattr("src.trade.autonomous_decision_guard.maybe_retry_autonomous_decision", _guard)
+
+    async def scenario() -> None:
+        service = _service(tmp_path, monkeypatch)
+        session = service.create_session(title="failed")
+        _stub_agent(service, monkeypatch, {"status": "error", "reason": "boom"})
+
+        await service.send_message(session.session_id, "one")
+        await _wait_released(service, session.session_id)
+        await asyncio.sleep(0.1)
+        assert calls == []
+
+    asyncio.run(scenario())

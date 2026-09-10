@@ -183,24 +183,27 @@ async def maybe_orchestrator_propose_guard(
     assistant_text: str,
     tools_called: set[str] | list[str],
     session_config: Optional[Dict[str, Any]] = None,
-) -> None:
+) -> bool:
     from src.session.orchestrator_profile import is_orchestrator_session
 
     if not is_orchestrator_session(session_config):
-        return
+        return False
     try:
         from src.trade.orchestrator_propose_guard import maybe_enforce_orchestrator_propose
 
-        await maybe_enforce_orchestrator_propose(
-            service,
-            session_id,
-            user_message=user_message,
-            assistant_text=assistant_text,
-            tools_called=tools_called,
-            session_config=session_config,
+        return bool(
+            await maybe_enforce_orchestrator_propose(
+                service,
+                session_id,
+                user_message=user_message,
+                assistant_text=assistant_text,
+                tools_called=tools_called,
+                session_config=session_config,
+            )
         )
     except Exception:
         logger.exception("Orchestrator propose guard failed")
+        return False
 
 
 def maybe_widget_guard(
@@ -235,23 +238,26 @@ async def maybe_autonomous_decision_guard(
     session: Session,
     user_message: str,
     tools_called: set[str] | list[str],
-) -> None:
+) -> bool:
     from src.session.orchestrator_profile import is_orchestrator_session
 
     if is_orchestrator_session(session.config):
-        return
+        return False
     try:
         from src.trade.autonomous_decision_guard import maybe_retry_autonomous_decision
 
-        await maybe_retry_autonomous_decision(
-            service,
-            session.session_id,
-            user_message=user_message,
-            tools_called=tools_called,
-            session_config=dict(session.config),
+        return bool(
+            await maybe_retry_autonomous_decision(
+                service,
+                session.session_id,
+                user_message=user_message,
+                tools_called=tools_called,
+                session_config=dict(session.config),
+            )
         )
     except Exception:
         logger.exception("Autonomous decision guard hook failed")
+        return False
 
 
 async def maybe_bootstrap_finalize_guard(
@@ -259,20 +265,51 @@ async def maybe_bootstrap_finalize_guard(
     session: Session,
     user_message: str,
     tools_called: set[str] | list[str],
-) -> None:
+) -> bool:
     from src.session.orchestrator_profile import is_orchestrator_session
 
     if is_orchestrator_session(session.config):
-        return
+        return False
     try:
         from src.trade.bootstrap_finalize_guard import maybe_retry_bootstrap_widget
 
-        await maybe_retry_bootstrap_widget(
-            service,
-            session.session_id,
-            user_message=user_message,
-            tools_called=tools_called,
-            session_config=dict(session.config),
+        return bool(
+            await maybe_retry_bootstrap_widget(
+                service,
+                session.session_id,
+                user_message=user_message,
+                tools_called=tools_called,
+                session_config=dict(session.config),
+            )
         )
     except Exception:
         logger.exception("Bootstrap finalize guard hook failed")
+        return False
+
+
+async def run_resend_guards(
+    service: "SessionService",
+    session: Session,
+    user_message: str,
+    assistant_text: str,
+    tools_called: set[str] | list[str],
+) -> bool:
+    """Run the guards that re-prompt the session, after its in-flight claim is released.
+
+    Each guard starts its follow-up turn through ``send_message``, which claims the
+    session; called while the finished run still held it, every re-prompt failed with
+    SessionBusyError. They apply to disjoint turns, and at most one runs: the first to
+    enqueue a turn owns the session again, so a later one could only be refused.
+    """
+    if await maybe_orchestrator_propose_guard(
+        service,
+        session.session_id,
+        user_message,
+        assistant_text,
+        tools_called,
+        dict(session.config),
+    ):
+        return True
+    if await maybe_autonomous_decision_guard(service, session, user_message, tools_called):
+        return True
+    return await maybe_bootstrap_finalize_guard(service, session, user_message, tools_called)

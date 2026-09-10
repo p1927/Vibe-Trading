@@ -418,6 +418,7 @@ class SessionService:
         permanently busy.
         """
         started_at = time.perf_counter()
+        resend_guard_tools: list | None = None
         try:
             attempt.mark_running()
             # Wall-clock start (epoch seconds) is the one timing fact clients
@@ -503,14 +504,6 @@ class SessionService:
                  **{key: reply_metadata[key] for key in ("elapsed_ms", *runtime_keys) if key in reply_metadata}},
             )
             if attempt.status == AttemptStatus.COMPLETED:
-                await service_hooks.maybe_orchestrator_propose_guard(
-                    self,
-                    session.session_id,
-                    attempt.prompt,
-                    attempt.summary or "",
-                    result.get("tools_called") or [],
-                    dict(session.config),
-                )
                 await asyncio.to_thread(
                     service_hooks.maybe_widget_guard,
                     self.event_bus,
@@ -520,18 +513,9 @@ class SessionService:
                     result.get("tools_called") or [],
                     dict(session.config),
                 )
-                await service_hooks.maybe_autonomous_decision_guard(
-                    self,
-                    session,
-                    attempt.prompt,
-                    result.get("tools_called") or [],
-                )
-                await service_hooks.maybe_bootstrap_finalize_guard(
-                    self,
-                    session,
-                    attempt.prompt,
-                    result.get("tools_called") or [],
-                )
+                # The re-prompting guards start a new turn through send_message, which
+                # must claim this session; they run after the finally below releases it.
+                resend_guard_tools = list(result.get("tools_called") or [])
 
         except asyncio.CancelledError:
             if session.session_id in self._user_cancel_requests:
@@ -564,6 +548,14 @@ class SessionService:
             self._user_cancel_requests.discard(session.session_id)
             self._release_session(session.session_id)
             await self._finalize_autonomous_agent_turn(session)
+        if resend_guard_tools is not None:
+            await service_hooks.run_resend_guards(
+                self,
+                session,
+                attempt.prompt,
+                attempt.summary or "",
+                resend_guard_tools,
+            )
 
     async def _finalize_autonomous_agent_turn(self, session: Session) -> None:
         agent_id = str((session.config or {}).get("autonomous_agent_id") or "").strip()
