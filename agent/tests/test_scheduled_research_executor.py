@@ -536,7 +536,9 @@ def test_impossible_cron_marks_failed_and_tick_continues(tmp_path: Path) -> None
     good = store.get("good")
     assert bad is not None
     assert good is not None
-    assert calls == ["bad", "good"]
+    # Both ran; order is not the point here. Under D11 (dispatch_admission.py) "good" — a 1s
+    # cadence overdue by years — is aged and goes first, while "bad" has no computable cadence.
+    assert sorted(calls) == ["bad", "good"]
     assert bad.status == JobStatus.FAILED
     assert bad.last_run_at == now
     assert bad.next_run_at == 10

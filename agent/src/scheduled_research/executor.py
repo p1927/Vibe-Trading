@@ -37,6 +37,8 @@ from src.scheduled_research.job_tier_policy import (
 from src.scheduled_research.store import ScheduledResearchJobStore
 # Fork-only sidecar (docs/FORK_CONVENTIONS.md): the jobs `is_due()` cannot express.
 from src.scheduled_research import stuck_jobs
+# Fork-only sidecar: D11 shortest-expected-runtime-first slot admission (docs/DECISIONS.md).
+from src.scheduled_research.dispatch_admission import DispatchPool, record_dispatch_duration
 # Stale-run detection and watchdog tuning live in staleness.py (a file we
 # fully own) and are re-exported here so this module's existing internal
 # call sites and external importers (lifecycle.py, index_prediction_jobs.py,
@@ -406,6 +408,14 @@ class ScheduledResearchExecutor:
         self._last_tick_started_ms: int | None = None
         self._last_tick_completed_ms: int | None = None
         self._in_flight_job_ids: set[str] = set()
+        # D11 (sidecar dispatch_admission.py): one persistent slot pool per loop, so a
+        # tick offers its due jobs and returns instead of awaiting their dispatches.
+        self._dispatch_pool = DispatchPool(
+            global_cap=lambda: self._dispatch_concurrency, stopping=lambda: self._stopping, next_due_fn=next_due
+        )
+        self._operational_dispatch_pool = DispatchPool(
+            global_cap=lambda: self._dispatch_concurrency, stopping=lambda: self._stopping, next_due_fn=next_due
+        )
 
     @property
     def is_running(self) -> bool:
@@ -596,6 +606,10 @@ class ScheduledResearchExecutor:
         # a completion at all (``_dispatch_one`` re-raises CancelledError), so it
         # is still RUNNING and still gets recovered.
         await self._drain_in_flight_dispatches()
+        # Dispatches are pool tasks, not children of the loop task (D11), so cancelling the
+        # loop below would no longer cancel them — the pools do it explicitly.
+        await self._dispatch_pool.shutdown()
+        await self._operational_dispatch_pool.shutdown()
         watchdog = self._watchdog_task
         if watchdog is not None:
             watchdog.cancel()
@@ -751,11 +765,14 @@ class ScheduledResearchExecutor:
         if self._operational_wakeup is not None:
             self._operational_wakeup.set()
 
-    async def tick(self, now_ms: int | None = None) -> None:
+    async def tick(self, now_ms: int | None = None, *, wait: bool = True) -> None:
         """Run one poll/dispatch pass.
 
         Args:
             now_ms: Optional explicit reference time. Defaults to ``now_fn``.
+            wait: When true (direct callers), return only once the jobs this tick offered
+                have finished. The background loop passes ``False`` so a long dispatch never
+                blocks the next tick (D11(a); see ``dispatch_admission.py``).
         """
         now = self._now_fn() if now_ms is None else now_ms
         self._executor_tick_count += 1
@@ -790,7 +807,9 @@ class ScheduledResearchExecutor:
             ),
             key=lambda job: job.next_run_at,
         )
-        await self._dispatch_due_jobs(jobs, now, in_flight=self._in_flight_job_ids)
+        await self._dispatch_due_jobs(
+            jobs, now, in_flight=self._in_flight_job_ids, pool=self._dispatch_pool, wait=wait
+        )
 
         # The sweep is what makes delivery correct; the event hook only makes
         # it prompt. A briefing whose hook was lost to a restart, a crash
@@ -799,7 +818,7 @@ class ScheduledResearchExecutor:
         await self.sweep_deliveries()
         self._last_tick_completed_ms = self._now_fn()
 
-    async def _operational_tick(self, now_ms: int | None = None) -> None:
+    async def _operational_tick(self, now_ms: int | None = None, *, wait: bool = True) -> None:
         """Run one poll/dispatch pass over the operational tier only.
 
         Deliberately does not repeat the main tick's store-wide maintenance
@@ -820,7 +839,13 @@ class ScheduledResearchExecutor:
             ),
             key=lambda job: job.next_run_at,
         )
-        await self._dispatch_due_jobs(jobs, now, in_flight=self._operational_in_flight_job_ids)
+        await self._dispatch_due_jobs(
+            jobs,
+            now,
+            in_flight=self._operational_in_flight_job_ids,
+            pool=self._operational_dispatch_pool,
+            wait=wait,
+        )
         self._last_operational_tick_completed_ms = self._now_fn()
 
     async def _dispatch_due_jobs(
@@ -829,85 +854,39 @@ class ScheduledResearchExecutor:
         now: int,
         *,
         in_flight: set[str],
+        pool: DispatchPool,
+        wait: bool = True,
     ) -> None:
-        """Dispatch `jobs` (already filtered to due + tier-eligible) up to
-        `_dispatch_concurrency` at once, tracking in-flight ids in `in_flight` for
-        `liveness()`. Shared by the main tick and `_operational_tick` so both loops'
-        dispatch/concurrency semantics stay identical — only the job selection and the
-        in-flight set differ between them.
+        """Offer `jobs` (already filtered to due + tier-eligible) to this loop's slot pool,
+        tracking in-flight ids in `in_flight` for `liveness()`. Shared by the main tick and
+        `_operational_tick` so both loops' dispatch/concurrency semantics stay identical.
+
+        Slot accounting, the per-type caps, shortest-expected-runtime-first ordering, the
+        reserved last slot and ageing all live in the sidecar ``dispatch_admission.py``
+        (docs/DECISIONS.md D11). Concurrent dispatches are safe for the same reason as
+        before: every store mutation a job performs is a synchronous call with no internal
+        ``await``, so it runs to completion atomically on this single event loop. A job
+        waiting for a slot has not been marked RUNNING and its ``dispatch_timeout_ms`` clock
+        has not started, so queueing never counts against its budget.
         """
-        # Dispatch up to _dispatch_concurrency jobs at once instead of
-        # strictly one at a time: a burst of simultaneously-due jobs
-        # (routine on overlapping cron cadences, not just a mass manual
-        # trigger) used to queue behind whichever job the executor happened
-        # to be awaiting, even when that job was slow only because of a
-        # network call and shared nothing else with the others. Safe to
-        # overlap because every store mutation a job performs (marking
-        # RUNNING, persisting completion) is a synchronous call with no
-        # internal ``await`` — it always runs to completion atomically on
-        # this single event loop, so concurrent dispatches never interleave
-        # their store writes even though their dispatch awaits overlap. The
-        # same argument holds across the main and operational loops' ticks
-        # running concurrently: there is still exactly one event loop, and
-        # no store mutation anywhere in this class awaits mid-write.
-        semaphore = asyncio.Semaphore(self._dispatch_concurrency)
-        # A second, narrower gate for job types that contend on a shared
-        # external resource beyond just "the event loop is busy" (see
-        # dispatch_concurrency_for_job_type's docstring — hub_news_ingest
-        # is the live-verified case: 2026-09-02-hub-news-ingest-tight-light-
-        # dispatch-timeout-undersized's Attempts log). Built fresh per tick
-        # from only the job types actually due right now — cheap, and safe
-        # because a tick's own dispatch fully drains before that same tick
-        # returns (each loop's ticks don't overlap with themselves), so a
-        # semaphore never needs to survive past the ``gather`` below that
-        # owns its lifetime.
-        type_semaphores: dict[str, asyncio.Semaphore] = {}
-        for job in jobs:
-            job_type = str(job.config.get("job_type") or "")
-            if job_type in type_semaphores:
-                continue
-            cap = dispatch_concurrency_for_job_type(job_type)
-            if cap is not None:
-                type_semaphores[job_type] = asyncio.Semaphore(cap)
 
-        async def _run_job_bounded(job: ScheduledResearchJob) -> None:
-            job_type = str(job.config.get("job_type") or "")
-            type_semaphore = type_semaphores.get(job_type)
-            # Acquire the narrower type-gate first (if any) so a job waiting
-            # on it doesn't also occupy one of the scarcer global slots while
-            # it waits — and, critically, this wait happens before
-            # ``_run_job`` marks the job RUNNING and starts its own
-            # ``dispatch_timeout_ms`` clock, so queueing behind a type-mate
-            # never counts against that budget or gets the queued job itself
-            # cancelled. It only pays for the *work*, not the *wait*.
-            if type_semaphore is not None:
-                async with type_semaphore:
-                    await _dispatch_one(job)
-            else:
-                await _dispatch_one(job)
+        async def _dispatch_one(job: ScheduledResearchJob, admit_now: int) -> None:
+            # One job's unexpected persistence/lifecycle error must not starve every other
+            # job. Tracked in `in_flight` for the whole await so ``liveness()`` can name
+            # what is running.
+            in_flight.add(str(job.id))
+            try:
+                await self._run_job(job, admit_now)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.error("scheduled research job %s failed its run cycle", job.id, exc_info=True)
+            finally:
+                in_flight.discard(str(job.id))
 
-        async def _dispatch_one(job: ScheduledResearchJob) -> None:
-            async with semaphore:
-                # One job's unexpected persistence/lifecycle error must not
-                # starve every other job in this tick.
-                #
-                # Tracked in `in_flight` for the whole await so ``liveness()``
-                # can name what the tick is currently blocked on — the difference
-                # between "the scheduler is wedged" and "hub-evening-maintenance is
-                # 27 minutes into its 45-minute ceiling", which took a live
-                # investigation to establish the first time.
-                in_flight.add(str(job.id))
-                try:
-                    await self._run_job(job, now)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.error("scheduled research job %s failed its run cycle", job.id, exc_info=True)
-                finally:
-                    in_flight.discard(str(job.id))
-
-        if jobs:
-            await asyncio.gather(*(_run_job_bounded(job) for job in jobs))
+        await pool.submit(
+            jobs, now, run=_dispatch_one, population=self._store.load().values(), wait=wait
+        )
 
     def _expire_elapsed_jobs(self, now_ms: int) -> int:
         """Persist jobs whose configured end boundary has elapsed."""
@@ -1055,7 +1034,7 @@ class ScheduledResearchExecutor:
         self.defer_startup_backlog(self._now_fn())
         while not self._stopping:
             try:
-                await self.tick(self._now_fn())
+                await self.tick(self._now_fn(), wait=False)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -1078,7 +1057,7 @@ class ScheduledResearchExecutor:
             await self._sleep_or_wake(grace_ms, event=self._operational_wakeup)
         while not self._stopping:
             try:
-                await self._operational_tick(self._now_fn())
+                await self._operational_tick(self._now_fn(), wait=False)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -1277,6 +1256,7 @@ class ScheduledResearchExecutor:
         finally:
             finish_named_task(task_id)
             elapsed_ms = int((time.monotonic() - started) * 1000)
+            record_dispatch_duration(job, elapsed_ms)  # D11 expected-runtime history
             _final_status = JobStatus.COMPLETED if dispatch_error is None else JobStatus.FAILED
             logger.info(
                 "scheduled research dispatch done job=%s type=%s status=%s (%.1fs)",
