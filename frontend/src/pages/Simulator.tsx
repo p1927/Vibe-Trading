@@ -186,7 +186,7 @@ export function Simulator() {
   const [replayNotConfigured, setReplayNotConfigured] = useState<string | null>(null);
   const [replayRange, setReplayRange] = useState<ReplayRange | null>(null);
   const [armedRange, setArmedRange] = useState<ReplayRange | null>(null);
-  const [replaySpeed, setReplaySpeed] = useState<number>(1);
+  const [replaySpeed, setReplaySpeed] = useState<number>(2);
   const [speedUpdating, setSpeedUpdating] = useState(false);
   const [replayLoop, setReplayLoop] = useState<boolean>(true);
   const [armingDay, setArmingDay] = useState<string | null>(null);
@@ -877,7 +877,8 @@ export function Simulator() {
                     className="rounded border bg-background px-1.5 py-0.5 text-xs"
                     data-testid="simulator-speed"
                   >
-                    {[0.5, 1, 2, 5, 10, 25, 50].map((s) => (
+                    {/* docs/DECISIONS.md D19: only 1x, 2x, 5x. */}
+                    {[1, 2, 5].map((s) => (
                       <option key={s} value={s}>{s}×</option>
                     ))}
                   </select>
