@@ -54,8 +54,11 @@ def test_api_startup_runs_migration(
     import api_server
 
     monkeypatch.setattr("src.preflight.run_preflight", lambda console: None)
-    monkeypatch.setattr(api_server, "_start_scheduled_research_executor", lambda: None)
+    monkeypatch.setattr(
+        "src.api.scheduled_routes._start_scheduled_research_executor", lambda: None
+    )
     monkeypatch.setattr("src.trade.job_watchdog.start_job_watchdog", lambda: None)
+    monkeypatch.setattr("src.api.loop_stall_watchdog.start_loop_stall_watchdog", lambda: None)
     monkeypatch.setattr(
         "src.config.accessor.get_env_config",
         lambda: type(
@@ -91,9 +94,10 @@ def test_api_lifespan_preserves_startup_and_shutdown_order(
         "src.preflight.run_preflight",
         lambda console: events.append("preflight"),
     )
+    # lifecycle.py imports these function-locally from their home modules (since the
+    # c141926c extraction), so patching the api_server re-exports would not reach them.
     monkeypatch.setattr(
-        api_server,
-        "_start_scheduled_research_executor",
+        "src.api.scheduled_routes._start_scheduled_research_executor",
         lambda: events.append("scheduler-start"),
     )
 
@@ -106,10 +110,13 @@ def test_api_lifespan_preserves_startup_and_shutdown_order(
     async def stop_scheduler() -> None:
         events.append("scheduler-stop")
 
-    monkeypatch.setattr(api_server, "_start_channel_runtime", start_channels)
-    monkeypatch.setattr(api_server, "_stop_channel_runtime", stop_channels)
-    monkeypatch.setattr(api_server, "_stop_scheduled_research_executor", stop_scheduler)
+    monkeypatch.setattr("src.api.channels_routes._start_channel_runtime", start_channels)
+    monkeypatch.setattr("src.api.channels_routes._stop_channel_runtime", stop_channels)
+    monkeypatch.setattr(
+        "src.api.scheduled_routes._stop_scheduled_research_executor", stop_scheduler
+    )
     monkeypatch.setattr("src.trade.job_watchdog.start_job_watchdog", lambda: None)
+    monkeypatch.setattr("src.api.loop_stall_watchdog.start_loop_stall_watchdog", lambda: None)
     monkeypatch.setattr("src.trade.job_watchdog.stop_job_watchdog", lambda: None)
     monkeypatch.setattr(
         "src.config.accessor.get_env_config",
@@ -161,8 +168,10 @@ def test_api_lifespan_stops_scheduler_when_channel_shutdown_fails(
         events.append("scheduler-stop")
 
     monkeypatch.setattr(api_server, "_run_startup_preflight", startup)
-    monkeypatch.setattr(api_server, "_stop_channel_runtime", stop_channels)
-    monkeypatch.setattr(api_server, "_stop_scheduled_research_executor", stop_scheduler)
+    monkeypatch.setattr("src.api.channels_routes._stop_channel_runtime", stop_channels)
+    monkeypatch.setattr(
+        "src.api.scheduled_routes._stop_scheduled_research_executor", stop_scheduler
+    )
 
     async def scenario() -> None:
         async with api_server._lifespan(api_server.app):
