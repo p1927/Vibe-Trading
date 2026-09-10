@@ -423,6 +423,19 @@ function BrokerRow({
   );
 }
 
+/**
+ * A `/live/status` broker is worth a row when it is authorized, configured, or its SDK
+ * connection reports connected/ready. Unconfigured connectors (e.g. an Alpaca profile
+ * with no credentials) stay hidden so the panel doesn't list every built-in broker.
+ * From upstream eecb86e1 (Longbridge connector runtime card); the fork's selected-profile
+ * row (444f2e59) is layered on top of this list rather than replacing it.
+ */
+export function isVisibleRuntimeConnector(broker: LiveBrokerStatus): boolean {
+  const auth = broker.auth;
+  if (auth.oauth_token_present || auth.configured === true) return true;
+  return auth.connection_state === "connected" || auth.connection_state === "ready";
+}
+
 export const RunnerStatus = memo(function RunnerStatus({
   status,
   connectors,
@@ -436,32 +449,35 @@ export const RunnerStatus = memo(function RunnerStatus({
   const selectedProfile = connectors?.profiles.find((p) => p.selected) ?? null;
   const sdkReady = connectorCheck?.status === "ok";
   const brokers = status?.brokers ?? [];
-  const oauthAuthorizedCount = brokers.filter((b) => b.auth.oauth_token_present).length;
-  const anyRunning = brokers.some((b) => b.runner?.alive);
-  const oauthEngaged = oauthAuthorizedCount > 0 || anyRunning || brokers.some((b) => b.mandate != null);
-  const showOAuthSection = !unavailable && (
-    selectedProfile?.transport === "remote_mcp" || oauthEngaged
-  );
-  const oauthBrokers = showOAuthSection
-    ? brokers.filter((b) => (
+  // `unavailable` hides the `/live/status` rows only; the selected SDK profile row stays.
+  const visibleBrokers = unavailable
+    ? []
+    : brokers.filter((b) => (
       selectedProfile?.transport === "remote_mcp"
-      || b.auth.oauth_token_present
+      || isVisibleRuntimeConnector(b)
       || b.runner?.alive
       || b.mandate != null
-    ))
-    : [];
+    ));
+  const sdkBrokers = visibleBrokers.filter((b) => isSdkBroker(b.auth));
+  const oauthBrokers = visibleBrokers.filter((b) => !isSdkBroker(b.auth));
+  const connectedCount = visibleBrokers.filter(
+    (b) => b.auth.oauth_token_present || b.auth.connection_state === "connected",
+  ).length;
+  const anyRunning = visibleBrokers.some((b) => b.runner?.alive);
 
-  if (!selectedProfile && oauthBrokers.length === 0) return null;
+  if (!selectedProfile && visibleBrokers.length === 0) return null;
 
-  const isOAuthHalted = (halted ?? status?.global_halted) && showOAuthSection;
+  const isOAuthHalted = (halted ?? status?.global_halted) && visibleBrokers.length > 0;
   const summaryName = selectedProfile ? connectorSummaryName(selectedProfile, connectorCheck) : "";
   const summary = sdkReady && selectedProfile
     ? (selectedProfile.connector === "openalgo" && connectorCheck?.broker_display
       ? i18n.t("runnerStatus.sdkConnectedBrokerSummary", { broker: connectorCheck.broker_display })
       : i18n.t("runnerStatus.sdkConnectedSummary", { name: summaryName }))
-    : oauthAuthorizedCount > 0
-      ? i18n.t("runnerStatus.connected", { count: oauthAuthorizedCount })
-      : i18n.t("runnerStatus.pickConnector");
+    : connectedCount > 0
+      ? i18n.t("runnerStatus.connected", { count: connectedCount })
+      : selectedProfile
+        ? i18n.t("runnerStatus.pickConnector")
+        : i18n.t("runnerStatus.noConnector");
 
   return (
     <div className="grid gap-2">
@@ -497,10 +513,22 @@ export const RunnerStatus = memo(function RunnerStatus({
       </button>
 
       {open && (
-        <div className="grid gap-2 rounded-xl border border-primary/20 bg-background/95 p-3 shadow-sm">
+        <div
+          role="region"
+          aria-label={i18n.t("runnerStatus.configuredProfiles")}
+          className="grid max-h-[min(70vh,36rem)] gap-2 overflow-y-auto rounded-xl border border-primary/20 bg-background/95 p-3 shadow-sm"
+        >
           {selectedProfile ? (
             <SdkProfileRow profile={selectedProfile} check={connectorCheck} />
           ) : null}
+          {sdkBrokers.map((broker) => (
+            <BrokerRow
+              key={broker.auth.broker}
+              broker={broker}
+              halted={isOAuthHalted || broker.halted}
+              onRefresh={onRefresh}
+            />
+          ))}
           {oauthBrokers.length > 0 ? (
             <>
               {selectedProfile ? (

@@ -3,11 +3,18 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { Agent } from "../Agent";
 import { useAgentStore } from "@/stores/agent";
 
+// Agent also polls the connector runtime on mount (Agent.tsx refreshConnectorRuntime,
+// fork 444f2e59) and ContextDrawer loads session provenance (fork 9f0dc278). Shapes
+// follow agent/src/api/trading_connector_routes.py and sessions_routes.py.
 const apiMock = vi.hoisted(() => ({
   getGoal: vi.fn(),
   getLLMSettings: vi.fn(),
   getRun: vi.fn(),
   getSessionMessages: vi.fn(),
+  getLiveStatus: vi.fn(),
+  getTradingConnectors: vi.fn(),
+  checkTradingConnector: vi.fn(),
+  getSessionProvenance: vi.fn(),
   sseUrl: vi.fn((sid: string) => `/sessions/${sid}/events`),
 }));
 
@@ -109,6 +116,32 @@ describe("Agent runtime identity session transitions", () => {
     apiMock.getSessionMessages.mockImplementation((sid: string) => (
       sid === "session-one" ? Promise.resolve([storedReply(sid)]) : Promise.resolve([])
     ));
+    apiMock.getLiveStatus.mockResolvedValue({ global_halted: false, brokers: [] });
+    apiMock.getTradingConnectors.mockResolvedValue({
+      selected_profile: "openalgo-paper-sdk",
+      profiles: [
+        {
+          id: "openalgo-paper-sdk",
+          connector: "openalgo",
+          label: "OpenAlgo Paper · Analyzer (India + US data)",
+          environment: "paper",
+          transport: "broker_sdk",
+          capabilities: ["account.read", "positions.read"],
+          readonly: true,
+          config: {},
+          notes: "",
+          selected: true,
+        },
+      ],
+    });
+    apiMock.checkTradingConnector.mockResolvedValue({
+      status: "ok",
+      profile_id: "openalgo-paper-sdk",
+      connector: "openalgo",
+      environment: "paper",
+      transport: "broker_sdk",
+    });
+    apiMock.getSessionProvenance.mockResolvedValue({ sources: [] });
     Object.defineProperty(HTMLElement.prototype, "scrollTo", {
       configurable: true,
       value: vi.fn(),

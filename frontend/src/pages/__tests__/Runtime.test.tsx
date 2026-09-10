@@ -7,6 +7,7 @@ const apiMock = vi.hoisted(() => ({
   getTradingConnectors: vi.fn(),
   selectTradingConnector: vi.fn(),
   checkTradingConnector: vi.fn(),
+  verifyConnector: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -148,36 +149,6 @@ function makeConnectors() {
   };
 }
 
-function makeEtoroStatus(
-  authOverrides: Partial<LiveBrokerStatus["auth"]> = {},
-): LiveStatus {
-  return makeStatus({
-    brokers: [
-      {
-        auth: {
-          broker: "etoro",
-          oauth_token_present: false,
-          is_live_broker: false,
-          profile_id: "etoro-live-sdk-readonly",
-          transport: "broker_sdk",
-          configured: false,
-          connection_state: "not_configured",
-          error_code: "credentials_missing",
-          ...authOverrides,
-        },
-        runner: {
-          broker: "etoro",
-          alive: false,
-          last_tick: null,
-          last_tick_age_seconds: null,
-        },
-        mandate: null,
-        halted: false,
-      },
-    ],
-  });
-}
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -191,6 +162,7 @@ function deferred<T>() {
 describe("Runtime page", () => {
   beforeEach(() => {
     apiMock.getLiveStatus.mockReset();
+    apiMock.verifyConnector.mockReset();
     apiMock.getTradingConnectors.mockReset();
     apiMock.getTradingConnectors.mockResolvedValue(makeConnectors());
   });
@@ -358,7 +330,6 @@ describe("Runtime page", () => {
     expect(screen.getByText("http://127.0.0.1:5001")).toBeInTheDocument();
     expect(screen.getByText("INDmoney")).toBeInTheDocument();
   });
-});
 
   it("shows exact missing Longbridge variable names without rendering secret inputs", async () => {
     apiMock.getLiveStatus.mockResolvedValue(makeLongbridgeStatus({
