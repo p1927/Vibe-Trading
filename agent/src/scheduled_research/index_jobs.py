@@ -1045,8 +1045,13 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         logger.info("hub news entity pipeline completed for job %s: %s", job.id, summary)
         return
     if job_type == JOB_TYPE_HUB_NEWS_INGEST:
+        from src.scheduled_research.ingest_source_streaks import record_source_zero_streaks
+
         summary = run_hub_news_ingest_job(job.config)
         _attach_job_result_summary(job, summary)
+        # A source that fetches nothing run after run is flagged (a signal, never a failure):
+        # zero rows reads the same as a quiet cycle unless someone counts the repetition.
+        record_source_zero_streaks(job, summary, summary_config_key=LAST_RESULT_CONFIG_KEY)
         logger.info("hub news ingest completed for job %s: %s", job.id, summary)
         if _hub_news_ingest_collected_nothing(summary):
             # A run that was gated shut (``blocked`` / ``pipeline_paused``) and
