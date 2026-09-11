@@ -28,7 +28,7 @@ def test_register_default_index_jobs_includes_me_news_ingest(tmp_path):
     assert full.config["job_type"] == index_jobs.JOB_TYPE_HUB_NEWS_INGEST
     assert full.config["ticker"] == "TASI"
     assert full.config["market"] == "SA"
-    assert "searxng" not in full.config["sources"]
+    assert not {"searxng", "web_search"} & set(full.config["sources"].split(","))
     assert full.config["currents_keywords"] == ["Tadawul"]
 
     light = store.get("me-hub-news-ingest-light")
@@ -51,7 +51,7 @@ def test_register_default_index_jobs_includes_latam_news_ingest(tmp_path):
     assert full.config["job_type"] == index_jobs.JOB_TYPE_HUB_NEWS_INGEST
     assert full.config["ticker"] == "IBOVESPA"
     assert full.config["market"] == "BR"
-    assert "searxng" not in full.config["sources"]
+    assert not {"searxng", "web_search"} & set(full.config["sources"].split(","))
     assert full.config["currents_keywords"] == ["IBOVESPA"]
 
     light = store.get("latam-hub-news-ingest-light")

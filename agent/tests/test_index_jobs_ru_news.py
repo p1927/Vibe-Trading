@@ -28,7 +28,7 @@ def test_register_default_index_jobs_includes_ru_news_ingest(tmp_path):
     assert full.config["ticker"] == "MOEX"
     assert full.config["market"] == "RU"
     assert "currents" in full.config["sources"]
-    assert "searxng" not in full.config["sources"]
+    assert not {"searxng", "web_search"} & set(full.config["sources"].split(","))
     assert full.config["currents_keywords"]
 
     light = store.get("ru-hub-news-ingest-light")

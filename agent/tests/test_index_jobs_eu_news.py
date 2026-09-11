@@ -28,7 +28,7 @@ def test_register_default_index_jobs_includes_eu_news_ingest(tmp_path):
     assert full.config["job_type"] == index_jobs.JOB_TYPE_HUB_NEWS_INGEST
     assert full.config["ticker"] == "EURO_STOXX_50"
     assert full.config["market"] == "EU"
-    assert "searxng" not in full.config["sources"]
+    assert not {"searxng", "web_search"} & set(full.config["sources"].split(","))
     assert full.config["currents_keywords"] == ["DAX", "stocks"]
 
     light = store.get("eu-hub-news-ingest-light")
