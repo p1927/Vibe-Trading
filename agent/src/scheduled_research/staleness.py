@@ -41,6 +41,16 @@ FAILURE_THRESHOLD_ENV = "SCHEDULED_RESEARCH_FAILURE_THRESHOLD"
 DEFAULT_FRESH_REGISTRATION_DEFER_MS = 30 * 60 * 1000
 FRESH_REGISTRATION_DEFER_ENV = "SCHEDULED_RESEARCH_FRESH_DEFER_MS"
 
+# Golden-eval jobs: a live LLM pipeline call per golden case, then an MLflow scoring pass.
+# Measured: news_quality_eval took 8 min on 2026-09-10 and 59 min on 2026-09-11. The case loop
+# was ~all of that; scoring took 32 s. index_research_eval took 3.5 min on 2026-09-10 02:44, then
+# hit its 30-minute timeout on 2026-09-10 21:36 and again on 2026-09-11. 60 minutes covers the
+# worst measured day. Beyond that, each case's own budget (`trade_integrations.eval_support.
+# case_budget`) makes the run skip its slowest cases, with a recorded reason, and still score the
+# rest, rather than the budget being set by the worst day seen so far.
+# See .claude/backlog/items/2026-09-11-eval-jobs-exceed-dispatch-timeout.md.
+EVAL_JOB_DISPATCH_TIMEOUT_MS = 60 * 60 * 1000
+
 _JOB_DISPATCH_TIMEOUT_MS: dict[str, int] = {
     "index_plan_refresh": 10 * 60 * 1000,
     "index_factor_snapshot": 60 * 60 * 1000,
@@ -63,6 +73,11 @@ _JOB_DISPATCH_TIMEOUT_MS: dict[str, int] = {
     "autonomous_agent_decision_eval": 5 * 60 * 1000,
     "recording_wake": 5 * 60 * 1000,
     "options_position_monitor": 5 * 60 * 1000,
+    # Listing a type here also makes it eligible for the dispatch-timeout cancel
+    # (`_request_pipeline_cancel_on_dispatch_timeout`). `news_quality_eval` was neither
+    # listed nor `index_`-prefixed, so its timed-out run was never asked to stop.
+    "news_quality_eval": EVAL_JOB_DISPATCH_TIMEOUT_MS,
+    "index_research_eval": EVAL_JOB_DISPATCH_TIMEOUT_MS,
 }
 _INDEX_JOB_DISPATCH_TIMEOUT_MS = 30 * 60 * 1000
 

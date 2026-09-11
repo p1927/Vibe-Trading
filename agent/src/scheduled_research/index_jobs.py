@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from src.config.accessor import get_env_config, get_env_or
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.staleness import EVAL_JOB_DISPATCH_TIMEOUT_MS
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -964,24 +965,16 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
     seeing each other's.
     """
     try:
-        from trade_integrations.dataflows.index_research.pipeline_cancel import (
-            clear_pipeline_cancel,
-            set_pipeline_job_id,
-        )
+        from trade_integrations.dataflows.index_research.pipeline_cancel import pipeline_job_scope
     except ImportError:
         _dispatch_index_job_body(job)
         return
 
-    clear_pipeline_cancel(job_id=job.id)
-    set_pipeline_job_id(job.id)
-    try:
+    # Clears this job's own stale flag, binds, runs, unbinds, clears its own flag again (so
+    # it cannot cancel the job's *next* run); never touches the global stop-everything flag.
+    # Shared with dst_eval_jobs.dispatch_dst_eval_job_sync.
+    with pipeline_job_scope(job.id):
         _dispatch_index_job_body(job)
-    finally:
-        set_pipeline_job_id(None)
-        # This job is over, so its flag has no further reader; leaving it would
-        # cancel the job's *next* run instead. Deliberately does NOT touch the
-        # global flag, which is a stop-everything lever this job does not own.
-        clear_pipeline_cancel(job_id=job.id)
 
 
 def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
@@ -1702,7 +1695,10 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             config={
                 "job_type": JOB_TYPE_NEWS_QUALITY_EVAL,
                 "ticker": "NIFTY",
-                "dispatch_timeout_ms": 1_800_000,
+                # Pinned here, so it overrides the per-type table; reconciled into an existing
+                # record on boot (see the merge below). Measured justification lives with the
+                # constant. See 2026-09-11-eval-jobs-exceed-dispatch-timeout.
+                "dispatch_timeout_ms": EVAL_JOB_DISPATCH_TIMEOUT_MS,
             },
         ),
         ScheduledResearchJob(

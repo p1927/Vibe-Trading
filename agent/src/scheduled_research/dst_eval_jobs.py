@@ -170,6 +170,22 @@ def run_autonomous_agents_eval_job(config: dict[str, Any] | None = None) -> dict
 
 
 def dispatch_dst_eval_job_sync(job: ScheduledResearchJob) -> None:
+    """Run one dst-eval job under its own job-scoped cancel flag.
+
+    Without the binding, the dispatch-timeout cancel aimed at this job
+    (`staleness._request_pipeline_cancel_on_dispatch_timeout`) was invisible to the golden-eval
+    loops' `check_pipeline_cancel()` checkpoints. The timed-out run then kept its LLM slot and
+    pool thread for as long as the loop took. Same scope `index_jobs.dispatch_index_job_sync` uses.
+    See .claude/backlog/items/2026-09-11-eval-jobs-exceed-dispatch-timeout.md.
+    """
+    ensure_trade_stack_path()
+    from trade_integrations.dataflows.index_research.pipeline_cancel import pipeline_job_scope
+
+    with pipeline_job_scope(job.id):
+        _dispatch_dst_eval_job_body(job)
+
+
+def _dispatch_dst_eval_job_body(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_RECORDER_DST:
         run_recorder_dst_job(job.config)
