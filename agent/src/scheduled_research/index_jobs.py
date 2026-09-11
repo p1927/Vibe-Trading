@@ -1160,18 +1160,16 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     validate_schedule(max_pain_bhavcopy_cron)
     validate_schedule(constituent_volume_snapshot_cron)
 
-    skip_unified_duplicates = False
-    try:
-        from src.scheduled_research.hub_calibration_jobs import (
-            is_hub_calibration_scheduler_enabled,
-            is_hub_unified_calibration_enabled,
-        )
+    from src.scheduled_research.hub_calibration_jobs import (
+        is_hub_calibration_scheduler_enabled,
+        is_hub_unified_calibration_enabled,
+    )
 
-        skip_unified_duplicates = (
-            is_hub_calibration_scheduler_enabled() and is_hub_unified_calibration_enabled()
-        )
-    except Exception:
-        pass
+    # No try/except: an import/config error here must surface, not silently
+    # change which jobs get registered.
+    skip_unified_duplicates = (
+        is_hub_calibration_scheduler_enabled() and is_hub_unified_calibration_enabled()
+    )
 
     now_ms = int(time.time() * 1000)
     defaults = [

@@ -131,24 +131,38 @@ async def dispatch_trade_data_job(job: ScheduledResearchJob) -> None:
 
 
 def register_default_trade_data_jobs(store: ScheduledResearchJobStore) -> int:
-    """Register nightly fills export and research history archive jobs."""
-    try:
-        from src.scheduled_research.hub_calibration_jobs import (
-            is_hub_calibration_scheduler_enabled,
-            is_hub_unified_calibration_enabled,
-        )
+    """Register the daily trade-data jobs.
 
-        if is_hub_calibration_scheduler_enabled() and is_hub_unified_calibration_enabled():
-            return 0
-    except Exception:
-        pass
-
+    When the unified hub calibration jobs are on, they subsume the fills export
+    (morning) and the options/stock research-history archive (evening), so only
+    those two jobs are skipped. The NSE browser jobs (``nse-macro-refresh``,
+    ``nse-repo-consistency``) are not covered by the unified path and are always
+    registered — a whole-function early return here once left ``nse_browser/*``
+    with no daily writer (2026-09-11-nse-browser-jobs-never-registered).
+    """
     if not is_trade_data_scheduler_enabled():
         return 0
+
+    from src.scheduled_research.hub_calibration_jobs import (
+        is_hub_calibration_scheduler_enabled,
+        is_hub_unified_calibration_enabled,
+    )
+
+    unified_subsumes_fills_and_archive = (
+        is_hub_calibration_scheduler_enabled() and is_hub_unified_calibration_enabled()
+    )
 
     created = 0
     now_ms = int(time.time() * 1000)
 
+    if not unified_subsumes_fills_and_archive:
+        created += _register_fills_and_archive_jobs(store, now_ms)
+    created += _register_nse_browser_jobs(store, now_ms)
+    return created
+
+
+def _register_fills_and_archive_jobs(store: ScheduledResearchJobStore, now_ms: int) -> int:
+    created = 0
     fills_cron = get_env_config().trade.trade_fills_export_cron.strip()
     validate_schedule(fills_cron)
     fills_job_id = "hub-trade-fills-export"
@@ -184,7 +198,11 @@ def register_default_trade_data_jobs(store: ScheduledResearchJobStore) -> int:
         )
         logger.info("registered default trade data job %s (%s)", archive_job_id, archive_cron)
         created += 1
+    return created
 
+
+def _register_nse_browser_jobs(store: ScheduledResearchJobStore, now_ms: int) -> int:
+    created = 0
     nse_cron = get_env_config().trade.nse_macro_refresh_cron.strip()
     validate_schedule(nse_cron)
     nse_job_id = "nse-macro-refresh"

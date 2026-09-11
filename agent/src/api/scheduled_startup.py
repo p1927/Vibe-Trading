@@ -139,7 +139,10 @@ def boot_scheduled_research_stack(get_store) -> None:
         register_default_options_jobs(get_store())
     if is_hub_calibration_scheduler_enabled():
         register_default_hub_calibration_jobs(get_store())
-    elif is_trade_data_scheduler_enabled():
+    # Not an ``elif``: the NSE browser jobs are never subsumed by the unified hub
+    # calibration jobs; register_default_trade_data_jobs itself skips only the
+    # fills/archive jobs those do subsume.
+    if is_trade_data_scheduler_enabled():
         register_default_trade_data_jobs(get_store())
     if is_hub_capture_scheduler_enabled():
         register_default_hub_capture_jobs(get_store())
