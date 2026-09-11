@@ -273,20 +273,27 @@ def commit_autonomous_agent_route(
     body: CommitAutonomousAgentRequest,
     _auth: None = Depends(require_local_or_auth),
 ) -> Dict[str, Any]:
+    from trade_integrations.autonomous_agents.commit_timing import StageTimer
     from trade_integrations.autonomous_agents.proposals import commit_autonomous_agent
+    from trade_integrations.autonomous_agents.store import CommitInProgressError
     from src.scheduled_research.autonomous_agent_jobs import register_agent_jobs
 
     svc = _session_service()
     if svc is None:
         raise HTTPException(status_code=503, detail="session runtime not enabled")
+    # This route has run past a 120s client cap while succeeding server-side, with the long pole
+    # never measured; the trace names the slow stage. See 2026-09-07-commit-route-times-out.
+    timer = StageTimer("POST /autonomous-agents/commit", warn_after_s=30.0, context=body.proposal_id)
     try:
-        result = commit_autonomous_agent(
-            proposal_id=body.proposal_id,
-            consent_ack=body.consent_ack,
-            session_service=svc,
-            orchestrator_session_id=body.session_id,
-        )
-        register_agent_jobs(result["agent"])
+        with timer.stage("commit"):
+            result = commit_autonomous_agent(
+                proposal_id=body.proposal_id,
+                consent_ack=body.consent_ack,
+                session_service=svc,
+                orchestrator_session_id=body.session_id,
+            )
+        with timer.stage("register_jobs"):
+            register_agent_jobs(result["agent"])
         agent = result.get("agent") or {}
         if (
             not result.get("already_committed")
@@ -296,21 +303,38 @@ def commit_autonomous_agent_route(
         ):
             from src.scheduled_research.autonomous_bootstrap import schedule_agent_bootstrap
 
-            schedule_agent_bootstrap(str(agent["id"]))
+            with timer.stage("schedule_bootstrap"):
+                schedule_agent_bootstrap(str(agent["id"]))
         committed_payload = {
             "agent_id": agent.get("id"),
             "vibe_session_id": result.get("vibe_session_id"),
             "name": agent.get("name"),
         }
-        orch_sid = body.session_id or agent.get("orchestrator_session_id")
-        if orch_sid:
-            svc.event_bus.emit(str(orch_sid), "autonomous_agent.committed", committed_payload)
-        vibe_sid = result.get("vibe_session_id")
-        if vibe_sid and str(vibe_sid) != str(orch_sid or ""):
-            svc.event_bus.emit(str(vibe_sid), "autonomous_agent.committed", committed_payload)
+        with timer.stage("emit_events"):
+            orch_sid = body.session_id or agent.get("orchestrator_session_id")
+            if orch_sid:
+                svc.event_bus.emit(str(orch_sid), "autonomous_agent.committed", committed_payload)
+            vibe_sid = result.get("vibe_session_id")
+            if vibe_sid and str(vibe_sid) != str(orch_sid or ""):
+                svc.event_bus.emit(str(vibe_sid), "autonomous_agent.committed", committed_payload)
         return result
+    except CommitInProgressError as exc:
+        # Not a client error: an earlier request for this proposal is still committing (a slow
+        # commit can outlive the caller's timeout). 409 + status lets a retrying client wait and
+        # re-check GET /autonomous-agents instead of reporting "commit failed".
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "status": "in_progress",
+                "detail": str(exc),
+                "proposal_id": body.proposal_id,
+                "hint": "an earlier commit of this proposal is still running; poll GET /autonomous-agents",
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        timer.log()
 
 
 class PlanApprovalRequest(BaseModel):

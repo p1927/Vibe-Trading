@@ -267,6 +267,46 @@ def test_resume_onto_a_stopped_executor_says_nothing_will_dispatch(
     assert "warning" not in body
 
 
+def test_commit_already_in_progress_is_409_not_a_client_error(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """2026-09-07-commit-route-times-out: a retry of a slow commit that is still running
+    server-side used to get a bare 400, which reads like "your commit failed"."""
+    import src.api.autonomous_routes as autonomous_routes
+    import trade_integrations.autonomous_agents.proposals as proposals
+    from trade_integrations.autonomous_agents.store import CommitInProgressError
+
+    monkeypatch.setattr(autonomous_routes, "_session_service", lambda: object())
+
+    def _in_progress(**kwargs):
+        raise CommitInProgressError("commit already in progress")
+
+    monkeypatch.setattr(proposals, "commit_autonomous_agent", _in_progress)
+
+    response = client.post(
+        "/autonomous-agents/commit",
+        json={"proposal_id": "aap_slow", "consent_ack": True},
+    )
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["status"] == "in_progress"
+    assert detail["proposal_id"] == "aap_slow"
+
+    def _invalid(**kwargs):
+        raise ValueError("proposal expired")
+
+    monkeypatch.setattr(proposals, "commit_autonomous_agent", _invalid)
+
+    response = client.post(
+        "/autonomous-agents/commit",
+        json={"proposal_id": "aap_slow", "consent_ack": True},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "proposal expired"
+
+
 def test_every_mutating_route_requires_local_or_auth() -> None:
     """Mechanical regression test for
     `.claude/backlog/items/2026-09-07-approve-plan-route-no-auth.md` (and the earlier
