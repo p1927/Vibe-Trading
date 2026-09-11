@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 from src.market_data import canonical_fx_pair
+from src.agent.instrument_identity import registry_equivalent_symbol
 
 from src.agent.resolution_context import (
     IdentityConstraint,
@@ -1312,6 +1313,9 @@ class GroundingLedger:
         authorized = {_normalize_symbol(item) for item in authorized_symbols}
         if requested in authorized:
             return requested
+        registry_match = registry_equivalent_symbol(requested, authorized)
+        if registry_match is not None:
+            return registry_match
         if "." in requested:
             return None
         matches = [
