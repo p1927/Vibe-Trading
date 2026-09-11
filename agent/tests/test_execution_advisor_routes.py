@@ -25,7 +25,7 @@ def test_execution_advisor_positions_returns_advisories_and_grouping(
         {"symbol": "NIFTY24AUGFUT", "strategy_group_id": "iron_condor_1", "fsm_state": "trailing", "action": "hold"},
         {"symbol": "RELIANCE", "strategy_group_id": None, "fsm_state": "in_trade", "action": "hold"},
     ]
-    monkeypatch.setattr(advisor_mod, "advise_positions", lambda: fake_advisories)
+    monkeypatch.setattr(advisor_mod, "latest_advisories", lambda: fake_advisories)
 
     response = client.get("/execution-advisor/positions")
     assert response.status_code == 200
@@ -42,7 +42,7 @@ def test_execution_advisor_positions_empty_when_no_open_positions(
 ) -> None:
     import trade_integrations.dataflows.index_research.execution_advisor as advisor_mod
 
-    monkeypatch.setattr(advisor_mod, "advise_positions", lambda: [])
+    monkeypatch.setattr(advisor_mod, "latest_advisories", lambda: [])
 
     response = client.get("/execution-advisor/positions")
     assert response.status_code == 200
@@ -61,7 +61,7 @@ def test_execution_advisor_positions_failure_returns_502(
     def _boom():
         raise RuntimeError("openalgo unreachable")
 
-    monkeypatch.setattr(advisor_mod, "advise_positions", _boom)
+    monkeypatch.setattr(advisor_mod, "latest_advisories", _boom)
 
     response = client.get("/execution-advisor/positions")
     assert response.status_code == 502

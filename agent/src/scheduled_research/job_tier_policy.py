@@ -70,6 +70,7 @@ from src.scheduled_research.options_jobs import (
     JOB_TYPE_OPTIONS_POSITION_MONITOR,
 )
 from src.scheduled_research.recording_wake_jobs import JOB_TYPE_RECORDING_WAKE
+from src.scheduled_research.execution_advisor_jobs import JOB_TYPE_EXECUTION_ADVISOR_SWEEP
 from src.scheduled_research.autonomous_agent_jobs import AUTONOMOUS_JOB_TYPES
 from src.scheduled_research.trade_data_jobs import (
     JOB_TYPE_NSE_MACRO_REFRESH,
@@ -208,6 +209,9 @@ OPERATIONAL_TIER_JOB_TYPES: frozenset[str] = frozenset(AUTONOMOUS_JOB_TYPES) | f
     {
         JOB_TYPE_RECORDING_WAKE,
         JOB_TYPE_OPTIONS_POSITION_MONITOR,
+        # Advises on this tier's own OpenAlgo positions every 5 minutes; per-tier like
+        # options_position_monitor, and must not queue behind a long collection dispatch.
+        JOB_TYPE_EXECUTION_ADVISOR_SWEEP,
     }
 )
 

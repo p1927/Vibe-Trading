@@ -65,16 +65,17 @@ def register_execution_advisor_routes(app: FastAPI, require_auth: AuthDep | None
         """
         try:
             from trade_integrations.dataflows.index_research.execution_advisor import (
-                advise_positions,
                 group_advisories_by_strategy,
+                latest_advisories,
             )
 
-            advisories = await asyncio.to_thread(advise_positions)
+            # A reader: each open position's newest advisory from the ledger, written by the
+            # scheduled `execution_advisor_sweep` job. Calling `advise_positions` here would step
+            # the FSM on every page view (its flip counter counts calls), so the advice would
+            # depend on how often someone looked — see Trade's
+            # .claude/backlog/items/2026-09-07-advisory-ledger-write-only.md.
+            advisories = await asyncio.to_thread(latest_advisories)
             grouped = group_advisories_by_strategy(advisories)
-            # Persistence to the advisory ledger now happens inside `advise_positions`
-            # itself (the generation point), independent of whether/when this route is
-            # hit — see .claude/backlog/items/2026-09-07-advisory-ledger-write-only.md.
-            # This route only reads back what `advise_positions` already recorded.
         except Exception:  # noqa: BLE001 — never leak a stack frame to clients
             logger.exception("execution advisor positions failed")
             return JSONResponse(

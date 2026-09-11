@@ -94,6 +94,15 @@ def _load_dst_eval():
     return DST_EVAL_JOB_TYPES, dispatch_dst_eval_job
 
 
+def _load_execution_advisor():
+    from src.scheduled_research.execution_advisor_jobs import (
+        EXECUTION_ADVISOR_JOB_TYPES,
+        dispatch_execution_advisor_job,
+    )
+
+    return EXECUTION_ADVISOR_JOB_TYPES, dispatch_execution_advisor_job
+
+
 # Order matters only in that it's the sequence checked; job-type sets are
 # disjoint in practice so it has no behavioral effect today.
 _DISPATCH_LOADERS: tuple[Callable[[], tuple[frozenset, Callable[..., Awaitable[None]]]], ...] = (
@@ -107,6 +116,7 @@ _DISPATCH_LOADERS: tuple[Callable[[], tuple[frozenset, Callable[..., Awaitable[N
     _load_recording_wake,
     _load_dst_eval,
     _load_factor_health,
+    _load_execution_advisor,
 )
 
 

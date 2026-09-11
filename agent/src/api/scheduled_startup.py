@@ -152,6 +152,10 @@ def boot_scheduled_research_stack(get_store) -> None:
         register_default_dst_eval_jobs(get_store())
     if is_factor_health_scheduler_enabled():
         register_default_factor_health_jobs(get_store())
+    # No enable flag: the advisory ledger's only writer (2026-09-07-advisory-ledger-write-only).
+    from src.scheduled_research.execution_advisor_jobs import register_default_execution_advisor_jobs
+
+    register_default_execution_advisor_jobs(get_store())
     register_persisted_autonomous_agent_jobs()
     # Recording-wake poller: unlike the general executor below, this starts
     # unconditionally (not gated by the scheduler enable/resume flag) — see
