@@ -1064,7 +1064,11 @@ def test_index_plan_refresh_uses_shorter_stale_threshold(
     heavy.config = {"job_type": "index_calibration"}
     now_ms = 11 * 60 * 1000
 
-    assert stale_running_ms_for(poll) == 600_000
+    # Still far shorter than a heavy job's window, but floored at its own dispatch timeout
+    # (10 min) + the 60 s watchdog buffer: an unfloored 10-minute window equalled the timeout,
+    # so the watchdog could recover the run before its own timeout/outcome was written.
+    # See .claude/backlog/items/2026-09-11-job-errors-recorded-as-success.md.
+    assert stale_running_ms_for(poll) == 600_000 + 60_000
     assert is_job_stale_running(poll, now_ms) is True
     assert is_job_stale_running(heavy, now_ms) is False
     assert dispatch_timeout_ms_for(poll) == 10 * 60 * 1000
@@ -1768,6 +1772,34 @@ def test_liveness_reports_overdue_when_running_still_true(tmp_path: Path) -> Non
     assert live["tick_count"] == 0
     assert live["last_tick_completed_at"] is None
     assert live["in_flight"] == []
+
+
+def test_liveness_reports_process_start_and_resume_history(tmp_path: Path) -> None:
+    """2026-09-06-boot-pause-under-reload: "never resumed since this process started" and
+    "resumed, then reset by a restart" must be distinguishable from the status payload."""
+    from src.scheduled_research import executor as executor_module
+
+    store = _store(tmp_path)
+    executor = ScheduledResearchExecutor(store, _noop_dispatch)
+
+    live = executor.liveness(now_ms=1_000)
+    assert live["process_started_at"] == executor_module._PROCESS_STARTED_MS
+    assert live["start_count"] == 0
+    assert live["last_started_at"] is None
+
+    async def _start_twice_with_a_stop_between() -> None:
+        executor.start()
+        executor.start()  # idempotent while running: must not count twice
+        await executor.stop()
+        executor.start()
+        await executor.stop()
+
+    asyncio.run(_start_twice_with_a_stop_between())
+
+    live = executor.liveness(now_ms=1_000)
+    assert live["start_count"] == 2
+    assert isinstance(live["last_started_at"], int)
+    assert live["last_started_at"] >= live["process_started_at"]
 
 
 def test_liveness_ignores_jobs_this_tier_cannot_dispatch(

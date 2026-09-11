@@ -13,6 +13,8 @@ from zoneinfo import ZoneInfo
 
 from src.config.accessor import get_env_config, get_env_or
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.run_outcome import raise_if_run_had_errors
+from src.scheduled_research.staleness import EVAL_JOB_DISPATCH_TIMEOUT_MS
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -139,7 +141,13 @@ def _compact_result_summary(result: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(result, dict):
         return {}
     summary: dict[str, Any] = {}
-    for key in ("mode", "skipped", "pipeline_paused", "pause_reason", "had_errors", "status", "error"):
+    for key in (
+        "mode", "skipped", "pipeline_paused", "pause_reason", "had_errors", "status", "error",
+        # Golden-eval summaries: a case skipped for overrunning its budget must be visible in
+        # the job record, not only in MLflow (eval_support.case_budget).
+        "article_count", "case_count", "scored_count", "skipped_case_count", "skipped_cases",
+        "mlflow_run_id",
+    ):
         if key in result:
             summary[key] = result[key]
     staging = result.get("staging")
@@ -669,6 +677,10 @@ def run_global_macro_eod_refresh_job(config: dict[str, Any] | None = None) -> di
     backlog item's "Remaining follow-ups"). Each series is fetched inside
     its own try/except so one bad yfinance call (e.g. a `sp500` rate limit)
     can't block the others from refreshing.
+
+    Then runs `StockHistory.refresh_global_macro_factors()` (D59): the unified
+    engine's refresh of every global-macro factor it owns into that factor's
+    declared home, which `/history/global_macro` serves for those series.
     """
     _ensure_trade_integrations_on_path()
     from trade_integrations.stock_history.api import StockHistory
@@ -688,7 +700,24 @@ def run_global_macro_eod_refresh_job(config: dict[str, Any] | None = None) -> di
         results[series] = result
         if isinstance(result, dict) and result.get("status") == "error":
             had_errors = True
-    return {"status": "error" if had_errors else "ok", "had_errors": had_errors, "series": results}
+    # D59: the same job also runs the unified engine's scheduled refresh of the global-macro
+    # factors it owns (acquire_and_persist over the lookback window, into each factor's declared
+    # home). That home is what /history/global_macro now serves for those series, and before this
+    # nothing refreshed it on a schedule. The legacy per-series loop above is kept (D54): it still
+    # refreshes global_macro_store, which the factor bindings themselves read from the vendor.
+    try:
+        factors = sh.refresh_global_macro_factors(lookback_days=lookback_days)
+    except Exception as exc:
+        logger.warning("global macro unified factor refresh failed: %s", exc)
+        factors = {"status": "error", "had_errors": True, "reason": str(exc)}
+    if factors.get("had_errors"):
+        had_errors = True
+    return {
+        "status": "error" if had_errors else "ok",
+        "had_errors": had_errors,
+        "series": results,
+        "factors": factors,
+    }
 
 
 def run_oi_snapshot_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -964,24 +993,16 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
     seeing each other's.
     """
     try:
-        from trade_integrations.dataflows.index_research.pipeline_cancel import (
-            clear_pipeline_cancel,
-            set_pipeline_job_id,
-        )
+        from trade_integrations.dataflows.index_research.pipeline_cancel import pipeline_job_scope
     except ImportError:
         _dispatch_index_job_body(job)
         return
 
-    clear_pipeline_cancel(job_id=job.id)
-    set_pipeline_job_id(job.id)
-    try:
+    # Clears this job's own stale flag, binds, runs, unbinds, clears its own flag again (so
+    # it cannot cancel the job's *next* run); never touches the global stop-everything flag.
+    # Shared with dst_eval_jobs.dispatch_dst_eval_job_sync.
+    with pipeline_job_scope(job.id):
         _dispatch_index_job_body(job)
-    finally:
-        set_pipeline_job_id(None)
-        # This job is over, so its flag has no further reader; leaving it would
-        # cancel the job's *next* run instead. Deliberately does NOT touch the
-        # global flag, which is a stop-everything lever this job does not own.
-        clear_pipeline_cancel(job_id=job.id)
 
 
 def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
@@ -1045,8 +1066,13 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         logger.info("hub news entity pipeline completed for job %s: %s", job.id, summary)
         return
     if job_type == JOB_TYPE_HUB_NEWS_INGEST:
+        from src.scheduled_research.ingest_source_streaks import record_source_zero_streaks
+
         summary = run_hub_news_ingest_job(job.config)
         _attach_job_result_summary(job, summary)
+        # A source that fetches nothing run after run is flagged (a signal, never a failure):
+        # zero rows reads the same as a quiet cycle unless someone counts the repetition.
+        record_source_zero_streaks(job, summary, summary_config_key=LAST_RESULT_CONFIG_KEY)
         logger.info("hub news ingest completed for job %s: %s", job.id, summary)
         if _hub_news_ingest_collected_nothing(summary):
             # A run that was gated shut (``blocked`` / ``pipeline_paused``) and
@@ -1081,11 +1107,17 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         summary = run_news_quality_eval_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("news quality golden eval completed for job %s: %s", job.id, summary)
+        # The handler catches its own error and *returns* had_errors. Without this raise, the
+        # executor recorded the run `completed` with failure_kind None. Observed on release:
+        # 09-08 (MLflow schema error) and 09-10 ("No Experiment with id=2 exists").
+        # See .claude/backlog/items/2026-09-11-job-errors-recorded-as-success.md.
+        raise_if_run_had_errors(job, summary, "news quality golden eval")
         return
     if job_type == JOB_TYPE_NEWS_DEDUP_QUALITY_EVAL:
         summary = run_news_dedup_quality_eval_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("news dedup quality golden eval completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "news dedup quality golden eval")
         return
     if job_type == JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH:
         summary = run_global_macro_eod_refresh_job(job.config)
@@ -1160,18 +1192,16 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     validate_schedule(max_pain_bhavcopy_cron)
     validate_schedule(constituent_volume_snapshot_cron)
 
-    skip_unified_duplicates = False
-    try:
-        from src.scheduled_research.hub_calibration_jobs import (
-            is_hub_calibration_scheduler_enabled,
-            is_hub_unified_calibration_enabled,
-        )
+    from src.scheduled_research.hub_calibration_jobs import (
+        is_hub_calibration_scheduler_enabled,
+        is_hub_unified_calibration_enabled,
+    )
 
-        skip_unified_duplicates = (
-            is_hub_calibration_scheduler_enabled() and is_hub_unified_calibration_enabled()
-        )
-    except Exception:
-        pass
+    # No try/except: an import/config error here must surface, not silently
+    # change which jobs get registered.
+    skip_unified_duplicates = (
+        is_hub_calibration_scheduler_enabled() and is_hub_unified_calibration_enabled()
+    )
 
     now_ms = int(time.time() * 1000)
     defaults = [
@@ -1334,10 +1364,10 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "mode": "full",
                 "ticker": "SPX",
                 "market": "US",
-                # Explicit list, not "all" — excludes moneycontrol/searxng_sector/
-                # searxng_constituent/watcher, which are Nifty-50-specific sources
+                # Explicit list, not "all" — excludes moneycontrol/web_search_sector/
+                # web_search_constituent/watcher, which are Nifty-50-specific sources
                 # with no US equivalent yet.
-                "sources": "rss,searxng,searxng_global,marketaux,currents",
+                "sources": "rss,web_search,web_search_global,marketaux,currents",
                 "lookback_days": 3,
                 "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
@@ -1385,9 +1415,9 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 # coverage at all on this account/plan) — unlike US, there's no
                 # keyword fallback wired for this yet (see this job's backlog
                 # item for the open follow-up). SearXNG's market-aware query
-                # widening (same _ingest_searxng_ticker/_ingest_searxng_market
+                # widening (same _ingest_web_search_ticker/_ingest_web_search_market
                 # path proven for US) is the real source here.
-                "sources": "rss,searxng,searxng_global",
+                "sources": "rss,web_search,web_search_global",
                 "lookback_days": 3,
                 "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
@@ -1432,7 +1462,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 # articles (Evergrande, Alibaba share placement, Shein IPO,
                 # etc.), not empty like JP's country query. No marketaux
                 # (not configured/no key).
-                "sources": "rss,searxng,searxng_global,currents",
+                "sources": "rss,web_search,web_search_global,currents",
                 "lookback_days": 3,
                 "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
@@ -1472,7 +1502,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "mode": "full",
                 "ticker": "MOEX",
                 "market": "RU",
-                # No searxng/searxng_global: live-tested 2026-08-25 with two
+                # No searxng/web_search_global: live-tested 2026-08-25 with two
                 # different query phrasings, both returned almost entirely
                 # generic Russia country-profile pages (Wikipedia, Britannica,
                 # Al Jazeera) or off-topic contamination (chicken-soup recipes,
@@ -1699,7 +1729,10 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             config={
                 "job_type": JOB_TYPE_NEWS_QUALITY_EVAL,
                 "ticker": "NIFTY",
-                "dispatch_timeout_ms": 1_800_000,
+                # Pinned here, so it overrides the per-type table; reconciled into an existing
+                # record on boot (see the merge below). Measured justification lives with the
+                # constant. See 2026-09-11-eval-jobs-exceed-dispatch-timeout.
+                "dispatch_timeout_ms": EVAL_JOB_DISPATCH_TIMEOUT_MS,
             },
         ),
         ScheduledResearchJob(

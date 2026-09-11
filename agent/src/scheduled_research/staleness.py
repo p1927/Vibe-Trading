@@ -41,6 +41,16 @@ FAILURE_THRESHOLD_ENV = "SCHEDULED_RESEARCH_FAILURE_THRESHOLD"
 DEFAULT_FRESH_REGISTRATION_DEFER_MS = 30 * 60 * 1000
 FRESH_REGISTRATION_DEFER_ENV = "SCHEDULED_RESEARCH_FRESH_DEFER_MS"
 
+# Golden-eval jobs: a live LLM pipeline call per golden case, then an MLflow scoring pass.
+# Measured: news_quality_eval took 8 min on 2026-09-10 and 59 min on 2026-09-11. The case loop
+# was ~all of that; scoring took 32 s. index_research_eval took 3.5 min on 2026-09-10 02:44, then
+# hit its 30-minute timeout on 2026-09-10 21:36 and again on 2026-09-11. 60 minutes covers the
+# worst measured day. Beyond that, each case's own budget (`trade_integrations.eval_support.
+# case_budget`) makes the run skip its slowest cases, with a recorded reason, and still score the
+# rest, rather than the budget being set by the worst day seen so far.
+# See .claude/backlog/items/2026-09-11-eval-jobs-exceed-dispatch-timeout.md.
+EVAL_JOB_DISPATCH_TIMEOUT_MS = 60 * 60 * 1000
+
 _JOB_DISPATCH_TIMEOUT_MS: dict[str, int] = {
     "index_plan_refresh": 10 * 60 * 1000,
     "index_factor_snapshot": 60 * 60 * 1000,
@@ -60,9 +70,13 @@ _JOB_DISPATCH_TIMEOUT_MS: dict[str, int] = {
     "autonomous_agent_news": 5 * 60 * 1000,
     "autonomous_agent_strategy_review": 5 * 60 * 1000,
     "autonomous_agent_strategy_snapshot": 5 * 60 * 1000,
-    "autonomous_agent_decision_eval": 5 * 60 * 1000,
     "recording_wake": 5 * 60 * 1000,
     "options_position_monitor": 5 * 60 * 1000,
+    # Listing a type here also makes it eligible for the dispatch-timeout cancel
+    # (`_request_pipeline_cancel_on_dispatch_timeout`). `news_quality_eval` was neither
+    # listed nor `index_`-prefixed, so its timed-out run was never asked to stop.
+    "news_quality_eval": EVAL_JOB_DISPATCH_TIMEOUT_MS,
+    "index_research_eval": EVAL_JOB_DISPATCH_TIMEOUT_MS,
 }
 _INDEX_JOB_DISPATCH_TIMEOUT_MS = 30 * 60 * 1000
 
@@ -224,20 +238,24 @@ def stale_running_ms_for(job: ScheduledResearchJob) -> int:
     """Return stale threshold for *job* (poll jobs use a shorter window)."""
     job_type = str(job.config.get("job_type") or "")
     if job_type == "index_plan_refresh":
-        return _index_plan_refresh_stale_ms()
-    if job_type == "autonomous_agent_watch":
+        base = _index_plan_refresh_stale_ms()
+    elif job_type == "autonomous_agent_watch":
         try:
-            interval = int(str(job.schedule).strip())
-            return max(120_000, 2 * interval)
+            base = max(120_000, 2 * int(str(job.schedule).strip()))
         except ValueError:
-            return 120_000
-    # Guarantee the stale threshold is at least ``dispatch_timeout + buffer``
-    # so the watchdog cannot fire mid-cleanup. Without this, a long-running
-    # hub-news drain (e.g. 20-min dispatch + LLM adjudication cleanup) would
-    # be recovered after ``stale_running_ms`` (default 45 min) but before the
-    # completion code path runs, silently dropping the ``last_run_at`` write
-    # via the ``current.status != RUNNING`` guard in ``_persist_completion``.
-    base = _stale_running_ms()
+            base = 120_000
+    else:
+        base = _stale_running_ms()
+    # Every type is floored at ``dispatch_timeout + buffer``, including the two short-window
+    # types above, so the watchdog can never fire before the dispatch's own timeout does.
+    # Without the floor, a long-running hub-news drain (e.g. 20-min dispatch + LLM adjudication
+    # cleanup) was recovered after ``stale_running_ms`` but before its completion code ran,
+    # silently dropping the write via the ``current.status != RUNNING`` guard in
+    # ``_persist_completion``. The two short-window types above used to return early, unfloored.
+    # ``index_plan_refresh``'s 10-minute window equalled its 10-minute timeout. A 60 s
+    # ``autonomous_agent_watch`` got a 120 s window against a 5-minute timeout. So the watchdog
+    # could recover either one mid-run, and the real outcome (success or timeout) was discarded.
+    # See .claude/backlog/items/2026-09-11-job-errors-recorded-as-success.md.
     return max(base, dispatch_timeout_ms_for(job) + _watchdog_buffer_ms())
 
 

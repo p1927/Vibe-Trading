@@ -352,13 +352,32 @@ class SessionService:
             # cancel_current() can land here — before _run_attempt (and the
             # in-flight claim it owns) is ever reached, e.g. while the run is
             # still on prefetch. Without this, the claim was never released.
-            attempt.mark_cancelled(reason="cancelled by user")
-            self.store.update_attempt(attempt)
-            self.event_bus.emit(
-                session.session_id,
-                "attempt.cancelled",
-                {"attempt_id": attempt.attempt_id, "status": attempt.status.value},
-            )
+            #
+            # Same rule as _run_attempt's handler: only a cancel requested
+            # through cancel_current is a user cancellation. Event-loop
+            # shutdown raises CancelledError here too, and that attempt must
+            # stay PENDING so _recover_interrupted_attempts marks it
+            # INTERRUPTED on the next start. Marking every cancel "cancelled
+            # by user" here made a restart during prefetch (up to
+            # vibe_attempt_prefetch_timeout_s) indistinguishable from a
+            # deliberate stop, and recovery skipped it.
+            if session.session_id in self._user_cancel_requests:
+                attempt.mark_cancelled(reason="cancelled by user")
+                self.store.update_attempt(attempt)
+                self.event_bus.emit(
+                    session.session_id,
+                    "attempt.cancelled",
+                    {"attempt_id": attempt.attempt_id, "status": attempt.status.value},
+                )
+            else:
+                logger.info(
+                    "Leaving attempt %s recoverable after service task cancellation during prefetch",
+                    attempt.attempt_id,
+                )
+            # _run_attempt's finally is never reached from here, so the request
+            # is consumed here. Left behind, it would turn a later shutdown
+            # cancel on this session into a "user" cancel.
+            self._user_cancel_requests.discard(session.session_id)
             self._active_tasks.pop(session.session_id, None)
             self._release_session(session.session_id)
             raise

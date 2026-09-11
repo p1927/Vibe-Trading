@@ -140,3 +140,118 @@ def test_stop_with_no_dispatch_in_flight_still_recovers_a_stranded_running_job(
     assert saved is not None
     assert saved.status == JobStatus.PENDING
     assert saved.auto_paused_reason == "auto-paused: recovered on stack shutdown"
+
+
+# --- The dispatch-done log line must report the verdict the run actually got -------------
+# See .claude/backlog/items/2026-09-08-dispatch-done-log-says-completed-for-a-cancelled-run.md:
+# a dispatch cancelled by shutdown used to log `status=completed` because the verdict was
+# derived from `dispatch_error is None`, which a CancelledError leaves unset. Only the log
+# verdict changes; the record behaviour asserted by the tests above is untouched.
+
+_EXECUTOR_LOGGER = executor_module.__name__
+
+
+def _dispatch_done_lines(caplog: pytest.LogCaptureFixture, job_id: str) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == _EXECUTOR_LOGGER
+        and "dispatch done" in r.getMessage()
+        and f"job={job_id} " in r.getMessage()
+    ]
+
+
+def test_dispatch_cancelled_by_shutdown_logs_cancelled_not_completed(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("INFO", logger=_EXECUTOR_LOGGER)
+    store = _store(tmp_path)
+    store.upsert(_job("cut-off"))
+    released = asyncio.Event()
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        released.set()
+        await asyncio.sleep(30)  # far beyond the grace below
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(
+            store, dispatch, tick_interval_ms=1, shutdown_drain_grace_ms=50
+        )
+        executor.start()
+        await asyncio.wait_for(released.wait(), timeout=5)
+        await asyncio.wait_for(
+            executor.stop(auto_pause_reason="auto-paused: recovered on stack shutdown"),
+            timeout=10,
+        )
+
+    asyncio.run(scenario())
+
+    lines = _dispatch_done_lines(caplog, "cut-off")
+    assert lines, "no dispatch-done line was logged for the cancelled run"
+    assert all("status=cancelled" in line for line in lines), lines
+    assert not any("status=completed" in line for line in lines), lines
+    # Record behaviour unchanged: no completion persisted, recovered by shutdown.
+    saved = store.get("cut-off")
+    assert saved is not None
+    assert saved.status == JobStatus.PENDING
+
+
+def test_dispatch_finishing_during_shutdown_still_logs_completed(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("INFO", logger=_EXECUTOR_LOGGER)
+    store = _store(tmp_path)
+    store.upsert(_job("lands-in-grace"))
+    released = asyncio.Event()
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        released.set()
+        await asyncio.sleep(0.15)
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(
+            store, dispatch, tick_interval_ms=1, shutdown_drain_grace_ms=5_000
+        )
+        executor.start()
+        await asyncio.wait_for(released.wait(), timeout=5)
+        await executor.stop(auto_pause_reason="auto-paused: recovered on stack shutdown")
+
+    asyncio.run(scenario())
+
+    lines = _dispatch_done_lines(caplog, "lands-in-grace")
+    assert lines and all("status=completed" in line for line in lines), lines
+
+
+def test_pipeline_cancelled_dispatch_logs_cancelled(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The PipelineCancelledError path (already tracked as `was_cancelled`) reports the same
+    `cancelled` verdict; its record keeps `last_error: "cancelled: <reason>"` as before."""
+    pipeline_cancel = pytest.importorskip(
+        "trade_integrations.dataflows.index_research.pipeline_cancel"
+    )
+    caplog.set_level("INFO", logger=_EXECUTOR_LOGGER)
+    store = _store(tmp_path)
+    store.upsert(_job("operator-cancelled"))
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        raise pipeline_cancel.PipelineCancelledError("operator_cancel")
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(store, dispatch, tick_interval_ms=1)
+        executor.start()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            saved = store.get("operator-cancelled")
+            if saved is not None and (saved.last_error or "").startswith("cancelled:"):
+                break
+            await asyncio.sleep(0.01)
+        await executor.stop(auto_pause_reason="auto-paused: recovered on stack shutdown")
+
+    asyncio.run(scenario())
+
+    saved = store.get("operator-cancelled")
+    assert saved is not None
+    assert saved.last_error == "cancelled: operator_cancel"
+    lines = _dispatch_done_lines(caplog, "operator-cancelled")
+    assert lines and all("status=cancelled" in line for line in lines), lines

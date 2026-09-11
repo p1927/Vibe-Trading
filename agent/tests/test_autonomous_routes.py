@@ -218,6 +218,98 @@ def test_resume_reschedules_a_failed_bootstrap(
     )
 
 
+def test_resume_onto_a_stopped_executor_says_nothing_will_dispatch(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """2026-09-06-boot-pause-under-reload: after a restart, resuming the agent alone gave
+    `status: running` with all jobs registered and zero ticks, and nothing said so."""
+    import src.api.scheduled_routes as scheduled_routes
+    import src.scheduled_research.autonomous_agent_jobs as agent_jobs
+    from trade_integrations.autonomous_agents.store import save_agent
+
+    agent_id = "agent-resume-stopped-executor"
+    paused_agent = {
+        "id": agent_id,
+        "type": "autonomous_agent.instance",
+        "name": "test agent",
+        "status": "paused",
+        "pause_reason": "user",
+        "bootstrap_status": "done",
+        "vibe_session_id": "sess-1",
+        "symbols": ["RELIANCE"],
+        "execution_market": "IN",
+        "execution_backend": "paper",
+        "schedules": {},
+    }
+    save_agent(dict(paused_agent))
+    monkeypatch.setattr(agent_jobs, "register_agent_jobs", lambda agent: None)
+
+    class _StoppedExecutor:
+        is_running = False
+
+    monkeypatch.setattr(scheduled_routes, "_get_scheduled_research_executor", lambda: _StoppedExecutor())
+    monkeypatch.setattr(scheduled_routes, "_scheduled_research_scheduler_enabled", lambda: True)
+
+    body = client.post(f"/autonomous-agents/{agent_id}/resume").json()
+
+    assert body["scheduler"] == {"enabled": True, "running": False}
+    assert "/scheduled-runs/scheduler/resume" in body["warning"]
+
+    class _RunningExecutor:
+        is_running = True
+
+    monkeypatch.setattr(scheduled_routes, "_get_scheduled_research_executor", lambda: _RunningExecutor())
+    save_agent(dict(paused_agent))
+
+    body = client.post(f"/autonomous-agents/{agent_id}/resume").json()
+
+    assert body["scheduler"] == {"enabled": True, "running": True}
+    assert "warning" not in body
+
+
+def test_commit_already_in_progress_is_409_not_a_client_error(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """2026-09-07-commit-route-times-out: a retry of a slow commit that is still running
+    server-side used to get a bare 400, which reads like "your commit failed"."""
+    import src.api.autonomous_routes as autonomous_routes
+    import trade_integrations.autonomous_agents.proposals as proposals
+    from trade_integrations.autonomous_agents.store import CommitInProgressError
+
+    monkeypatch.setattr(autonomous_routes, "_session_service", lambda: object())
+
+    def _in_progress(**kwargs):
+        raise CommitInProgressError("commit already in progress")
+
+    monkeypatch.setattr(proposals, "commit_autonomous_agent", _in_progress)
+
+    response = client.post(
+        "/autonomous-agents/commit",
+        json={"proposal_id": "aap_slow", "consent_ack": True},
+    )
+
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["status"] == "in_progress"
+    assert detail["proposal_id"] == "aap_slow"
+    # frontend formatApiDetail renders an object detail only through `message`; without it the
+    # proposal card toasted "Request failed" for this case.
+    assert "earlier request" in detail["message"]
+
+    def _invalid(**kwargs):
+        raise ValueError("proposal expired")
+
+    monkeypatch.setattr(proposals, "commit_autonomous_agent", _invalid)
+
+    response = client.post(
+        "/autonomous-agents/commit",
+        json={"proposal_id": "aap_slow", "consent_ack": True},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "proposal expired"
+
+
 def test_every_mutating_route_requires_local_or_auth() -> None:
     """Mechanical regression test for
     `.claude/backlog/items/2026-09-07-approve-plan-route-no-auth.md` (and the earlier

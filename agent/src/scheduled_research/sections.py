@@ -13,6 +13,7 @@ from typing import Dict
 
 from .autonomous_agent_jobs import AUTONOMOUS_JOB_TYPES
 from .capture_jobs import HUB_CAPTURE_JOB_TYPES
+from .decision_grading_jobs import DECISION_GRADING_JOB_TYPES
 from .financial_knowledge_jobs import FINANCIAL_KNOWLEDGE_JOB_TYPES
 from .hub_calibration_jobs import HUB_CALIBRATION_JOB_TYPES
 from .index_jobs import INDEX_JOB_TYPES
@@ -32,7 +33,7 @@ _SECTION_JOB_TYPES: Dict[str, frozenset] = {
     "trade_data": TRADE_DATA_JOB_TYPES,
     "hub": HUB_CALIBRATION_JOB_TYPES | HUB_CAPTURE_JOB_TYPES,
     "knowledge": FINANCIAL_KNOWLEDGE_JOB_TYPES,
-    "autonomous_agent": AUTONOMOUS_JOB_TYPES,
+    "autonomous_agent": AUTONOMOUS_JOB_TYPES | DECISION_GRADING_JOB_TYPES,
     "recording": RECORDING_WAKE_JOB_TYPES,
 }
 

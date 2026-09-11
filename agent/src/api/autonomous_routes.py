@@ -277,20 +277,27 @@ def commit_autonomous_agent_route(
     body: CommitAutonomousAgentRequest,
     _auth: None = Depends(require_local_or_auth),
 ) -> Dict[str, Any]:
+    from trade_integrations.autonomous_agents.commit_timing import StageTimer
     from trade_integrations.autonomous_agents.proposals import commit_autonomous_agent
+    from trade_integrations.autonomous_agents.store import CommitInProgressError
     from src.scheduled_research.autonomous_agent_jobs import register_agent_jobs
 
     svc = _session_service()
     if svc is None:
         raise HTTPException(status_code=503, detail="session runtime not enabled")
+    # This route has run past a 120s client cap while succeeding server-side, with the long pole
+    # never measured; the trace names the slow stage. See 2026-09-07-commit-route-times-out.
+    timer = StageTimer("POST /autonomous-agents/commit", warn_after_s=30.0, context=body.proposal_id)
     try:
-        result = commit_autonomous_agent(
-            proposal_id=body.proposal_id,
-            consent_ack=body.consent_ack,
-            session_service=svc,
-            orchestrator_session_id=body.session_id,
-        )
-        register_agent_jobs(result["agent"])
+        with timer.stage("commit"):
+            result = commit_autonomous_agent(
+                proposal_id=body.proposal_id,
+                consent_ack=body.consent_ack,
+                session_service=svc,
+                orchestrator_session_id=body.session_id,
+            )
+        with timer.stage("register_jobs"):
+            register_agent_jobs(result["agent"])
         agent = result.get("agent") or {}
         if (
             not result.get("already_committed")
@@ -300,21 +307,44 @@ def commit_autonomous_agent_route(
         ):
             from src.scheduled_research.autonomous_bootstrap import schedule_agent_bootstrap
 
-            schedule_agent_bootstrap(str(agent["id"]))
+            with timer.stage("schedule_bootstrap"):
+                schedule_agent_bootstrap(str(agent["id"]))
         committed_payload = {
             "agent_id": agent.get("id"),
             "vibe_session_id": result.get("vibe_session_id"),
             "name": agent.get("name"),
         }
-        orch_sid = body.session_id or agent.get("orchestrator_session_id")
-        if orch_sid:
-            svc.event_bus.emit(str(orch_sid), "autonomous_agent.committed", committed_payload)
-        vibe_sid = result.get("vibe_session_id")
-        if vibe_sid and str(vibe_sid) != str(orch_sid or ""):
-            svc.event_bus.emit(str(vibe_sid), "autonomous_agent.committed", committed_payload)
+        with timer.stage("emit_events"):
+            orch_sid = body.session_id or agent.get("orchestrator_session_id")
+            if orch_sid:
+                svc.event_bus.emit(str(orch_sid), "autonomous_agent.committed", committed_payload)
+            vibe_sid = result.get("vibe_session_id")
+            if vibe_sid and str(vibe_sid) != str(orch_sid or ""):
+                svc.event_bus.emit(str(vibe_sid), "autonomous_agent.committed", committed_payload)
         return result
+    except CommitInProgressError as exc:
+        # Not a client error: an earlier request for this proposal is still committing (a slow
+        # commit can outlive the caller's timeout). 409 + status lets a retrying client wait and
+        # re-check GET /autonomous-agents instead of reporting "commit failed".
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "status": "in_progress",
+                # `message` is the key the frontend's formatApiDetail renders; without it a
+                # double-clicked Commit toasted a bare "Request failed".
+                "message": (
+                    "This agent is still being created by an earlier request. "
+                    "Refresh the agent list in a moment."
+                ),
+                "detail": str(exc),
+                "proposal_id": body.proposal_id,
+                "hint": "an earlier commit of this proposal is still running; poll GET /autonomous-agents",
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        timer.log()
 
 
 class PlanApprovalRequest(BaseModel):
@@ -421,9 +451,40 @@ def resume_agent(
                     # "failed" and resets it to "running", so no manual
                     # reset is needed here.
                     schedule_agent_bootstrap(agent_id)
-        return result
+        return {**result, **_scheduler_state_for_resume()}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _scheduler_state_for_resume() -> Dict[str, Any]:
+    """The dispatch executor's state, attached to a resume response.
+
+    An agent resumed while the executor is stopped reports ``status: running`` with all its jobs
+    registered and receives no ticks at all — measured live 2026-09-07, with nothing on the agent
+    or the response saying so. Every process start brings the executor back stopped by design,
+    so after any restart resuming the agent alone is not enough. See
+    .claude/backlog/items/2026-09-06-boot-pause-under-reload.md.
+    """
+    from src.api.scheduled_routes import (
+        _get_scheduled_research_executor,
+        _scheduled_research_scheduler_enabled,
+    )
+
+    enabled = _scheduled_research_scheduler_enabled()
+    running = _get_scheduled_research_executor().is_running
+    state: Dict[str, Any] = {"scheduler": {"enabled": enabled, "running": running}}
+    if not enabled:
+        state["warning"] = (
+            "agent resumed, but the scheduled-job executor is disabled on this process "
+            "(VIBE_TRADING_ENABLE_SCHEDULER), so none of its jobs will dispatch"
+        )
+    elif not running:
+        state["warning"] = (
+            "agent resumed, but the scheduled-job executor is not running, so none of its jobs "
+            "will dispatch. POST /scheduled-runs/scheduler/resume to start it (every process "
+            "restart, including a dev --reload, brings it back stopped)"
+        )
+    return state
 
 
 @autonomous_router.post("/{agent_id}/stop")

@@ -110,6 +110,26 @@ def _load_autonomous_proposal(proposal_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _load_latest_session_proposal(session_id: str) -> Optional[Dict[str, Any]]:
+    """Newest uncommitted, unexpired proposal saved for this vibe session."""
+    if not session_id:
+        return None
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.autonomous_agents.store import (
+            load_latest_proposal_for_orchestrator,
+        )
+
+        data = load_latest_proposal_for_orchestrator(session_id)
+        if isinstance(data, dict) and data.get("type") == "autonomous_agent.proposal":
+            return data
+    except Exception:
+        logger.debug("latest autonomous_agent.proposal lookup failed for %s", session_id, exc_info=True)
+    return None
+
+
 def _is_autonomous_propose_tool(tool_name: str | None) -> bool:
     """Match local and MCP-wrapped propose_autonomous_agent tool names."""
     name = str(tool_name or "").strip()
@@ -146,10 +166,19 @@ def _autonomous_agent_proposal_frame_from_tool_result(event: Any) -> Optional[st
         return None
     if not _is_autonomous_propose_tool(data.get("tool")) or data.get("status") != "ok":
         return None
+    session_id = str(getattr(event, "session_id", "") or "")
     proposal_id = _extract_autonomous_proposal_id_from_tool_result(data)
-    if not proposal_id:
-        return None
-    proposal = _load_autonomous_proposal(proposal_id)
+    if proposal_id:
+        proposal = _load_autonomous_proposal(proposal_id)
+    else:
+        # ``preview`` is only the first 200 chars of the result. An MCP-wrapped
+        # propose result nests the proposal in double-encoded JSON behind a
+        # security envelope, so the id is escaped or past the cut entirely
+        # (verified live 2026-09-11: status=ok, proposal saved, no card). The
+        # propose tool stamps this vibe session id on the proposal it saves, and
+        # the lookup returns the session's newest live proposal by wall-clock
+        # save time — the one this call just created.
+        proposal = _load_latest_session_proposal(session_id)
     if proposal is None:
         return None
     if str(proposal.get("status") or "") not in {"ready", "incomplete"}:
@@ -224,7 +253,9 @@ def _trade_plan_widget_frame_from_tool_result(event: Any) -> Optional[str]:
 
         notify_trade_plan_widget(session_id, widget)
     except Exception:
-        logger.debug("plan widget hook failed for session %s", session_id, exc_info=True)
+        # Binding failure must be visible (2026-09-07-plan-widget-never-bound); the frame is
+        # still forwarded so the user's stream is not cut off by a binder error.
+        logger.exception("plan widget hook failed for session %s", session_id)
     return frame
 
 

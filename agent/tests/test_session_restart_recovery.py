@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 
 import pytest
@@ -146,20 +147,37 @@ def test_restart_finishes_attempt_when_terminal_reply_was_already_appended(
 
 
 def test_event_loop_shutdown_remains_recoverable(tmp_path: Path, monkeypatch) -> None:
+    """Shutdown while the agent is running: the attempt stays RUNNING and the next start
+    recovers it as INTERRUPTED.
+
+    Fork note: in this fork the run task first goes through
+    ``_run_attempt_with_prefetch``, which runs the research prefetch in a thread before
+    ``_run_attempt`` marks the attempt running. Upstream's single ``asyncio.sleep(0)``
+    therefore only reached prefetch, where the attempt is still PENDING. So this waits
+    until the agent run has really started. The prefetch is stubbed so the test does not
+    run the real hub prefetch. Shutdown *during* prefetch is covered separately below.
+    """
+
     async def scenario() -> None:
         store = SessionStore(tmp_path / "sessions")
         service = _service(store, tmp_path / "runs", monkeypatch)
+        monkeypatch.setattr(
+            "src.session.service_hooks.prefetch_research_for_message",
+            lambda *args, **kwargs: "",
+        )
         session = service.create_session(title="shutdown")
         gate = asyncio.Event()
+        started = asyncio.Event()
 
         async def wait_forever(attempt, messages=None, **kwargs):
             del attempt, messages, kwargs
+            started.set()
             await gate.wait()
             return {"status": "success", "content": "too late"}
 
         monkeypatch.setattr(service, "_run_with_agent", wait_forever)
         sent = await service.send_message(session.session_id, "keep this")
-        await asyncio.sleep(0)
+        await asyncio.wait_for(started.wait(), timeout=5)
         task = service._active_tasks[session.session_id]
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -173,5 +191,109 @@ def test_event_loop_shutdown_remains_recoverable(tmp_path: Path, monkeypatch) ->
         recovered = store.get_attempt(session.session_id, sent["attempt_id"])
         assert recovered is not None
         assert recovered.status == AttemptStatus.INTERRUPTED
+
+    asyncio.run(scenario())
+
+
+def _blocking_prefetch(monkeypatch) -> tuple[threading.Event, threading.Event]:
+    """Stub the research prefetch with one that blocks until released.
+
+    It runs in a worker thread (``asyncio.to_thread``), so the caller must set
+    ``release`` or ``asyncio.run`` will wait on the thread at shutdown.
+    """
+    entered = threading.Event()
+    release = threading.Event()
+
+    def _prefetch(*args, **kwargs) -> str:
+        del args, kwargs
+        entered.set()
+        release.wait(5)
+        return ""
+
+    monkeypatch.setattr("src.session.service_hooks.prefetch_research_for_message", _prefetch)
+    return entered, release
+
+
+def test_shutdown_during_prefetch_is_recoverable_not_a_user_cancel(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Event-loop shutdown that lands while the run is still on prefetch.
+
+    The fork's prefetch handler used to mark every CancelledError "cancelled by user".
+    That made a restart during prefetch look like a deliberate stop, and
+    ``_recover_interrupted_attempts`` (which only recovers PENDING/RUNNING) skipped it.
+    The session claim must still be released.
+    """
+
+    async def scenario() -> None:
+        store = SessionStore(tmp_path / "sessions")
+        service = _service(store, tmp_path / "runs", monkeypatch)
+        entered, release = _blocking_prefetch(monkeypatch)
+        session = service.create_session(title="shutdown during prefetch")
+
+        sent = await service.send_message(session.session_id, "keep this")
+        assert await asyncio.to_thread(entered.wait, 5)
+        task = service._active_tasks[session.session_id]
+        task.cancel()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            release.set()
+
+        attempt = store.get_attempt(session.session_id, sent["attempt_id"])
+        assert attempt is not None
+        assert attempt.status == AttemptStatus.PENDING
+        assert session.session_id not in service._active_tasks
+        assert session.session_id not in service._inflight
+
+        _service(store, tmp_path / "runs", monkeypatch)
+        recovered = store.get_attempt(session.session_id, sent["attempt_id"])
+        assert recovered is not None
+        assert recovered.status == AttemptStatus.INTERRUPTED
+        reply = store.get_message_for_attempt(session.session_id, sent["attempt_id"])
+        assert reply is not None
+        assert reply.metadata["recovery_reason"] == "service_restart"
+
+    asyncio.run(scenario())
+
+
+def test_user_cancel_during_prefetch_is_cancelled_and_consumed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """``cancel_current`` during prefetch is a real user cancel, and the request is consumed.
+
+    ``_run_attempt``'s finally is never reached from the prefetch handler. A request left
+    in ``_user_cancel_requests`` would make a later shutdown cancel on the same session
+    read as a user cancel.
+    """
+
+    async def scenario() -> None:
+        store = SessionStore(tmp_path / "sessions")
+        service = _service(store, tmp_path / "runs", monkeypatch)
+        entered, release = _blocking_prefetch(monkeypatch)
+        session = service.create_session(title="user cancel during prefetch")
+
+        sent = await service.send_message(session.session_id, "stop this")
+        assert await asyncio.to_thread(entered.wait, 5)
+        task = service._active_tasks[session.session_id]
+        assert service.cancel_current(session.session_id) is True
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            release.set()
+
+        attempt = store.get_attempt(session.session_id, sent["attempt_id"])
+        assert attempt is not None
+        assert attempt.status == AttemptStatus.CANCELLED
+        assert session.session_id not in service._user_cancel_requests
+        assert session.session_id not in service._inflight
+
+        # A deliberate stop is terminal: the next start must not relabel it interrupted.
+        _service(store, tmp_path / "runs", monkeypatch)
+        after = store.get_attempt(session.session_id, sent["attempt_id"])
+        assert after is not None
+        assert after.status == AttemptStatus.CANCELLED
 
     asyncio.run(scenario())

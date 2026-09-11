@@ -28,7 +28,7 @@ def test_register_default_index_jobs_includes_us_news_ingest(tmp_path):
     assert full.config["ticker"] == "SPX"
     assert full.config["market"] == "US"
     assert "moneycontrol" not in full.config["sources"]
-    assert "searxng_sector" not in full.config["sources"]
+    assert "web_search_sector" not in full.config["sources"]
 
     light = store.get("us-hub-news-ingest-light")
     assert light is not None

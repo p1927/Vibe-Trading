@@ -23,13 +23,13 @@ describe("WelcomeScreen", () => {
     render(<WelcomeScreen onExample={onExample} />);
     expect(screen.getByText("A-Share Backtest")).toBeInTheDocument();
     expect(screen.getByText("Research & Analysis")).toBeInTheDocument();
-    expect(screen.getByText("Swarm Teams")).toBeInTheDocument();
+    expect(screen.getByText("AI Analyst Teams")).toBeInTheDocument();
   });
 
   it("calls onExample with prompt when an example button is clicked", async () => {
     render(<WelcomeScreen onExample={onExample} />);
     const user = userEvent.setup();
-    await user.click(screen.getByText("A-Share Portfolio Optimization"));
+    await user.click(screen.getByText("Balance a 3-stock portfolio"));
     expect(onExample).toHaveBeenCalledTimes(1);
     expect(onExample).toHaveBeenCalledWith(
       expect.stringContaining("risk-parity portfolio"),

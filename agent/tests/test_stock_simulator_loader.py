@@ -44,9 +44,57 @@ class _FakeStockHistory:
     def bar_at(self, *, symbol, exchange, sim_now):
         return self._latest_bar
 
-    def option_chain_at(self, **kwargs):
-        self.option_chain_at_calls.append(kwargs)
+    # Explicit keywords, not **kwargs: a catch-all double accepts any call the loader makes and
+    # so could never notice drift. `test_fake_signatures_match_the_real_stock_history` pins
+    # every method here to the real one.
+    def option_chain_at(
+        self, *, underlying, exchange, spot, sim_now,
+        expiry_date=None, strike_count=10, expiry_anchor=None,
+    ):
+        self.option_chain_at_calls.append({
+            "underlying": underlying, "exchange": exchange, "spot": spot, "sim_now": sim_now,
+            "expiry_date": expiry_date, "strike_count": strike_count,
+            "expiry_anchor": expiry_anchor,
+        })
         return self._chain
+
+
+def _real_stock_history_class():
+    """The real class, or skip: this file must still run in a standalone Vibe-Trading checkout."""
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.stock_history.api import StockHistory
+    except Exception as exc:  # noqa: BLE001 - optional cross-repo dependency, same as the loader
+        pytest.skip(f"trade_integrations not importable here: {exc}")
+    return StockHistory
+
+
+def _shape(fn):
+    import inspect
+
+    return [
+        (p.name, p.kind, p.default is inspect.Parameter.empty)
+        for p in inspect.signature(fn).parameters.values()
+        if p.name != "self"
+    ]
+
+
+def test_fake_signatures_match_the_real_stock_history() -> None:
+    """The hand-written fake stays (it keeps this file standalone), but it cannot drift:
+    every method it defines must take exactly the real method's parameters — same names,
+    same kinds, same required/optional split. A renamed or added parameter on the real
+    `StockHistory` fails here instead of the loader breaking only in production
+    ([[2026-09-07-coverage-sweep-test-double-stale-after-budget-change]])."""
+    real = _real_stock_history_class()
+    methods = [
+        name for name, value in vars(_FakeStockHistory).items()
+        if callable(value) and not name.startswith("_")
+    ]
+    assert methods, "no fake methods found"
+    for name in methods:
+        assert _shape(getattr(_FakeStockHistory, name)) == _shape(getattr(real, name)), name
 
 
 def test_symbol_resolution() -> None:

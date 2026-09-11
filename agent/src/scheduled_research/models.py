@@ -349,7 +349,11 @@ class ScheduledResearchJob:
             (it increments ``consecutive_failures`` and takes backoff) that the
             executor deliberately exempts from the terminal auto-pause, so a
             sustained gate outage cannot disable the sole-collector tier's
-            daily ingest.
+            daily ingest. A run recovered from RUNNING without writing its
+            own outcome (stale watchdog, executor shutdown, stack boot or
+            shutdown) is also recorded as ``"dispatch"``, with the reason in
+            ``last_error``. See ``run_outcome.py`` for why that path records
+            no new kind.
         config: Opaque dict for future backtest parameters.
         timezone: IANA timezone key the cron schedule is evaluated in, or
             ``None`` for UTC (the semantics every job had before this field

@@ -170,20 +170,74 @@ def run_autonomous_agents_eval_job(config: dict[str, Any] | None = None) -> dict
 
 
 def dispatch_dst_eval_job_sync(job: ScheduledResearchJob) -> None:
+    """Run one dst-eval job under its own job-scoped cancel flag.
+
+    Without the binding, the dispatch-timeout cancel aimed at this job
+    (`staleness._request_pipeline_cancel_on_dispatch_timeout`) was invisible to the golden-eval
+    loops' `check_pipeline_cancel()` checkpoints. The timed-out run then kept its LLM slot and
+    pool thread for as long as the loop took. Same scope `index_jobs.dispatch_index_job_sync` uses.
+    See .claude/backlog/items/2026-09-11-eval-jobs-exceed-dispatch-timeout.md.
+    """
+    ensure_trade_stack_path()
+    from trade_integrations.dataflows.index_research.pipeline_cancel import pipeline_job_scope
+
+    with pipeline_job_scope(job.id):
+        _dispatch_dst_eval_job_body(job)
+
+
+def _dispatch_dst_eval_job_body(job: ScheduledResearchJob) -> None:
+    """Route one dst-eval job, attach its summary, and fail the run when the summary says it failed.
+
+    Every runner here catches its own errors and *returns* ``{"status": "error", "had_errors":
+    True}``, and this function used to discard that return value. So the executor took its success
+    branch and recorded the run ``completed`` with ``failure_kind: None``. Observed on release: all
+    three index_research_eval sub-evals raised on 2026-09-08 and the job still read ``completed``.
+    The runners stay report-only, so one failing sub-eval never stops the others. Only the job's
+    own record changes.
+    See .claude/backlog/items/2026-09-11-job-errors-recorded-as-success.md.
+    """
+    from src.scheduled_research.index_jobs import LAST_RESULT_CONFIG_KEY
+    from src.scheduled_research.run_outcome import raise_if_run_had_errors
+
     job_type = str(job.config.get("job_type") or "")
-    if job_type == JOB_TYPE_RECORDER_DST:
-        run_recorder_dst_job(job.config)
-        return
-    if job_type == JOB_TYPE_PREDICTION_EVAL:
-        run_prediction_eval_job(job.config)
-        return
-    if job_type == JOB_TYPE_INDEX_RESEARCH_EVAL:
-        run_index_research_eval_job(job.config)
-        return
-    if job_type == JOB_TYPE_AUTONOMOUS_AGENTS_EVAL:
-        run_autonomous_agents_eval_job(job.config)
-        return
-    raise ValueError(f"unsupported dst_eval job_type: {job_type!r}")
+    runners = {
+        JOB_TYPE_RECORDER_DST: run_recorder_dst_job,
+        JOB_TYPE_PREDICTION_EVAL: run_prediction_eval_job,
+        JOB_TYPE_INDEX_RESEARCH_EVAL: run_index_research_eval_job,
+        JOB_TYPE_AUTONOMOUS_AGENTS_EVAL: run_autonomous_agents_eval_job,
+    }
+    runner = runners.get(job_type)
+    if runner is None:
+        raise ValueError(f"unsupported dst_eval job_type: {job_type!r}")
+    summary = runner(job.config)
+    compact = _compact_dst_eval_summary(summary)
+    if compact:
+        job.config[LAST_RESULT_CONFIG_KEY] = compact
+    logger.info("dst_eval %s completed for job %s: %s", job_type, job.id, compact)
+    raise_if_run_had_errors(job, summary, f"dst_eval {job_type}")
+
+
+def _compact_dst_eval_summary(summary: Any) -> dict[str, Any]:
+    """Status, error, and each sub-eval's status/error/scored/skipped counts. Small enough to persist."""
+    if not isinstance(summary, dict):
+        return {}
+    compact: dict[str, Any] = {
+        k: summary[k]
+        for k in ("status", "had_errors", "error", "returncode", "scored_count", "skipped_case_count")
+        if k in summary
+    }
+    results = summary.get("results")
+    if isinstance(results, dict):
+        compact["results"] = {
+            name: {
+                k: r[k]
+                for k in ("status", "error", "scored_count", "skipped_case_count", "mlflow_run_id")
+                if k in r
+            }
+            for name, r in results.items()
+            if isinstance(r, dict)
+        }
+    return compact
 
 
 async def dispatch_dst_eval_job(job: ScheduledResearchJob) -> None:

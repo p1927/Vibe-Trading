@@ -12,6 +12,7 @@ This job runs a full-coverage `backfill_into_week` sweep daily.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import create_autospec
 
 import pytest
 
@@ -19,60 +20,75 @@ from src.scheduled_research import index_jobs
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob
 
 
-@pytest.mark.unit
-def test_run_stock_history_coverage_sweep_job_calls_backfill_into_week(monkeypatch):
-    calls = {}
+def _autospec_stock_history(monkeypatch, *, summary=None, error=None):
+    """Install a `StockHistory` whose every call binds against the REAL signatures.
 
-    class _FakeStockHistory:
-        # Keep this signature in step with the real
-        # `StockHistory.backfill_into_week` -- an explicit keyword list here is the
-        # point of the test (it pins what the job actually passes), so a new
-        # parameter on the real method must be added here too. When it wasn't, the
-        # job's own `except Exception` swallowed the resulting TypeError and this
-        # test failed on a downstream assertion instead of on the real cause.
-        def backfill_into_week(self, *, week_start, include_optional, verify_after, budget_seconds):
-            calls["week_start"] = week_start
-            calls["include_optional"] = include_optional
-            calls["verify_after"] = verify_after
-            calls["budget_seconds"] = budget_seconds
-            return SimpleNamespace(had_errors=False, ok_count=5, failed_count=0, skipped_count=1)
+    `create_autospec` replaces the hand-written doubles this file used to carry: one with an
+    explicit keyword list that broke when `budget_seconds` was added (and, because the job's
+    own `except Exception` swallowed the TypeError, failed on a downstream assertion), and two
+    taking `**kwargs` that would have kept passing against any call at all
+    ([[2026-09-07-coverage-sweep-test-double-stale-after-budget-change]]). An autospec needs no
+    upkeep: a renamed or added parameter on the real method is a bind error at the call site.
+    """
+    index_jobs._ensure_trade_integrations_on_path()
+    from trade_integrations.stock_history.api import StockHistory
 
-    monkeypatch.setattr(
-        "trade_integrations.stock_history.api.StockHistory", _FakeStockHistory
-    )
+    sh = create_autospec(StockHistory, instance=True)
+    if error is not None:
+        sh.backfill_into_week.side_effect = error
+    else:
+        sh.backfill_into_week.return_value = summary
+    monkeypatch.setattr("trade_integrations.stock_history.api.StockHistory", lambda *a, **k: sh)
     monkeypatch.setattr(
         "trade_integrations.dataflows.company_research.market.india_trading_date_iso",
         lambda: "2026-08-18T00:00:00Z",
     )
+    return sh
+
+
+@pytest.mark.unit
+def test_run_stock_history_coverage_sweep_job_calls_backfill_into_week(monkeypatch):
+    sh = _autospec_stock_history(
+        monkeypatch,
+        summary=SimpleNamespace(had_errors=False, ok_count=5, failed_count=0, skipped_count=1),
+    )
 
     result = index_jobs.run_stock_history_coverage_sweep_job({"include_optional": True})
 
-    assert calls["include_optional"] is True
-    assert calls["verify_after"] is True
-    assert calls["week_start"] == "2026-08-18"
+    # First, so a signature drift fails HERE with the real bind error in the message, not on a
+    # later assertion about a result the job never produced.
+    assert "error" not in result, result.get("error")
     # Budgeted inside the executor's 30-minute dispatch timeout; see
     # [[2026-09-07-coverage-sweep-times-out-and-stops-backfilling]].
-    assert calls["budget_seconds"] == 1200.0
+    sh.backfill_into_week.assert_called_once_with(
+        week_start="2026-08-18", include_optional=True, verify_after=True, budget_seconds=1200.0,
+    )
     assert result["status"] == "ok"
     assert result["ok_count"] == 5
     assert result["had_errors"] is False
 
 
 @pytest.mark.unit
-def test_run_stock_history_coverage_sweep_job_reports_errors(monkeypatch):
-    class _FakeStockHistory:
-        def backfill_into_week(self, **kwargs):
-            return SimpleNamespace(had_errors=True, ok_count=2, failed_count=3, skipped_count=0)
+def test_the_autospec_rejects_an_argument_the_real_method_does_not_take():
+    """Proves the double is not blind: the drift it guards against is a bind error."""
+    index_jobs._ensure_trade_integrations_on_path()
+    from trade_integrations.stock_history.api import StockHistory
 
-    monkeypatch.setattr(
-        "trade_integrations.stock_history.api.StockHistory", _FakeStockHistory
-    )
-    monkeypatch.setattr(
-        "trade_integrations.dataflows.company_research.market.india_trading_date_iso",
-        lambda: "2026-08-18T00:00:00Z",
+    sh = create_autospec(StockHistory, instance=True)
+    with pytest.raises(TypeError):
+        sh.backfill_into_week(week_start="2026-08-18", not_a_real_parameter=1)
+
+
+@pytest.mark.unit
+def test_run_stock_history_coverage_sweep_job_reports_errors(monkeypatch):
+    sh = _autospec_stock_history(
+        monkeypatch,
+        summary=SimpleNamespace(had_errors=True, ok_count=2, failed_count=3, skipped_count=0),
     )
 
     result = index_jobs.run_stock_history_coverage_sweep_job({})
+    assert "error" not in result, result.get("error")
+    sh.backfill_into_week.assert_called_once()
     assert result["status"] == "error"
     assert result["failed_count"] == 3
     assert result["had_errors"] is True
@@ -80,13 +96,7 @@ def test_run_stock_history_coverage_sweep_job_reports_errors(monkeypatch):
 
 @pytest.mark.unit
 def test_run_stock_history_coverage_sweep_job_never_raises(monkeypatch):
-    class _FakeStockHistory:
-        def backfill_into_week(self, **kwargs):
-            raise RuntimeError("hub_dir unreachable")
-
-    monkeypatch.setattr(
-        "trade_integrations.stock_history.api.StockHistory", _FakeStockHistory
-    )
+    _autospec_stock_history(monkeypatch, error=RuntimeError("hub_dir unreachable"))
 
     result = index_jobs.run_stock_history_coverage_sweep_job({})
     assert result["status"] == "error"

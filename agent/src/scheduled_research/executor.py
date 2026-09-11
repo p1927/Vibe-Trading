@@ -39,6 +39,7 @@ from src.scheduled_research.store import ScheduledResearchJobStore
 from src.scheduled_research import stuck_jobs
 # Fork-only sidecar: D11 shortest-expected-runtime-first slot admission (docs/DECISIONS.md).
 from src.scheduled_research.dispatch_admission import DispatchPool, record_dispatch_duration
+from src.scheduled_research.run_outcome import record_interrupted_run
 # Stale-run detection and watchdog tuning live in staleness.py (a file we
 # fully own) and are re-exported here so this module's existing internal
 # call sites and external importers (lifecycle.py, index_prediction_jobs.py,
@@ -101,10 +102,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_TICK_INTERVAL_MS = 60 * 1000
 SCHEDULER_ENABLED_ENV = "VIBE_TRADING_ENABLE_SCHEDULER"
 LAST_RESULT_CONFIG_KEY = "_last_result_summary"
-_RECOVERY_ERROR_MARKERS = (
-    "recovered on stack boot",
-    "recovered on shutdown",
-)
 
 _MAX_PERSISTED_ERROR_CHARS = 1000
 
@@ -283,6 +280,14 @@ def _day_matches(dt: date, doms: set[int] | None, months: set[int] | None, dows:
     return day_of_month_matches and day_of_week_matches
 
 
+#: Wall-clock ms when this process imported the executor, i.e. when it booted. Reported by
+#: ``liveness()`` so a caller can tell "never resumed since this process started" from "resumed,
+#: then reset by a restart": under ``trade dev --reload`` any code save restarts the process and
+#: the executor always boots stopped. See
+#: .claude/backlog/items/2026-09-06-boot-pause-under-reload.md.
+_PROCESS_STARTED_MS = int(time.time() * 1000)
+
+
 class ScheduledResearchExecutor:
     """Background poller that dispatches due scheduled research jobs."""
 
@@ -390,6 +395,10 @@ class ScheduledResearchExecutor:
         self._startup_backlog_deferred = False
         self._watchdog_task: asyncio.Task | None = None
         self._executor_tick_count = 0
+        # How many times start() actually started the loop in this process, and when last
+        # (wall clock). With _PROCESS_STARTED_MS these say which "not running" a caller sees.
+        self._start_count = 0
+        self._last_started_ms: int | None = None
         # The operational tier's own loop/task, over the same store — see
         # `_run_operational`/`_operational_tick`. Split from the main loop so a long
         # collection-job dispatch can never hold an autonomous agent's watch/news/
@@ -426,6 +435,19 @@ class ScheduledResearchExecutor:
     def is_operational_running(self) -> bool:
         """Return whether the operational tier's own loop task is active."""
         return self._operational_task is not None and not self._operational_task.done()
+
+    def _restart_fields(self) -> dict[str, Any]:
+        """Process start time and resume history, all wall-clock epoch ms.
+
+        ``start_count == 0`` with ``running: false`` means nobody has resumed the executor since
+        this process started; a resume issued before ``process_started_at`` was wiped by that
+        restart. ``start_count > 0`` means it was resumed here and has since stopped.
+        """
+        return {
+            "process_started_at": _PROCESS_STARTED_MS,
+            "start_count": self._start_count,
+            "last_started_at": self._last_started_ms,
+        }
 
     def liveness(self, now_ms: int | None = None) -> dict[str, Any]:
         """Evidence that the dispatch loop is progressing, not merely alive.
@@ -497,6 +519,7 @@ class ScheduledResearchExecutor:
             # be reported as "nothing overdue" either — None is distinguishable from 0.
             logger.warning("liveness store read failed", exc_info=True)
             return {
+                **self._restart_fields(),
                 "running": self.is_running,
                 "tick_count": self._executor_tick_count,
                 "last_tick_started_at": self._last_tick_started_ms,
@@ -516,6 +539,7 @@ class ScheduledResearchExecutor:
                 },
             }
         return {
+            **self._restart_fields(),
             "running": self.is_running,
             "tick_count": self._executor_tick_count,
             "last_tick_started_at": self._last_tick_started_ms,
@@ -549,6 +573,8 @@ class ScheduledResearchExecutor:
             return
         self._stopping = False
         self._shutdown_recovery_done = False
+        self._start_count += 1
+        self._last_started_ms = int(time.time() * 1000)
         self.recover_stale_running(self._now_fn(), startup=True)
         self._wakeup = asyncio.Event()
         self._operational_wakeup = asyncio.Event()
@@ -741,8 +767,10 @@ class ScheduledResearchExecutor:
                     exc_info=True,
                 )
                 job.next_run_at = now + self._tick_interval_ms
-            if not job.last_error:
-                job.last_error = "recovered on executor shutdown"
+            # Its dispatch was cancelled before writing an outcome: a failed run. It used to get
+            # only a `last_error` note, and only when the field was empty, so an older run's error
+            # survived and D32 saw nothing (run_outcome.py).
+            record_interrupted_run(job, "recovered on executor shutdown")
             if auto_pause_reason and not job.paused:
                 job.paused = True
                 job.auto_paused_reason = auto_pause_reason
@@ -929,6 +957,20 @@ class ScheduledResearchExecutor:
                 continue
             if not startup and not is_job_stale_running(job, now):
                 continue
+            # The run never wrote its own outcome, and after this reset its real timeout/failure
+            # write would be refused by `_persist_completion` (record no longer RUNNING). So record
+            # the failure here, or it is lost. Before this, the job read as healthy: D32 saw
+            # nothing, and a real dispatch timeout was discarded on 2026-09-10.
+            # See .claude/backlog/items/2026-09-11-job-errors-recorded-as-success.md.
+            if startup:
+                reason = "recovered on executor start: run was still RUNNING when the previous process ended"
+            else:
+                started_at = job.last_run_at if job.last_run_at is not None else job.created_at
+                reason = (
+                    f"recovered stale: no outcome {now - started_at}ms after dispatch start "
+                    f"(watchdog threshold {stale_running_ms_for(job)}ms)"
+                )
+            record_interrupted_run(job, reason)
             job.status = JobStatus.PENDING
             try:
                 job.next_run_at = next_due(job.schedule, now)
@@ -1138,7 +1180,14 @@ class ScheduledResearchExecutor:
             )
             return
 
-        if job.last_error and any(marker in job.last_error for marker in _RECOVERY_ERROR_MARKERS):
+        # A `last_error` with no failure state behind it did not come from the run starting now,
+        # so it must not survive into this run's record. Two sources: history a resume keeps on
+        # purpose (pause_control), and an old cancel note. An error that IS backed by a failure
+        # (failure_kind set) stays visible until this run's own outcome overwrites it, so D32
+        # never shows a live failure with no error. This replaces a substring match on two
+        # recovery-note markers, which let every other stale error through.
+        # See .claude/backlog/items/2026-09-11-job-errors-recorded-as-success.md.
+        if job.last_error and not job.failure_kind:
             job.last_error = None
 
         job.status = JobStatus.RUNNING
@@ -1179,6 +1228,12 @@ class ScheduledResearchExecutor:
         dispatch_error: Exception | None = None
         session_id: str | None = None
         was_cancelled = False
+        # Set when the dispatch task itself is cancelled (executor shutdown past the drain grace,
+        # or any other task.cancel()). The CancelledError still propagates — no completion is
+        # persisted, recover_all_running_on_shutdown() owns the record — but the dispatch-done
+        # log line and observability events below must not report it as completed. See
+        # .claude/backlog/items/2026-09-08-dispatch-done-log-says-completed-for-a-cancelled-run.md
+        interrupted = False
         try:
             # Bind this job's dispatch budget to the context BEFORE dispatching, so every LLM
             # retry ladder underneath it bounds itself by what is left (sidecar:
@@ -1204,6 +1259,7 @@ class ScheduledResearchExecutor:
             dispatch_error = TimeoutError(f"dispatch timed out after {timeout_ms}ms")
             job.consecutive_failures = int(job.consecutive_failures or 0) + 1
         except asyncio.CancelledError:
+            interrupted = True
             raise
         except Exception as exc:
             try:
@@ -1257,7 +1313,13 @@ class ScheduledResearchExecutor:
             finish_named_task(task_id)
             elapsed_ms = int((time.monotonic() - started) * 1000)
             record_dispatch_duration(job, elapsed_ms)  # D11 expected-runtime history
-            _final_status = JobStatus.COMPLETED if dispatch_error is None else JobStatus.FAILED
+            # A cancelled dispatch — task cancellation (`interrupted`) or a PipelineCancelledError
+            # (`was_cancelled`) — reports `cancelled`, not `completed`: `dispatch_error is None`
+            # alone cannot tell "finished cleanly" from "was stopped before it could fail".
+            if interrupted or was_cancelled:
+                _final_status = JobStatus.CANCELLED
+            else:
+                _final_status = JobStatus.COMPLETED if dispatch_error is None else JobStatus.FAILED
             logger.info(
                 "scheduled research dispatch done job=%s type=%s status=%s (%.1fs)",
                 job.id,
@@ -1334,6 +1396,12 @@ class ScheduledResearchExecutor:
             barren_collection = isinstance(dispatch_error, HubNewsIngestCollectedNothingError)
             job.failure_kind = "barren_collection" if barren_collection else "dispatch"
             job.last_error = _persisted_error(dispatch_error)
+            # A handler that attached its summary and then failed on it (run_outcome.
+            # raise_if_run_had_errors) should leave *that* summary on the record. Without this,
+            # the scratch key rode along in config and the previous run's summary stayed visible.
+            raw_summary = job.config.pop(LAST_RESULT_CONFIG_KEY, None)
+            if isinstance(raw_summary, dict):
+                job.last_result_summary = raw_summary
             if not barren_collection and job.consecutive_failures >= self._max_consecutive_failures:
                 # A recurring job (every job in this store carries a schedule)
                 # must not go terminal here: JobStatus.FAILED is excluded from

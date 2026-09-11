@@ -301,7 +301,7 @@
     "unknown": "Desconocido"
   },
   "connection": {
-    "reconnecting": "Conexión perdida, reconectando (intento {{attempt}})…",
+    "reconnecting": "Reconectando…",
     "disconnected": "Se perdió la conexión. Recarga la página para reconectar.",
     "reload": "Recargar"
   },

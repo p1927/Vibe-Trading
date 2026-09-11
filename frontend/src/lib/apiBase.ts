@@ -1,11 +1,12 @@
 /**
  * REST API origin for `fetch` calls.
  *
- * - Vite dev server (dev 5899 / release 5909 / bare 5173): talk directly to that tier's API,
- *   which avoids the proxy gaps this file exists to work around — Vite's `PROXY_PATHS` in
- *   `vite.config.ts` does not list every API prefix (`/board` is one it misses), so a
- *   same-origin call to an unlisted prefix silently returns the SPA's `index.html` with a
- *   200 and `text/html`, and the caller fails parsing JSON rather than seeing an error.
+ * - Vite dev server (dev 5899 / release 5909 / bare 5173): talk directly to that tier's API.
+ *   A same-origin call to a prefix missing from `vite.config.ts`'s proxy silently returns the
+ *   SPA's `index.html` with a 200 and `text/html`, and the caller fails parsing JSON rather than
+ *   seeing an error (`/board` shipped that way). The proxy now covers every prefix the client
+ *   calls, and `src/__tests__/viteProxy.test.ts` fails if a new one is added without an entry;
+ *   the absolute origin here is kept as defence in depth.
  * - Combined server (8899/8909): same-origin relative paths.
  *
  * The release UI port pair is listed explicitly rather than inferred, mirroring

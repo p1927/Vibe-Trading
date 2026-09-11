@@ -347,42 +347,36 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
             new_widget_id,
         )
 
+        if not is_options_thesis_break_auto_dispatch_enabled():
+            # Widget refresh + event log already emitted above; skip the
+            # LLM-firing auto-dispatch path to avoid a per-tick cascade
+            # when many positions are broken (OPTIONS_AUTO_DISPATCH_THESIS_BREAK=0).
+            logger.info(
+                "thesis break for %s widget=%s — auto-dispatch suppressed "
+                "(OPTIONS_AUTO_DISPATCH_THESIS_BREAK=0)",
+                underlying,
+                widget_id,
+            )
+            continue
+        # Shared alert-turn path (Trade sidecar): a normal strategy_revision turn
+        # via nautilus_openalgo_bridge.vibe_trigger, not a bespoke session prompt.
         try:
-            from trade_integrations.autonomous_agents.thesis_break import dispatch_thesis_break_revision
+            from trade_integrations.autonomous_agents.thesis_break import dispatch_options_thesis_break
 
-            dispatch_widget_id = str(widget_id or "").strip()
-            new_plan_widget_id = str(new_widget_id or "").strip() or None
-            if not is_options_thesis_break_auto_dispatch_enabled():
-                # Widget refresh + event log already emitted above; skip the
-                # LLM-firing auto-dispatch path to avoid a per-tick cascade
-                # when many positions are broken (OPTIONS_AUTO_DISPATCH_THESIS_BREAK=0).
-                logger.info(
-                    "thesis break for %s widget=%s — auto-dispatch suppressed "
-                    "(OPTIONS_AUTO_DISPATCH_THESIS_BREAK=0)",
-                    underlying,
-                    widget_id,
-                )
-                continue
-            try:
-                asyncio.get_event_loop().create_task(
-                    dispatch_thesis_break_revision(
-                        underlying=underlying,
-                        widget_id=dispatch_widget_id,
-                        reasons=list(report.reasons or []),
-                        new_plan_widget_id=new_plan_widget_id,
-                    )
-                )
-            except RuntimeError:
-                asyncio.run(
-                    dispatch_thesis_break_revision(
-                        underlying=underlying,
-                        widget_id=dispatch_widget_id,
-                        reasons=list(report.reasons or []),
-                        new_plan_widget_id=new_plan_widget_id,
-                    )
-                )
+            result = dispatch_options_thesis_break(
+                underlying=underlying,
+                widget_id=widget_id,
+                reasons=list(report.reasons or []),
+                new_plan_widget_id=str(new_widget_id or "").strip() or None,
+            )
+            logger.info(
+                "thesis break dispatch for %s widget=%s: %s",
+                underlying,
+                widget_id,
+                result.get("status"),
+            )
         except Exception:
-            logger.debug("thesis break agent dispatch failed", exc_info=True)
+            logger.warning("thesis break agent dispatch failed for %s", underlying, exc_info=True)
 
     return {"skipped": False, "broken": broken, "refreshed": refreshed}
 

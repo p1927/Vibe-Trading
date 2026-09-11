@@ -2844,16 +2844,6 @@ export function Agent({
             </div>
           )}
 
-          {/* Persistent streaming pulse bar — always visible while agent is working */}
-          {status === "streaming" && (
-            <div className="flex items-center gap-2 px-1 pt-1">
-              <div className="h-0.5 flex-1 rounded-full bg-primary/20 overflow-hidden">
-                <div className="h-full w-1/3 bg-primary rounded-full animate-[pulse-slide_2s_ease-in-out_infinite]" />
-              </div>
-              <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">{t('agent.running')}</span>
-            </div>
-          )}
-
         </div>
 
         {/* Scroll to bottom button */}
