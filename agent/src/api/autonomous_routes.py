@@ -326,6 +326,12 @@ def commit_autonomous_agent_route(
             status_code=409,
             detail={
                 "status": "in_progress",
+                # `message` is the key the frontend's formatApiDetail renders; without it a
+                # double-clicked Commit toasted a bare "Request failed".
+                "message": (
+                    "This agent is still being created by an earlier request. "
+                    "Refresh the agent list in a moment."
+                ),
                 "detail": str(exc),
                 "proposal_id": body.proposal_id,
                 "hint": "an earlier commit of this proposal is still running; poll GET /autonomous-agents",

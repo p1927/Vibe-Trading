@@ -292,6 +292,9 @@ def test_commit_already_in_progress_is_409_not_a_client_error(
     detail = response.json()["detail"]
     assert detail["status"] == "in_progress"
     assert detail["proposal_id"] == "aap_slow"
+    # frontend formatApiDetail renders an object detail only through `message`; without it the
+    # proposal card toasted "Request failed" for this case.
+    assert "earlier request" in detail["message"]
 
     def _invalid(**kwargs):
         raise ValueError("proposal expired")
