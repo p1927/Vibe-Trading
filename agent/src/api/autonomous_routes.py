@@ -417,9 +417,40 @@ def resume_agent(
                     # "failed" and resets it to "running", so no manual
                     # reset is needed here.
                     schedule_agent_bootstrap(agent_id)
-        return result
+        return {**result, **_scheduler_state_for_resume()}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _scheduler_state_for_resume() -> Dict[str, Any]:
+    """The dispatch executor's state, attached to a resume response.
+
+    An agent resumed while the executor is stopped reports ``status: running`` with all its jobs
+    registered and receives no ticks at all — measured live 2026-09-07, with nothing on the agent
+    or the response saying so. Every process start brings the executor back stopped by design,
+    so after any restart resuming the agent alone is not enough. See
+    .claude/backlog/items/2026-09-06-boot-pause-under-reload.md.
+    """
+    from src.api.scheduled_routes import (
+        _get_scheduled_research_executor,
+        _scheduled_research_scheduler_enabled,
+    )
+
+    enabled = _scheduled_research_scheduler_enabled()
+    running = _get_scheduled_research_executor().is_running
+    state: Dict[str, Any] = {"scheduler": {"enabled": enabled, "running": running}}
+    if not enabled:
+        state["warning"] = (
+            "agent resumed, but the scheduled-job executor is disabled on this process "
+            "(VIBE_TRADING_ENABLE_SCHEDULER), so none of its jobs will dispatch"
+        )
+    elif not running:
+        state["warning"] = (
+            "agent resumed, but the scheduled-job executor is not running, so none of its jobs "
+            "will dispatch. POST /scheduled-runs/scheduler/resume to start it (every process "
+            "restart, including a dev --reload, brings it back stopped)"
+        )
+    return state
 
 
 @autonomous_router.post("/{agent_id}/stop")

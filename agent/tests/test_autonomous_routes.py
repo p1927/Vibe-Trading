@@ -218,6 +218,55 @@ def test_resume_reschedules_a_failed_bootstrap(
     )
 
 
+def test_resume_onto_a_stopped_executor_says_nothing_will_dispatch(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """2026-09-06-boot-pause-under-reload: after a restart, resuming the agent alone gave
+    `status: running` with all jobs registered and zero ticks, and nothing said so."""
+    import src.api.scheduled_routes as scheduled_routes
+    import src.scheduled_research.autonomous_agent_jobs as agent_jobs
+    from trade_integrations.autonomous_agents.store import save_agent
+
+    agent_id = "agent-resume-stopped-executor"
+    paused_agent = {
+        "id": agent_id,
+        "type": "autonomous_agent.instance",
+        "name": "test agent",
+        "status": "paused",
+        "pause_reason": "user",
+        "bootstrap_status": "done",
+        "vibe_session_id": "sess-1",
+        "symbols": ["RELIANCE"],
+        "execution_market": "IN",
+        "execution_backend": "paper",
+        "schedules": {},
+    }
+    save_agent(dict(paused_agent))
+    monkeypatch.setattr(agent_jobs, "register_agent_jobs", lambda agent: None)
+
+    class _StoppedExecutor:
+        is_running = False
+
+    monkeypatch.setattr(scheduled_routes, "_get_scheduled_research_executor", lambda: _StoppedExecutor())
+    monkeypatch.setattr(scheduled_routes, "_scheduled_research_scheduler_enabled", lambda: True)
+
+    body = client.post(f"/autonomous-agents/{agent_id}/resume").json()
+
+    assert body["scheduler"] == {"enabled": True, "running": False}
+    assert "/scheduled-runs/scheduler/resume" in body["warning"]
+
+    class _RunningExecutor:
+        is_running = True
+
+    monkeypatch.setattr(scheduled_routes, "_get_scheduled_research_executor", lambda: _RunningExecutor())
+    save_agent(dict(paused_agent))
+
+    body = client.post(f"/autonomous-agents/{agent_id}/resume").json()
+
+    assert body["scheduler"] == {"enabled": True, "running": True}
+    assert "warning" not in body
+
+
 def test_every_mutating_route_requires_local_or_auth() -> None:
     """Mechanical regression test for
     `.claude/backlog/items/2026-09-07-approve-plan-route-no-auth.md` (and the earlier

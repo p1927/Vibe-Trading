@@ -283,6 +283,14 @@ def _day_matches(dt: date, doms: set[int] | None, months: set[int] | None, dows:
     return day_of_month_matches and day_of_week_matches
 
 
+#: Wall-clock ms when this process imported the executor, i.e. when it booted. Reported by
+#: ``liveness()`` so a caller can tell "never resumed since this process started" from "resumed,
+#: then reset by a restart": under ``trade dev --reload`` any code save restarts the process and
+#: the executor always boots stopped. See
+#: .claude/backlog/items/2026-09-06-boot-pause-under-reload.md.
+_PROCESS_STARTED_MS = int(time.time() * 1000)
+
+
 class ScheduledResearchExecutor:
     """Background poller that dispatches due scheduled research jobs."""
 
@@ -390,6 +398,10 @@ class ScheduledResearchExecutor:
         self._startup_backlog_deferred = False
         self._watchdog_task: asyncio.Task | None = None
         self._executor_tick_count = 0
+        # How many times start() actually started the loop in this process, and when last
+        # (wall clock). With _PROCESS_STARTED_MS these say which "not running" a caller sees.
+        self._start_count = 0
+        self._last_started_ms: int | None = None
         # The operational tier's own loop/task, over the same store — see
         # `_run_operational`/`_operational_tick`. Split from the main loop so a long
         # collection-job dispatch can never hold an autonomous agent's watch/news/
@@ -426,6 +438,19 @@ class ScheduledResearchExecutor:
     def is_operational_running(self) -> bool:
         """Return whether the operational tier's own loop task is active."""
         return self._operational_task is not None and not self._operational_task.done()
+
+    def _restart_fields(self) -> dict[str, Any]:
+        """Process start time and resume history, all wall-clock epoch ms.
+
+        ``start_count == 0`` with ``running: false`` means nobody has resumed the executor since
+        this process started; a resume issued before ``process_started_at`` was wiped by that
+        restart. ``start_count > 0`` means it was resumed here and has since stopped.
+        """
+        return {
+            "process_started_at": _PROCESS_STARTED_MS,
+            "start_count": self._start_count,
+            "last_started_at": self._last_started_ms,
+        }
 
     def liveness(self, now_ms: int | None = None) -> dict[str, Any]:
         """Evidence that the dispatch loop is progressing, not merely alive.
@@ -497,6 +522,7 @@ class ScheduledResearchExecutor:
             # be reported as "nothing overdue" either — None is distinguishable from 0.
             logger.warning("liveness store read failed", exc_info=True)
             return {
+                **self._restart_fields(),
                 "running": self.is_running,
                 "tick_count": self._executor_tick_count,
                 "last_tick_started_at": self._last_tick_started_ms,
@@ -516,6 +542,7 @@ class ScheduledResearchExecutor:
                 },
             }
         return {
+            **self._restart_fields(),
             "running": self.is_running,
             "tick_count": self._executor_tick_count,
             "last_tick_started_at": self._last_tick_started_ms,
@@ -549,6 +576,8 @@ class ScheduledResearchExecutor:
             return
         self._stopping = False
         self._shutdown_recovery_done = False
+        self._start_count += 1
+        self._last_started_ms = int(time.time() * 1000)
         self.recover_stale_running(self._now_fn(), startup=True)
         self._wakeup = asyncio.Event()
         self._operational_wakeup = asyncio.Event()
