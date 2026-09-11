@@ -510,7 +510,7 @@ def _count_verified_headlines_since(ticker: str, since: datetime) -> int:
 
 def _material_news_count(ticker: str) -> int:
     try:
-        from trade_integrations.dataflows.company_research.india_symbols import india_index_tickers
+        from trade_integrations.dataflows.entity_registry import india_index_tickers
         from trade_integrations.monitor.news_watcher import count_material_headlines_since
         from trade_integrations.monitor.service import MonitorService
 
