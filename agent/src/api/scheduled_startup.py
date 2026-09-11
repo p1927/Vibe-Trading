@@ -190,7 +190,10 @@ def boot_scheduled_research_stack(get_store) -> None:
         if any(recovery.values()):
             logger.info("autonomous agent recovery: %s", recovery)
     except Exception:
-        logger.debug("autonomous agent recovery on startup failed", exc_info=True)
+        # This pass is the only thing that clears a stale agent.streaming=True and
+        # reconciles positions; a silent debug-level failure can leave an agent stuck
+        # skipping every alert as turn_in_flight. Match the boot-pause call site above.
+        logger.exception("autonomous agent recovery on startup failed")
     try:
         if get_env_config().trade.stack_dev.strip().lower() in {"1", "true", "yes", "on"}:
             logger.debug("skipping Nautilus watch ensure in dev mode (use: trade reload nautilus)")

@@ -68,7 +68,11 @@ def list_autonomous_agents() -> Dict[str, Any]:
 
         run_autonomous_agent_recovery()
     except Exception:
-        logger.debug("autonomous agent recovery failed", exc_info=True)
+        # This pass is the only thing that clears a stale agent.streaming=True and
+        # reconciles positions; a silent debug-level failure can leave an agent stuck
+        # skipping every alert as turn_in_flight. Match the boot-pause call site in
+        # scheduled_startup.py.
+        logger.exception("autonomous agent recovery failed")
 
     try:
         from src.scheduled_research.autonomous_agent_jobs import finalize_infra_heal
