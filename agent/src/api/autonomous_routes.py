@@ -655,6 +655,12 @@ def next_simulation_route(
     from src.scheduled_research.autonomous_agent_jobs import register_agent_jobs
 
     try:
+        # This continue-simulation flow is driven from the agent's own page, not an
+        # orchestrator chat turn — `next_simulation_config` deliberately carries no
+        # orchestrator_session_id, and the frontend never sends `req.session_id` either.
+        # save_proposal() now refuses a null session (2026-09-11-save-proposal-accepts-null-
+        # session), so stamp an explicit non-chat marker rather than leaving it null.
+        config.setdefault("orchestrator_session_id", req.session_id or f"system:next-simulation:{agent_id}")
         proposal = propose_autonomous_agent(**config)
         proposal_id = str(proposal.get("proposal_id") or "")
         if proposal.get("status") != "ready" or not proposal_id:
