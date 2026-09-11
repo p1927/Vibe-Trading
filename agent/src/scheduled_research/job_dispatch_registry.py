@@ -103,6 +103,15 @@ def _load_execution_advisor():
     return EXECUTION_ADVISOR_JOB_TYPES, dispatch_execution_advisor_job
 
 
+def _load_decision_grading():
+    from src.scheduled_research.decision_grading_jobs import (
+        DECISION_GRADING_JOB_TYPES,
+        dispatch_decision_grading_job,
+    )
+
+    return DECISION_GRADING_JOB_TYPES, dispatch_decision_grading_job
+
+
 # Order matters only in that it's the sequence checked; job-type sets are
 # disjoint in practice so it has no behavioral effect today.
 _DISPATCH_LOADERS: tuple[Callable[[], tuple[frozenset, Callable[..., Awaitable[None]]]], ...] = (
@@ -117,6 +126,7 @@ _DISPATCH_LOADERS: tuple[Callable[[], tuple[frozenset, Callable[..., Awaitable[N
     _load_dst_eval,
     _load_factor_health,
     _load_execution_advisor,
+    _load_decision_grading,
 )
 
 

@@ -253,7 +253,9 @@ def _trade_plan_widget_frame_from_tool_result(event: Any) -> Optional[str]:
 
         notify_trade_plan_widget(session_id, widget)
     except Exception:
-        logger.debug("plan widget hook failed for session %s", session_id, exc_info=True)
+        # Binding failure must be visible (2026-09-07-plan-widget-never-bound); the frame is
+        # still forwarded so the user's stream is not cut off by a binder error.
+        logger.exception("plan widget hook failed for session %s", session_id)
     return frame
 
 

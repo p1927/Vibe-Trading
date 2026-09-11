@@ -156,6 +156,10 @@ def boot_scheduled_research_stack(get_store) -> None:
     from src.scheduled_research.execution_advisor_jobs import register_default_execution_advisor_jobs
 
     register_default_execution_advisor_jobs(get_store())
+    # No enable flag either: the one grader for every agent on this tier (Trade DECISIONS D55).
+    from src.scheduled_research.decision_grading_jobs import register_default_decision_grading_jobs
+
+    register_default_decision_grading_jobs(get_store())
     register_persisted_autonomous_agent_jobs()
     # Recording-wake poller: unlike the general executor below, this starts
     # unconditionally (not gated by the scheduler enable/resume flag) — see
