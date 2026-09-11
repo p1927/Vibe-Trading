@@ -536,6 +536,24 @@ def test_list_includes_section_derived_from_job_type(
     assert body["hub-job"]["section"] == "hub"
 
 
+def test_list_marks_monitor_jobs_from_the_job_type_declaration(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    """Trade's check_dev_ports fails on a failed monitor and only warns on anything else; it
+    reads `monitor` from here, so the declaration lives with the job type, not in the checker."""
+    _seed(store, id="factor-health", config={"job_type": "factor_health"})
+    _seed(store, id="factor-health-live", config={"job_type": "factor_health_live"})
+    _seed(store, id="ingest", config={"job_type": "hub_news_ingest"})
+    _seed(store, id="ad-hoc", config={})
+
+    body = {row["id"]: row for row in client.get("/scheduled-runs").json()}
+
+    assert body["factor-health"]["monitor"] is True
+    assert body["factor-health-live"]["monitor"] is True
+    assert body["ingest"]["monitor"] is False
+    assert body["ad-hoc"]["monitor"] is False
+
+
 def test_list_surfaces_dispatch_blocked_reason_for_due_collection_job(
     client: TestClient, store: ScheduledResearchJobStore, monkeypatch: pytest.MonkeyPatch
 ):

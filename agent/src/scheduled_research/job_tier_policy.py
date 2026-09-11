@@ -177,6 +177,25 @@ def is_safe_to_auto_resume(job_type: str) -> bool:
     return job_type in SAFE_TO_AUTO_RESUME_JOB_TYPES
 
 
+#: Job types whose whole job is to notice that something else broke. A failed run of one of
+#: these means nothing is watching what it watches, so Trade's `.claude/check_dev_ports.py`
+#: FAILS on it; a failed run of any other job type only WARNS. Served per job as
+#: `ScheduledRunResponse.monitor` so the checker never carries its own list (Trade DECISIONS
+#: D31). Same narrow, per-job-with-evidence rule as `SAFE_TO_AUTO_RESUME_JOB_TYPES` above.
+#: See `.claude/backlog/items/2026-09-07-factor-health-job-failed-on-a-signature-it-no-longer-has.md`.
+MONITOR_JOB_TYPES = frozenset(
+    {
+        JOB_TYPE_FACTOR_HEALTH,
+        JOB_TYPE_FACTOR_HEALTH_LIVE,
+    }
+)
+
+
+def is_monitor_job(job_type: str) -> bool:
+    """Whether a failed run of this job type means a monitor is down (see ``MONITOR_JOB_TYPES``)."""
+    return job_type in MONITOR_JOB_TYPES
+
+
 # The genuinely operational/session-scoped types called out in this module's own docstring —
 # never collection work, dispatched fast (0.1-19s observed live) and on a short cadence an
 # autonomous agent actually depends on (autonomous_agent_watch's 7-minute default). Given their

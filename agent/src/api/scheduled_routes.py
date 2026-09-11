@@ -355,6 +355,7 @@ class ScheduledRunResponse(BaseModel):
     last_verdict: Optional[Dict[str, Any]] = None
     section: str = "general"
     dispatch_blocked_reason: Optional[str] = None
+    monitor: bool = False
 
 
 class ScheduledJobPreviewResponse(BaseModel):
@@ -383,6 +384,7 @@ def _job_to_response(job: ScheduledResearchJob) -> "ScheduledRunResponse":
     Returns:
         The response model for that job.
     """
+    from src.scheduled_research.job_tier_policy import is_monitor_job
     from src.scheduled_research.sections import job_section
 
     payload = job.to_flat_dict()
@@ -396,6 +398,7 @@ def _job_to_response(job: ScheduledResearchJob) -> "ScheduledRunResponse":
         delivery_updated_at=delivery.get("updated_at"),
         section=job_section(str(job.config.get("job_type") or "")),
         dispatch_blocked_reason=_dispatch_blocked_reason(job),
+        monitor=is_monitor_job(str(job.config.get("job_type") or "")),
         delivery_attempts=delivery.get("attempts", 0),
         delivery_provider_message_id=delivery.get("provider_message_id"),
     )
