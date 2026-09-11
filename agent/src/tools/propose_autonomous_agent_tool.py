@@ -48,8 +48,13 @@ class ProposeAutonomousAgentTool(BaseTool):
             },
             "allowed_instruments": {
                 "type": "array",
-                "items": {"type": "string", "enum": ["equity", "options"]},
-                "description": "equity for stocks, options for F&O — omit to auto-infer from mandate.",
+                # Same values as trade_integrations proposals.ALLOWED_INSTRUMENT_VALUES and the
+                # openalgo MCP tool; "futures" is real (intent_merge emits it).
+                "items": {"type": "string", "enum": ["equity", "options", "futures"]},
+                "description": (
+                    "equity for stocks, options for F&O options, futures for F&O futures. "
+                    "Omit to auto-infer from the mandate; an invalid value is rejected."
+                ),
             },
             "session_id": {"type": "string", "description": "Orchestrator vibe session id (auto-filled)."},
         },
