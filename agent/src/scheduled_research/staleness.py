@@ -70,7 +70,6 @@ _JOB_DISPATCH_TIMEOUT_MS: dict[str, int] = {
     "autonomous_agent_news": 5 * 60 * 1000,
     "autonomous_agent_strategy_review": 5 * 60 * 1000,
     "autonomous_agent_strategy_snapshot": 5 * 60 * 1000,
-    "autonomous_agent_decision_eval": 5 * 60 * 1000,
     "recording_wake": 5 * 60 * 1000,
     "options_position_monitor": 5 * 60 * 1000,
     # Listing a type here also makes it eligible for the dispatch-timeout cancel
