@@ -6,6 +6,7 @@ import { RepeatIntervalPicker } from "@/components/RepeatIntervalPicker";
 import { NewsPipelineGraph } from "@/components/NewsPipelineGraph";
 import { EventsCalendar } from "@/components/news/EventsCalendar";
 import { FactorRegistryGaps } from "@/components/news/FactorRegistryGaps";
+import { NewsPipelineStatusStrip } from "@/components/news/NewsPipelineStatusStrip";
 
 type NewsFilter = "all" | "staging" | "distilled" | "discarded";
 
@@ -1331,6 +1332,7 @@ export function Hub() {
 
         {newsView === "pipeline" ? (
           <div className="space-y-3">
+            <NewsPipelineStatusStrip status={hub?.news_pipeline} />
             <NewsPipelineGraph entityId="NIFTY" />
             {/* Sits under the pipeline graph because it is pipeline output: the queue is
                 refreshed by process_staging_batch, not by this page. */}

@@ -4336,6 +4336,69 @@ export interface ReplayCalendarResponse {
 // stock_history refactor; mirrors the backend response models.
 // ============================================================
 
+/**
+ * `hub_news_pipeline_status()` — carried as `HubStatus.news_pipeline` on every /trade/hub/status
+ * call. Typed field by field so a backend rename breaks the build instead of silently emptying
+ * a panel (2026-09-07-hub-news-pipeline-status-transported-unrendered).
+ *
+ * Rendered by: `factor_registry_gaps` → Pipeline-view tab badge (Hub.tsx); `llm_wiki`,
+ * `distilled_event_count`, `relevance_gate_enabled` → `NewsPipelineStatusStrip`.
+ * Deliberately NOT rendered from here: `pipeline_paused`/`pause_reason`/`migration`/`worker_last`
+ * — the Hub page already shows those from `news_staging`/`gates`/`news_events_migration`; the
+ * copies here exist for the ingest/verify-script callers of the same function.
+ */
+export interface HubNewsPipelineStatus {
+  ticker?: string;
+  ssot?: string;
+  /** "summary" on the 30s poll (no network); "full" adds the LLM-Wiki probes. */
+  detail?: "summary" | "full";
+  omitted_blocks?: string[];
+  entity_pipeline_enabled?: boolean;
+  pipeline_paused?: boolean;
+  pause_reason?: string;
+  minimax_configured?: boolean;
+  generative_adapter_configured?: boolean;
+  staging?: Record<string, unknown>;
+  discarded_count?: number;
+  relevance_gate_enabled?: boolean;
+  distilled_event_count?: number;
+  worker_last?: Record<string, unknown>;
+  market_context?: Record<string, unknown>;
+  migration?: { needed?: boolean; state?: Record<string, unknown> };
+  factor_registry_gaps?: {
+    pending_count?: number;
+    accepted_count?: number;
+    ignored_count?: number;
+    error?: string;
+  };
+  llm_wiki?: {
+    base_url?: string;
+    project_dir?: string;
+    project_id?: string;
+    /** Summary mode: `{probed: false, reason}` — "not checked", not "down". */
+    health?: { probed?: boolean; reason?: string; ok?: boolean; reachable?: boolean; error?: string };
+    path_alignment?: {
+      aligned?: boolean;
+      expected_path?: string;
+      registered_path?: string;
+      project_name?: string;
+      project_id?: string;
+      current?: boolean;
+    };
+    embedding_available?: boolean;
+    cluster_backend?: string | null;
+    local_source_md_count?: number;
+    raw_sources_dir?: string;
+    wiki_page_count?: number;
+    registered_source_count?: number;
+    unresolved_reviews_count?: number;
+    unresolved_reviews_count_capped?: boolean;
+    search_probe?: { ok?: boolean; mode?: string; hits?: number; token_hits?: number; vector_hits?: number };
+    setup_hint?: string;
+  };
+  error?: string;
+}
+
 export interface HubMarketDataSpot {
   symbol: string;
   exchange: string;
@@ -5496,20 +5559,8 @@ export interface HubStatusPayload {
     mode?: string;
     stages?: Array<Record<string, unknown>>;
   };
-  /**
-   * `hub_news_pipeline_status()` output. Reaches the browser on every /trade/hub/status call.
-   * Still largely untyped and unrendered -- see the backlog item on this payload being
-   * transported and discarded. `factor_registry_gaps` is typed because the Hub page renders a
-   * review badge from it.
-   */
-  news_pipeline?: Record<string, unknown> & {
-    factor_registry_gaps?: {
-      pending_count?: number;
-      accepted_count?: number;
-      ignored_count?: number;
-      error?: string;
-    };
-  };
+  /** `hub_news_pipeline_status()` output (summary mode on the 30s poll). */
+  news_pipeline?: HubNewsPipelineStatus;
   news_staging?: {
     entity_pipeline_enabled?: boolean;
     pipeline_paused?: boolean;
