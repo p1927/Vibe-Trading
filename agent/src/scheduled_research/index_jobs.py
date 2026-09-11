@@ -1334,10 +1334,10 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "mode": "full",
                 "ticker": "SPX",
                 "market": "US",
-                # Explicit list, not "all" — excludes moneycontrol/searxng_sector/
-                # searxng_constituent/watcher, which are Nifty-50-specific sources
+                # Explicit list, not "all" — excludes moneycontrol/web_search_sector/
+                # web_search_constituent/watcher, which are Nifty-50-specific sources
                 # with no US equivalent yet.
-                "sources": "rss,searxng,searxng_global,marketaux,currents",
+                "sources": "rss,web_search,web_search_global,marketaux,currents",
                 "lookback_days": 3,
                 "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
@@ -1385,9 +1385,9 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 # coverage at all on this account/plan) — unlike US, there's no
                 # keyword fallback wired for this yet (see this job's backlog
                 # item for the open follow-up). SearXNG's market-aware query
-                # widening (same _ingest_searxng_ticker/_ingest_searxng_market
+                # widening (same _ingest_web_search_ticker/_ingest_web_search_market
                 # path proven for US) is the real source here.
-                "sources": "rss,searxng,searxng_global",
+                "sources": "rss,web_search,web_search_global",
                 "lookback_days": 3,
                 "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
@@ -1432,7 +1432,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 # articles (Evergrande, Alibaba share placement, Shein IPO,
                 # etc.), not empty like JP's country query. No marketaux
                 # (not configured/no key).
-                "sources": "rss,searxng,searxng_global,currents",
+                "sources": "rss,web_search,web_search_global,currents",
                 "lookback_days": 3,
                 "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
@@ -1472,7 +1472,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "mode": "full",
                 "ticker": "MOEX",
                 "market": "RU",
-                # No searxng/searxng_global: live-tested 2026-08-25 with two
+                # No searxng/web_search_global: live-tested 2026-08-25 with two
                 # different query phrasings, both returned almost entirely
                 # generic Russia country-profile pages (Wikipedia, Britannica,
                 # Al Jazeera) or off-topic contamination (chicken-soup recipes,

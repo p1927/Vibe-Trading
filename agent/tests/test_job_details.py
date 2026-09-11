@@ -39,7 +39,9 @@ def test_hub_news_ingest_preview_notes_non_rss_sources_without_enumerating_them(
         {"market": "IN", "ticker": "NIFTY", "mode": "full", "sources": "rss,searxng"}
     )
 
-    assert "searxng" in result["note"]
+    # "searxng" is the deprecated alias for "web_search" (2026-09-03 rename); the note names the
+    # resolved source.
+    assert "web_search" in result["note"]
 
 
 def test_hub_capture_factor_snapshot_preview_lists_only_due_capture_enabled_entities(
