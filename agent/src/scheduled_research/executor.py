@@ -1179,6 +1179,12 @@ class ScheduledResearchExecutor:
         dispatch_error: Exception | None = None
         session_id: str | None = None
         was_cancelled = False
+        # Set when the dispatch task itself is cancelled (executor shutdown past the drain grace,
+        # or any other task.cancel()). The CancelledError still propagates — no completion is
+        # persisted, recover_all_running_on_shutdown() owns the record — but the dispatch-done
+        # log line and observability events below must not report it as completed. See
+        # .claude/backlog/items/2026-09-08-dispatch-done-log-says-completed-for-a-cancelled-run.md
+        interrupted = False
         try:
             # Bind this job's dispatch budget to the context BEFORE dispatching, so every LLM
             # retry ladder underneath it bounds itself by what is left (sidecar:
@@ -1204,6 +1210,7 @@ class ScheduledResearchExecutor:
             dispatch_error = TimeoutError(f"dispatch timed out after {timeout_ms}ms")
             job.consecutive_failures = int(job.consecutive_failures or 0) + 1
         except asyncio.CancelledError:
+            interrupted = True
             raise
         except Exception as exc:
             try:
@@ -1257,7 +1264,13 @@ class ScheduledResearchExecutor:
             finish_named_task(task_id)
             elapsed_ms = int((time.monotonic() - started) * 1000)
             record_dispatch_duration(job, elapsed_ms)  # D11 expected-runtime history
-            _final_status = JobStatus.COMPLETED if dispatch_error is None else JobStatus.FAILED
+            # A cancelled dispatch — task cancellation (`interrupted`) or a PipelineCancelledError
+            # (`was_cancelled`) — reports `cancelled`, not `completed`: `dispatch_error is None`
+            # alone cannot tell "finished cleanly" from "was stopped before it could fail".
+            if interrupted or was_cancelled:
+                _final_status = JobStatus.CANCELLED
+            else:
+                _final_status = JobStatus.COMPLETED if dispatch_error is None else JobStatus.FAILED
             logger.info(
                 "scheduled research dispatch done job=%s type=%s status=%s (%.1fs)",
                 job.id,
