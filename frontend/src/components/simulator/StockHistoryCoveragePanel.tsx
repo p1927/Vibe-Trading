@@ -99,7 +99,7 @@ const SHORT_LABEL: Record<string, string> = {
   macro_india_vix: "India VIX",
   valuation_nifty_pe: "NIFTY PE",
   valuation_nifty_pb: "NIFTY PB",
-  valuation_nifty_dy: "NIFTY DivY",
+  valuation_nifty_dividend_yield: "NIFTY DivY",
   rate_repo_rate: "Repo",
   rate_india_10y: "India 10Y",
   rate_india_91d_tbill: "India 91d",
