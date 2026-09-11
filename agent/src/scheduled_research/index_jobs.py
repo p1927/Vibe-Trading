@@ -677,6 +677,10 @@ def run_global_macro_eod_refresh_job(config: dict[str, Any] | None = None) -> di
     backlog item's "Remaining follow-ups"). Each series is fetched inside
     its own try/except so one bad yfinance call (e.g. a `sp500` rate limit)
     can't block the others from refreshing.
+
+    Then runs `StockHistory.refresh_global_macro_factors()` (D59): the unified
+    engine's refresh of every global-macro factor it owns into that factor's
+    declared home, which `/history/global_macro` serves for those series.
     """
     _ensure_trade_integrations_on_path()
     from trade_integrations.stock_history.api import StockHistory
@@ -696,7 +700,24 @@ def run_global_macro_eod_refresh_job(config: dict[str, Any] | None = None) -> di
         results[series] = result
         if isinstance(result, dict) and result.get("status") == "error":
             had_errors = True
-    return {"status": "error" if had_errors else "ok", "had_errors": had_errors, "series": results}
+    # D59: the same job also runs the unified engine's scheduled refresh of the global-macro
+    # factors it owns (acquire_and_persist over the lookback window, into each factor's declared
+    # home). That home is what /history/global_macro now serves for those series, and before this
+    # nothing refreshed it on a schedule. The legacy per-series loop above is kept (D54): it still
+    # refreshes global_macro_store, which the factor bindings themselves read from the vendor.
+    try:
+        factors = sh.refresh_global_macro_factors(lookback_days=lookback_days)
+    except Exception as exc:
+        logger.warning("global macro unified factor refresh failed: %s", exc)
+        factors = {"status": "error", "had_errors": True, "reason": str(exc)}
+    if factors.get("had_errors"):
+        had_errors = True
+    return {
+        "status": "error" if had_errors else "ok",
+        "had_errors": had_errors,
+        "series": results,
+        "factors": factors,
+    }
 
 
 def run_oi_snapshot_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
