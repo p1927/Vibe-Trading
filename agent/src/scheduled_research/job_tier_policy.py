@@ -181,7 +181,7 @@ def is_safe_to_auto_resume(job_type: str) -> bool:
 #: these means nothing is watching what it watches, so Trade's `.claude/check_dev_ports.py`
 #: FAILS on it; a failed run of any other job type only WARNS. Served per job as
 #: `ScheduledRunResponse.monitor` so the checker never carries its own list (Trade DECISIONS
-#: D31). Same narrow, per-job-with-evidence rule as `SAFE_TO_AUTO_RESUME_JOB_TYPES` above.
+#: D32). Same narrow, per-job-with-evidence rule as `SAFE_TO_AUTO_RESUME_JOB_TYPES` above.
 #: See `.claude/backlog/items/2026-09-07-factor-health-job-failed-on-a-signature-it-no-longer-has.md`.
 MONITOR_JOB_TYPES = frozenset(
     {
