@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from src.config.accessor import get_env_config, get_env_or
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.run_outcome import raise_if_run_had_errors
 from src.scheduled_research.staleness import EVAL_JOB_DISPATCH_TIMEOUT_MS
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
@@ -140,7 +141,13 @@ def _compact_result_summary(result: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(result, dict):
         return {}
     summary: dict[str, Any] = {}
-    for key in ("mode", "skipped", "pipeline_paused", "pause_reason", "had_errors", "status", "error"):
+    for key in (
+        "mode", "skipped", "pipeline_paused", "pause_reason", "had_errors", "status", "error",
+        # Golden-eval summaries: a case skipped for overrunning its budget must be visible in
+        # the job record, not only in MLflow (eval_support.case_budget).
+        "article_count", "case_count", "scored_count", "skipped_case_count", "skipped_cases",
+        "mlflow_run_id",
+    ):
         if key in result:
             summary[key] = result[key]
     staging = result.get("staging")
@@ -1079,11 +1086,17 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         summary = run_news_quality_eval_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("news quality golden eval completed for job %s: %s", job.id, summary)
+        # The handler catches its own error and *returns* had_errors. Without this raise, the
+        # executor recorded the run `completed` with failure_kind None. Observed on release:
+        # 09-08 (MLflow schema error) and 09-10 ("No Experiment with id=2 exists").
+        # See .claude/backlog/items/2026-09-11-job-errors-recorded-as-success.md.
+        raise_if_run_had_errors(job, summary, "news quality golden eval")
         return
     if job_type == JOB_TYPE_NEWS_DEDUP_QUALITY_EVAL:
         summary = run_news_dedup_quality_eval_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("news dedup quality golden eval completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "news dedup quality golden eval")
         return
     if job_type == JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH:
         summary = run_global_macro_eod_refresh_job(job.config)

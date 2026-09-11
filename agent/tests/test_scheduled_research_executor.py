@@ -1064,7 +1064,11 @@ def test_index_plan_refresh_uses_shorter_stale_threshold(
     heavy.config = {"job_type": "index_calibration"}
     now_ms = 11 * 60 * 1000
 
-    assert stale_running_ms_for(poll) == 600_000
+    # Still far shorter than a heavy job's window, but floored at its own dispatch timeout
+    # (10 min) + the 60 s watchdog buffer: an unfloored 10-minute window equalled the timeout,
+    # so the watchdog could recover the run before its own timeout/outcome was written.
+    # See .claude/backlog/items/2026-09-11-job-errors-recorded-as-success.md.
+    assert stale_running_ms_for(poll) == 600_000 + 60_000
     assert is_job_stale_running(poll, now_ms) is True
     assert is_job_stale_running(heavy, now_ms) is False
     assert dispatch_timeout_ms_for(poll) == 10 * 60 * 1000

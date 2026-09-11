@@ -106,8 +106,13 @@ def recover_persisted_scheduler_jobs(
             now_ms,
             auto_pause_reason=(f"auto-paused: {reason}" if pause_this and reason else None),
         )
-        if reason and not job.last_error:
-            job.last_error = reason
+        # A job found RUNNING here never wrote its own outcome: its run failed. Record it as one,
+        # overwriting any older error, so D32 sees it. It used to set `last_error` only when
+        # empty and left failure_kind/consecutive_failures untouched.
+        # See .claude/backlog/items/2026-09-11-job-errors-recorded-as-success.md.
+        from src.scheduled_research.run_outcome import record_interrupted_run
+
+        record_interrupted_run(job, reason or f"recovered from RUNNING ({mode})")
         recovered += 1
         logger.warning(
             "recovered scheduled research job %s from running to pending (%s, next_run_at=%s)",

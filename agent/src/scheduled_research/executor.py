@@ -39,6 +39,7 @@ from src.scheduled_research.store import ScheduledResearchJobStore
 from src.scheduled_research import stuck_jobs
 # Fork-only sidecar: D11 shortest-expected-runtime-first slot admission (docs/DECISIONS.md).
 from src.scheduled_research.dispatch_admission import DispatchPool, record_dispatch_duration
+from src.scheduled_research.run_outcome import record_interrupted_run
 # Stale-run detection and watchdog tuning live in staleness.py (a file we
 # fully own) and are re-exported here so this module's existing internal
 # call sites and external importers (lifecycle.py, index_prediction_jobs.py,
@@ -101,10 +102,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_TICK_INTERVAL_MS = 60 * 1000
 SCHEDULER_ENABLED_ENV = "VIBE_TRADING_ENABLE_SCHEDULER"
 LAST_RESULT_CONFIG_KEY = "_last_result_summary"
-_RECOVERY_ERROR_MARKERS = (
-    "recovered on stack boot",
-    "recovered on shutdown",
-)
 
 _MAX_PERSISTED_ERROR_CHARS = 1000
 
@@ -770,8 +767,10 @@ class ScheduledResearchExecutor:
                     exc_info=True,
                 )
                 job.next_run_at = now + self._tick_interval_ms
-            if not job.last_error:
-                job.last_error = "recovered on executor shutdown"
+            # Its dispatch was cancelled before writing an outcome: a failed run. It used to get
+            # only a `last_error` note, and only when the field was empty, so an older run's error
+            # survived and D32 saw nothing (run_outcome.py).
+            record_interrupted_run(job, "recovered on executor shutdown")
             if auto_pause_reason and not job.paused:
                 job.paused = True
                 job.auto_paused_reason = auto_pause_reason
@@ -958,6 +957,20 @@ class ScheduledResearchExecutor:
                 continue
             if not startup and not is_job_stale_running(job, now):
                 continue
+            # The run never wrote its own outcome, and after this reset its real timeout/failure
+            # write would be refused by `_persist_completion` (record no longer RUNNING). So record
+            # the failure here, or it is lost. Before this, the job read as healthy: D32 saw
+            # nothing, and a real dispatch timeout was discarded on 2026-09-10.
+            # See .claude/backlog/items/2026-09-11-job-errors-recorded-as-success.md.
+            if startup:
+                reason = "recovered on executor start: run was still RUNNING when the previous process ended"
+            else:
+                started_at = job.last_run_at if job.last_run_at is not None else job.created_at
+                reason = (
+                    f"recovered stale: no outcome {now - started_at}ms after dispatch start "
+                    f"(watchdog threshold {stale_running_ms_for(job)}ms)"
+                )
+            record_interrupted_run(job, reason)
             job.status = JobStatus.PENDING
             try:
                 job.next_run_at = next_due(job.schedule, now)
@@ -1167,7 +1180,14 @@ class ScheduledResearchExecutor:
             )
             return
 
-        if job.last_error and any(marker in job.last_error for marker in _RECOVERY_ERROR_MARKERS):
+        # A `last_error` with no failure state behind it did not come from the run starting now,
+        # so it must not survive into this run's record. Two sources: history a resume keeps on
+        # purpose (pause_control), and an old cancel note. An error that IS backed by a failure
+        # (failure_kind set) stays visible until this run's own outcome overwrites it, so D32
+        # never shows a live failure with no error. This replaces a substring match on two
+        # recovery-note markers, which let every other stale error through.
+        # See .claude/backlog/items/2026-09-11-job-errors-recorded-as-success.md.
+        if job.last_error and not job.failure_kind:
             job.last_error = None
 
         job.status = JobStatus.RUNNING
@@ -1376,6 +1396,12 @@ class ScheduledResearchExecutor:
             barren_collection = isinstance(dispatch_error, HubNewsIngestCollectedNothingError)
             job.failure_kind = "barren_collection" if barren_collection else "dispatch"
             job.last_error = _persisted_error(dispatch_error)
+            # A handler that attached its summary and then failed on it (run_outcome.
+            # raise_if_run_had_errors) should leave *that* summary on the record. Without this,
+            # the scratch key rode along in config and the previous run's summary stayed visible.
+            raw_summary = job.config.pop(LAST_RESULT_CONFIG_KEY, None)
+            if isinstance(raw_summary, dict):
+                job.last_result_summary = raw_summary
             if not barren_collection and job.consecutive_failures >= self._max_consecutive_failures:
                 # A recurring job (every job in this store carries a schedule)
                 # must not go terminal here: JobStatus.FAILED is excluded from
