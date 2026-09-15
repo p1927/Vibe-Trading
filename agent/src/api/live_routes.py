@@ -764,7 +764,11 @@ def register_live_routes(
         """
         from src.live.halt import halt_flag_set
 
-        all_brokers = sorted(set(_known_live_brokers()) | set(_live_broker_sdk_connectors()))
+        # Profile discovery and the per-broker state reads below are filesystem I/O;
+        # /live/status is polled every 15s by several panels, so keep them off the loop.
+        all_brokers = sorted(
+            set(_known_live_brokers()) | set(await asyncio.to_thread(_live_broker_sdk_connectors))
+        )
 
         if broker is not None:
             target = broker.strip().lower()
@@ -789,7 +793,7 @@ def register_live_routes(
 
                 live_profiles = [
                     profile
-                    for profile in list_profiles()
+                    for profile in await asyncio.to_thread(list_profiles)
                     if profile.connector == key and profile.environment == "live"
                 ]
                 if live_profiles:
@@ -908,22 +912,31 @@ def register_live_routes(
                 except Exception:  # noqa: BLE001 - status must never raise
                     sdk_metadata = {}
 
+            oauth_present, mandate_state, runner_state, halted = await asyncio.to_thread(
+                lambda: (
+                    _oauth_token_present(key),
+                    h._active_mandate_state(key),
+                    _runner_liveness_state(key),
+                    halt_flag_set(broker=key),
+                )
+            )
             statuses.append(
                 LiveBrokerStatus(
                     auth=BrokerAuthState(
                         broker=key,
-                        oauth_token_present=_oauth_token_present(key),
+                        oauth_token_present=oauth_present,
                         is_live_broker=key in known,
                         transport=transport,
                         **sdk_metadata,
                     ),
-                    mandate=h._active_mandate_state(key),
-                    runner=_runner_liveness_state(key),
-                    halted=halt_flag_set(broker=key),
+                    mandate=mandate_state,
+                    runner=runner_state,
+                    halted=halted,
                 )
             )
 
-        return LiveStatusResponse(global_halted=halt_flag_set(broker=None), brokers=statuses)
+        global_halted = await asyncio.to_thread(halt_flag_set, broker=None)
+        return LiveStatusResponse(global_halted=global_halted, brokers=statuses)
 
     @app.post("/live/authorize", dependencies=[Depends(require_auth)])
     async def live_authorize_endpoint(payload: LiveAuthorizeRequest):

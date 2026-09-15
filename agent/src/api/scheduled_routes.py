@@ -560,9 +560,11 @@ def register_scheduled_routes(
         .claude/backlog/items/2026-09-07-scheduler-tick-head-of-line-stall.md.
         """
         executor = _get_scheduled_research_executor()
+        # liveness() reads the whole job store; off the loop (check_dev_ports + UI poll this).
+        liveness = await asyncio.to_thread(executor.liveness)
         return {
             "enabled": _scheduled_research_scheduler_enabled(),
-            **executor.liveness(),
+            **liveness,
         }
 
     @app.post(
@@ -693,7 +695,7 @@ def register_scheduled_routes(
             delivery_target_ref=request.delivery_target_ref,
             delivery_target_label=delivery_target_label,
         )
-        _get_scheduled_research_store().upsert(job)
+        await asyncio.to_thread(_get_scheduled_research_store().upsert, job)
         return _job_to_response(job)
 
     @app.get(
@@ -706,8 +708,8 @@ def register_scheduled_routes(
         limit: int = Query(200, ge=1, le=200),
     ) -> List[ScheduledRunResponse]:
         """List scheduled research jobs, optionally filtered by status."""
-        jobs = _get_scheduled_research_store().list_jobs(
-            status=status_filter, limit=limit
+        jobs = await asyncio.to_thread(
+            _get_scheduled_research_store().list_jobs, status=status_filter, limit=limit
         )
         return [_job_to_response(j) for j in jobs]
 
@@ -733,7 +735,7 @@ def register_scheduled_routes(
         from src.scheduled_research.proposals import ProposalError, commit_proposal
 
         try:
-            return commit_proposal(proposal_id)
+            return await asyncio.to_thread(commit_proposal, proposal_id)
         except ProposalError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -745,7 +747,7 @@ def register_scheduled_routes(
         from src.scheduled_research.proposals import ProposalError, discard_proposal
 
         try:
-            return discard_proposal(proposal_id)
+            return await asyncio.to_thread(discard_proposal, proposal_id)
         except ProposalError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -757,7 +759,7 @@ def register_scheduled_routes(
     async def delete_scheduled_run(job_id: str) -> Response:
         """Cancel (delete) a scheduled research job by id."""
         _validate_job_id_path_param(job_id)
-        removed = _get_scheduled_research_store().delete(job_id)
+        removed = await asyncio.to_thread(_get_scheduled_research_store().delete, job_id)
         if not removed:
             raise HTTPException(
                 status_code=404, detail=f"scheduled run {job_id} not found"
@@ -789,7 +791,7 @@ def register_scheduled_routes(
         ``set_job_enabled`` mutation path so this can never diverge from the
         prediction-jobs panel's pause/resume.
         """
-        return _set_job_paused(job_id, True)
+        return await asyncio.to_thread(_set_job_paused, job_id, True)
 
     @app.post(
         "/scheduled-runs/{job_id}/resume",
@@ -798,7 +800,7 @@ def register_scheduled_routes(
     )
     async def resume_scheduled_run(job_id: str) -> ScheduledRunResponse:
         """Resume a single paused scheduled job on its existing cadence."""
-        return _set_job_paused(job_id, False)
+        return await asyncio.to_thread(_set_job_paused, job_id, False)
 
     @app.post(
         "/scheduled-runs/{job_id}/cancel",
@@ -824,7 +826,7 @@ def register_scheduled_routes(
         _validate_job_id_path_param(job_id)
         store = _get_scheduled_research_store()
         try:
-            job = cancel_running_job(job_id, store=store)
+            job = await asyncio.to_thread(cancel_running_job, job_id, store=store)
         except JobNotRunningError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if job is None:
@@ -857,7 +859,7 @@ def register_scheduled_routes(
         _validate_job_id_path_param(job_id)
         store = _get_scheduled_research_store()
         try:
-            job = trigger_job_now(job_id, store=store)
+            job = await asyncio.to_thread(trigger_job_now, job_id, store=store)
         except (JobPausedError, JobAlreadyRunningError, JobCollectionDispatchBlockedError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if job is None:
@@ -887,7 +889,7 @@ def register_scheduled_routes(
         from src.scheduled_research.job_details import job_type_detail
 
         _validate_job_id_path_param(job_id)
-        job = _get_scheduled_research_store().get(job_id)
+        job = await asyncio.to_thread(_get_scheduled_research_store().get, job_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"scheduled run {job_id} not found")
 
@@ -896,7 +898,7 @@ def register_scheduled_routes(
         if detail.preview is None:
             return ScheduledJobPreviewResponse(description=detail.description, preview_available=False)
         try:
-            result = detail.preview(job.config)
+            result = await asyncio.to_thread(detail.preview, job.config)
             return ScheduledJobPreviewResponse(
                 description=detail.description,
                 preview_available=True,
@@ -924,7 +926,7 @@ def register_scheduled_routes(
         SSE endpoints — an ``EventSource`` can't send an Authorization header.
         """
         _validate_job_id_path_param(job_id)
-        if _get_scheduled_research_store().get(job_id) is None:
+        if await asyncio.to_thread(_get_scheduled_research_store().get, job_id) is None:
             raise HTTPException(status_code=404, detail=f"scheduled run {job_id} not found")
         return StreamingResponse(
             _scheduled_run_log_stream(job_id, request),
@@ -1072,7 +1074,7 @@ def register_scheduled_routes(
             job.delivery_target_ref = target.ref
             job.delivery_target_label = target.label
 
-        _get_scheduled_research_store().upsert(job)
+        await asyncio.to_thread(_get_scheduled_research_store().upsert, job)
         return _job_to_response(job)
 
     # Registered after the static /playbooks routes so "playbooks" is never
@@ -1084,7 +1086,7 @@ def register_scheduled_routes(
     )
     async def get_scheduled_run(job_id: str) -> ScheduledRunResponse:
         _host_validate_path_param(job_id, "job_id")
-        job = _get_scheduled_research_store().get(job_id)
+        job = await asyncio.to_thread(_get_scheduled_research_store().get, job_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"scheduled run {job_id} not found")
         return _job_to_response(job)

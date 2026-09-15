@@ -436,13 +436,15 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
                 resolve_options_instrument,
             )
 
-            ineligible = options_research_ineligible_reason(ticker_norm)
+            # Off the loop: the eligibility check can load OpenAlgo's SQLite master
+            # contract and make a live OpenAlgo symbol probe (sync HTTP).
+            ineligible = await asyncio.to_thread(options_research_ineligible_reason, ticker_norm)
             if ineligible:
                 return JSONResponse(
                     status_code=400,
                     content={"ok": False, "error": f"{ticker_norm} is not eligible for options research ({ineligible})"},
                 )
-            instrument = resolve_options_instrument(ticker_norm)
+            instrument = await asyncio.to_thread(resolve_options_instrument, ticker_norm)
         except Exception as exc:  # noqa: BLE001 — never leak a stack frame to clients
             logger.warning("selector instrument resolution failed (ticker=%s): %s", ticker_norm, exc)
             return JSONResponse(status_code=400, content={"ok": False, "error": str(exc)})

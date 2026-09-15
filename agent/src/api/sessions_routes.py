@@ -282,8 +282,8 @@ def register_sessions_routes(app: FastAPI) -> None:
         svc = _host_get_session_service()
         if not svc:
             raise HTTPException(status_code=501, detail="Session runtime not enabled")
-        session = svc.create_session(
-            title=request.title, config=request.config, owner=principal
+        session = await asyncio.to_thread(
+            svc.create_session, title=request.title, config=request.config, owner=principal
         )
         return SessionResponse(
             session_id=session.session_id,
@@ -300,7 +300,7 @@ def register_sessions_routes(app: FastAPI) -> None:
         svc = _host_get_session_service()
         if not svc:
             raise HTTPException(status_code=501, detail="Session runtime not enabled")
-        sessions = svc.list_sessions(limit=limit)
+        sessions = await asyncio.to_thread(svc.list_sessions, limit=limit)
         visible = []
         for s in sessions:
             cfg = s.config if isinstance(s.config, dict) else {}
@@ -329,7 +329,7 @@ def register_sessions_routes(app: FastAPI) -> None:
         svc = _host_get_session_service()
         if not svc:
             raise HTTPException(status_code=501, detail="Session runtime not enabled")
-        session = svc.get_session(session_id)
+        session = await asyncio.to_thread(svc.get_session, session_id)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
         return SessionResponse(
@@ -551,10 +551,10 @@ def register_sessions_routes(app: FastAPI) -> None:
         svc = _host_get_session_service()
         if not svc:
             raise HTTPException(status_code=501, detail="Session runtime not enabled")
-        deleted = svc.delete_session(session_id)
+        deleted = await asyncio.to_thread(svc.delete_session, session_id)
         if not deleted:
             raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-        _get_goal_store().delete_session_goals(session_id)
+        await asyncio.to_thread(_get_goal_store().delete_session_goals, session_id)
         return {"status": "deleted", "session_id": session_id}
 
     @app.patch("/sessions/{session_id}", dependencies=[Depends(require_auth)])
@@ -564,13 +564,13 @@ def register_sessions_routes(app: FastAPI) -> None:
         svc = _host_get_session_service()
         if not svc:
             raise HTTPException(status_code=501, detail="Session runtime not enabled")
-        session = svc.store.get_session(session_id)
+        session = await asyncio.to_thread(svc.store.get_session, session_id)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
         if req.title is not None:
             session.title = req.title
         session.updated_at = datetime.now(timezone.utc).isoformat()
-        svc.store.update_session(session)
+        await asyncio.to_thread(svc.store.update_session, session)
         return {"status": "updated", "session_id": session_id}
 
     @app.post("/sessions/{session_id}/title/auto", dependencies=[Depends(require_auth)])
@@ -584,11 +584,11 @@ def register_sessions_routes(app: FastAPI) -> None:
         svc = _host_get_session_service()
         if not svc:
             raise HTTPException(status_code=501, detail="Session runtime not enabled")
-        session = svc.store.get_session(session_id)
+        session = await asyncio.to_thread(svc.store.get_session, session_id)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
-        messages = svc.get_messages(session_id, limit=6)
+        messages = await asyncio.to_thread(svc.get_messages, session_id, limit=6)
         first_user = next(
             (m for m in messages if m.role == "user" and (m.content or "").strip()), None
         )
@@ -637,7 +637,7 @@ def register_sessions_routes(app: FastAPI) -> None:
 
         session.title = title
         session.updated_at = datetime.now(timezone.utc).isoformat()
-        svc.store.update_session(session)
+        await asyncio.to_thread(svc.store.update_session, session)
         return {"status": "updated", "session_id": session_id, "title": title}
 
     @app.post("/sessions/{session_id}/messages", dependencies=[Depends(require_auth)])
@@ -680,7 +680,7 @@ def register_sessions_routes(app: FastAPI) -> None:
         svc = _host_get_session_service()
         if not svc:
             raise HTTPException(status_code=501, detail="Session runtime not enabled")
-        messages = svc.get_messages(session_id, limit=limit)
+        messages = await asyncio.to_thread(svc.get_messages, session_id, limit=limit)
         return [
             MessageResponse(
                 message_id=m.message_id,
@@ -702,12 +702,12 @@ def register_sessions_routes(app: FastAPI) -> None:
         svc = _host_get_session_service()
         if not svc:
             raise HTTPException(status_code=501, detail="Session runtime not enabled")
-        session = svc.get_session(session_id)
+        session = await asyncio.to_thread(svc.get_session, session_id)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
         from src.provenance.store import get_provenance_store
 
-        sources = get_provenance_store().list_session(session_id)
+        sources = await asyncio.to_thread(get_provenance_store().list_session, session_id)
         return {"sources": [item.to_dict() for item in sources]}
 
     @app.get("/sessions/{session_id}/events", dependencies=[Depends(require_event_stream_auth)])
@@ -722,7 +722,7 @@ def register_sessions_routes(app: FastAPI) -> None:
         svc = _host_get_session_service()
         if not svc:
             raise HTTPException(status_code=501, detail="Session runtime not enabled")
-        session = svc.get_session(session_id)
+        session = await asyncio.to_thread(svc.get_session, session_id)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
@@ -732,7 +732,9 @@ def register_sessions_routes(app: FastAPI) -> None:
         replay_all = False
         running_attempt = None
         if replay_active and not event_id and session.last_attempt_id:
-            attempt = svc.store.get_attempt(session_id, session.last_attempt_id)
+            attempt = await asyncio.to_thread(
+                svc.store.get_attempt, session_id, session.last_attempt_id
+            )
             attempt_status = getattr(attempt.status, "value", attempt.status) if attempt else None
             replay_all = attempt_status == "running"
             if replay_all:

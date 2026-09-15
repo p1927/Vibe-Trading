@@ -3315,7 +3315,7 @@ async def stream_external_predictions_refresh_job(
 
     if not job_id_valid(job_id):
         raise HTTPException(status_code=400, detail="invalid job_id")
-    if _get_job_record(job_id) is None:
+    if await asyncio.to_thread(_get_job_record, job_id) is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
     return _external_predictions_refresh_stream_response(job_id, request)
 
@@ -3971,7 +3971,7 @@ async def stream_index_prediction_run_job(
 
     if not job_id_valid(job_id):
         raise HTTPException(status_code=400, detail="invalid job_id")
-    if _get_job_record(job_id) is None:
+    if await asyncio.to_thread(_get_job_record, job_id) is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
     return _index_prediction_run_stream_response(job_id, request)
 
@@ -4870,7 +4870,7 @@ async def stream_recording_job(
 
     if not job_id_valid(job_id):
         raise HTTPException(status_code=400, detail="invalid job_id")
-    if _get_job_record(job_id) is None:
+    if await asyncio.to_thread(_get_job_record, job_id) is None:
         raise HTTPException(status_code=404, detail=f"job {job_id} not found")
     return _recording_stream_response(job_id, request)
 
