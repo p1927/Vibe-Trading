@@ -30,6 +30,17 @@ class CheckResult:
     critical: bool = False
 
 
+def critical_failures(results: List[CheckResult]) -> List[str]:
+    """Names of the checks that declare themselves critical and are not ready.
+
+    Non-empty means the stack cannot function, and every caller that starts work on top of
+    preflight -- the API lifespan (`src/api/lifecycle.py`), `run` and the REPL
+    (`cli/_legacy.py`) -- refuses to proceed on it. One rule, stated once, so the banner's
+    "Critical check failed" and the decision to stop can never disagree.
+    """
+    return [r.name for r in results if r.critical and r.status != "ready"]
+
+
 # Matches the placeholder credential shapes used throughout
 # agent/.env.example (e.g. "sk-or-...here", "sk-xxx", "gsk_xxx", "xxx",
 # "your-tushare-token") so a freshly-copied template .env that was never
@@ -400,7 +411,7 @@ def run_preflight(console: Optional[Console] = None) -> List[CheckResult]:
     console.print("[bold]Preflight Check[/bold]")
     console.print(table)
 
-    has_critical = any(r.critical and r.status != "ready" for r in results)
+    has_critical = bool(critical_failures(results))
     if has_critical:
         console.print(
             "\n[bold red]Critical check failed — fix the items above before using the stack.[/bold red]"

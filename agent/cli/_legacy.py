@@ -1584,9 +1584,9 @@ def _print_result(result: dict, elapsed: float, *, no_rich: bool = False) -> Non
 def cmd_run(prompt: str, max_iter: int, *, json_mode: bool = False, no_rich: bool = False) -> int:
     """Single run."""
     if not json_mode:
-        from src.preflight import run_preflight
+        from src.preflight import critical_failures, run_preflight
         results = run_preflight(console)
-        if any(r.critical and r.status != "ready" for r in results):
+        if critical_failures(results):
             return EXIT_RUN_FAILED
 
     if not json_mode:
@@ -2122,9 +2122,9 @@ def cmd_interactive(max_iter: int) -> None:
     """Interactive mode with welcome screen, slash commands, and agent conversation."""
     _print_welcome()
 
-    from src.preflight import run_preflight
+    from src.preflight import critical_failures, run_preflight
     results = run_preflight(console)
-    if any(r.critical and r.status != "ready" for r in results):
+    if critical_failures(results):
         return
 
     history: List[Dict[str, str]] = []

@@ -9,7 +9,7 @@ import threading
 import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
@@ -3187,8 +3187,7 @@ async def _external_predictions_refresh_event_stream(job_id: str, request: Reque
         if await request.is_disconnected():
             return
 
-        reconcile_zombie_job(job_id)
-        job = _get_job_record(job_id)
+        job = await _reconcile_and_read_job(reconcile_zombie_job, _get_job_record, job_id)
         if job is None:
             yield _index_prediction_run_sse_frame("error", {"message": "job not found"})
             return
@@ -3643,6 +3642,27 @@ def _index_prediction_run_sse_frame(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
+async def _reconcile_and_read_job(
+    reconcile: Callable[[str], Any],
+    get_record: Callable[[str], dict[str, Any] | None],
+    job_id: str,
+) -> dict[str, Any] | None:
+    """One SSE poll tick of a file-backed job store, run off the event loop thread.
+
+    ``reconcile`` probes the worker PID and may rewrite the job file; ``get_record`` reads
+    the job file from disk and takes the store's ``_JOBS_LOCK``. Called from an async
+    generator every poll tick per connected client, so on the loop thread either one would
+    freeze every request on the process while it ran, ``/health`` included. Same fix as the
+    Command Center legs (fork 19f04199).
+    """
+
+    def _poll() -> dict[str, Any] | None:
+        reconcile(job_id)
+        return get_record(job_id)
+
+    return await asyncio.to_thread(_poll)
+
+
 async def _index_prediction_run_event_stream(job_id: str, request: Request):
     """Replay stored logs then poll job store until done/error."""
     import time as time_mod
@@ -3655,8 +3675,7 @@ async def _index_prediction_run_event_stream(job_id: str, request: Request):
         if await request.is_disconnected():
             return
 
-        reconcile_job(job_id)
-        job = _get_job_record(job_id)
+        job = await _reconcile_and_read_job(reconcile_job, _get_job_record, job_id)
         if job is None:
             yield _index_prediction_run_sse_frame("error", {"message": "job not found"})
             return
@@ -3978,8 +3997,7 @@ async def _recording_event_stream(job_id: str, request: Request):
         if await request.is_disconnected():
             return
 
-        reconcile_job(job_id)
-        job = _get_job_record(job_id)
+        job = await _reconcile_and_read_job(reconcile_job, _get_job_record, job_id)
         if job is None:
             yield _recording_sse_frame("error", {"message": "job not found"})
             return

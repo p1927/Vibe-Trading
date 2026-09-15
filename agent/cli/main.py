@@ -22,7 +22,6 @@ from __future__ import annotations
 import importlib
 import logging
 import sys
-import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -514,33 +513,6 @@ def _maybe_resume_last_session(console: Any) -> Optional[Dict[str, Any]]:
         "history": _build_session_history(store, last.session_id),
         "title": title,
     }
-
-
-# ---------------------------------------------------------------------------
-# Async preflight
-# ---------------------------------------------------------------------------
-
-
-def _start_preflight_async() -> threading.Thread:
-    """Run ``src.preflight.run_preflight`` in a daemon thread.
-
-    The welcome banner has already painted by the time this runs, so the
-    user sees something useful immediately while credential / network
-    probes happen in the background. We swallow exceptions because the
-    legacy path runs preflight again before any agent invocation — this
-    pre-warm is opportunistic. Audit item 11.
-    """
-    def _worker() -> None:
-        try:
-            from src.preflight import run_preflight
-
-            run_preflight(get_console())
-        except Exception:  # noqa: BLE001
-            pass
-
-    thread = threading.Thread(target=_worker, daemon=True, name="vibe-preflight")
-    thread.start()
-    return thread
 
 
 # ---------------------------------------------------------------------------
