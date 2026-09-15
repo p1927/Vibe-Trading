@@ -50,8 +50,8 @@ def _configure_process_logging() -> None:
 
 
 async def _run_startup_preflight() -> None:
-    """Run preflight checks on server startup."""
-    from src.preflight import run_preflight
+    """Run preflight checks on server startup; raise if a critical check failed."""
+    from src.preflight import critical_failures, run_preflight
 
     from src.config import migrate as _migrate
     # Function-local, like the rest of this module: `channels_routes`/`scheduled_routes` pull in
@@ -67,7 +67,19 @@ async def _run_startup_preflight() -> None:
         _migrate.migrate_legacy_state()  # one-time pre-#904 state move; must never block startup
     except Exception:  # pragma: no cover — best-effort
         logging.getLogger(__name__).warning("Legacy state migration failed", exc_info=True)
-    run_preflight(console)
+    failed = critical_failures(run_preflight(console))
+    if failed:
+        # A check that declares itself critical ("agent cannot function") gates boot, the same
+        # as the CLI paths in cli/_legacy.py. Raising here fails the FastAPI lifespan, so uvicorn
+        # exits instead of logging "Application startup complete" on a stack it just called
+        # broken. Nothing below (executor, watchdogs, channels) has started yet.
+        # See .claude/backlog/items/2026-09-07-preflight-critical-not-blocking.md.
+        names = ", ".join(failed)
+        logger.error("startup preflight: critical check(s) failed: %s; refusing to start", names)
+        raise RuntimeError(
+            f"critical preflight check(s) failed: {names}; refusing to start "
+            "(see the Preflight Check table above)"
+        )
 
     import asyncio
 

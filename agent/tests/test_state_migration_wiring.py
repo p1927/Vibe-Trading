@@ -53,7 +53,7 @@ def test_api_startup_runs_migration(
 
     import api_server
 
-    monkeypatch.setattr("src.preflight.run_preflight", lambda console: None)
+    monkeypatch.setattr("src.preflight.run_preflight", lambda console: [])
     monkeypatch.setattr(
         "src.api.scheduled_routes._start_scheduled_research_executor", lambda: None
     )
@@ -92,7 +92,7 @@ def test_api_lifespan_preserves_startup_and_shutdown_order(
     )
     monkeypatch.setattr(
         "src.preflight.run_preflight",
-        lambda console: events.append("preflight"),
+        lambda console: events.append("preflight") or [],
     )
     # lifecycle.py imports these function-locally from their home modules (since the
     # c141926c extraction), so patching the api_server re-exports would not reach them.
