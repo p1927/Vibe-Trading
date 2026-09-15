@@ -7,13 +7,24 @@ import {
   type HubNewsPipelineTraceSummary,
 } from "@/lib/api";
 
-const SOURCES = [
-  { key: "rss", label: "RSS" },
-  { key: "searxng", label: "SearXNG" },
-  { key: "searxng_global", label: "SearXNG global" },
-  { key: "moneycontrol", label: "Moneycontrol" },
-  { key: "watcher", label: "Watcher" },
-];
+// Display names for known source families. The source nodes themselves come from the data
+// (`summary.by_source`, keyed by family by the trace store), so a new ingest source gets a node
+// without a code change; a family not listed here shows its raw key.
+const SOURCE_LABELS: Record<string, string> = {
+  rss: "RSS",
+  searxng: "SearXNG",
+  web_search: "Web search",
+  currents: "Currents",
+  watcher: "Watcher",
+};
+
+export function sourceNodes(
+  summary: HubNewsPipelineTraceSummary | null,
+): { key: string; label: string; count: number }[] {
+  return Object.entries(summary?.by_source ?? {})
+    .map(([key, count]) => ({ key, label: SOURCE_LABELS[key] ?? key, count: count || 0 }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+}
 
 const STAGES = [
   { key: "step_01_relevance_gate", label: "Relevance gate" },
@@ -210,12 +221,12 @@ export function NewsPipelineGraph({ entityId = "NIFTY" }: { entityId?: string })
         <div className="grid grid-cols-3 gap-2">
           <div className="space-y-1">
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Sources</p>
-            {SOURCES.map((s) => (
+            {sourceNodes(summary).map((s) => (
               <NodeButton
                 key={s.key}
                 active={selected?.kind === "source" && selected.key === s.key}
                 label={s.label}
-                count={summary?.by_source?.[s.key] ?? 0}
+                count={s.count}
                 onClick={() => void selectNode({ kind: "source", key: s.key, label: s.label })}
               />
             ))}
