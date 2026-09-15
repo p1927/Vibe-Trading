@@ -6616,6 +6616,11 @@ export interface AutonomousStackHealth {
   market_open?: boolean;
   paper_session_enabled?: boolean;
   agent_trading_enabled?: boolean;
+  /** Whether the anchor agent could actually place a trade right now; `null` when there is no
+   * running agent to check (see `cannot_trade_reason` for why, e.g. `"no_running_agent"`). */
+  can_trade?: boolean | null;
+  /** Why `can_trade` isn't true, e.g. `"broker_session_dead"` or `"no_running_agent"`. */
+  cannot_trade_reason?: string | null;
 }
 
 export interface AutonomousAgentSchedules {

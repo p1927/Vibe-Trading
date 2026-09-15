@@ -46,7 +46,7 @@ function GlobalHaltBanner({ onResumed }: { onResumed: () => void }) {
   );
 }
 
-function StackHealthStrip({ health }: { health: AutonomousStackHealth | undefined }) {
+export function StackHealthStrip({ health }: { health: AutonomousStackHealth | undefined }) {
   if (!health) return null;
   const sched = health.scheduler_health ?? "unknown";
   const nautilusOn = health.nautilus_watch_enabled !== false;
@@ -105,6 +105,21 @@ function StackHealthStrip({ health }: { health: AutonomousStackHealth | undefine
       >
         trading {health.agent_trading_enabled ? "live" : "off"}
       </span>
+      {health.can_trade !== true && health.cannot_trade_reason && (
+        <span
+          className={cn(
+            "rounded border px-1.5 py-0.5",
+            health.can_trade === false
+              ? "border-red-500/40 text-red-700"
+              : "border-amber-500/40 text-amber-700",
+          )}
+        >
+          cannot trade:{" "}
+          {health.cannot_trade_reason === "broker_session_dead"
+            ? "broker session dead — log in to the broker in the OpenAlgo UI; INDmoney needs its daily token pasted"
+            : health.cannot_trade_reason}
+        </span>
+      )}
     </div>
   );
 }
