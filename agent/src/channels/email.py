@@ -19,7 +19,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Literal
 
-import logging; logger = logging.getLogger(__name__)
+from src.channels.brace_logging import get_channel_logger; logger = get_channel_logger(__name__)
 from pydantic import Field
 
 from src.channels.bus.events import OutboundMessage

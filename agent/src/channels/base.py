@@ -6,6 +6,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
+from src.channels.brace_logging import get_channel_logger
 from src.channels.bus.events import DeliveryReceipt, InboundMessage, OutboundMessage
 from src.channels.bus.queue import MessageBus
 from src.channels.pairing import (
@@ -41,7 +42,7 @@ class BaseChannel(ABC):
         self.config = config
         self.bus = bus
         self._running = False
-        self.logger = logging.getLogger(f"{__name__}.{self.name}")
+        self.logger = get_channel_logger(f"{__name__}.{self.name}")
 
     async def login(self, force: bool = False) -> bool:
         """Perform channel-specific interactive login (e.g. QR code scan).

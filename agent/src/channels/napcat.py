@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import aiohttp
-import logging; logger = logging.getLogger(__name__)
+from src.channels.brace_logging import get_channel_logger; logger = get_channel_logger(__name__)
 from pydantic import Field
 from websockets.asyncio.client import ClientConnection
 from websockets.asyncio.client import connect as ws_connect

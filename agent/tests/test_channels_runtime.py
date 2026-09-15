@@ -846,14 +846,22 @@ def test_channel_runtime_session_map_persisted_after_reset(tmp_path: Path) -> No
     asyncio.run(scenario())
 
 
-def test_signal_group_command_requires_per_sender_authorization() -> None:
+def test_signal_group_command_requires_per_sender_authorization(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """A slash-command in an allowed group needs per-sender auth (GHSA-fwpw).
 
     Group membership alone must not authorize control-plane commands: an
     unauthorized member's ``/pairing`` is dropped, while an allowlisted
     sender's command passes even without a mention.
     """
+    import logging
+
     from src.channels.signal import SignalChannel, SignalConfig, SignalDMConfig, SignalGroupConfig
+
+    # Always format the INFO audit line; it used to raise only when another
+    # test happened to leave logging at INFO (order-dependent failure).
+    caplog.set_level(logging.INFO, logger="src.channels.base.signal")
 
     config = SignalConfig(
         enabled=True,
@@ -880,6 +888,10 @@ def test_signal_group_command_requires_per_sender_authorization() -> None:
     )
     assert denied is False
     assert denied_chat == "group-1"
+    assert (
+        "Ignoring group control-plane command from unauthorized sender +15559999 in group-1"
+        in caplog.text
+    )
 
     allowed, allowed_chat = channel._check_inbound_policy(
         sender_id="+15550001",
