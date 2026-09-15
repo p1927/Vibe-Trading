@@ -269,9 +269,48 @@ def _assert_mode(cfg: OpenAlgoConfig, analyze: bool) -> dict[str, Any] | None:
     return None
 
 
+def _order_error(exc: Exception) -> dict[str, Any]:
+    """The connector's error shape for a failed order call, with a ``code`` for Trade's two D37 refusals.
+
+    ``duplicate_order_blocked``: an identical order went out inside the dedupe window, so this one
+    was not sent. ``order_outcome_unknown``: the request may have reached OpenAlgo and was not
+    retried, so check the order book before sending it again. Matched by class name so a
+    standalone install without Trade's ``trade_integrations`` still imports this module.
+    """
+    out: dict[str, Any] = {"status": "error", "error": str(exc)}
+    code = {
+        "DuplicateOrderBlocked": "duplicate_order_blocked",
+        "AmbiguousOrderOutcome": "order_outcome_unknown",
+    }.get(type(exc).__name__)
+    if code:
+        out["code"] = code
+    return out
+
+
 class _RestClient:
     def __init__(self, cfg: OpenAlgoConfig) -> None:
         self.cfg = cfg
+
+    def post_order(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Send an order-changing request through Trade's one OpenAlgo order seam (Trade D37).
+
+        ``trade_integrations.openalgo.rest_client.OpenAlgoRestClient.post`` claims every order by
+        content (an identical order inside its window raises ``DuplicateOrderBlocked``) and never
+        retries one (a lost reply raises ``AmbiguousOrderOutcome``). ``api/trade_routes.py``'s
+        ``/execute-basket`` already posts through it; this connector used to post orders with its
+        own ``requests`` client, which neither deduped nor stayed out of any retry. Reads keep
+        :meth:`post`.
+        """
+        from trade_integrations.openalgo.rest_client import get_rest_client
+
+        body = {**payload, "apikey": self.cfg.api_key}
+        parsed = get_rest_client(host=self.cfg.host, api_key=self.cfg.api_key).post(
+            path, body, timeout=self.cfg.timeout
+        )
+        if parsed.get("status") not in (None, "success", "ok"):
+            message = parsed.get("message") or parsed.get("error") or "OpenAlgo error"
+            raise RuntimeError(str(message))
+        return parsed
 
     def post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.cfg.host}/api/v1/{path.lstrip('/')}"
@@ -730,14 +769,14 @@ def place_order(
         mode_error = _assert_mode(cfg, analyze)
         if mode_error:
             return mode_error
-        body = client.post("placeorder", payload)
+        body = client.post_order("placeorder", payload)
         order_id = body.get("orderid") or body.get("order_id")
         if not order_id and isinstance(body.get("data"), dict):
             order_id = body["data"].get("orderid")
         if not order_id:
             return {"status": "error", "error": body.get("message") or "OpenAlgo did not return orderid"}
     except Exception as exc:  # noqa: BLE001
-        return {"status": "error", "error": str(exc)}
+        return _order_error(exc)
 
     return {
         "status": "ok",
@@ -773,7 +812,7 @@ def cancel_order(
         mode_error = _assert_mode(cfg, client.analyzer_status())
         if mode_error:
             return mode_error
-        client.post(
+        client.post_order(
             "cancelorder",
             {
                 "strategy": "vibe_connector",
@@ -783,7 +822,7 @@ def cancel_order(
             },
         )
     except Exception as exc:  # noqa: BLE001
-        return {"status": "error", "error": str(exc)}
+        return _order_error(exc)
 
     return {
         "status": "ok",
