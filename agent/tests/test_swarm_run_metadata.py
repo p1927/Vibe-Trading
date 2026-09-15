@@ -130,6 +130,10 @@ def test_runtime_redacts_non_public_llm_model_metadata_before_persistence(
         encoding="utf-8",
     )
     monkeypatch.setenv("LANGCHAIN_PROVIDER", "openai")
+    # The .env loader never overrides an already-exported variable, so a model
+    # name exported by the shell (or leaked by an earlier test) would win and
+    # the metadata under test would never be read.
+    monkeypatch.delenv("LANGCHAIN_MODEL_NAME", raising=False)
     monkeypatch.setattr(llm_mod, "_ENV_CANDIDATES", [env_file])
     monkeypatch.setattr(llm_mod, "_dotenv_loaded", False)
     reset_env_config()
@@ -153,6 +157,7 @@ def test_runtime_bounds_llm_metadata_before_persistence(
         encoding="utf-8",
     )
     monkeypatch.setenv("LANGCHAIN_PROVIDER", "openai")
+    monkeypatch.delenv("LANGCHAIN_MODEL_NAME", raising=False)
     monkeypatch.setattr(llm_mod, "_ENV_CANDIDATES", [env_file])
     monkeypatch.setattr(llm_mod, "_dotenv_loaded", False)
     reset_env_config()
@@ -176,6 +181,7 @@ def test_runtime_redacts_unsupported_reasoning_effort_before_persistence(
         encoding="utf-8",
     )
     monkeypatch.setenv("LANGCHAIN_PROVIDER", "openai")
+    monkeypatch.delenv("LANGCHAIN_REASONING_EFFORT", raising=False)
     monkeypatch.setattr(llm_mod, "_ENV_CANDIDATES", [env_file])
     monkeypatch.setattr(llm_mod, "_dotenv_loaded", False)
     reset_env_config()

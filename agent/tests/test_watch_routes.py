@@ -13,23 +13,22 @@ flagging for whoever picks up the "wire real auth" follow-up.
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 import api_server
-import trade_integrations.watch_registry.store as watch_store
+from trade_integrations.context import hub as hub_context
 
 
 @pytest.fixture
-def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    tmp = Path(tempfile.mkdtemp(prefix="watch_routes_test_"))
-    # store.py binds `get_hub_dir` via `from ... import get_hub_dir` (a local name, not a
-    # module-attribute lookup) — patching the defining module's attribute wouldn't reach this
-    # already-bound reference, so the module's own name must be patched directly.
-    monkeypatch.setattr(watch_store, "get_hub_dir", lambda: tmp)
+def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
+    tmp = tmp_path / "hub"
+    tmp.mkdir()
+    # watch_registry/store.py resolves the hub via `hub_context.get_hub_dir()` at call time
+    # (a module-attribute lookup), so patching the defining module reaches every call.
+    monkeypatch.setattr(hub_context, "get_hub_dir", lambda: tmp)
     monkeypatch.setattr(api_server, "_API_KEY", "")
     return TestClient(api_server.app, client=("127.0.0.1", 50000))
 
