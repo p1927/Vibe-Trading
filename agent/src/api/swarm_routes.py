@@ -181,7 +181,8 @@ def register_swarm_routes(
 
         _host_validate_path_param(run_id, "run_id")
         runtime = _get_swarm_runtime()
-        if not runtime._store.load_run(run_id):
+        # Store reads/writes are file I/O: run them off the event loop thread.
+        if not await asyncio.to_thread(runtime._store.load_run, run_id):
             raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
         async def event_stream():
@@ -191,18 +192,18 @@ def register_swarm_routes(
             while True:
                 if await request.is_disconnected():
                     break
-                events = runtime._store.read_events(run_id, after_index=idx)
+                events = await asyncio.to_thread(runtime._store.read_events, run_id, after_index=idx)
                 for evt in events:
                     idx += 1
                     yield f"id: {idx}\nevent: {evt.type}\ndata: {json.dumps(evt.model_dump(), ensure_ascii=False)}\n\n"
-                run = runtime._store.load_run(run_id)
+                run = await asyncio.to_thread(runtime._store.load_run, run_id)
                 if not run:
                     yield 'event: done\ndata: {"status": "missing"}\n\n'
                     break
                 # Reconcile so a zombie running run can still close this SSE
                 # stream cleanly — without it, a dead host would keep the
                 # stream open forever and block the dashboard's "done" state.
-                reconciled = runtime._store.reconcile_run(run, write=True)
+                reconciled = await asyncio.to_thread(runtime._store.reconcile_run, run, write=True)
                 if reconciled.status.value in ("completed", "failed", "cancelled"):
                     yield f'event: done\ndata: {{"status": "{reconciled.status.value}"}}\n\n'
                     break

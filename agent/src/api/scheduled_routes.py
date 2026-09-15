@@ -469,7 +469,9 @@ async def _scheduled_run_log_stream(job_id: str, request: Request):
         if await request.is_disconnected():
             return
 
-        job = store.get(job_id)
+        # store.get re-reads and parses the whole job-store file; keep it off the loop
+        # thread so a slow read can't freeze every request (fork 19f04199's pattern).
+        job = await asyncio.to_thread(store.get, job_id)
         if job is None:
             yield _run_log_sse_frame("error", {"message": "job not found"})
             return
