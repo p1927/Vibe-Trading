@@ -96,8 +96,11 @@ def _default_file_roots() -> list[Path]:
     """Return default roots for uploaded/imported user files."""
     from src.config.paths import get_runtime_root
 
+    # Only this tier's runtime root. A literal ~/.vibe-trading entry here (and in the
+    # two functions below) duplicated runtime_root on dev and, on release
+    # (VIBE_TRADING_HOME=~/.vibe-trading-release), granted file tools read/write
+    # access to dev's uploads/runs (Trade backlog 2026-09-06-vibe-home-bypassed).
     cwd = Path.cwd().resolve()
-    home = Path.home().resolve()
     agent_root = _agent_root()
     runtime_root = get_runtime_root()
     return [
@@ -105,8 +108,6 @@ def _default_file_roots() -> list[Path]:
         agent_root / "runs",
         cwd / "uploads",
         cwd / "data",
-        home / ".vibe-trading" / "uploads",
-        home / ".vibe-trading" / "imports",
         runtime_root / "uploads",
         runtime_root / "runs",
         runtime_root / "imports",
@@ -119,7 +120,6 @@ def _default_run_roots() -> list[Path]:
     from src.swarm.store import swarm_runs_root
 
     cwd = Path.cwd().resolve()
-    home = Path.home().resolve()
     agent_root = _agent_root()
     runtime_root = get_runtime_root()
     return [
@@ -127,8 +127,6 @@ def _default_run_roots() -> list[Path]:
         agent_root / ".swarm" / "runs",  # un-migrated legacy swarm runs
         swarm_runs_root(),
         cwd / "runs",
-        home / ".vibe-trading" / "shadow_runs",
-        home / ".vibe-trading" / "runs",
         runtime_root / "shadow_runs",
         runtime_root / "runs",
     ]
@@ -161,15 +159,12 @@ def allowed_write_roots() -> list[Path]:
     from src.config.paths import get_runtime_root
 
     cwd = Path.cwd().resolve()
-    home = Path.home().resolve()
     agent_root = _agent_root()
     runtime_root = get_runtime_root()
     defaults = [
         agent_root / "uploads",
         agent_root / "runs",
         cwd / "uploads",
-        home / ".vibe-trading" / "uploads",
-        home / ".vibe-trading" / "runs",
         runtime_root / "uploads",
         runtime_root / "runs",
     ]

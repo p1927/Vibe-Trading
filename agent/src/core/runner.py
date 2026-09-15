@@ -144,18 +144,41 @@ def _rlimit_bootstrap_argv() -> list[str] | None:
     ]
 
 
+def _sandbox_reexpose_source(real_home: Path | None) -> Path | None:
+    """The runtime root whose loader paths the sandbox re-exposes: this tier's.
+
+    ``VIBE_TRADING_HOME`` is not forwarded to the subprocess (it is not in
+    ``_RUNTIME_ENV_KEYS``), so inside the sandbox ``get_runtime_root()`` resolves to
+    ``<sandbox HOME>/.vibe-trading``. That directory therefore has to be filled from
+    the parent's *tier* root. Filling it from ``real_home / ".vibe-trading"`` made the
+    release tier (``VIBE_TRADING_HOME=~/.vibe-trading-release``) run generated
+    strategies against dev's loader cache, data-bridge config and qveris.json, and
+    write into dev's cache through the symlink (Trade backlog
+    2026-09-06-vibe-home-bypassed). With no ``VIBE_TRADING_HOME`` the two are the
+    same directory, so the HOME-relative path is kept.
+    """
+    if os.environ.get("VIBE_TRADING_HOME", "").strip():
+        from src.config.paths import get_runtime_root
+
+        return get_runtime_root()
+    if real_home is None:
+        return None
+    return real_home / ".vibe-trading"
+
+
 def _prepare_sandbox_home(real_home: Path | None) -> Path:
     """Create an ephemeral HOME and symlink in only the loader-owned paths.
 
     The generated strategy runs in the same subprocess as the data loaders, so
-    the ephemeral home re-exposes the narrow set of ``~/.vibe-trading`` paths the
+    the ephemeral home re-exposes the narrow set of runtime-root paths the
     loaders need (opt-in cache, local data-bridge config, qveris config) and
-    nothing else. Symlinks are used so the opt-in loader cache still persists
+    nothing else, taken from this tier's runtime root (``_sandbox_reexpose_source``).
+    Symlinks are used so the opt-in loader cache still persists
     across runs; ``shutil.rmtree`` later removes the links, never their targets.
     """
     sandbox = Path(tempfile.mkdtemp(prefix="vibe-sandbox-home-"))
-    if real_home is not None:
-        src_root = real_home / ".vibe-trading"
+    src_root = _sandbox_reexpose_source(real_home)
+    if src_root is not None:
         if src_root.is_dir():
             dst_root = sandbox / ".vibe-trading"
             dst_root.mkdir(parents=True, exist_ok=True)

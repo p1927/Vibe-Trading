@@ -25,7 +25,10 @@ import pytest
 
 AGENT_DIR = Path(__file__).resolve().parents[1]
 
-_LITERAL = re.compile(r"""Path\.home\(\)\s*/\s*["']\.vibe-trading["']""")
+# Any `<something> / ".vibe-trading"`, not only `Path.home() / ...`: path_utils spelled it
+# `home = Path.home()` then `home / ".vibe-trading"`, which the narrower pattern missed, and
+# kept granting the release tier's file tools access to dev's uploads/runs.
+_LITERAL = re.compile(r"""/\s*["']\.vibe-trading["']""")
 
 #: The only non-test modules allowed to spell the literal, each with its reason.
 _ALLOWED = {
@@ -34,6 +37,10 @@ _ALLOWED = {
     # Falls back to the literal only if src.config.paths cannot be imported at all
     # (the package is usable without the config layer).
     "src/strategy_discovery/evidence_store.py",
+    # The sandbox HOME's own layout (the subprocess gets no VIBE_TRADING_HOME, so its
+    # runtime root IS <sandbox>/.vibe-trading), plus the no-VIBE_TRADING_HOME fallback in
+    # _sandbox_reexpose_source. Pinned by test_sandbox_reexposes_the_tier_root below.
+    "src/core/runner.py",
 }
 
 
@@ -166,3 +173,66 @@ def test_runtime_call_sites_follow_vibe_trading_home(tmp_path: Path, call: str) 
     assert proc.returncode == 0, proc.stderr[-4000:]
     out = proc.stdout.strip().splitlines()[-1]
     assert out.startswith(str(tier_root) + os.sep), out
+
+
+def _two_tier_home(tmp_path: Path) -> tuple[Path, Path, Path]:
+    real_home = tmp_path / "home"
+    dev_root = real_home / ".vibe-trading"
+    tier_root = real_home / ".vibe-trading-release"
+    for root, tier in ((dev_root, "dev"), (tier_root, "release")):
+        (root / "cache").mkdir(parents=True)
+        (root / "cache" / "marker").write_text(tier, encoding="utf-8")
+        (root / "qveris.json").write_text(json.dumps({"tier": tier}), encoding="utf-8")
+    return real_home, dev_root, tier_root
+
+
+def test_sandbox_reexposes_the_tier_root(monkeypatch, tmp_path: Path) -> None:
+    """Generated strategies run in a subprocess with an ephemeral HOME and no
+    VIBE_TRADING_HOME, so their loaders read <sandbox>/.vibe-trading. That must be filled
+    from THIS tier's root: filling it from ~/.vibe-trading gave release's backtests dev's
+    loader cache and qveris config, and wrote into dev's cache through the symlink."""
+    import shutil
+
+    from src.core import runner
+
+    real_home, dev_root, tier_root = _two_tier_home(tmp_path)
+    monkeypatch.setenv("VIBE_TRADING_HOME", str(tier_root))
+    sandbox = runner._prepare_sandbox_home(real_home)
+    try:
+        dst = sandbox / ".vibe-trading"
+        assert (dst / "cache" / "marker").read_text(encoding="utf-8") == "release"
+        assert json.loads((dst / "qveris.json").read_text(encoding="utf-8")) == {"tier": "release"}
+        assert (dst / "cache").resolve() == (tier_root / "cache").resolve()
+    finally:
+        shutil.rmtree(sandbox, ignore_errors=True)
+    assert (dev_root / "cache" / "marker").read_text(encoding="utf-8") == "dev"
+
+    # Without VIBE_TRADING_HOME the tier root IS ~/.vibe-trading: unchanged behaviour.
+    monkeypatch.delenv("VIBE_TRADING_HOME")
+    sandbox = runner._prepare_sandbox_home(real_home)
+    try:
+        assert (sandbox / ".vibe-trading" / "cache" / "marker").read_text(encoding="utf-8") == "dev"
+    finally:
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+
+def test_file_tool_roots_never_grant_another_tiers_root(monkeypatch, tmp_path: Path) -> None:
+    """The file-tool read/write/run allowlists used to add ~/.vibe-trading/{uploads,imports,
+    runs,shadow_runs} next to the tier's own root, so release's file tools could read and
+    write dev's uploads and runs."""
+    from src.tools import path_utils
+
+    real_home, dev_root, tier_root = _two_tier_home(tmp_path)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: real_home))
+    monkeypatch.setenv("VIBE_TRADING_HOME", str(tier_root))
+    monkeypatch.delenv("VIBE_TRADING_ALLOWED_WRITE_ROOTS", raising=False)
+    dev = dev_root.resolve()
+    for name, roots in (
+        ("write", path_utils.allowed_write_roots()),
+        ("file", path_utils.allowed_file_roots()),
+        ("run", path_utils._default_run_roots()),
+    ):
+        leaked = [r for r in roots if r.resolve().is_relative_to(dev)]
+        assert not leaked, f"{name} roots grant dev's runtime root: {leaked}"
+    assert (tier_root / "uploads").resolve() in path_utils.allowed_write_roots()
+    assert (tier_root / "runs").resolve() in path_utils.allowed_file_roots()
