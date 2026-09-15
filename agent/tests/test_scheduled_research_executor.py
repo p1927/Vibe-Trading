@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
+from src.scheduled_research import dispatch_admission
 from src.scheduled_research.executor import (
     ScheduledResearchExecutor,
     defer_fresh_registrations,
@@ -22,6 +24,16 @@ from src.scheduled_research.executor import (
 from src.scheduled_research.index_jobs import HubNewsIngestCollectedNothingError
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob
 from src.scheduled_research.store import ScheduledResearchJobStore
+
+
+@pytest.fixture(autouse=True)
+def _frozen_admission_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Admission stamps a job with the tick's ``now`` plus real elapsed time (D11,
+    ``dispatch_admission._Waiter.now_ms``), so ``last_run_at == <tick now>`` flaked by 1ms.
+    Freeze only that module's clock (asyncio's own stays real): these tests pin the tick
+    clock, and the elapsed-time stamping is covered in test_scheduled_research_dispatch_admission.
+    """
+    monkeypatch.setattr(dispatch_admission, "time", SimpleNamespace(monotonic=lambda: 0.0))
 
 
 def _ms(year: int, month: int, day: int, hour: int, minute: int) -> int:
