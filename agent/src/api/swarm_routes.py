@@ -5,6 +5,7 @@ Mounted by ``agent/api_server.py`` via ``register_swarm_routes(app, ...)``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, Awaitable, Callable
 
@@ -33,6 +34,33 @@ def _get_swarm_runtime():
     agent_config = load_swarm_agent_config()
     _swarm_runtime = SwarmRuntime(store=store, agent_config=agent_config)
     return _swarm_runtime
+
+
+# Fork: the swarm store is file I/O (run.json, tasks/*.json, events.jsonl), and
+# reconcile_run(write=True) may rewrite those files. The handlers below run these
+# helpers with asyncio.to_thread, one thread call per request, so a slow disk never
+# freezes the event loop (and /health with it). Trade backlog:
+# .claude/backlog/items/2026-09-16-vibe-swarm-handlers-sync-store-io-on-loop.md
+
+
+def _reconciled_run_rows(store, limit: int) -> list[tuple[Any, bool]]:
+    """``list_runs`` + reconcile + staleness for each row: ``[(run, is_stale), ...]``."""
+    rows = []
+    for r in store.list_runs(limit=limit):
+        # Reconcile each row: a zombie running run will be auto-finalized so
+        # the dashboard never shows a "running" stuck row.
+        reconciled = store.reconcile_run(r, write=True)
+        rows.append((reconciled, store.is_run_stale(reconciled)))
+    return rows
+
+
+def _load_reconciled_run(store, run_id: str) -> tuple[Any, bool] | None:
+    """``load_run`` + reconcile + staleness: ``(run, is_stale)``, or None if not found."""
+    loaded = store.load_run(run_id)
+    if not loaded:
+        return None
+    run = store.reconcile_run(loaded, write=True)
+    return run, store.is_run_stale(run)
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +114,7 @@ def register_swarm_routes(
         """
         from src.swarm.presets import list_presets
 
-        return list_presets()
+        return await asyncio.to_thread(list_presets)
 
     @app.post("/swarm/runs", dependencies=[Depends(require_auth)])
     async def create_swarm_run(payload: dict, http_request: Request):
@@ -95,7 +123,8 @@ def register_swarm_routes(
         preset_name = payload.get("preset_name", "")
         user_vars = payload.get("user_vars", {})
         try:
-            run = runtime.start_run(
+            run = await asyncio.to_thread(
+                runtime.start_run,
                 preset_name,
                 user_vars,
                 include_shell_tools=_host_shell_tools_enabled_for_request(http_request),
@@ -110,18 +139,15 @@ def register_swarm_routes(
     async def list_swarm_runs(limit: int = Query(20, ge=1, le=100)):
         """List swarm runs (newest first), reconciled."""
         runtime = _get_swarm_runtime()
-        runs = runtime._store.list_runs(limit=limit)
+        rows = await asyncio.to_thread(_reconciled_run_rows, runtime._store, limit)
         items = []
-        for r in runs:
-            # Reconcile each row: a zombie running run will be auto-finalized so
-            # the dashboard never shows a "running" stuck row.
-            reconciled = runtime._store.reconcile_run(r, write=True)
+        for reconciled, is_stale in rows:
             items.append(
                 {
                     "id": reconciled.id,
                     "preset_name": reconciled.preset_name,
                     "status": reconciled.status.value,
-                    "is_stale": runtime._store.is_run_stale(reconciled),
+                    "is_stale": is_stale,
                     "created_at": reconciled.created_at,
                     "completed_at": reconciled.completed_at,
                     "task_count": len(reconciled.tasks),
@@ -137,11 +163,11 @@ def register_swarm_routes(
         """Swarm run detail including task statuses (reconciled)."""
         _host_validate_path_param(run_id, "run_id")
         runtime = _get_swarm_runtime()
-        loaded = runtime._store.load_run(run_id)
-        if not loaded:
+        found = await asyncio.to_thread(_load_reconciled_run, runtime._store, run_id)
+        if not found:
             raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
-        run = runtime._store.reconcile_run(loaded, write=True)
+        run, is_stale = found
 
         from src.swarm.serialization import serialize_task
 
@@ -149,7 +175,7 @@ def register_swarm_routes(
             "id": run.id,
             "preset_name": run.preset_name,
             "status": run.status.value,
-            "is_stale": runtime._store.is_run_stale(run),
+            "is_stale": is_stale,
             "user_vars": run.user_vars,
             "agents": [a.model_dump() for a in run.agents],
             "tasks": [
@@ -232,15 +258,15 @@ def register_swarm_routes(
         """
         _host_validate_path_param(run_id, "run_id")
         runtime = _get_swarm_runtime()
-        loaded = runtime._store.load_run(run_id)
-        if not loaded:
-            raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
-
         # Reconcile first so a stale "running" run whose host died gets demoted
         # before we gate on status; only a genuinely active run blocks retry.
+        found = await asyncio.to_thread(_load_reconciled_run, runtime._store, run_id)
+        if not found:
+            raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+
         from src.swarm.models import RunStatus
 
-        reconciled = runtime._store.reconcile_run(loaded, write=True)
+        reconciled, _is_stale = found
         if reconciled.status == RunStatus.running:
             raise HTTPException(
                 status_code=409, detail="Cannot retry a running run. Cancel it first."
@@ -255,7 +281,8 @@ def register_swarm_routes(
             )
 
         try:
-            new_run = runtime.start_run(
+            new_run = await asyncio.to_thread(
+                runtime.start_run,
                 reconciled.preset_name,
                 reconciled.user_vars or {},
                 include_shell_tools=_host_shell_tools_enabled_for_request(http_request),
