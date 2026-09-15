@@ -39,8 +39,10 @@ _POLL_INTERVAL = 2
 # Project .env locations, mirroring Vibe-Trading's own loader
 # (src/providers/llm.py ``_ENV_CANDIDATES``): first existing file wins.
 # tap_forward.py lives at agent/src/trading/ -> parents[2] is the agent dir.
+from src.config.paths import get_runtime_root as _get_runtime_root  # noqa: E402
+
 _ENV_CANDIDATES = (
-    Path.home() / ".vibe-trading" / ".env",
+    _get_runtime_root() / ".env",  # this tier's runtime root, not a fixed ~/.vibe-trading
     Path(__file__).resolve().parents[2] / ".env",  # agent/.env
     Path.cwd() / ".env",
 )

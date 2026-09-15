@@ -324,7 +324,9 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
             widget["autonomous_agent_id"] = ledger_agent_id
         new_widget_id = widget.get("widget_id")
         if new_widget_id:
-            widget_dir = Path.home() / ".vibe-trading" / "trade_widgets"
+            from src.config.paths import get_runtime_root
+
+            widget_dir = get_runtime_root() / "trade_widgets"
             widget_dir.mkdir(parents=True, exist_ok=True)
             widget_path = widget_dir / f"{new_widget_id}.json"
             widget_path.write_text(

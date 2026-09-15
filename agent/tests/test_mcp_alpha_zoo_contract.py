@@ -71,7 +71,9 @@ def test_alpha_zoo_forwards_filters(monkeypatch) -> None:
 def test_alpha_bench_forwards_selection(monkeypatch) -> None:
     registry = _RecordingRegistry()
     monkeypatch.setattr(mcp_server, "_get_registry", lambda: registry)
-    output_dir = Path.home() / ".vibe-trading" / "reports" / "alpha-zoo"
+    from src.config.paths import get_runtime_root
+
+    output_dir = get_runtime_root() / "reports" / "alpha-zoo"
 
     _ALPHA_BENCH(
         universe="sp500",

@@ -250,9 +250,11 @@ def _build_keybindings(state: _CtrlCState) -> KeyBindings:
 
 
 def _default_history_path() -> Path:
-    """Where ``~/.vibe-trading/history`` lives by default."""
-    home = Path.home() / ".vibe-trading"
-    return home / "history"
+    """Where ``<runtime root>/history`` lives by default (``~/.vibe-trading`` unless
+    ``VIBE_TRADING_HOME`` says otherwise)."""
+    from src.config.paths import get_runtime_root
+
+    return get_runtime_root() / "history"
 
 
 def make_session(history_path: Optional[Path] = None) -> PromptSession:

@@ -34,7 +34,9 @@ from src.strategy_store.models import (
 # Constants
 # ---------------------------------------------------------------------------
 
-_DEFAULT_DB_PATH = Path.home() / ".vibe-trading" / "strategy_store.db"
+from src.config.paths import get_runtime_root as _get_runtime_root  # noqa: E402
+
+_DEFAULT_DB_PATH = _get_runtime_root() / "strategy_store.db"
 
 # Schema version introduced by the model-governance migration (adds the
 # developer/owner/validator/approver/model_version/artifact_version/

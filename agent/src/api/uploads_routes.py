@@ -105,7 +105,9 @@ def register_uploads_routes(
         if format not in ("html", "pdf"):
             raise HTTPException(status_code=400, detail="format must be html or pdf")
 
-        reports_dir = Path.home() / ".vibe-trading" / "shadow_reports"
+        from src.config.paths import get_runtime_root
+
+        reports_dir = get_runtime_root() / "shadow_reports"
         path = reports_dir / f"{shadow_id}.{format}"
         if not path.exists():
             raise HTTPException(status_code=404, detail=f"Shadow report not found: {shadow_id}.{format}")

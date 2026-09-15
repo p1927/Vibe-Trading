@@ -177,15 +177,17 @@ class QQChannel(BaseChannel):
 
     def _init_media_root(self) -> Path:
         """Choose a directory for saving inbound attachments."""
+        from src.config.paths import get_runtime_root
+
         if self.config.media_dir:
             root = Path(self.config.media_dir).expanduser()
         elif get_media_dir:
             try:
                 root = Path(get_media_dir("qq"))
             except Exception:
-                root = Path.home() / ".vibe-trading" / "media" / "qq"
+                root = get_runtime_root() / "media" / "qq"
         else:
-            root = Path.home() / ".vibe-trading" / "media" / "qq"
+            root = get_runtime_root() / "media" / "qq"
 
         root.mkdir(parents=True, exist_ok=True)
         self.logger.info("media directory: {}", str(root))

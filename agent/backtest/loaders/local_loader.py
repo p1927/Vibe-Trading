@@ -40,10 +40,11 @@ import yaml
 
 from backtest.loaders.base import cached_loader_fetch, validate_date_range, validate_ohlc
 from backtest.loaders.registry import register
+from src.config.paths import get_runtime_root
 
 logger = logging.getLogger(__name__)
 
-_CONFIG_DIR = Path.home() / ".vibe-trading" / "data-bridge"
+_CONFIG_DIR = get_runtime_root() / "data-bridge"
 _CONFIG_PATH = _CONFIG_DIR / "config.yaml"
 
 _DEFAULT_COLUMNS = {

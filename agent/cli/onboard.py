@@ -118,7 +118,10 @@ TIMEOUT_CHOICES: Final[tuple[tuple[str, str], ...]] = (
 # ---------------------------------------------------------------------------
 
 
-def _env_dir() -> Path: return Path.home() / ".vibe-trading"
+def _env_dir() -> Path:
+    from src.config.paths import get_runtime_root
+
+    return get_runtime_root()
 def _env_path() -> Path: return _env_dir() / ".env"
 def _partial_path() -> Path: return _env_dir() / ".env.partial"
 

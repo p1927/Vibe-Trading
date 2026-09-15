@@ -26,12 +26,13 @@ import yaml
 
 from src.swarm.models import RunStatus, SwarmAgentSpec, SwarmRun, SwarmTask, TaskStatus
 from src.swarm.task_store import topological_layers, validate_dag
+from src.config.paths import get_runtime_root as _get_runtime_root
 
 PRESETS_DIR = Path(__file__).resolve().parent / "presets"
 #: User-created presets; searched before the bundled directory so user files
 #: can add to and override the roster by name (mirrors USER_SKILLS_DIR in
-#: ``src/agent/skills.py``). Survives package upgrades.
-USER_PRESETS_DIR = Path.home() / ".vibe-trading" / "swarm" / "presets"
+#: ``src/agent/skills.py``, including being per tier). Survives package upgrades.
+USER_PRESETS_DIR = _get_runtime_root() / "swarm" / "presets"
 _INTERNAL_TEMPLATE_VARS = {"upstream_context"}
 
 

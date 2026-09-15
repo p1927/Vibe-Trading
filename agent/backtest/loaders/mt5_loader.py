@@ -31,11 +31,12 @@ import pandas as pd
 
 from backtest.loaders.base import cached_loader_fetch, validate_date_range, validate_ohlc
 from backtest.loaders.registry import register
+from src.config.paths import get_runtime_root
 
 logger = logging.getLogger(__name__)
 
 #: Shared file contract with the MT5 trading connector (extra keys tolerated).
-_MT5_CONFIG_PATH = Path.home() / ".vibe-trading" / "mt5.json"
+_MT5_CONFIG_PATH = get_runtime_root() / "mt5.json"
 
 #: Canonical interval token → MetaTrader5 timeframe constant name.
 #: Lowercase ``1h``/``4h``/``1d``/``1w`` alias project-style tokens (connector parity).

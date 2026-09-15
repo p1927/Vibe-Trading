@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.api._compat import host_attr as _host_attr
-from src.config.paths import get_runs_dir, get_sessions_dir, get_uploads_dir
+from src.config.paths import get_runs_dir, get_runtime_root, get_sessions_dir, get_uploads_dir
 
 
 # ============================================================================
@@ -30,7 +30,10 @@ RUNS_DIR = get_runs_dir()
 SESSIONS_DIR = get_sessions_dir()
 UPLOADS_DIR = get_uploads_dir()
 AGENT_DIR = _AGENT_DIR
-ENV_PATH = Path.home() / ".vibe-trading" / ".env"
+# This tier's runtime root (VIBE_TRADING_HOME), like RUNS_DIR/SESSIONS_DIR above. A literal
+# ~/.vibe-trading here made the release tier read and WRITE dev's provider settings and API
+# keys (Trade backlog 2026-09-06-vibe-home-bypassed).
+ENV_PATH = get_runtime_root() / ".env"
 LEGACY_ENV_PATH = AGENT_DIR / ".env"
 ENV_EXAMPLE_PATH = AGENT_DIR / ".env.example"
 
@@ -223,8 +226,15 @@ def _read_env_values(path: Path) -> Dict[str, str]:
 
 def _project_relative_path(path: Path) -> str:
     """Return a project-relative display path without leaking an absolute path."""
-    if path == ENV_PATH:
-        return "~/.vibe-trading/.env"
+    home = Path.home()
+    try:
+        # A runtime-root file (the settings .env) is shown home-collapsed, so each tier
+        # reports its own root (~/.vibe-trading/.env vs ~/.vibe-trading-release/.env)
+        # instead of one hardcoded string, without leaking the absolute home path.
+        if path.is_relative_to(get_runtime_root()) and path.is_relative_to(home):
+            return "~/" + path.relative_to(home).as_posix()
+    except (TypeError, ValueError):
+        pass
     try:
         return path.resolve().relative_to(AGENT_DIR.parent.resolve()).as_posix()
     except ValueError:

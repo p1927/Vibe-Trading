@@ -5615,7 +5615,9 @@ def _handle_prompt_command(
     return cmd_run(resolved_prompt, max_iter, json_mode=json_mode, no_rich=no_rich)
 
 
-_INIT_ENV_PATH = Path.home() / ".vibe-trading" / ".env"
+from src.config.paths import get_runtime_root as _get_runtime_root  # noqa: E402
+
+_INIT_ENV_PATH = _get_runtime_root() / ".env"
 
 _PROVIDER_CHOICES: list[dict[str, str | None]] = [
     {

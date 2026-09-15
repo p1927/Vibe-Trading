@@ -371,10 +371,11 @@ def test_settings_write_permission_error_is_actionable(
     )
 
     assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "Unable to save settings; check ownership and permissions for "
-        "~/.vibe-trading/.env"
-    )
+    detail = response.json()["detail"]
+    # Names the file that could not be written (display form, never an absolute home path)
+    # rather than a hardcoded ~/.vibe-trading/.env that is wrong for the release tier.
+    assert detail.startswith("Unable to save settings; check ownership and permissions for ")
+    assert str(Path.home()) not in detail
 
 
 def test_update_nvidia_settings_persists_provider_namespace(
