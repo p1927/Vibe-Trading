@@ -124,3 +124,68 @@ def test_unchanged_snapshot_across_polls_is_not_re_emitted(monkeypatch: pytest.M
 
     assert calls["positions"] == 3  # polled every tick...
     assert len(positions_events) == 1  # ...but only emitted once, since the snapshot never changed
+
+
+def test_blocking_legs_do_not_stall_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every leg is synchronous I/O (a broker call, a plan-artifact read, a full news_events
+    parquet read per story). Run on the loop thread, they froze the whole API: on release
+    2026-09-11 the loop-stall watchdog logged 10 stalls of 10-13s, every one inside this
+    generator's news leg (`resolve_news_impact` -> `news_events_store._load_events_frame`), and
+    `/health` timed out meanwhile. See
+    .claude/backlog/items/2026-09-07-vibe-api-thread-pool-starvation-during-agent-turn.md.
+
+    Each leg here blocks its thread for 0.3s. A probe coroutine on the same loop must keep
+    ticking while they run; if any leg ran on the loop thread, the probe would see a gap of at
+    least that long."""
+    import threading
+    import time
+
+    loop_thread: list[int] = []
+    leg_threads: list[int] = []
+
+    def _blocking(result):
+        def _leg(*_a, **_kw):
+            leg_threads.append(threading.get_ident())
+            time.sleep(0.3)
+            return result
+
+        return _leg
+
+    monkeypatch.setattr(
+        "nautilus_openalgo_bridge.live_pop.compute_live_pop_for_agent",
+        _blocking({"groups": [], "skipped": []}),
+    )
+    monkeypatch.setattr("src.trade.hub_bridge.load_hub_plan_artifact", _blocking({"spot": 24000.0}))
+    monkeypatch.setattr("trade_integrations.context.hub.load_index_research_json", lambda ticker: None)
+    monkeypatch.setattr(
+        "trade_integrations.dataflows.news_hub_bridge.resolve_news_impact", _blocking({"items": []}),
+    )
+
+    async def _run() -> tuple[float, list[str]]:
+        loop_thread.append(threading.get_ident())
+        done = asyncio.Event()
+        max_gap = 0.0
+
+        async def _probe() -> None:
+            nonlocal max_gap
+            last = time.monotonic()
+            while not done.is_set():
+                await asyncio.sleep(0.01)
+                now = time.monotonic()
+                max_gap = max(max_gap, now - last)
+                last = now
+
+        probe = asyncio.create_task(_probe())
+        events: list[str] = []
+        async for frame in routes._command_center_event_stream("aa_one", "NIFTY", _FakeRequest(1)):
+            events.append(frame.split("\n", 1)[0])
+        done.set()
+        await probe
+        return max_gap, events
+
+    max_gap, events = asyncio.run(_run())
+
+    assert {"event: positions", "event: prediction", "event: news"} <= set(events)
+    assert len(leg_threads) == 3
+    assert loop_thread[0] not in leg_threads  # every leg ran off the loop thread
+    assert max_gap < 0.2, f"event loop stalled for {max_gap:.2f}s while a leg ran"

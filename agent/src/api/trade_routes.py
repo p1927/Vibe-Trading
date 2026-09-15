@@ -3759,7 +3759,7 @@ async def _command_center_event_stream(agent_id: str, ticker: str, request: Requ
         if agent_id and now - last_positions_poll >= _COMMAND_CENTER_POSITIONS_POLL_SECONDS:
             last_positions_poll = now
             try:
-                positions = compute_live_pop_for_agent(agent_id)
+                positions = await asyncio.to_thread(compute_live_pop_for_agent, agent_id)
                 snapshot = _command_center_snapshot_hash(positions)
                 if snapshot != last_positions_snapshot:
                     last_positions_snapshot = snapshot
@@ -3775,8 +3775,12 @@ async def _command_center_event_stream(agent_id: str, ticker: str, request: Requ
             try:
                 from src.trade.hub_bridge import load_hub_plan_artifact
 
-                artifact = load_hub_plan_artifact(ticker, "index")
-                _attach_latest_forecast_fan(artifact, ticker)
+                def _load_prediction() -> Any:
+                    artifact = load_hub_plan_artifact(ticker, "index")
+                    _attach_latest_forecast_fan(artifact, ticker)
+                    return artifact
+
+                artifact = await asyncio.to_thread(_load_prediction)
                 snapshot = _command_center_snapshot_hash(artifact)
                 if snapshot != last_prediction_snapshot:
                     last_prediction_snapshot = snapshot
@@ -3795,8 +3799,11 @@ async def _command_center_event_stream(agent_id: str, ticker: str, request: Requ
                 from trade_integrations.context.hub import load_index_research_json
                 from trade_integrations.dataflows import news_hub_bridge
 
-                doc = load_index_research_json(ticker)
-                report = news_hub_bridge.resolve_news_impact(ticker=ticker, doc=doc, limit=12, horizon_days=7)
+                def _load_news() -> Any:
+                    doc = load_index_research_json(ticker)
+                    return news_hub_bridge.resolve_news_impact(ticker=ticker, doc=doc, limit=12, horizon_days=7)
+
+                report = await asyncio.to_thread(_load_news)
                 snapshot = _command_center_snapshot_hash(report)
                 if snapshot != last_news_snapshot:
                     last_news_snapshot = snapshot
