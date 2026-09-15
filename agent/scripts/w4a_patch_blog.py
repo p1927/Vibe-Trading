@@ -25,8 +25,12 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # agent/, for src.*
+
+from src.config.paths import get_runtime_root  # noqa: E402
+
 HTML_PATH = REPO / "wiki" / "research-lab" / "posts" / "alpha-191-in-2026.html"
-SUMMARY_PATH = Path.home() / ".vibe-trading" / "reports" / "bench_summary.json"
+SUMMARY_PATH = get_runtime_root() / "reports" / "bench_summary.json"
 
 GTJA_KEY = "gtja191_csi300"
 

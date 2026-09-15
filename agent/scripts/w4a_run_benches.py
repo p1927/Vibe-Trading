@@ -41,7 +41,9 @@ from src.factors.bench_runner import run_bench  # noqa: E402
 from src.tools.alpha_bench_tool import run_alpha_bench  # noqa: E402
 
 
-REPORTS_DIR = Path.home() / ".vibe-trading" / "reports"
+from src.config.paths import get_runtime_root  # noqa: E402
+
+REPORTS_DIR = get_runtime_root() / "reports"
 
 BENCHES = [
     {"key": "gtja191_csi300", "zoo": "gtja191", "universe": "csi300", "period": "2018-2025"},

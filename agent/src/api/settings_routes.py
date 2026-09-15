@@ -561,7 +561,7 @@ def _persist_settings_updates(updates: Dict[str, str]) -> Dict[str, str]:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
                 "Unable to save settings; check ownership and permissions for "
-                "~/.vibe-trading/.env"
+                f"{host._project_relative_path(target)}"
             ),
         ) from exc
     return _read_settings_env_values()

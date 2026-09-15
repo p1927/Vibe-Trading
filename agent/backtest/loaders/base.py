@@ -360,11 +360,12 @@ def loader_cache_root() -> Path:
         The configured cache root, or the default under the user's home.
     """
     from src.config.accessor import get_env_config
+    from src.config.paths import get_runtime_root
 
     root = get_env_config().data.vibe_trading_data_cache_root
     if isinstance(root, str) and root.strip():
         return Path(root).expanduser()
-    return Path.home() / ".vibe-trading" / "cache" / "loaders"
+    return get_runtime_root() / "cache" / "loaders"
 
 
 def make_loader_cache_key(

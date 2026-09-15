@@ -736,18 +736,22 @@ AGENT_DIR = Path(__file__).resolve().parents[2]
 # the primary bootstrap path already layers root Trade/.env under agent/.env
 # correctly. The repo-root entry here exists so single-sourced settings (e.g.
 # NSE_REPLAY_DATA_ROOT) are still reachable even via this fallback.
+from src.config.paths import get_runtime_root as _get_runtime_root  # noqa: E402
+
 _ENV_CANDIDATES = [
-    Path.home() / ".vibe-trading" / ".env",
+    # This tier's runtime root (VIBE_TRADING_HOME), not a fixed ~/.vibe-trading — see
+    # Trade backlog 2026-09-06-vibe-home-bypassed.
+    _get_runtime_root() / ".env",
     AGENT_DIR / ".env",
     AGENT_DIR.parents[1] / ".env",
     Path.cwd() / ".env",
 ]
 
-# Index-aligned with _ENV_CANDIDATES. CWE-209: never log the absolute
-# .env path (it leaks the OS username / home / CWD). The label names
-# which slot won - the entire P08 R1 signal - using compile-time
-# constants only.
-_ENV_LABELS = ("~/.vibe-trading/.env", "<AGENT_DIR>/.env", "<CWD>/.env")
+# Index-aligned with _ENV_CANDIDATES (one label per slot — the repo-root slot used to have
+# none, so zip() gave it "<CWD>/.env" and dropped the real CWD slot). CWE-209: never log the
+# absolute .env path (it leaks the OS username / home / CWD). The label names which slot won
+# - the entire P08 R1 signal - using compile-time constants only.
+_ENV_LABELS = ("<RUNTIME_ROOT>/.env", "<AGENT_DIR>/.env", "<TRADE_ROOT>/.env", "<CWD>/.env")
 
 # Kimi reasoning models (K-series: kimi-k2*, kimi-k3, …, and the
 # kimi-for-coding alias) reject any temperature other than 1 with

@@ -17,11 +17,12 @@ from typing import Any
 import httpx
 
 from src.agent.tools import BaseTool
+from src.config.paths import get_runtime_root
 
 SIGNUP_URL = "https://qveris.ai/?ref=Vyjjo5G_1cAHJA"
 INVITE_CODE = "Vyjjo5G_1cAHJA"
 DEFAULT_BASE_URL = "https://qveris.ai/api/v1"
-QVERIS_CONFIG_PATH = Path.home() / ".vibe-trading" / "qveris.json"
+QVERIS_CONFIG_PATH = get_runtime_root() / "qveris.json"
 VALID_MODES = {"free", "paid"}
 _LEGACY_MODE_MAP = {
     "preview": "free",

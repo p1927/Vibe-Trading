@@ -239,9 +239,10 @@ def test_read_write_env_values_roundtrip(tmp_path):
 
 def test_settings_default_to_user_writable_config_path() -> None:
     """Web settings must not target the installed package directory."""
-    from pathlib import Path
+    from src.config.paths import get_runtime_root
 
-    assert helpers.ENV_PATH == Path.home() / ".vibe-trading" / ".env"
+    # Under this tier's runtime root (VIBE_TRADING_HOME), not a fixed ~/.vibe-trading.
+    assert helpers.ENV_PATH == get_runtime_root() / ".env"
     assert helpers.LEGACY_ENV_PATH == helpers.AGENT_DIR / ".env"
 
 

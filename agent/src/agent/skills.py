@@ -94,7 +94,13 @@ def _load_skill_dir(dir_path: Path) -> Optional[Skill]:
     )
 
 
-USER_SKILLS_DIR = Path.home() / ".vibe-trading" / "skills" / "user"
+from src.config.paths import get_runtime_root as _get_runtime_root  # noqa: E402
+
+# Per tier, like the rest of the runtime root: Trade's setup_vibe.sync_skills already
+# provisions skills into each tier's own VIBE_TRADING_HOME/skills/user, and an agent that
+# writes a skill (skill_writer_tool) on the unstable dev tier must not change what release
+# loads (Trade backlog 2026-09-06-vibe-home-bypassed).
+USER_SKILLS_DIR = _get_runtime_root() / "skills" / "user"
 
 
 class SkillsLoader:

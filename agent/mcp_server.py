@@ -965,8 +965,10 @@ def alpha_bench(
         from src.tools.path_utils import allowed_write_roots, resolve_safe_path
 
         try:
+            # Only this tier's runtime root: a literal ~/.vibe-trading/reports here granted
+            # the release tier write access into dev's tree (Trade backlog
+            # 2026-09-06-vibe-home-bypassed).
             report_roots = [
-                Path.home() / ".vibe-trading" / "reports",
                 get_runtime_root() / "reports",
                 *allowed_write_roots(),
             ]

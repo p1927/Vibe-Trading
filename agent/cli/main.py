@@ -101,8 +101,10 @@ def _register_data_slash_commands() -> None:  # QVERIS-INTEGRATION
 # QVERIS-INTEGRATION
 _register_data_slash_commands()  # QVERIS-INTEGRATION
 # QVERIS-INTEGRATION
+from src.config.paths import get_runtime_root as _get_runtime_root  # noqa: E402
+
 _AGENT_DIR = Path(__file__).resolve().parents[1]
-_ENV_PATH = Path.home() / ".vibe-trading" / ".env"
+_ENV_PATH = _get_runtime_root() / ".env"
 _PROJECT_ENV_PATH = _AGENT_DIR / ".env"
 _CWD_ENV_PATH = Path.cwd() / ".env"
 # Best-effort fallbacks used only when the probe genuinely fails (missing

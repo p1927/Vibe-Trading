@@ -67,11 +67,25 @@ def resolve_trade_root(trade_root: Path | None = None) -> Path | None:
     return None
 
 
+def _home_collapsed(path: Path) -> str:
+    """``path`` with the home prefix shown as ``~`` (never an absolute home path)."""
+    try:
+        return "~/" + path.relative_to(Path.home()).as_posix()
+    except ValueError:
+        return path.name
+
+
 def _env_layer_paths(trade_root: Path | None) -> list[tuple[str, Path]]:
+    from src.config.paths import get_runtime_root
+
     layers: list[tuple[str, Path]] = []
-    operator = Path.home() / ".vibe-trading" / ".env"
+    # The operator layer is THIS tier's runtime root (VIBE_TRADING_HOME), not a fixed
+    # ~/.vibe-trading: the release tier used to configure itself from dev's .env here
+    # (Trade backlog 2026-09-06-vibe-home-bypassed). The label is the home-collapsed real
+    # path, so the boot banner names the file actually layered.
+    operator = get_runtime_root() / ".env"
     if operator.is_file():
-        layers.append(("~/.vibe-trading/.env", operator))
+        layers.append((_home_collapsed(operator), operator))
     if trade_root is not None:
         trade_env = trade_root / ".env"
         if trade_env.is_file():

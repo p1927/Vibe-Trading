@@ -31,10 +31,11 @@ from backtest.loaders.base import (
     validate_ohlc,
 )
 from backtest.loaders.registry import register
+from src.config.paths import get_runtime_root
 
 logger = logging.getLogger(__name__)
 
-_CONFIG_PATH = Path.home() / ".vibe-trading" / "qveris.json"
+_CONFIG_PATH = get_runtime_root() / "qveris.json"
 _DEFAULT_BASE_URL = "https://qveris.ai/api/v1"
 _API_KEY_ENV = "QVERIS_API_KEY"
 _BASE_URL_ENV = "QVERIS_BASE_URL"

@@ -22,8 +22,9 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     uploads_dir = Path(tempfile.mkdtemp(prefix="uploads_routes_test_"))
     home_dir = Path(tempfile.mkdtemp(prefix="uploads_routes_home_"))
     monkeypatch.setattr(api_server, "UPLOADS_DIR", uploads_dir)
-    # /shadow-reports reads Path.home() / ".vibe-trading" / "shadow_reports" directly (not a
-    # host-module attribute), so isolating it means patching Path.home itself.
+    # /shadow-reports resolves get_runtime_root() / "shadow_reports" per request (not a
+    # host-module attribute); conftest removes VIBE_TRADING_HOME, so patching Path.home
+    # isolates it.
     monkeypatch.setattr(Path, "home", staticmethod(lambda: home_dir))
     monkeypatch.setattr(api_server, "_API_KEY", "")
     return TestClient(api_server.app, client=("127.0.0.1", 50000))
@@ -99,7 +100,9 @@ def test_shadow_report_missing_returns_404(client: TestClient) -> None:
 
 
 def test_shadow_report_html_served_when_present(client: TestClient) -> None:
-    reports_dir = Path.home() / ".vibe-trading" / "shadow_reports"
+    from src.config.paths import get_runtime_root
+
+    reports_dir = get_runtime_root() / "shadow_reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     (reports_dir / "shadow_12345678.html").write_text("<html>ok</html>", encoding="utf-8")
 

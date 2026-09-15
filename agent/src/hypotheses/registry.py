@@ -39,7 +39,9 @@ def default_hypotheses_path() -> Path:
     override = get_env_config().paths.vibe_trading_hypotheses_path.strip()
     if override:
         return Path(override).expanduser()
-    return Path.home() / ".vibe-trading" / "hypotheses.json"
+    from src.config.paths import get_runtime_root
+
+    return get_runtime_root() / "hypotheses.json"
 
 
 def _utc_now() -> str:
