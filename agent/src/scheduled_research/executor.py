@@ -855,10 +855,17 @@ class ScheduledResearchExecutor:
         them from both loops would only duplicate work, not add coverage. This loop
         owns exactly one thing: dispatching operational-tier jobs on their own cadence,
         immune to whatever the main loop's tick is currently blocked on.
+
+        Also sweeps every running simulation agent for a crossed replay-pass boundary
+        (`_check_simulation_boundaries` below) on every pass of this loop — this tier's own
+        job-independent cadence is exactly why it was picked for that, over the narrower
+        per-agent `autonomous_agent_watch` job: see
+        .claude/backlog/items/2026-09-08-simulation-boundary-only-detected-on-watch-tick.md.
         """
         now = self._now_fn() if now_ms is None else now_ms
         self._operational_tick_count += 1
         self._last_operational_tick_started_ms = now
+        self._check_simulation_boundaries()
         jobs = sorted(
             (
                 job
@@ -875,6 +882,26 @@ class ScheduledResearchExecutor:
             wait=wait,
         )
         self._last_operational_tick_completed_ms = self._now_fn()
+
+    def _check_simulation_boundaries(self) -> None:
+        """Catch a completed simulation replay pass on this tick, for every running agent.
+
+        Sidecar call into Trade's own autonomous-agents module (docs/FORK_CONVENTIONS.md) —
+        this fork does not own simulation lifecycle, it just makes sure the check is not
+        gated behind any one job. `ImportError` means a standalone vibetrading install
+        outside the Trade monorepo, where there is no simulation concept at all; any other
+        failure is logged loudly rather than silently disabling detection for a whole tick.
+        """
+        try:
+            from trade_integrations.autonomous_agents.simulation_lifecycle import (
+                check_all_simulation_boundaries,
+            )
+        except ImportError:
+            return
+        try:
+            check_all_simulation_boundaries()
+        except Exception:
+            logger.error("simulation boundary sweep failed", exc_info=True)
 
     async def _dispatch_due_jobs(
         self,

@@ -2021,6 +2021,74 @@ def test_operational_tier_job_dispatches_on_its_own_tick_not_the_main_one() -> N
         asyncio.run(scenario())
 
 
+def test_operational_tick_sweeps_simulation_boundaries_every_pass(monkeypatch) -> None:
+    """The operational tick must catch a completed simulation replay pass on every pass of
+    its own loop, not only when some agent's `autonomous_agent_watch` job happens to be due —
+    see .claude/backlog/items/2026-09-08-simulation-boundary-only-detected-on-watch-tick.md.
+    This is the wiring test; `check_all_simulation_boundaries`'s own behaviour is covered in
+    `tests/test_autonomous_simulation_lifecycle.py`."""
+    import tempfile
+
+    import trade_integrations.autonomous_agents.simulation_lifecycle as simlife
+
+    calls: list[None] = []
+    monkeypatch.setattr(simlife, "check_all_simulation_boundaries", lambda: calls.append(None) or [])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = ScheduledResearchJobStore(path=Path(tmp) / "jobs.json")
+
+        async def dispatch(job: ScheduledResearchJob) -> None:
+            pass
+
+        async def scenario() -> None:
+            executor = ScheduledResearchExecutor(store, dispatch)
+            await executor._operational_tick(1_500)
+            await executor._operational_tick(2_500)
+
+        asyncio.run(scenario())
+
+    assert len(calls) == 2
+
+
+def test_operational_tick_survives_the_simulation_sweep_raising(monkeypatch) -> None:
+    """One bad exception out of the sweep must not take down the operational tick, which
+    still has real jobs (autonomous_agent_watch and friends) to dispatch on this pass."""
+    import tempfile
+
+    import trade_integrations.autonomous_agents.simulation_lifecycle as simlife
+
+    def _boom():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(simlife, "check_all_simulation_boundaries", _boom)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = ScheduledResearchJobStore(path=Path(tmp) / "jobs.json")
+        store.upsert(
+            ScheduledResearchJob(
+                id="aa-watch",
+                prompt="watch",
+                schedule="5000",
+                next_run_at=1_000,
+                status=JobStatus.PENDING,
+                created_at=0,
+                config={"job_type": "autonomous_agent_watch"},
+            )
+        )
+        dispatched: list[str] = []
+
+        async def dispatch(job: ScheduledResearchJob) -> None:
+            dispatched.append(job.id)
+
+        async def scenario() -> None:
+            executor = ScheduledResearchExecutor(store, dispatch)
+            await executor._operational_tick(1_500)
+
+        asyncio.run(scenario())
+
+        assert dispatched == ["aa-watch"]
+
+
 def test_main_tick_never_dispatches_operational_tier_jobs() -> None:
     import tempfile
 
