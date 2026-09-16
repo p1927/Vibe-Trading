@@ -50,11 +50,17 @@ def set_job_enabled(
 ) -> Optional[ScheduledResearchJob]:
     """Enable or disable a job's recurring schedule.
 
-    Disabling sets ``paused = True`` without touching ``status`` or
-    ``next_run_at``, so a live run is unaffected and the original cadence
-    resumes unchanged on resume. Enabling clears both ``paused`` and
-    ``auto_paused_reason`` regardless of whether the pause was user- or
-    system-initiated.
+    Disabling sets ``paused = True`` and clears ``auto_paused_reason`` without
+    touching ``status`` or ``next_run_at``, so a live run is unaffected and
+    the original cadence resumes unchanged on resume. Clearing the reason on
+    disable (not just on enable) matters because a deliberate operator pause
+    must always replace any stale system-pause reason a prior shutdown/boot
+    recovery left behind — otherwise ``resume_jobs_auto_paused_by_shutdown``
+    at the next boot reads that leftover reason and silently un-pauses a job
+    the operator explicitly turned off. See
+    `.claude/backlog/items/2026-09-11-operator-pause-overridden-by-boot-resume.md`.
+    Enabling clears both ``paused`` and ``auto_paused_reason`` regardless of
+    whether the pause was user- or system-initiated.
 
     Enabling ALWAYS clears ``consecutive_failures``/``failure_kind``, so a
     resumed job gets a genuinely clean slate. This is the whole point of a
@@ -102,8 +108,8 @@ def set_job_enabled(
     if job is None:
         return None
     job.paused = not enabled
+    job.auto_paused_reason = None
     if enabled:
-        job.auto_paused_reason = None
         job.consecutive_failures = 0
         job.failure_kind = None
         if job.status == JobStatus.FAILED:

@@ -286,6 +286,43 @@ def test_resume_jobs_auto_paused_by_shutdown_leaves_operator_pause_alone(
     assert store.get("operator-paused").paused is True  # type: ignore[union-attr]
 
 
+def test_operator_pause_after_shutdown_auto_pause_survives_boot_resume(tmp_path: Path) -> None:
+    """Regression for
+    .claude/backlog/items/2026-09-11-operator-pause-overridden-by-boot-resume.md:
+    a shutdown auto-pause stamps auto_paused_reason; if an operator then
+    deliberately pauses the same job, set_job_enabled(False) must clear that
+    stale reason so the next boot's resume_jobs_auto_paused_by_shutdown sweep
+    can no longer mistake the operator's own decision for its own transient
+    shutdown pause and silently un-pause the job."""
+    from src.scheduled_research.pause_control import set_job_enabled
+
+    store = _store(tmp_path)
+    now_ms = int(time.time() * 1000)
+    store.upsert(_running_job("options-plan-refresh", last_run_at=now_ms - 1_000))
+
+    # 1. A release restart shutdown-auto-pauses the job.
+    recover_scheduler_jobs_on_stack_shutdown(store)
+    shutdown_paused = store.get("options-plan-refresh")
+    assert shutdown_paused is not None
+    assert shutdown_paused.paused is True
+    assert shutdown_paused.auto_paused_reason == "auto-paused: recovered on stack shutdown"
+
+    # 2. Before the next boot, an operator deliberately pauses it too.
+    set_job_enabled("options-plan-refresh", False, store=store)
+    operator_paused = store.get("options-plan-refresh")
+    assert operator_paused is not None
+    assert operator_paused.paused is True
+    assert operator_paused.auto_paused_reason is None
+
+    # 3. The next boot's auto-resume sweep must not touch it.
+    resumed = resume_jobs_auto_paused_by_shutdown(store)
+    assert resumed == 0
+
+    saved = store.get("options-plan-refresh")
+    assert saved is not None
+    assert saved.paused is True
+
+
 def test_resume_does_not_touch_status_of_a_non_failed_job(tmp_path: Path) -> None:
     """A merely-paused, healthy job's status must be untouched by resume —
     only the terminal-FAILED case gets the extra reset."""
