@@ -84,6 +84,27 @@ os.environ["HOME"] = str(_SANDBOX_HOME)
 os.environ["USERPROFILE"] = str(_SANDBOX_HOME)
 (_SANDBOX_HOME / ".vibe-trading").mkdir(parents=True, exist_ok=True)
 
+# Same leak, same mechanism, for MLflow: Trade's `mlflow_config.tracking_uri()` lets an
+# explicit MLFLOW_TRACKING_URI win over its own per-process pytest temp store, and both
+# tiers' .env set it, so a vibetrading test that reaches a Trade MLflow writer (board
+# routes, ledger reconcilers, version stores) from a .env-loaded shell would log into the
+# tier's REAL store.
+#
+# `import trade_integrations` MUST happen before the pop, not after: importing it is what
+# triggers `trade_integrations.register.apply()` -> `env.load_trade_env()`, which applies
+# Trade's real `.env` (MLFLOW_TRACKING_URI included) via `os.environ.setdefault(...)` the
+# first time anything imports the package. `apply()` only runs once per process (its own
+# `_APPLIED` guard), so forcing that import here, then popping the value it just set,
+# means every later `import trade_integrations` anywhere in the suite is a cached no-op —
+# nothing re-applies the real value afterwards. Popping first and importing later (or not
+# at all) leaves the pop with nothing to remove yet, and the first test that imports
+# trade_integrations re-populates it from the real .env regardless of this pop -- confirmed
+# live: with the pop alone, a case reaching `trade_integrations.observability.mlflow_config`
+# still saw MLFLOW_TRACKING_URI resolve to the real dev store.
+import trade_integrations  # noqa: E402,F401 -- see ordering note above
+
+os.environ.pop("MLFLOW_TRACKING_URI", None)
+
 # A developer shell that exports MARKET_DATA_ORDER_* would silently reorder
 # the default fallback chains (registry.refresh_source_order_overrides reads
 # them at import time), breaking every default-order assertion in the suite.
