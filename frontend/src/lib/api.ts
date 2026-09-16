@@ -2226,15 +2226,23 @@ export const api = {
       `/trade/model-adapters/${encodeURIComponent(adapterId)}`,
       { method: "PATCH", body: JSON.stringify(body) },
     ),
+  // Backend `run_hub_news_ingest` chains multiple source legs (RSS, Currents, web-search
+  // waterfall, LLM relevance/distillation); its own docstring documents an 11+ minute
+  // worst case for a single leg on "full" mode. The default 20s abort was cutting a
+  // legitimately-slow full ingest off before it could finish, same reasoning as
+  // postHubStockHistoryBackfill above.
   runHubNewsIngest: (body: HubNewsIngestRequest = { mode: "full" }) =>
     request<HubStagingDrainResponse>("/trade/hub/news-pipeline/ingest", {
       method: "POST",
       body: JSON.stringify(body),
+      timeoutMs: 900_000,
     }),
+  // Chains repair + backfill + compact + cleanup + rollup over up to 730 days —
+  // at least as heavy as ingest above, same timeout reasoning.
   runHubNewsMaintenance: (entityId = "NIFTY", lookbackDays = 365) =>
     request<HubStagingDrainResponse>(
       `/trade/hub/news-pipeline/maintenance?entity_id=${encodeURIComponent(entityId)}&lookback_days=${encodeURIComponent(String(lookbackDays))}`,
-      { method: "POST" },
+      { method: "POST", timeoutMs: 900_000 },
     ),
   listFactorRegistryGaps: (status?: string, limit = 100) =>
     request<FactorRegistryGapReviewResponse>(
