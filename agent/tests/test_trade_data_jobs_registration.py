@@ -54,12 +54,20 @@ def test_unified_calibration_off_registers_all_four(monkeypatch, tmp_path):
     assert _ids(store) == NSE_JOB_IDS | SUBSUMED_JOB_IDS
 
 
-def test_trade_data_scheduler_off_registers_nothing(monkeypatch, tmp_path):
+def test_trade_data_scheduler_off_registers_all_paused(monkeypatch, tmp_path):
+    """D80: TRADE_DATA_ENABLE_SCHEDULER=0 no longer means unregistered/invisible —
+    the family is still registered, just paused, so it's visible and resumable
+    from the Scheduled UI. See docs/DECISIONS.md D80.
+    """
     _set_env(monkeypatch, trade_data="0", calibration="1", unified="1")
     store = ScheduledResearchJobStore(tmp_path / "jobs.json")
 
-    assert register_default_trade_data_jobs(store) == 0
-    assert _ids(store) == set()
+    assert register_default_trade_data_jobs(store) == 2
+    assert _ids(store) == NSE_JOB_IDS
+    for job_id in NSE_JOB_IDS:
+        job = store.get(job_id)
+        assert job.paused is True
+        assert job.auto_paused_reason == "TRADE_DATA_ENABLE_SCHEDULER disabled (D80)"
 
 
 def test_registration_is_idempotent(monkeypatch, tmp_path):

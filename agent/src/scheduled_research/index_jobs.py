@@ -458,11 +458,14 @@ def run_index_research_job(config: dict[str, Any] | None = None) -> dict[str, An
 
 
 def run_index_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Light refresh for NIFTY when macro drifts or material news appears."""
-    if not is_index_monitor_scheduler_enabled():
-        logger.info("index plan refresh skipped: INDEX_MONITOR_ENABLE_SCHEDULER disabled")
-        return {"skipped": True, "reason": "monitor_disabled"}
+    """Light refresh for NIFTY when macro drifts or material news appears.
 
+    D80: this used to also re-check ``INDEX_MONITOR_ENABLE_SCHEDULER`` at dispatch
+    time — a second on/off mechanism for the same switch that now only decides the
+    job's initial ``paused`` state at registration (``register_default_index_jobs``).
+    A registered job is controlled only by the scheduler's own pause; see
+    docs/DECISIONS.md D80.
+    """
     _ensure_trade_integrations_on_path()
     from trade_integrations.dataflows.index_research.light_refresh import run_index_light_refresh
 
@@ -1865,20 +1868,40 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             if job.id not in {"nifty-index-calibration", "nifty-company-research-archive"}
         ]
 
-    if is_index_monitor_scheduler_enabled():
-        poll_cron = get_env_config().trade.index_monitor_poll_cron.strip()
-        validate_schedule(poll_cron)
-        defaults.append(
-            ScheduledResearchJob(
-                id="nifty-index-plan-refresh",
-                prompt="Light refresh Nifty index prediction on news/macro drift",
-                schedule=poll_cron,
-                next_run_at=now_ms,
-                status=JobStatus.PENDING,
-                created_at=now_ms,
-                config={"job_type": JOB_TYPE_INDEX_PLAN_REFRESH, "ticker": "NIFTY"},
-            ),
-        )
+    # D80: always registered (previously only appended when
+    # INDEX_MONITOR_ENABLE_SCHEDULER was on, which left it unregistered/invisible
+    # to the Scheduled UI when off); "off" now starts the job paused instead. See
+    # docs/DECISIONS.md D80.
+    index_monitor_enabled = is_index_monitor_scheduler_enabled()
+    poll_cron = get_env_config().trade.index_monitor_poll_cron.strip()
+    validate_schedule(poll_cron)
+    defaults.append(
+        ScheduledResearchJob(
+            id="nifty-index-plan-refresh",
+            prompt="Light refresh Nifty index prediction on news/macro drift",
+            schedule=poll_cron,
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={"job_type": JOB_TYPE_INDEX_PLAN_REFRESH, "ticker": "NIFTY"},
+            paused=not index_monitor_enabled,
+            auto_paused_reason=None if index_monitor_enabled else "INDEX_MONITOR_ENABLE_SCHEDULER disabled (D80)",
+        ),
+    )
+
+    # D80: INDEX_RESEARCH_ENABLE_SCHEDULER used to gate whether
+    # register_default_index_jobs ran at all (scheduled_startup.py), leaving every
+    # job above unregistered/invisible to the Scheduled UI when off. It now always
+    # registers; the switch only decides whether newly-created jobs start paused
+    # (existing jobs' `paused` is left untouched by the reconcile loop below, same
+    # as every other field it doesn't own). See docs/DECISIONS.md D80.
+    if not is_index_scheduler_enabled():
+        defaults = [
+            dataclasses.replace(
+                job, paused=True, auto_paused_reason="INDEX_RESEARCH_ENABLE_SCHEDULER disabled (D80)"
+            )
+            for job in defaults
+        ]
 
     # India's settings-managed hub-news jobs take their settings-owned fields from the Hub
     # news-pipeline settings, the same source sync_scheduled_jobs() applies below, so the

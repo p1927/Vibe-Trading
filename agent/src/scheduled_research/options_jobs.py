@@ -74,11 +74,19 @@ def is_options_thesis_break_auto_dispatch_enabled(
 
 
 def is_options_monitor_active() -> bool:
-    """Both master monitor switch and scheduler env must be enabled."""
+    """The master monitor switch (unrelated to job registration; D80 out of scope).
+
+    D80: this used to also require ``is_options_scheduler_enabled()``, a second
+    dispatch-time read of the same env var that already governs the job's initial
+    ``paused`` state at registration (``register_default_options_jobs``). A
+    registered job is now controlled only by the scheduler's own pause — see
+    docs/DECISIONS.md D80 — so this dispatch-time read is dropped rather than
+    kept as a second on/off mechanism for the same switch.
+    """
     _ensure_trade_integrations_on_path()
     from trade_integrations.monitor.config import is_monitor_enabled
 
-    return is_monitor_enabled() and is_options_scheduler_enabled()
+    return is_monitor_enabled()
 
 
 def _ensure_trade_integrations_on_path() -> None:
@@ -405,9 +413,14 @@ async def dispatch_options_job(job: ScheduledResearchJob) -> None:
 
 
 def register_default_options_jobs(store) -> int:
-    """Register default options monitor jobs when missing. Returns count created."""
-    if not is_options_scheduler_enabled():
-        return 0
+    """Register default options monitor jobs when missing. Returns count created.
+
+    D80: always registers — ``OPTIONS_MONITOR_ENABLE_SCHEDULER`` no longer gates
+    registration itself (which left the family invisible/unresumable in the
+    Scheduled UI when off); it now only decides whether newly-created jobs start
+    paused, same as every other job family (docs/DECISIONS.md D80).
+    """
+    enabled = is_options_scheduler_enabled()
 
     _ensure_trade_integrations_on_path()
     from trade_integrations.monitor.config import get_monitor_config
@@ -417,6 +430,7 @@ def register_default_options_jobs(store) -> int:
     watchlist = list(get_monitor_config().watchlist)
 
     now_ms = int(time.time() * 1000)
+    reason = None if enabled else "OPTIONS_MONITOR_ENABLE_SCHEDULER disabled (D80)"
     defaults = [
         ScheduledResearchJob(
             id="options-plan-refresh",
@@ -430,6 +444,8 @@ def register_default_options_jobs(store) -> int:
                 "watchlist": watchlist,
                 "dispatch_timeout_ms": OPTIONS_PLAN_REFRESH_DISPATCH_TIMEOUT_MS,
             },
+            paused=not enabled,
+            auto_paused_reason=reason,
         ),
         ScheduledResearchJob(
             id="options-position-monitor",
@@ -439,6 +455,8 @@ def register_default_options_jobs(store) -> int:
             status=JobStatus.PENDING,
             created_at=now_ms,
             config={"job_type": JOB_TYPE_OPTIONS_POSITION_MONITOR},
+            paused=not enabled,
+            auto_paused_reason=reason,
         ),
     ]
 
@@ -448,5 +466,5 @@ def register_default_options_jobs(store) -> int:
             continue
         store.upsert(job)
         created += 1
-        logger.info("registered default options monitor job %s (%s)", job.id, job.schedule)
+        logger.info("registered default options monitor job %s (%s, paused=%s)", job.id, job.schedule, not enabled)
     return created

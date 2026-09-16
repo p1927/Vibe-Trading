@@ -77,8 +77,9 @@ async def dispatch_financial_knowledge_job(job: ScheduledResearchJob) -> None:
 
 
 def register_default_financial_knowledge_jobs(store: ScheduledResearchJobStore) -> int:
-    if not is_financial_knowledge_scheduler_enabled():
-        return 0
+    # D80: always register — "off" is the scheduler's own per-job pause, not a
+    # never-registered/invisible family. See docs/DECISIONS.md D80.
+    enabled = is_financial_knowledge_scheduler_enabled()
 
     now_ms = int(time.time() * 1000)
     cron = get_env_config().trade.financial_knowledge_curator_cron.strip()
@@ -96,7 +97,9 @@ def register_default_financial_knowledge_jobs(store: ScheduledResearchJobStore) 
             status=JobStatus.PENDING,
             created_at=now_ms,
             config={"job_type": JOB_TYPE_FINANCIAL_KNOWLEDGE_CURATOR, "batch_size": 15},
+            paused=not enabled,
+            auto_paused_reason=None if enabled else "FINANCIAL_KNOWLEDGE_ENABLE_SCHEDULER disabled (D80)",
         )
     )
-    logger.info("registered financial-knowledge curator job %s (%s)", job_id, cron)
+    logger.info("registered financial-knowledge curator job %s (%s, paused=%s)", job_id, cron, not enabled)
     return 1

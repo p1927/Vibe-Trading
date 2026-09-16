@@ -111,8 +111,10 @@ async def dispatch_factor_health_job(job: ScheduledResearchJob) -> None:
 
 
 def register_default_factor_health_jobs(store: ScheduledResearchJobStore) -> int:
-    if not is_factor_health_scheduler_enabled():
-        return 0
+    # D80: always register — "off" is the scheduler's own per-job pause, not a
+    # never-registered/invisible family. See docs/DECISIONS.md D80.
+    enabled = is_factor_health_scheduler_enabled()
+    reason = None if enabled else "FACTOR_HEALTH_ENABLE_SCHEDULER disabled (D80)"
 
     created = 0
     now_ms = int(time.time() * 1000)
@@ -132,9 +134,11 @@ def register_default_factor_health_jobs(store: ScheduledResearchJobStore) -> int
                 status=JobStatus.PENDING,
                 created_at=now_ms,
                 config={"job_type": JOB_TYPE_FACTOR_HEALTH},
+                paused=not enabled,
+                auto_paused_reason=reason,
             )
         )
-        logger.info("registered factor health job factor-health (%s)", daily_cron)
+        logger.info("registered factor health job factor-health (%s, paused=%s)", daily_cron, not enabled)
         created += 1
 
     # Opt-in only: this one calls every RECORDED factor's live source.
@@ -150,9 +154,11 @@ def register_default_factor_health_jobs(store: ScheduledResearchJobStore) -> int
                 status=JobStatus.PENDING,
                 created_at=now_ms,
                 config={"job_type": JOB_TYPE_FACTOR_HEALTH_LIVE},
+                paused=not enabled,
+                auto_paused_reason=reason,
             )
         )
-        logger.info("registered factor health job factor-health-live (%s)", live_cron)
+        logger.info("registered factor health job factor-health-live (%s, paused=%s)", live_cron, not enabled)
         created += 1
 
     return created

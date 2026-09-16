@@ -145,8 +145,10 @@ def agent_job_ids(agent_id: str) -> frozenset[str]:
 
 
 def register_infra_heal_job(agent_id: str) -> None:
-    if not is_autonomous_scheduler_enabled():
-        return
+    # D80: always registered — VIBE_TRADING_AUTONOMOUS_AGENTS_ENABLE_SCHEDULER off
+    # no longer means "never registered"; it starts the job paused instead. See
+    # docs/DECISIONS.md D80.
+    enabled = is_autonomous_scheduler_enabled()
     from src.scheduled_research.store import ScheduledResearchJobStore
 
     store = ScheduledResearchJobStore()
@@ -161,9 +163,11 @@ def register_infra_heal_job(agent_id: str) -> None:
             status=JobStatus.PENDING,
             created_at=now_ms,
             config={"job_type": JOB_TYPE_INFRA_HEAL, "autonomous_agent_id": agent_id},
+            paused=not enabled,
+            auto_paused_reason=None if enabled else "autonomous scheduler disabled (D80)",
         )
     )
-    logger.info("registered infra heal job for %s", agent_id)
+    logger.info("registered infra heal job for %s (paused=%s)", agent_id, not enabled)
 
 
 def unregister_infra_heal_job(agent_id: str) -> bool:
@@ -173,8 +177,15 @@ def unregister_infra_heal_job(agent_id: str) -> bool:
 
 
 def register_agent_jobs(agent: dict[str, Any]) -> None:
-    if not is_autonomous_scheduler_enabled():
-        return
+    # D80: always registered — the autonomous scheduler env switch no longer
+    # decides whether an agent's jobs get created at all (which made a
+    # switched-off tier's agents' jobs invisible/unresumable in the Scheduled
+    # UI); it now only decides whether they start paused, same as every other
+    # job family. See docs/DECISIONS.md D80. (This function already replaces
+    # each job wholesale on every call — see `store.upsert` — so applying the
+    # switch unconditionally here doesn't change that existing behavior.)
+    scheduler_enabled = is_autonomous_scheduler_enabled()
+    auto_paused_reason = None if scheduler_enabled else "autonomous scheduler disabled (D80)"
 
     agent_id = str(agent.get("id") or "")
     if not agent_id:
@@ -232,6 +243,8 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
                 created_at=watch_created_at,
                 last_run_at=watch_last_run,
                 config={"job_type": JOB_TYPE_WATCH, "autonomous_agent_id": agent_id},
+                paused=not scheduler_enabled,
+                auto_paused_reason=auto_paused_reason,
             )
         )
     store.upsert(
@@ -243,6 +256,8 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
             status=JobStatus.PENDING,
             created_at=now_ms,
             config={"job_type": JOB_TYPE_RESEARCH, "autonomous_agent_id": agent_id},
+            paused=not scheduler_enabled,
+            auto_paused_reason=auto_paused_reason,
         )
     )
     if _is_index_agent(agent):
@@ -256,6 +271,8 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
                 status=JobStatus.PENDING,
                 created_at=now_ms,
                 config={"job_type": JOB_TYPE_QUANT, "autonomous_agent_id": agent_id},
+                paused=not scheduler_enabled,
+                auto_paused_reason=auto_paused_reason,
             )
         )
 
@@ -270,6 +287,8 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
                 status=JobStatus.PENDING,
                 created_at=now_ms,
                 config={"job_type": JOB_TYPE_NEWS, "autonomous_agent_id": agent_id},
+                paused=not scheduler_enabled,
+                auto_paused_reason=auto_paused_reason,
             )
         )
         strategy_review_ms = str(int(schedules.get("strategy_review_ms") or _STRATEGY_REVIEW_MS_DEFAULT))
@@ -282,6 +301,8 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
                 status=JobStatus.PENDING,
                 created_at=now_ms,
                 config={"job_type": JOB_TYPE_STRATEGY_REVIEW, "autonomous_agent_id": agent_id},
+                paused=not scheduler_enabled,
+                auto_paused_reason=auto_paused_reason,
             )
         )
         # Own (tighter) cadence than strategy_review_ms — see
@@ -299,6 +320,8 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
                 status=JobStatus.PENDING,
                 created_at=now_ms,
                 config={"job_type": JOB_TYPE_STRATEGY_SNAPSHOT, "autonomous_agent_id": agent_id},
+                paused=not scheduler_enabled,
+                auto_paused_reason=auto_paused_reason,
             )
         )
     logger.info("registered autonomous jobs for %s", agent_id)

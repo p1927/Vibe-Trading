@@ -90,8 +90,10 @@ async def dispatch_hub_capture_job(job: ScheduledResearchJob) -> None:
 
 
 def register_default_hub_capture_jobs(store: ScheduledResearchJobStore) -> int:
-    if not is_hub_capture_scheduler_enabled():
-        return 0
+    # D80: always register — a family switched off is registered *paused*
+    # (scheduler-owned on/off, per docs/DECISIONS.md D80), not left unregistered
+    # and invisible to the Scheduled UI, same as index/news jobs already are.
+    enabled = is_hub_capture_scheduler_enabled()
     now_ms = int(time.time() * 1000)
     registered = 0
 
@@ -108,9 +110,11 @@ def register_default_hub_capture_jobs(store: ScheduledResearchJobStore) -> int:
                 status=JobStatus.PENDING,
                 created_at=now_ms,
                 config={"job_type": JOB_TYPE_HUB_CAPTURE_INTRADAY, "entity_id": "NIFTY"},
+                paused=not enabled,
+                auto_paused_reason=None if enabled else "HUB_CAPTURE_ENABLE_SCHEDULER disabled (D80)",
             )
         )
-        logger.info("registered hub capture job %s (%s)", job_id, cron)
+        logger.info("registered hub capture job %s (%s, paused=%s)", job_id, cron, not enabled)
         registered += 1
 
     # Independent of the intraday job above — registered separately so
@@ -129,9 +133,11 @@ def register_default_hub_capture_jobs(store: ScheduledResearchJobStore) -> int:
                 status=JobStatus.PENDING,
                 created_at=now_ms,
                 config={"job_type": JOB_TYPE_HUB_CAPTURE_FACTOR_SNAPSHOT, "entity_id": "NIFTY"},
+                paused=not enabled,
+                auto_paused_reason=None if enabled else "HUB_CAPTURE_ENABLE_SCHEDULER disabled (D80)",
             )
         )
-        logger.info("registered hub capture job %s (%s)", factor_job_id, factor_cron)
+        logger.info("registered hub capture job %s (%s, paused=%s)", factor_job_id, factor_cron, not enabled)
         registered += 1
 
     return registered

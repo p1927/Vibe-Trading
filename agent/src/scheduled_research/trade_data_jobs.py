@@ -139,9 +139,13 @@ def register_default_trade_data_jobs(store: ScheduledResearchJobStore) -> int:
     ``nse-repo-consistency``) are not covered by the unified path and are always
     registered — a whole-function early return here once left ``nse_browser/*``
     with no daily writer (2026-09-11-nse-browser-jobs-never-registered).
+
+    D80: the whole function used to early-return when ``TRADE_DATA_ENABLE_SCHEDULER``
+    was off, leaving every job below unregistered and invisible to the Scheduled UI.
+    It now always registers; that switch instead decides whether newly-created jobs
+    start paused (docs/DECISIONS.md D80), same as every other job family.
     """
-    if not is_trade_data_scheduler_enabled():
-        return 0
+    enabled = is_trade_data_scheduler_enabled()
 
     from src.scheduled_research.hub_calibration_jobs import (
         is_hub_calibration_scheduler_enabled,
@@ -156,13 +160,14 @@ def register_default_trade_data_jobs(store: ScheduledResearchJobStore) -> int:
     now_ms = int(time.time() * 1000)
 
     if not unified_subsumes_fills_and_archive:
-        created += _register_fills_and_archive_jobs(store, now_ms)
-    created += _register_nse_browser_jobs(store, now_ms)
+        created += _register_fills_and_archive_jobs(store, now_ms, enabled)
+    created += _register_nse_browser_jobs(store, now_ms, enabled)
     return created
 
 
-def _register_fills_and_archive_jobs(store: ScheduledResearchJobStore, now_ms: int) -> int:
+def _register_fills_and_archive_jobs(store: ScheduledResearchJobStore, now_ms: int, enabled: bool) -> int:
     created = 0
+    reason = None if enabled else "TRADE_DATA_ENABLE_SCHEDULER disabled (D80)"
     fills_cron = get_env_config().trade.trade_fills_export_cron.strip()
     validate_schedule(fills_cron)
     fills_job_id = "hub-trade-fills-export"
@@ -176,9 +181,11 @@ def _register_fills_and_archive_jobs(store: ScheduledResearchJobStore, now_ms: i
                 status=JobStatus.PENDING,
                 created_at=now_ms,
                 config={"job_type": JOB_TYPE_TRADE_FILLS_EXPORT},
+                paused=not enabled,
+                auto_paused_reason=reason,
             )
         )
-        logger.info("registered default trade data job %s (%s)", fills_job_id, fills_cron)
+        logger.info("registered default trade data job %s (%s, paused=%s)", fills_job_id, fills_cron, not enabled)
         created += 1
 
     archive_cron = get_env_config().trade.research_history_archive_cron.strip()
@@ -194,15 +201,18 @@ def _register_fills_and_archive_jobs(store: ScheduledResearchJobStore, now_ms: i
                 status=JobStatus.PENDING,
                 created_at=now_ms,
                 config={"job_type": JOB_TYPE_RESEARCH_HISTORY_ARCHIVE},
+                paused=not enabled,
+                auto_paused_reason=reason,
             )
         )
-        logger.info("registered default trade data job %s (%s)", archive_job_id, archive_cron)
+        logger.info("registered default trade data job %s (%s, paused=%s)", archive_job_id, archive_cron, not enabled)
         created += 1
     return created
 
 
-def _register_nse_browser_jobs(store: ScheduledResearchJobStore, now_ms: int) -> int:
+def _register_nse_browser_jobs(store: ScheduledResearchJobStore, now_ms: int, enabled: bool) -> int:
     created = 0
+    reason = None if enabled else "TRADE_DATA_ENABLE_SCHEDULER disabled (D80)"
     nse_cron = get_env_config().trade.nse_macro_refresh_cron.strip()
     validate_schedule(nse_cron)
     nse_job_id = "nse-macro-refresh"
@@ -216,9 +226,11 @@ def _register_nse_browser_jobs(store: ScheduledResearchJobStore, now_ms: int) ->
                 status=JobStatus.PENDING,
                 created_at=now_ms,
                 config={"job_type": JOB_TYPE_NSE_MACRO_REFRESH},
+                paused=not enabled,
+                auto_paused_reason=reason,
             )
         )
-        logger.info("registered default trade data job %s (%s)", nse_job_id, nse_cron)
+        logger.info("registered default trade data job %s (%s, paused=%s)", nse_job_id, nse_cron, not enabled)
         created += 1
 
     consistency_cron = get_env_config().trade.nse_repo_consistency_cron.strip()
@@ -237,9 +249,11 @@ def _register_nse_browser_jobs(store: ScheduledResearchJobStore, now_ms: int) ->
                     "job_type": JOB_TYPE_NSE_REPO_CONSISTENCY,
                     "trigger_reingest_on_drift": True,
                 },
+                paused=not enabled,
+                auto_paused_reason=reason,
             )
         )
-        logger.info("registered default trade data job %s (%s)", consistency_job_id, consistency_cron)
+        logger.info("registered default trade data job %s (%s, paused=%s)", consistency_job_id, consistency_cron, not enabled)
         created += 1
 
     return created

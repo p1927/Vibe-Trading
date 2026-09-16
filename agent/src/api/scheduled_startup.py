@@ -100,58 +100,34 @@ def boot_scheduled_research_stack(get_store) -> None:
             )
     except Exception:
         logger.exception("failed to auto-resume shutdown-paused scheduler jobs on API startup")
-    from src.scheduled_research.index_jobs import (
-        is_index_scheduler_enabled,
-        register_default_index_jobs,
-    )
-    from src.scheduled_research.options_jobs import (
-        is_options_scheduler_enabled,
-        register_default_options_jobs,
-    )
-    from src.scheduled_research.trade_data_jobs import (
-        is_trade_data_scheduler_enabled,
-        register_default_trade_data_jobs,
-    )
-    from src.scheduled_research.hub_calibration_jobs import (
-        is_hub_calibration_scheduler_enabled,
-        register_default_hub_calibration_jobs,
-    )
-    from src.scheduled_research.capture_jobs import (
-        is_hub_capture_scheduler_enabled,
-        register_default_hub_capture_jobs,
-    )
+    from src.scheduled_research.index_jobs import register_default_index_jobs
+    from src.scheduled_research.options_jobs import register_default_options_jobs
+    from src.scheduled_research.trade_data_jobs import register_default_trade_data_jobs
+    from src.scheduled_research.hub_calibration_jobs import register_default_hub_calibration_jobs
+    from src.scheduled_research.capture_jobs import register_default_hub_capture_jobs
     from src.scheduled_research.financial_knowledge_jobs import (
-        is_financial_knowledge_scheduler_enabled,
         register_default_financial_knowledge_jobs,
     )
-    from src.scheduled_research.dst_eval_jobs import (
-        is_dst_eval_scheduler_enabled,
-        register_default_dst_eval_jobs,
-    )
-    from src.scheduled_research.factor_health_jobs import (
-        is_factor_health_scheduler_enabled,
-        register_default_factor_health_jobs,
-    )
+    from src.scheduled_research.dst_eval_jobs import register_default_dst_eval_jobs
+    from src.scheduled_research.factor_health_jobs import register_default_factor_health_jobs
 
-    if is_index_scheduler_enabled():
-        register_default_index_jobs(get_store())
-    if is_options_scheduler_enabled():
-        register_default_options_jobs(get_store())
-    if is_hub_calibration_scheduler_enabled():
-        register_default_hub_calibration_jobs(get_store())
+    # D80: every family is always registered now — each register_default_*_jobs
+    # function reads its own `*_ENABLE_SCHEDULER` env var itself and uses it only
+    # to decide whether a newly-created job starts paused, not whether the family
+    # registers at all. A family switched off is therefore visible and resumable
+    # from the Scheduled UI instead of silently absent. See docs/DECISIONS.md D80
+    # and .claude/backlog/items/2026-09-16-per-family-scheduler-env-switches.md.
+    register_default_index_jobs(get_store())
+    register_default_options_jobs(get_store())
+    register_default_hub_calibration_jobs(get_store())
     # Not an ``elif``: the NSE browser jobs are never subsumed by the unified hub
     # calibration jobs; register_default_trade_data_jobs itself skips only the
     # fills/archive jobs those do subsume.
-    if is_trade_data_scheduler_enabled():
-        register_default_trade_data_jobs(get_store())
-    if is_hub_capture_scheduler_enabled():
-        register_default_hub_capture_jobs(get_store())
-    if is_financial_knowledge_scheduler_enabled():
-        register_default_financial_knowledge_jobs(get_store())
-    if is_dst_eval_scheduler_enabled():
-        register_default_dst_eval_jobs(get_store())
-    if is_factor_health_scheduler_enabled():
-        register_default_factor_health_jobs(get_store())
+    register_default_trade_data_jobs(get_store())
+    register_default_hub_capture_jobs(get_store())
+    register_default_financial_knowledge_jobs(get_store())
+    register_default_dst_eval_jobs(get_store())
+    register_default_factor_health_jobs(get_store())
     # No enable flag: the advisory ledger's only writer (2026-09-07-advisory-ledger-write-only).
     from src.scheduled_research.execution_advisor_jobs import register_default_execution_advisor_jobs
 
