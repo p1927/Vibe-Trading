@@ -23,6 +23,7 @@ from src.config.accessor import get_env_config
 
 if TYPE_CHECKING:
     from src.scheduled_research.models import ScheduledResearchJob
+    from src.scheduled_research.store import ScheduledResearchJobStore
 
 logger = logging.getLogger(__name__)
 
@@ -356,6 +357,7 @@ class ScheduledRunResponse(BaseModel):
     section: str = "general"
     dispatch_blocked_reason: Optional[str] = None
     monitor: bool = False
+    due_jobs_ahead: Optional[int] = None
 
 
 class ScheduledJobPreviewResponse(BaseModel):
@@ -401,6 +403,30 @@ def _job_to_response(job: ScheduledResearchJob) -> "ScheduledRunResponse":
         monitor=is_monitor_job(str(job.config.get("job_type") or "")),
         delivery_attempts=delivery.get("attempts", 0),
         delivery_provider_message_id=delivery.get("provider_message_id"),
+    )
+
+
+def _count_due_jobs_ahead(job: ScheduledResearchJob, store: "ScheduledResearchJobStore") -> int:
+    """Count other due jobs a just-triggered job is queued behind.
+
+    A trigger only sets ``next_run_at = now`` (see ``trigger_job_now``); it
+    does not give the job any dispatch priority, so it competes for a slot
+    under the same D11 admission ordering (shortest expected runtime first,
+    a reserved last slot per type, ageing) as every other due job — see
+    .claude/backlog/items/2026-09-16-trigger-docstring-promises-immediate-dispatch.md.
+    This does not reproduce that ordering (it would need live executor
+    state this route doesn't have); it reports the same plain "how many
+    other jobs are due right now" count used to catch the bug live, so an
+    operator immediately sees whether a 200 means "about to run" or "behind
+    a backlog" instead of assuming the docstring's old "immediately" claim.
+    """
+    from src.scheduled_research.executor import is_due
+
+    now_ms = int(time.time() * 1000)
+    return sum(
+        1
+        for other in store.load().values()
+        if other.id != job.id and is_due(other, now_ms)
     )
 
 
@@ -841,7 +867,19 @@ def register_scheduled_routes(
         dependencies=[Depends(require_auth)],
     )
     async def trigger_scheduled_run(job_id: str) -> ScheduledRunResponse:
-        """Fire this job immediately without changing its paused/enabled state.
+        """Make this job due now; it does NOT fire it immediately.
+
+        This only sets ``next_run_at = now`` and wakes the executor so its
+        next tick considers the job — it grants no dispatch priority. The
+        executor still runs every due job through D11 admission (shortest
+        expected runtime first, a reserved last slot per type, ageing), so a
+        triggered job competes on equal footing with the rest of the overdue
+        backlog and can sit ``pending`` for a long time behind it (observed
+        live: 15+ minutes behind 38 other due jobs — see
+        .claude/backlog/items/2026-09-16-trigger-docstring-promises-immediate-dispatch.md).
+        The response's ``due_jobs_ahead`` says how many other jobs were due
+        at the same moment, so a poller can tell "about to run" from "queued
+        behind a backlog" instead of assuming immediacy.
 
         Errors 409 if the job is paused (resume it first), already running,
         or is a release-exclusive data-collection job type triggered outside
@@ -870,7 +908,8 @@ def register_scheduled_routes(
         wake = getattr(executor, "wake", None)
         if callable(wake):
             wake()
-        return _job_to_response(job)
+        due_jobs_ahead = await asyncio.to_thread(_count_due_jobs_ahead, job, store)
+        return _job_to_response(job).model_copy(update={"due_jobs_ahead": due_jobs_ahead})
 
     @app.get(
         "/scheduled-runs/{job_id}/preview",

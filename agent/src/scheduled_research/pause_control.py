@@ -161,13 +161,17 @@ def trigger_job_now(
     *,
     store: ScheduledResearchJobStore,
 ) -> Optional[ScheduledResearchJob]:
-    """Fire a job immediately without changing its enabled/paused state.
+    """Make a job due now, without changing its enabled/paused state.
 
+    This does NOT fire the job immediately and grants it no dispatch
+    priority: it only pulls ``next_run_at`` forward to now so the
+    executor's next due-check offers it to D11 admission like any other
+    due job, where it can still wait behind an overdue backlog (see
+    .claude/backlog/items/2026-09-16-trigger-docstring-promises-immediate-dispatch.md).
     Distinct from :func:`set_job_enabled`: this doesn't touch ``paused``, so
-    a paused job stays paused (and is refused, see below) — it only pulls
-    ``next_run_at`` forward to now so the executor's next due-check picks it
-    up. Mirrors ``trade/index_prediction_jobs.trigger_index_prediction_job``'s
-    guard logic, generalized to any job (no ``job_type`` gate).
+    a paused job stays paused (and is refused, see below). Mirrors
+    ``trade/index_prediction_jobs.trigger_index_prediction_job``'s guard
+    logic, generalized to any job (no ``job_type`` gate).
 
     Args:
         job_id: The job to trigger.

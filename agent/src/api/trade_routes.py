@@ -5121,10 +5121,14 @@ def trigger_index_prediction_job_route(
     job_id: str,
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexPredictionJobsResponse:
-    """Fire an index prediction cron job immediately (the Prediction tab's "run now").
+    """Make an index prediction cron job due now (the Prediction tab's "run now").
 
     Does not enable a paused job — full schedule control lives on the
-    Scheduler tab.
+    Scheduler tab. This does not fire the job immediately or bypass D11
+    admission — see ``trigger_index_prediction_job``'s docstring and
+    .claude/backlog/items/2026-09-16-trigger-docstring-promises-immediate-dispatch.md.
+    The returned ``job.due_jobs_ahead`` says how many other jobs were due
+    at trigger time.
     """
     try:
         from src.trade.index_prediction_jobs import trigger_index_prediction_job

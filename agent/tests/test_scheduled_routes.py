@@ -320,6 +320,37 @@ def test_trigger_sets_next_run_at_to_now_without_changing_status(
     assert stored.status == JobStatus.PENDING
 
 
+def test_trigger_reports_due_jobs_ahead_not_immediate_execution(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    """The trigger response must not claim immediate execution.
+
+    It only makes the job due — under D11 admission it queues behind every
+    other already-due job. The response says how many of those there are
+    (``due_jobs_ahead``) so an operator polling ``last_run_at`` after a 200
+    can tell "about to run" from "queued behind a backlog" instead of
+    trusting the old "fire immediately" docstring text. Regression test for
+    .claude/backlog/items/2026-09-16-trigger-docstring-promises-immediate-dispatch.md.
+    """
+    now = 1_700_000_000_000
+    _seed(store, id="already-due-1", next_run_at=now - 1, status=JobStatus.PENDING)
+    _seed(store, id="already-due-2", next_run_at=now - 1, status=JobStatus.PENDING)
+    _seed(
+        store,
+        id="paused-not-counted",
+        next_run_at=now - 1,
+        status=JobStatus.PENDING,
+        paused=True,
+    )
+    _seed(store, id="trigger-me", next_run_at=9_999_999_999_000, status=JobStatus.PENDING)
+
+    response = client.post("/scheduled-runs/trigger-me/trigger")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["due_jobs_ahead"] == 2
+
+
 def test_trigger_paused_job_returns_409(client: TestClient, store: ScheduledResearchJobStore):
     _seed(store, id="paused-job", status=JobStatus.PENDING)
     job = store.get("paused-job")
@@ -465,6 +496,32 @@ def test_trigger_shares_the_single_mutation_helper(
 
     assert "trigger-shared" in calls
     assert "trigger-shared-2" in calls
+
+
+def test_index_prediction_trigger_reports_due_jobs_ahead(
+    store: ScheduledResearchJobStore,
+):
+    """The Prediction tab's "run now" shares the docstring-promises-immediate
+    bug with the generic trigger route (both call ``trigger_job_now``), so
+    its response must carry the same ``due_jobs_ahead`` honesty field.
+    Regression test for
+    .claude/backlog/items/2026-09-16-trigger-docstring-promises-immediate-dispatch.md.
+    """
+    from src.trade import index_prediction_jobs
+
+    now = 1_700_000_000_000
+    _seed(store, id="idx-already-due", config={"job_type": "news_quality_eval"}, next_run_at=now - 1)
+    _seed(
+        store,
+        id="idx-trigger-me",
+        config={"job_type": "news_quality_eval"},
+        next_run_at=9_999_999_999_000,
+    )
+
+    payload = index_prediction_jobs.trigger_index_prediction_job("idx-trigger-me", store=store)
+
+    assert payload["status"] == "ok"
+    assert payload["job"]["due_jobs_ahead"] == 1
 
 
 def test_index_prediction_pause_uses_paused_field_not_status(

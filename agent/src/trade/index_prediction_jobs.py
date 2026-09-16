@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from src.scheduled_research.executor import is_job_stale_running
+from src.scheduled_research.executor import is_due, is_job_stale_running
 from src.scheduled_research.index_jobs import (
     INDEX_JOB_TYPES,
     JOB_TYPE_HUB_NEWS_ENTITY,
@@ -260,11 +260,18 @@ def resume_index_prediction_job(job_id: str, store: ScheduledResearchJobStore | 
 
 
 def trigger_index_prediction_job(job_id: str, store: ScheduledResearchJobStore | None = None) -> dict[str, Any]:
-    """Fire this job immediately, without changing its enabled/paused state.
+    """Make this job due now; it does NOT fire it immediately.
 
     This is the Prediction tab's "run now" action — it does not enable a
     paused job (full schedule control lives on the Scheduler tab), so it
-    errors if the job is currently paused or already running.
+    errors if the job is currently paused or already running. Under the
+    hood it calls the same ``trigger_job_now`` used by the generic
+    ``/scheduled-runs/{id}/trigger`` route: it only sets ``next_run_at =
+    now`` and grants no dispatch priority, so the job still competes under
+    D11 admission and can wait behind an overdue backlog (see
+    .claude/backlog/items/2026-09-16-trigger-docstring-promises-immediate-dispatch.md).
+    The returned job dict's ``due_jobs_ahead`` says how many other jobs were
+    due at the same moment.
     """
     store = store or ScheduledResearchJobStore()
     job = store.get(job_id)
@@ -277,7 +284,12 @@ def trigger_index_prediction_job(job_id: str, store: ScheduledResearchJobStore |
     except JobAlreadyRunningError:
         return {"status": "error", "message": f"index job {job_id} is already running"}
     _wake_executor()
-    return {"status": "ok", "job": _serialize_job(job)}
+    serialized = _serialize_job(job)
+    now_ms = int(time.time() * 1000)
+    serialized["due_jobs_ahead"] = sum(
+        1 for other in store.load().values() if other.id != job.id and is_due(other, now_ms)
+    )
+    return {"status": "ok", "job": serialized}
 
 
 def cancel_index_prediction_job(job_id: str, store: ScheduledResearchJobStore | None = None) -> dict[str, Any]:

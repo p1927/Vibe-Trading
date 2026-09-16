@@ -330,7 +330,7 @@ def test_trigger_scheduled_run_off_loop(monkeypatch: pytest.MonkeyPatch, schedul
 
     calls = _StoreCalls()
     woke: list[bool] = []
-    scheduled.install_store()
+    scheduled.install_store(load=calls.blocking({}))
     monkeypatch.setattr(pause_control, "trigger_job_now", calls.blocking(_job()))
     monkeypatch.setattr(
         scheduled.routes,
@@ -339,7 +339,9 @@ def test_trigger_scheduled_run_off_loop(monkeypatch: pytest.MonkeyPatch, schedul
     )
     endpoint = _endpoint("/scheduled-runs/{job_id}/trigger", "POST")
 
-    assert _await_with_probe(lambda: endpoint(job_id=_JOB_ID), calls, 1).id == _JOB_ID
+    # trigger_job_now, then store.load() to count other due jobs for the
+    # due_jobs_ahead response field (see _count_due_jobs_ahead).
+    assert _await_with_probe(lambda: endpoint(job_id=_JOB_ID), calls, 2).id == _JOB_ID
     assert woke == [True]  # wake() sets loop-side events, so it stays on the loop
 
 
