@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+from pathlib import Path
 from unittest.mock import patch
 
 import httpx
@@ -137,7 +139,16 @@ def test_ibkr_seed_is_official_readonly_oauth_probe() -> None:
     assert ibkr.url == "https://api.ibkr.com/v1/api/mcp-public"
     assert ibkr.auth is not None and ibkr.auth.type == "oauth"
     assert ibkr.auth.scopes == ["mcp.read"]
-    assert ibkr.auth.cache_dir == "~/.vibe-trading/live/ibkr/oauth"
+    # Not a hardcoded "~/.vibe-trading/..." string -- resolved under this tier's runtime root
+    # (VIBE_TRADING_HOME) at schema import time. Checked by shape, not exact value: this test
+    # module is collected after src.config.schema has already been imported once (via the
+    # config package's own __init__ import chain, pulled in early by conftest.py's runtime-root
+    # sandbox setup, #1116), so a fresh get_runtime_root() call here reflects the *sandboxed*
+    # home while the seed reflects whatever was real at that earlier import -- two correct
+    # values that legitimately differ within this test process. The real-tier behavior itself
+    # is covered by test_runtime_root_tier_scoping.py's fresh-subprocess probe.
+    assert Path(ibkr.auth.cache_dir).is_absolute()
+    assert ibkr.auth.cache_dir.endswith(os.path.join("live", "ibkr", "oauth"))
     assert ibkr.enabled_tools == ["*"]
     assert "ibkr" in LIVE_BROKER_SERVER_KEYS
 

@@ -8,6 +8,17 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from src.config.paths import get_runtime_root
+
+# This tier's runtime root, resolved once at import time. Every tier's process env
+# carries VIBE_TRADING_HOME before this module is imported (see
+# test_runtime_root_tier_scoping.py), so a module-level constant is safe here and
+# matches the pattern the rest of the runtime-root call sites use. Do not hardcode
+# "~/.vibe-trading/..." below -- that bypasses VIBE_TRADING_HOME entirely and puts
+# release's broker OAuth tokens in dev's runtime root (Trade backlog
+# 2026-09-16-broker-oauth-cache-dir-unscoped).
+_RUNTIME_ROOT = get_runtime_root()
+
 # Live-broker MCP server keys. These channels may place real orders, so a
 # wildcard ``enabled_tools`` (which would re-admit every WRITE/UNKNOWN tool) is
 # rejected at config-load time unless a broker-specific read-only OAuth probe is
@@ -44,7 +55,7 @@ LIVE_BROKER_READONLY_WILDCARD_ALLOWED_EXTRA_SCOPES: dict[str, frozenset[str]] = 
 LIVE_BROKER_WRITE_SCOPES: dict[str, frozenset[str]] = {
     "ibkr": frozenset({"mcp.write"}),
 }
-ROBINHOOD_AGENT_CONFIG_PATH = "~/.vibe-trading/agent.json"
+ROBINHOOD_AGENT_CONFIG_PATH = str(_RUNTIME_ROOT / "agent.json")
 LIVE_BROKER_WILDCARD_ALLOWLIST_ERROR = (
     "enabledTools allowlist ('*'); pin an explicit read-only tool list"
 )
@@ -198,7 +209,7 @@ ROBINHOOD_MCP_SERVER_SEED: dict[str, object] = {
         "type": "oauth",
         "scopes": ["trading.read"],
         "client_name": "Vibe-Trading",
-        "cache_dir": "~/.vibe-trading/live/robinhood/oauth",
+        "cache_dir": str(_RUNTIME_ROOT / "live" / "robinhood" / "oauth"),
     },
     # Seed the OFF-by-default READ allowlist to EXACTLY the canonical curated
     # READ tool names (``src.trading.connectors.robinhood.classification.ROBINHOOD_TOOL_CLASS``).
@@ -231,7 +242,7 @@ IBKR_MCP_SERVER_SEED: dict[str, object] = {
         "type": "oauth",
         "scopes": ["mcp.read"],
         "client_name": "Vibe-Trading",
-        "cache_dir": "~/.vibe-trading/live/ibkr/oauth",
+        "cache_dir": str(_RUNTIME_ROOT / "live" / "ibkr" / "oauth"),
     },
     "enabled_tools": ["*"],
 }
@@ -339,7 +350,9 @@ class MCPOAuthConfig(ConfigBase):
     type: Literal["oauth"] = "oauth"
     scopes: list[str] = Field(default_factory=list)
     client_name: str = "Vibe-Trading"
-    cache_dir: str = "~/.vibe-trading/live/robinhood/oauth"
+    cache_dir: str = Field(
+        default_factory=lambda: str(get_runtime_root() / "live" / "robinhood" / "oauth")
+    )
     callback_port: int | None = Field(default=None, ge=1, le=65535)
     client_id: str | None = None
     client_secret: str | None = None

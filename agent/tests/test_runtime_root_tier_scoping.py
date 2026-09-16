@@ -43,6 +43,31 @@ _ALLOWED = {
     "src/core/runner.py",
 }
 
+# The string-literal spelling, e.g. `"~/.vibe-trading/agent.json"` or
+# `cache_dir: str = "~/.vibe-trading/live/robinhood/oauth"`. `_LITERAL` above only catches the
+# `<expr> / ".vibe-trading"` path-join form; schema.py's broker OAuth `cache_dir` defaults were
+# spelled as whole strings instead and slipped past both ratchets (Trade backlog
+# 2026-09-16-broker-oauth-cache-dir-unscoped).
+_STRING_LITERAL = re.compile(r"""["']~/\.vibe-trading/""")
+
+#: Non-test modules allowed to spell the "~/.vibe-trading/..." string literal, each with its
+#: reason. Only for a genuine documentation/comment/docstring mention of the path -- a literal
+#: used as an actual default or value belongs in `_ALLOWED` above instead, resolved through
+#: `get_runtime_root()`.
+_STRING_LITERAL_ALLOWED = {
+    # Only the operator-facing ROBINHOOD_MCP_SERVER_SEED docstring/comment mentions the path
+    # as prose; the actual cache_dir/config-path values are resolved via get_runtime_root().
+    "src/config/schema.py",
+    # LLM-facing tool `description` prose stating where a profile is persisted, for the
+    # model's own understanding -- not a value the tool computes or resolves a real path from.
+    "src/tools/shadow_account_tool.py",
+    # LLM-facing tool `description` example JSON (an illustrative file path, not a real one).
+    "src/tools/image_vision_tool.py",
+    # Human-facing error message text naming the config file by its default-tier name; not the
+    # path this code actually reads/writes (that's `get_config_path()`, a few lines above).
+    "src/channels/feishu.py",
+}
+
 
 def _non_test_python_files() -> list[Path]:
     out = []
@@ -70,11 +95,44 @@ def test_no_literal_runtime_root_outside_allowlist() -> None:
     )
 
 
+def test_no_string_literal_runtime_root_outside_allowlist() -> None:
+    """Catches the `"~/.vibe-trading/..."` whole-string spelling, not just the path-join
+    expression form `test_no_literal_runtime_root_outside_allowlist` checks. A comment or
+    docstring line that only mentions the path for documentation is allowed, and only a module
+    listed in `_STRING_LITERAL_ALLOWED` may do even that -- a real (non-comment, non-docstring)
+    offender in that module still fails."""
+    offenders = []
+    for path in _non_test_python_files():
+        rel = path.relative_to(AGENT_DIR).as_posix()
+        in_docstring = False
+        for lineno, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            line = raw_line.strip()
+            is_comment_or_doc = line.startswith("#") or in_docstring
+            if (line.count('"""') + line.count("'''")) % 2 == 1:
+                in_docstring = not in_docstring
+                is_comment_or_doc = True
+            if not _STRING_LITERAL.search(raw_line):
+                continue
+            if is_comment_or_doc:
+                continue
+            if rel in _STRING_LITERAL_ALLOWED:
+                continue
+            offenders.append(f"{rel}:{lineno}: {raw_line.strip()}")
+    assert not offenders, (
+        "Use src.config.paths.get_runtime_root() instead of a literal "
+        '"~/.vibe-trading/..." string (it ignores VIBE_TRADING_HOME, so the release tier '
+        "would share dev's state):\n" + "\n".join(offenders)
+    )
+
+
 def test_allowlist_entries_still_exist() -> None:
     """A stale allowlist entry would silently permit a new literal at that path."""
     for rel in _ALLOWED:
         text = (AGENT_DIR / rel).read_text(encoding="utf-8")
         assert _LITERAL.search(text), f"{rel} no longer needs its allowlist entry"
+    for rel in _STRING_LITERAL_ALLOWED:
+        text = (AGENT_DIR / rel).read_text(encoding="utf-8")
+        assert _STRING_LITERAL.search(text), f"{rel} no longer needs its allowlist entry"
 
 
 _PROBE = r"""
@@ -88,12 +146,16 @@ from src.agent import skills
 from src.swarm import presets
 from src.providers import llm
 from src.trading import tap_forward
-from src.config import bootstrap
+from src.config import bootstrap, schema
 from src.tools import qveris_tool
 from backtest.loaders import mt5_loader, qveris_loader, local_loader
 import importlib
 cli_main = importlib.import_module("cli.main")  # `from cli import main` is the re-exported function
 print(json.dumps({
+    "robinhood_agent_config_path": schema.ROBINHOOD_AGENT_CONFIG_PATH,
+    "robinhood_seed_cache_dir": schema.ROBINHOOD_MCP_SERVER_SEED["auth"]["cache_dir"],
+    "ibkr_seed_cache_dir": schema.IBKR_MCP_SERVER_SEED["auth"]["cache_dir"],
+    "oauth_config_default_cache_dir": schema.MCPOAuthConfig().cache_dir,
     "env_path": str(helpers.ENV_PATH),
     "env_display": helpers._project_relative_path(helpers.ENV_PATH),
     "memory": str(persistent.MEMORY_BASE),
@@ -136,6 +198,8 @@ def test_import_time_paths_follow_vibe_trading_home(tmp_path: Path) -> None:
     for key in (
         "env_path", "memory", "memory_index", "strategy_store", "skills", "presets",
         "llm_env0", "tap_env0", "qveris", "mt5", "qveris_loader", "data_bridge", "cli_env",
+        "robinhood_agent_config_path", "robinhood_seed_cache_dir", "ibkr_seed_cache_dir",
+        "oauth_config_default_cache_dir",
     ):
         assert got[key].startswith(root + os.sep), f"{key} -> {got[key]} is not under {root}"
     # The settings API names the tier's own file, not a hardcoded ~/.vibe-trading/.env.
