@@ -1046,31 +1046,37 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         summary = run_index_calibration_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("index calibration completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "index calibration")
         return
     if job_type == JOB_TYPE_FORECAST_PLATFORM_RETRAIN:
         summary = run_forecast_platform_retrain_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("forecast platform retrain completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "forecast platform retrain")
         return
     if job_type == JOB_TYPE_QUANTILE_FORECAST_LEDGER_PUSH:
         summary = run_quantile_forecast_ledger_push_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("quantile forecast ledger push completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "quantile forecast ledger push")
         return
     if job_type == JOB_TYPE_COMPANY_RESEARCH_ARCHIVE:
         summary = run_company_research_archive_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("company research archive completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "company research archive")
         return
     if job_type == JOB_TYPE_INDEX_PREDICTION_POST_CLOSE:
         summary = run_index_prediction_post_close_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("index prediction post-close completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "index prediction post-close")
         return
     if job_type == JOB_TYPE_HUB_NEWS_ENTITY:
         summary = run_hub_news_entity_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("hub news entity pipeline completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "hub news entity pipeline")
         return
     if job_type == JOB_TYPE_HUB_NEWS_INGEST:
         from src.scheduled_research.ingest_source_streaks import record_source_zero_streaks
@@ -1109,6 +1115,7 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         summary = run_stock_history_coverage_sweep_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("stock_history coverage sweep completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "stock_history coverage sweep")
         return
     if job_type == JOB_TYPE_NEWS_QUALITY_EVAL:
         summary = run_news_quality_eval_job(job.config)
@@ -1130,36 +1137,43 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         summary = run_global_macro_eod_refresh_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("global macro EOD refresh completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "global macro EOD refresh")
         return
     if job_type == JOB_TYPE_OI_SNAPSHOT:
         summary = run_oi_snapshot_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("OI snapshot capture completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "OI snapshot capture")
         return
     if job_type == JOB_TYPE_PUMP_DUMP_PROXY:
         summary = run_pump_dump_proxy_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("pump-dump proxy capture completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "pump-dump proxy capture")
         return
     if job_type == JOB_TYPE_FUTURES_POSITIONING:
         summary = run_futures_positioning_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("futures positioning capture completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "futures positioning capture")
         return
     if job_type == JOB_TYPE_MAX_PAIN_BHAVCOPY:
         summary = run_max_pain_bhavcopy_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("max pain bhavcopy capture completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "max pain bhavcopy capture")
         return
     if job_type == JOB_TYPE_REINFERENCE_TICK:
         summary = run_reinference_tick_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("reinference tick completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "reinference tick")
         return
     if job_type == JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT:
         summary = run_constituent_volume_snapshot_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("constituent volume snapshot completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "constituent volume snapshot")
         return
     raise ValueError(f"unsupported index job_type: {job_type!r}")
 

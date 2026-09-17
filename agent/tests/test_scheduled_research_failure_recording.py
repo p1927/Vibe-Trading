@@ -220,27 +220,44 @@ def test_dst_eval_ok_summary_is_not_a_failure(monkeypatch) -> None:
     assert job.config["_last_result_summary"]["status"] == "ok"
 
 
-# --- parity fix: index_calibration / company_research_archive / index_prediction_post_close -----
+# --- D86 (2026-09-17 revision): every index_jobs branch now fails loud -------------------------
 #
-# These three branches used to skip `_attach_job_result_summary` entirely (unlike every other
-# branch in `_dispatch_index_job_body`, which already attaches without raising) -- so a
-# `had_errors: True` run left `last_result_summary` untouched, hiding the failure from view even
-# more completely than the other 11 branches' own gap. This fix only brings them to parity with
-# those 11: it attaches the summary. It deliberately does NOT add `raise_if_run_had_errors` -- the
-# internal-failure-vs-partial-vendor-result judgment call for these (and the other 11) branches
-# remains open, tracked by
-# .claude/backlog/items/2026-09-11-index-job-handlers-ignore-had-errors.md.
+# The maintainer originally decided (D86, 2026-09-16) that whether a given branch's `had_errors`
+# counts as a job failure would be a per-branch judgment call, deliberately not a blanket rule.
+# That was revisited on 2026-09-17: silently recording `status: completed` for a run that reported
+# errors gives a false sense of things being fine, so EVERY branch now raises
+# `JobRunHadErrorsError` on `had_errors` (or a bare `status == "error"` with no `had_errors` key at
+# all -- a second, inconsistent convention a few handlers used instead, e.g.
+# constituent-volume-snapshot's "no active broker session" path). This makes failure always
+# visible (`failure_kind`, `consecutive_failures`, `last_error`, UI/logs) and auto-pause-eligible
+# by default. What stays a per-branch decision, per the revised D86, is whether a job type should
+# ALSO get an exemption from auto-pause for well-evidenced, genuinely routine partial-vendor noise
+# -- the way `hub_news_ingest`'s `barren_collection` already is. No branch has been given that
+# exemption yet; it is added only when real evidence shows a job type is being wrongly auto-paused
+# for routine noise, not speculatively. See
+# .claude/backlog/items/2026-09-11-index-job-handlers-ignore-had-errors.md and docs/DECISIONS.md.
 
 
 @pytest.mark.parametrize(
     ("job_type", "handler_name"),
     [
         ("index_calibration", "run_index_calibration_job"),
+        ("forecast_platform_retrain", "run_forecast_platform_retrain_job"),
+        ("quantile_forecast_ledger_push", "run_quantile_forecast_ledger_push_job"),
         ("company_research_archive", "run_company_research_archive_job"),
         ("index_prediction_post_close", "run_index_prediction_post_close_job"),
+        ("hub_news_entity", "run_hub_news_entity_job"),
+        ("stock_history_coverage_sweep", "run_stock_history_coverage_sweep_job"),
+        ("global_macro_eod_refresh", "run_global_macro_eod_refresh_job"),
+        ("oi_snapshot", "run_oi_snapshot_job"),
+        ("pump_dump_proxy", "run_pump_dump_proxy_job"),
+        ("futures_positioning", "run_futures_positioning_job"),
+        ("max_pain_bhavcopy", "run_max_pain_bhavcopy_job"),
+        ("reinference_tick", "run_reinference_tick_job"),
+        ("constituent_volume_snapshot", "run_constituent_volume_snapshot_job"),
     ],
 )
-def test_previously_unattached_branches_now_attach_summary_on_had_errors(
+def test_every_index_job_branch_now_raises_on_had_errors(
     monkeypatch, job_type: str, handler_name: str
 ) -> None:
     monkeypatch.setattr(
@@ -249,24 +266,33 @@ def test_previously_unattached_branches_now_attach_summary_on_had_errors(
     )
     job = _job(f"{job_type}-had-errors", config={"job_type": job_type})
 
-    # Same as the 11 already-attaching branches: attaches but does not raise (the
-    # raise-vs-non-terminal decision for these branches is explicitly out of scope here).
-    index_jobs.dispatch_index_job_sync(job)
+    with pytest.raises(JobRunHadErrorsError):
+        index_jobs.dispatch_index_job_sync(job)
 
     summary = job.config["_last_result_summary"]
     assert summary["had_errors"] is True
-    assert summary["warning"] == "one or more pipeline stages reported errors"
 
 
 @pytest.mark.parametrize(
     ("job_type", "handler_name"),
     [
         ("index_calibration", "run_index_calibration_job"),
+        ("forecast_platform_retrain", "run_forecast_platform_retrain_job"),
+        ("quantile_forecast_ledger_push", "run_quantile_forecast_ledger_push_job"),
         ("company_research_archive", "run_company_research_archive_job"),
         ("index_prediction_post_close", "run_index_prediction_post_close_job"),
+        ("hub_news_entity", "run_hub_news_entity_job"),
+        ("stock_history_coverage_sweep", "run_stock_history_coverage_sweep_job"),
+        ("global_macro_eod_refresh", "run_global_macro_eod_refresh_job"),
+        ("oi_snapshot", "run_oi_snapshot_job"),
+        ("pump_dump_proxy", "run_pump_dump_proxy_job"),
+        ("futures_positioning", "run_futures_positioning_job"),
+        ("max_pain_bhavcopy", "run_max_pain_bhavcopy_job"),
+        ("reinference_tick", "run_reinference_tick_job"),
+        ("constituent_volume_snapshot", "run_constituent_volume_snapshot_job"),
     ],
 )
-def test_previously_unattached_branches_attach_summary_on_ok(
+def test_every_index_job_branch_still_ok_without_errors(
     monkeypatch, job_type: str, handler_name: str
 ) -> None:
     monkeypatch.setattr(index_jobs, handler_name, lambda config: {"status": "ok", "had_errors": False})
@@ -277,3 +303,17 @@ def test_previously_unattached_branches_attach_summary_on_ok(
     summary = job.config["_last_result_summary"]
     assert summary["status"] == "ok"
     assert "warning" not in summary
+
+
+def test_status_error_with_no_had_errors_key_also_raises(monkeypatch) -> None:
+    """The exact constituent-volume-snapshot shape: `status: "error"` with no `had_errors` key
+    at all (e.g. "no active broker session"). `raise_if_run_had_errors` must catch this second,
+    inconsistent convention too, not just the `had_errors` one."""
+    monkeypatch.setattr(
+        index_jobs, "run_constituent_volume_snapshot_job",
+        lambda config: {"status": "error", "error": "no active broker session", "rows_added": 0},
+    )
+    job = _job("constituent-volume-snapshot-no-broker", config={"job_type": "constituent_volume_snapshot"})
+
+    with pytest.raises(JobRunHadErrorsError, match="no active broker session"):
+        index_jobs.dispatch_index_job_sync(job)
