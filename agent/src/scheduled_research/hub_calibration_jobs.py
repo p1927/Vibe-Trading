@@ -94,7 +94,7 @@ def _attach_job_result_summary(job: ScheduledResearchJob, summary: dict[str, Any
         job.config[LAST_RESULT_CONFIG_KEY] = summary
 
 
-def dispatch_hub_calibration_job_sync(job: ScheduledResearchJob) -> None:
+def _dispatch_hub_calibration_job_body(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_HUB_MORNING_CALIBRATION:
         summary = run_hub_morning_calibration_job(job.config)
@@ -105,6 +105,25 @@ def dispatch_hub_calibration_job_sync(job: ScheduledResearchJob) -> None:
         _attach_job_result_summary(job, summary)
         return
     raise ValueError(f"unsupported hub_calibration job_type: {job_type!r}")
+
+
+def dispatch_hub_calibration_job_sync(job: ScheduledResearchJob) -> None:
+    """Dispatch, with this run's step_clock lines (calibration_orchestrator/calibration_runner)
+    also reported live into the Scheduler tab's log buffer -- see index_jobs.dispatch_index_job_sync
+    for the identical pattern and rationale."""
+    try:
+        from trade_integrations.dataflows.index_research.pipeline_cancel import set_stage_sink
+    except ImportError:
+        _dispatch_hub_calibration_job_body(job)
+        return
+
+    from src.scheduled_research.run_log_buffer import append_log
+
+    set_stage_sink(lambda message: append_log(job.id, message))
+    try:
+        _dispatch_hub_calibration_job_body(job)
+    finally:
+        set_stage_sink(None)
 
 
 async def dispatch_hub_calibration_job(job: ScheduledResearchJob) -> None:

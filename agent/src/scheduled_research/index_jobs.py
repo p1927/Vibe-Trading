@@ -278,7 +278,10 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
     """Collect daily macro + constituent aggregate factors."""
     _ensure_trade_integrations_on_path()
 
-    from trade_integrations.dataflows.index_research.pipeline_cancel import check_pipeline_cancel
+    from trade_integrations.dataflows.index_research.pipeline_cancel import (
+        check_pipeline_cancel,
+        emit_stage_event,
+    )
 
     cfg = config or {}
     ticker = str(cfg.get("ticker") or "NIFTY").strip().upper()
@@ -300,30 +303,44 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
 
         snapshot_date = india_trading_date_iso()[:10]
 
+    emit_stage_event("stage persist_daily_hub_market_data: starting")
+    stage_started = time.monotonic()
     try:
         from trade_integrations.dataflows.index_research.history_ingest import (
             persist_daily_hub_market_data,
         )
 
         summary = persist_daily_hub_market_data()
+        emit_stage_event(
+            f"stage persist_daily_hub_market_data: done in {int((time.monotonic() - stage_started) * 1000)}ms"
+        )
     except Exception as exc:
         _reraise_pipeline_cancel(exc)
         logger.warning("daily hub market persist in factor snapshot failed: %s", exc)
+        emit_stage_event(
+            f"stage persist_daily_hub_market_data: failed after "
+            f"{int((time.monotonic() - stage_started) * 1000)}ms: {exc}"
+        )
         summary = {"status": "error", "reason": str(exc)}
 
     check_pipeline_cancel()
     from trade_integrations.dataflows.index_research.snapshot import run_snapshot
 
+    emit_stage_event("stage run_snapshot: starting")
+    stage_started = time.monotonic()
     snapshot_summary = run_snapshot(
         snapshot_date=snapshot_date,
         skip_constituents=bool(cfg.get("skip_constituents")),
     )
+    emit_stage_event(f"stage run_snapshot: done in {int((time.monotonic() - stage_started) * 1000)}ms")
     summary = {**summary, "snapshot": snapshot_summary}
 
     enrich_days = int(cfg.get("enrich_days") or 7)
     participant_oi_days = int(cfg.get("participant_oi_days") or min(7, enrich_days))
     live_fetch_days = int(cfg.get("live_fetch_days") or 1)
     enrich_rolling_only = bool(cfg.get("enrich_rolling_only", False))
+    emit_stage_event("stage backfill_participant_oi: starting")
+    stage_started = time.monotonic()
     try:
         from trade_integrations.dataflows.index_research.participant_oi_backfill import (
             backfill_participant_oi,
@@ -336,12 +353,21 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
             skip_if_complete=True,
         )
         summary["participant_oi"] = oi_summary
+        emit_stage_event(
+            f"stage backfill_participant_oi: done in {int((time.monotonic() - stage_started) * 1000)}ms"
+        )
     except Exception as exc:
         _reraise_pipeline_cancel(exc)
         logger.warning("participant OI refresh in factor snapshot failed: %s", exc)
+        emit_stage_event(
+            f"stage backfill_participant_oi: failed after "
+            f"{int((time.monotonic() - stage_started) * 1000)}ms: {exc}"
+        )
         summary["participant_oi"] = {"status": "error", "reason": str(exc)}
 
     check_pipeline_cancel()
+    emit_stage_event("stage enrich_factor_history: starting")
+    stage_started = time.monotonic()
     try:
         from trade_integrations.dataflows.index_research.factor_backfill_enrichment import (
             enrich_factor_history,
@@ -355,9 +381,16 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
             live_fetch_days=live_fetch_days,
         )
         summary["factor_enrichment"] = enrich_summary
+        emit_stage_event(
+            f"stage enrich_factor_history: done in {int((time.monotonic() - stage_started) * 1000)}ms"
+        )
     except Exception as exc:
         _reraise_pipeline_cancel(exc)
         logger.warning("factor enrichment in factor snapshot failed: %s", exc)
+        emit_stage_event(
+            f"stage enrich_factor_history: failed after "
+            f"{int((time.monotonic() - stage_started) * 1000)}ms: {exc}"
+        )
         summary["factor_enrichment"] = {"status": "error", "reason": str(exc)}
 
     check_pipeline_cancel()
@@ -371,6 +404,8 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
             "trading_day": india_trading_date_iso()[:10],
         }
     else:
+        emit_stage_event("stage finalize_daily_cold_tier: starting")
+        stage_started = time.monotonic()
         try:
             from trade_integrations.dataflows.index_research.history_ingest import finalize_daily_cold_tier
 
@@ -381,9 +416,16 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
                 panel_tail_days=int(cfg.get("panel_tail_days") or 14),
             )
             summary["cold_tier_finalize"] = finalize_summary
+            emit_stage_event(
+                f"stage finalize_daily_cold_tier: done in {int((time.monotonic() - stage_started) * 1000)}ms"
+            )
         except Exception as exc:
             _reraise_pipeline_cancel(exc)
             logger.warning("cold tier finalize in factor snapshot failed: %s", exc)
+            emit_stage_event(
+                f"stage finalize_daily_cold_tier: failed after "
+                f"{int((time.monotonic() - stage_started) * 1000)}ms: {exc}"
+            )
             summary["cold_tier_finalize"] = {"status": "error", "reason": str(exc)}
 
     if _index_factor_snapshot_had_errors(summary):
@@ -531,31 +573,54 @@ def run_index_prediction_post_close_job(config: dict[str, Any] | None = None) ->
     from trade_integrations.dataflows.index_research.backtest_runner import run_and_save_backtest
     from trade_integrations.dataflows.index_research.nse_browser_refresh import refresh_nse_browser_for_prediction
     from trade_integrations.dataflows.index_research.prediction_counterfactual import run_and_save_counterfactual
+    from trade_integrations.dataflows.index_research.pipeline_cancel import emit_stage_event
+
+    def _timed(name: str, fn: Any) -> Any:
+        emit_stage_event(f"stage {name}: starting")
+        started = time.monotonic()
+        result = fn()
+        emit_stage_event(f"stage {name}: done in {int((time.monotonic() - started) * 1000)}ms")
+        return result
 
     cfg = config or {}
     enrich_days = int(cfg.get("enrich_days") or min(int(cfg.get("days") or 365), _POST_CLOSE_LIGHT_ENRICH_DAYS))
     backtest_days = int(cfg.get("days") or 365)
     horizon_days = int(cfg.get("horizon_days") or 14)
-    nse_browser = refresh_nse_browser_for_prediction(
-        days=enrich_days,
-        refresh=bool(cfg.get("refresh_nse_browser", True)),
-        refresh_cookies=bool(cfg.get("refresh_cookies", False)),
+    nse_browser = _timed(
+        "nse_browser",
+        lambda: refresh_nse_browser_for_prediction(
+            days=enrich_days,
+            refresh=bool(cfg.get("refresh_nse_browser", True)),
+            refresh_cookies=bool(cfg.get("refresh_cookies", False)),
+        ),
     )
-    return {
-        "nse_browser": nse_browser,
-        "factor_enrichment": enrich_factor_history(
+    factor_enrichment = _timed(
+        "factor_enrichment",
+        lambda: enrich_factor_history(
             days=enrich_days,
             batch_historic=False,
             enrichment_mode="light",
             skip_niftyinvest_fetch=False,
         ),
-        "backtest": run_and_save_backtest(
+    )
+    backtest = _timed(
+        "backtest",
+        lambda: run_and_save_backtest(
             days=backtest_days,
             horizon_days=horizon_days,
             include_bottom_up=bool(cfg.get("include_bottom_up")),
         ),
-        "counterfactual": run_and_save_counterfactual(days=backtest_days, horizon_days=horizon_days),
-        "data_audit": run_and_save_data_audit(days=backtest_days, horizon_days=horizon_days),
+    )
+    counterfactual = _timed(
+        "counterfactual", lambda: run_and_save_counterfactual(days=backtest_days, horizon_days=horizon_days)
+    )
+    data_audit = _timed("data_audit", lambda: run_and_save_data_audit(days=backtest_days, horizon_days=horizon_days))
+    return {
+        "nse_browser": nse_browser,
+        "factor_enrichment": factor_enrichment,
+        "backtest": backtest,
+        "counterfactual": counterfactual,
+        "data_audit": data_audit,
     }
 
 
@@ -688,6 +753,7 @@ def run_global_macro_eod_refresh_job(config: dict[str, Any] | None = None) -> di
     """
     _ensure_trade_integrations_on_path()
     from trade_integrations.stock_history.api import StockHistory
+    from trade_integrations.dataflows.index_research.pipeline_cancel import emit_stage_event
 
     sh = StockHistory()
     cfg = config or {}
@@ -696,10 +762,20 @@ def run_global_macro_eod_refresh_job(config: dict[str, Any] | None = None) -> di
     results: dict[str, Any] = {}
     had_errors = False
     for series in series_list:
+        emit_stage_event(f"stage global_macro_eod[{series}]: starting")
+        stage_started = time.monotonic()
         try:
             result = sh.refresh_global_macro_eod(series=series, lookback_days=lookback_days)
+            emit_stage_event(
+                f"stage global_macro_eod[{series}]: done in "
+                f"{int((time.monotonic() - stage_started) * 1000)}ms"
+            )
         except Exception as exc:
             logger.warning("global macro EOD refresh failed for series %s: %s", series, exc)
+            emit_stage_event(
+                f"stage global_macro_eod[{series}]: failed after "
+                f"{int((time.monotonic() - stage_started) * 1000)}ms: {exc}"
+            )
             result = {"status": "error", "series": series, "reason": str(exc)}
         results[series] = result
         if isinstance(result, dict) and result.get("status") == "error":
@@ -709,10 +785,19 @@ def run_global_macro_eod_refresh_job(config: dict[str, Any] | None = None) -> di
     # home). That home is what /history/global_macro now serves for those series, and before this
     # nothing refreshed it on a schedule. The legacy per-series loop above is kept (D54): it still
     # refreshes global_macro_store, which the factor bindings themselves read from the vendor.
+    emit_stage_event("stage refresh_global_macro_factors: starting")
+    stage_started = time.monotonic()
     try:
         factors = sh.refresh_global_macro_factors(lookback_days=lookback_days)
+        emit_stage_event(
+            f"stage refresh_global_macro_factors: done in {int((time.monotonic() - stage_started) * 1000)}ms"
+        )
     except Exception as exc:
         logger.warning("global macro unified factor refresh failed: %s", exc)
+        emit_stage_event(
+            f"stage refresh_global_macro_factors: failed after "
+            f"{int((time.monotonic() - stage_started) * 1000)}ms: {exc}"
+        )
         factors = {"status": "error", "had_errors": True, "reason": str(exc)}
     if factors.get("had_errors"):
         had_errors = True

@@ -218,6 +218,8 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
         logger.info("options plan refresh skipped: no agent/watch symbols in scope")
         return {"skipped": True, "reason": "empty_watchlist", "reconciled_predictions": reconciled}
 
+    from trade_integrations.dataflows.index_research.pipeline_cancel import emit_stage_event
+
     refreshed: list[dict[str, Any]] = []
     skipped: list[str] = []
     ineligible: list[str] = []
@@ -239,6 +241,8 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
             skipped.append(ticker)
             continue
 
+        emit_stage_event(f"stage options_plan_refresh[{ticker}]: starting")
+        stage_started = time.monotonic()
         # Bounded in its own thread: this function already runs off the event
         # loop (dispatch_options_job wraps it in asyncio.to_thread), so a
         # plain blocking call with a timeout is enough. A timed-out ticker's
@@ -254,9 +258,17 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
                     ticker,
                     _OPTIONS_PLAN_REFRESH_PER_TICKER_TIMEOUT_S,
                 )
+                emit_stage_event(
+                    f"stage options_plan_refresh[{ticker}]: timed out after "
+                    f"{_OPTIONS_PLAN_REFRESH_PER_TICKER_TIMEOUT_S}s"
+                )
                 timed_out.append(ticker)
                 continue
 
+        emit_stage_event(
+            f"stage options_plan_refresh[{ticker}]: done in "
+            f"{int((time.monotonic() - stage_started) * 1000)}ms (refreshed={did_refresh})"
+        )
         if did_refresh:
             refreshed.append({"ticker": ticker, "reasons": reasons})
             logger.info("options plan refreshed for %s (%s)", ticker, ", ".join(reasons))
@@ -286,6 +298,8 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
     from trade_integrations.monitor.execution_ledger import list_open_entries
     from trade_integrations.monitor.service import MonitorService
 
+    from trade_integrations.dataflows.index_research.pipeline_cancel import emit_stage_event
+
     cfg = config or {}
     service = MonitorService()
     broken: list[dict[str, Any]] = []
@@ -297,7 +311,13 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
         if not widget_id or not underlying:
             continue
 
+        emit_stage_event(f"stage options_position_monitor[{underlying}]: evaluating thesis")
+        stage_started = time.monotonic()
         report = service.evaluate_position_thesis(widget_id)
+        emit_stage_event(
+            f"stage options_position_monitor[{underlying}]: thesis evaluated in "
+            f"{int((time.monotonic() - stage_started) * 1000)}ms (broken={bool(report and report.broken)})"
+        )
         if report is None or not report.broken:
             continue
 
@@ -315,10 +335,16 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
         if not is_options_research_eligible(underlying):
             continue
 
+        emit_stage_event(f"stage options_position_monitor[{underlying}]: running options research")
+        stage_started = time.monotonic()
         doc = run_options_research(
             underlying,
             expiry_date=cfg.get("expiry_date"),
             lookahead_days=cfg.get("lookahead_days"),
+        )
+        emit_stage_event(
+            f"stage options_position_monitor[{underlying}]: options research done in "
+            f"{int((time.monotonic() - stage_started) * 1000)}ms"
         )
         save_options_research(doc)
         revision_reason = "; ".join(report.reasons)
@@ -391,8 +417,7 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
     return {"skipped": False, "broken": broken, "refreshed": refreshed}
 
 
-def dispatch_options_job_sync(job: ScheduledResearchJob) -> None:
-    """Execute one options scheduled job synchronously."""
+def _dispatch_options_job_body(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_OPTIONS_PLAN_REFRESH:
         summary = run_options_plan_refresh_job(job.config)
@@ -403,6 +428,27 @@ def dispatch_options_job_sync(job: ScheduledResearchJob) -> None:
         logger.info("options position monitor completed for job %s: %s", job.id, summary)
         return
     raise ValueError(f"unsupported options job_type: {job_type!r}")
+
+
+def dispatch_options_job_sync(job: ScheduledResearchJob) -> None:
+    """Dispatch, with this run's per-ticker/per-entry stage events also reported live into the
+    Scheduler tab's log buffer -- see index_jobs.dispatch_index_job_sync for the identical
+    pattern and rationale. This job type has the clearest documented dispatch-timeout history
+    of any scheduled module (2026-08-27-scheduler-dispatch-timeouts): a handful of slow tickers
+    can blow well past the dispatch timeout with no visibility into which ticker was slow."""
+    try:
+        from trade_integrations.dataflows.index_research.pipeline_cancel import set_stage_sink
+    except ImportError:
+        _dispatch_options_job_body(job)
+        return
+
+    from src.scheduled_research.run_log_buffer import append_log
+
+    set_stage_sink(lambda message: append_log(job.id, message))
+    try:
+        _dispatch_options_job_body(job)
+    finally:
+        set_stage_sink(None)
 
 
 async def dispatch_options_job(job: ScheduledResearchJob) -> None:
