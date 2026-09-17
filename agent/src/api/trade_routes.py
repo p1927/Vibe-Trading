@@ -893,6 +893,40 @@ class ForecastEngineArtifactResponse(BaseModel):
     message: str = ""
 
 
+class ForecastEngineRecipeInfo(BaseModel):
+    name: str
+    version: str
+    covariate_keys: List[str] = Field(default_factory=list)
+    target: str = ""
+    description: str = ""
+
+
+class ForecastEngineRecipesResponse(BaseModel):
+    status: str
+    recipes: List[ForecastEngineRecipeInfo] = Field(default_factory=list)
+    default_recipe: str = ""
+    message: str = ""
+
+
+class ForecastEngineEvaluationResponse(BaseModel):
+    status: str
+    available: bool = False
+    ticker: str = ""
+    recipe_name: str = ""
+    recipe_version: str = ""
+    engine_checkpoint: str = ""
+    horizon_days: int = 0
+    generated_at: str = ""
+    n_observations: int = 0
+    n_skipped_gaps: int = 0
+    mean_pinball_loss: float = 0.0
+    mean_naive_pinball_loss: float = 0.0
+    passes_gate: bool = False
+    gate_lower_bound: float = 0.0
+    observations: List[Dict[str, Any]] = Field(default_factory=list)
+    message: str = ""
+
+
 class ConstituentHistoryResponse(BaseModel):
     status: str
     symbol: str = ""
@@ -5020,14 +5054,47 @@ def get_index_factor_history(
     )
 
 
+@trade_router.get("/index-prediction/forecast-engine-recipes", response_model=ForecastEngineRecipesResponse)
+def get_forecast_engine_recipes(
+    _auth: None = Depends(require_local_or_auth),
+) -> ForecastEngineRecipesResponse:
+    """Every forecast_engine recipe registered in `forecast_engine.registry` (backend-defined,
+    docs/add/forecast_engine.md) -- what the UI's dataset selector lists."""
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.forecast_engine.registry import DEFAULT_RECIPE_NAME, RECIPES
+
+        recipes = [
+            ForecastEngineRecipeInfo(
+                name=r.name,
+                version=r.version,
+                covariate_keys=list(r.covariate_keys),
+                target=r.target,
+                description=r.description,
+            )
+            for r in RECIPES.values()
+        ]
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("forecast-engine-recipes failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return ForecastEngineRecipesResponse(status="ok", recipes=recipes, default_recipe=DEFAULT_RECIPE_NAME)
+
+
 @trade_router.get("/index-prediction/forecast-engine-latest", response_model=ForecastEngineArtifactResponse)
 def get_forecast_engine_latest(
     ticker: str = "NIFTY",
+    recipe: str | None = None,
     _auth: None = Depends(require_local_or_auth),
 ) -> ForecastEngineArtifactResponse:
-    """The forecast_engine module's cached latest forecast (docs/add/forecast_engine.md) --
-    dataset covariates + a TimesFM point/quantile forecast, refreshed offline by
-    scripts/run_forecast_engine_latest.py. `available=False` (not a 404/502) when no artifact
+    """The forecast_engine module's cached latest forecast for one recipe
+    (docs/add/forecast_engine.md) -- dataset covariates + a TimesFM point/quantile forecast,
+    refreshed offline by scripts/run_forecast_engine_latest.py. `recipe` defaults to the
+    registry's default recipe when omitted. `available=False` (not a 404/502) when no artifact
     has been generated yet -- this is an expected, normal state, not a service failure."""
     key = (ticker or "NIFTY").strip().upper()
     try:
@@ -5035,8 +5102,10 @@ def get_forecast_engine_latest(
 
         ensure_trade_stack_path()
         from trade_integrations.forecast_engine.artifact import read_latest_forecast
+        from trade_integrations.forecast_engine.registry import DEFAULT_RECIPE_NAME
 
-        artifact = read_latest_forecast(key)
+        recipe_name = (recipe or DEFAULT_RECIPE_NAME).strip()
+        artifact = read_latest_forecast(key, recipe_name)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
@@ -5044,7 +5113,9 @@ def get_forecast_engine_latest(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     if artifact is None:
-        return ForecastEngineArtifactResponse(status="ok", available=False, ticker=key, message="no artifact yet")
+        return ForecastEngineArtifactResponse(
+            status="ok", available=False, ticker=key, recipe_name=recipe_name, message="no artifact yet"
+        )
 
     return ForecastEngineArtifactResponse(
         status="ok",
@@ -5061,6 +5132,55 @@ def get_forecast_engine_latest(
         quantiles_pct=artifact.quantiles_pct,
         dataset=artifact.dataset,
         covariate_keys=artifact.covariate_keys,
+    )
+
+
+@trade_router.get("/index-prediction/forecast-engine-evaluation", response_model=ForecastEngineEvaluationResponse)
+def get_forecast_engine_evaluation(
+    ticker: str = "NIFTY",
+    recipe: str | None = None,
+    _auth: None = Depends(require_local_or_auth),
+) -> ForecastEngineEvaluationResponse:
+    """One recipe's walk-forward backtest history -- predicted vs actual NIFTY over past forecast
+    cutoffs (docs/add/forecast_engine.md rule 5), refreshed offline by the same job as the latest
+    forecast. `available=False` when no evaluation has been run for this recipe yet."""
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.forecast_engine.artifact import read_evaluation_artifact
+        from trade_integrations.forecast_engine.registry import DEFAULT_RECIPE_NAME
+
+        recipe_name = (recipe or DEFAULT_RECIPE_NAME).strip()
+        artifact = read_evaluation_artifact(key, recipe_name)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("forecast-engine-evaluation failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if artifact is None:
+        return ForecastEngineEvaluationResponse(
+            status="ok", available=False, ticker=key, recipe_name=recipe_name, message="no evaluation yet"
+        )
+
+    return ForecastEngineEvaluationResponse(
+        status="ok",
+        available=True,
+        ticker=artifact.ticker,
+        recipe_name=artifact.recipe_name,
+        recipe_version=artifact.recipe_version,
+        engine_checkpoint=artifact.engine_checkpoint,
+        horizon_days=artifact.horizon_days,
+        generated_at=artifact.generated_at,
+        n_observations=artifact.n_observations,
+        n_skipped_gaps=artifact.n_skipped_gaps,
+        mean_pinball_loss=artifact.mean_pinball_loss,
+        mean_naive_pinball_loss=artifact.mean_naive_pinball_loss,
+        passes_gate=artifact.passes_gate,
+        gate_lower_bound=artifact.gate_lower_bound,
+        observations=artifact.observations,
     )
 
 

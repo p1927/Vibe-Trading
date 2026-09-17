@@ -1945,10 +1945,18 @@ export const api = {
     const params = new URLSearchParams({ ticker: "NIFTY", days: String(days), factors: factorList.join(",") });
     return request<IndexFactorHistoryResponse>(`/trade/index-prediction/factor-history?${params}`);
   },
-  getForecastEngineLatest: (ticker = "NIFTY") =>
-    request<ForecastEngineArtifactResponse>(
-      `/trade/index-prediction/forecast-engine-latest?ticker=${encodeURIComponent(ticker)}`,
-    ),
+  getForecastEngineRecipes: () =>
+    request<ForecastEngineRecipesResponse>(`/trade/index-prediction/forecast-engine-recipes`),
+  getForecastEngineLatest: (ticker = "NIFTY", recipe?: string) => {
+    const params = new URLSearchParams({ ticker });
+    if (recipe) params.set("recipe", recipe);
+    return request<ForecastEngineArtifactResponse>(`/trade/index-prediction/forecast-engine-latest?${params}`);
+  },
+  getForecastEngineEvaluation: (ticker = "NIFTY", recipe?: string) => {
+    const params = new URLSearchParams({ ticker });
+    if (recipe) params.set("recipe", recipe);
+    return request<ForecastEngineEvaluationResponse>(`/trade/index-prediction/forecast-engine-evaluation?${params}`);
+  },
   getIndexDayAttribution: (date: string, days = 365) =>
     request<DayAttributionResponse>(
       `/trade/index-prediction/day-attribution?date=${encodeURIComponent(date)}&days=${days}`,
@@ -5085,6 +5093,51 @@ export interface ForecastEngineArtifactResponse {
   quantiles_pct?: Record<string, number>;
   dataset?: IndexFactorHistoryPoint[];
   covariate_keys?: string[];
+  message?: string;
+}
+
+export interface ForecastEngineRecipeInfo {
+  name: string;
+  version: string;
+  covariate_keys?: string[];
+  target?: string;
+  description?: string;
+}
+
+export interface ForecastEngineRecipesResponse {
+  status: string;
+  recipes?: ForecastEngineRecipeInfo[];
+  default_recipe?: string;
+  message?: string;
+}
+
+export interface ForecastEngineEvaluationObservation {
+  cutoff: string;
+  target_date: string;
+  actual: number;
+  predicted_point: number;
+  naive_point?: number;
+  predicted_p10?: number;
+  predicted_p50?: number;
+  predicted_p90?: number;
+}
+
+export interface ForecastEngineEvaluationResponse {
+  status: string;
+  available: boolean;
+  ticker?: string;
+  recipe_name?: string;
+  recipe_version?: string;
+  engine_checkpoint?: string;
+  horizon_days?: number;
+  generated_at?: string;
+  n_observations?: number;
+  n_skipped_gaps?: number;
+  mean_pinball_loss?: number;
+  mean_naive_pinball_loss?: number;
+  passes_gate?: boolean;
+  gate_lower_bound?: number;
+  observations?: ForecastEngineEvaluationObservation[];
   message?: string;
 }
 

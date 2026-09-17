@@ -25,7 +25,7 @@ import { PredictionLearningPanel } from "@/components/prediction/PredictionLearn
 import { PredictionPipelinePanel } from "@/components/prediction/PredictionPipelinePanel";
 import { PredictionRunningStrip } from "@/components/prediction/PredictionRunningStrip";
 import { DerivativesFactorsPanel } from "@/components/prediction/DerivativesFactorsPanel";
-import { ForecastEngineChart } from "@/components/prediction/ForecastEngineChart";
+import { ForecastEngineSection } from "@/components/prediction/ForecastEngineSection";
 import { PredictionScheduledJobsPanel } from "@/components/prediction/PredictionScheduledJobsPanel";
 import { DataCapturePanel } from "@/components/prediction/DataCapturePanel";
 import { NewsTriggerPanel } from "@/components/prediction/NewsTriggerPanel";
@@ -754,7 +754,7 @@ export function Prediction() {
               subtitle="Standalone dataset-recipe + swappable pretrained forecaster (docs/add/forecast_engine.md) — its own probability output, not yet blended into the core Ridge model."
               modelRole="context"
             />
-            <ForecastEngineChart ticker="NIFTY" />
+            <ForecastEngineSection ticker="NIFTY" />
           </section>
         ) : predictionMode === SCOREBOARD_MODE ? (
           <>

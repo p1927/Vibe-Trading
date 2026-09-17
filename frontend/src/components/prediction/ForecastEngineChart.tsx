@@ -9,6 +9,8 @@ import { cn } from "@/lib/utils";
 const LABELS: Record<string, string> = {
   fii_net_5d: "FII net (5d, ₹ Cr)",
   dii_net_5d: "DII net (5d, ₹ Cr)",
+  nifty_pcr: "Nifty PCR",
+  fii_fut_long_short_ratio: "FII index fut long/short",
 };
 
 const NIFTY_KEY = "nifty_close";
@@ -21,6 +23,7 @@ const COVARIATE_COLORS = ["#f97316", "#a855f7", "#14b8a6", "#ec4899", "#84cc16",
 
 interface Props {
   ticker?: string;
+  recipe?: string;
   onLoadState?: (available: boolean, error: string | null) => void;
 }
 
@@ -41,7 +44,7 @@ function fmtDatasetValue(v: unknown): string {
   return v.toFixed(2);
 }
 
-export function ForecastEngineChart({ ticker = "NIFTY", onLoadState }: Props) {
+export function ForecastEngineChart({ ticker = "NIFTY", recipe, onLoadState }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const { dark } = useDarkMode();
   const [artifact, setArtifact] = useState<ForecastEngineArtifactResponse | null>(null);
@@ -49,11 +52,17 @@ export function ForecastEngineChart({ ticker = "NIFTY", onLoadState }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set());
 
+  // A new recipe has a different covariate set, so any hidden-series selection from the
+  // previous one wouldn't even apply — reset rather than carry stale hidden keys across.
+  useEffect(() => {
+    setHiddenKeys(new Set());
+  }, [recipe]);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     void api
-      .getForecastEngineLatest(ticker)
+      .getForecastEngineLatest(ticker, recipe)
       .then((res) => {
         if (!cancelled) {
           setArtifact(res);
@@ -75,7 +84,7 @@ export function ForecastEngineChart({ ticker = "NIFTY", onLoadState }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [ticker, onLoadState]);
+  }, [ticker, recipe, onLoadState]);
 
   const covariateKeys = artifact?.covariate_keys ?? [];
   const dataset = artifact?.dataset ?? [];
