@@ -25,6 +25,7 @@ import { PredictionLearningPanel } from "@/components/prediction/PredictionLearn
 import { PredictionPipelinePanel } from "@/components/prediction/PredictionPipelinePanel";
 import { PredictionRunningStrip } from "@/components/prediction/PredictionRunningStrip";
 import { DerivativesFactorsPanel } from "@/components/prediction/DerivativesFactorsPanel";
+import { ForecastEngineChart } from "@/components/prediction/ForecastEngineChart";
 import { PredictionScheduledJobsPanel } from "@/components/prediction/PredictionScheduledJobsPanel";
 import { DataCapturePanel } from "@/components/prediction/DataCapturePanel";
 import { NewsTriggerPanel } from "@/components/prediction/NewsTriggerPanel";
@@ -1019,6 +1020,15 @@ export function Prediction() {
                 modelRole="context"
               />
               <DerivativesFactorsPanel days={365} onLoadState={handleDerivativesLoadState} />
+            </section>
+
+            <section className="space-y-3">
+              <PredictionSectionHeader
+                title="Forecast engine (TimesFM 3.0)"
+                subtitle="Standalone dataset-recipe + swappable pretrained forecaster (docs/add/forecast_engine.md) — its own probability output, not yet blended into the core Ridge model."
+                modelRole="context"
+              />
+              <ForecastEngineChart ticker="NIFTY" />
             </section>
 
             <section className="space-y-3">

@@ -875,6 +875,24 @@ class IndexFactorHistoryResponse(BaseModel):
     message: str = ""
 
 
+class ForecastEngineArtifactResponse(BaseModel):
+    status: str
+    available: bool = False
+    ticker: str = ""
+    recipe_name: str = ""
+    recipe_version: str = ""
+    engine_checkpoint: str = ""
+    horizon_days: int = 0
+    as_of: str = ""
+    generated_at: str = ""
+    spot: float = 0.0
+    expected_return_pct: float = 0.0
+    quantiles_pct: Dict[str, float] = Field(default_factory=dict)
+    dataset: List[Dict[str, Any]] = Field(default_factory=list)
+    covariate_keys: List[str] = Field(default_factory=list)
+    message: str = ""
+
+
 class ConstituentHistoryResponse(BaseModel):
     status: str
     symbol: str = ""
@@ -4999,6 +5017,50 @@ def get_index_factor_history(
         factors=payload.get("factors", []),
         coverage=payload.get("coverage") or {},
         coverage_notes=payload.get("coverage_notes") or [],
+    )
+
+
+@trade_router.get("/index-prediction/forecast-engine-latest", response_model=ForecastEngineArtifactResponse)
+def get_forecast_engine_latest(
+    ticker: str = "NIFTY",
+    _auth: None = Depends(require_local_or_auth),
+) -> ForecastEngineArtifactResponse:
+    """The forecast_engine module's cached latest forecast (docs/add/forecast_engine.md) --
+    dataset covariates + a TimesFM point/quantile forecast, refreshed offline by
+    scripts/run_forecast_engine_latest.py. `available=False` (not a 404/502) when no artifact
+    has been generated yet -- this is an expected, normal state, not a service failure."""
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.forecast_engine.artifact import read_latest_forecast
+
+        artifact = read_latest_forecast(key)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("forecast-engine-latest failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if artifact is None:
+        return ForecastEngineArtifactResponse(status="ok", available=False, ticker=key, message="no artifact yet")
+
+    return ForecastEngineArtifactResponse(
+        status="ok",
+        available=True,
+        ticker=artifact.ticker,
+        recipe_name=artifact.recipe_name,
+        recipe_version=artifact.recipe_version,
+        engine_checkpoint=artifact.engine_checkpoint,
+        horizon_days=artifact.horizon_days,
+        as_of=artifact.as_of,
+        generated_at=artifact.generated_at,
+        spot=artifact.spot,
+        expected_return_pct=artifact.expected_return_pct,
+        quantiles_pct=artifact.quantiles_pct,
+        dataset=artifact.dataset,
+        covariate_keys=artifact.covariate_keys,
     )
 
 

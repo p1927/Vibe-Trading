@@ -1945,6 +1945,10 @@ export const api = {
     const params = new URLSearchParams({ ticker: "NIFTY", days: String(days), factors: factorList.join(",") });
     return request<IndexFactorHistoryResponse>(`/trade/index-prediction/factor-history?${params}`);
   },
+  getForecastEngineLatest: (ticker = "NIFTY") =>
+    request<ForecastEngineArtifactResponse>(
+      `/trade/index-prediction/forecast-engine-latest?ticker=${encodeURIComponent(ticker)}`,
+    ),
   getIndexDayAttribution: (date: string, days = 365) =>
     request<DayAttributionResponse>(
       `/trade/index-prediction/day-attribution?date=${encodeURIComponent(date)}&days=${days}`,
@@ -5062,6 +5066,25 @@ export interface IndexFactorHistoryResponse {
   factors?: string[];
   coverage?: Record<string, number>;
   coverage_notes?: string[];
+  message?: string;
+}
+
+export interface ForecastEngineArtifactResponse {
+  status: string;
+  available: boolean;
+  ticker?: string;
+  recipe_name?: string;
+  recipe_version?: string;
+  engine_checkpoint?: string;
+  horizon_days?: number;
+  as_of?: string;
+  generated_at?: string;
+  spot?: number;
+  expected_return_pct?: number;
+  // p10/p50/p90 pct-return quantiles, docs/add/forecast_engine.md's ForecastTrack convention.
+  quantiles_pct?: Record<string, number>;
+  dataset?: IndexFactorHistoryPoint[];
+  covariate_keys?: string[];
   message?: string;
 }
 
