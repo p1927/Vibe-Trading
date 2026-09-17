@@ -1008,8 +1008,15 @@ def _terminate_worker(job: dict[str, Any] | None) -> None:
 
 
 def _agent_dir() -> Path:
+    # Off-by-one regression fixed here: for .../vibetrading/agent/src/trade/recording_jobs.py,
+    # parents[0] is .../src/trade, parents[1] is .../src (has no "src/" subfolder of its own),
+    # parents[2] is .../agent (the actual vibetrading/agent root, which does). The old
+    # parents[1] value made `-m src.trade.recording_worker` unable to resolve `src` via this
+    # cwd at all, so it silently fell through to whatever *other* `vibetrading/agent` happened
+    # to be on PYTHONPATH (e.g. a stale checkout from a different worktree) -- see
+    # .claude/backlog/items/2026-09-11-recording-job-workers-die-before-run.md.
     here = Path(__file__).resolve()
-    return here.parents[1]
+    return here.parents[2]
 
 
 def spawn_worker(job_id: str) -> None:

@@ -22,14 +22,6 @@ def _now_iso() -> str:
 
 
 def run_worker(job_id: str) -> None:
-    # Raw fd-level write, ahead of anything Python-level (even
-    # logging.basicConfig below) -- bypasses any possibility of a
-    # buffering/locking issue in the logging module itself swallowing
-    # output. If this line is ever missing from worker.log, the process
-    # died before reaching this point at all (interpreter/import/exec
-    # level), not inside our own code.
-    os.write(2, f"recording worker {job_id}: process alive, pid={os.getpid()}\n".encode())
-
     # This process's stdout/stderr is redirected to worker.log with no
     # other logging config in the call path — without this, every
     # logger.info/warning call (e.g. tick_stream's connect/subscribe/
@@ -206,7 +198,6 @@ def run_worker(job_id: str) -> None:
 
 
 if __name__ == "__main__":
-    os.write(2, f"recording_worker module: __main__ reached, argv={sys.argv!r}\n".encode())
     if len(sys.argv) < 2:
         print("usage: python -m src.trade.recording_worker <job_id>", file=sys.stderr)
         sys.exit(1)

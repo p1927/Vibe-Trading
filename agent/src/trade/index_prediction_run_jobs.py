@@ -820,8 +820,11 @@ def run_worker(job_id: str) -> None:
 
 
 def _agent_dir() -> Path:
+    # See recording_jobs.py's _agent_dir() for the full explanation: parents[1] pointed at
+    # .../agent/src (no "src/" subfolder), silently breaking `-m` module resolution for the
+    # spawned worker. parents[2] is the actual .../agent root.
     here = Path(__file__).resolve()
-    return here.parents[1]
+    return here.parents[2]
 
 
 def spawn_worker(job_id: str) -> None:
