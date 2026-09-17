@@ -225,7 +225,15 @@ def _job_is_fast_failure(job: dict[str, Any] | None) -> bool | None:
     result = job.get("result") or {}
     cycles = result.get("cycles")
     if cycles is None:
-        return None
+        if job.get("status") != "error":
+            return None
+        # `fail_job()` (the zombie/queued/stale reconciler path) never
+        # populates `result` -- only `complete_job()` does, on a session
+        # that actually ran. Treat "errored with nothing recorded" the
+        # same as "recorded zero cycles" instead of leaving the outcome
+        # undetermined forever, which let the streak counter never
+        # increment for this entire failure class.
+        cycles = 0
     if cycles > 0:
         return False
     created_at = job.get("created_at")

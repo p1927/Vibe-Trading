@@ -31,6 +31,7 @@ except ImportError:  # pragma: no cover - Windows / minimal builds
     _HAS_FCNTL = False
 
 from src.config.accessor import get_env_config
+from src.trade import detached_worker
 
 logger = logging.getLogger(__name__)
 
@@ -56,13 +57,7 @@ _watchdog_stop = threading.Event()
 
 
 def _is_pid_alive(pid: int | None) -> bool:
-    if pid is None or pid <= 0:
-        return False
-    try:
-        os.kill(int(pid), 0)
-    except OSError:
-        return False
-    return True
+    return detached_worker.is_alive(pid)
 
 
 def worker_alive(job: dict[str, Any] | None) -> bool:
@@ -85,7 +80,9 @@ def reconcile_zombie_job(job_id: str) -> bool:
         return False
     if worker_alive(job):
         return False
-    fail_job(job_id, "worker process exited unexpectedly")
+    pid = job.get("worker_pid")
+    reason = detached_worker.describe_exit(pid) if pid is not None else None
+    fail_job(job_id, reason or "worker process exited unexpectedly")
     return True
 
 
@@ -412,6 +409,7 @@ def _prune_old_jobs() -> None:
         for job_id in stale:
             job = INDEX_PREDICTION_RUN_JOBS.pop(job_id, None)
             if job:
+                detached_worker.forget(job.get("worker_pid"))
                 ticker = str(job.get("ticker") or "").upper()
                 if _ACTIVE_BY_TICKER.get(ticker) == job_id:
                     _ACTIVE_BY_TICKER.pop(ticker, None)
@@ -843,6 +841,7 @@ def spawn_worker(job_id: str) -> None:
         stderr=subprocess.STDOUT,
     )
     log_handle.close()
+    detached_worker.register(proc)
 
     def mutator(job: dict[str, Any]) -> bool:
         job["worker_pid"] = proc.pid

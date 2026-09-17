@@ -15,6 +15,7 @@ from src.scheduled_research.models import JobStatus
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.recording_wait_scheduler import (
     JOB_TYPE_RECORDING_WAKE,
+    _job_is_fast_failure,
     cancel_recording_wake,
     schedule_recording_wake,
 )
@@ -145,3 +146,37 @@ def test_schedule_validates_interval_ms(tmp_path: Path) -> None:
     )
     persisted = store.load()
     assert persisted["recording_wake:rec-job-validate"].schedule == "60000"
+
+
+def test_fast_failure_counts_a_zombie_reconciled_error_with_no_result() -> None:
+    """Regression for
+    ``.claude/backlog/items/2026-09-11-recording-job-workers-die-before-run.md``:
+    a job that dies via the zombie/queued/stale reconciler (``fail_job()``)
+    never gets a ``result`` -- only ``complete_job()`` sets one, on a session
+    that actually ran. Before the fix, ``cycles is None`` always short-
+    circuited to ``None`` ("undetermined") for this entire failure class, so
+    the circuit breaker's streak counter never incremented and a broken
+    recorder could re-kick forever instead of backing off after 3 failures.
+    """
+    job = {
+        "status": "error",
+        "result": None,
+        "created_at": "2026-09-17T05:01:40+00:00",
+        "_finished_at": datetime(2026, 9, 17, 5, 1, 45, tzinfo=timezone.utc).timestamp(),
+    }
+    assert _job_is_fast_failure(job) is True
+
+
+def test_fast_failure_still_undetermined_for_a_job_still_in_flight() -> None:
+    """A ``queued``/``running``/``waiting_for_open`` job (no result yet,
+    hasn't reached a terminal status) must stay undetermined, not get
+    misclassified as a fast failure."""
+    assert _job_is_fast_failure({"status": "running", "result": None}) is None
+
+
+def test_fast_failure_false_when_real_cycles_were_recorded() -> None:
+    """A job that completed via ``complete_job()`` with real cycles recorded
+    must not be misclassified as a fast failure just because it's ``done``
+    rather than ``error``."""
+    job = {"status": "done", "result": {"cycles": 12}}
+    assert _job_is_fast_failure(job) is False

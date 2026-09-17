@@ -36,6 +36,7 @@ except ImportError:  # pragma: no cover - Windows / minimal builds
     _HAS_FCNTL = False
 
 from src.config.accessor import get_env_config
+from src.trade import detached_worker
 
 logger = logging.getLogger(__name__)
 
@@ -52,13 +53,7 @@ _QUEUED_NO_PID_SECONDS = int(get_env_config().trade.recording_queued_no_pid_seco
 
 
 def _is_pid_alive(pid: int | None) -> bool:
-    if pid is None or pid <= 0:
-        return False
-    try:
-        os.kill(int(pid), 0)
-    except OSError:
-        return False
-    return True
+    return detached_worker.is_alive(pid)
 
 
 def worker_alive(job: dict[str, Any] | None) -> bool:
@@ -88,7 +83,9 @@ def reconcile_zombie_job(job_id: str) -> bool:
         return False
     if worker_alive(job):
         return False
-    fail_job(job_id, "worker process exited unexpectedly")
+    pid = job.get("worker_pid")
+    reason = detached_worker.describe_exit(pid) if pid is not None else None
+    fail_job(job_id, reason or "worker process exited unexpectedly")
     return True
 
 
@@ -419,7 +416,9 @@ def _prune_old_jobs() -> None:
             if job.get("status") in ("done", "error") and job.get("_finished_at", 0) < cutoff
         ]
         for job_id in stale:
-            RECORDING_JOBS.pop(job_id, None)
+            job = RECORDING_JOBS.pop(job_id, None)
+            if job is not None:
+                detached_worker.forget(job.get("worker_pid"))
 
 
 def job_id_valid(job_id: str | None) -> bool:
@@ -1041,6 +1040,7 @@ def spawn_worker(job_id: str) -> None:
         stderr=subprocess.STDOUT,
     )
     log_handle.close()
+    detached_worker.register(proc)
 
     def mutator(job: dict[str, Any]) -> bool:
         job["worker_pid"] = proc.pid
