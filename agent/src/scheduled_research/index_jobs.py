@@ -1043,16 +1043,33 @@ def dispatch_index_job_sync(job: ScheduledResearchJob) -> None:
     seeing each other's.
     """
     try:
-        from trade_integrations.dataflows.index_research.pipeline_cancel import pipeline_job_scope
+        from trade_integrations.dataflows.index_research.pipeline_cancel import (
+            pipeline_job_scope,
+            set_stage_sink,
+        )
     except ImportError:
         _dispatch_index_job_body(job)
         return
 
+    from src.scheduled_research.run_log_buffer import append_log
+
     # Clears this job's own stale flag, binds, runs, unbinds, clears its own flag again (so
     # it cannot cancel the job's *next* run); never touches the global stop-everything flag.
     # Shared with dst_eval_jobs.dispatch_dst_eval_job_sync.
+    #
+    # Also binds a stage-progress sink for the duration: a multi-stage handler (news_entity_
+    # worker's ~20 `_safe_stage` calls) reports "stage X: starting"/"stage X: done in Yms" into
+    # this job's own log buffer (already capped at 500 lines, already the Scheduler tab's
+    # live-log-tail), giving real step-by-step visibility instead of a 40-minute silence between
+    # "starting" and "completed"/"failed". A handler that never calls `_safe_stage` is unaffected
+    # (the sink is simply never invoked). See
+    # .claude/backlog/items/2026-09-07-collection-job-timeout-and-llm-deadline-hardening.md.
     with pipeline_job_scope(job.id):
-        _dispatch_index_job_body(job)
+        set_stage_sink(lambda message: append_log(job.id, message))
+        try:
+            _dispatch_index_job_body(job)
+        finally:
+            set_stage_sink(None)
 
 
 def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
