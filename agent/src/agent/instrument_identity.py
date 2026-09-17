@@ -9,11 +9,13 @@ This module carries no alias table of its own — that would be a second
 spelling authority, which D30 forbids.
 
 Sidecar per Trade ``docs/FORK_CONVENTIONS.md``: ``grounding.py`` (an upstream
-file) holds one import and one call into it.
+file) holds one import and one call into it. ``trade/symbol_detect.py`` also
+uses this module's ``india_index_tickers()`` instead of hand-keeping its own
+India-index set (see 2026-09-17-vibetrading-symbol-detect-fold).
 
 Run standalone (vibetrading outside the Trade monorepo) there is no registry:
 ``ensure_trade_stack_path`` raises ``RuntimeError`` and every lookup answers
-``None``, which leaves the guard's own exact and venue rules as the only
+``None``/empty, which leaves callers' own exact and venue rules as the only
 matchers — the pre-D30 behaviour. Once the Trade stack is found, an import
 failure inside it is a real bug and propagates.
 """
@@ -55,3 +57,22 @@ def registry_equivalent_symbol(requested: str, authorized: Iterable[str]) -> str
         return None
     matches = [symbol for symbol in authorized if same(requested, symbol)]
     return matches[0] if len(matches) == 1 else None
+
+
+@lru_cache(maxsize=1)
+def india_index_tickers() -> frozenset[str]:
+    """Every spelling Trade's entity registry knows for an India index (D30).
+
+    Empty when the Trade stack isn't available (fork run standalone) — callers
+    that need an index set fall back to their own narrower heuristics in that
+    case, same as ``registry_equivalent_symbol`` above.
+    """
+    from src.trade.hub_bridge import ensure_trade_stack_path
+
+    try:
+        ensure_trade_stack_path()
+    except RuntimeError:
+        return frozenset()
+    from trade_integrations.dataflows.entity_registry import india_index_tickers as _tickers
+
+    return _tickers()

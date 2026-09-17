@@ -4,18 +4,15 @@ from __future__ import annotations
 
 import re
 
-_IN_INDICES = frozenset(
-    {
-        "NIFTY",
-        "NIFTY50",
-        "BANKNIFTY",
-        "FINNIFTY",
-        "MIDCPNIFTY",
-        "SENSEX",
-        "^NSEI",
-        "^BSESN",
-    }
-)
+from src.agent.instrument_identity import india_index_tickers as _india_index_tickers
+
+
+def _in_indices() -> frozenset[str]:
+    """India index tickers, per Trade's entity registry (D30) via the
+    ``instrument_identity`` sidecar — no hand-kept list here (see
+    2026-09-17-vibetrading-symbol-detect-fold)."""
+    return _india_index_tickers()
+
 
 _STOPWORDS = frozenset(
     {
@@ -158,7 +155,8 @@ def extract_primary_ticker(text: str) -> str | None:
     if not text:
         return None
     upper = text.upper()
-    for index in sorted(_IN_INDICES, key=len, reverse=True):
+    in_indices = _in_indices()
+    for index in sorted(in_indices, key=len, reverse=True):
         if re.search(rf"\b{re.escape(index)}\b", upper):
             return index.replace("^", "") if index.startswith("^") else index
 
@@ -168,7 +166,7 @@ def extract_primary_ticker(text: str) -> str | None:
         if token.endswith(".NS") or token.endswith(".BO"):
             candidates.append(token.split(".")[0])
             continue
-        if token in _STOPWORDS or token in _IN_INDICES:
+        if token in _STOPWORDS or token in in_indices:
             continue
         if len(token) < 2 or len(token) > 12 or token.isdigit():
             continue
@@ -196,6 +194,6 @@ def _filter_india_listed(candidates: list[str]) -> list[str]:
 def infer_asset_type(text: str, ticker: str | None) -> str:
     if detect_options_intent(text):
         return "options"
-    if ticker and ticker.upper() in _IN_INDICES:
+    if ticker and ticker.upper() in _in_indices():
         return "options"
     return "stock"
