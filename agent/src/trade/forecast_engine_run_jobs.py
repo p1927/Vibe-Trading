@@ -489,12 +489,18 @@ def run_worker(job_id: str) -> None:
         def on_progress(message: str) -> None:
             append_log(job_id, message)
 
+        # step_days=1: evaluate_recipe's own default (5) only yields ~3 cutoffs over a normal
+        # few-week UI-picked window, below the 5-observation minimum it enforces -- found live,
+        # running a real job through this exact code path against start=2026-08-25/end=2026-09-17
+        # (.claude/backlog/items/2026-09-18-timesfm-forecast-engine-module.md). Daily cutoffs are
+        # what every other real run in this feature's history has actually used successfully.
         report = evaluate_recipe(
             recipe,
             engine,
             start=start,
             end=end,
             horizon=horizon,
+            step_days=1,
             client=None,
             on_progress=on_progress,
         )
