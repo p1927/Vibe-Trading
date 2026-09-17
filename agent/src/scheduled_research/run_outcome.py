@@ -66,10 +66,24 @@ def run_error_detail(summary: Any) -> str:
 
 
 def raise_if_run_had_errors(job: ScheduledResearchJob, summary: Any, label: str) -> None:
-    """Raise `JobRunHadErrorsError` when the handler's summary reports ``had_errors``."""
-    if isinstance(summary, dict) and summary.get("had_errors"):
-        detail = run_error_detail(summary) or "no error detail in the summary"
-        raise JobRunHadErrorsError(f"{label} for job {job.id} reported errors: {detail}")
+    """Raise `JobRunHadErrorsError` when the handler's summary reports an error.
+
+    Checks both ``had_errors`` (the convention most handlers use) and a bare
+    ``status == "error"`` with no ``had_errors`` key at all (a second, inconsistent
+    convention some handlers use instead — e.g. constituent-volume-snapshot's "no
+    active broker session" / "no constituent symbols" paths). Either one means the
+    run did not finish cleanly and must not be recorded ``completed``. See
+    docs/DECISIONS.md D86: every handler now fails loud and visibly (this check
+    always fires); whether a given job type also gets exempted from auto-pause for
+    genuinely routine partial-vendor noise (the way ``hub_news_ingest``'s
+    ``barren_collection`` is) stays a separate, per-branch decision.
+    """
+    if not isinstance(summary, dict):
+        return
+    if not (summary.get("had_errors") or summary.get("status") == "error"):
+        return
+    detail = run_error_detail(summary) or "no error detail in the summary"
+    raise JobRunHadErrorsError(f"{label} for job {job.id} reported errors: {detail}")
 
 
 __all__ = [
