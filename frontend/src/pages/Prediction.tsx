@@ -72,6 +72,7 @@ const DEFAULT_POLL_MS = 300_000;
 const NEWS_SCENARIO_MODE = "news-scenarios";
 const SCOREBOARD_MODE = "scoreboard";
 const EXTERNAL_PREDICTIONS_MODE = "external-predictions";
+const FORECAST_ENGINE_MODE = "forecast-engine";
 
 export function Prediction() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -82,7 +83,9 @@ export function Prediction() {
         ? SCOREBOARD_MODE
         : searchParams.get("mode") === EXTERNAL_PREDICTIONS_MODE
           ? EXTERNAL_PREDICTIONS_MODE
-          : "analysis";
+          : searchParams.get("mode") === FORECAST_ENGINE_MODE
+            ? FORECAST_ENGINE_MODE
+            : "analysis";
   const [newsSessionError, setNewsSessionError] = useState<string | null>(null);
   const [boundPipelineAsOf, setBoundPipelineAsOf] = useState<string | null>(null);
   const [newsScenarioWidget, setNewsScenarioWidget] = useState<TradePlanWidget | null>(null);
@@ -311,7 +314,8 @@ export function Prediction() {
         | "analysis"
         | typeof NEWS_SCENARIO_MODE
         | typeof SCOREBOARD_MODE
-        | typeof EXTERNAL_PREDICTIONS_MODE,
+        | typeof EXTERNAL_PREDICTIONS_MODE
+        | typeof FORECAST_ENGINE_MODE,
     ) => {
       setSearchParams(
         (prev) => {
@@ -323,6 +327,9 @@ export function Prediction() {
             next.delete("session");
           } else if (mode === EXTERNAL_PREDICTIONS_MODE) {
             next.set("mode", EXTERNAL_PREDICTIONS_MODE);
+            next.delete("session");
+          } else if (mode === FORECAST_ENGINE_MODE) {
+            next.set("mode", FORECAST_ENGINE_MODE);
             next.delete("session");
           } else {
             next.delete("mode");
@@ -706,6 +713,18 @@ export function Prediction() {
           >
             Miscellaneous
           </button>
+          <button
+            type="button"
+            onClick={() => setPredictionMode(FORECAST_ENGINE_MODE)}
+            className={cn(
+              "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
+              predictionMode === FORECAST_ENGINE_MODE
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Forecast Engine
+          </button>
         </div>
 
         {predictionMode === EXTERNAL_PREDICTIONS_MODE ? (
@@ -728,6 +747,15 @@ export function Prediction() {
             onRemoveSource={handleExternalRemoveSource}
             onApprovePath={handleExternalApprovePath}
           />
+        ) : predictionMode === FORECAST_ENGINE_MODE ? (
+          <section className="space-y-3">
+            <PredictionSectionHeader
+              title="Forecast engine (TimesFM 3.0)"
+              subtitle="Standalone dataset-recipe + swappable pretrained forecaster (docs/add/forecast_engine.md) — its own probability output, not yet blended into the core Ridge model."
+              modelRole="context"
+            />
+            <ForecastEngineChart ticker="NIFTY" />
+          </section>
         ) : predictionMode === SCOREBOARD_MODE ? (
           <>
             {error && running === false ? (
@@ -1020,15 +1048,6 @@ export function Prediction() {
                 modelRole="context"
               />
               <DerivativesFactorsPanel days={365} onLoadState={handleDerivativesLoadState} />
-            </section>
-
-            <section className="space-y-3">
-              <PredictionSectionHeader
-                title="Forecast engine (TimesFM 3.0)"
-                subtitle="Standalone dataset-recipe + swappable pretrained forecaster (docs/add/forecast_engine.md) — its own probability output, not yet blended into the core Ridge model."
-                modelRole="context"
-              />
-              <ForecastEngineChart ticker="NIFTY" />
             </section>
 
             <section className="space-y-3">
