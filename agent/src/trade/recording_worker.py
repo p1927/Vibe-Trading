@@ -8,6 +8,7 @@ trading day (or until manually stopped).
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,8 +35,26 @@ def run_worker(job_id: str) -> None:
     from src.trade.hub_bridge import ensure_trade_stack_path
     from src.trade import recording_jobs as jobs
 
+    logger.info("recording worker %s: starting (pid=%s)", job_id, os.getpid())
+
     job = jobs.get_job(job_id)
     if job is None:
+        # Silent culprit behind
+        # .claude/backlog/items/2026-09-11-recording-job-workers-die-before-run.md:
+        # every reproduced production failure has exited cleanly (code 0)
+        # with zero log lines and run_started_at never stamped, which only
+        # this branch can produce (the except-block below always logs
+        # before returning). Log loudly to worker.log -- this process's
+        # stdout/stderr, not a job.json write, since the whole premise here
+        # is that the job record isn't found -- so the next occurrence
+        # finally explains itself instead of exiting silently.
+        logger.error(
+            "recording worker %s: job record not found at %s (jobs_root=%s) "
+            "-- exiting without running",
+            job_id,
+            jobs._job_file(job_id),
+            jobs._jobs_root(),
+        )
         return
 
     underlyings = list(job.get("underlyings") or [])
