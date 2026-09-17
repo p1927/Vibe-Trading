@@ -1624,9 +1624,14 @@ def get_hub_status(
     page_size: int = 20,
     window_hours: int | None = None,
     provenance: str | None = None,
+    detail: str = "summary",
     _auth: None = Depends(require_local_or_auth),
 ) -> HubStatusResponse:
-    """Return hub inventory: staging queue, verified news, cache health, capture stats."""
+    """Return hub inventory: staging queue, verified news, cache health, capture stats.
+
+    ``detail=full`` additionally runs the LLM-Wiki network probes in the news_pipeline block.
+    The default is deliberately cheap: this endpoint is polled every 30s by the Hub page.
+    """
     key = entity_id.strip().upper()
     size = max(1, min(int(page_size or 20), 100))
     current_page = max(1, int(page or 1))
@@ -1646,7 +1651,9 @@ def get_hub_status(
             # truncating an already-capped pool, so it isn't limited to the
             # page-scaled pool_size above.
             news_since = (datetime.now(timezone.utc) - timedelta(hours=int(window_hours))).isoformat()
-        hub = build_hub_status(entity_id=key, news_limit=pool_size, news_since=news_since)
+        hub = build_hub_status(
+            entity_id=key, news_limit=pool_size, news_since=news_since, detail=detail
+        )
         gates = hub.get("gates") or {}
         if not gates.get("hub_ready", True):
             blocking = list(gates.get("blocking") or [])
