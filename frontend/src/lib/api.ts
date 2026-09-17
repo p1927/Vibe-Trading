@@ -889,6 +889,142 @@ export async function streamRecordingJob(
   }
 }
 
+export interface StreamForecastEngineRunHandlers {
+  onLog?: (entry: ForecastEngineRunLogEntry) => void;
+  onDone?: (result: ForecastEngineRunResult) => void;
+  onError?: (message: string) => void;
+}
+
+async function consumeForecastEngineRunSse(
+  res: Response,
+  handlers: StreamForecastEngineRunHandlers,
+): Promise<boolean> {
+  if (!res.body) {
+    throw new ApiError("Empty stream body", res.status);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let gotDone = false;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    buffer = parseSseChunk(buffer, (eventType, data) => {
+      if (eventType === "log" && data.entry) {
+        handlers.onLog?.(data.entry as ForecastEngineRunLogEntry);
+        return;
+      }
+      if (eventType === "done") {
+        gotDone = true;
+        handlers.onDone?.(data.result as ForecastEngineRunResult);
+        return;
+      }
+      if (eventType === "error") {
+        gotDone = true;
+        handlers.onError?.(String(data.message ?? "Forecast engine run failed"));
+      }
+    });
+  }
+  return gotDone;
+}
+
+async function fetchForecastEngineRunJobSnapshot(
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<ForecastEngineRunJobSnapshot | null> {
+  try {
+    const res = await fetch(
+      `${BASE}/trade/index-prediction/forecast-engine-run/${encodeURIComponent(jobId)}`,
+      { headers: authHeaders(), signal },
+    );
+    if (!res.ok) return null;
+    const payload = (await res.json()) as ForecastEngineRunJobResponse;
+    return payload.job ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const ACTIVE_FORECAST_ENGINE_RUN_STATUSES = new Set(["queued", "running"]);
+const FORECAST_ENGINE_RUN_POLL_REATTACH_MS = 5000;
+const FORECAST_ENGINE_RUN_POLL_REATTACH_MAX_MS = 60 * 60 * 1000; // a real TimesFM run is multi-minute, not multi-hour
+
+async function pollForecastEngineRunJobUntilDone(
+  jobId: string,
+  handlers: StreamForecastEngineRunHandlers,
+  signal?: AbortSignal,
+  options?: { skipLogsBefore?: number },
+): Promise<void> {
+  const started = Date.now();
+  let lastLogCount = Math.max(0, options?.skipLogsBefore ?? 0);
+  while (Date.now() - started < FORECAST_ENGINE_RUN_POLL_REATTACH_MAX_MS) {
+    if (signal?.aborted) return;
+    const job = await fetchForecastEngineRunJobSnapshot(jobId, signal);
+    if (job?.logs && job.logs.length > lastLogCount) {
+      for (let i = lastLogCount; i < job.logs.length; i += 1) {
+        handlers.onLog?.(job.logs[i]!);
+      }
+      lastLogCount = job.logs.length;
+    }
+    if (job?.status === "done" && job.result) {
+      handlers.onDone?.(job.result);
+      return;
+    }
+    if (job?.status === "error") {
+      handlers.onError?.(job.error || "Forecast engine run failed");
+      return;
+    }
+    if (job?.status && !ACTIVE_FORECAST_ENGINE_RUN_STATUSES.has(job.status)) {
+      handlers.onError?.("Forecast engine run ended unexpectedly");
+      return;
+    }
+    await sleepMs(FORECAST_ENGINE_RUN_POLL_REATTACH_MS, signal);
+  }
+  handlers.onError?.("Forecast engine run stream timed out waiting for completion");
+}
+
+export async function streamForecastEngineRunJob(
+  jobId: string,
+  handlers: StreamForecastEngineRunHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `${BASE}/trade/index-prediction/forecast-engine-run/${encodeURIComponent(jobId)}/stream`,
+      { headers: authHeaders(), signal },
+    );
+  } catch (err) {
+    throw new ApiError(
+      `Network error reaching forecast engine run stream. ${err instanceof Error ? err.message : ""}`.trim(),
+      0,
+    );
+  }
+  if (!res.ok) {
+    throw await errorFromResponse(res);
+  }
+  const gotDone = await consumeForecastEngineRunSse(res, handlers);
+  if (!gotDone) {
+    const job = await fetchForecastEngineRunJobSnapshot(jobId);
+    if (job?.status && ACTIVE_FORECAST_ENGINE_RUN_STATUSES.has(job.status)) {
+      await pollForecastEngineRunJobUntilDone(jobId, handlers, signal, {
+        skipLogsBefore: job.logs?.length ?? 0,
+      });
+      return;
+    }
+    if (job?.status === "done" && job.result) {
+      handlers.onDone?.(job.result);
+      return;
+    }
+    if (job?.status === "error") {
+      handlers.onError?.(job.error || "Forecast engine run failed");
+      return;
+    }
+    handlers.onError?.("Forecast engine run stream ended without a result.");
+  }
+}
+
 export const api = {
   uploadFile,
   getCorrelation: (codes: string, days: number, method: "pearson" | "spearman") =>
@@ -1957,6 +2093,23 @@ export const api = {
     if (recipe) params.set("recipe", recipe);
     return request<ForecastEngineEvaluationResponse>(`/trade/index-prediction/forecast-engine-evaluation?${params}`);
   },
+  startForecastEngineRun: (params: { ticker?: string; recipe: string; start: string; end: string; horizon?: number }) =>
+    request<ForecastEngineRunStartResponse>(`/trade/index-prediction/forecast-engine-run/start`, {
+      method: "POST",
+      body: JSON.stringify({ ticker: params.ticker ?? "NIFTY", ...params }),
+    }),
+  getForecastEngineRunStatus: (jobId: string) =>
+    request<ForecastEngineRunJobResponse>(`/trade/index-prediction/forecast-engine-run/${encodeURIComponent(jobId)}`),
+  getForecastEngineRuns: (ticker = "NIFTY", recipe?: string) => {
+    const params = new URLSearchParams({ ticker });
+    if (recipe) params.set("recipe", recipe);
+    return request<ForecastEngineRunListResponse>(`/trade/index-prediction/forecast-engine-runs?${params}`);
+  },
+  getForecastEngineRunDetail: (ticker: string, recipe: string, runId: string) => {
+    const params = new URLSearchParams({ ticker, recipe, run_id: runId });
+    return request<ForecastEngineEvaluationResponse>(`/trade/index-prediction/forecast-engine-run-detail?${params}`);
+  },
+  streamForecastEngineRunJob: streamForecastEngineRunJob,
   getIndexDayAttribution: (date: string, days = 365) =>
     request<DayAttributionResponse>(
       `/trade/index-prediction/day-attribution?date=${encodeURIComponent(date)}&days=${days}`,
@@ -5139,6 +5292,67 @@ export interface ForecastEngineEvaluationResponse {
   gate_lower_bound?: number;
   observations?: ForecastEngineEvaluationObservation[];
   message?: string;
+}
+
+export interface ForecastEngineRunLogEntry {
+  message: string;
+  level: string;
+  at: string;
+}
+
+export interface ForecastEngineRunStartResponse {
+  status: string;
+  job_id: string;
+  run_id: string;
+  job_status: string;
+  reused: boolean;
+}
+
+export interface ForecastEngineRunResult {
+  run_id: string;
+  ticker: string;
+  recipe: string;
+  n_observations: number;
+  n_skipped_gaps: number;
+  mean_pinball_loss: number;
+  passes_gate: boolean;
+}
+
+export interface ForecastEngineRunJobSnapshot {
+  job_id: string;
+  status: "queued" | "running" | "done" | "error" | string;
+  created_at?: string | null;
+  error?: string | null;
+  logs?: ForecastEngineRunLogEntry[];
+  extra?: {
+    ticker?: string;
+    recipe?: string;
+    start?: string;
+    end?: string;
+    horizon?: number;
+    run_id?: string;
+  };
+  result?: ForecastEngineRunResult | null;
+}
+
+export interface ForecastEngineRunJobResponse {
+  status: string;
+  job: ForecastEngineRunJobSnapshot;
+}
+
+export interface ForecastEngineRunSummary {
+  run_id: string;
+  run_start?: string | null;
+  run_end?: string | null;
+  generated_at?: string | null;
+  n_observations?: number | null;
+  passes_gate?: boolean | null;
+  mean_pinball_loss?: number | null;
+}
+
+export interface ForecastEngineRunListResponse {
+  status: string;
+  runs?: ForecastEngineRunSummary[];
 }
 
 export interface ConstituentHistoryPoint {

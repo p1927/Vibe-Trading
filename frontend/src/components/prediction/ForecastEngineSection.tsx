@@ -3,6 +3,7 @@ import { api, type ForecastEngineRecipeInfo } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ForecastEngineChart } from "@/components/prediction/ForecastEngineChart";
 import { ForecastEnginePredictedVsActualChart } from "@/components/prediction/ForecastEnginePredictedVsActualChart";
+import { ForecastEngineRunPanel } from "@/components/prediction/ForecastEngineRunPanel";
 
 interface Props {
   ticker?: string;
@@ -16,6 +17,7 @@ export function ForecastEngineSection({ ticker = "NIFTY" }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,7 +62,10 @@ export function ForecastEngineSection({ ticker = "NIFTY" }: Props) {
               <button
                 key={r.name}
                 type="button"
-                onClick={() => setSelected(r.name)}
+                onClick={() => {
+                  setSelected(r.name);
+                  setSelectedRunId(null);
+                }}
                 className={cn(
                   "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors",
                   selected === r.name
@@ -80,7 +85,13 @@ export function ForecastEngineSection({ ticker = "NIFTY" }: Props) {
           {selected ? (
             <>
               <ForecastEngineChart ticker={ticker} recipe={selected} />
-              <ForecastEnginePredictedVsActualChart ticker={ticker} recipe={selected} />
+              <ForecastEnginePredictedVsActualChart ticker={ticker} recipe={selected} runId={selectedRunId} />
+              <ForecastEngineRunPanel
+                ticker={ticker}
+                recipe={selected}
+                onSelectRun={setSelectedRunId}
+                selectedRunId={selectedRunId}
+              />
             </>
           ) : null}
         </>

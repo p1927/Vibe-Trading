@@ -8,9 +8,13 @@ import { fmtNiftyLevel } from "@/lib/factorHistoryUtils";
 interface Props {
   ticker?: string;
   recipe?: string;
+  /** When set, shows this specific named historical run's detail instead of the always-latest
+   * evaluation (`api.getForecastEngineRunDetail` instead of `api.getForecastEngineEvaluation`).
+   * Omitted / undefined keeps the existing default "latest" behavior unchanged. */
+  runId?: string | null;
 }
 
-export function ForecastEnginePredictedVsActualChart({ ticker = "NIFTY", recipe }: Props) {
+export function ForecastEnginePredictedVsActualChart({ ticker = "NIFTY", recipe, runId }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const { dark } = useDarkMode();
   const [evaluation, setEvaluation] = useState<ForecastEngineEvaluationResponse | null>(null);
@@ -20,8 +24,10 @@ export function ForecastEnginePredictedVsActualChart({ ticker = "NIFTY", recipe 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    void api
-      .getForecastEngineEvaluation(ticker, recipe)
+    const request = runId
+      ? api.getForecastEngineRunDetail(ticker, recipe ?? "", runId)
+      : api.getForecastEngineEvaluation(ticker, recipe);
+    void request
       .then((res) => {
         if (!cancelled) {
           setEvaluation(res);
@@ -40,7 +46,7 @@ export function ForecastEnginePredictedVsActualChart({ ticker = "NIFTY", recipe 
     return () => {
       cancelled = true;
     };
-  }, [ticker, recipe]);
+  }, [ticker, recipe, runId]);
 
   const observations = useMemo(
     () => [...(evaluation?.observations ?? [])].sort((a, b) => a.target_date.localeCompare(b.target_date)),
@@ -148,7 +154,9 @@ export function ForecastEnginePredictedVsActualChart({ ticker = "NIFTY", recipe 
         <p className="mt-3 text-[11px] text-red-600 dark:text-red-400">{error}</p>
       ) : !evaluation?.available ? (
         <p className="mt-3 text-[11px] text-muted-foreground">
-          No backtest history yet for this recipe — run the offline refresh job to generate one.
+          {runId
+            ? "That run could not be found."
+            : "No backtest history yet for this recipe — run the offline refresh job to generate one."}
         </p>
       ) : (
         <>
