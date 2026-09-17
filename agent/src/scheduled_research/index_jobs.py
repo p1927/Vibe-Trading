@@ -866,12 +866,30 @@ def run_constituent_volume_snapshot_job(config: dict[str, Any] | None = None) ->
     live-quote call (one HTTP round-trip for all NIFTY50 constituents), not a per-symbol
     fetch, so it's cheap enough to run every ~15 minutes without needing a per-tick
     materiality gate the way reinference does.
+
+    Routed through the factor registry before dispatch (D102,
+    .claude/backlog/items/2026-09-11-index-job-handlers-ignore-had-errors.md): the data this
+    job produces is ``IN/volume_interest_score``, a PANEL-shaped ``SourcedFactorSpec`` per
+    NIFTY50 symbol (``factors/constituent_specs.py``, same pattern as the sibling
+    ``constituent_weight``). Confirming the key is still catalogued fails this job loudly if
+    the registry entry is ever renamed or removed, instead of silently drifting out of catalog
+    coverage. The capture call itself still writes through
+    ``constituent_volume_snapshot_store``'s own accumulator, not ``factors.acquisition.persist``
+    — ``PANEL`` is not one of ``persist.SUPPORTED_SHAPES`` yet (same status as
+    ``constituent_weight``'s ``mcap_weights`` store), so there is no registry write path to
+    swap onto here; only the catalog-presence check is new.
     """
     _ensure_trade_integrations_on_path()
     from trade_integrations.dataflows.index_research.constituent_volume_snapshot_store import (
         capture_and_append_constituent_volume_snapshot,
     )
+    from trade_integrations.factors.registry import constituent_factor_keys_for_market
 
+    if "volume_interest_score" not in constituent_factor_keys_for_market("IN"):
+        raise ValueError(
+            "IN/volume_interest_score is not in the factor registry — see "
+            "factors/constituent_specs.py's _VOLUME_INTEREST_SOURCES / _FIELD_TEMPLATES"
+        )
     return capture_and_append_constituent_volume_snapshot()
 
 
