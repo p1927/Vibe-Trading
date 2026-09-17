@@ -803,6 +803,17 @@ def run_futures_positioning_job(config: dict[str, Any] | None = None) -> dict[st
     re-implements that logic here). Uses IST "today" as the default trading
     day, same convention ``run_max_pain_bhavcopy_job`` already uses, since
     NSE's F&O bhavcopy is published against IST trading days.
+
+    Since 2026-09-17 this run's persisted row also feeds
+    ``IN/nifty_futures_oi``'s registry binding: that factor's priority-1
+    ``get_futures_oi_own_store`` `SourceBinding` (a CACHE_READ leg, see
+    ``factors/markets/in_/positioning.py``) reads back exactly the day this
+    job writes here, so a run earlier today means the registry's own
+    priority-2 bhavcopy fetch doesn't re-hit NSE for the same day — closing
+    the duplicate-fetch finding in
+    [[2026-09-11-index-job-handlers-ignore-had-errors]]. No code change was
+    needed on this side: both write to the same raw store
+    (``futures_positioning_store.persist_futures_rows``'s single writer).
     """
     _ensure_trade_integrations_on_path()
     from trade_integrations.dataflows.index_research.futures_positioning_store import (
