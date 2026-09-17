@@ -18,13 +18,15 @@ from pathlib import Path
 
 import pytest
 from src.scheduled_research.dispatch_admission import (
+    AGEING_CEILING_MS,
     DURATION_HISTORY_CONFIG_KEY,
     DURATION_HISTORY_LEN,
     expected_runtime_ms,
+    is_aged,
     long_runtime_threshold_ms,
     record_dispatch_duration,
 )
-from src.scheduled_research.executor import ScheduledResearchExecutor
+from src.scheduled_research.executor import ScheduledResearchExecutor, next_due
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob
 from src.scheduled_research.store import ScheduledResearchJobStore
 
@@ -340,6 +342,24 @@ def test_dispatch_duration_history_is_recorded_persisted_and_capped(tmp_path: Pa
         record_dispatch_duration(job, 1000 + ms)
     assert job.config[DURATION_HISTORY_CONFIG_KEY] == [1005, 1006, 1007, 1008, 1009]
     assert len(job.config[DURATION_HISTORY_CONFIG_KEY]) == DURATION_HISTORY_LEN
+
+
+def test_ageing_is_capped_so_a_daily_cadence_job_does_not_wait_24h_to_age() -> None:
+    """.claude/backlog/items/2026-09-17-infrequent-long-jobs-starved-behind-short-cadence-under-d11.md:
+    a 24h-cadence job's own cadence alone would make ageing wait a full day; the absolute
+    ceiling forces it sooner. A short-cadence job (well under the ceiling) still ages at its
+    own cadence, unaffected."""
+    daily = ScheduledResearchJob(id="daily", prompt="daily", schedule="0 3 * * *", next_run_at=0)
+    just_under_ceiling = AGEING_CEILING_MS - 1
+    just_over_ceiling = AGEING_CEILING_MS + 1
+    assert not is_aged(daily, just_under_ceiling, next_due)
+    assert is_aged(daily, just_over_ceiling, next_due)
+    # Sanity: without the ceiling this job's own 24h cadence would not have aged it yet.
+    assert just_over_ceiling < 24 * 60 * MIN
+
+    tight = ScheduledResearchJob(id="tight", prompt="tight", schedule=str(10 * MIN), next_run_at=0)
+    assert not is_aged(tight, 10 * MIN - 1, next_due)
+    assert is_aged(tight, 10 * MIN + 1, next_due)
 
 
 def test_expected_runtime_is_median_of_history_else_budget() -> None:

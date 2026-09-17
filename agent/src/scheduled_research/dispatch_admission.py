@@ -61,6 +61,14 @@ LONG_RUNTIME_FACTOR = 3.0
 #: A waiter overdue by at least this many of its own cadence intervals is *aged*: it has
 #: missed a whole run it was owed, which is the point where waiting stops being fair.
 AGEING_CADENCE_MULTIPLE = 1.0
+#: Absolute cap on the ageing threshold, regardless of a job's own cadence. Without this, a
+#: daily job's cadence (24h) makes ``AGEING_CADENCE_MULTIPLE`` alone a 24h wait before it is
+#: ever forced ahead of a shorter job contending for the same global slots, and a weekly job's
+#: is a full week. Live-observed 2026-09-17: 5 daily/weekly jobs sat unadmitted for 45+ minutes
+#: straight (still short of their own 24h/7d threshold) while short-cadence jobs of other types
+#: kept winning every freed slot on (b)'s shortest-expected-runtime ordering. See
+#: .claude/backlog/items/2026-09-17-infrequent-long-jobs-starved-behind-short-cadence-under-d11.md
+AGEING_CEILING_MS = 60 * 60 * 1000
 
 RunFn = Callable[[ScheduledResearchJob, int], Awaitable[None]]
 NextDueFn = Callable[[str, int, "str | None"], int]
@@ -118,11 +126,13 @@ def cadence_ms(job: ScheduledResearchJob, next_due_fn: NextDueFn) -> int | None:
 
 
 def is_aged(job: ScheduledResearchJob, now_ms: int, next_due_fn: NextDueFn) -> bool:
-    """Whether *job* has waited at least ``AGEING_CADENCE_MULTIPLE`` of its cadence past due."""
+    """Whether *job* has waited at least ``min(AGEING_CADENCE_MULTIPLE`` of its cadence,
+    ``AGEING_CEILING_MS)`` past due."""
     cadence = cadence_ms(job, next_due_fn)
     if cadence is None:
         return False
-    return now_ms - int(job.next_run_at) >= AGEING_CADENCE_MULTIPLE * cadence
+    threshold = min(AGEING_CADENCE_MULTIPLE * cadence, AGEING_CEILING_MS)
+    return now_ms - int(job.next_run_at) >= threshold
 
 
 @dataclass
