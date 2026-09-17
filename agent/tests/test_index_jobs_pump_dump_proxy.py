@@ -50,6 +50,24 @@ def test_run_pump_dump_proxy_job_defaults_config(monkeypatch):
 
 
 @pytest.mark.unit
+def test_run_pump_dump_proxy_job_fails_loud_if_catalog_binding_goes_missing(monkeypatch):
+    """D102 / registry-audit regression: the job routes through `require_factor()` before
+    writing, so a catalog drift (the `IN/pump_dump_proxy_score` `SourceBinding` renamed/removed)
+    is a loud failure here, not a silent write against a stale key. Doesn't touch the real
+    catalog — monkeypatches `require_factor` itself to simulate the drift."""
+
+    def _raise(market, key, instrument=""):
+        raise ValueError(f"{market}/{key} is not catalogued")
+
+    monkeypatch.setattr(
+        "trade_integrations.factors.registry.require_factor", _raise,
+    )
+
+    with pytest.raises(ValueError, match="pump_dump_proxy_score"):
+        index_jobs.run_pump_dump_proxy_job({"symbol": "NIFTY", "exchange": "NSE_INDEX"})
+
+
+@pytest.mark.unit
 def test_pump_dump_proxy_job_type_registered():
     assert index_jobs.JOB_TYPE_PUMP_DUMP_PROXY in index_jobs.INDEX_JOB_TYPES
 

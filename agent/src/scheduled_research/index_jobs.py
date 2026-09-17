@@ -759,11 +759,28 @@ def run_pump_dump_proxy_job(config: dict[str, Any] | None = None) -> dict[str, A
     tick recorder is always-on) and written as-is rather than skipped, so
     this accumulator's day-coverage stays honestly visible for whenever
     there's enough history to join into `reversal_hazard`'s training panel.
+
+    Routes through ``require_factor()`` (D102) before writing, per the
+    2026-09-17 registry-audit finding in
+    [[2026-09-11-index-job-handlers-ignore-had-errors]]: the ``IN/pump_dump_proxy_score``
+    ``SourceBinding`` already named this exact module as its source and is now wired
+    (``volume_concentration.pump_dump_proxy_score_series``) — this call fails loud if the catalog
+    and this job's fetch pointer ever drift apart, the same fail-loud convention
+    ``factors.acquisition.fetch.acquire()`` itself uses for a bad ``fetch_module``/``fetch_function``.
+    Deliberately does **not** switch this job's write onto the registry's own
+    ``persist()``/``acquire_and_persist()`` path -- that needs its own real design decision
+    (declaring ``backfill_owner='unified'`` and a ``StorageRef`` on the spec, and deciding whether
+    this forward-only accumulator's shape even fits unified-engine storage) that is out of scope
+    for this pure-wiring change; this job keeps writing its own ``_data/pump_dump_snapshots/daily``
+    accumulator exactly as before.
     """
     _ensure_trade_integrations_on_path()
     from trade_integrations.dataflows.index_research.volume_concentration import (
         capture_and_append_pump_dump_snapshot,
     )
+    from trade_integrations.factors.registry import require_factor
+
+    require_factor("IN", "pump_dump_proxy_score")
 
     cfg = config or {}
     return capture_and_append_pump_dump_snapshot(
