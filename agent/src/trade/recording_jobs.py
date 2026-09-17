@@ -14,11 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import re
-import signal
-import subprocess
-import sys
 import threading
 import time
 import uuid
@@ -36,7 +31,7 @@ except ImportError:  # pragma: no cover - Windows / minimal builds
     _HAS_FCNTL = False
 
 from src.config.accessor import get_env_config
-from src.trade import detached_worker
+from src.trade import detached_worker, job_runner
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +41,6 @@ _ACTIVE_JOB_ID: str | None = None
 _JOBS_LOCK = threading.RLock()
 
 _JOB_TTL_SECONDS = 60 * 60
-_JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 _ACTIVE_STATUSES = frozenset({"queued", "waiting_for_open", "running"})
 _WALL_CLOCK_SECONDS = int(get_env_config().trade.recording_run_wall_clock_seconds)
 _QUEUED_NO_PID_SECONDS = int(get_env_config().trade.recording_queued_no_pid_seconds)
@@ -223,21 +217,10 @@ def _job_lock_file(job_id: str) -> Path:
 
 @contextmanager
 def _job_file_lock(job_id: str, *, exclusive: bool = True):
-    if not job_id_valid(job_id):
+    with job_runner.job_file_lock(
+        _job_lock_file(job_id), valid=job_id_valid(job_id), exclusive=exclusive
+    ):
         yield
-        return
-    lock_path = _job_lock_file(job_id)
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    if not _HAS_FCNTL:
-        yield
-        return
-    with open(lock_path, "a+", encoding="utf-8") as lockf:
-        flag = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-        fcntl.flock(lockf.fileno(), flag)
-        try:
-            yield
-        finally:
-            fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
 
 
 def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -268,11 +251,7 @@ def _write_job_to_disk_unsafe(job: dict[str, Any]) -> None:
     job_id = str(job.get("job_id") or "")
     if not job_id_valid(job_id):
         return
-    path = _job_file(job_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(_serialize_job(job), ensure_ascii=False, default=str), encoding="utf-8")
-    tmp.replace(path)
+    job_runner.write_job_json_unsafe(_job_file(job_id), _serialize_job(job))
 
 
 def _supplement_marker_path(session_date: str) -> Path:
@@ -314,14 +293,8 @@ def claim_supplement_run(session_date: str, job_id: str) -> bool:
 
 
 def _read_job_from_disk_unsafe(job_id: str) -> dict[str, Any] | None:
-    path = _job_file(job_id)
-    if not path.is_file():
-        return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
-    if not isinstance(payload, dict) or not job_id_valid(str(payload.get("job_id") or job_id)):
+    payload = job_runner.read_job_json_unsafe(_job_file(job_id))
+    if payload is None or not job_id_valid(str(payload.get("job_id") or job_id)):
         return None
     payload.setdefault("job_id", job_id)
     payload.setdefault("logs", [])
@@ -343,16 +316,14 @@ def _mutate_job_on_disk(
     job_id: str,
     mutator: Callable[[dict[str, Any]], bool],
 ) -> dict[str, Any] | None:
-    with _job_file_lock(job_id, exclusive=True):
-        job = _read_job_from_disk_unsafe(job_id)
-        if job is None:
-            return None
-        job = dict(job)
-        job.setdefault("logs", [])
-        if not mutator(job):
-            return None
-        _write_job_to_disk_unsafe(job)
-        return job
+    return job_runner.mutate_job_on_disk(
+        job_file=_job_file(job_id),
+        lock_file=_job_lock_file(job_id),
+        valid=job_id_valid(job_id),
+        job_id=job_id,
+        serialize=_serialize_job,
+        mutator=mutator,
+    )
 
 
 def _merge_job_from_disk(job_id: str, memory: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -422,7 +393,7 @@ def _prune_old_jobs() -> None:
 
 
 def job_id_valid(job_id: str | None) -> bool:
-    return bool(job_id and _JOB_ID_RE.fullmatch(job_id))
+    return job_runner.job_id_valid(job_id)
 
 
 def _job_snapshot(job: dict[str, Any], *, include_logs: bool = True) -> dict[str, Any]:
@@ -992,19 +963,7 @@ def stop_active_job_cooperatively(*, reason: str = "stopped") -> str | None:
 def _terminate_worker(job: dict[str, Any] | None) -> None:
     if job is None:
         return
-    pid = job.get("worker_pid")
-    if pid is None:
-        return
-    try:
-        pid_int = int(pid)
-    except (TypeError, ValueError):
-        return
-    if not _is_pid_alive(pid_int) or pid_int == os.getpid():
-        return
-    try:
-        os.kill(pid_int, signal.SIGTERM)
-    except OSError:
-        pass
+    job_runner.terminate_worker(job.get("worker_pid"))
 
 
 def _agent_dir() -> Path:
@@ -1015,20 +974,12 @@ def _agent_dir() -> Path:
     # cwd at all, so it silently fell through to whatever *other* `vibetrading/agent` happened
     # to be on PYTHONPATH (e.g. a stale checkout from a different worktree) -- see
     # .claude/backlog/items/2026-09-11-recording-job-workers-die-before-run.md.
-    here = Path(__file__).resolve()
-    return here.parents[2]
+    return job_runner.agent_dir_from_here(__file__)
 
 
-def spawn_worker(job_id: str) -> None:
-    """Launch the recorder in a detached subprocess (survives API hot-reload)."""
-    agent_dir = _agent_dir()
-    worker_log = _job_dir(job_id) / "worker.log"
-    worker_log.parent.mkdir(parents=True, exist_ok=True)
-    log_handle = worker_log.open("ab")
-
-    env = os.environ.copy()
+def _mutate_recording_env(env: dict[str, str]) -> None:
     # NSE_REPLAY_DATA_ROOT is configured as a path relative to *this*
-    # process's cwd (typically the repo root). The worker below runs with
+    # process's cwd (typically the repo root). The worker runs with
     # cwd=agent_dir instead (needed for `-m src.trade.recording_worker` to
     # resolve), so the same relative string would land two directories off
     # — silently writing every recorded session into a brand-new, orphaned
@@ -1038,16 +989,17 @@ def spawn_worker(job_id: str) -> None:
     data_root_raw = env.get("NSE_REPLAY_DATA_ROOT")
     if data_root_raw and not Path(data_root_raw).is_absolute():
         env["NSE_REPLAY_DATA_ROOT"] = str(Path(data_root_raw).resolve())
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "src.trade.recording_worker", job_id],
-        cwd=str(agent_dir),
-        env=env,
-        start_new_session=True,
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
+
+
+def spawn_worker(job_id: str) -> None:
+    """Launch the recorder in a detached subprocess (survives API hot-reload)."""
+    proc = job_runner.spawn_worker_process(
+        job_id=job_id,
+        worker_module="src.trade.recording_worker",
+        agent_dir=_agent_dir(),
+        worker_log=_job_dir(job_id) / "worker.log",
+        env_mutator=_mutate_recording_env,
     )
-    log_handle.close()
-    detached_worker.register(proc)
 
     def mutator(job: dict[str, Any]) -> bool:
         job["worker_pid"] = proc.pid

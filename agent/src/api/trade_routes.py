@@ -3234,65 +3234,55 @@ def _kick_external_predictions_refresh(body: ExternalPredictionsRefreshRequest) 
     )
 
 
+def _external_predictions_log_to_events(entry: dict[str, Any]) -> "list[tuple[str, dict[str, Any]]]":
+    if str(entry.get("stage") or "") == "source_complete":
+        return [
+            (
+                "source_complete",
+                {
+                    "source_id": entry.get("source_id"),
+                    "record": entry.get("record"),
+                    "partial_snapshot": entry.get("partial_snapshot"),
+                },
+            )
+        ]
+    return [("log", {"entry": entry})]
+
+
+def _external_predictions_terminal(job: dict[str, Any]) -> "tuple[str, dict[str, Any]] | None":
+    status = str(job.get("status") or "")
+    if status == "done":
+        snapshot = job.get("snapshot")
+        ticker = str(job.get("ticker") or "")
+        if snapshot is not None:
+            return ("done", {"ticker": ticker, "snapshot": snapshot})
+        return ("error", {"message": "job completed without snapshot"})
+    if status == "error":
+        return ("error", {"message": job.get("error") or "unknown error"})
+    return None
+
+
+def _external_predictions_heartbeat(job_id: str, status: str) -> str:
+    return _index_prediction_run_sse_frame("heartbeat", {"job_id": job_id, "status": status})
+
+
 async def _external_predictions_refresh_event_stream(job_id: str, request: Request):
     """Replay stored logs then poll job store until done/error."""
-    import time as time_mod
-
     from src.trade.external_predictions_run_jobs import _get_job_record, reconcile_zombie_job
 
-    last_log_idx = 0
-    last_emit = time_mod.monotonic()
-    while True:
-        if await request.is_disconnected():
-            return
-
-        job = await _reconcile_and_read_job(reconcile_zombie_job, _get_job_record, job_id)
-        if job is None:
-            yield _index_prediction_run_sse_frame("error", {"message": "job not found"})
-            return
-        status = str(job.get("status") or "")
-        logs = list(job.get("logs") or [])
-        snapshot = job.get("snapshot")
-        error = job.get("error")
-        ticker = str(job.get("ticker") or "")
-
-        while last_log_idx < len(logs):
-            entry = logs[last_log_idx]
-            if str(entry.get("stage") or "") == "source_complete":
-                yield _index_prediction_run_sse_frame(
-                    "source_complete",
-                    {
-                        "source_id": entry.get("source_id"),
-                        "record": entry.get("record"),
-                        "partial_snapshot": entry.get("partial_snapshot"),
-                    },
-                )
-            else:
-                yield _index_prediction_run_sse_frame("log", {"entry": entry})
-            last_log_idx += 1
-            last_emit = time_mod.monotonic()
-
-        if status == "done":
-            if snapshot is not None:
-                yield _index_prediction_run_sse_frame(
-                    "done",
-                    {"ticker": ticker, "snapshot": snapshot},
-                )
-            else:
-                yield _index_prediction_run_sse_frame(
-                    "error",
-                    {"message": "job completed without snapshot"},
-                )
-            return
-        if status == "error":
-            yield _index_prediction_run_sse_frame("error", {"message": error or "unknown error"})
-            return
-
-        if time_mod.monotonic() - last_emit >= _INDEX_PREDICTION_RUN_HEARTBEAT_SECONDS:
-            yield _index_prediction_run_sse_frame("heartbeat", {"job_id": job_id, "status": status})
-            last_emit = time_mod.monotonic()
-
-        await asyncio.sleep(_INDEX_PREDICTION_RUN_POLL_SECONDS)
+    async for chunk in _sse_event_stream(
+        job_id=job_id,
+        request=request,
+        reconcile=reconcile_zombie_job,
+        get_record=_get_job_record,
+        frame=_index_prediction_run_sse_frame,
+        log_to_events=_external_predictions_log_to_events,
+        terminal=_external_predictions_terminal,
+        heartbeat=_external_predictions_heartbeat,
+        heartbeat_seconds=_INDEX_PREDICTION_RUN_HEARTBEAT_SECONDS,
+        poll_seconds=_INDEX_PREDICTION_RUN_POLL_SECONDS,
+    ):
+        yield chunk
 
 
 def _external_predictions_refresh_stream_response(job_id: str, request: Request) -> StreamingResponse:
@@ -3722,11 +3712,33 @@ async def _reconcile_and_read_job(
     return await asyncio.to_thread(_poll)
 
 
-async def _index_prediction_run_event_stream(job_id: str, request: Request):
-    """Replay stored logs then poll job store until done/error."""
-    import time as time_mod
+async def _sse_event_stream(
+    *,
+    job_id: str,
+    request: Request,
+    reconcile: Callable[[str], Any],
+    get_record: Callable[[str], dict[str, Any] | None],
+    frame: Callable[[str, dict[str, Any]], str],
+    log_to_events: Callable[[dict[str, Any]], "list[tuple[str, dict[str, Any]]]"],
+    terminal: Callable[[dict[str, Any]], "tuple[str, dict[str, Any]] | None"],
+    heartbeat: Callable[[str, str], str],
+    heartbeat_seconds: float,
+    poll_seconds: float,
+):
+    """Generic poll-loop skeleton shared by the three job-store SSE endpoints
+    (index-prediction run, external-predictions refresh, recording): replay
+    buffered logs off the last-seen index, then poll the job store until
+    ``terminal(job)`` reports a frame to emit and end the stream.
 
-    from src.trade.index_prediction_run_jobs import _get_job_record, reconcile_job
+    Genuinely different per caller behavior stays caller-owned via hooks
+    rather than being forced into one shape here: ``log_to_events`` (external
+    predictions turns a ``source_complete`` log entry into a differently-
+    shaped event instead of a raw ``log`` frame), ``terminal`` (each system's
+    own done/error payload field name and status set), and ``heartbeat``
+    (index-prediction/recording emit a bare SSE comment, external-predictions
+    emits a real named ``heartbeat`` event with a JSON body).
+    """
+    import time as time_mod
 
     last_log_idx = 0
     last_emit = time_mod.monotonic()
@@ -3734,46 +3746,72 @@ async def _index_prediction_run_event_stream(job_id: str, request: Request):
         if await request.is_disconnected():
             return
 
-        job = await _reconcile_and_read_job(reconcile_job, _get_job_record, job_id)
+        job = await _reconcile_and_read_job(reconcile, get_record, job_id)
         if job is None:
-            yield _index_prediction_run_sse_frame("error", {"message": "job not found"})
+            yield frame("error", {"message": "job not found"})
             return
-        status = str(job.get("status") or "")
-        logs = list(job.get("logs") or [])
-        artifact = job.get("artifact")
-        error = job.get("error")
-        ticker = str(job.get("ticker") or "")
 
+        logs = list(job.get("logs") or [])
         while last_log_idx < len(logs):
-            yield _index_prediction_run_sse_frame("log", {"entry": logs[last_log_idx]})
+            for event, data in log_to_events(logs[last_log_idx]):
+                yield frame(event, data)
             last_log_idx += 1
             last_emit = time_mod.monotonic()
 
-        if status in ("done", "done_with_warnings"):
-            if artifact is not None:
-                yield _index_prediction_run_sse_frame(
-                    "done",
-                    {
-                        "ticker": ticker,
-                        "artifact": artifact,
-                        "warnings": job.get("warnings") or [],
-                    },
-                )
-            else:
-                yield _index_prediction_run_sse_frame(
-                    "error",
-                    {"message": "job completed without artifact"},
-                )
-            return
-        if status == "error":
-            yield _index_prediction_run_sse_frame("error", {"message": error or "unknown error"})
+        done = terminal(job)
+        if done is not None:
+            event, data = done
+            yield frame(event, data)
             return
 
-        if time_mod.monotonic() - last_emit >= _INDEX_PREDICTION_RUN_HEARTBEAT_SECONDS:
-            yield ": keepalive\n\n"
+        if time_mod.monotonic() - last_emit >= heartbeat_seconds:
+            yield heartbeat(job_id, str(job.get("status") or ""))
             last_emit = time_mod.monotonic()
 
-        await asyncio.sleep(_INDEX_PREDICTION_RUN_POLL_SECONDS)
+        await asyncio.sleep(poll_seconds)
+
+
+def _index_prediction_run_log_to_events(entry: dict[str, Any]) -> "list[tuple[str, dict[str, Any]]]":
+    return [("log", {"entry": entry})]
+
+
+def _index_prediction_run_terminal(job: dict[str, Any]) -> "tuple[str, dict[str, Any]] | None":
+    status = str(job.get("status") or "")
+    if status in ("done", "done_with_warnings"):
+        artifact = job.get("artifact")
+        ticker = str(job.get("ticker") or "")
+        if artifact is not None:
+            return (
+                "done",
+                {"ticker": ticker, "artifact": artifact, "warnings": job.get("warnings") or []},
+            )
+        return ("error", {"message": "job completed without artifact"})
+    if status == "error":
+        return ("error", {"message": job.get("error") or "unknown error"})
+    return None
+
+
+def _index_prediction_run_heartbeat(job_id: str, status: str) -> str:
+    return ": keepalive\n\n"
+
+
+async def _index_prediction_run_event_stream(job_id: str, request: Request):
+    """Replay stored logs then poll job store until done/error."""
+    from src.trade.index_prediction_run_jobs import _get_job_record, reconcile_job
+
+    async for chunk in _sse_event_stream(
+        job_id=job_id,
+        request=request,
+        reconcile=reconcile_job,
+        get_record=_get_job_record,
+        frame=_index_prediction_run_sse_frame,
+        log_to_events=_index_prediction_run_log_to_events,
+        terminal=_index_prediction_run_terminal,
+        heartbeat=_index_prediction_run_heartbeat,
+        heartbeat_seconds=_INDEX_PREDICTION_RUN_HEARTBEAT_SECONDS,
+        poll_seconds=_INDEX_PREDICTION_RUN_POLL_SECONDS,
+    ):
+        yield chunk
 
 
 def _index_prediction_run_stream_response(job_id: str, request: Request) -> StreamingResponse:
@@ -4044,44 +4082,40 @@ def _recording_sse_frame(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
+def _recording_log_to_events(entry: dict[str, Any]) -> "list[tuple[str, dict[str, Any]]]":
+    return [("log", {"entry": entry})]
+
+
+def _recording_terminal(job: dict[str, Any]) -> "tuple[str, dict[str, Any]] | None":
+    status = str(job.get("status") or "")
+    if status == "done":
+        return ("done", {"result": job.get("result")})
+    if status == "error":
+        return ("error", {"message": job.get("error") or "unknown error"})
+    return None
+
+
+def _recording_heartbeat(job_id: str, status: str) -> str:
+    return ": keepalive\n\n"
+
+
 async def _recording_event_stream(job_id: str, request: Request):
     """Replay stored logs then poll the job store until done/error."""
-    import time as time_mod
-
     from src.trade.recording_jobs import _get_job_record, reconcile_job
 
-    last_log_idx = 0
-    last_emit = time_mod.monotonic()
-    while True:
-        if await request.is_disconnected():
-            return
-
-        job = await _reconcile_and_read_job(reconcile_job, _get_job_record, job_id)
-        if job is None:
-            yield _recording_sse_frame("error", {"message": "job not found"})
-            return
-        status = str(job.get("status") or "")
-        logs = list(job.get("logs") or [])
-        result = job.get("result")
-        error = job.get("error")
-
-        while last_log_idx < len(logs):
-            yield _recording_sse_frame("log", {"entry": logs[last_log_idx]})
-            last_log_idx += 1
-            last_emit = time_mod.monotonic()
-
-        if status == "done":
-            yield _recording_sse_frame("done", {"result": result})
-            return
-        if status == "error":
-            yield _recording_sse_frame("error", {"message": error or "unknown error"})
-            return
-
-        if time_mod.monotonic() - last_emit >= _RECORDING_HEARTBEAT_SECONDS:
-            yield ": keepalive\n\n"
-            last_emit = time_mod.monotonic()
-
-        await asyncio.sleep(_RECORDING_POLL_SECONDS)
+    async for chunk in _sse_event_stream(
+        job_id=job_id,
+        request=request,
+        reconcile=reconcile_job,
+        get_record=_get_job_record,
+        frame=_recording_sse_frame,
+        log_to_events=_recording_log_to_events,
+        terminal=_recording_terminal,
+        heartbeat=_recording_heartbeat,
+        heartbeat_seconds=_RECORDING_HEARTBEAT_SECONDS,
+        poll_seconds=_RECORDING_POLL_SECONDS,
+    ):
+        yield chunk
 
 
 def _recording_stream_response(job_id: str, request: Request) -> StreamingResponse:

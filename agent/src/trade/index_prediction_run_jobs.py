@@ -7,31 +7,17 @@ survives API hot-reload. Workers run in a detached subprocess (see
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import re
-import signal
-import subprocess
-import sys
 import threading
 import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
-
-try:
-    import fcntl
-
-    _HAS_FCNTL = True
-except ImportError:  # pragma: no cover - Windows / minimal builds
-    fcntl = None  # type: ignore[assignment]
-    _HAS_FCNTL = False
+from typing import Any
 
 from src.config.accessor import get_env_config
-from src.trade import detached_worker
+from src.trade import detached_worker, job_runner
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +26,6 @@ _ACTIVE_BY_TICKER: dict[str, str] = {}
 _JOBS_LOCK = threading.RLock()
 
 _JOB_TTL_SECONDS = 60 * 60
-_JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 _ACTIVE_STATUSES = frozenset({"queued", "running"})
 _TERMINAL_STATUSES = frozenset({"done", "done_with_warnings", "error"})
 _STALE_LOG_SECONDS = int(get_env_config().trade.index_prediction_stale_log_seconds)
@@ -49,11 +34,6 @@ _REFRESH_WALL_CLOCK_SECONDS = int(
     get_env_config().trade.index_prediction_refresh_wall_clock_seconds
 )
 _QUEUED_NO_PID_SECONDS = int(get_env_config().trade.index_prediction_queued_no_pid_seconds)
-_WATCHDOG_INTERVAL_SECONDS = float(
-    get_env_config().trade.index_prediction_watchdog_interval_seconds
-)
-_watchdog_thread: threading.Thread | None = None
-_watchdog_stop = threading.Event()
 
 
 def _is_pid_alive(pid: int | None) -> bool:
@@ -177,44 +157,6 @@ def reconcile_all_active_jobs() -> int:
     return sum(1 for job_id in job_ids if reconcile_job(job_id))
 
 
-def _watchdog_loop(interval_seconds: float) -> None:
-    hydrate_jobs_from_disk()
-    while not _watchdog_stop.wait(interval_seconds):
-        try:
-            reconciled = reconcile_all_active_jobs()
-            if reconciled:
-                logger.warning("stuck-job watchdog reconciled %d job(s)", reconciled)
-        except Exception:  # pragma: no cover - watchdog must never die
-            logger.exception("stuck-job watchdog iteration failed")
-
-
-def start_stuck_job_watchdog(interval_seconds: float | None = None) -> None:
-    """Start the background reconciliation loop (idempotent, safe to call repeatedly)."""
-    global _watchdog_thread
-    with _JOBS_LOCK:
-        if _watchdog_thread is not None and _watchdog_thread.is_alive():
-            return
-        _watchdog_stop.clear()
-        _watchdog_thread = threading.Thread(
-            target=_watchdog_loop,
-            args=(interval_seconds if interval_seconds is not None else _WATCHDOG_INTERVAL_SECONDS,),
-            name="index-prediction-job-watchdog",
-            daemon=True,
-        )
-        _watchdog_thread.start()
-
-
-def stop_stuck_job_watchdog(timeout: float = 5.0) -> None:
-    """Stop the background reconciliation loop, if running."""
-    global _watchdog_thread
-    _watchdog_stop.set()
-    with _JOBS_LOCK:
-        thread = _watchdog_thread
-        _watchdog_thread = None
-    if thread is not None:
-        thread.join(timeout=timeout)
-
-
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -243,21 +185,10 @@ def _job_lock_file(job_id: str) -> Path:
 @contextmanager
 def _job_file_lock(job_id: str, *, exclusive: bool = True):
     """Cross-process lock for job.json read-modify-write (API vs worker subprocess)."""
-    if not job_id_valid(job_id):
+    with job_runner.job_file_lock(
+        _job_lock_file(job_id), valid=job_id_valid(job_id), exclusive=exclusive
+    ):
         yield
-        return
-    lock_path = _job_lock_file(job_id)
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    if not _HAS_FCNTL:
-        yield
-        return
-    with open(lock_path, "a+", encoding="utf-8") as lockf:
-        flag = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-        fcntl.flock(lockf.fileno(), flag)
-        try:
-            yield
-        finally:
-            fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
 
 
 def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -281,22 +212,12 @@ def _write_job_to_disk_unsafe(job: dict[str, Any]) -> None:
     job_id = str(job.get("job_id") or "")
     if not job_id_valid(job_id):
         return
-    path = _job_file(job_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(_serialize_job(job), ensure_ascii=False, default=str), encoding="utf-8")
-    tmp.replace(path)
+    job_runner.write_job_json_unsafe(_job_file(job_id), _serialize_job(job))
 
 
 def _read_job_from_disk_unsafe(job_id: str) -> dict[str, Any] | None:
-    path = _job_file(job_id)
-    if not path.is_file():
-        return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
-    if not isinstance(payload, dict) or not job_id_valid(str(payload.get("job_id") or job_id)):
+    payload = job_runner.read_job_json_unsafe(_job_file(job_id))
+    if payload is None or not job_id_valid(str(payload.get("job_id") or job_id)):
         return None
     payload.setdefault("job_id", job_id)
     payload.setdefault("logs", [])
@@ -316,19 +237,17 @@ def _read_job_from_disk(job_id: str) -> dict[str, Any] | None:
 
 def _mutate_job_on_disk(
     job_id: str,
-    mutator: Callable[[dict[str, Any]], bool],
+    mutator: "Callable[[dict[str, Any]], bool]",
 ) -> dict[str, Any] | None:
     """Atomically read, mutate, and write job.json under an exclusive file lock."""
-    with _job_file_lock(job_id, exclusive=True):
-        job = _read_job_from_disk_unsafe(job_id)
-        if job is None:
-            return None
-        job = dict(job)
-        job.setdefault("logs", [])
-        if not mutator(job):
-            return None
-        _write_job_to_disk_unsafe(job)
-        return job
+    return job_runner.mutate_job_on_disk(
+        job_file=_job_file(job_id),
+        lock_file=_job_lock_file(job_id),
+        valid=job_id_valid(job_id),
+        job_id=job_id,
+        serialize=_serialize_job,
+        mutator=mutator,
+    )
 
 
 def _merge_job_from_disk(job_id: str, memory: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -416,7 +335,7 @@ def _prune_old_jobs() -> None:
 
 
 def job_id_valid(job_id: str | None) -> bool:
-    return bool(job_id and _JOB_ID_RE.fullmatch(job_id))
+    return job_runner.job_id_valid(job_id)
 
 
 def _job_progress_from_logs(logs: list[dict[str, Any]] | None) -> dict[str, Any]:
@@ -671,21 +590,7 @@ def _terminate_worker(job: dict[str, Any] | None) -> None:
     """Best-effort SIGTERM for a detached worker subprocess."""
     if job is None:
         return
-    pid = job.get("worker_pid")
-    if pid is None:
-        return
-    try:
-        pid_int = int(pid)
-    except (TypeError, ValueError):
-        return
-    if not _is_pid_alive(pid_int):
-        return
-    if pid_int == os.getpid():
-        return
-    try:
-        os.kill(pid_int, signal.SIGTERM)
-    except OSError:
-        pass
+    job_runner.terminate_worker(job.get("worker_pid"))
 
 
 def run_worker(job_id: str) -> None:
@@ -823,28 +728,17 @@ def _agent_dir() -> Path:
     # See recording_jobs.py's _agent_dir() for the full explanation: parents[1] pointed at
     # .../agent/src (no "src/" subfolder), silently breaking `-m` module resolution for the
     # spawned worker. parents[2] is the actual .../agent root.
-    here = Path(__file__).resolve()
-    return here.parents[2]
+    return job_runner.agent_dir_from_here(__file__)
 
 
 def spawn_worker(job_id: str) -> None:
     """Launch pipeline in a detached subprocess (survives API hot-reload)."""
-    agent_dir = _agent_dir()
-    worker_log = _job_dir(job_id) / "worker.log"
-    worker_log.parent.mkdir(parents=True, exist_ok=True)
-    log_handle = worker_log.open("ab")
-
-    env = os.environ.copy()
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "src.trade.index_prediction_run_worker", job_id],
-        cwd=str(agent_dir),
-        env=env,
-        start_new_session=True,
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
+    proc = job_runner.spawn_worker_process(
+        job_id=job_id,
+        worker_module="src.trade.index_prediction_run_worker",
+        agent_dir=_agent_dir(),
+        worker_log=_job_dir(job_id) / "worker.log",
     )
-    log_handle.close()
-    detached_worker.register(proc)
 
     def mutator(job: dict[str, Any]) -> bool:
         job["worker_pid"] = proc.pid

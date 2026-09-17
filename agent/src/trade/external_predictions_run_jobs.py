@@ -6,13 +6,7 @@ polling survives API hot-reload. Workers run in a detached subprocess.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import re
-import signal
-import subprocess
-import sys
 import threading
 import time
 import uuid
@@ -21,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from src.config.accessor import get_env_config
-from src.trade import detached_worker
+from src.trade import detached_worker, job_runner
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +24,6 @@ _ACTIVE_BY_SCOPE: dict[str, str] = {}
 _JOBS_LOCK = threading.Lock()
 
 _JOB_TTL_SECONDS = 60 * 60
-_JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 _ACTIVE_STATUSES = frozenset({"queued", "running"})
 _WALL_CLOCK_SECONDS = int(get_env_config().trade.external_predictions_run_wall_clock_seconds)
 _QUEUED_NO_PID_SECONDS = int(get_env_config().trade.external_predictions_queued_no_pid_seconds)
@@ -141,19 +134,7 @@ def reconcile_all_active_jobs() -> int:
 def _terminate_worker(job: dict[str, Any] | None) -> None:
     if job is None:
         return
-    pid = job.get("worker_pid")
-    if pid is None:
-        return
-    try:
-        pid_int = int(pid)
-    except (TypeError, ValueError):
-        return
-    if not _is_pid_alive(pid_int) or pid_int == os.getpid():
-        return
-    try:
-        os.kill(pid_int, signal.SIGTERM)
-    except OSError:
-        pass
+    job_runner.terminate_worker(job.get("worker_pid"))
 
 
 def _now_iso() -> str:
@@ -179,6 +160,10 @@ def _job_dir(job_id: str) -> Path:
 
 def _job_file(job_id: str) -> Path:
     return _job_dir(job_id) / "job.json"
+
+
+def _job_lock_file(job_id: str) -> Path:
+    return _job_dir(job_id) / ".job.lock"
 
 
 def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -218,53 +203,50 @@ def _sanitize_log_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return sanitized if isinstance(sanitized, dict) else dict(entry)
 
 
-def _write_job_to_disk(job: dict[str, Any]) -> None:
+def _write_job_to_disk_unsafe(job: dict[str, Any]) -> None:
     job_id = str(job.get("job_id") or "")
     if not job_id_valid(job_id):
         return
-    path = _job_file(job_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(_serialize_job(job), ensure_ascii=False, default=str)
-    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        tmp.write_text(payload, encoding="utf-8")
-        tmp.replace(path)
-    finally:
-        if tmp.is_file():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass
+    job_runner.write_job_json_unsafe(_job_file(job_id), _serialize_job(job))
 
 
-def _mutate_job(job_id: str, mutator) -> dict[str, Any] | None:
-    """Apply in-memory job mutation under lock, then persist atomically."""
-    with _JOBS_LOCK:
-        job = EXTERNAL_PREDICTIONS_RUN_JOBS.get(job_id)
-        if job is None:
-            job = _read_job_from_disk(job_id)
-            if job is None:
-                return None
-            EXTERNAL_PREDICTIONS_RUN_JOBS[job_id] = job
-        mutator(job)
-        _write_job_to_disk(job)
-        return job
-
-
-def _read_job_from_disk(job_id: str) -> dict[str, Any] | None:
-    path = _job_file(job_id)
-    if not path.is_file():
-        return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("external-predictions job file unreadable (job=%s): %s", job_id, exc)
-        return None
-    if not isinstance(payload, dict) or not job_id_valid(str(payload.get("job_id") or job_id)):
+def _read_job_from_disk_unsafe(job_id: str) -> dict[str, Any] | None:
+    payload = job_runner.read_job_json_unsafe(_job_file(job_id))
+    if payload is None or not job_id_valid(str(payload.get("job_id") or job_id)):
         return None
     payload.setdefault("job_id", job_id)
     payload.setdefault("logs", [])
     return payload
+
+
+def _write_job_to_disk(job: dict[str, Any]) -> None:
+    job_id = str(job.get("job_id") or "")
+    with job_runner.job_file_lock(_job_lock_file(job_id), valid=job_id_valid(job_id), exclusive=True):
+        _write_job_to_disk_unsafe(job)
+
+
+def _read_job_from_disk(job_id: str) -> dict[str, Any] | None:
+    with job_runner.job_file_lock(_job_lock_file(job_id), valid=job_id_valid(job_id), exclusive=False):
+        return _read_job_from_disk_unsafe(job_id)
+
+
+def _mutate_job(job_id: str, mutator) -> dict[str, Any] | None:
+    """Apply in-memory job mutation under a cross-process file lock (API vs
+    worker subprocess — previously missing here, unlike index_prediction_run_jobs.py
+    and recording_jobs.py, which is what let the worker and API race on partial
+    job.json reads/writes), then persist atomically."""
+    with job_runner.job_file_lock(_job_lock_file(job_id), valid=job_id_valid(job_id), exclusive=True):
+        with _JOBS_LOCK:
+            job = EXTERNAL_PREDICTIONS_RUN_JOBS.get(job_id)
+        if job is None:
+            job = _read_job_from_disk_unsafe(job_id)
+            if job is None:
+                return None
+        mutator(job)
+        _write_job_to_disk_unsafe(job)
+        with _JOBS_LOCK:
+            EXTERNAL_PREDICTIONS_RUN_JOBS[job_id] = job
+        return job
 
 
 def _merge_job_from_disk(job_id: str, memory: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -350,7 +332,7 @@ def _prune_old_jobs() -> None:
 
 
 def job_id_valid(job_id: str | None) -> bool:
-    return bool(job_id and _JOB_ID_RE.fullmatch(job_id))
+    return job_runner.job_id_valid(job_id)
 
 
 def _job_snapshot(job: dict[str, Any], *, include_logs: bool = True) -> dict[str, Any]:
@@ -600,26 +582,16 @@ def _agent_dir() -> Path:
     # See recording_jobs.py's _agent_dir() for the full explanation: parents[1] pointed at
     # .../agent/src (no "src/" subfolder), silently breaking `-m` module resolution for the
     # spawned worker. parents[2] is the actual .../agent root.
-    here = Path(__file__).resolve()
-    return here.parents[2]
+    return job_runner.agent_dir_from_here(__file__)
 
 
 def spawn_worker(job_id: str) -> None:
-    agent_dir = _agent_dir()
-    worker_log = _job_dir(job_id) / "worker.log"
-    worker_log.parent.mkdir(parents=True, exist_ok=True)
-    log_handle = worker_log.open("ab")
-    env = os.environ.copy()
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "src.trade.external_predictions_run_worker", job_id],
-        cwd=str(agent_dir),
-        env=env,
-        start_new_session=True,
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
+    proc = job_runner.spawn_worker_process(
+        job_id=job_id,
+        worker_module="src.trade.external_predictions_run_worker",
+        agent_dir=_agent_dir(),
+        worker_log=_job_dir(job_id) / "worker.log",
     )
-    log_handle.close()
-    detached_worker.register(proc)
     job = _get_job_record(job_id)
     if job is not None:
         job["worker_pid"] = proc.pid
