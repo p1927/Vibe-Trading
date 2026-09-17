@@ -1044,6 +1044,7 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         return
     if job_type == JOB_TYPE_INDEX_CALIBRATION:
         summary = run_index_calibration_job(job.config)
+        _attach_job_result_summary(job, summary)
         logger.info("index calibration completed for job %s: %s", job.id, summary)
         return
     if job_type == JOB_TYPE_FORECAST_PLATFORM_RETRAIN:
@@ -1058,10 +1059,12 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         return
     if job_type == JOB_TYPE_COMPANY_RESEARCH_ARCHIVE:
         summary = run_company_research_archive_job(job.config)
+        _attach_job_result_summary(job, summary)
         logger.info("company research archive completed for job %s: %s", job.id, summary)
         return
     if job_type == JOB_TYPE_INDEX_PREDICTION_POST_CLOSE:
         summary = run_index_prediction_post_close_job(job.config)
+        _attach_job_result_summary(job, summary)
         logger.info("index prediction post-close completed for job %s: %s", job.id, summary)
         return
     if job_type == JOB_TYPE_HUB_NEWS_ENTITY:

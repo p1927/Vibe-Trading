@@ -218,3 +218,62 @@ def test_dst_eval_ok_summary_is_not_a_failure(monkeypatch) -> None:
     job = _job("dst-eval-recorder-dst", config={"job_type": "recorder_dst"})
     dst_eval_jobs.dispatch_dst_eval_job_sync(job)
     assert job.config["_last_result_summary"]["status"] == "ok"
+
+
+# --- parity fix: index_calibration / company_research_archive / index_prediction_post_close -----
+#
+# These three branches used to skip `_attach_job_result_summary` entirely (unlike every other
+# branch in `_dispatch_index_job_body`, which already attaches without raising) -- so a
+# `had_errors: True` run left `last_result_summary` untouched, hiding the failure from view even
+# more completely than the other 11 branches' own gap. This fix only brings them to parity with
+# those 11: it attaches the summary. It deliberately does NOT add `raise_if_run_had_errors` -- the
+# internal-failure-vs-partial-vendor-result judgment call for these (and the other 11) branches
+# remains open, tracked by
+# .claude/backlog/items/2026-09-11-index-job-handlers-ignore-had-errors.md.
+
+
+@pytest.mark.parametrize(
+    ("job_type", "handler_name"),
+    [
+        ("index_calibration", "run_index_calibration_job"),
+        ("company_research_archive", "run_company_research_archive_job"),
+        ("index_prediction_post_close", "run_index_prediction_post_close_job"),
+    ],
+)
+def test_previously_unattached_branches_now_attach_summary_on_had_errors(
+    monkeypatch, job_type: str, handler_name: str
+) -> None:
+    monkeypatch.setattr(
+        index_jobs, handler_name,
+        lambda config: {"status": "error", "error": "boom", "had_errors": True},
+    )
+    job = _job(f"{job_type}-had-errors", config={"job_type": job_type})
+
+    # Same as the 11 already-attaching branches: attaches but does not raise (the
+    # raise-vs-non-terminal decision for these branches is explicitly out of scope here).
+    index_jobs.dispatch_index_job_sync(job)
+
+    summary = job.config["_last_result_summary"]
+    assert summary["had_errors"] is True
+    assert summary["warning"] == "one or more pipeline stages reported errors"
+
+
+@pytest.mark.parametrize(
+    ("job_type", "handler_name"),
+    [
+        ("index_calibration", "run_index_calibration_job"),
+        ("company_research_archive", "run_company_research_archive_job"),
+        ("index_prediction_post_close", "run_index_prediction_post_close_job"),
+    ],
+)
+def test_previously_unattached_branches_attach_summary_on_ok(
+    monkeypatch, job_type: str, handler_name: str
+) -> None:
+    monkeypatch.setattr(index_jobs, handler_name, lambda config: {"status": "ok", "had_errors": False})
+    job = _job(f"{job_type}-ok", config={"job_type": job_type})
+
+    index_jobs.dispatch_index_job_sync(job)
+
+    summary = job.config["_last_result_summary"]
+    assert summary["status"] == "ok"
+    assert "warning" not in summary
