@@ -177,12 +177,19 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
         return {"skipped": True, "reason": "monitor_disabled"}
 
     _ensure_trade_integrations_on_path()
+    from trade_integrations.dataflows.index_research.pipeline_cancel import emit_stage_event
     from trade_integrations.dataflows.prediction_ledger_bridge import (
         reconcile_options_predictions,
     )
     from trade_integrations.monitor.config import get_monitor_config
 
+    emit_stage_event("stage setup[reconcile_options_predictions]: starting")
+    _setup_started = time.monotonic()
     reconciled = reconcile_options_predictions()
+    emit_stage_event(
+        f"stage setup[reconcile_options_predictions]: done in "
+        f"{int((time.monotonic() - _setup_started) * 1000)}ms"
+    )
 
     cfg = config or {}
     watchlist = list(cfg.get("watchlist") or [])
@@ -194,12 +201,21 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
         from trade_integrations.dataflows.options_research.market import is_options_research_eligible
         from trade_integrations.watch_registry.store import list_watches
 
+        emit_stage_event("stage setup[list_watches]: starting")
+        _setup_started = time.monotonic()
         extra: set[str] = set()
         for watch in list_watches(active_only=True):
             for sym in watch.get("symbols") or []:
                 s = str(sym).strip().upper()
                 if s and is_options_research_eligible(s):
                     extra.add(s)
+        emit_stage_event(
+            f"stage setup[list_watches]: done in "
+            f"{int((time.monotonic() - _setup_started) * 1000)}ms"
+        )
+
+        emit_stage_event("stage setup[list_agents]: starting")
+        _setup_started = time.monotonic()
         for agent in list_agents() or []:
             if str(agent.get("status") or "") not in ("running", "paused"):
                 continue
@@ -209,6 +225,10 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
                 s = str(sym).strip().upper()
                 if s and is_options_research_eligible(s):
                     extra.add(s)
+        emit_stage_event(
+            f"stage setup[list_agents]: done in "
+            f"{int((time.monotonic() - _setup_started) * 1000)}ms"
+        )
         if extra:
             watchlist = sorted(set(watchlist) | extra)
     except Exception:
@@ -217,8 +237,6 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
     if not watchlist:
         logger.info("options plan refresh skipped: no agent/watch symbols in scope")
         return {"skipped": True, "reason": "empty_watchlist", "reconciled_predictions": reconciled}
-
-    from trade_integrations.dataflows.index_research.pipeline_cancel import emit_stage_event
 
     refreshed: list[dict[str, Any]] = []
     skipped: list[str] = []
