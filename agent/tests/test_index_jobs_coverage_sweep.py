@@ -144,3 +144,41 @@ def test_register_default_index_jobs_includes_coverage_sweep(monkeypatch, tmp_pa
     job = store.get("stock-history-coverage-sweep")
     assert job is not None
     assert job.config["job_type"] == index_jobs.JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP
+
+
+@pytest.mark.unit
+def test_sweep_names_failed_buckets_in_last_error(monkeypatch):
+    from src.scheduled_research.run_outcome import JobRunHadErrorsError, raise_if_run_had_errors
+
+    _autospec_stock_history(
+        monkeypatch,
+        summary=dict(
+            had_errors=True, ok_count=1, failed_count=1, skipped_count=0,
+            results=[
+                {"bucket": "equity_ohlcv", "status": "failed", "error": "boom", "message": ""},
+                {"bucket": "news", "status": "ok", "error": None, "message": ""},
+            ],
+        ),
+    )
+    result = index_jobs.run_stock_history_coverage_sweep_job({})
+    job = ScheduledResearchJob(
+        id="j", prompt="p", schedule="0 19 * * *", next_run_at=0, status=JobStatus.PENDING, created_at=0,
+    )
+    with pytest.raises(JobRunHadErrorsError, match="equity_ohlcv: boom"):
+        raise_if_run_had_errors(job, result, "sweep")
+
+
+@pytest.mark.unit
+def test_volume_snapshot_skips_outside_nse_session(monkeypatch):
+    monkeypatch.setattr("nautilus_openalgo_bridge.market_hours.is_real_nse_market_open", lambda **k: False)
+    result = index_jobs.run_constituent_volume_snapshot_job({})
+    assert result["status"] == "skipped"
+
+
+@pytest.mark.unit
+def test_volume_snapshot_job_is_ist_scoped(tmp_path):
+    from src.scheduled_research.store import ScheduledResearchJobStore
+
+    store = ScheduledResearchJobStore(tmp_path / "jobs.json")
+    index_jobs.register_default_index_jobs(store)
+    assert store.get("nifty50-constituent-volume-snapshot").timezone == "Asia/Kolkata"

@@ -723,12 +723,22 @@ def run_stock_history_coverage_sweep_job(config: dict[str, Any] | None = None) -
             verify_after=True,
             budget_seconds=float(cfg.get("budget_seconds") or 1200.0),
         )["data"]
+        # Name every failed bucket with its own error, in `run_error_detail`'s per-part `results`
+        # shape, so the dispatcher's `last_error` says WHICH buckets failed and why. Before this the
+        # summary carried only counts, and the job auto-paused reporting "no error detail in the
+        # summary" (release, 2026-09-18).
+        failed = {
+            r["bucket"]: {"error": r.get("error") or r.get("message") or f"status={r['status']}"}
+            for r in summary.get("results", [])
+            if r.get("status") in ("failed", "partial")
+        }
         return {
             "status": "error" if summary["had_errors"] else "ok",
             "ok_count": summary["ok_count"],
             "failed_count": summary["failed_count"],
             "skipped_count": summary["skipped_count"],
             "had_errors": summary["had_errors"],
+            "results": failed,
         }
     except Exception as exc:
         logger.exception("stock_history coverage sweep failed")
@@ -1003,6 +1013,13 @@ def run_constituent_volume_snapshot_job(config: dict[str, Any] | None = None) ->
             "IN/volume_interest_score is not in the factor registry — see "
             "factors/constituent_specs.py's _VOLUME_INTEREST_SOURCES / _FIELD_TEMPLATES"
         )
+    # The cron fires on a fixed IST grid, but 9:00-9:15 and 15:45 fall outside the NSE session,
+    # where there is no live volume -- an expected quiet slot, not a failure (it used to fail every
+    # off-hours run and auto-pause the job).
+    from nautilus_openalgo_bridge.market_hours import is_real_nse_market_open
+
+    if not is_real_nse_market_open():
+        return {"status": "skipped", "reason": "NSE market closed", "rows_added": 0}
     return capture_and_append_constituent_volume_snapshot()
 
 
@@ -2020,6 +2037,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             next_run_at=now_ms,
             status=JobStatus.PENDING,
             created_at=now_ms,
+            timezone="Asia/Kolkata",
             config={
                 "job_type": JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT,
             },
@@ -2152,6 +2170,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         merged_config.update(job.config)
         if (
             existing.schedule == job.schedule
+            and existing.timezone == job.timezone
             and existing.prompt == job.prompt
             and existing.config == merged_config
         ):
@@ -2160,6 +2179,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             dataclasses.replace(
                 existing,
                 schedule=job.schedule,
+                timezone=job.timezone,
                 prompt=job.prompt,
                 config=merged_config,
             )
