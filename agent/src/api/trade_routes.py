@@ -477,10 +477,10 @@ def _live_context_from_report(report: Any) -> dict[str, Any]:
 
 def _count_verified_headlines_since(ticker: str, since: datetime) -> int:
     """Canonical verified hub stories ingested or published since analysis as_of."""
-    from trade_integrations.dataflows.news_hub_bridge import query_verified_news
+    from trade_integrations.dataflows.news_hub_bridge import now_instant, query_verified_news
 
     since_day = since.astimezone(timezone.utc).strftime("%Y-%m-%d")
-    records = query_verified_news(ticker=ticker, since=since_day, limit=200)
+    records = query_verified_news(as_of=now_instant(), ticker=ticker, since=since_day, limit=200)
     if not records:
         return 0
 
@@ -1854,6 +1854,7 @@ def get_hub_news_events_calendar(
 
         ensure_trade_stack_path()
         from trade_integrations.dataflows.news_hub_bridge import (
+            now_instant,
             list_extracted_future_events,
             query_verified_news,
         )
@@ -1865,7 +1866,7 @@ def get_hub_news_events_calendar(
         # every call, so calling it in a per-row loop is an N+1 that times out once the
         # corpus has more than a handful of events.
         article_by_id: Dict[str, HubNewsCalendarEventArticle] = {}
-        for raw in query_verified_news(ticker=ticker, market="IN", include_rejected=True, limit=10_000):
+        for raw in query_verified_news(as_of=now_instant(), ticker=ticker, market="IN", include_rejected=True, limit=10_000):
             event_id = str(raw.get("event_id") or raw.get("id") or "")
             if not event_id:
                 continue
@@ -3676,6 +3677,7 @@ def get_index_verified_news(
         ensure_trade_stack_path()
         inv = news_hub_bridge.tag_inventory(ticker=key) if inventory else None
         items = news_hub_bridge.query_verified_news(
+            as_of=news_hub_bridge.now_instant(),
             ticker=key,
             since=since,
             until=until,
