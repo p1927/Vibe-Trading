@@ -2174,6 +2174,7 @@ def discard_hub_news(
             discard_similar_items,
             get_distilled_event,
             list_pending_staging_refs,
+            now_instant,
             preview_discard_similar,
         )
 
@@ -2187,7 +2188,7 @@ def discard_hub_news(
                         anchor = {**ref, "provenance": "staging"}
                         break
             else:
-                ev = get_distilled_event(iid)
+                ev = get_distilled_event(iid, as_of=now_instant())
                 if ev:
                     anchor = {**ev, "provenance": "distilled_event"}
             if not anchor:

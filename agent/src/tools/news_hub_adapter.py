@@ -88,5 +88,5 @@ def _ingest_and_read_from_hub(
             market=market,
             collection_day=collection_day,
         )
-    items = hub.query_with_staging(ticker=ticker, market=market, limit=limit)
+    items = hub.query_with_staging(ticker=ticker, market=market, limit=limit, as_of=hub.now_instant())
     return [_hub_headline_to_article(item) for item in items][:limit]
