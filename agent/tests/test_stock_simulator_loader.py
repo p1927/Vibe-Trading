@@ -62,13 +62,12 @@ class _FakeStockHistory:
 def _real_stock_history_class():
     """The real class, or skip: this file must still run in a standalone Vibe-Trading checkout."""
     try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
+        from src.trade.stock_simulator_facade import FacadeHistory, sim_client
 
-        ensure_trade_stack_path()
-        from trade_integrations.stock_history.api import StockHistory
+        sim_client()
     except Exception as exc:  # noqa: BLE001 - optional cross-repo dependency, same as the loader
         pytest.skip(f"trade_integrations not importable here: {exc}")
-    return StockHistory
+    return FacadeHistory
 
 
 def _shape(fn):

@@ -1,6 +1,6 @@
 """Detached end-of-session supplement worker for stock-simulator recording.
 
-Runs the macro/flow gap-fill (``StockHistory().supplement_today(...)``) in
+Runs the macro/flow gap-fill (the facade's ``supplement_today``, in-process) in
 its own subprocess so the recorder's main worker can return immediately
 after ``complete_job`` writes ``status="done"`` to ``job.json``.
 
@@ -111,7 +111,7 @@ def run_supplement(job_id: str, session_date: str) -> None:
 
     try:
         ensure_trade_stack_path()
-        from trade_integrations.stock_history.api import StockHistory
+        from src.trade.stock_simulator_facade import sim_client
 
         # Defensive parse so a malformed session_date (e.g. "today"
         # leaking from a buggy caller) doesn't blow up the subprocess.
@@ -131,18 +131,18 @@ def run_supplement(job_id: str, session_date: str) -> None:
             )
             return
 
-        summary = StockHistory().supplement_today(session_date=parsed)
+        summary = sim_client().supplement_today(session_date=parsed.isoformat())["data"]
 
         log(
             {
                 "stage": "supplement",
                 "message": (
-                    f"complete: had_errors={summary.had_errors} "
-                    f"ok={summary.ok_count} "
-                    f"failed={summary.failed_count} "
-                    f"skipped={summary.skipped_count}"
+                    f"complete: had_errors={summary['had_errors']} "
+                    f"ok={summary['ok_count']} "
+                    f"failed={summary['failed_count']} "
+                    f"skipped={summary['skipped_count']}"
                 ),
-                "level": "info" if not summary.had_errors else "warning",
+                "level": "info" if not summary["had_errors"] else "warning",
                 "at": _now_iso(),
             }
         )

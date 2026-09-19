@@ -11,7 +11,6 @@ This job runs a full-coverage `backfill_into_week` sweep daily.
 """
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import create_autospec
 
 import pytest
@@ -21,7 +20,7 @@ from src.scheduled_research.models import JobStatus, ScheduledResearchJob
 
 
 def _autospec_stock_history(monkeypatch, *, summary=None, error=None):
-    """Install a `StockHistory` whose every call binds against the REAL signatures.
+    """Install a `StockSimulatorClient` (the D117 facade) whose every call binds against the REAL signatures.
 
     `create_autospec` replaces the hand-written doubles this file used to carry: one with an
     explicit keyword list that broke when `budget_seconds` was added (and, because the job's
@@ -31,14 +30,14 @@ def _autospec_stock_history(monkeypatch, *, summary=None, error=None):
     upkeep: a renamed or added parameter on the real method is a bind error at the call site.
     """
     index_jobs._ensure_trade_integrations_on_path()
-    from trade_integrations.stock_history.api import StockHistory
+    from trade_integrations.stock_simulator.client import StockSimulatorClient
 
-    sh = create_autospec(StockHistory, instance=True)
+    sh = create_autospec(StockSimulatorClient, instance=True)
     if error is not None:
         sh.backfill_into_week.side_effect = error
     else:
-        sh.backfill_into_week.return_value = summary
-    monkeypatch.setattr("trade_integrations.stock_history.api.StockHistory", lambda *a, **k: sh)
+        sh.backfill_into_week.return_value = {"status": "ok", "data": summary}
+    monkeypatch.setattr("src.trade.stock_simulator_facade.sim_client", lambda: sh)
     monkeypatch.setattr(
         "trade_integrations.dataflows.company_research.market.india_trading_date_iso",
         lambda: "2026-08-18T00:00:00Z",
@@ -50,7 +49,7 @@ def _autospec_stock_history(monkeypatch, *, summary=None, error=None):
 def test_run_stock_history_coverage_sweep_job_calls_backfill_into_week(monkeypatch):
     sh = _autospec_stock_history(
         monkeypatch,
-        summary=SimpleNamespace(had_errors=False, ok_count=5, failed_count=0, skipped_count=1),
+        summary=dict(had_errors=False, ok_count=5, failed_count=0, skipped_count=1),
     )
 
     result = index_jobs.run_stock_history_coverage_sweep_job({"include_optional": True})
@@ -72,9 +71,9 @@ def test_run_stock_history_coverage_sweep_job_calls_backfill_into_week(monkeypat
 def test_the_autospec_rejects_an_argument_the_real_method_does_not_take():
     """Proves the double is not blind: the drift it guards against is a bind error."""
     index_jobs._ensure_trade_integrations_on_path()
-    from trade_integrations.stock_history.api import StockHistory
+    from trade_integrations.stock_simulator.client import StockSimulatorClient
 
-    sh = create_autospec(StockHistory, instance=True)
+    sh = create_autospec(StockSimulatorClient, instance=True)
     with pytest.raises(TypeError):
         sh.backfill_into_week(week_start="2026-08-18", not_a_real_parameter=1)
 
@@ -83,7 +82,7 @@ def test_the_autospec_rejects_an_argument_the_real_method_does_not_take():
 def test_run_stock_history_coverage_sweep_job_reports_errors(monkeypatch):
     sh = _autospec_stock_history(
         monkeypatch,
-        summary=SimpleNamespace(had_errors=True, ok_count=2, failed_count=3, skipped_count=0),
+        summary=dict(had_errors=True, ok_count=2, failed_count=3, skipped_count=0),
     )
 
     result = index_jobs.run_stock_history_coverage_sweep_job({})

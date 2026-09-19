@@ -86,12 +86,9 @@ def _ensure_stock_history():
     reports this source unavailable, never crashes the loader registry.
     """
     try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
+        from src.trade.stock_simulator_facade import FacadeHistory
 
-        ensure_trade_stack_path()
-        from trade_integrations.stock_history.api import StockHistory
-
-        return StockHistory()
+        return FacadeHistory()
     except Exception as exc:  # noqa: BLE001 — optional cross-repo dependency
         logger.debug("stock_simulator bridge unavailable: %s", exc)
         return None

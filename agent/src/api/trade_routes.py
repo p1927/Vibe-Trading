@@ -6402,15 +6402,14 @@ def hub_stock_history_coverage(
     and `fetch_command` for every missing bucket — the UI uses this to
     render the white-cell gap and surface the backfill command on click.
     """
-    from trade_integrations.stock_history import StockHistory
+    from src.trade.stock_simulator_facade import sim_client
 
     try:
-        report = StockHistory().coverage_report(
+        payload = sim_client().get_coverage_report(
             week_start=week,
             symbol=symbol,
             include_optional=bool(include_optional),
-        )
-        payload = report.as_dict()
+        )["data"]
         return HubStockHistoryCoverageResponse(status="ok", **payload)
     except Exception as exc:
         logger.exception("stock-history coverage failed for week=%s", week)
@@ -6437,11 +6436,10 @@ def hub_stock_history_backfill(
     - `max_jobs` caps the total jobs in one HTTP call
     - `buckets` filters which missing buckets to fill (single-cell click)
     """
-    from trade_integrations.stock_history import StockHistory
+    from src.trade.stock_simulator_facade import sim_client
 
     try:
-        sh = StockHistory()
-        summary = sh.backfill_into_week(
+        summary = sim_client().backfill_into_week(
             week_start=req.week,
             symbol=req.symbol,
             include_optional=bool(req.include_optional),
@@ -6449,11 +6447,11 @@ def hub_stock_history_backfill(
             max_jobs=req.max_jobs,
             buckets=req.buckets,
             verify_after=bool(req.verify_after),
-        )
+        )["data"]
         return HubStockHistoryBackfillResponse(
             status="ok",
-            summary=summary.as_dict(),
-            coverage_after=summary.coverage_after,
+            summary=summary,
+            coverage_after=summary["coverage_after"],
         )
     except Exception as exc:
         logger.exception("stock-history backfill failed for week=%s", req.week)

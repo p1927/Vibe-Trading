@@ -687,7 +687,7 @@ def run_stock_history_coverage_sweep_job(config: dict[str, Any] | None = None) -
     """Daily full-coverage backfill sweep.
 
     Before this job existed, the only automatic trigger for the
-    stock_history coverage buckets was `StockHistory.supplement_today()`
+    stock_history coverage buckets was the facade's `supplement_today`
     (called once per recording session for 3 macro/flow buckets only —
     and until recently that call was itself a no-op due to a bucket-
     name mismatch, see `stock_history/coverage.py`). Every other bucket
@@ -700,12 +700,12 @@ def run_stock_history_coverage_sweep_job(config: dict[str, Any] | None = None) -
     week they appear instead of accumulating silently.
     """
     _ensure_trade_integrations_on_path()
-    from trade_integrations.stock_history.api import StockHistory
+    from src.trade.stock_simulator_facade import sim_client
     from trade_integrations.dataflows.company_research.market import india_trading_date_iso
 
     cfg = config or {}
     try:
-        sh = StockHistory()
+        sh = sim_client()
         # Budget the sweep INSIDE the executor's dispatch timeout, so it finishes and reports
         # rather than being killed. Measured 2026-09-07: this job was failing with
         # `TimeoutError: dispatch timed out after 1800000ms` and had been for days, which is why
@@ -722,13 +722,13 @@ def run_stock_history_coverage_sweep_job(config: dict[str, Any] | None = None) -
             include_optional=bool(cfg.get("include_optional", True)),
             verify_after=True,
             budget_seconds=float(cfg.get("budget_seconds") or 1200.0),
-        )
+        )["data"]
         return {
-            "status": "error" if summary.had_errors else "ok",
-            "ok_count": summary.ok_count,
-            "failed_count": summary.failed_count,
-            "skipped_count": summary.skipped_count,
-            "had_errors": summary.had_errors,
+            "status": "error" if summary["had_errors"] else "ok",
+            "ok_count": summary["ok_count"],
+            "failed_count": summary["failed_count"],
+            "skipped_count": summary["skipped_count"],
+            "had_errors": summary["had_errors"],
         }
     except Exception as exc:
         logger.exception("stock_history coverage sweep failed")
@@ -752,20 +752,20 @@ def run_global_macro_eod_refresh_job(config: dict[str, Any] | None = None) -> di
     declared home, which `/history/global_macro` serves for those series.
     """
     _ensure_trade_integrations_on_path()
-    from trade_integrations.stock_history.api import StockHistory
+    from src.trade.stock_simulator_facade import sim_client
     from trade_integrations.dataflows.index_research.pipeline_cancel import emit_stage_event
 
-    sh = StockHistory()
+    sh = sim_client()
     cfg = config or {}
     lookback_days = int(cfg.get("lookback_days") or 90)
-    series_list = cfg.get("series") or sh.list_eod_refreshable_series()
+    series_list = cfg.get("series") or sh.list_eod_refreshable_series()["series"]
     results: dict[str, Any] = {}
     had_errors = False
     for series in series_list:
         emit_stage_event(f"stage global_macro_eod[{series}]: starting")
         stage_started = time.monotonic()
         try:
-            result = sh.refresh_global_macro_eod(series=series, lookback_days=lookback_days)
+            result = sh.refresh_global_macro_eod(series=series, lookback_days=lookback_days)["data"]
             emit_stage_event(
                 f"stage global_macro_eod[{series}]: done in "
                 f"{int((time.monotonic() - stage_started) * 1000)}ms"
@@ -788,7 +788,7 @@ def run_global_macro_eod_refresh_job(config: dict[str, Any] | None = None) -> di
     emit_stage_event("stage refresh_global_macro_factors: starting")
     stage_started = time.monotonic()
     try:
-        factors = sh.refresh_global_macro_factors(lookback_days=lookback_days)
+        factors = sh.refresh_global_macro_factors(lookback_days=lookback_days)["data"]
         emit_stage_event(
             f"stage refresh_global_macro_factors: done in {int((time.monotonic() - stage_started) * 1000)}ms"
         )
