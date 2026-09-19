@@ -112,7 +112,7 @@ def recover_persisted_scheduler_jobs(
         # See .claude/backlog/items/2026-09-11-job-errors-recorded-as-success.md.
         from src.scheduled_research.run_outcome import record_interrupted_run
 
-        record_interrupted_run(job, reason or f"recovered from RUNNING ({mode})")
+        record_interrupted_run(job, reason or f"recovered from RUNNING ({mode})", restart_artifact=True)
         recovered += 1
         logger.warning(
             "recovered scheduled research job %s from running to pending (%s, next_run_at=%s)",

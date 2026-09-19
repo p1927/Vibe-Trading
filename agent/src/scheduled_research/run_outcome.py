@@ -39,14 +39,18 @@ class JobRunHadErrorsError(RuntimeError):
     """
 
 
-def record_interrupted_run(job: ScheduledResearchJob, reason: str) -> None:
+def record_interrupted_run(job: ScheduledResearchJob, reason: str, *, restart_artifact: bool = False) -> None:
     """Mark a run that was left RUNNING and never wrote its own outcome as a failed run.
 
     ``last_error`` is always overwritten. It used to be written only ``if not job.last_error``, so an
     older run's error survived into a record whose newest run failed differently, or left no trace.
     """
     job.failure_kind = RECOVERED_FAILURE_KIND
-    job.consecutive_failures = int(job.consecutive_failures or 0) + 1
+    # A run cut short by OUR restart (executor/stack shutdown, boot/startup recovery) is not the
+    # job's failure: it stays visible (failure_kind + last_error) but must not stack toward
+    # auto-pause. Only the mid-life stale watchdog (a real hang) counts.
+    if not restart_artifact:
+        job.consecutive_failures = int(job.consecutive_failures or 0) + 1
     job.last_error = reason[:_MAX_ERROR_CHARS]
 
 

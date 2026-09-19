@@ -770,7 +770,7 @@ class ScheduledResearchExecutor:
             # Its dispatch was cancelled before writing an outcome: a failed run. It used to get
             # only a `last_error` note, and only when the field was empty, so an older run's error
             # survived and D32 saw nothing (run_outcome.py).
-            record_interrupted_run(job, "recovered on executor shutdown")
+            record_interrupted_run(job, "recovered on executor shutdown", restart_artifact=True)
             if auto_pause_reason and not job.paused:
                 job.paused = True
                 job.auto_paused_reason = auto_pause_reason
@@ -997,7 +997,7 @@ class ScheduledResearchExecutor:
                     f"recovered stale: no outcome {now - started_at}ms after dispatch start "
                     f"(watchdog threshold {stale_running_ms_for(job)}ms)"
                 )
-            record_interrupted_run(job, reason)
+            record_interrupted_run(job, reason, restart_artifact=startup)
             job.status = JobStatus.PENDING
             try:
                 job.next_run_at = next_due(job.schedule, now)

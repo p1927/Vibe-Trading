@@ -82,7 +82,7 @@ def test_startup_recovery_records_the_interrupted_run_as_failed(tmp_path: Path) 
     executor = ScheduledResearchExecutor(store, _ok)
 
     assert executor.recover_stale_running(2000, startup=True) == 1
-    _assert_recorded_failure(store.get("job-1"), streak=2, error_contains="executor start")
+    _assert_recorded_failure(store.get("job-1"), streak=1, error_contains="executor start")
 
 
 @pytest.mark.parametrize(
@@ -144,7 +144,7 @@ def test_executor_shutdown_recovery_records_a_failure_over_an_older_error(tmp_pa
     executor = ScheduledResearchExecutor(store, _ok)
 
     assert executor.recover_all_running_on_shutdown(5000) == 1
-    _assert_recorded_failure(store.get("job-1"), streak=1, error_contains="recovered on executor shutdown")
+    _assert_recorded_failure(store.get("job-1"), streak=0, error_contains="recovered on executor shutdown")
 
 
 @pytest.mark.parametrize(
@@ -156,7 +156,7 @@ def test_stack_recovery_records_a_failure_over_an_older_error(tmp_path: Path, mo
     store.upsert(_job(status=JobStatus.RUNNING, last_run_at=1, last_error=OLD_ERROR))
 
     assert recover_persisted_scheduler_jobs(store, mode=mode, reason=reason, auto_pause=True) == 1
-    _assert_recorded_failure(store.get("job-1"), streak=1, error_contains=reason)
+    _assert_recorded_failure(store.get("job-1"), streak=0, error_contains=reason)
 
 
 # --- (d) handler summaries that report had_errors -----------------------------------------------
@@ -317,3 +317,15 @@ def test_status_error_with_no_had_errors_key_also_raises(monkeypatch) -> None:
 
     with pytest.raises(JobRunHadErrorsError, match="no active broker session"):
         index_jobs.dispatch_index_job_sync(job)
+
+
+def test_restart_artifact_does_not_count_toward_auto_pause():
+    from src.scheduled_research.models import ScheduledResearchJob
+    from src.scheduled_research.run_outcome import record_interrupted_run
+
+    job = ScheduledResearchJob(id="j", prompt="p", schedule="every 1h", consecutive_failures=1)
+    record_interrupted_run(job, "recovered on executor shutdown", restart_artifact=True)
+    assert job.consecutive_failures == 1 and job.failure_kind == "dispatch"
+    assert job.last_error == "recovered on executor shutdown"
+    record_interrupted_run(job, "recovered stale: hang")
+    assert job.consecutive_failures == 2
