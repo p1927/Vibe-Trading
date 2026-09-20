@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from src.config.accessor import get_env_config, get_env_or
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
 from src.scheduled_research.run_outcome import raise_if_run_had_errors
-from src.scheduled_research.staleness import EVAL_JOB_DISPATCH_TIMEOUT_MS
+from src.scheduled_research.staleness import EVAL_JOB_DISPATCH_TIMEOUT_MS, dispatch_timeout_ms_for
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -1041,8 +1041,14 @@ def run_hub_news_entity_job(config: dict[str, Any] | None = None) -> dict[str, A
         return {"status": "error", "error": str(exc), "had_errors": True}
 
 
-def run_hub_news_ingest_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Fetch live news from configured sources into hub staging."""
+def run_hub_news_ingest_job(
+    config: dict[str, Any] | None = None, *, time_budget_s: float | None = None
+) -> dict[str, Any]:
+    """Fetch live news from configured sources into hub staging.
+
+    ``time_budget_s``: the run's own deadline (the dispatch passes 75% of its timeout) so the
+    ingest stops itself with unfinished work deferred rather than being killed at the ceiling.
+    """
     _ensure_trade_integrations_on_path()
     from trade_integrations.dataflows.news_hub_bridge import run_hub_news_ingest
 
@@ -1062,6 +1068,7 @@ def run_hub_news_ingest_job(config: dict[str, Any] | None = None) -> dict[str, A
             watcher_since_hours=int(cfg.get("watcher_since_hours") or 6),
             watcher_tickers=cfg.get("watcher_tickers"),
             currents_keywords=cfg.get("currents_keywords"),
+            time_budget_s=time_budget_s,
         )
         if summary.get("blocked") or (
             summary.get("pipeline_paused")
@@ -1246,7 +1253,9 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
     if job_type == JOB_TYPE_HUB_NEWS_INGEST:
         from src.scheduled_research.ingest_source_streaks import record_source_zero_streaks
 
-        summary = run_hub_news_ingest_job(job.config)
+        summary = run_hub_news_ingest_job(
+            job.config, time_budget_s=0.75 * dispatch_timeout_ms_for(job) / 1000.0
+        )
         _attach_job_result_summary(job, summary)
         # A source that fetches nothing run after run is flagged (a signal, never a failure):
         # zero rows reads the same as a quiet cycle unless someone counts the repetition.
