@@ -88,11 +88,7 @@ def _preview_hub_news_ingest(config: Dict[str, Any]) -> Dict[str, Any]:
     configured sources this run would also hit (not enumerable cheaply —
     searxng/watcher/marketaux/currents all require a live call to know
     "what would it fetch")."""
-    from trade_integrations.dataflows.news_hub_bridge.internal.hub_news_ingest import (
-        _apply_light_source_guard,
-        _parse_sources,
-    )
-    from trade_integrations.dataflows.news_hub_bridge import get_pipeline_config
+    from trade_integrations.dataflows.news_hub_bridge import get_pipeline_config, resolve_ingest_sources
     from trade_integrations.dataflows.rss_feeds import _resolve_url, get_sentiment_rss_feeds
 
     mode = str(config.get("mode") or "full").strip().lower()
@@ -104,9 +100,7 @@ def _preview_hub_news_ingest(config: Dict[str, Any]) -> Dict[str, Any]:
         cfg = get_pipeline_config()
         sources_cfg = cfg["light_ingest_sources"] if mode == "light" else cfg["full_ingest_sources"]
 
-    selected, _dropped_by_light_guard = _apply_light_source_guard(
-        _parse_sources(sources_cfg), ingest_mode=mode
-    )
+    selected = resolve_ingest_sources(sources_cfg, mode=mode)
     feeds = get_sentiment_rss_feeds(market)
     urls = [_resolve_url(f["url"], ticker) for f in feeds] if "rss" in selected else []
     other_sources = sorted(selected - {"rss"})

@@ -3129,7 +3129,7 @@ def patch_news_scenario_session(
         if str(cfg.get("session_kind") or "") != "news_scenario_advisor":
             raise HTTPException(status_code=403, detail="not a news scenario session")
         if body.date_range is not None:
-            from trade_integrations.dataflows.news_hub_bridge.internal.news_event_scenarios import (
+            from trade_integrations.dataflows.news_hub_bridge import (
                 validate_scenario_date_range,
             )
 
@@ -3150,7 +3150,7 @@ def patch_news_scenario_session(
     except HTTPException:
         raise
     except Exception as exc:
-        from trade_integrations.dataflows.news_hub_bridge.internal.news_event_scenarios import NewsScenarioError
+        from trade_integrations.dataflows.news_hub_bridge import NewsScenarioError
 
         if isinstance(exc, NewsScenarioError):
             raise HTTPException(status_code=400, detail=exc.to_dict()) from exc
@@ -3167,7 +3167,7 @@ def list_news_scenarios(
     key = (ticker or "NIFTY").strip().upper()
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
-        from trade_integrations.dataflows.news_hub_bridge.internal.news_event_scenarios import (
+        from trade_integrations.dataflows.news_hub_bridge import (
             list_recent_news_scenarios,
         )
 
@@ -3191,7 +3191,7 @@ def get_news_scenario(
     key = (ticker or "NIFTY").strip().upper()
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
-        from trade_integrations.dataflows.news_hub_bridge.internal.news_event_scenarios import (
+        from trade_integrations.dataflows.news_hub_bridge import (
             load_news_event_scenario,
         )
 
