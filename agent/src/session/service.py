@@ -236,7 +236,9 @@ class SessionService:
     def delete_session(self, session_id: str) -> bool:
         """Delete a session."""
         self.event_bus.clear(session_id)
-        return self.store.delete_session(session_id)
+        deleted = self.store.delete_session(session_id)
+        self._search_index.delete_session(session_id)
+        return deleted
 
     async def send_message(
         self,
@@ -288,7 +290,8 @@ class SessionService:
             session.config["include_shell_tools"] = include_shell_tools
             session.last_attempt_id = attempt.attempt_id
             service_hooks.maybe_mark_autonomous_user_turn(session, content)
-            service_hooks.maybe_refresh_agent_intent(self, session, content, message.message_id)
+            # Off-loop: this can call the LLM (rate-limited), which must never block the event loop.
+            await asyncio.to_thread(service_hooks.maybe_refresh_agent_intent, self, session, content, message.message_id)
             session.updated_at = datetime.now().isoformat()
             self.store.update_session(session)
             self.event_bus.emit(session_id, "attempt.created", {"attempt_id": attempt.attempt_id, "prompt": content})

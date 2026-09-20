@@ -191,6 +191,13 @@ class SessionSearchIndex:
         )
         conn.commit()
 
+    def delete_session(self, session_id: str) -> None:
+        """Remove a session's row and all its messages (the FTS trigger drops their text)."""
+        conn = self._get_conn()
+        conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        conn.commit()
+
     @staticmethod
     def _sanitize_fts_query(query: str) -> str:
         """Sanitize a user query for FTS5 MATCH syntax.
