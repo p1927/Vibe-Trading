@@ -16,7 +16,7 @@ export const MACRO_CORE_KEYS = [
   "cpi_yoy_proxy",
   "repo_rate",
   "index_sentiment",
-  "nifty_pcr",
+  "fii_idx_opt_put_call_short_ratio",
   "nifty_return_7d",
   "nifty_return_14d",
   "nifty_rsi_14",

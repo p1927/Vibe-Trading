@@ -15,6 +15,7 @@ export const FACTOR_LABELS: Record<string, string> = {
   repo_rate: "Repo rate",
   index_sentiment: "Index sentiment",
   nifty_pcr: "NIFTY PCR",
+  fii_idx_opt_put_call_short_ratio: "FII idx-opt short put/call",
   nifty_return_7d: "NIFTY 7d return",
   nifty_return_14d: "NIFTY 14d return",
   nifty_rsi_14: "NIFTY RSI(14)",
