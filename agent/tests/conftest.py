@@ -82,6 +82,10 @@ _SANDBOX_HOME = Path(tempfile.mkdtemp(prefix="vibe-trading-test-home-")).resolve
 os.environ.pop("VIBE_TRADING_HOME", None)
 os.environ["HOME"] = str(_SANDBOX_HOME)
 os.environ["USERPROFILE"] = str(_SANDBOX_HOME)
+# Trade's `get_hub_dir()` refuses to guess a hub and, under pytest, any hub outside the system temp
+# dir; some Trade modules resolve it at import. Declare a scratch hub before collection (overriding
+# a `.env`-loaded real one), so no vibetrading test can reach a real hub.
+os.environ["TRADE_STACK_HUB_DIR"] = tempfile.mkdtemp(prefix="trade-pytest-hub-")
 (_SANDBOX_HOME / ".vibe-trading").mkdir(parents=True, exist_ok=True)
 
 # Same leak, same mechanism, for MLflow: Trade's `mlflow_config.tracking_uri()` lets an

@@ -59,11 +59,14 @@ def test_run_stock_history_coverage_sweep_job_calls_backfill_into_week(monkeypat
     assert "error" not in result, result.get("error")
     # Budgeted inside the executor's 30-minute dispatch timeout; see
     # [[2026-09-07-coverage-sweep-times-out-and-stops-backfilling]].
-    sh.backfill_into_week.assert_called_once_with(
-        week_start="2026-08-18", include_optional=True, verify_after=True, budget_seconds=1200.0,
-    )
+    # Current week first, then the two before it: a gap from a past week (an outage, an auto-pause)
+    # is still healed after the week rolls over.
+    weeks = [c.kwargs["week_start"] for c in sh.backfill_into_week.call_args_list]
+    assert weeks == ["2026-08-18", "2026-08-11", "2026-08-04"]
+    assert all(c.kwargs["include_optional"] and c.kwargs["verify_after"] for c in sh.backfill_into_week.call_args_list)
+    assert sh.backfill_into_week.call_args_list[0].kwargs["budget_seconds"] <= 1200.0
     assert result["status"] == "ok"
-    assert result["ok_count"] == 5
+    assert result["ok_count"] == 15
     assert result["had_errors"] is False
 
 
@@ -87,9 +90,9 @@ def test_run_stock_history_coverage_sweep_job_reports_errors(monkeypatch):
 
     result = index_jobs.run_stock_history_coverage_sweep_job({})
     assert "error" not in result, result.get("error")
-    sh.backfill_into_week.assert_called_once()
+    assert sh.backfill_into_week.call_count == 3
     assert result["status"] == "error"
-    assert result["failed_count"] == 3
+    assert result["failed_count"] == 9
     assert result["had_errors"] is True
 
 

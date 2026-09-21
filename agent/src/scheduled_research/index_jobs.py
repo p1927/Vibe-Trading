@@ -7,7 +7,7 @@ import dataclasses
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -717,12 +717,31 @@ def run_stock_history_coverage_sweep_job(config: dict[str, Any] | None = None) -
         # coverage re-scan. Unreached buckets come back as an explicit TRUNCATED result, and the
         # sweep now runs stalest-bucket-first so a short run spends its budget on the most
         # behind data instead of always starving the same tail.
-        summary = sh.backfill_into_week(
-            week_start=india_trading_date_iso()[:10],
-            include_optional=bool(cfg.get("include_optional", True)),
-            verify_after=True,
-            budget_seconds=float(cfg.get("budget_seconds") or 1200.0),
-        )["data"]
+        # The sweep covers the last `lookback_weeks` ISO weeks, current week first, all inside the one
+        # budget. A current-week-only sweep can never heal a gap once the week rolls over: the
+        # 2026-09-18 auto-pause plus an unrotated vendor token left constituent daily bars missing
+        # for 09-11..09-21 and nothing ever revisited them
+        # ([[2026-09-22-constituent-daily-ohlc-stale-since-09-16]]).
+        today = datetime.fromisoformat(india_trading_date_iso()[:10])
+        lookback_weeks = max(1, int(cfg.get("lookback_weeks") or 3))
+        deadline = time.monotonic() + float(cfg.get("budget_seconds") or 1200.0)
+        summary: dict[str, Any] = {
+            "had_errors": False, "ok_count": 0, "failed_count": 0, "skipped_count": 0, "results": [],
+        }
+        for back in range(lookback_weeks):
+            remaining = deadline - time.monotonic()
+            if back and remaining <= 0:
+                break
+            week = sh.backfill_into_week(
+                week_start=(today - timedelta(weeks=back)).date().isoformat(),
+                include_optional=bool(cfg.get("include_optional", True)),
+                verify_after=True,
+                budget_seconds=max(remaining, 1.0),
+            )["data"]
+            summary["had_errors"] = summary["had_errors"] or week["had_errors"]
+            for key in ("ok_count", "failed_count", "skipped_count"):
+                summary[key] += week[key]
+            summary["results"].extend(week.get("results", []))
         # Name every failed bucket with its own error, in `run_error_detail`'s per-part `results`
         # shape, so the dispatcher's `last_error` says WHICH buckets failed and why. Before this the
         # summary carried only counts, and the job auto-paused reporting "no error detail in the
