@@ -1975,6 +1975,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             next_run_at=now_ms,
             status=JobStatus.PENDING,
             created_at=now_ms,
+            timezone="Asia/Kolkata",
             config={
                 "job_type": JOB_TYPE_OI_SNAPSHOT,
                 "underlying": "NIFTY",
@@ -1987,6 +1988,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             next_run_at=now_ms,
             status=JobStatus.PENDING,
             created_at=now_ms,
+            timezone="Asia/Kolkata",
             config={
                 "job_type": JOB_TYPE_PUMP_DUMP_PROXY,
                 "symbol": "NIFTY",
@@ -2031,6 +2033,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             next_run_at=now_ms,
             status=JobStatus.PENDING,
             created_at=now_ms,
+            timezone="Asia/Kolkata",
             config={
                 "job_type": JOB_TYPE_REINFERENCE_TICK,
                 "ticker": "NIFTY",

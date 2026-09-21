@@ -734,7 +734,7 @@ class TradeConfig(_EnvBase):
         alias="MAX_PAIN_BHAVCOPY_CRON", default="30 17 * * 1-5",
     )
     reinference_tick_cron: str = Field(
-        alias="REINFERENCE_TICK_CRON", default="*/15 9-16 * * 1-5",
+        alias="REINFERENCE_TICK_CRON", default="*/15 9-15 * * 1-5",
     )
     constituent_volume_snapshot_cron: str = Field(
         alias="CONSTITUENT_VOLUME_SNAPSHOT_CRON", default="*/15 9-15 * * 1-5",
