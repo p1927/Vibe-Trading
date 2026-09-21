@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from src.api.security import require_event_stream_auth, require_local_or_auth
 from src.config.accessor import get_env_config
+from trade_integrations.market_registry import market_for_ticker
 from trade_integrations.trade_widgets.store import load_trade_widget
 from trade_integrations.ui_links import trade_ui_deep_link
 
@@ -2065,7 +2066,7 @@ def run_hub_news_ingest_now(
             ticker=key,
             mode=mode,
             sources=body.sources or "default",
-            lookback_days=body.lookback_days,
+            lookback_days=body.lookback_days, market=market_for_ticker(key),
         )
         if summary.get("blocked") or (
             summary.get("pipeline_paused")
@@ -2961,7 +2962,7 @@ def get_index_prediction_news_impact(
             gate = check_ingest_allowed()
             if gate.get("blocked"):
                 report = news_hub_bridge.resolve_news_impact(
-                    ticker=key, doc=doc, limit=12, horizon_days=horizon_days
+                    ticker=key, doc=doc, limit=12, horizon_days=horizon_days, market=market_for_ticker(key)
                 )
                 report = dict(report or {})
                 report["ingest_blocked"] = True
@@ -2976,11 +2977,11 @@ def get_index_prediction_news_impact(
                 spot=spot,
                 macro_factors=macro or None,
                 refresh_ingest=True,
-                include_rejected=include_rejected,
+                include_rejected=include_rejected, market=market_for_ticker(key),
             )
         else:
             report = news_hub_bridge.resolve_news_impact(
-                ticker=key, doc=doc, limit=12, horizon_days=horizon_days
+                ticker=key, doc=doc, limit=12, horizon_days=horizon_days, market=market_for_ticker(key)
             )
         status = str((report or {}).get("status") or "ok")
         return IndexNewsImpactResponse(status=status, ticker=key, report=report)
@@ -3966,7 +3967,7 @@ async def _command_center_event_stream(agent_id: str, ticker: str, request: Requ
 
                 def _load_news() -> Any:
                     doc = load_index_research_json(ticker)
-                    return news_hub_bridge.resolve_news_impact(ticker=ticker, doc=doc, limit=12, horizon_days=7)
+                    return news_hub_bridge.resolve_news_impact(ticker=ticker, doc=doc, limit=12, horizon_days=7, market=market_for_ticker(ticker))
 
                 report = await asyncio.to_thread(_load_news)
                 snapshot = _command_center_snapshot_hash(report)
