@@ -75,6 +75,25 @@ def test_first_tick_emits_all_three_legs_when_agent_id_given(monkeypatch: pytest
     assert "news" in events
 
 
+def test_news_leg_rebuilds_from_hub_instead_of_serving_a_cached_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("src.trade.hub_bridge.load_hub_plan_artifact", lambda ticker, kind: {"spot": 24000.0})
+    monkeypatch.setattr("trade_integrations.context.hub.load_index_research_json", lambda ticker: None)
+    calls: list[dict] = []
+
+    def _resolve_news_impact(**kwargs):
+        calls.append(kwargs)
+        return {"items": []}
+
+    monkeypatch.setattr("trade_integrations.dataflows.news_hub_bridge.resolve_news_impact", _resolve_news_impact)
+    _drive("", "NIFTY", alive_ticks=1)
+
+    assert calls == [
+        {"ticker": "NIFTY", "doc": None, "limit": 12, "horizon_days": 7, "force_rebuild": True}
+    ]
+
+
 def test_no_agent_id_skips_positions_leg_but_still_emits_prediction_and_news(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
