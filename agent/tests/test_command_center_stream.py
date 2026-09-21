@@ -96,7 +96,7 @@ def test_no_agent_id_skips_positions_leg_but_still_emits_prediction_and_news(
 def test_unchanged_snapshot_across_polls_is_not_re_emitted(monkeypatch: pytest.MonkeyPatch) -> None:
     """Real-time push means "notify on change", not "blast every tick" — an identical
     snapshot on a later poll must not produce a second frame. Forces re-polls within one
-    test run by monkeypatching monotonic() to jump past every leg's interval each tick."""
+    test run by zeroing every leg's poll interval."""
     calls = {"positions": 0}
 
     def _positions(agent_id: str) -> dict:
@@ -111,13 +111,11 @@ def test_unchanged_snapshot_across_polls_is_not_re_emitted(monkeypatch: pytest.M
         lambda **kwargs: {"items": []},
     )
 
-    fake_now = [0.0]
-
-    def _fake_monotonic() -> float:
-        fake_now[0] += 100.0  # always past every leg's poll interval
-        return fake_now[0]
-
-    monkeypatch.setattr("time.monotonic", _fake_monotonic)
+    # Zero poll intervals force a re-poll every tick. Do NOT fake `time.monotonic` for this: asyncio's
+    # own loop clock is `time.monotonic`, so a jumping fake made `asyncio.run`'s 300s default-executor
+    # shutdown timeout elapse instantly (the "executor did not finish joining" warning).
+    for leg in ("POSITIONS", "PREDICTION", "NEWS"):
+        monkeypatch.setattr(routes, f"_COMMAND_CENTER_{leg}_POLL_SECONDS", 0.0)
 
     frames = _drive("aa_one", "NIFTY", alive_ticks=3)
     positions_events = [d for e, d in frames if e == "positions"]

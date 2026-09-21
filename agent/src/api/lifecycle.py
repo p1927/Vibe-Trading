@@ -62,6 +62,9 @@ async def _run_startup_preflight() -> None:
     from src.api.scheduled_routes import _start_scheduled_research_executor
 
     _configure_process_logging()
+    from src.trade.tier_roots_guard import assert_release_tier_roots
+
+    assert_release_tier_roots()  # release-profile process with misrouted roots refuses to boot
 
     try:
         _migrate.migrate_legacy_state()  # one-time pre-#904 state move; must never block startup
