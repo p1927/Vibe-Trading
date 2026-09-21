@@ -347,6 +347,8 @@ def _provider_default_base_url(provider_name: str) -> str:
 def get_llm_credentials(
     provider: str | None,
     model: str | None,
+    *,
+    allow_generic_openai_env: bool = True,
 ) -> dict[str, str]:
     """Resolve API key, base URL, and model from provider/model env vars.
 
@@ -395,11 +397,13 @@ def get_llm_credentials(
             if base_env
             else ""
         )
-        or os.getenv(  # noqa: env-gate — dynamic provider URL chain
-            "OPENAI_BASE_URL", ""
-        )
-        or os.getenv(  # noqa: env-gate — dynamic provider URL chain
-            "OPENAI_API_BASE", ""
+        or (
+            # ``_sync_provider_env`` mirrors the *configured* provider's URL into these; a
+            # caller building a different provider (chat fallback) must not inherit it.
+            os.getenv("OPENAI_BASE_URL", "")  # noqa: env-gate — dynamic provider URL chain
+            or os.getenv("OPENAI_API_BASE", "")  # noqa: env-gate — dynamic provider URL chain
+            if allow_generic_openai_env
+            else ""
         )
         or _provider_default_base_url(caps.name)
     )

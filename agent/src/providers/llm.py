@@ -1603,7 +1603,11 @@ def build_llm(
     # Moonshot/DeepSeek official APIs emit reasoning by default and ignore this field.
     configured_responses_api = get_env_config().llm.langchain_use_responses_api
     use_responses_api = uses_responses_api(provider, configured_responses_api)
-    creds = get_llm_credentials(provider, name)
+    creds = get_llm_credentials(
+        provider,
+        name,
+        allow_generic_openai_env=provider == get_env_config().llm.langchain_provider.strip().lower(),
+    )
     api_key = creds["api_key"]
     _validate_authorization_credential(
         api_key,
