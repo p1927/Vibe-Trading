@@ -2077,7 +2077,7 @@ export const api = {
   },
   getIndexDerivativesHistory: (days = 365, factors?: string[]) => {
     const factorList =
-      factors ?? ["nifty_pcr", "fii_net_5d", "dii_net_5d", "fii_fut_long_short_ratio"];
+      factors ?? ["nifty_pcr", "fii_idx_opt_put_call_short_ratio", "fii_net_5d", "dii_net_5d", "fii_fut_long_short_ratio"];
     const params = new URLSearchParams({ ticker: "NIFTY", days: String(days), factors: factorList.join(",") });
     return request<IndexFactorHistoryResponse>(`/trade/index-prediction/factor-history?${params}`);
   },

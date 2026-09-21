@@ -45,6 +45,10 @@ export const CASCADE_DOWNSTREAM: Record<string, Array<{ factor: string; multipli
     { factor: "india_vix", multiplier: 0.05, mode: "absolute" },
     { factor: "fii_net_5d", multiplier: -0.05, mode: "relative" },
   ],
+  fii_idx_opt_put_call_short_ratio: [
+    { factor: "india_vix", multiplier: 0.05, mode: "absolute" },
+    { factor: "fii_net_5d", multiplier: -0.05, mode: "relative" },
+  ],
 };
 
 export const PINNED_CAUSAL_FACTORS = [

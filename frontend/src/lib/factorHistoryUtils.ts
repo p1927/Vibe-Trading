@@ -59,6 +59,7 @@ export const MACRO_DRIFT_FACTORS = [
 
 export const DERIVATIVES_FACTORS = [
   "nifty_pcr",
+  "fii_idx_opt_put_call_short_ratio",
   "fii_net_5d",
   "dii_net_5d",
   "fii_fut_long_short_ratio",

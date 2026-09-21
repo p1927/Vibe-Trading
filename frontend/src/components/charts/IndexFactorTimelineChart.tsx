@@ -28,6 +28,7 @@ const LABELS: Record<string, string> = {
   fii_net_5d: "FII net 5d",
   dii_net_5d: "DII net 5d",
   nifty_pcr: "PCR",
+  fii_idx_opt_put_call_short_ratio: "FII put/call",
   repo_rate: "Repo",
 };
 

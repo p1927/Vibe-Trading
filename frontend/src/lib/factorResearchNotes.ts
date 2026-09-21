@@ -69,6 +69,10 @@ export const FACTOR_RESEARCH_NOTES: Record<string, FactorResearchNote> = {
     expectedDirection: "mixed",
     summary: "High PCR often interpreted as support (put writing); contrarian at extremes.",
   },
+  fii_idx_opt_put_call_short_ratio: {
+    expectedDirection: "mixed",
+    summary: "FII-only index-option short put/call ratio (the Macro Ridge input); contrarian at extremes.",
+  },
   nifty_return_7d: {
     expectedDirection: "mixed",
     summary: "Short-term momentum/mean-reversion feature; sign depends on training window.",

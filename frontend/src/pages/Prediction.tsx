@@ -404,6 +404,7 @@ export function Prediction() {
         ...MACRO_DRIFT_FACTORS,
         "dii_net_5d",
         "nifty_pcr",
+        "fii_idx_opt_put_call_short_ratio",
       ]);
       if (res.series) setFactorHistory(res.series);
       setFactorCoverageNotes(res.coverage_notes ?? []);

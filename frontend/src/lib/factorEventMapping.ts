@@ -72,6 +72,7 @@ export const FACTOR_LABELS: Record<string, string> = {
   fii_net_5d: "FII net (5d)",
   dii_net_5d: "DII net (5d)",
   nifty_pcr: "Nifty PCR",
+  fii_idx_opt_put_call_short_ratio: "FII idx-opt short put/call",
   repo_rate: "Repo rate",
   gold: "Gold",
   index_sentiment: "Index sentiment",
