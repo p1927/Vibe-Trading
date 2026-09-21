@@ -23,6 +23,17 @@ describe("StackHealthStrip — tradability reason", () => {
     expect(screen.getByText(/log in to the broker in the OpenAlgo UI/)).toBeInTheDocument();
   });
 
+  it("says OpenAlgo is not responding, not a token problem, when it is unreachable", () => {
+    render(
+      <StackHealthStrip
+        health={baseHealth({ can_trade: false, cannot_trade_reason: "openalgo_unreachable" })}
+      />,
+    );
+
+    expect(screen.getByText(/OpenAlgo is not responding/)).toBeInTheDocument();
+    expect(screen.queryByText(/pasted/)).not.toBeInTheDocument();
+  });
+
   it("does not render a cannot-trade chip when can_trade is true", () => {
     render(<StackHealthStrip health={baseHealth({ can_trade: true, cannot_trade_reason: null })} />);
 

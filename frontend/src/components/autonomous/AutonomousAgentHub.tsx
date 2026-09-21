@@ -117,7 +117,9 @@ export function StackHealthStrip({ health }: { health: AutonomousStackHealth | u
           cannot trade:{" "}
           {health.cannot_trade_reason === "broker_session_dead"
             ? "broker session dead — log in to the broker in the OpenAlgo UI; INDmoney needs its daily token pasted"
-            : health.cannot_trade_reason}
+            : health.cannot_trade_reason === "openalgo_unreachable"
+              ? "OpenAlgo is not responding — check the stack (trade release status); this is not a token problem"
+              : health.cannot_trade_reason}
         </span>
       )}
     </div>
