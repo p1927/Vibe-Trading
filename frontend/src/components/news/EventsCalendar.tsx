@@ -42,6 +42,7 @@ export function EventsCalendar({
   structuralEvents = [],
   isNewStructuralEvent,
   includeStructuralHistory = false,
+  refreshKey,
 }: {
   structuralEvents?: IndexUpcomingEvent[];
   isNewStructuralEvent?: (event: IndexUpcomingEvent) => boolean;
@@ -50,6 +51,9 @@ export function EventsCalendar({
    * by default so callers that only pass forward-looking `structuralEvents` (or none at all,
    * like the Hub's news-only calendar) don't unexpectedly gain a second data source. */
   includeStructuralHistory?: boolean;
+  /** A changing live-data value triggers a fresh news-event read for callers already driven by
+   * SSE. The calendar remains mount/date-driven elsewhere, avoiding a second poll timer. */
+  refreshKey?: unknown;
 }) {
   const [selectedDate, setSelectedDate] = useState(() => {
     const now = new Date();
@@ -97,7 +101,7 @@ export function EventsCalendar({
     return () => {
       cancelled = true;
     };
-  }, [weekDays]);
+  }, [weekDays, refreshKey]);
 
   useEffect(() => {
     if (!includeStructuralHistory) {

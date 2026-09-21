@@ -377,6 +377,7 @@ function PnlPositionsPanel({ agents, agentId, onAgentChange, groups, skipped, st
 
 interface EventsRangePanelProps {
   artifact: IndexPredictionArtifact | null;
+  newsReport: IndexNewsImpactReport | null;
   status: SSEStatus;
   revision: {
     prevAsOf: string;
@@ -387,7 +388,7 @@ interface EventsRangePanelProps {
   newEventKeys: Set<string> | null;
 }
 
-function EventsRangePanel({ artifact, status, revision, newEventKeys }: EventsRangePanelProps) {
+function EventsRangePanel({ artifact, newsReport, status, revision, newEventKeys }: EventsRangePanelProps) {
   const [priorDay, setPriorDay] = useState<{ day: string; bars: HubIndexHistoryBar[] } | null>(null);
 
   useEffect(() => {
@@ -547,6 +548,7 @@ function EventsRangePanel({ artifact, status, revision, newEventKeys }: EventsRa
             structuralEvents={artifact?.upcoming_events ?? []}
             isNewStructuralEvent={(ev) => newEventKeys?.has(eventKeyFor(ev)) ?? false}
             includeStructuralHistory
+            refreshKey={newsReport}
           />
 
           <PriorDayPriceStrip day={priorDay?.day ?? null} bars={priorDay?.bars ?? []} currentSpot={artifact.spot} height={64} />
@@ -608,7 +610,13 @@ export function CommandCenter() {
             skipped={positions?.skipped ?? []}
             status={status}
           />
-          <EventsRangePanel artifact={prediction} status={status} revision={revision} newEventKeys={newEventKeys} />
+          <EventsRangePanel
+            artifact={prediction}
+            newsReport={news}
+            status={status}
+            revision={revision}
+            newEventKeys={newEventKeys}
+          />
         </div>
         <div className="rounded-xl border border-border/60 bg-card p-2 shadow-sm">
           <NewsImpactPanel horizonDays={EVENTS_HORIZON_DAYS} externalReport={news} />

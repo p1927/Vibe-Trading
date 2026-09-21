@@ -3966,7 +3966,13 @@ async def _command_center_event_stream(agent_id: str, ticker: str, request: Requ
 
                 def _load_news() -> Any:
                     doc = load_index_research_json(ticker)
-                    return news_hub_bridge.resolve_news_impact(ticker=ticker, doc=doc, limit=12, horizon_days=7)
+                    return news_hub_bridge.resolve_news_impact(
+                        ticker=ticker,
+                        doc=doc,
+                        limit=12,
+                        horizon_days=7,
+                        force_rebuild=True,
+                    )
 
                 report = await asyncio.to_thread(_load_news)
                 snapshot = _command_center_snapshot_hash(report)
