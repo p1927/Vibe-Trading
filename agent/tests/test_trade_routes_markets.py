@@ -3,7 +3,7 @@ which front `StockSimulatorClient`'s multi-country read methods
 (`get_market_index_history`/`get_policy_factors`/`get_flow_of_funds`/
 `get_market_factor_coverage`/`get_live_market_spot`) the same way
 `test_trade_routes_replay.py` covers the replay-control routes: no network,
-`requests.request` stubbed.
+`stock_simulator.client.http_request` stubbed (the name the client calls; D-http-gateway).
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def test_markets_registry_lists_all_supported_markets() -> None:
     assert res.status_code == 200
     body = res.json()
     codes = {m["code"] for m in body["markets"]}
-    assert codes == {"IN", "US", "CN", "JP", "RU", "ME", "LATAM", "EU"}
+    assert codes == {"IN", "US", "CN", "JP", "RU", "EU", "BR", "SA", "AE"}
     us = next(m for m in body["markets"] if m["code"] == "US")
     assert us["indices"] == ["SPX", "NASDAQ", "DOW", "SOX"]
     assert us["currency"] == "USD"
@@ -77,13 +77,13 @@ def test_market_index_history_forwards_country_index_and_period() -> None:
         captured["headers"] = headers
         return _FakeResponse(200, {"status": "ok", "data": {"rows": [{"date": "2026-08-20", "close": 5500.1}]}})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/US/index/SPX", params={"period": "6mo"})
 
     assert res.status_code == 200
     assert captured["method"] == "GET"
     assert captured["url"].endswith("/history/US/index/SPX")
-    assert captured["params"] == {"period": "6mo"}
+    assert captured["params"] == {"period": "6mo", "as_of": None}
     assert captured["headers"] == {"X-Simulator-Control-Token": "test-shared-secret"}
     assert res.json()["data"]["rows"][0]["close"] == 5500.1
 
@@ -92,7 +92,7 @@ def test_market_index_history_propagates_unknown_index_as_400() -> None:
     def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(400, {"detail": "No index 'BOGUS' registered for market 'US'"})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/US/index/BOGUS")
 
     assert res.status_code == 400
@@ -106,7 +106,7 @@ def test_market_live_spot_forwards_country_and_index() -> None:
         captured["params"] = params
         return _FakeResponse(200, {"status": "ok", "data": {"series": "JP:NIKKEI225", "value": 38000.5}})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/JP/live_spot/NIKKEI225")
 
     assert res.status_code == 200
@@ -118,7 +118,7 @@ def test_market_policy_factors_propagates_not_sourced_as_404() -> None:
     def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(404, {"detail": "no source configured for RU:bond_10y"})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/RU/factors/bond_10y")
 
     assert res.status_code == 404
@@ -131,7 +131,7 @@ def test_market_sector_indices_forwards_country() -> None:
         captured["url"] = url
         return _FakeResponse(200, {"status": "ok", "data": [{"name": "SPX", "label": "S&P 500 Index", "kind": "headline"}]})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/US/sector_indices")
 
     assert res.status_code == 200
@@ -156,7 +156,7 @@ def test_market_bundle_forwards_country_and_period() -> None:
             },
         )
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/US/bundle", params={"period": "1y"})
 
     assert res.status_code == 200
@@ -172,7 +172,7 @@ def test_market_bundle_defaults_period_to_3mo() -> None:
         captured["params"] = params
         return _FakeResponse(200, {"status": "ok", "data": {"headline": [], "sectors": []}})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/US/bundle")
 
     assert res.status_code == 200
@@ -187,7 +187,7 @@ def test_market_top_constituents_forwards_country_and_top_n() -> None:
         captured["params"] = params
         return _FakeResponse(200, {"status": "ok", "data": [{"symbol": "NSE:RELIANCE", "name": "RELIANCE"}]})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/IN/top_constituents", params={"top_n": 5})
 
     assert res.status_code == 200
@@ -200,7 +200,7 @@ def test_market_top_constituents_propagates_not_sourced_as_404() -> None:
     def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(404, {"detail": "no constituent ranking source for market 'US'"})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/US/top_constituents")
 
     assert res.status_code == 404
@@ -213,7 +213,7 @@ def test_market_flow_of_funds_forwards_country_and_series() -> None:
         captured["url"] = url
         return _FakeResponse(200, {"status": "ok", "data": {"rows": []}})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/CN/flow/stock_connect_net")
 
     assert res.status_code == 200
@@ -224,7 +224,7 @@ def test_market_factor_coverage_reads_from_the_service() -> None:
     def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(200, {"status": "ok", "data": {"sourced": [], "not_sourced": []}})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/factor_coverage")
 
     assert res.status_code == 200
@@ -238,7 +238,7 @@ def test_market_replay_calendar_forwards_country() -> None:
         captured["url"] = url
         return _FakeResponse(200, {"status": "ok", "days": [{"date": "2024-05-01", "has_spx": True}], "indices": ["SPX"]})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/US/replay/calendar")
 
     assert res.status_code == 200
@@ -254,7 +254,7 @@ def test_market_replay_calendar_forwards_lookback_days_and_before() -> None:
         captured["params"] = params
         return _FakeResponse(200, {"status": "ok", "days": [], "indices": ["SPX"]})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/US/replay/calendar?lookback_days=30&before=2025-01-01")
 
     assert res.status_code == 200
@@ -270,7 +270,7 @@ def test_market_backfill_forwards_country_index_and_period() -> None:
         captured["json"] = json
         return _FakeResponse(200, {"status": "ok", "results": [{"country": "US", "index": "SPX", "written": 3}]})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().post("/trade/markets/backfill", json={"country": "US", "index": "SPX"})
 
     assert res.status_code == 200
@@ -295,7 +295,7 @@ def test_market_global_macro_forwards_series_and_filters() -> None:
         captured["params"] = params
         return _FakeResponse(200, {"status": "ok", "data": [{"day": "2026-08-20", "series": "usd_inr", "field": "rate", "value": 87.1, "source": "yfinance_eod_refresh"}]})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/global_macro/usd_inr", params={"field": "rate"})
 
     assert res.status_code == 200
@@ -313,7 +313,7 @@ def test_market_global_macro_live_spot_forwards_series() -> None:
         captured["params"] = params
         return _FakeResponse(200, {"status": "ok", "data": {"series": "gold", "value": 3400.5, "source": "yfinance_live_spot", "fetched_at": "2026-08-23T00:00:00+00:00", "stale": False}})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/global_macro/gold/live_spot")
 
     assert res.status_code == 200
@@ -338,7 +338,7 @@ def test_market_global_macro_refresh_forwards_series_and_lookback() -> None:
         captured["params"] = params
         return _FakeResponse(200, {"status": "ok", "data": {"status": "ok", "series": "usd_inr", "rows": 91, "new_rows": 91}})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().post("/trade/markets/global_macro/usd_inr/refresh", params={"lookback_days": 30})
 
     assert res.status_code == 200
@@ -352,7 +352,7 @@ def test_market_global_macro_refresh_propagates_unsupported_series_as_400() -> N
     def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(400, {"detail": "EOD refresh not supported for series 'bogus'"})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().post("/trade/markets/global_macro/bogus/refresh")
 
     assert res.status_code == 400
@@ -362,7 +362,7 @@ def test_market_global_macro_refreshable_series_lists_series() -> None:
     def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(200, {"status": "ok", "series": ["gold", "oil_brent_daily", "sp500", "usd_inr"]})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/global_macro/refreshable_series")
 
     assert res.status_code == 200
@@ -379,7 +379,7 @@ def test_market_global_macro_refreshable_series_not_swallowed_as_series_path_par
         captured["url"] = url
         return _FakeResponse(200, {"status": "ok", "series": []})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/global_macro/refreshable_series")
 
     assert res.status_code == 200

@@ -2,7 +2,7 @@
 `StockSimulatorClient().get_constituents_history()` — migrated off direct
 `StockHistory().load_constituents_history()` per
 .claude/backlog/items/2026-08-23-india-dedicated-methods-retirement.md, Tier 4. Same
-no-network, `requests.request`-stubbed pattern as `test_trade_routes_markets.py`.
+no-network, `http_request`-stubbed pattern as `test_trade_routes_markets.py`.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def test_hub_constituents_panel_forwards_start_end_and_returns_rows() -> None:
         captured["params"] = params
         return _FakeResponse(200, {"status": "ok", "data": rows})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/hub/constituents/panel", params={"start": "2024-05-01", "end": "2024-05-02"})
 
     assert res.status_code == 200
@@ -68,7 +68,7 @@ def test_hub_constituents_panel_respects_limit() -> None:
     def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(200, {"status": "ok", "data": rows})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/hub/constituents/panel", params={"limit": 2})
 
     assert res.status_code == 200
@@ -79,7 +79,7 @@ def test_hub_constituents_panel_degrades_to_error_status_on_client_failure() -> 
     def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(503, {"detail": "stock_simulator unreachable"})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/hub/constituents/panel")
 
     assert res.status_code == 200  # the route itself always 200s, error surfaces in the body

@@ -1,7 +1,7 @@
 """Tests for VibeTrading's `/trade/markets/multi_market/*` proxy routes, fronting
 `StockSimulatorClient`'s multi-market-replay methods the same way
 `test_trade_routes_tick_recording.py` covers the tick-recording proxy: no network,
-`requests.request` stubbed.
+`stock_simulator.client.http_request` stubbed (the name the client calls; D-http-gateway).
 """
 
 from __future__ import annotations
@@ -52,6 +52,8 @@ _STATUS_PAYLOAD = {
 
 def test_arm_returns_503_without_token(monkeypatch) -> None:
     monkeypatch.delenv("SIMULATOR_CONTROL_TOKEN", raising=False)
+    # The client falls back to the OPENALGO_-prefixed name (root .env defines only that one).
+    monkeypatch.delenv("OPENALGO_SIMULATOR_CONTROL_TOKEN", raising=False)
     res = _client().post("/trade/markets/multi_market/arm", json={"markets": ["IN", "US"]})
     assert res.status_code == 503
     assert "SIMULATOR_CONTROL_TOKEN" in res.json()["detail"]
@@ -66,7 +68,7 @@ def test_arm_forwards_markets_start_utc_and_speed() -> None:
         captured["json"] = json
         return _FakeResponse(200, _STATUS_PAYLOAD)
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().post(
             "/trade/markets/multi_market/arm",
             json={"markets": ["IN", "US"], "start_utc": "2026-08-23T00:00:00+00:00", "speed": 2.0},
@@ -88,7 +90,7 @@ def test_arm_forwards_end_utc_and_loop() -> None:
         captured["json"] = json
         return _FakeResponse(200, _STATUS_PAYLOAD)
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().post(
             "/trade/markets/multi_market/arm",
             json={
@@ -114,7 +116,7 @@ def test_arm_propagates_unsupported_market_as_400() -> None:
     def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(400, {"detail": "unsupported market(s) ['XX']; known: ['CN', 'IN', ...]"})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().post("/trade/markets/multi_market/arm", json={"markets": ["XX"]})
 
     assert res.status_code == 400
@@ -124,7 +126,7 @@ def test_get_status() -> None:
     def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(200, _STATUS_PAYLOAD)
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/markets/multi_market/status")
 
     assert res.status_code == 200
@@ -135,7 +137,7 @@ def test_pause_and_resume() -> None:
     def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(200, {**_STATUS_PAYLOAD, "clock": {**_STATUS_PAYLOAD["clock"], "paused": method == "POST"}})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res_pause = _client().post("/trade/markets/multi_market/pause")
         res_resume = _client().post("/trade/markets/multi_market/resume")
 
@@ -151,7 +153,7 @@ def test_seek_forwards_time() -> None:
         captured["json"] = json
         return _FakeResponse(200, _STATUS_PAYLOAD)
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().post("/trade/markets/multi_market/seek", json={"time": "2026-08-21T09:30:00+00:00"})
 
     assert res.status_code == 200
@@ -166,7 +168,7 @@ def test_set_speed_forwards_speed() -> None:
         captured["json"] = json
         return _FakeResponse(200, _STATUS_PAYLOAD)
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().post("/trade/markets/multi_market/speed", json={"speed": 5.0})
 
     assert res.status_code == 200
@@ -177,7 +179,7 @@ def test_stop() -> None:
     def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(200, {"status": "ok", "message": "multi-market session stopped"})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().post("/trade/markets/multi_market/stop")
 
     assert res.status_code == 200
@@ -196,7 +198,7 @@ def test_get_quote_forwards_query_params() -> None:
                                        "stale": False, "source": "tick_recorder"}},
         )
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get(
             "/trade/markets/multi_market/quote",
             params={"market": "US", "symbol": "SPX", "exchange": "US_INDEX"},
@@ -212,7 +214,7 @@ def test_get_quote_propagates_no_data_as_400() -> None:
     def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(400, {"detail": "no tick data for US/SPX/US_INDEX at ... — no tick_recorder job has produced data in this window yet"})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get(
             "/trade/markets/multi_market/quote",
             params={"market": "US", "symbol": "SPX", "exchange": "US_INDEX"},
