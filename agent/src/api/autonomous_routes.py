@@ -43,56 +43,11 @@ class DraftAgentResponse(BaseModel):
 
 @autonomous_router.get("")
 def list_autonomous_agents() -> Dict[str, Any]:
-    from trade_integrations.autonomous_agents.infra_startup import maybe_heal_infra_paused_agents
+    """Read-only. Bootstrap resume, recovery and infra heal run in the periodic hygiene loop
+    (``src.scheduled_research.autonomous_hygiene``), not on this 15 s UI poll."""
     from trade_integrations.autonomous_agents.agent_status import load_openalgo_authority
     from trade_integrations.autonomous_agents.runtime_status import build_stack_health, enrich_agent
     from trade_integrations.autonomous_agents.store import list_agents
-
-    try:
-        from src.scheduled_research.autonomous_bootstrap import (
-            resume_stale_pending_bootstraps,
-            resume_stale_running_bootstraps,
-        )
-
-        resume_stale_pending_bootstraps()
-    except Exception:
-        logger.debug("stale pending bootstrap resume failed", exc_info=True)
-    try:
-        from src.scheduled_research.autonomous_bootstrap import resume_stale_running_bootstraps
-
-        resume_stale_running_bootstraps()
-    except Exception:
-        logger.debug("stale running bootstrap resume failed", exc_info=True)
-    try:
-        from trade_integrations.autonomous_agents.recovery import run_autonomous_agent_recovery
-
-        run_autonomous_agent_recovery()
-    except Exception:
-        # This pass is the only thing that clears a stale agent.streaming=True and
-        # reconciles positions; a silent debug-level failure can leave an agent stuck
-        # skipping every alert as turn_in_flight. Match the boot-pause call site in
-        # scheduled_startup.py.
-        logger.exception("autonomous agent recovery failed")
-
-    try:
-        from src.scheduled_research.autonomous_agent_jobs import finalize_infra_heal
-
-        before = {
-            str(a.get("id") or ""): str(a.get("status") or "")
-            for a in list_agents()
-            if str(a.get("pause_reason") or "") == "infra"
-        }
-        maybe_heal_infra_paused_agents()
-        for agent_id, prev_status in before.items():
-            if not agent_id or prev_status != "paused":
-                continue
-            from trade_integrations.autonomous_agents.store import get_agent
-
-            updated = get_agent(agent_id)
-            if updated and str(updated.get("status") or "") == "running":
-                finalize_infra_heal(agent_id)
-    except Exception:
-        logger.debug("infra heal on list failed", exc_info=True)
 
     shared_authority = load_openalgo_authority(agent=None)
     agents = [enrich_agent(a, authority=shared_authority) for a in list_agents()]

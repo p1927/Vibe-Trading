@@ -81,6 +81,38 @@ class TestSaveRejectsOutageReports:
         assert result["status"] == "ok"
 
 
+class TestSaveRejectsTurnLogs:
+    """Trade D218: memory holds durable facts, never turn-by-turn logs. These titles are real
+    notes from the release tier's memory (2026-09-23) that padded every agent's context."""
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "NIFTY bootstrap turn aa_32695249 — HOLD, watch_spec drift repaired cleanly",
+            "NIFTY Nautilus revision turn #1 (aa_53a051) — synthetic alert HOLD pattern",
+            "SPY E2E Phase 1 turn (aa_ade5...d098) — ENTER via harness override",
+            "NIFTY paper agent aa_0db8fc88 — hold_cash simplification pattern",
+            "NIFTY Nautilus integration test re-fire turn — HOLD repeat",
+        ],
+    )
+    def test_turn_log_refused(self, tool: RememberTool, title: str) -> None:
+        result = json.loads(tool.execute(action="save", title=title, content="held, nothing changed"))
+        assert result["status"] == "error"
+        assert "turn-by-turn log" in result["error"]
+
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "OpenAlgo set_agent_watch_spec: rule uses 'symbol' not 'ticker'",
+            "Alpaca paper E2E positions can carry across turns — verify with fresh trading_positions",
+            "NIFTY bootstrap_status=awaiting_plan_approval is correct terminal state (not done)",
+        ],
+    )
+    def test_durable_fact_still_saves(self, tool: RememberTool, title: str) -> None:
+        result = json.loads(tool.execute(action="save", title=title, content="seen on aa_1b54dcdd"))
+        assert result["status"] == "ok", result
+
+
 # ---------------------------------------------------------------------------
 # recall
 # ---------------------------------------------------------------------------
