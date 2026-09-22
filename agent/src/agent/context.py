@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 import json
 import logging
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from src.agent.memory import WorkspaceMemory
@@ -269,7 +268,9 @@ class ContextBuilder:
         Returns:
             System prompt text.
         """
-        now = datetime.now(timezone.utc)
+        from src.trade.hub_bridge import agent_now_utc
+
+        now = agent_now_utc()  # D75: sim clock on a replay tier
 
         # Build memory section only if there are saved memories
         memory_section = ""
