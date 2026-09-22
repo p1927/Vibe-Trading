@@ -38,6 +38,7 @@ from mcp.shared.auth import OAuthMetadata
 from pydantic_core import PydanticSerializationError, to_jsonable_python
 
 from src.agent.tools import BaseTool
+from src.tools import mcp_stdio_pool
 from src.config.schema import (
     ROBINHOOD_AGENT_CONFIG_PATH,
     MCPOAuthConfig,
@@ -582,8 +583,14 @@ class MCPServerAdapter:
         self.local_server_name = local_server_name or server_name
         self.server_config = server_config
         self._client_factory = client_factory or self._build_client
+        self._default_client_factory = client_factory is None
         self._list_tools_attempts = max(1, max_list_tools_attempts)
         self._interactive_oauth = interactive_oauth
+
+    def _run(self, operation: Callable[[], Coroutine[Any, Any, ResultT]]) -> ResultT:
+        # Fork: stdio servers run on warm, process-wide sessions (tools/mcp_stdio_pool.py).
+        pool = mcp_stdio_pool.pool_for_adapter(self, _make_cache_key)
+        return pool.run_sync(operation) if pool is not None else _run_sync(operation)
 
     def discover_tools(self) -> list[MCPRemoteToolSpec]:
         """Discover enabled tools from the remote MCP server.
@@ -595,7 +602,7 @@ class MCPServerAdapter:
             Exception: Propagates discovery failures after retry exhaustion.
         """
         try:
-            tools = _run_sync(self._list_tools)
+            tools = self._run(self._list_tools)
         except httpx.HTTPStatusError as exc:
             # Same reason as _http_error_body: discovery propagates raw, so the
             # traceback the user sees would otherwise carry no server detail.
@@ -652,7 +659,7 @@ class MCPServerAdapter:
             Normalized result payload ready for JSON serialization.
         """
         try:
-            result = _run_sync(lambda: self._call_tool(remote_name, arguments))
+            result = self._run(lambda: self._call_tool(remote_name, arguments))
             payload = _normalize_call_tool_result(result)
             payload.update({
                 "server": self.server_name,

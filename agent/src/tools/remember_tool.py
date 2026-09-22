@@ -19,7 +19,9 @@ class RememberTool(BaseTool):
     name = "remember"
     description = (
         "Persistent cross-session memory. "
-        "save: store user preferences, strategy insights, or project context. "
+        "save: store durable facts only (user preferences, verified API contracts, market "
+        "conventions, strategy insights that hold across sessions). Never a turn log or a note "
+        "naming one agent run (aa_...): record turn outcomes with record_autonomous_decision. "
         "recall: search past memories by keyword. "
         "forget: remove a memory by title. "
         "reinforce: provide quality feedback on a memory."

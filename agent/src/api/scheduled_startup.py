@@ -147,6 +147,15 @@ def boot_scheduled_research_stack(get_store) -> None:
         start_recording_wake_poller(get_store())
     except Exception:
         logger.exception("failed to start recording-wake poller on startup")
+    # Autonomous-agent hygiene (bootstrap resume, recovery, infra heal): also not gated on the
+    # executor's resume flag — pure hygiene runs while the scheduler is paused (D98; ADD
+    # autonomous_agents.md § Lifecycle). It used to run on every GET /autonomous-agents poll.
+    try:
+        from src.scheduled_research.autonomous_hygiene import start_autonomous_hygiene_loop
+
+        start_autonomous_hygiene_loop()
+    except Exception:
+        logger.exception("failed to start autonomous hygiene loop on startup")
     # Hot-reload safety: every ``register_default_*`` helper stamps
     # ``next_run_at=now_ms`` so a fresh job fires immediately. On uvicorn
     # --reload this means every code save re-stamps every default job and the
@@ -242,3 +251,9 @@ async def shutdown_scheduled_research_stack(get_store, executor: Any) -> None:
         await stop_recording_wake_poller()
     except Exception:
         logger.exception("failed to stop recording-wake poller on shutdown")
+    try:
+        from src.scheduled_research.autonomous_hygiene import stop_autonomous_hygiene_loop
+
+        await stop_autonomous_hygiene_loop()
+    except Exception:
+        logger.exception("failed to stop autonomous hygiene loop on shutdown")
