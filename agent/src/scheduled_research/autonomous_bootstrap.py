@@ -26,16 +26,9 @@ def schedule_agent_bootstrap(agent_id: str) -> bool:
     handle = schedule_coroutine(bootstrap_agent(agent_id), label=f"bootstrap-{agent_id[:12]}")
     if handle is None:
         logger.error("failed to schedule bootstrap for %s", agent_id)
-        try:
-            from trade_integrations.autonomous_agents.store import get_agent, save_agent
+        from trade_integrations.autonomous_agents.bootstrap import fail_bootstrap
 
-            agent = get_agent(agent_id)
-            if agent:
-                agent["bootstrap_status"] = "failed"
-                agent["bootstrap_error"] = "main event loop unavailable"
-                save_agent(agent)
-        except Exception:
-            logger.debug("could not mark bootstrap failed for %s", agent_id, exc_info=True)
+        fail_bootstrap(agent_id, "main event loop unavailable")
         return False
     return True
 
@@ -128,7 +121,9 @@ def resume_stale_running_bootstraps(*, max_age_s: float = _STALE_RUNNING_BOOTSTR
         session_id = str(agent.get("vibe_session_id") or "")
         if session_id and is_session_turn_in_flight(session_id):
             continue
-        age_anchor = str(agent.get("updated_at") or agent.get("created_at") or "")
+        # The bootstrap's own start (D116: real wall clock), not `updated_at`, which every
+        # watch tick's save bumps — anchored on it this watchdog never tripped.
+        age_anchor = str(agent.get("bootstrap_started_at") or agent.get("created_at") or "")
         if not age_anchor:
             continue
         try:
@@ -148,10 +143,4 @@ def resume_stale_running_bootstraps(*, max_age_s: float = _STALE_RUNNING_BOOTSTR
         save_agent(agent)
         if schedule_agent_bootstrap(agent_id):
             count += 1
-        else:
-            latest = get_agent(agent_id)
-            if latest and str(latest.get("bootstrap_status") or "") == "pending":
-                latest["bootstrap_status"] = "failed"
-                latest["bootstrap_error"] = "bootstrap retry schedule failed"
-                save_agent(latest)
     return count
