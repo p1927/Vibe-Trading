@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 logger = logging.getLogger(__name__)
 from typing import Any, Dict, List, Optional
 
+from src.agent.tool_arg_coercion import unwrap_item_arrays
+
 
 class BaseTool(ABC):
     """Tool base class.
@@ -130,7 +132,7 @@ class ToolRegistry:
                 )
             return json.dumps(payload, ensure_ascii=False)
         try:
-            return tool.execute(**params)
+            return tool.execute(**unwrap_item_arrays(params, tool.parameters))
         except Exception as exc:
             logger.exception("Tool %s failed", name)
             return json.dumps({
