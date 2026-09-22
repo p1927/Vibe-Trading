@@ -182,6 +182,28 @@ function bucketMatchesCountry(bucket: string, country: string): boolean {
   );
 }
 
+/** `base` with every bucket status in `update` laid over it, per day, and the day/week
+ *  completeness fields recomputed. A backfill run re-checks only its own buckets
+ *  (a full re-check was 20-40 s), so its `coverage_after` is merged, not swapped in. */
+function mergeCoverage(
+  base: HubStockHistoryCoverageResponse,
+  update: HubStockHistoryCoverageResponse,
+): HubStockHistoryCoverageResponse {
+  const byDay = new Map(update.days.map((d) => [d.day, d]));
+  const days = base.days.map((day) => {
+    const upd = byDay.get(day.day);
+    if (!upd) return day;
+    const buckets = { ...day.buckets, ...upd.buckets };
+    const entries = Object.entries(buckets);
+    const missing = entries.filter(([, s]) => !s.present).map(([k]) => k);
+    const present = entries.filter(([, s]) => s.present).map(([k]) => k);
+    return { ...day, buckets, missing, present, is_complete: missing.length === 0 };
+  });
+  const missing_days = days.filter((d) => d.is_weekday && !d.is_complete).map((d) => d.day);
+  const labels = [...base.bucket_labels, ...update.bucket_labels.filter((b) => !base.bucket_labels.includes(b))];
+  return { ...base, bucket_labels: labels, days, missing_days, is_complete: missing_days.length === 0 };
+}
+
 /** Restrict a coverage response to one market's own buckets, recomputing
  *  the per-day/week-level completeness fields (`is_complete`,
  *  `missing`/`missing_days`) over just that subset — the backend's
@@ -484,7 +506,10 @@ export function StockHistoryCoveragePanel({
     appliedRunRef.current = run.run_id;
     const after = run.summary?.coverage_after;
     if (after && after.week_start === weekStartIso) {
-      setReport(filterCoverageByCountry(after, countryFilter));
+      // `after` covers only the run's own buckets: merge them into the table shown.
+      setReport((prev) =>
+        filterCoverageByCountry(prev ? mergeCoverage(prev, after) : after, countryFilter),
+      );
     } else {
       void fetchCoverage();
     }
