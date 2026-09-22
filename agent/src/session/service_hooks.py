@@ -99,10 +99,8 @@ def prefetch_research_for_message(
 
     if is_orchestrator_session(session_config):
         return ""
-    from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
-    from src.trade.session_context import is_autonomous_agent_session
+    from src.session.autonomous_agent_profile import scheduler_turn_kind
 
-    cfg = dict(session_config or {})
     blocks: list[str] = []
     try:
         from src.trade.hub_bridge import prefetch_autonomous_context, prefetch_research_for_message
@@ -111,7 +109,7 @@ def prefetch_research_for_message(
         if agent_ctx.strip():
             blocks.append(agent_ctx.strip())
 
-        if is_autonomous_agent_session(cfg) and is_autonomous_scheduler_turn(content):
+        if scheduler_turn_kind(session_config):
             return "\n\n".join(blocks)
 
         research_ctx = prefetch_research_for_message(
@@ -124,6 +122,8 @@ def prefetch_research_for_message(
             blocks.append(research_ctx.strip())
     except Exception:
         logger.exception("Research prefetch hook failed")
+        if scheduler_turn_kind(session_config):
+            raise  # a scheduler turn's [agent_context] is its only copy of learning/progress
         return "\n\n".join(blocks)
     return "\n\n".join(blocks)
 
@@ -238,6 +238,7 @@ async def maybe_autonomous_decision_guard(
     session: Session,
     user_message: str,
     tools_called: set[str] | list[str],
+    turn_kind: str | None = None,
 ) -> bool:
     from src.session.orchestrator_profile import is_orchestrator_session
 
@@ -253,6 +254,7 @@ async def maybe_autonomous_decision_guard(
                 user_message=user_message,
                 tools_called=tools_called,
                 session_config=dict(session.config),
+                turn_kind=turn_kind,
             )
         )
     except Exception:
@@ -293,6 +295,8 @@ async def run_resend_guards(
     user_message: str,
     assistant_text: str,
     tools_called: set[str] | list[str],
+    *,
+    turn_kind: str | None = None,
 ) -> bool:
     """Run the guards that re-prompt the session, after its in-flight claim is released.
 
@@ -310,6 +314,6 @@ async def run_resend_guards(
         dict(session.config),
     ):
         return True
-    if await maybe_autonomous_decision_guard(service, session, user_message, tools_called):
+    if await maybe_autonomous_decision_guard(service, session, user_message, tools_called, turn_kind):
         return True
     return await maybe_bootstrap_finalize_guard(service, session, user_message, tools_called)

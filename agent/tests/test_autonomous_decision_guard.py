@@ -55,17 +55,6 @@ def test_decision_retry_message_matches_scheduler_turn_for_compact_defer():
     assert "bootstrap" in msg.lower()
 
 
-def test_decision_retry_message_gets_defer_compact_policy():
-    from src.agent.loop import COMPACT_POLICY_DEFER, _resolve_compact_policy
-
-    msg = build_decision_retry_message(agent_id="aa_abc", turn_kind="bootstrap")
-    policy = _resolve_compact_policy(
-        msg,
-        {"session_kind": "autonomous_agent", "autonomous_agent_id": "aa_abc"},
-    )
-    assert policy == COMPACT_POLICY_DEFER
-
-
 def test_infer_scheduler_turn_kind_from_bootstrap_prompt():
     from src.trade.autonomous_decision_guard import infer_scheduler_turn_kind
 

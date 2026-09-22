@@ -217,6 +217,8 @@ Decide which workflow to use based on the request:
 Today is {current_datetime}.
 """
 
+_SCHEMA_ONLY_TOOLS_NOTE = "Each tool's name, description and parameters arrive with this request."
+
 _MEMORY_SECTION = """
 ## Persistent Memory (cross-session)
 
@@ -280,6 +282,20 @@ class ContextBuilder:
             )
 
         session_kind = str(self._session_config.get("session_kind") or "")
+        from src.session.autonomous_agent_profile import (
+            AUTONOMOUS_AGENT_SYSTEM_PROMPT,
+            is_autonomous_agent_session,
+            scheduler_turn_kind,
+            turn_kind_skill_descriptions,
+        )
+
+        # D220: an agent session never repeats the tool list as prose — the schemas carry it.
+        tool_descriptions = (
+            _SCHEMA_ONLY_TOOLS_NOTE
+            if is_autonomous_agent_session(self._session_config)
+            else self._format_tool_descriptions()
+        )
+        turn_kind = scheduler_turn_kind(self._session_config)
         if session_kind == "autonomous_orchestrator":
             base = _ORCHESTRATOR_SYSTEM_PROMPT.format(
                 tool_descriptions=self._format_tool_descriptions(),
@@ -312,9 +328,18 @@ class ContextBuilder:
             skill_block = news_scenario_skill_block(self.skills_loader)
             if skill_block:
                 base = f"{base}\n{skill_block}"
+        elif turn_kind:
+            # D220: a scheduler turn gets the dedicated agent prompt with only its turn kind's
+            # skills (not the research-agent prompt and its full skill catalogue).
+            base = AUTONOMOUS_AGENT_SYSTEM_PROMPT.format(
+                turn_kind=turn_kind,
+                skill_descriptions=turn_kind_skill_descriptions(self.skills_loader, turn_kind),
+                memory_section=memory_section,
+                current_datetime=now.strftime("%A, %B %d, %Y %H:%M UTC"),
+            )
         elif str(self._session_config.get("agent_mode") or "") == "observe":
             base = _OBSERVE_AUTONOMOUS_SYSTEM_PROMPT.format(
-                tool_descriptions=self._format_tool_descriptions(),
+                tool_descriptions=tool_descriptions,
                 skill_descriptions=self.skills_loader.get_descriptions(),
                 memory_section=memory_section,
                 current_datetime=now.strftime("%A, %B %d, %Y %H:%M UTC"),
@@ -334,7 +359,7 @@ class ContextBuilder:
                 tool_count=len(self.registry._tools),
                 skill_count=len(self.skills_loader.skills),
                 data_source_count=self._count_data_sources(),
-                tool_descriptions=self._format_tool_descriptions(),
+                tool_descriptions=tool_descriptions,
                 skill_descriptions=self.skills_loader.get_descriptions(),
                 memory_summary=self.memory.to_summary(),
                 memory_section=memory_section,

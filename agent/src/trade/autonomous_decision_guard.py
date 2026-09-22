@@ -87,6 +87,7 @@ async def maybe_retry_autonomous_decision(
     user_message: str,
     tools_called: set[str] | list[str],
     session_config: dict | None,
+    turn_kind: str | None = None,
 ) -> bool:
     """Enqueue a follow-up user turn when a scheduler turn skipped record_autonomous_decision."""
     if not needs_decision_guard(user_message, tools_called, session_config):
@@ -99,8 +100,9 @@ async def maybe_retry_autonomous_decision(
             session_id,
             build_decision_retry_message(
                 agent_id=agent_id,
-                turn_kind=infer_scheduler_turn_kind(user_message),
+                turn_kind=turn_kind or infer_scheduler_turn_kind(user_message),
             ),
+            turn_kind=turn_kind,  # the retry keeps the original turn's tool list (D220)
         )
         logger.info("Autonomous decision guard enqueued retry for agent %s session=%s", agent_id, session_id)
         return True

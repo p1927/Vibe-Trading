@@ -515,7 +515,7 @@ def test_dns_rebound_session_message_does_not_enable_shell_tools_by_default(
     captured: dict[str, object] = {}
 
     class FakeSessionService:
-        async def send_message(self, session_id: str, content: str, include_shell_tools: bool = False):
+        async def send_message(self, session_id: str, content: str, include_shell_tools: bool = False, turn_kind=None):
             captured["session_id"] = session_id
             captured["content"] = content
             captured["include_shell_tools"] = include_shell_tools

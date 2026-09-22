@@ -70,7 +70,12 @@ class _StubLLMWithUsage:
     ) -> _StubLLMResponse:
         response = _StubLLMResponse()
         response.content = "done"
-        response.usage_metadata = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+        response.usage_metadata = {
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "total_tokens": 15,
+            "input_token_details": {"cache_read": 8},  # D220: provider prompt-cache hits
+        }
         return response
 
     def chat(self, messages: list[dict[str, Any]], **_: Any) -> _StubLLMResponse:
@@ -291,11 +296,13 @@ def test_usage_metadata_is_persisted_to_run_artifact(tmp_path: Path, monkeypatch
         "input_tokens": 10,
         "output_tokens": 5,
         "total_tokens": 15,
+        "cached_input_tokens": 8,
         "calls": 1,
     }
     assert payload["per_iteration"] == [
-        {"iter": 1, "input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+        {"iter": 1, "input_tokens": 10, "output_tokens": 5, "total_tokens": 15, "cached_input_tokens": 8, "tools": []}
     ]
+    assert payload["turn_kind"] is None  # a chat turn; scheduler turns record their kind
     assert payload["updated_at"].endswith("Z")
 
 

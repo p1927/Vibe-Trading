@@ -187,7 +187,7 @@ def test_send_message_returns_service_result(tmp_path, monkeypatch):
     sid = _create_session(client)
     service = api_server._get_session_service()
 
-    async def _fake_send_message(*, session_id, content, include_shell_tools):
+    async def _fake_send_message(*, session_id, content, include_shell_tools, turn_kind=None):
         assert session_id == sid
         assert content == "do research"
         return {"message_id": "m1", "attempt_id": "a1"}
@@ -211,7 +211,7 @@ def test_send_message_returns_409_when_session_busy(tmp_path, monkeypatch):
     sid = _create_session(client)
     service = api_server._get_session_service()
 
-    async def _busy(*, session_id, content, include_shell_tools):
+    async def _busy(*, session_id, content, include_shell_tools, turn_kind=None):
         raise SessionBusyError("already running")
 
     monkeypatch.setattr(service, "send_message", _busy)

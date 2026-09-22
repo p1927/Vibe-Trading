@@ -323,6 +323,9 @@ class Attempt:
         completed_at: Completion time in ISO format, if available.
         error: Error message when the attempt fails.
         metrics: Snapshot of backtest metrics.
+        turn_kind: Autonomous scheduler turn kind (``bootstrap``/``research``/...) set by the
+            dispatcher, ``None`` for a chat turn. Drives the turn's tool list and system prompt
+            (D220); persisted so a recovered attempt keeps it.
     """
 
     attempt_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
@@ -338,6 +341,7 @@ class Attempt:
     completed_at: Optional[str] = None
     error: Optional[str] = None
     metrics: Optional[Dict[str, Any]] = None
+    turn_kind: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize the attempt to a dictionary.

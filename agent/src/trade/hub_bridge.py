@@ -778,39 +778,39 @@ def prefetch_autonomous_context(
         ensure_trade_stack_path()
     except RuntimeError:
         return ""
-    from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
-    from src.trade.session_context import is_autonomous_agent_session
+    from src.session.autonomous_agent_profile import is_autonomous_agent_session, scheduler_turn_kind
 
     cfg = dict(session_config or {})
     if not is_autonomous_agent_session(cfg):
         return ""
-    if not is_autonomous_scheduler_turn(content) and not _is_operator_retry_message(content):
-        return ""
+    # The turn kind arrives as data on the attempt (D220), never parsed from the prompt text.
+    turn_kind = scheduler_turn_kind(cfg)
+    if not turn_kind:
+        if not _is_operator_retry_message(content):
+            return ""
+        # An operator retry is a chat turn. "strategy_revision" is the kind whose progress
+        # block carries the fresh, tool-backed portfolio_greeks/live_pop snapshot a retry
+        # needs to re-check prior tool failures against, not just repeat them from memory.
+        turn_kind = "strategy_revision"
     agent_id = str(cfg.get("autonomous_agent_id") or "").strip()
     if not agent_id:
         return ""
     try:
         from trade_integrations.autonomous_agents.context_prefetch import (
             format_autonomous_context_for_prefetch,
-            infer_turn_kind_from_prompt,
         )
         from trade_integrations.autonomous_agents.store import get_agent
 
         agent = get_agent(agent_id)
         if not agent:
             return ""
-        turn_kind = infer_turn_kind_from_prompt(content)
-        if turn_kind == "research" and not is_autonomous_scheduler_turn(content):
-            # An operator retry with no explicit turn-kind marker defaults to
-            # "research", which format_strategy_progress_for_prompt skips entirely
-            # (it only renders for strategy_revision/post_execution) -- meaning
-            # "research" would leave out exactly the fresh, tool-backed
-            # portfolio_greeks/live_pop/etc. snapshot a retry needs to actually
-            # re-check prior tool failures against, not just repeat them from memory.
-            turn_kind = "strategy_revision"
         return format_autonomous_context_for_prefetch(agent=agent, turn_kind=turn_kind)
     except Exception:
         logger.exception("Autonomous context prefetch failed for %s", agent_id)
+        if scheduler_turn_kind(cfg):
+            # The turn prompt no longer repeats learning/progress (D220): a scheduler turn
+            # without its context must fail, not run blind.
+            raise
         return ""
 
 

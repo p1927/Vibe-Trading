@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -43,6 +43,10 @@ class SessionResponse(BaseModel):
 class SendMessageRequest(BaseModel):
     """Send chat message: natural-language strategy description."""
     content: str = Field(..., description="Natural language strategy description", min_length=1, max_length=5000)
+    # Autonomous scheduler turn kind, set by the trade stack's dispatcher (D220); None = chat.
+    turn_kind: Optional[
+        Literal["bootstrap", "research", "strategy_revision", "post_execution", "watch_report"]
+    ] = None
 
 
 class MessageResponse(BaseModel):
@@ -652,6 +656,7 @@ def register_sessions_routes(app: FastAPI) -> None:
                 session_id=session_id,
                 content=payload.content,
                 include_shell_tools=_host_shell_tools_enabled_for_request(http_request),
+                turn_kind=payload.turn_kind,
             )
             return result
         except SessionBusyError as exc:

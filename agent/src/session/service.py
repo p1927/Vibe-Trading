@@ -55,6 +55,14 @@ class SessionBusyError(RuntimeError):
     """
 
 
+
+def _attempt_session_config(session: Session, attempt: Attempt) -> Dict[str, Any]:
+    """The session config this attempt runs with: the session's, plus its ``turn_kind`` (D220)."""
+    cfg = dict(session.config)
+    if attempt.turn_kind:
+        cfg["turn_kind"] = attempt.turn_kind
+    return cfg
+
 class SessionService:
     """Session lifecycle service.
 
@@ -247,6 +255,7 @@ class SessionService:
         role: str = "user",
         *,
         include_shell_tools: bool = False,
+        turn_kind: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send a message to a session and trigger execution.
 
@@ -255,6 +264,9 @@ class SessionService:
             content: Message content.
             role: Message role.
             include_shell_tools: Whether this attempt may use shell tools.
+            turn_kind: Autonomous scheduler turn kind, passed by the dispatcher as data
+                (never parsed from ``content``); ``None`` for a chat turn. Validated against
+                the known kinds before anything is stored.
 
         Returns:
             Dictionary containing message_id and attempt_id.
@@ -268,6 +280,11 @@ class SessionService:
         session = self.store.get_session(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
+        if turn_kind is not None:
+            from src.session.autonomous_agent_profile import TURN_KINDS
+
+            if turn_kind not in TURN_KINDS:
+                raise ValueError(f"unknown turn_kind {turn_kind!r}; expected one of {TURN_KINDS}")
 
         # Claim the session before persisting anything. Reserving after the
         # user message is appended lets two concurrent sends both store a
@@ -285,11 +302,17 @@ class SessionService:
             if role != "user":
                 return {"message_id": message.message_id}
 
-            attempt = Attempt(session_id=session_id, parent_attempt_id=session.last_attempt_id, prompt=content)
+            attempt = Attempt(
+                session_id=session_id,
+                parent_attempt_id=session.last_attempt_id,
+                prompt=content,
+                turn_kind=turn_kind,
+            )
             self.store.create_attempt(attempt)
             session.config["include_shell_tools"] = include_shell_tools
             session.last_attempt_id = attempt.attempt_id
-            service_hooks.maybe_mark_autonomous_user_turn(session, content)
+            if turn_kind is None:
+                service_hooks.maybe_mark_autonomous_user_turn(session, content)
             # Off-loop: this can call the LLM (rate-limited), which must never block the event loop.
             await asyncio.to_thread(service_hooks.maybe_refresh_agent_intent, self, session, content, message.message_id)
             session.updated_at = datetime.now().isoformat()
@@ -337,7 +360,7 @@ class SessionService:
                     self.event_bus,
                     session.session_id,
                     content,
-                    dict(session.config),
+                    _attempt_session_config(session, attempt),
                 ),
                 timeout=max(5.0, prefetch_timeout),
             )
@@ -461,7 +484,7 @@ class SessionService:
                 attempt,
                 messages=messages,
                 include_shell_tools=include_shell_tools,
-                session_config=dict(session.config),
+                session_config=_attempt_session_config(session, attempt),
                 research_context=research_context,
             )
             if result.get("status") == "success":
@@ -577,6 +600,7 @@ class SessionService:
                 attempt.prompt,
                 attempt.summary or "",
                 resend_guard_tools,
+                turn_kind=attempt.turn_kind,
             )
 
     async def _finalize_autonomous_agent_turn(self, session: Session) -> None:

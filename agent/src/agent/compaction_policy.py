@@ -30,10 +30,6 @@ PROTECTED_TOOL_NAMES = frozenset(
     }
 )
 
-COMPACT_POLICY_NORMAL = "normal"
-COMPACT_POLICY_DEFER = "defer"
-
-
 def is_protected_tool(name: str | None) -> bool:
     if not name:
         return False

@@ -28,8 +28,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from src.agent.compaction_policy import (
-    COMPACT_POLICY_DEFER,
-    COMPACT_POLICY_NORMAL,
     adjust_cut_idx_for_tool_batches,
     is_protected_tool,
 )
@@ -101,24 +99,6 @@ def _token_threshold() -> int:
         return ov
     from src.config.accessor import get_env_config
     return get_env_config().agent_tuning.token_threshold
-
-
-def _compact_hard_cap() -> int:
-    ov = _override("COMPACT_HARD_CAP")
-    if ov is not None:
-        return int(ov)
-    return max(int(_token_threshold() * 2.5), 100_000)
-
-
-def _resolve_compact_policy(user_message: str, session_config: dict[str, Any] | None) -> str:
-    """Defer mid-attempt compaction for autonomous scheduler turns (bootstrap/research/revision)."""
-    from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
-    from src.trade.session_context import is_autonomous_agent_session
-
-    cfg = session_config or {}
-    if is_autonomous_agent_session(cfg) and is_autonomous_scheduler_turn(user_message):
-        return COMPACT_POLICY_DEFER
-    return COMPACT_POLICY_NORMAL
 
 
 def _heartbeat_interval_s() -> float:
@@ -251,15 +231,27 @@ def _normalize_llm_usage(usage: Any) -> dict[str, int] | None:
         total_tokens = input_tokens + output_tokens
     if not (input_tokens or output_tokens or total_tokens):
         return None
-    return {
+    normalized = {
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "total_tokens": total_tokens,
     }
+    # Prompt-cache hits (D220 step 1): LangChain maps the provider's cached-prompt count
+    # (OpenAI-compatible ``prompt_tokens_details.cached_tokens``, as MiniMax returns it, or
+    # Anthropic ``cache_read_input_tokens``) to ``input_token_details.cache_read``. Recorded
+    # only when the provider reports it, so "absent" never reads as "zero cache hits".
+    details = usage.get("input_token_details")
+    if isinstance(details, dict) and details.get("cache_read") is not None:
+        normalized["cached_input_tokens"] = _coerce_usage_int(details.get("cache_read"))
+    return normalized
 
 
-def _new_llm_usage_summary(llm: Any) -> dict[str, Any]:
-    """Create the run-scoped provider usage accumulator."""
+def _new_llm_usage_summary(llm: Any, turn_kind: str | None = None) -> dict[str, Any]:
+    """Create the run-scoped provider usage accumulator.
+
+    ``turn_kind`` is the autonomous scheduler turn kind (D220), ``None`` for a chat turn, so
+    token use and the tools called can be read per turn kind from ``llm_usage.json``.
+    """
     from src.config.accessor import get_env_config
     cfg = get_env_config()
     provider = cfg.llm.langchain_provider.strip() or "openai"
@@ -274,6 +266,7 @@ def _new_llm_usage_summary(llm: Any) -> dict[str, Any]:
             "calls": 0,
         },
         "per_iteration": [],
+        "turn_kind": turn_kind,
     }
 
 
@@ -282,18 +275,22 @@ def _record_llm_usage(
     summary: dict[str, Any],
     usage: Any,
     iteration: int,
+    tools: list[str] | None = None,
 ) -> dict[str, int] | None:
-    """Accumulate and persist one provider-reported usage event."""
+    """Accumulate and persist one provider-reported usage event (and the tools that call chose)."""
     normalized = _normalize_llm_usage(usage)
     if normalized is None:
         return None
+    if "cached_input_tokens" in normalized:
+        totals = summary.setdefault("totals", {})
+        totals["cached_input_tokens"] = int(totals.get("cached_input_tokens") or 0) + normalized["cached_input_tokens"]
 
     totals = summary.setdefault("totals", {})
     totals["input_tokens"] = int(totals.get("input_tokens") or 0) + normalized["input_tokens"]
     totals["output_tokens"] = int(totals.get("output_tokens") or 0) + normalized["output_tokens"]
     totals["total_tokens"] = int(totals.get("total_tokens") or 0) + normalized["total_tokens"]
     totals["calls"] = int(totals.get("calls") or 0) + 1
-    summary.setdefault("per_iteration", []).append({"iter": iteration, **normalized})
+    summary.setdefault("per_iteration", []).append({"iter": iteration, **normalized, "tools": list(tools or [])})
     summary["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     try:
@@ -1150,9 +1147,7 @@ class AgentLoop:
         # an AttributeError on first access.
         self._session_id: str = ""
         self._session_config: dict[str, Any] = {}
-        self._compact_policy = _resolve_compact_policy("", {})
         self._auto_compact_count = 0
-        self._emergency_compact_used = False
         self._tail_token_budget = TAIL_TOKEN_BUDGET
         self._stall_reason: str | None = None
         self._last_activity_wall: float = 0.0
@@ -1262,9 +1257,7 @@ class AgentLoop:
         self._session_config: dict[str, Any] = dict(session_config or {})
         self._forced_tool_call_retry_used = False
         self._awaiting_forced_retry_verification = False
-        self._compact_policy = _resolve_compact_policy(user_message, session_config)
         self._auto_compact_count = 0
-        self._emergency_compact_used = False
         self._tail_token_budget = TAIL_TOKEN_BUDGET
         self._released_fallback = False
         self._released_fallback_reason = None
@@ -1338,7 +1331,9 @@ class AgentLoop:
         content_filter_circuit_breaker = False
         empty_model_response_iter: int | None = None
         consecutive_empty_responses = 0
-        llm_usage_summary = _new_llm_usage_summary(self.llm)
+        from src.session.autonomous_agent_profile import scheduler_turn_kind
+
+        llm_usage_summary = _new_llm_usage_summary(self.llm, scheduler_turn_kind(self._session_config))
         last_response_model: str | None = None
         goal_continuations = 0
         goal_last_progress: tuple[int, int] | None = None
@@ -1617,6 +1612,7 @@ class AgentLoop:
                     llm_usage_summary,
                     usage,
                     current_iter,
+                    [tc.name for tc in (getattr(response, "tool_calls", None) or [])],
                 )
                 if usage_delta:
                     self._emit(
@@ -3078,15 +3074,13 @@ class AgentLoop:
         trace: TraceWriter,
         iteration: int = 0,
     ) -> None:
-        """Run the three-layer compaction cascade, honoring ``self._compact_policy``.
+        """Run the three-layer compaction cascade.
 
         Layers 1 (microcompact) and 2 (context collapse) always run — they
         mutate messages in place at zero API cost and never lose information
-        outright. Layer 3 (auto_compact, an LLM summary) is the expensive,
-        lossy one: under ``COMPACT_POLICY_DEFER`` (an autonomous scheduler
-        turn mid-attempt) it's skipped unless the transcript has grown past
-        ``_compact_hard_cap()``, in which case it still runs once — an
-        "emergency compact" — so a deferred run can't grow unbounded.
+        outright. Layer 3 (auto_compact, an LLM summary) runs past the token
+        threshold, for autonomous scheduler turns too (D220: deferring it let a
+        turn grow from 83k to 102k tokens).
 
         Args:
             messages: Message list (mutated in place by the layers below).
@@ -3113,20 +3107,6 @@ class AgentLoop:
         _tok_threshold = _token_threshold()
         if tokens <= _tok_threshold:
             return
-
-        if self._compact_policy == COMPACT_POLICY_DEFER:
-            hard_cap = _compact_hard_cap()
-            if tokens <= hard_cap:
-                logger.info(
-                    f"Auto compact deferred (scheduler turn): {tokens} tokens > "
-                    f"{_tok_threshold} but below hard cap {hard_cap}"
-                )
-                return
-            logger.info(
-                f"Emergency compact: deferred run exceeded hard cap "
-                f"({tokens} tokens > {hard_cap})"
-            )
-            self._emergency_compact_used = True
 
         logger.info(f"Auto compact triggered: {tokens} tokens > {_tok_threshold}")
         self._auto_compact(messages, run_dir, trace, iteration=iteration)

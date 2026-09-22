@@ -119,6 +119,7 @@ async def maybe_retry_bootstrap_widget(
         await session_service.send_message(
             session_id,
             build_bootstrap_widget_retry_message(agent_id=agent_id, focus=focus),
+            turn_kind="bootstrap",
         )
         logger.info(
             "Bootstrap finalize guard enqueued widget retry for agent %s session=%s",
