@@ -6494,28 +6494,23 @@ def _backfill_run_call(fn_name: str, *args: Any, **kwargs: Any) -> dict[str, Any
 
 
 _SIM_LOG_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+# openalgo's `_LIVE_LOG_SOURCES` (services/scheduler_registry_service.py); openalgo re-checks it.
+_OPENALGO_LOG_SOURCES = frozenset({"flow", "historify", "strategy", "chartink", "python_strategy"})
+# APScheduler job ids: `flow_workflow_5`, `historify_schedule_3`, `start_<secure_filename stem>_<ts>`.
+# No leading dot, so `.`/`..` can never become a path segment upstream.
+_OPENALGO_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,199}$")
 
 
-@trade_router.get("/stock-simulator/log-stream/{key}", dependencies=[Depends(require_event_stream_auth)])
-async def stock_simulator_log_stream(key: str, request: Request) -> StreamingResponse:
-    """SSE: relay one stock_simulator live-log stream (`/scheduler-runs/{key}/stream`) to the browser.
+def _relay_log_stream(upstream: str, request: Request) -> StreamingResponse:
+    """Relay one upstream live-log SSE stream to the browser, frames unchanged.
 
-    The browser can't read the simulator's stream itself: the simulator sends no CORS headers,
-    and its URL carries the simulator control token, which must stay on the server. So every
-    simulator live log goes through here: a recorder's (the Scheduler tab) and a coverage
-    backfill run's (D195). Ticket-authed like this app's other SSE routes. The frames pass through
-    unchanged (`log` lines, then a terminal `status` for a finite run).
-    """
+    Every cross-service live log (stock_simulator, openalgo) goes through here: the browser can't
+    read those streams itself (no CORS for this app's origin) and their URLs carry the service's
+    secret (simulator control token, openalgo apikey), which must stay on the server."""
     import httpx
 
-    from src.trade.stock_simulator_facade import sim_client
-
-    if not _SIM_LOG_KEY_RE.match(key):
-        raise HTTPException(status_code=400, detail=f"invalid log-stream key {key!r}")
-    upstream = sim_client().log_stream_url(key)
-
     async def relay():
-        # No read timeout: the upstream sends a keepalive every 15s, and a recorder stream never ends.
+        # No read timeout: the upstreams send a keepalive every 15s, and a recorder stream never ends.
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None)) as client:
             async with client.stream("GET", upstream) as resp:
                 if resp.status_code != 200:
@@ -6531,6 +6526,39 @@ async def stock_simulator_log_stream(key: str, request: Request) -> StreamingRes
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
+
+
+@trade_router.get("/stock-simulator/log-stream/{key}", dependencies=[Depends(require_event_stream_auth)])
+async def stock_simulator_log_stream(key: str, request: Request) -> StreamingResponse:
+    """SSE: relay one stock_simulator live-log stream (`/scheduler-runs/{key}/stream`): a
+    recorder's (the Scheduler tab) or a coverage backfill run's (D195). Ticket-authed like this
+    app's other SSE routes. The frames pass through unchanged (`log` lines, then a terminal
+    `status` for a finite run)."""
+    from src.trade.stock_simulator_facade import sim_client
+
+    if not _SIM_LOG_KEY_RE.match(key):
+        raise HTTPException(status_code=400, detail=f"invalid log-stream key {key!r}")
+    return _relay_log_stream(sim_client().log_stream_url(key), request)
+
+
+@trade_router.get(
+    "/openalgo/log-stream/{source}/{job_id}", dependencies=[Depends(require_event_stream_auth)]
+)
+async def openalgo_log_stream(source: str, job_id: str, request: Request) -> StreamingResponse:
+    """SSE: relay one openalgo scheduler job's live log (`/api/v1/scheduler/registry/{source}/
+    {job_id}/stream`) for the Scheduler tab. The upstream URL carries openalgo's apikey, which
+    authorizes its broker/order APIs, so it never leaves this server. Ticket-authed."""
+    from trade_integrations.execution.openalgo_client import OpenAlgoClient
+
+    if source not in _OPENALGO_LOG_SOURCES:
+        raise HTTPException(status_code=400, detail=f"invalid openalgo log source {source!r}")
+    if not _OPENALGO_JOB_ID_RE.match(job_id):
+        raise HTTPException(status_code=400, detail=f"invalid openalgo job id {job_id!r}")
+    try:
+        client = OpenAlgoClient()
+    except RuntimeError as exc:  # OPENALGO_API_KEY not configured
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return _relay_log_stream(client.log_stream_url(source, job_id), request)
 
 
 @trade_router.post("/hub/stock-history/backfill-runs", status_code=202)

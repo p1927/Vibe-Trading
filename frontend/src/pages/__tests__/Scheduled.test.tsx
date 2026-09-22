@@ -34,6 +34,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       resumeStockSimSchedulerEntry: vi.fn(),
       triggerStockSimSchedulerEntry: vi.fn(),
       scheduledRunStreamUrl: vi.fn(),
+      liveLogStreamUrl: vi.fn(),
     },
   };
 });
@@ -55,6 +56,7 @@ const mocked = api as unknown as {
   resumeStockSimSchedulerEntry: ReturnType<typeof vi.fn>;
   triggerStockSimSchedulerEntry: ReturnType<typeof vi.fn>;
   scheduledRunStreamUrl: ReturnType<typeof vi.fn>;
+  liveLogStreamUrl: ReturnType<typeof vi.fn>;
 };
 
 // jsdom has no EventSource; LiveLogTail only needs enough of the interface to
@@ -108,6 +110,7 @@ beforeEach(() => {
   mocked.listScheduledRuns.mockResolvedValue([]);
   mocked.listSchedulerRegistry.mockResolvedValue({ status: "ok", entries: [], sources: {} });
   mocked.scheduledRunStreamUrl.mockResolvedValue("http://test/scheduled-runs/x/stream");
+  mocked.liveLogStreamUrl.mockImplementation((path: string) => Promise.resolve(`http://test${path}?ticket=t`));
   FakeEventSource.instances = [];
   vi.stubGlobal("EventSource", FakeEventSource);
 });
@@ -611,7 +614,7 @@ describe("cross-service registry entries (Mechanism B)", () => {
       entries: [
         registryEntry({
           supports_live_log: true,
-          live_log_stream_url: "http://sim.example.com/scheduler-runs/us/stream?token=tok",
+          live_log_stream_url: "/trade/stock-simulator/log-stream/us",
         }),
       ],
       sources: { stock_simulator: { status: "ok" } },
@@ -628,7 +631,7 @@ describe("cross-service registry entries (Mechanism B)", () => {
       entries: [
         registryEntry({
           supports_live_log: true,
-          live_log_stream_url: "http://sim.example.com/scheduler-runs/us/stream?token=tok",
+          live_log_stream_url: "/trade/stock-simulator/log-stream/us",
         }),
       ],
       sources: { stock_simulator: { status: "ok" } },
@@ -638,11 +641,9 @@ describe("cross-service registry entries (Mechanism B)", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Toggle live logs/i }));
 
     await waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
-    expect(FakeEventSource.instances[0].url).toBe(
-      "http://sim.example.com/scheduler-runs/us/stream?token=tok",
-    );
-    // Mechanism B's URL is already absolute (stamped server-side) — no
-    // ticket-minting round-trip through vibetrading-agent's api.ts needed.
+    // The stamped relay path goes through the ticket-authed helper, not the scheduled-run stream.
+    expect(mocked.liveLogStreamUrl).toHaveBeenCalledWith("/trade/stock-simulator/log-stream/us");
+    expect(FakeEventSource.instances[0].url).toBe("http://test/trade/stock-simulator/log-stream/us?ticket=t");
     expect(mocked.scheduledRunStreamUrl).not.toHaveBeenCalled();
   });
 
@@ -845,8 +846,7 @@ describe("cross-service registry entries (Mechanism C)", () => {
       entries: [
         openalgoEntry({
           supports_live_log: true,
-          live_log_stream_url:
-            "http://openalgo.example.com/api/v1/scheduler/registry/flow/wf_1/stream?apikey=tok",
+          live_log_stream_url: "/trade/openalgo/log-stream/flow/wf_1",
         }),
       ],
       sources: { openalgo: { status: "ok" } },
@@ -857,14 +857,13 @@ describe("cross-service registry entries (Mechanism C)", () => {
     expect(screen.getByRole("button", { name: /Toggle live logs/i })).toBeInTheDocument();
   });
 
-  it("clicking a flow job's Logs toggle mounts the tail against its absolute URL", async () => {
+  it("clicking a flow job's Logs toggle mounts the tail against the agent's relay", async () => {
     mocked.listSchedulerRegistry.mockResolvedValue({
       status: "ok",
       entries: [
         openalgoEntry({
           supports_live_log: true,
-          live_log_stream_url:
-            "http://openalgo.example.com/api/v1/scheduler/registry/flow/wf_1/stream?apikey=tok",
+          live_log_stream_url: "/trade/openalgo/log-stream/flow/wf_1",
         }),
       ],
       sources: { openalgo: { status: "ok" } },
@@ -874,9 +873,8 @@ describe("cross-service registry entries (Mechanism C)", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Toggle live logs/i }));
 
     await waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
-    expect(FakeEventSource.instances[0].url).toBe(
-      "http://openalgo.example.com/api/v1/scheduler/registry/flow/wf_1/stream?apikey=tok",
-    );
+    expect(mocked.liveLogStreamUrl).toHaveBeenCalledWith("/trade/openalgo/log-stream/flow/wf_1");
+    expect(FakeEventSource.instances[0].url).toBe("http://test/trade/openalgo/log-stream/flow/wf_1?ticket=t");
   });
 
   it("does not show a Logs toggle for strategy/chartink/python_strategy jobs yet", async () => {

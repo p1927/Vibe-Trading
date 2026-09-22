@@ -475,11 +475,10 @@ def test_stock_simulator_entries_leaves_url_alone_when_live_log_unsupported(
 def test_openalgo_entries_stamps_live_log_stream_url_for_flow_and_historify(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """`scheduler_registry_service.py`'s DTO leaves `live_log_stream_url` as None
-    (it can't embed its own apikey into a URL from inside a service module) —
-    `_openalgo_entries` must fill it in via `OpenAlgoClient.log_stream_url`,
-    deriving `source`/`job_id` from the entry's `section`/`id`
-    ("C:<source>:<job_id>")."""
+    """`scheduler_registry_service.py`'s DTO leaves `live_log_stream_url` as None;
+    `_openalgo_entries` stamps this app's relay path, deriving `source`/`job_id`
+    from the entry's `section`/`id` ("C:<source>:<job_id>"). The openalgo apikey
+    (in `OpenAlgoClient.log_stream_url`) must never appear in the browser-facing URL."""
     from src.api import scheduler_registry_routes
     from trade_integrations.execution import openalgo_client as openalgo_client_module
 
@@ -513,8 +512,51 @@ def test_openalgo_entries_stamps_live_log_stream_url_for_flow_and_historify(
     entries, status = scheduler_registry_routes._openalgo_entries()
 
     assert status == {"status": "ok"}
-    assert entries[0]["live_log_stream_url"] == (
-        "http://openalgo.example.com/api/v1/scheduler/registry/flow/flow_workflow_5/stream?apikey=tok"
-    )
+    assert entries[0]["live_log_stream_url"] == "/trade/openalgo/log-stream/flow/flow_workflow_5"
+    assert "apikey" not in str(entries)
     # strategy has no live-log support yet — must stay untouched.
     assert entries[1]["live_log_stream_url"] is None
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/trade/openalgo/log-stream/bogus/flow_workflow_5",  # source not in the allowlist
+        "/trade/openalgo/log-stream/flow/.hidden",  # leading dot (blocks `.`/`..` segments)
+        "/trade/openalgo/log-stream/flow/a%20b",  # charset
+    ],
+)
+def test_openalgo_log_stream_relay_rejects_bad_path_params(client: TestClient, path: str):
+    """The relay builds an upstream URL (carrying openalgo's apikey) from these path params,
+    so anything outside the allowlist/charset is refused before any upstream call."""
+    resp = client.get(path)
+    assert resp.status_code == 400
+
+
+def test_openalgo_log_stream_relay_builds_upstream_from_client(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+):
+    """A valid request relays `OpenAlgoClient.log_stream_url(source, job_id)` server-side."""
+    from src.api import trade_routes
+    from trade_integrations.execution import openalgo_client as openalgo_client_module
+
+    seen: dict = {}
+
+    class _FakeClient:
+        def log_stream_url(self, source: str, job_id: str) -> str:
+            seen["args"] = (source, job_id)
+            return "http://openalgo.invalid/stream?apikey=secret"
+
+    def _fake_relay(upstream, request):
+        from fastapi.responses import PlainTextResponse
+
+        seen["upstream"] = upstream
+        return PlainTextResponse("ok")
+
+    monkeypatch.setattr(openalgo_client_module, "OpenAlgoClient", _FakeClient)
+    monkeypatch.setattr(trade_routes, "_relay_log_stream", _fake_relay)
+
+    resp = client.get("/trade/openalgo/log-stream/python_strategy/start_my.strat_20260923101500")
+    assert resp.status_code == 200
+    assert seen["args"] == ("python_strategy", "start_my.strat_20260923101500")
+    assert seen["upstream"] == "http://openalgo.invalid/stream?apikey=secret"

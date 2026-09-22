@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any, Awaitable, Callable, Dict
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException
 
@@ -85,20 +86,20 @@ def _openalgo_entries() -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
         client = OpenAlgoClient()
         entries = client.list_scheduler_registry()
         for entry in entries:
-            # openalgo's own DTO can't embed its apikey into a URL from
-            # inside a service module — stamp it in here via the same
-            # client that already holds it. `section` is the raw scheduler
-            # source ("flow"/"historify"/...) for a Mechanism-C entry, and
-            # `id` is "C:<source>:<job_id>" — strip that exact prefix to
-            # recover the raw job id (see scheduler_registry_service.py's
-            # `_job_to_entry`).
+            # Stamp this app's own relay route (`trade_routes.openalgo_log_stream`), a path
+            # relative to the API base: openalgo's stream URL carries its apikey (which
+            # authorizes broker/order APIs) and has no CORS for this app's origin, so the
+            # browser never gets it. `section` is the raw scheduler source ("flow"/
+            # "historify"/...) for a Mechanism-C entry, and `id` is "C:<source>:<job_id>" —
+            # strip that exact prefix to recover the raw job id (see
+            # scheduler_registry_service.py's `_job_to_entry`).
             if entry.get("supports_live_log"):
                 source = str(entry.get("section", ""))
                 prefix = f"C:{source}:"
                 entry_id = str(entry.get("id", ""))
                 if entry_id.startswith(prefix):
-                    job_id = entry_id[len(prefix) :]
-                    entry["live_log_stream_url"] = client.log_stream_url(source, job_id)
+                    job_id = quote(entry_id[len(prefix) :], safe="")
+                    entry["live_log_stream_url"] = f"/trade/openalgo/log-stream/{quote(source, safe='')}/{job_id}"
         return entries, {"status": "ok"}
     except RuntimeError as exc:
         # OpenAlgoClient() raises this when OPENALGO_API_KEY isn't configured.
