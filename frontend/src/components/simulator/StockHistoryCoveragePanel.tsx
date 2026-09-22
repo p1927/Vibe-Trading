@@ -4,7 +4,9 @@
  *
  *   - **Week** (default) — 5 trading days × N buckets as a tabular
  *     heatmap, one row per bucket. Click a cell to inspect /
- *     backfill. This is the original view, untouched in spirit.
+ *     backfill. Click a day header to "Backfill all" the filter's
+ *     selected buckets for that day as a background run with a live
+ *     log and a Cancel button (D195).
  *   - **Year** — GitHub-contribution-style 7 × 52 grid covering the
  *     past 365 days. Each day is emerald if all selected buckets
  *     are present (AND semantics), muted otherwise. Click a day
@@ -37,19 +39,20 @@ import {
   Loader2,
   RefreshCw,
   Search,
+  Square,
   Wand2,
   X,
 } from "lucide-react";
 import { cn, localIsoDate } from "@/lib/utils";
 import {
-  type HubStockHistoryBackfillRequest,
-  type HubStockHistoryBackfillResponse,
-  type HubStockHistoryBackfillResult,
+  type HubStockHistoryBackfillRun,
   type HubStockHistoryCoverageBucketStatus,
   type HubStockHistoryCoverageDay,
   type HubStockHistoryCoverageResponse,
+  ApiError,
   api,
 } from "@/lib/api";
+import { LiveLogTail } from "@/components/scheduler/LiveLogTail";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const YEAR_WEEKS = 52;
@@ -79,11 +82,13 @@ interface SelectedCell {
   status: HubStockHistoryCoverageBucketStatus;
 }
 
-interface BackfillProgress {
-  bucket: string;
-  status: "running" | "done" | "error";
-  result?: HubStockHistoryBackfillResult;
-  error?: string;
+/** A source whose `fallback` says "not backfillable" only has a live snapshot for today, so any
+ *  other day can't be filled (the backend handler would only skip it). */
+function isKnownUnfillable(day: string, status: HubStockHistoryCoverageBucketStatus): boolean {
+  return (
+    day !== localIsoDate(new Date()) &&
+    (status.fallback ?? "").toLowerCase().includes("not backfillable")
+  );
 }
 
 /** Per-key macro / valuation / rate rows have long internal names
@@ -245,7 +250,11 @@ export function StockHistoryCoveragePanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<SelectedCell | null>(null);
-  const [backfill, setBackfill] = useState<BackfillProgress | null>(null);
+  // Day header clicked in the week view -> the "Backfill all" drawer for that day (D195).
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  // The one background backfill run (stock_simulator is single-flight), active or just finished.
+  const [run, setRun] = useState<HubStockHistoryBackfillRun | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
 
   // Year-view state: a window-end date and a stitched coverage response
   // covering that date's preceding 52 weeks. We fetch each week in
@@ -405,47 +414,81 @@ export function StockHistoryCoveragePanel({
     return allBuckets.filter((b) => bucketFilter.has(b));
   }, [allBuckets, bucketFilter]);
 
-  const onBackfill = useCallback(
-    async (bucket: string) => {
-      const req: HubStockHistoryBackfillRequest = {
-        week: weekStartIso,
-        symbol,
-        include_optional: includeOptional,
-        buckets: [bucket],
-        verify_after: true,
-      };
-      setBackfill({ bucket, status: "running" });
+  // Backfill runs in the background on stock_simulator (D195): start returns at once, the
+  // run's log streams into `LiveLogTail`, and we poll its status until it finishes.
+  const startRun = useCallback(
+    async (day: string, buckets: string[]) => {
+      setRunError(null);
       try {
-        const resp: HubStockHistoryBackfillResponse =
-          await api.postHubStockHistoryBackfill(req);
-        if (resp.status !== "ok") {
-          setBackfill({ bucket, status: "error", error: resp.error ?? "backfill failed" });
-          return;
-        }
-        const result = resp.summary.results.find((r) => r.bucket === bucket);
-        setBackfill({
-          bucket,
-          status: result?.had_errors ? "error" : "done",
-          result,
+        const resp = await api.startHubStockHistoryBackfillRun({
+          day,
+          buckets,
+          symbol,
+          include_optional: includeOptional,
         });
-        if (resp.coverage_after) {
-          setReport(filterCoverageByCountry(resp.coverage_after, countryFilter));
-        } else {
-          await fetchCoverage();
-        }
-        // Year view shows stale state until the next manual refresh —
-        // a year re-fetch here would block the UI for too long, so we
-        // just nudge the user with a hint in the footer instead.
+        setRun(resp.run);
       } catch (e) {
-        setBackfill({
-          bucket,
-          status: "error",
-          error: e instanceof Error ? e.message : String(e),
-        });
+        setRunError(e instanceof Error ? e.message : String(e));
+        // 409 = another run is already going: show that one instead.
+        if (e instanceof ApiError && e.status === 409) {
+          const active = await api.getActiveHubStockHistoryBackfillRun().catch(() => null);
+          if (active?.run) setRun(active.run);
+        }
       }
     },
-    [weekStartIso, symbol, includeOptional, fetchCoverage, countryFilter],
+    [symbol, includeOptional],
   );
+
+  const cancelRun = useCallback(async () => {
+    if (!run) return;
+    try {
+      const resp = await api.cancelHubStockHistoryBackfillRun(run.run_id);
+      if (resp.run) setRun(resp.run);
+    } catch (e) {
+      setRunError(e instanceof Error ? e.message : String(e));
+    }
+  }, [run]);
+
+  // Re-attach to a run that is still going after a page reload.
+  useEffect(() => {
+    api
+      .getActiveHubStockHistoryBackfillRun()
+      .then((resp) => {
+        if (resp.run) setRun(resp.run);
+      })
+      .catch(() => {
+        /* no stock_simulator reachable: the coverage fetch surfaces that error */
+      });
+  }, []);
+
+  const runId = run?.run_id;
+  const runStatus = run?.status;
+  useEffect(() => {
+    if (!runId || runStatus !== "running") return;
+    const timer = window.setInterval(() => {
+      api
+        .getHubStockHistoryBackfillRun(runId)
+        .then((resp) => {
+          if (resp.run) setRun(resp.run);
+        })
+        .catch((e) => setRunError(e instanceof Error ? e.message : String(e)));
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [runId, runStatus]);
+
+  // When a run finishes, show its post-backfill coverage (or refetch if it is for another week).
+  // The year view refetches on its own each time it is opened.
+  const appliedRunRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!run || run.status === "running" || appliedRunRef.current === run.run_id) return;
+    appliedRunRef.current = run.run_id;
+    const after = run.summary?.coverage_after;
+    if (after && after.week_start === weekStartIso) {
+      setReport(filterCoverageByCountry(after, countryFilter));
+    } else {
+      void fetchCoverage();
+    }
+  }, [run, weekStartIso, countryFilter, fetchCoverage]);
 
   const shiftWeek = useCallback((deltaDays: number) => {
     setWeekStart((prev) => addDays(prev, deltaDays));
@@ -681,17 +724,32 @@ export function StockHistoryCoveragePanel({
             loading={loading}
             selectedBuckets={effectiveSelected}
             isAllSelected={isAllSelected}
-            onCellClick={(day, bucket, status) =>
-              setSelected({ day, bucket, status })
-            }
+            onCellClick={(day, bucket, status) => {
+              setSelectedDay(null);
+              setSelected({ day, bucket, status });
+            }}
             selected={selected}
+            selectedDay={selectedDay}
+            onDayClick={(day) => {
+              setSelected(null);
+              setSelectedDay((prev) => (prev === day ? null : day));
+            }}
           />
           <CellDrawer
             selected={selected}
             onClose={() => setSelected(null)}
-            onBackfill={(bucket) => void onBackfill(bucket)}
-            backfill={backfill}
+            onBackfill={(day, bucket) => void startRun(day, [bucket])}
+            run={run}
           />
+          {selectedDay && report && (
+            <DayDrawer
+              day={report.days.find((d) => d.day === selectedDay) ?? null}
+              buckets={isAllSelected ? report.bucket_labels : selectedBucketsList}
+              run={run}
+              onClose={() => setSelectedDay(null)}
+              onStart={(day, buckets) => void startRun(day, buckets)}
+            />
+          )}
         </>
       ) : (
         <>
@@ -709,6 +767,19 @@ export function StockHistoryCoveragePanel({
             </p>
           )}
         </>
+      )}
+
+      {runError && (
+        <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
+          backfill: {runError}
+        </div>
+      )}
+      {run && (
+        <BackfillRunPanel
+          run={run}
+          onCancel={() => void cancelRun()}
+          onClose={() => setRun(null)}
+        />
       )}
     </div>
   );
@@ -1240,6 +1311,8 @@ interface HeatmapProps {
     bucket: string,
     status: HubStockHistoryCoverageBucketStatus,
   ) => void;
+  selectedDay: string | null;
+  onDayClick: (day: string) => void;
 }
 
 function CoverageHeatmap({
@@ -1249,6 +1322,8 @@ function CoverageHeatmap({
   isAllSelected,
   selected,
   onCellClick,
+  selectedDay,
+  onDayClick,
 }: HeatmapProps) {
   if (loading && !report) {
     return (
@@ -1320,15 +1395,25 @@ function CoverageHeatmap({
                     passes === false && "bg-rose-500/10 text-rose-700 dark:text-rose-300",
                   )}
                   style={{ minWidth: "5rem" }}
-                  title={
-                    passes === null
-                      ? undefined
-                      : passes
-                      ? "All selected buckets present"
-                      : "At least one selected bucket is missing"
-                  }
                 >
-                  {d.day.slice(5)}
+                  <button
+                    type="button"
+                    onClick={() => onDayClick(d.day)}
+                    aria-pressed={selectedDay === d.day}
+                    title={`${
+                      passes === null
+                        ? ""
+                        : passes
+                        ? "All selected buckets present. "
+                        : "At least one selected bucket is missing. "
+                    }Click to backfill the selected buckets for ${d.day}.`}
+                    className={cn(
+                      "w-full rounded px-1 font-mono hover:underline",
+                      selectedDay === d.day && "ring-2 ring-primary",
+                    )}
+                  >
+                    {d.day.slice(5)}
+                  </button>
                 </th>
               );
             })}
@@ -1633,25 +1718,24 @@ function YearHeatmap({
 }
 
 // ============================================================
-// Cell drawer (unchanged)
+// Cell drawer
 // ============================================================
 
 interface DrawerProps {
   selected: SelectedCell | null;
-  backfill: BackfillProgress | null;
+  run: HubStockHistoryBackfillRun | null;
   onClose: () => void;
-  onBackfill: (bucket: string) => void;
+  onBackfill: (day: string, bucket: string) => void;
 }
 
-function CellDrawer({ selected, backfill, onClose, onBackfill }: DrawerProps) {
+function CellDrawer({ selected, run, onClose, onBackfill }: DrawerProps) {
   if (!selected) return null;
   const { day, bucket, status } = selected;
   const isMissing = !status.present;
-  const progress = backfill && backfill.bucket === bucket ? backfill : null;
-  const today = localIsoDate(new Date());
-  const knownUnfillable =
-    day !== today &&
-    (status.fallback ?? "").toLowerCase().includes("not backfillable");
+  const runActive = run?.status === "running";
+  const mine = run && run.day === day && run.buckets.includes(bucket) ? run : null;
+  const result = mine?.summary?.results.find((r) => r.bucket === bucket);
+  const knownUnfillable = isKnownUnfillable(day, status);
   return (
     <div
       className="rounded-xl border bg-card p-4 text-xs shadow-sm"
@@ -1722,43 +1806,211 @@ function CellDrawer({ selected, backfill, onClose, onBackfill }: DrawerProps) {
             <>
               <button
                 type="button"
-                onClick={() => onBackfill(bucket)}
-                disabled={progress?.status === "running"}
+                onClick={() => onBackfill(day, bucket)}
+                disabled={runActive}
+                title={runActive ? "Another backfill run is in progress" : undefined}
                 className="mt-2 inline-flex items-center gap-1 rounded-lg border border-amber-500/40 bg-background px-3 py-1.5 text-amber-800 transition-colors hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-300"
               >
-                {progress?.status === "running" ? (
+                {mine?.status === "running" ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Wand2 className="h-4 w-4" />
                 )}
-                {progress?.status === "running"
+                {mine?.status === "running"
                   ? "Backfilling…"
-                  : "Backfill this bucket"}
+                  : `Backfill this bucket for ${day}`}
               </button>
-              {progress &&
-                progress.status === "done" &&
-                progress.result && (
-                  <div className="mt-2 font-mono text-emerald-700 dark:text-emerald-300">
-                    {progress.result.status} —{" "}
-                    {progress.result.rows_written} row(s) in{" "}
-                    {progress.result.duration_ms} ms
-                    {progress.result.rows_written === 0 &&
-                      progress.result.message && (
-                        <div className="mt-1 text-muted-foreground">
-                          {progress.result.message}
-                        </div>
-                      )}
-                  </div>
-                )}
-              {progress && progress.status === "error" && (
-                <div className="mt-2 font-mono text-rose-700 dark:text-rose-300">
-                  error:{" "}
-                  {progress.error ?? progress.result?.error ?? "unknown"}
+              {result && (
+                <div
+                  className={cn(
+                    "mt-2 font-mono",
+                    result.had_errors
+                      ? "text-rose-700 dark:text-rose-300"
+                      : "text-emerald-700 dark:text-emerald-300",
+                  )}
+                >
+                  {result.status} — {result.rows_written} row(s) in {result.duration_ms} ms
+                  {(result.error || (result.rows_written === 0 && result.message)) && (
+                    <div className="mt-1 text-muted-foreground">
+                      {result.error ?? result.message}
+                    </div>
+                  )}
                 </div>
               )}
             </>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Day drawer — "Backfill all" for one day (D195)
+// ============================================================
+
+function DayDrawer({
+  day,
+  buckets,
+  run,
+  onClose,
+  onStart,
+}: {
+  day: HubStockHistoryCoverageDay | null;
+  /** The buckets selected in the filter (every bucket when the filter is "All"). */
+  buckets: string[];
+  run: HubStockHistoryBackfillRun | null;
+  onClose: () => void;
+  onStart: (day: string, buckets: string[]) => void;
+}) {
+  if (!day) return null;
+  const missing = buckets
+    .map((b) => day.buckets[b])
+    .filter((st): st is HubStockHistoryCoverageBucketStatus => !!st && !st.present);
+  const fillable = missing.filter((st) => !isKnownUnfillable(day.day, st));
+  const unfillable = missing.filter((st) => isKnownUnfillable(day.day, st));
+  const runActive = run?.status === "running";
+  return (
+    <div
+      className="rounded-xl border bg-card p-4 text-xs shadow-sm"
+      role="dialog"
+      aria-label={`Backfill ${day.day}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="font-mono text-sm font-semibold">{day.day}</div>
+          <div className="text-muted-foreground">
+            {buckets.length} selected bucket(s): {missing.length} missing, {fillable.length} can be
+            backfilled
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close drawer"
+          className="rounded-lg border bg-background px-2.5 py-1 text-muted-foreground transition-colors hover:bg-muted"
+        >
+          ×
+        </button>
+      </div>
+      {missing.length === 0 ? (
+        <div className="mt-3 text-emerald-700 dark:text-emerald-300">
+          Every selected bucket is present on {day.day}.
+        </div>
+      ) : (
+        <>
+          {fillable.length > 0 && (
+            <ul className="mt-3 flex flex-wrap gap-1.5">
+              {fillable.map((st) => (
+                <li key={st.bucket} className="rounded bg-muted px-1.5 py-0.5 font-mono" title={st.bucket}>
+                  {bucketLabel(st.bucket)}
+                </li>
+              ))}
+            </ul>
+          )}
+          {unfillable.length > 0 && (
+            <div className="mt-2 text-muted-foreground">
+              Not backfillable for {day.day} (live snapshot only):{" "}
+              <span className="font-mono">{unfillable.map((st) => bucketLabel(st.bucket)).join(", ")}</span>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => onStart(day.day, fillable.map((st) => st.bucket))}
+            disabled={fillable.length === 0 || runActive}
+            title={runActive ? "Another backfill run is in progress" : undefined}
+            className="mt-3 inline-flex items-center gap-1 rounded-lg border border-amber-500/40 bg-background px-3 py-1.5 text-amber-800 transition-colors hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-300"
+          >
+            <Wand2 className="h-4 w-4" />
+            Backfill all ({fillable.length})
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Backfill run panel — live log, cancel, per-bucket results (D195)
+// ============================================================
+
+function BackfillRunPanel({
+  run,
+  onCancel,
+  onClose,
+}: {
+  run: HubStockHistoryBackfillRun;
+  onCancel: () => void;
+  onClose: () => void;
+}) {
+  const running = run.status === "running";
+  return (
+    <div className="rounded-xl border bg-card p-4 text-xs shadow-sm" aria-label="Backfill run">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-sm font-semibold">
+            Backfill {run.day} — {run.buckets.length} bucket(s)
+          </div>
+          <div
+            className={cn(
+              "font-mono",
+              run.status === "done" && "text-emerald-700 dark:text-emerald-300",
+              (run.status === "error" || run.status === "cancelled") &&
+                "text-rose-700 dark:text-rose-300",
+            )}
+          >
+            {running && <Loader2 className="mr-1 inline h-3 w-3 animate-spin" />}
+            {run.status}
+            {run.summary &&
+              ` — ok ${run.summary.ok_count}, failed ${run.summary.failed_count}, skipped ${run.summary.skipped_count}`}
+          </div>
+        </div>
+        {running ? (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex items-center gap-1 rounded-lg border border-rose-500/40 bg-background px-2.5 py-1 text-rose-700 transition-colors hover:bg-rose-500/10 dark:text-rose-300"
+          >
+            <Square className="h-3.5 w-3.5" /> Cancel
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close backfill run"
+            className="rounded-lg border bg-background px-2.5 py-1 text-muted-foreground transition-colors hover:bg-muted"
+          >
+            ×
+          </button>
+        )}
+      </div>
+      <div className="mt-3">
+        <LiveLogTail key={run.run_id} streamUrl={async () => run.stream_url} />
+      </div>
+      {run.error && (
+        <div className="mt-2 font-mono text-rose-700 dark:text-rose-300">{run.error}</div>
+      )}
+      {run.summary && run.summary.results.length > 0 && (
+        <table className="mt-3 w-full border-collapse font-mono">
+          <tbody>
+            {run.summary.results.map((r) => (
+              <tr key={r.bucket} className="border-b border-border align-top">
+                <td className="py-1 pr-2" title={r.bucket}>{bucketLabel(r.bucket)}</td>
+                <td
+                  className={cn(
+                    "py-1 pr-2",
+                    r.status === "ok" && "text-emerald-700 dark:text-emerald-300",
+                    r.had_errors && "text-rose-700 dark:text-rose-300",
+                  )}
+                >
+                  {r.status}
+                </td>
+                <td className="py-1 pr-2">{r.rows_written} row(s)</td>
+                <td className="py-1 text-muted-foreground">{r.error ?? r.message}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </div>
   );

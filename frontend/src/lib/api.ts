@@ -1900,6 +1900,24 @@ export const api = {
       body: JSON.stringify(req),
       timeoutMs: 900_000,
     }),
+  // /trade/hub/stock-history/backfill-runs — background per-day backfill (D195): start returns
+  // at once with a run whose `stream_url` is the live-log SSE; poll `get` for status/summary.
+  startHubStockHistoryBackfillRun: (req: HubStockHistoryBackfillRunRequest) =>
+    request<HubStockHistoryBackfillRunResponse>("/trade/hub/stock-history/backfill-runs", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
+  getHubStockHistoryBackfillRun: (runId: string) =>
+    request<HubStockHistoryBackfillRunResponse>(
+      `/trade/hub/stock-history/backfill-runs/${encodeURIComponent(runId)}`,
+    ),
+  getActiveHubStockHistoryBackfillRun: () =>
+    request<HubStockHistoryBackfillRunResponse>("/trade/hub/stock-history/backfill-runs/active"),
+  cancelHubStockHistoryBackfillRun: (runId: string) =>
+    request<HubStockHistoryBackfillRunResponse>(
+      `/trade/hub/stock-history/backfill-runs/${encodeURIComponent(runId)}/cancel`,
+      { method: "POST" },
+    ),
   // /trade/markets/* — global-markets vertical (see the type block above).
   getMarketRegistry: () => request<MarketRegistryResponse>("/trade/markets/registry"),
   getMarketIndexHistory: (country: string, index: string, period = "1y") =>
@@ -4822,6 +4840,37 @@ export interface HubStockHistoryBackfillResponse {
   summary: HubStockHistoryBackfillSummary;
   coverage_after?: HubStockHistoryCoverageResponse | null;
   error?: string | null;
+}
+
+export interface HubStockHistoryBackfillRunRequest {
+  day: string;
+  buckets: string[];
+  symbol?: string;
+  include_optional?: boolean;
+}
+
+export interface HubStockHistoryBackfillRun {
+  run_id: string;
+  stream_key: string;
+  stream_url: string;
+  day: string;
+  buckets: string[];
+  symbol: string;
+  include_optional: boolean;
+  status: "running" | "done" | "error" | "cancelled";
+  started_at: number;
+  finished_at: number | null;
+  error: string | null;
+  summary:
+    | (HubStockHistoryBackfillSummary & {
+        coverage_after?: HubStockHistoryCoverageResponse | null;
+      })
+    | null;
+}
+
+export interface HubStockHistoryBackfillRunResponse {
+  status: string;
+  run: HubStockHistoryBackfillRun | null;
 }
 
 // /trade/markets/* — global-markets vertical (multi-country index/factor/flow/live-spot

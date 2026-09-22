@@ -6471,6 +6471,61 @@ def hub_stock_history_backfill(
         )
 
 
+class HubStockHistoryBackfillRunRequest(BaseModel):
+    day: str
+    buckets: list[str] = Field(min_length=1)
+    symbol: str = "NIFTY"
+    include_optional: bool = True
+
+
+def _backfill_run_call(fn_name: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Proxy one call to stock_simulator's `/backfill_runs` (D195) and stamp the run's live-log SSE
+    URL, which only this side can build (`StockSimulatorClient.log_stream_url`)."""
+    from src.trade.stock_simulator_facade import sim_client
+    from trade_integrations.stock_simulator.client import StockSimulatorClientError
+
+    client = sim_client()
+    try:
+        payload = getattr(client, fn_name)(*args, **kwargs)
+    except StockSimulatorClientError as exc:
+        status = exc.status_code if exc.status_code and exc.status_code >= 400 else 502
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    run = payload.get("run")
+    if run:
+        run["stream_url"] = client.log_stream_url(run["stream_key"])
+    return {"status": "ok", "run": run}
+
+
+@trade_router.post("/hub/stock-history/backfill-runs", status_code=202)
+def hub_stock_history_backfill_run_start(
+    req: HubStockHistoryBackfillRunRequest,
+    _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    """Start a background backfill of `req.buckets` for the one day `req.day` (D195): the
+    coverage panel's per-day "Backfill all" and per-cell button. 409 while another run is active."""
+    return _backfill_run_call(
+        "start_backfill_run", day=req.day, buckets=req.buckets, symbol=req.symbol,
+        include_optional=req.include_optional,
+    )
+
+
+@trade_router.get("/hub/stock-history/backfill-runs/active")
+def hub_stock_history_backfill_run_active(_auth: None = Depends(require_local_or_auth)) -> dict[str, Any]:
+    return _backfill_run_call("get_active_backfill_run")
+
+
+@trade_router.get("/hub/stock-history/backfill-runs/{run_id}")
+def hub_stock_history_backfill_run_get(run_id: str, _auth: None = Depends(require_local_or_auth)) -> dict[str, Any]:
+    return _backfill_run_call("get_backfill_run", run_id)
+
+
+@trade_router.post("/hub/stock-history/backfill-runs/{run_id}/cancel")
+def hub_stock_history_backfill_run_cancel(
+    run_id: str, _auth: None = Depends(require_local_or_auth),
+) -> dict[str, Any]:
+    return _backfill_run_call("cancel_backfill_run", run_id)
+
+
 def _safe_float(v: Any) -> float | None:
     try:
         return float(v) if v is not None else None
