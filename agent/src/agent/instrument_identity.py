@@ -60,6 +60,30 @@ def registry_equivalent_symbol(requested: str, authorized: Iterable[str]) -> str
 
 
 @lru_cache(maxsize=1)
+def _registry_resolve_known_index() -> Callable[[str], str | None] | None:
+    from src.trade.hub_bridge import ensure_trade_stack_path
+
+    try:
+        ensure_trade_stack_path()
+    except RuntimeError:
+        return None
+    from trade_integrations.dataflows.entity_registry import resolve_known_index
+
+    return resolve_known_index
+
+
+def registry_known_instrument(symbol: str) -> str | None:
+    """Trade's canonical name for ``symbol`` when its registry already knows it (D214).
+
+    ``NIFTY``, ``^NSEI`` and ``BANKNIFTY`` need no resolver round-trip: D30 makes
+    the registry the owner of what they name. ``None`` for anything else, and
+    for every symbol when no registry is available.
+    """
+    resolve = _registry_resolve_known_index()
+    return resolve(symbol) if resolve is not None else None
+
+
+@lru_cache(maxsize=1)
 def india_index_tickers() -> frozenset[str]:
     """Every spelling Trade's entity registry knows for an India index (D30).
 
