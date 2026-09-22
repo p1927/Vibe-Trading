@@ -392,8 +392,8 @@ def test_scheduler_registry_stock_simulator_trigger_paused_job_propagates_409(
 def test_stock_simulator_entries_stamps_live_log_stream_url(monkeypatch: pytest.MonkeyPatch):
     """`scheduler_introspection.py`'s DTO leaves `live_log_stream_url` as None
     (it doesn't know its own externally-reachable host) — `_stock_simulator_entries`
-    must fill it in via `StockSimulatorClient.log_stream_url`, deriving the
-    recorder name from the entry's `section` (`"recorder:<name>"`)."""
+    must fill it in with this app's relay route (never the simulator's own tokened URL),
+    deriving the recorder name from the entry's `section` (`"recorder:<name>"`)."""
     from src.api import scheduler_registry_routes
     from trade_integrations.stock_simulator import client as stock_simulator_client_module
 
@@ -432,8 +432,8 @@ def test_stock_simulator_entries_stamps_live_log_stream_url(monkeypatch: pytest.
 
     assert status == {"status": "ok"}
     assert [e["live_log_stream_url"] for e in entries] == [
-        "http://sim.example.com/scheduler-runs/us/stream?token=tok",
-        "http://sim.example.com/scheduler-runs/us/stream?token=tok",
+        "/trade/stock-simulator/log-stream/us",
+        "/trade/stock-simulator/log-stream/us",
     ]
 
 

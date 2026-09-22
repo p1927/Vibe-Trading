@@ -2,7 +2,7 @@ import type { TFunction } from "i18next";
 import { ChevronDown, ChevronRight, Loader2, Pause, Play, PlayCircle, Square } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
-import type { ScheduledRun, SchedulerRegistryEntry } from "@/lib/api";
+import { api, type ScheduledRun, type SchedulerRegistryEntry } from "@/lib/api";
 import { LiveLogTail } from "@/components/scheduler/LiveLogTail";
 import { StatusPill, type StatusTone } from "@/components/scheduler/StatusPill";
 
@@ -355,7 +355,7 @@ function RegistryRow({
         )}
       </div>
       {expandedLogKey === entry.id && entry.live_log_stream_url && (
-        <LiveLogTail streamUrl={() => Promise.resolve(entry.live_log_stream_url!)} />
+        <LiveLogTail streamUrl={() => api.liveLogStreamUrl(entry.live_log_stream_url!)} />
       )}
     </li>
   );

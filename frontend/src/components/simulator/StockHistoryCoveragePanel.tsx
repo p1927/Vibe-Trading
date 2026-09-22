@@ -1985,7 +1985,10 @@ function BackfillRunPanel({
         )}
       </div>
       <div className="mt-3">
-        <LiveLogTail key={run.run_id} streamUrl={async () => run.stream_url} />
+        <LiveLogTail
+          key={run.run_id}
+          streamUrl={() => api.stockSimulatorLogStreamUrl(run.stream_key)}
+        />
       </div>
       {run.error && (
         <div className="mt-2 font-mono text-rose-700 dark:text-rose-300">{run.error}</div>

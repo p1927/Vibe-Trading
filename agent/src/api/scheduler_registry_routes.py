@@ -56,15 +56,14 @@ def _stock_simulator_entries() -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
         payload = client.list_scheduler_registry()
         entries = list(payload.get("entries") or [])
         for entry in entries:
-            # stock_simulator's own DTO can't fill this in — it doesn't know
-            # its own externally-reachable host/port — so stamp it in here
-            # via the same client that already does (see
-            # `StockSimulatorClient.log_stream_url`'s docstring). `section`
-            # is always `f"recorder:{recorder_name}"` for a Mechanism-B
-            # entry (`scheduler_introspection.list_recorder_categories`).
+            # Stamp this app's own relay route (`trade_routes.stock_simulator_log_stream`), a path
+            # relative to the API base: the browser can't read the simulator's stream directly (no
+            # CORS, and its URL carries the simulator control token). `section` is always
+            # `f"recorder:{recorder_name}"` for a Mechanism-B entry
+            # (`scheduler_introspection.list_recorder_categories`).
             if entry.get("supports_live_log") and str(entry.get("section", "")).startswith("recorder:"):
                 recorder_name = str(entry["section"])[len("recorder:") :]
-                entry["live_log_stream_url"] = client.log_stream_url(recorder_name)
+                entry["live_log_stream_url"] = f"/trade/stock-simulator/log-stream/{recorder_name}"
         return entries, {"status": "ok"}
     except StockSimulatorClientError as exc:
         logger.warning("scheduler-registry: stock_simulator unreachable: %s", exc)

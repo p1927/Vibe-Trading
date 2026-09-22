@@ -6479,8 +6479,8 @@ class HubStockHistoryBackfillRunRequest(BaseModel):
 
 
 def _backfill_run_call(fn_name: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
-    """Proxy one call to stock_simulator's `/backfill_runs` (D195) and stamp the run's live-log SSE
-    URL, which only this side can build (`StockSimulatorClient.log_stream_url`)."""
+    """Proxy one call to stock_simulator's `/backfill_runs` (D195). The run's live log is read
+    through `/trade/stock-simulator/log-stream/{run.stream_key}` below."""
     from src.trade.stock_simulator_facade import sim_client
     from trade_integrations.stock_simulator.client import StockSimulatorClientError
 
@@ -6490,10 +6490,47 @@ def _backfill_run_call(fn_name: str, *args: Any, **kwargs: Any) -> dict[str, Any
     except StockSimulatorClientError as exc:
         status = exc.status_code if exc.status_code and exc.status_code >= 400 else 502
         raise HTTPException(status_code=status, detail=str(exc)) from exc
-    run = payload.get("run")
-    if run:
-        run["stream_url"] = client.log_stream_url(run["stream_key"])
-    return {"status": "ok", "run": run}
+    return {"status": "ok", "run": payload.get("run")}
+
+
+_SIM_LOG_KEY_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+
+
+@trade_router.get("/stock-simulator/log-stream/{key}", dependencies=[Depends(require_event_stream_auth)])
+async def stock_simulator_log_stream(key: str, request: Request) -> StreamingResponse:
+    """SSE: relay one stock_simulator live-log stream (`/scheduler-runs/{key}/stream`) to the browser.
+
+    The browser can't read the simulator's stream itself: the simulator sends no CORS headers,
+    and its URL carries the simulator control token, which must stay on the server. So every
+    simulator live log goes through here: a recorder's (the Scheduler tab) and a coverage
+    backfill run's (D195). Ticket-authed like this app's other SSE routes. The frames pass through
+    unchanged (`log` lines, then a terminal `status` for a finite run).
+    """
+    import httpx
+
+    from src.trade.stock_simulator_facade import sim_client
+
+    if not _SIM_LOG_KEY_RE.match(key):
+        raise HTTPException(status_code=400, detail=f"invalid log-stream key {key!r}")
+    upstream = sim_client().log_stream_url(key)
+
+    async def relay():
+        # No read timeout: the upstream sends a keepalive every 15s, and a recorder stream never ends.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None)) as client:
+            async with client.stream("GET", upstream) as resp:
+                if resp.status_code != 200:
+                    yield f"event: error\ndata: {json.dumps({'status': resp.status_code})}\n\n"
+                    return
+                async for chunk in resp.aiter_raw():
+                    if await request.is_disconnected():
+                        return
+                    yield chunk
+
+    return StreamingResponse(
+        relay(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
 
 
 @trade_router.post("/hub/stock-history/backfill-runs", status_code=202)

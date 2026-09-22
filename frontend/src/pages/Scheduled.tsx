@@ -1052,7 +1052,7 @@ export function Scheduled() {
                     </button>
                   )}
                   {expandedLogKey === entry.id && entry.live_log_stream_url && (
-                    <LiveLogTail streamUrl={() => Promise.resolve(entry.live_log_stream_url!)} />
+                    <LiveLogTail streamUrl={() => api.liveLogStreamUrl(entry.live_log_stream_url!)} />
                   )}
                 </li>
               ))}
