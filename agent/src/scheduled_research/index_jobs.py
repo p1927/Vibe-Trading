@@ -683,6 +683,74 @@ def run_quantile_forecast_ledger_push_job(config: dict[str, Any] | None = None) 
     return {"status": "ok", "rows_appended": rows_appended, "as_of_date": result.get("as_of_date")}
 
 
+_BACKFILL_RUN_POLL_SECONDS = 2.0
+# How long past its budget a run may still be finishing (`verify_after`'s coverage re-scan) before
+# the sweep cancels it -- the grace the old blocking HTTP call had as its read timeout.
+_BACKFILL_RUN_GRACE_SECONDS = 300.0
+
+
+def _backfill_week_as_run(sh: Any, *, week_start: str, include_optional: bool, deadline: float) -> dict[str, Any]:
+    """Backfill one ISO week as a stock_simulator background run (D195) and return its summary.
+
+    The run executes in stock_simulator, so its per-bucket progress lands in THAT process's
+    `log_buffer`; each poll fetches the new lines and re-emits them through this dispatch's stage
+    sink (the job's own Scheduler-tab log). A scheduled-job cancel or dispatch timeout
+    (`check_pipeline_cancel`) cancels the run before propagating. A run already active -- a user's
+    panel backfill -- is waited out inside the budget (it is short and writes the same stores);
+    still active when the budget is spent is a loud error, never a silent skip.
+    """
+    from trade_integrations.dataflows.index_research.pipeline_cancel import check_pipeline_cancel, emit_stage_event
+    from trade_integrations.stock_simulator.client import StockSimulatorClientError
+
+    waiting = False
+    while True:
+        try:
+            run = sh.start_backfill_run(
+                week_start=week_start, include_optional=include_optional,
+                budget_seconds=max(deadline - time.monotonic(), 1.0),
+            )["run"]
+            break
+        except StockSimulatorClientError as exc:
+            if exc.status_code != 409:
+                raise
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"week {week_start}: another backfill run is still active after the sweep's budget ran out: {exc}"
+                ) from exc
+            if not waiting:
+                emit_stage_event(f"week {week_start}: another backfill run is active; waiting for it ({exc})")
+                waiting = True
+            check_pipeline_cancel()
+            time.sleep(_BACKFILL_RUN_POLL_SECONDS)
+    run_id = run["run_id"]
+    emit_stage_event(f"week {week_start}: stock_simulator backfill run {run_id} started")
+    seq = 0
+    try:
+        while True:
+            body = sh.get_backfill_run(run_id, since_seq=seq)
+            for entry in body.get("logs") or []:
+                seq = entry["seq"]
+                emit_stage_event(entry["message"])
+            run = body["run"]
+            if run["status"] != "running":
+                break
+            check_pipeline_cancel()
+            if time.monotonic() > deadline + _BACKFILL_RUN_GRACE_SECONDS:
+                raise TimeoutError(f"week {week_start}: backfill run {run_id} still running past its budget")
+            time.sleep(_BACKFILL_RUN_POLL_SECONDS)
+    except BaseException:
+        try:
+            sh.cancel_backfill_run(run_id)
+        except Exception:
+            logger.exception("coverage sweep: could not cancel backfill run %s", run_id)
+        raise
+    if run["status"] == "cancelled":
+        raise RuntimeError(f"week {week_start}: backfill run {run_id} was cancelled from outside the sweep")
+    if run.get("summary") is None:
+        raise RuntimeError(f"week {week_start}: backfill run {run_id} failed: {run.get('error')}")
+    return run["summary"]
+
+
 def run_stock_history_coverage_sweep_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Daily full-coverage backfill sweep.
 
@@ -698,6 +766,11 @@ def run_stock_history_coverage_sweep_job(config: dict[str, Any] | None = None) -
     current ISO week across every registered bucket (`include_optional`
     covers the optional/soft buckets too), so gaps get caught the same
     week they appear instead of accumulating silently.
+
+    Each week runs as a stock_simulator background backfill run, the same mechanism as the
+    coverage panel's "Backfill all" (D195), so its per-bucket progress reaches this job's live log
+    instead of 20 silent minutes behind one blocking HTTP call
+    ([[2026-09-23-backfill-stage-events-lost-across-http]]).
     """
     _ensure_trade_integrations_on_path()
     from src.trade.stock_simulator_facade import sim_client
@@ -732,12 +805,12 @@ def run_stock_history_coverage_sweep_job(config: dict[str, Any] | None = None) -
             remaining = deadline - time.monotonic()
             if back and remaining <= 0:
                 break
-            week = sh.backfill_into_week(
+            week = _backfill_week_as_run(
+                sh,
                 week_start=(today - timedelta(weeks=back)).date().isoformat(),
                 include_optional=bool(cfg.get("include_optional", True)),
-                verify_after=True,
-                budget_seconds=max(remaining, 1.0),
-            )["data"]
+                deadline=deadline,
+            )
             summary["had_errors"] = summary["had_errors"] or week["had_errors"]
             for key in ("ok_count", "failed_count", "skipped_count"):
                 summary[key] += week[key]
@@ -760,6 +833,7 @@ def run_stock_history_coverage_sweep_job(config: dict[str, Any] | None = None) -
             "results": failed,
         }
     except Exception as exc:
+        _reraise_pipeline_cancel(exc)
         logger.exception("stock_history coverage sweep failed")
         return {"status": "error", "error": str(exc), "had_errors": True}
 

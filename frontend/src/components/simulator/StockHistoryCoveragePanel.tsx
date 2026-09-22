@@ -1733,7 +1733,7 @@ function CellDrawer({ selected, run, onClose, onBackfill }: DrawerProps) {
   const { day, bucket, status } = selected;
   const isMissing = !status.present;
   const runActive = run?.status === "running";
-  const mine = run && run.day === day && run.buckets.includes(bucket) ? run : null;
+  const mine = run && run.day === day && run.buckets?.includes(bucket) ? run : null;
   const result = mine?.summary?.results.find((r) => r.bucket === bucket);
   const knownUnfillable = isKnownUnfillable(day, status);
   return (
@@ -1949,7 +1949,8 @@ function BackfillRunPanel({
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="text-sm font-semibold">
-            Backfill {run.day} — {run.buckets.length} bucket(s)
+            Backfill {run.day ?? `week of ${run.week_start}`} —{" "}
+            {run.buckets ? `${run.buckets.length} bucket(s)` : "all buckets (coverage sweep)"}
           </div>
           <div
             className={cn(

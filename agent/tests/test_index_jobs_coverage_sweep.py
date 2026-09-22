@@ -28,15 +28,21 @@ def _autospec_stock_history(monkeypatch, *, summary=None, error=None):
     taking `**kwargs` that would have kept passing against any call at all
     ([[2026-09-07-coverage-sweep-test-double-stale-after-budget-change]]). An autospec needs no
     upkeep: a renamed or added parameter on the real method is a bind error at the call site.
+
+    Each week is a stock_simulator background run (D195): `start_backfill_run` returns a run that
+    `get_backfill_run` reports finished with `summary` on the first poll.
     """
     index_jobs._ensure_trade_integrations_on_path()
     from trade_integrations.stock_simulator.client import StockSimulatorClient
 
     sh = create_autospec(StockSimulatorClient, instance=True)
     if error is not None:
-        sh.backfill_into_week.side_effect = error
+        sh.start_backfill_run.side_effect = error
     else:
-        sh.backfill_into_week.return_value = {"status": "ok", "data": summary}
+        sh.start_backfill_run.return_value = {"status": "ok", "run": {"run_id": "r1", "status": "running"}}
+        sh.get_backfill_run.return_value = {
+            "status": "ok", "run": {"run_id": "r1", "status": "done", "summary": summary}, "logs": [],
+        }
     monkeypatch.setattr("src.trade.stock_simulator_facade.sim_client", lambda: sh)
     monkeypatch.setattr(
         "trade_integrations.dataflows.company_research.market.india_trading_date_iso",
@@ -46,7 +52,7 @@ def _autospec_stock_history(monkeypatch, *, summary=None, error=None):
 
 
 @pytest.mark.unit
-def test_run_stock_history_coverage_sweep_job_calls_backfill_into_week(monkeypatch):
+def test_run_stock_history_coverage_sweep_job_starts_one_backfill_run_per_week(monkeypatch):
     sh = _autospec_stock_history(
         monkeypatch,
         summary=dict(had_errors=False, ok_count=5, failed_count=0, skipped_count=1),
@@ -61,10 +67,11 @@ def test_run_stock_history_coverage_sweep_job_calls_backfill_into_week(monkeypat
     # [[2026-09-07-coverage-sweep-times-out-and-stops-backfilling]].
     # Current week first, then the two before it: a gap from a past week (an outage, an auto-pause)
     # is still healed after the week rolls over.
-    weeks = [c.kwargs["week_start"] for c in sh.backfill_into_week.call_args_list]
-    assert weeks == ["2026-08-18", "2026-08-11", "2026-08-04"]
-    assert all(c.kwargs["include_optional"] and c.kwargs["verify_after"] for c in sh.backfill_into_week.call_args_list)
-    assert sh.backfill_into_week.call_args_list[0].kwargs["budget_seconds"] <= 1200.0
+    calls = sh.start_backfill_run.call_args_list
+    assert [c.kwargs["week_start"] for c in calls] == ["2026-08-18", "2026-08-11", "2026-08-04"]
+    assert all(c.kwargs["include_optional"] and "buckets" not in c.kwargs and "day" not in c.kwargs for c in calls)
+    assert calls[0].kwargs["budget_seconds"] <= 1200.0
+    sh.backfill_into_week.assert_not_called()
     assert result["status"] == "ok"
     assert result["ok_count"] == 15
     assert result["had_errors"] is False
@@ -90,7 +97,7 @@ def test_run_stock_history_coverage_sweep_job_reports_errors(monkeypatch):
 
     result = index_jobs.run_stock_history_coverage_sweep_job({})
     assert "error" not in result, result.get("error")
-    assert sh.backfill_into_week.call_count == 3
+    assert sh.start_backfill_run.call_count == 3
     assert result["status"] == "error"
     assert result["failed_count"] == 9
     assert result["had_errors"] is True
@@ -185,3 +192,46 @@ def test_volume_snapshot_job_is_ist_scoped(tmp_path):
     store = ScheduledResearchJobStore(tmp_path / "jobs.json")
     index_jobs.register_default_index_jobs(store)
     assert store.get("nifty50-constituent-volume-snapshot").timezone == "Asia/Kolkata"
+
+
+@pytest.mark.unit
+def test_sweep_relays_run_log_waits_out_409_and_cancels_run_on_job_cancel(monkeypatch, tmp_path):
+    """[[2026-09-23-backfill-stage-events-lost-across-http]]: the run's log lines (emitted in the
+    stock_simulator process) reach the job's own stage sink; a user run already active (409) is
+    waited out; a scheduled-job cancel cancels the stock_simulator run and propagates."""
+    monkeypatch.setenv("TRADE_STACK_ROOT", str(tmp_path))
+    monkeypatch.setattr(index_jobs, "_BACKFILL_RUN_POLL_SECONDS", 0)
+    from trade_integrations.dataflows.index_research import pipeline_cancel as pc
+    from trade_integrations.stock_simulator.client import StockSimulatorClientError
+
+    sh = _autospec_stock_history(monkeypatch)
+    sh.start_backfill_run.side_effect = [
+        StockSimulatorClientError("a backfill run is already active", status_code=409),
+        {"status": "ok", "run": {"run_id": "r1", "status": "running"}},
+    ]
+    polls = iter([
+        {"run": {"run_id": "r1", "status": "running"}, "logs": [{"seq": 1, "message": "stage backfill[a]: starting"}]},
+        {"run": {"run_id": "r1", "status": "running"}, "logs": [{"seq": 2, "message": "stage backfill[a]: done"}]},
+    ])
+
+    def _poll(run_id, *, since_seq=0):
+        body = next(polls, None)
+        if body is None:  # third poll: the user cancels the scheduled job
+            pc.request_pipeline_cancel("user_cancel", job_id="sweep")
+            return {"run": {"run_id": "r1", "status": "running"}, "logs": []}
+        return body
+
+    sh.get_backfill_run.side_effect = _poll
+    lines: list[str] = []
+    with pc.pipeline_job_scope("sweep"):
+        pc.set_stage_sink(lines.append)
+        try:
+            with pytest.raises(pc.PipelineCancelledError):
+                index_jobs.run_stock_history_coverage_sweep_job({})
+        finally:
+            pc.set_stage_sink(None)
+
+    assert "stage backfill[a]: starting" in lines and "stage backfill[a]: done" in lines
+    assert any("waiting" in line for line in lines)
+    assert [c.kwargs.get("since_seq") for c in sh.get_backfill_run.call_args_list][:3] == [0, 1, 2]
+    sh.cancel_backfill_run.assert_called_once_with("r1")

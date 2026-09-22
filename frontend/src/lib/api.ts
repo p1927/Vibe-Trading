@@ -4860,8 +4860,12 @@ export interface HubStockHistoryBackfillRunRequest {
 export interface HubStockHistoryBackfillRun {
   run_id: string;
   stream_key: string;
-  day: string;
-  buckets: string[];
+  // A panel run has `day` + `buckets`; the daily coverage-sweep job's run has `week_start`, no
+  // bucket filter (null = every bucket) and a budget.
+  day: string | null;
+  week_start: string | null;
+  buckets: string[] | null;
+  budget_seconds: number | null;
   symbol: string;
   include_optional: boolean;
   status: "running" | "done" | "error" | "cancelled";
