@@ -1119,10 +1119,9 @@ export const api = {
   // authed like the other SSE endpoints (EventSource can't send a header).
   scheduledRunStreamUrl: (id: string) =>
     withAuthTicket(`${BASE}/scheduled-runs/${encodeURIComponent(id)}/stream`),
-  // A registry entry's `live_log_stream_url`: a path on this API (the stock_simulator relay,
-  // ticket-authed) or, for an openalgo entry, an absolute URL used as-is.
-  liveLogStreamUrl: (url: string) =>
-    url.startsWith("/") ? withAuthTicket(`${BASE}${url}`) : Promise.resolve(url),
+  // A registry entry's `live_log_stream_url`: always a path on this API (the stock_simulator or
+  // openalgo relay), ticket-authed, so no service's secret ever reaches the browser.
+  liveLogStreamUrl: (path: string) => withAuthTicket(`${BASE}${path}`),
   // Live log of one stock_simulator stream (a coverage backfill run's `stream_key`, D195),
   // relayed by the agent so the simulator's token never reaches the browser.
   stockSimulatorLogStreamUrl: (key: string) =>
