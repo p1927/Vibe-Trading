@@ -31,7 +31,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 from src.market_data import canonical_fx_pair
-from src.agent.instrument_identity import registry_equivalent_symbol
+from src.agent.instrument_identity import (
+    registry_equivalent_symbol,
+    registry_known_instrument,
+)
 
 from src.agent.resolution_context import (
     IdentityConstraint,
@@ -48,6 +51,11 @@ _RESOLVER_TOOL = "search_symbol"
 # providers don't cover India anyway) and returns the same resolver envelope
 # shape, so it satisfies identity resolution exactly like search_symbol does.
 _RESOLVER_TOOLS = (_RESOLVER_TOOL, "search_india_symbol")
+# Trade D214: proposing an agent for a name Trade's entity registry already
+# knows (NIFTY, ^NSEI, BANKNIFTY, ...) needs no resolver lock from an earlier
+# turn; the registry is the identity authority for it (D30). Local and MCP
+# spellings of the tool both count.
+_REGISTRY_RESOLVING_TOOL = "propose_autonomous_agent"
 _PRIVATE_COMPANY_SKILL_NAMES = {
     "private-company",
     "private-company-analysis",
@@ -1181,7 +1189,10 @@ class GroundingLedger:
 
         if tool_name == "load_skill" and self._identity_required:
             frozen_status = batch_identity_status or self.identity_status
-            if frozen_status in _RESOLUTION_INCOMPLETE_STATUSES:
+            # With no identity record at all no lookup is pending, so there is
+            # nothing for workflow selection to race; the orchestrator loads its
+            # skill on the first turn, before any instrument is resolved.
+            if frozen_status in _RESOLUTION_INCOMPLETE_STATUSES and self._identities:
                 return ToolAuthorization(
                     allowed=False,
                     error_code="identity_required",
@@ -1199,6 +1210,15 @@ class GroundingLedger:
 
         self._identity_required = True
         self._buffer_output = True
+        if tool_name == _REGISTRY_RESOLVING_TOOL or tool_name.endswith(
+            "_" + _REGISTRY_RESOLVING_TOOL
+        ):
+            requested = symbols
+            symbols = tuple(
+                symbol for symbol in symbols if not self._lock_registry_known(symbol, call_id)
+            )
+            if not symbols:
+                return ToolAuthorization(allowed=True, symbols=requested)
         authorized = {_normalize_symbol(item) for item in batch_authorized_symbols}
         frozen_status = batch_identity_status or self.identity_status
         if frozen_status != "locked" or not authorized:
@@ -1638,6 +1658,29 @@ class GroundingLedger:
             )
             self._identity_required = True
             self._buffer_output = True
+
+    def _lock_registry_known(self, symbol: str, call_id: str) -> bool:
+        """Lock ``symbol`` from Trade's entity registry when it knows the name (D214).
+
+        Returns:
+            Whether the registry knew ``symbol`` and a lock is now recorded.
+        """
+        canonical = registry_known_instrument(symbol)
+        if canonical is None:
+            return False
+        key = f"registry:{canonical}"
+        existing = self._identities.get(key)
+        self._identities[key] = IdentityRecord(
+            query=symbol,
+            status="locked",
+            symbol=_normalize_symbol(canonical),
+            instrument_type="index",
+            source_tool_call_id=call_id,
+            source=["entity_registry"],
+            version=(existing.version + 1) if existing else 1,
+        )
+        self.persist()
+        return True
 
     def _begin_resolution(self, query: str, call_id: str) -> None:
         """Enter unresolved state before the resolver executes."""

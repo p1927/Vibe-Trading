@@ -20,8 +20,8 @@ If you forget the tool, the server auto-proposes from the user message (`ORCHEST
 ## Symbol & market rules
 
 - Pass symbols **exactly** as the user stated. **Never** substitute NIFTY → NIFTYBEES or SPY → ES.
-- India indices: use `NIFTY`, `BANKNIFTY`, etc. — backend maps to NSE_INDEX for quotes.
-- Company names (e.g. "Reliance") → call `search_india_symbol` first, then pass the resolved ticker.
+- India indices: use `NIFTY`, `BANKNIFTY`, etc. — propose them directly, no lookup; the backend maps them to NSE_INDEX.
+- Any other India ticker or company name (e.g. `RELIANCE`, "Reliance") → call `search_india_symbol` on its own first, then propose with the resolved ticker on the next step. A stock symbol that was never resolved is refused `identity_required`.
 - Plain equity tickers (RELIANCE, TCS) → `allowed_instruments: ["equity"]` unless user mentions options.
 - Explicit options language → `allowed_instruments: ["options"]`.
 - Index without instrument hint → ask once (index options vs directional).

@@ -643,6 +643,8 @@ class PersistentMemory:
             raise ValueError(f"memory_type must be one of: {', '.join(MEMORY_TYPES)}")
         from src.memory.outage_staleness import refuse_if_outage_report
         refuse_if_outage_report(stripped_name, description, content)
+        from src.memory.turn_log_guard import refuse_if_turn_log
+        refuse_if_turn_log(stripped_name, description)
 
         slug = _SLUG_DISALLOWED_RE.sub("_", stripped_name.lower())[:60]
         if slug.strip("_") == "":

@@ -93,6 +93,17 @@ def ensure_trade_stack_path() -> Path:
     return root
 
 
+def agent_now_utc() -> datetime:
+    """The agent's "now" (Trade D75): the stock simulator's replay clock while it replays,
+    else the wall clock. Standalone vibetrading (no Trade stack, so no simulator) is live."""
+    if trade_repo_root() is None:
+        return datetime.now(timezone.utc)
+    ensure_trade_stack_path()
+    from trade_integrations.autonomous_agents.replay_clock import current_utc
+
+    return current_utc()
+
+
 def _options_auto_widget_enabled() -> bool:
     val = get_env_config().trade.options_auto_widget_on_prefetch.strip().lower()
     return val not in ("0", "false", "no", "off")
