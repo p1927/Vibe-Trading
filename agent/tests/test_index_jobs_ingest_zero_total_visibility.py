@@ -39,7 +39,9 @@ def _ingest_job(tmp_path):
     ],
 )
 def test_gated_zero_total_ingest_raises_so_executor_sees_a_failure(tmp_path, monkeypatch, summary):
-    monkeypatch.setattr(index_jobs, "run_hub_news_ingest_job", lambda config=None: summary)
+    monkeypatch.setattr(
+        index_jobs, "run_hub_news_ingest_job", lambda config=None, **kwargs: summary
+    )
 
     with pytest.raises(index_jobs.HubNewsIngestCollectedNothingError, match="collected nothing"):
         index_jobs.dispatch_index_job_sync(_ingest_job(tmp_path))
@@ -62,7 +64,9 @@ def test_gated_zero_total_ingest_raises_so_executor_sees_a_failure(tmp_path, mon
     ],
 )
 def test_successful_or_quiet_ingest_still_completes(tmp_path, monkeypatch, summary):
-    monkeypatch.setattr(index_jobs, "run_hub_news_ingest_job", lambda config=None: summary)
+    monkeypatch.setattr(
+        index_jobs, "run_hub_news_ingest_job", lambda config=None, **kwargs: summary
+    )
 
     index_jobs.dispatch_index_job_sync(_ingest_job(tmp_path))  # must not raise
 
@@ -76,7 +80,13 @@ def test_result_summary_is_still_recorded_on_the_failing_path(tmp_path, monkeypa
         "pause_reason": "llm_wiki_unavailable",
         "totals": {"queued": 0},
     }
-    monkeypatch.setattr(index_jobs, "run_hub_news_ingest_job", lambda config=None: summary)
+    captured_kwargs: dict = {}
+
+    def _fake_run_hub_news_ingest_job(config=None, **kwargs):
+        captured_kwargs.update(kwargs)
+        return summary
+
+    monkeypatch.setattr(index_jobs, "run_hub_news_ingest_job", _fake_run_hub_news_ingest_job)
     job = _ingest_job(tmp_path)
 
     with pytest.raises(index_jobs.HubNewsIngestCollectedNothingError):
@@ -85,3 +95,6 @@ def test_result_summary_is_still_recorded_on_the_failing_path(tmp_path, monkeypa
     recorded = job.config.get(index_jobs.LAST_RESULT_CONFIG_KEY)
     assert recorded, "last_result_summary was not attached before the raise"
     assert recorded.get("pause_reason") == "llm_wiki_unavailable"
+
+    expected_time_budget_s = 0.75 * index_jobs.dispatch_timeout_ms_for(job) / 1000.0
+    assert captured_kwargs.get("time_budget_s") == expected_time_budget_s
