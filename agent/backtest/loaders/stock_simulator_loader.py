@@ -23,7 +23,12 @@ span every requested trading day, so the registry's fallback chain
 recording accumulates, more ranges naturally qualify here without any code
 change.
 
-Interval scope: ``"1D"`` only, resampled from the recorded 1-minute bars.
+Where the bars come from: an index's daily frame is resampled from its recorded 1-minute tape; a
+company's is its stored daily bars, the close panel (Trade D264, D292), which holds every listed
+company's history, not just the days a session was recorded. A company's tape holds 1-minute bars
+only, so it is never resampled here.
+
+Interval scope: ``"1D"`` only.
 Every real production caller of ``resolve_loader``/``fetch`` for an equity
 market passes ``"1D"`` (or nothing); an unsupported interval is rejected
 explicitly rather than silently coerced, matching ``india_broker_loader``'s
@@ -132,6 +137,26 @@ def _bars_to_daily_frame(bars: list, start_date: str, end_date: str) -> Optional
     return daily[_OUTPUT_COLUMNS].astype(float) if not daily.empty else None
 
 
+def _company_symbol(symbol: str, exchange: str) -> str:
+    """The close panel's instrument name: a BSE listing is its own symbol (Trade D277(2))."""
+    return f"{symbol}.BO" if exchange == "BSE" else symbol
+
+
+def _company_daily_frame(sh: Any, symbol: str, exchange: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+    """A company's stored daily bars over the range, or ``None`` unless they cover every requested
+    day (the loader's full-range-or-omit policy)."""
+    rows = sh.company_bars(symbol=_company_symbol(symbol, exchange), start=start_date, end=end_date)
+    if not rows:
+        return None
+    frame = pd.DataFrame(rows)
+    if not _requested_trading_days(start_date, end_date).issubset(set(frame["date"].astype(str))):
+        return None
+    frame.index = pd.to_datetime(frame["date"])
+    frame.index.name = "trade_date"
+    frame = frame.sort_index().dropna(subset=["open", "high", "low", "close"])
+    return frame[_OUTPUT_COLUMNS].astype(float) if not frame.empty else None
+
+
 def _requested_trading_days(start_date: str, end_date: str) -> set[str]:
     """Business-day set for the requested range (no market-holiday calendar —
     a simple, self-contained baseline for the coverage completeness check)."""
@@ -191,12 +216,15 @@ class DataLoader:
         for code in codes:
             try:
                 symbol, exchange = _resolve_symbol(code)
-                if not _has_full_coverage(sh, symbol, exchange, start_date, end_date):
-                    continue
-                bars = sh.index_history(
-                    symbol=symbol, exchange=exchange, since_ist=since_ist, until_ist=until_ist,
-                )
-                frame = _bars_to_daily_frame(bars, start_date, end_date)
+                if exchange in ("NSE", "BSE"):
+                    frame = _company_daily_frame(sh, symbol, exchange, start_date, end_date)
+                else:
+                    if not _has_full_coverage(sh, symbol, exchange, start_date, end_date):
+                        continue
+                    bars = sh.index_history(
+                        symbol=symbol, exchange=exchange, since_ist=since_ist, until_ist=until_ist,
+                    )
+                    frame = _bars_to_daily_frame(bars, start_date, end_date)
             except Exception as exc:  # noqa: BLE001 — one bad symbol never aborts
                 logger.warning("stock_simulator bridge failed for %s: %s", code, exc)
                 continue

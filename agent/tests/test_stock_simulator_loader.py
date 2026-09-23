@@ -26,7 +26,9 @@ class _FakeBar:
 
 
 class _FakeStockHistory:
-    def __init__(self, bars_by_symbol=None, recorded_days_by_symbol=None, chain=None, latest_bar=None):
+    def __init__(self, bars_by_symbol=None, recorded_days_by_symbol=None, chain=None, latest_bar=None,
+                 company_rows=None):
+        self._company = company_rows or {}
         self._bars = bars_by_symbol or {}
         self._recorded = recorded_days_by_symbol or {}
         self._chain = chain
@@ -37,6 +39,10 @@ class _FakeStockHistory:
     def index_history(self, *, symbol, exchange, since_ist, until_ist):
         self.calls.append({"symbol": symbol, "exchange": exchange})
         return self._bars.get(symbol, [])
+
+    def company_bars(self, *, symbol, start, end):
+        self.calls.append({"company": symbol, "start": start, "end": end})
+        return [r for r in self._company.get(symbol, []) if start <= r["date"] <= end]
 
     def recorded_index_days(self, *, symbol, exchange):
         return self._recorded.get(symbol, [])
@@ -118,16 +124,16 @@ def test_fetch_aggregates_1min_bars_into_daily_ohlcv(monkeypatch) -> None:
         _FakeBar("2024-04-02T09:15:00", "2024-04-02", 105, 106, 104, 105.5, 200),
     ]
     fake = _FakeStockHistory(
-        bars_by_symbol={"RELIANCE": bars},
-        recorded_days_by_symbol={"RELIANCE": ["2024-04-01", "2024-04-02"]},
+        bars_by_symbol={"NIFTY": bars},
+        recorded_days_by_symbol={"NIFTY": ["2024-04-01", "2024-04-02"]},
     )
     monkeypatch.setattr(mod, "_ensure_stock_history", lambda: fake)
     loader = DataLoader()
     assert loader.is_available() is True
 
-    out = loader.fetch(["RELIANCE.NS"], "2024-04-01", "2024-04-02")
-    assert "RELIANCE.NS" in out
-    df = out["RELIANCE.NS"]
+    out = loader.fetch(["NIFTY"], "2024-04-01", "2024-04-02")
+    assert "NIFTY" in out
+    df = out["NIFTY"]
     assert list(df.columns) == ["open", "high", "low", "close", "volume"]
     assert df.index.name == "trade_date"
     assert len(df) == 2
@@ -143,21 +149,40 @@ def test_fetch_aggregates_1min_bars_into_daily_ohlcv(monkeypatch) -> None:
     assert day2["open"] == 105
     assert day2["close"] == 105.5
 
-    assert fake.calls[0]["symbol"] == "RELIANCE"
-    assert fake.calls[0]["exchange"] == "NSE"
+    assert fake.calls[0]["symbol"] == "NIFTY"
+    assert fake.calls[0]["exchange"] == "NSE_INDEX"
+
+
+def test_company_reads_its_stored_daily_bars_not_the_tape(monkeypatch) -> None:
+    """Trade D292: a company's daily frame is the close panel's bars; its 1-minute tape is never
+    resampled (it holds only recorded sessions, and used to hold daily bars posing as 1-minute ones).
+    A BSE listing is its own panel symbol."""
+    rows = [
+        {"date": "2024-04-01", "open": 100, "high": 101, "low": 99, "close": 100.3, "volume": 150, "source": "indmoney"},
+        {"date": "2024-04-02", "open": 105, "high": 106, "low": 104, "close": 105.5, "volume": 200, "source": "indmoney"},
+    ]
+    fake = _FakeStockHistory(company_rows={"RELIANCE": rows, "500325.BO": rows[:1]})
+    monkeypatch.setattr(mod, "_ensure_stock_history", lambda: fake)
+    out = DataLoader().fetch(["RELIANCE.NS", "500325.BO"], "2024-04-01", "2024-04-02")
+    df = out["RELIANCE.NS"]
+    assert list(df.columns) == ["open", "high", "low", "close", "volume"] and df.index.name == "trade_date"
+    assert df.loc["2024-04-01", "close"] == 100.3 and df.loc["2024-04-02", "volume"] == 200
+    assert "500325.BO" not in out  # one of two requested days: omitted, full range or nothing
+    assert [c.get("company") for c in fake.calls] == ["RELIANCE", "500325.BO"]
+    assert not any("exchange" in c for c in fake.calls)
 
 
 def test_partial_coverage_omits_symbol(monkeypatch) -> None:
     """2024-04-01/02 are both business days; only one is recorded -> omit."""
     bars = [_FakeBar("2024-04-01T09:15:00", "2024-04-01", 100, 101, 99, 100, 10)]
     fake = _FakeStockHistory(
-        bars_by_symbol={"RELIANCE": bars},
-        recorded_days_by_symbol={"RELIANCE": ["2024-04-01"]},
+        bars_by_symbol={"NIFTY": bars},
+        recorded_days_by_symbol={"NIFTY": ["2024-04-01"]},
     )
     monkeypatch.setattr(mod, "_ensure_stock_history", lambda: fake)
     loader = DataLoader()
 
-    out = loader.fetch(["RELIANCE.NS"], "2024-04-01", "2024-04-02")
+    out = loader.fetch(["NIFTY"], "2024-04-01", "2024-04-02")
     assert out == {}
 
 
