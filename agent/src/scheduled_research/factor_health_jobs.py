@@ -19,7 +19,15 @@ Two jobs, split by cost:
   which takes minutes and hits external vendors. Off by default; set
   ``FACTOR_HEALTH_LIVE_CRON`` to schedule it.
 
-**Not** in ``job_tier_policy.COLLECTION_JOB_TYPES``: this collects nothing and costs no vendor
+- ``factor_reference_check`` (daily, Trade DECISIONS D222) compares each venue's stored reference
+  calendar factor against a fresh vendor fetch (``factors/plan.py:check_references()``, through
+  ``acquire()`` like any factor fetch) and queues the reference's missing days as ordinary gap
+  jobs. The gap planner reads the store only, so this is the only thing that audits the reference
+  itself. It **is** in ``COLLECTION_JOB_TYPES`` (release-only, D60): it calls vendors to write work
+  into the hub's gap queue, and dev's hub is a mirror of release's. A failed fetch fails the run
+  (D103). Override the window with ``config.lookback_days`` (default 90).
+
+**Not** in ``job_tier_policy.COLLECTION_JOB_TYPES`` (the two ``factor_health*`` types): this collects nothing and costs no vendor
 quota in its daily form — it is an observability check over data already held, the same category
 as the ``*_eval`` job types that are deliberately allowed to run in dev. It is meaningful on both
 tiers because each reads its own ``TRADE_STACK_HUB_DIR`` (release's real hub; dev's mirror), and
@@ -50,11 +58,17 @@ FACTOR_HEALTH_LIVE_CRON_ENV = "FACTOR_HEALTH_LIVE_CRON"
 #: 07:10 local, after the overnight recorders have written but early enough that a stopped writer
 #: is visible the same morning.
 DEFAULT_FACTOR_HEALTH_CRON = "10 7 * * *"
+FACTOR_REFERENCE_CHECK_CRON_ENV = "FACTOR_REFERENCE_CHECK_CRON"
+#: 06:40 local: after the overnight EOD refreshes, and before the 07:10 health pass.
+DEFAULT_FACTOR_REFERENCE_CHECK_CRON = "40 6 * * *"
 
 JOB_TYPE_FACTOR_HEALTH = "factor_health"
 JOB_TYPE_FACTOR_HEALTH_LIVE = "factor_health_live"
+JOB_TYPE_FACTOR_REFERENCE_CHECK = "factor_reference_check"
 
-FACTOR_HEALTH_JOB_TYPES = frozenset({JOB_TYPE_FACTOR_HEALTH, JOB_TYPE_FACTOR_HEALTH_LIVE})
+FACTOR_HEALTH_JOB_TYPES = frozenset(
+    {JOB_TYPE_FACTOR_HEALTH, JOB_TYPE_FACTOR_HEALTH_LIVE, JOB_TYPE_FACTOR_REFERENCE_CHECK}
+)
 
 _FALSE_VALUES = {"0", "false", "no", "off"}
 
@@ -93,8 +107,31 @@ def run_factor_health_job(config: dict[str, Any] | None = None) -> dict[str, Any
     return report
 
 
+def run_factor_reference_check_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """D222: each stored reference calendar vs a fresh vendor fetch; missing days are queued."""
+    ensure_trade_stack_path()
+    from datetime import date, timedelta
+
+    from trade_integrations.factors.plan import check_references
+
+    end = date.today()
+    start = end - timedelta(days=int((config or {}).get("lookback_days") or 90))
+    report = check_references(start=start.isoformat(), end=end.isoformat())
+    logger.info(
+        "factor reference check %s..%s: %d reference(s) incomplete %s, %d job(s) queued %s, errors %s",
+        start, end, len(report["references_incomplete"]), report["references_incomplete"],
+        report["jobs"], report["enqueued"], report["errors"] or "none",
+    )
+    return report
+
+
 def dispatch_factor_health_job_sync(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
+    if job_type == JOB_TYPE_FACTOR_REFERENCE_CHECK:
+        from src.scheduled_research.run_outcome import raise_if_run_had_errors
+
+        raise_if_run_had_errors(job, run_factor_reference_check_job(job.config), "factor reference check")
+        return
     if job_type == JOB_TYPE_FACTOR_HEALTH:
         run_factor_health_job(job.config)
         return
@@ -139,6 +176,33 @@ def register_default_factor_health_jobs(store: ScheduledResearchJobStore) -> int
             )
         )
         logger.info("registered factor health job factor-health (%s, paused=%s)", daily_cron, not enabled)
+        created += 1
+
+    reference_cron = (
+        os.environ.get(FACTOR_REFERENCE_CHECK_CRON_ENV) or DEFAULT_FACTOR_REFERENCE_CHECK_CRON
+    ).strip()
+    validate_schedule(reference_cron)
+    if store.get("factor-reference-check") is None:
+        store.upsert(
+            ScheduledResearchJob(
+                id="factor-reference-check",
+                prompt=(
+                    "Reference calendars (D222): each venue's stored reference factor vs a fresh "
+                    "vendor fetch; queue the reference's missing days as gap jobs"
+                ),
+                schedule=reference_cron,
+                next_run_at=now_ms,
+                status=JobStatus.PENDING,
+                created_at=now_ms,
+                config={"job_type": JOB_TYPE_FACTOR_REFERENCE_CHECK},
+                paused=not enabled,
+                auto_paused_reason=reason,
+            )
+        )
+        logger.info(
+            "registered factor reference check job factor-reference-check (%s, paused=%s)",
+            reference_cron, not enabled,
+        )
         created += 1
 
     # Opt-in only: this one calls every RECORDED factor's live source.

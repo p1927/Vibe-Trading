@@ -33,6 +33,7 @@ from __future__ import annotations
 from src.scheduled_research.factor_health_jobs import (
     JOB_TYPE_FACTOR_HEALTH,
     JOB_TYPE_FACTOR_HEALTH_LIVE,
+    JOB_TYPE_FACTOR_REFERENCE_CHECK,
 )
 from src.scheduled_research.capture_jobs import (
     JOB_TYPE_HUB_CAPTURE_FACTOR_SNAPSHOT,
@@ -110,6 +111,9 @@ COLLECTION_JOB_TYPES: frozenset[str] = frozenset(
         JOB_TYPE_NSE_REPO_CONSISTENCY,
         JOB_TYPE_RESEARCH_HISTORY_ARCHIVE,
         JOB_TYPE_FINANCIAL_KNOWLEDGE_CURATOR,
+        # Vendor fetch of every reference calendar that writes gap jobs into the hub's queue
+        # (Trade D222); dev's hub is release's mirror, so only release may write that queue.
+        JOB_TYPE_FACTOR_REFERENCE_CHECK,
         # Literal, not a constant: no pipeline claims this job_type, so it falls
         # through `try_dispatch_pipeline_job` to the legacy agent-prompt path and
         # there is no handler module to import a constant from. The gate is

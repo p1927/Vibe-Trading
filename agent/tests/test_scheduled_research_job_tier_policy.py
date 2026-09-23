@@ -109,6 +109,27 @@ def test_factor_health_live_stays_ungated_on_purpose() -> None:
     assert is_collection_job("factor_health_live") is False
 
 
+def test_factor_reference_check_is_registered_release_only_and_fails_on_errors(tmp_path, monkeypatch) -> None:
+    """Trade D222: the reference-calendar check writes gap jobs into the hub queue after a vendor
+    fetch, so it is collection (release-only), registered by default, and a fetch error fails
+    the run instead of recording it completed (D103)."""
+    from src.scheduled_research import factor_health_jobs
+    from src.scheduled_research.run_outcome import JobRunHadErrorsError
+
+    assert is_collection_job("factor_reference_check") is True
+    store = _store(tmp_path)
+    factor_health_jobs.register_default_factor_health_jobs(store)
+    job = store.get("factor-reference-check")
+    assert job is not None and job.config["job_type"] == "factor_reference_check"
+
+    monkeypatch.setattr(
+        factor_health_jobs, "run_factor_reference_check_job",
+        lambda config: {"status": "error", "had_errors": True, "error": "EU/dax: vendor down"},
+    )
+    with pytest.raises(JobRunHadErrorsError, match="EU/dax"):
+        factor_health_jobs.dispatch_factor_health_job_sync(job)
+
+
 def test_collection_job_types_is_nonempty_and_only_strings() -> None:
     assert len(COLLECTION_JOB_TYPES) >= 20
     assert all(isinstance(t, str) and t for t in COLLECTION_JOB_TYPES)
