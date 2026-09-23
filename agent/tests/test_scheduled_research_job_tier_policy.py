@@ -130,6 +130,44 @@ def test_factor_reference_check_is_registered_release_only_and_fails_on_errors(t
         factor_health_jobs.dispatch_factor_health_job_sync(job)
 
 
+def test_factor_gap_fill_is_registered_release_only_runs_in_a_child_and_fails_on_errors(tmp_path, monkeypatch) -> None:
+    """Trade D287: the scheduled gap fill drains the planner's queue from vendors into release's
+    hub, so it is collection (release-only), registered by default with its own budget, runs in the
+    supervised child (D244/D262), and a drained factor's failure fails the run (D36/D282) after
+    recording the run's summary."""
+    from src.scheduled_research import child_dispatch, factor_health_jobs, run_log_buffer
+    from src.scheduled_research.index_jobs import LAST_RESULT_CONFIG_KEY
+    from src.scheduled_research.run_outcome import JobRunHadErrorsError
+
+    assert is_collection_job("factor_gap_fill") is True
+    store = _store(tmp_path)
+    factor_health_jobs.register_default_factor_health_jobs(store)
+    job = store.get("factor-gap-fill")
+    assert job is not None and job.config["job_type"] == "factor_gap_fill"
+    assert job.config["dispatch_timeout_ms"] == factor_health_jobs.FACTOR_GAP_FILL_TIMEOUT_MS
+
+    report = {"status": "error", "had_errors": True, "error": "IN/giftnifty: vendor down",
+              "window": {"start": "2016-09-23", "end": "2026-09-23"}, "enqueued": {"added": 3},
+              "factors_drained": 2, "outcomes": {"filled": 1, "failed": 1}, "days_filled": 30,
+              "failures": {"IN/giftnifty": "vendor down"}}
+    monkeypatch.setattr(factor_health_jobs, "run_factor_gap_fill_job", lambda config: report)
+    with pytest.raises(JobRunHadErrorsError, match="IN/giftnifty"):
+        factor_health_jobs.dispatch_factor_health_job_sync(job)
+    assert job.config[LAST_RESULT_CONFIG_KEY]["days_filled"] == 30
+
+    seen = []
+    monkeypatch.setattr(child_dispatch, "in_child", lambda fn: ("child", fn))
+
+    async def _run_logged(j, dispatch):
+        seen.append(dispatch)
+
+    monkeypatch.setattr(run_log_buffer, "run_logged", _run_logged)
+    asyncio.run(factor_health_jobs.dispatch_factor_health_job(job))
+    assert seen[0][0] == "child"
+    asyncio.run(factor_health_jobs.dispatch_factor_health_job(store.get("factor-health")))
+    assert seen[1] is factor_health_jobs.dispatch_factor_health_job_sync
+
+
 def test_collection_job_types_is_nonempty_and_only_strings() -> None:
     assert len(COLLECTION_JOB_TYPES) >= 20
     assert all(isinstance(t, str) and t for t in COLLECTION_JOB_TYPES)
