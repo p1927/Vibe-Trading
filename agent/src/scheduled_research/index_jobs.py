@@ -1445,11 +1445,29 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
     raise ValueError(f"unsupported index job_type: {job_type!r}")
 
 
+#: Index job types whose dispatch runs in a supervised child process (Trade D244): the CPU/LLM-heavy
+#: ones, each a run of minutes that has hit its dispatch timeout on release. The rest are short
+#: capture/snapshot calls that stay on an API thread. `stock_history_coverage_sweep` stays too: its
+#: work already runs in the simulator's own D204 child, and this job only polls it.
+CHILD_PROCESS_JOB_TYPES = frozenset({
+    JOB_TYPE_HUB_NEWS_INGEST,
+    JOB_TYPE_HUB_NEWS_ENTITY,
+    JOB_TYPE_NEWS_QUALITY_EVAL,
+    JOB_TYPE_NEWS_DEDUP_QUALITY_EVAL,
+    JOB_TYPE_INDEX_RESEARCH,
+    JOB_TYPE_INDEX_CALIBRATION,
+    JOB_TYPE_INDEX_PREDICTION_POST_CLOSE,
+    JOB_TYPE_FORECAST_PLATFORM_RETRAIN,
+})
+
+
 async def dispatch_index_job(job: ScheduledResearchJob) -> None:
     """Run an index job without blocking the asyncio event loop."""
+    from src.scheduled_research.child_dispatch import in_child
     from src.scheduled_research.run_log_buffer import run_logged
 
-    await run_logged(job, dispatch_index_job_sync)
+    heavy = str(job.config.get("job_type") or "") in CHILD_PROCESS_JOB_TYPES
+    await run_logged(job, in_child(dispatch_index_job_sync) if heavy else dispatch_index_job_sync)
 
 
 def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:

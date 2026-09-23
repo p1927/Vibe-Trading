@@ -125,9 +125,13 @@ def dispatch_trade_data_job_sync(job: ScheduledResearchJob) -> None:
 
 
 async def dispatch_trade_data_job(job: ScheduledResearchJob) -> None:
+    # The two NSE repository jobs run in a supervised child process (Trade D244): usually seconds,
+    # but each has hung to its 2700 s timeout, and a hung thread cannot be stopped.
+    from src.scheduled_research.child_dispatch import in_child
     from src.scheduled_research.run_log_buffer import run_logged
 
-    await run_logged(job, dispatch_trade_data_job_sync)
+    heavy = str(job.config.get("job_type") or "") in {JOB_TYPE_NSE_MACRO_REFRESH, JOB_TYPE_NSE_REPO_CONSISTENCY}
+    await run_logged(job, in_child(dispatch_trade_data_job_sync) if heavy else dispatch_trade_data_job_sync)
 
 
 def register_default_trade_data_jobs(store: ScheduledResearchJobStore) -> int:

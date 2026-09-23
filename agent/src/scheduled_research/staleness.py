@@ -84,8 +84,9 @@ _INDEX_JOB_DISPATCH_TIMEOUT_MS = 30 * 60 * 1000
 # dispatch_concurrency (see ``ScheduledResearchExecutor.tick``). Only
 # ``hub_news_ingest`` is listed today: live-verified 2026-09-02 that running
 # more than ~2-3 markets' worth of it concurrently (all contending for the
-# same local resources — the JSONL staging store's process-wide
-# ``threading.RLock``, and the single local LLM-Wiki server every ingest run
+# same local resources — the JSONL staging store's lock (a cross-process
+# flock, ``news_staging_store._staging_lock``, since each run is its own child
+# process under D244), and the single local LLM-Wiki server every ingest run
 # gates on) makes each individual run slow enough to blow past its own
 # per-job ``dispatch_timeout_ms`` budget, even the 90-minute one on the
 # ``-full`` variant — a genuine correctness problem (real work aborted mid-run

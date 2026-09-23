@@ -71,9 +71,11 @@ def dispatch_financial_knowledge_job_sync(job: ScheduledResearchJob) -> None:
 
 
 async def dispatch_financial_knowledge_job(job: ScheduledResearchJob) -> None:
+    # Runs in a supervised child process (Trade D244): a 10-45 minute LLM curation batch.
+    from src.scheduled_research.child_dispatch import in_child
     from src.scheduled_research.run_log_buffer import run_logged
 
-    await run_logged(job, dispatch_financial_knowledge_job_sync)
+    await run_logged(job, in_child(dispatch_financial_knowledge_job_sync))
 
 
 def register_default_financial_knowledge_jobs(store: ScheduledResearchJobStore) -> int:

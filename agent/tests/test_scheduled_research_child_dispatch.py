@@ -80,3 +80,118 @@ def test_timeout_kills_the_child(tmp_path) -> None:
     pid = int(pid_file.read_text())  # the child got as far as the hanging work
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+# --- The heavy job types beyond dst_eval (heavy-job-types-child-process-migration) ---------------
+
+
+def _target_reports(job: ScheduledResearchJob) -> None:
+    from src.scheduled_research.run_log_buffer import append_log
+    from trade_integrations.child_process import in_supervised_child
+    from trade_integrations.job_deadline import remaining_seconds
+
+    append_log(job.id, "stage x: done")  # what a dispatch's stage sink does
+    job.config["_seen"] = {"in_child": in_supervised_child(), "budget": remaining_seconds()}
+
+
+def _target_leaves_work_behind(job: ScheduledResearchJob) -> None:
+    import subprocess
+    import threading
+
+    proc = subprocess.Popen(["sleep", "300"])  # a browser a library started, say
+    Path(job.config["pid_file"]).write_text(str(proc.pid))
+    threading.Thread(target=time.sleep, args=(300,)).start()  # non-daemon: an abandoned worker
+
+
+def test_child_gets_the_budget_the_log_and_the_child_marker() -> None:
+    from src.scheduled_research.run_log_buffer import get_logs_since
+    from trade_integrations.job_deadline import job_deadline
+
+    job = _job()
+    with job_deadline(120):
+        child_dispatch.in_child(_target_reports)(job)
+    assert job.config["_seen"]["in_child"] is True
+    assert 60 < job.config["_seen"]["budget"] <= 120
+    assert any(e["message"] == "stage x: done" for e in get_logs_since(job.id))
+
+
+def test_a_cancel_at_the_deadline_gets_no_grace_past_it(tmp_path) -> None:
+    """The executor writes the job's cancel flag when its dispatch budget runs out; the child's
+    10 s cancel grace must not extend the run past that same budget (it used to: +10 s)."""
+    import threading
+
+    from trade_integrations.dataflows.index_research.pipeline_cancel import (
+        PipelineCancelledError,
+        request_pipeline_cancel,
+    )
+    from trade_integrations.job_deadline import job_deadline
+
+    job = _job(pid_file=str(tmp_path / "pid"))
+    timer = threading.Timer(4.5, request_pipeline_cancel, args=("dispatch_timeout",), kwargs={"job_id": job.id})
+    started = time.monotonic()
+    timer.start()
+    try:
+        with job_deadline(5), pytest.raises((TimeoutError, PipelineCancelledError)):
+            child_dispatch.in_child(_target_hangs)(job)
+    finally:
+        timer.cancel()
+    assert time.monotonic() - started < 7
+
+
+def test_nothing_the_child_started_outlives_its_run(tmp_path) -> None:
+    pid_file = tmp_path / "pid"
+    started = time.monotonic()
+    child_dispatch.in_child(_target_leaves_work_behind)(_job(pid_file=str(pid_file)))
+    assert time.monotonic() - started < 60  # the non-daemon thread did not hold the child open
+    pid = int(pid_file.read_text())
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail(f"grandchild {pid} outlived the child")
+
+
+@pytest.mark.parametrize(
+    ("module", "job_type", "heavy"),
+    [
+        ("index_jobs", "hub_news_ingest", True),
+        ("index_jobs", "hub_news_entity", True),
+        ("index_jobs", "news_quality_eval", True),
+        ("index_jobs", "news_dedup_quality_eval", True),
+        ("index_jobs", "index_research", True),
+        ("index_jobs", "index_calibration", True),
+        ("index_jobs", "index_prediction_post_close", True),
+        ("index_jobs", "forecast_platform_retrain", True),
+        ("index_jobs", "oi_snapshot", False),
+        ("index_jobs", "stock_history_coverage_sweep", False),
+        ("hub_calibration_jobs", "hub_morning_calibration", True),
+        ("hub_calibration_jobs", "hub_evening_maintenance", True),
+        ("financial_knowledge_jobs", "financial_knowledge_curator", True),
+        ("options_jobs", "options_plan_refresh", True),
+        ("options_jobs", "options_position_monitor", False),
+        ("trade_data_jobs", "nse_macro_refresh", True),
+        ("trade_data_jobs", "nse_repo_consistency", True),
+        ("trade_data_jobs", "trade_fills_export", False),
+    ],
+)
+def test_heavy_job_types_dispatch_in_a_child(monkeypatch, module, job_type, heavy) -> None:
+    import importlib
+
+    mod = importlib.import_module(f"src.scheduled_research.{module}")
+    family = module.removesuffix("_jobs")
+    dispatch, sync = getattr(mod, f"dispatch_{family}_job"), getattr(mod, f"dispatch_{family}_job_sync")
+    seen = {}
+
+    async def _fake_run_logged(job, fn):
+        seen["dispatch"] = fn
+
+    monkeypatch.setattr("src.scheduled_research.run_log_buffer.run_logged", _fake_run_logged)
+    asyncio.run(dispatch(_job(job_type=job_type)))
+    if heavy:
+        assert seen["dispatch"].func is child_dispatch.run_in_child
+        assert seen["dispatch"].keywords["dispatch_sync"] is sync
+    else:
+        assert seen["dispatch"] is sync

@@ -261,12 +261,14 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
 
         emit_stage_event(f"stage options_plan_refresh[{ticker}]: starting")
         stage_started = time.monotonic()
-        # Bounded in its own thread: this function already runs off the event
-        # loop (dispatch_options_job wraps it in asyncio.to_thread), so a
-        # plain blocking call with a timeout is enough. A timed-out ticker's
-        # thread is abandoned (best-effort; the pipeline call itself is not
-        # cancelled) rather than letting it stall the rest of the watchlist.
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        # Bounded in its own thread. A timed-out ticker's thread is abandoned (the
+        # pipeline call itself is not cancelled) rather than letting it stall the rest of
+        # the watchlist. Not a `with` block: its exit is shutdown(wait=True), which joined
+        # the timed-out thread and so stalled the watchlist anyway (runs hit the 2700 s
+        # dispatch ceiling). The job runs in a child process (D244) that exits when the
+        # run does, which ends an abandoned thread.
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
             future = pool.submit(refresh_options_research, ticker, config=cfg)
             try:
                 did_refresh = future.result(timeout=_OPTIONS_PLAN_REFRESH_PER_TICKER_TIMEOUT_S)
@@ -282,6 +284,8 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
                 )
                 timed_out.append(ticker)
                 continue
+        finally:
+            pool.shutdown(wait=False)
 
         emit_stage_event(
             f"stage options_plan_refresh[{ticker}]: done in "
@@ -470,10 +474,16 @@ def dispatch_options_job_sync(job: ScheduledResearchJob) -> None:
 
 
 async def dispatch_options_job(job: ScheduledResearchJob) -> None:
-    """Run an options job without blocking the asyncio event loop."""
+    """Run an options job without blocking the asyncio event loop.
+
+    `options_plan_refresh` (minutes of per-ticker research) runs in a supervised child process
+    (Trade D244); the sub-second position monitor stays on an API thread.
+    """
+    from src.scheduled_research.child_dispatch import in_child
     from src.scheduled_research.run_log_buffer import run_logged
 
-    await run_logged(job, dispatch_options_job_sync)
+    heavy = str(job.config.get("job_type") or "") == JOB_TYPE_OPTIONS_PLAN_REFRESH
+    await run_logged(job, in_child(dispatch_options_job_sync) if heavy else dispatch_options_job_sync)
 
 
 def register_default_options_jobs(store) -> int:

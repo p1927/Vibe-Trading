@@ -28,10 +28,21 @@ _MAX_LOGS_PER_JOB = 500
 _LOCK = threading.Lock()
 _BUFFERS: Dict[str, Deque[Dict[str, Any]]] = {}
 _SEQ_COUNTERS: Dict[str, int] = {}
+#: Set in a job's child process (``child_dispatch.main``): nobody reads this process's buffer, so
+#: a line is printed instead and the supervising API process appends it to the job's own log.
+_PRINT_INSTEAD = False
+
+
+def print_instead_of_buffering() -> None:
+    global _PRINT_INSTEAD
+    _PRINT_INSTEAD = True
 
 
 def append_log(job_id: str, message: str) -> None:
     """Append one log line for ``job_id``, evicting the oldest once past 500."""
+    if _PRINT_INSTEAD:
+        print(message, flush=True)
+        return
     with _LOCK:
         seq = _SEQ_COUNTERS.get(job_id, 0) + 1
         _SEQ_COUNTERS[job_id] = seq

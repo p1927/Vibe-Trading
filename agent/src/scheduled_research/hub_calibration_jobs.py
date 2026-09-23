@@ -127,9 +127,12 @@ def dispatch_hub_calibration_job_sync(job: ScheduledResearchJob) -> None:
 
 
 async def dispatch_hub_calibration_job(job: ScheduledResearchJob) -> None:
+    # Both types run in a supervised child process (Trade D244): each is a run of 5-45 minutes of
+    # calibration and LLM maintenance work that has hit its dispatch timeout on release.
+    from src.scheduled_research.child_dispatch import in_child
     from src.scheduled_research.run_log_buffer import run_logged
 
-    await run_logged(job, dispatch_hub_calibration_job_sync)
+    await run_logged(job, in_child(dispatch_hub_calibration_job_sync))
 
 
 def register_default_hub_calibration_jobs(store: ScheduledResearchJobStore) -> int:
