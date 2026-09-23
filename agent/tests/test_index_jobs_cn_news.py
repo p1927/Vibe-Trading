@@ -31,6 +31,7 @@ def test_register_default_index_jobs_includes_cn_news_ingest(tmp_path):
     assert "currents" in full.config["sources"]
     assert "marketaux" not in full.config["sources"]
     assert "moneycontrol" not in full.config["sources"]
+    assert "web_search_constituent" in full.config["sources"]  # Trade D253
 
     light = store.get("cn-hub-news-ingest-light")
     assert light is not None
