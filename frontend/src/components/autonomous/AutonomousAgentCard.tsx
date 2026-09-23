@@ -279,6 +279,12 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
 
       {expanded && !isDraft && (
         <div className="mt-2 space-y-2 border-t border-border/60 pt-2 text-[11px]">
+          {agent.trading_halted && (
+            <p className="text-red-600/90">
+              <span className="font-medium">Trading halted: </span>
+              {agent.trading_halt_reason || "no reason recorded"} — exits still run; Resume lifts the halt.
+            </p>
+          )}
           {bootstrapFailed && agent.bootstrap_error && (
             <p className="text-red-600/90">{agent.bootstrap_error}</p>
           )}
@@ -317,7 +323,7 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
                 Pause
               </button>
             )}
-            {agent.status === "paused" && onResume && (
+            {(agent.status === "paused" || agent.trading_halted) && onResume && (
               <button type="button" onClick={onResume} className="rounded border px-2 py-0.5 hover:bg-muted">
                 Resume
               </button>

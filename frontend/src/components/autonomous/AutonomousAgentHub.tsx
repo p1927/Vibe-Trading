@@ -211,7 +211,8 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
 
   const handleResume = async (id: string) => {
     try {
-      await api.resumeAutonomousAgent(id);
+      const result = await api.resumeAutonomousAgent(id);
+      if (result.halt_cleared) toast.success(`Trading halt lifted (was: ${result.halt_cleared})`);
       await load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Resume failed");
@@ -384,7 +385,9 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
             agent={agent}
             onOpen={() => openAgent(agent)}
             onPause={agent.status === "running" ? () => handlePause(agent.id) : undefined}
-            onResume={agent.status === "paused" ? () => handleResume(agent.id) : undefined}
+            onResume={
+              agent.status === "paused" || agent.trading_halted ? () => handleResume(agent.id) : undefined
+            }
             onDelete={() => void handleDelete(agent)}
           />
         ))}

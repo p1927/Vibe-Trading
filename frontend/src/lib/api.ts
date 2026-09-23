@@ -1491,7 +1491,7 @@ export const api = {
       { method: "POST" },
     ),
   resumeAutonomousAgent: (agentId: string) =>
-    request<{ status: string; agent: AutonomousAgentInstance }>(
+    request<{ status: string; agent: AutonomousAgentInstance; halt_cleared?: string | null }>(
       `/autonomous-agents/${encodeURIComponent(agentId)}/resume`,
       { method: "POST" },
     ),
@@ -7104,6 +7104,9 @@ export interface AutonomousAgentInstance {
   // Terminal-stop cause. "simulation_complete" means the replay pass ended; a stopped agent
   // is never resumable, which is what distinguishes it from a restart-paused one.
   stop_reason?: "user" | "simulation_complete" | string | null;
+  // Set by the risk halt (nautilus_openalgo_bridge.risk_state); Resume lifts it.
+  trading_halted?: boolean;
+  trading_halt_reason?: string | null;
   infra_pending?: string[];
   vibe_session_id?: string;
   symbols: string[];
