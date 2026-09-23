@@ -359,9 +359,25 @@ def finalize_infra_heal(agent_id: str) -> None:
     schedule_agent_bootstrap(agent_id)
 
 
+#: Autonomous job types whose dispatch runs in the supervised child (Trade D244/D262): the quant
+#: tick rebuilds the quant review (market history, TA, factor maps) and ran up to 300 s on an API
+#: thread beside other heavy jobs. It places no order itself: an alert becomes a
+#: ``strategy_revision`` turn POSTed to the API's session (``vibe_trigger.dispatch_quant_alert``),
+#: which runs the turn, and any paper order in it, in the API process. The tick saves its new
+#: snapshot before dispatching (``quant_monitor.run_quant_monitor_tick``), so a child killed at
+#: the deadline never re-sends the same alert. Trade backlog:
+#: 2026-09-23-autonomous-agent-quant-long-thread-runs.
+CHILD_PROCESS_JOB_TYPES = frozenset({JOB_TYPE_QUANT})
+
+
 async def dispatch_autonomous_job(job: ScheduledResearchJob) -> None:
     from src.scheduled_research.run_log_buffer import run_logged
 
+    if str((job.config or {}).get("job_type") or "") in CHILD_PROCESS_JOB_TYPES:
+        from src.scheduled_research.child_dispatch import in_child
+
+        await run_logged(job, in_child(dispatch_autonomous_job_sync))
+        return
     await run_logged(job, _dispatch_autonomous_job_inner, run_in_thread=False)
 
 
@@ -433,4 +449,5 @@ async def _dispatch_autonomous_job_inner(job: ScheduledResearchJob) -> None:
 
 
 def dispatch_autonomous_job_sync(job: ScheduledResearchJob) -> None:
-    asyncio.run(dispatch_autonomous_job(job))
+    """One autonomous job's dispatch, run to completion on this thread (the D244 child's entry)."""
+    asyncio.run(_dispatch_autonomous_job_inner(job))

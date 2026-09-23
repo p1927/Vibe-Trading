@@ -195,3 +195,39 @@ def test_heavy_job_types_dispatch_in_a_child(monkeypatch, module, job_type, heav
         assert seen["dispatch"].keywords["dispatch_sync"] is sync
     else:
         assert seen["dispatch"] is sync
+
+
+@pytest.mark.parametrize(
+    ("job_type", "heavy"),
+    [
+        ("autonomous_agent_quant", True),
+        ("autonomous_agent_watch", False),
+        ("autonomous_agent_news", False),
+    ],
+)
+def test_autonomous_quant_tick_dispatches_in_a_child(monkeypatch, job_type, heavy) -> None:
+    """Trade backlog 2026-09-23-autonomous-agent-quant-long-thread-runs: the quant tick (quant
+    review rebuild) runs in the child; the child's entry runs the inner dispatch itself, so it
+    never re-enters `in_child`."""
+    from src.scheduled_research import autonomous_agent_jobs as mod
+
+    seen = {}
+
+    async def _fake_run_logged(job, fn, **kwargs):
+        seen["dispatch"] = fn
+
+    monkeypatch.setattr("src.scheduled_research.run_log_buffer.run_logged", _fake_run_logged)
+    asyncio.run(mod.dispatch_autonomous_job(_job(job_type=job_type, autonomous_agent_id="aa_x")))
+    if heavy:
+        assert seen["dispatch"].func is child_dispatch.run_in_child
+        assert seen["dispatch"].keywords["dispatch_sync"] is mod.dispatch_autonomous_job_sync
+        ran = []
+
+        async def _inner(job):
+            ran.append(job.id)
+
+        monkeypatch.setattr(mod, "_dispatch_autonomous_job_inner", _inner)
+        mod.dispatch_autonomous_job_sync(_job(job_type=job_type))
+        assert len(ran) == 1 and "dispatch" in seen
+    else:
+        assert seen["dispatch"] is mod._dispatch_autonomous_job_inner
