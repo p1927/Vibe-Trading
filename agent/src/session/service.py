@@ -734,6 +734,7 @@ class SessionService:
                     history=history,
                     session_id=session_id,
                     session_config=session_config,
+                    task_request=attempt.prompt,
                 ),
             )
         finally:

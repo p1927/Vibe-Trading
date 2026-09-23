@@ -1232,6 +1232,7 @@ class AgentLoop:
         history: Optional[List[Dict[str, Any]]] = None,
         session_id: str = "",
         session_config: Optional[Dict[str, Any]] = None,
+        task_request: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Run the ReAct loop synchronously.
 
@@ -1240,6 +1241,9 @@ class AgentLoop:
             history: Prior conversation messages.
             session_id: Session ID.
             session_config: Optional session.config for orchestrator / autonomous modes.
+            task_request: The part of ``user_message`` a human wrote, when the caller
+                prepended system context to it. Only this text is scanned for task
+                target files. Defaults to ``user_message``.
 
         Returns:
             Execution result dict.
@@ -1278,7 +1282,19 @@ class AgentLoop:
             self.memory.run_dir = str(run_dir)
 
         state_store.save_request(run_dir, user_message, {"session_id": session_id})
-        from src.session.autonomous_agent_profile import is_autonomous_agent_session
+        from src.session.autonomous_agent_profile import (
+            is_autonomous_agent_session,
+            scheduler_turn_kind,
+        )
+
+        # Task target files come only from what a human asked for. A scheduler turn's
+        # prompt is built by the system, and prefetched context is not the request: file
+        # names in either are not write targets (2026-09-23-bootstrap-degraded-missing-target-file).
+        self._write_task_text = (
+            ""
+            if scheduler_turn_kind(self._session_config)
+            else (user_message if task_request is None else task_request)
+        )
 
         self._grounding = GroundingLedger(
             run_dir=run_dir,
@@ -1410,7 +1426,7 @@ class AgentLoop:
                         "if your task was to update a file, state that it is done and where."
                     )
                     pending_directive = self._pending_write_directive(
-                        user_message, run_started_wall
+                        self._write_task_text, run_started_wall
                     )
                     if pending_directive:
                         wrap_content += "\n\n" + pending_directive
@@ -1429,7 +1445,7 @@ class AgentLoop:
                 # "answered but incomplete".
                 if iteration == self.max_iterations - 1:
                     pending_directive = self._pending_write_directive(
-                        user_message, run_started_wall
+                        self._write_task_text, run_started_wall
                     )
                     if pending_directive:
                         trace.write(
@@ -2123,7 +2139,7 @@ class AgentLoop:
                 )
             elif not self._released_fallback:
                 pending_directive = self._pending_write_directive(
-                    user_message, run_started_wall
+                    self._write_task_text, run_started_wall
                 )
                 if pending_directive:
                     final_reason = (

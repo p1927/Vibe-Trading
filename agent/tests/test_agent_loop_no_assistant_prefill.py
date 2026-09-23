@@ -146,3 +146,31 @@ def test_auto_compact_handoff_summary_is_reintroduced_as_user_message(
 
     assert messages[-1]["role"] == "user"
     assert "Continue from the summary above" in messages[-1]["content"]
+
+
+@pytest.mark.parametrize(
+    ("turn_kind", "task_request", "degraded"),
+    [
+        ("bootstrap", None, False),  # scheduler turn: the prompt is system-built
+        (None, "Analyze NIFTY", False),  # chat turn: only the human's text is the request
+        (None, None, True),  # a human who really asks for a file is still held to it
+    ],
+)
+def test_target_file_check_reads_only_the_human_request(
+    tmp_path: Path, turn_kind: Any, task_request: Any, degraded: bool
+) -> None:
+    """2026-09-23-bootstrap-degraded-missing-target-file: a file name in system-built text
+    (a scheduler turn's prompt, prefetched context) made a healthy run end degraded."""
+    from src.session.orchestrator_profile import SESSION_KIND_AGENT
+
+    config = {"session_kind": SESSION_KIND_AGENT, "turn_kind": turn_kind} if turn_kind else None
+    llm = _StubLLM()
+    agent = _build_agent(llm, max_iter=3, tmp_run_dir=tmp_path / "run")
+    message = (
+        f"[agent_context] learning notes: update {tmp_path / 'CLAUDE.md'} when rules change."
+        "\n\nAnalyze NIFTY"
+    )
+    result = agent.run(message, session_config=config, task_request=task_request)
+    assert result["status"] == "success"
+    assert bool(result.get("degraded")) is degraded, result.get("reason")
+    assert ("target file" in str(result.get("reason") or "")) is degraded
