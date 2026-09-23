@@ -1670,10 +1670,10 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "mode": "full",
                 "ticker": "SPX",
                 "market": "US",
-                # Explicit list, not "all" — excludes moneycontrol/web_search_sector/
-                # web_search_constituent/watcher, which are Nifty-50-specific sources
-                # with no US equivalent yet.
-                "sources": "rss,web_search,web_search_global,marketaux,currents",
+                # Explicit list, not "all": web_search_sector/watcher are India-only.
+                # web_search_constituent sweeps this market's own constituents
+                # (Trade D253: US, CN and JP; one slice of 15 queries, ~48 s).
+                "sources": "rss,web_search,web_search_global,web_search_constituent,marketaux,currents",
                 "lookback_days": 3,
                 "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
@@ -1722,8 +1722,8 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 # keyword fallback wired for this yet (see this job's backlog
                 # item for the open follow-up). SearXNG's market-aware query
                 # widening (same _ingest_web_search_ticker/_ingest_web_search_market
-                # path proven for US) is the real source here.
-                "sources": "rss,web_search,web_search_global",
+                # path proven for US) is the real source here. Constituent sweep: Trade D253.
+                "sources": "rss,web_search,web_search_global,web_search_constituent",
                 "lookback_days": 3,
                 "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },
@@ -1767,8 +1767,8 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 # category="business" + country="cn" returns real, on-topic
                 # articles (Evergrande, Alibaba share placement, Shein IPO,
                 # etc.), not empty like JP's country query. No marketaux
-                # (not configured/no key).
-                "sources": "rss,web_search,web_search_global,currents",
+                # (not configured/no key). Constituent sweep: Trade D253.
+                "sources": "rss,web_search,web_search_global,web_search_constituent,currents",
                 "lookback_days": 3,
                 "dispatch_timeout_ms": _HUB_NEWS_FULL_INGEST_DISPATCH_TIMEOUT_MS,
             },

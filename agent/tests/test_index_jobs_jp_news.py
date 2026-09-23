@@ -29,6 +29,7 @@ def test_register_default_index_jobs_includes_jp_news_ingest(tmp_path):
     assert "currents" not in full.config["sources"]
     assert "marketaux" not in full.config["sources"]
     assert "moneycontrol" not in full.config["sources"]
+    assert "web_search_constituent" in full.config["sources"]  # Trade D253
 
     light = store.get("jp-hub-news-ingest-light")
     assert light is not None
