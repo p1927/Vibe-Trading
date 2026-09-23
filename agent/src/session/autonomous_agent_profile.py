@@ -8,7 +8,12 @@ strategy_revision and 59 chat turns — see the backlog item
 .claude/backlog/items/2026-09-23-agent-prompt-85k-tokens.md), widened on purpose (D54) with the
 rarely used but critical tools: execution, exits, positions/orders, decision and status. A tool
 not listed here is not reachable on a scheduler turn; a user chat turn in the same session
-(no ``turn_kind``) keeps the whole registry.
+(no ``turn_kind``) keeps the whole registry except what the capability filter strips.
+
+Every turn of an autonomous agent session, a user chat turn included, loses the raw broker order
+tools (``intent_capabilities.RAW_ORDER_TOOLS``: place/modify/cancel/close orders directly). Its
+only order paths are ``execute_autonomous_basket`` and the ``submit_*`` bridge intents, which pass
+the one risk gate (ADD autonomous_agents.md § Risk).
 
 Order matters for the prefix cache: the filtered registry keeps the full registry's order.
 """
@@ -16,6 +21,7 @@ Order matters for the prefix cache: the filtered registry keeps the full registr
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from src.agent.tools import ToolRegistry
@@ -30,6 +36,12 @@ _BLOCKED_TOOL_FRAGMENTS = (
     "get_index_trade_widget",
     "execute_autonomous_basket",
     "place_order",
+)
+# Raw broker order tools for that same fallback: stricter than RAW_ORDER_TOOLS (it may strip a
+# harmless tool) so a missing resolver never hands an agent session a raw order tool.
+# tests/test_agent_raw_order_tool_deny.py pins that it covers every RAW_ORDER_TOOLS name.
+_RAW_ORDER_FALLBACK = re.compile(
+    r"(place|modify|cancel)_\w*order|close_all_positions|analyzer_toggle|etoro_(close|cancel|edit|copy)"
 )
 
 TURN_KINDS = ("bootstrap", "research", "strategy_revision", "post_execution", "watch_report")
@@ -158,6 +170,8 @@ def filter_registry_for_autonomous_agent(
             continue
         if caps is None:
             if any(fragment in name.lower() for fragment in _BLOCKED_TOOL_FRAGMENTS):
+                continue
+            if _RAW_ORDER_FALLBACK.search(name.lower()):
                 continue
         elif not is_tool_allowed_for_capabilities(name, caps):
             continue
