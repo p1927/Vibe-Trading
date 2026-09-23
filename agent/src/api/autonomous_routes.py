@@ -367,7 +367,7 @@ def resume_agent(
     _auth: None = Depends(require_local_or_auth),
 ) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.proposals import resume_autonomous_agent
-    from trade_integrations.autonomous_agents.store import get_agent, save_agent
+    from trade_integrations.autonomous_agents.store import get_agent, update_agent
     from src.scheduled_research.autonomous_agent_jobs import finalize_infra_heal, register_agent_jobs
     from src.scheduled_research.autonomous_bootstrap import schedule_agent_bootstrap
 
@@ -392,8 +392,13 @@ def resume_agent(
                 # explicitly kick the bootstrap back off on user resume.
                 if was_restart_paused and bootstrap in {"pending", "running"}:
                     if bootstrap == "running" and not agent.get("last_decision"):
-                        agent["bootstrap_status"] = "pending"
-                        save_agent(agent)
+                        def _repend(latest: Dict[str, Any]) -> bool:
+                            if latest.get("last_decision"):
+                                return False
+                            latest["bootstrap_status"] = "pending"
+                            return True
+
+                        agent = update_agent(agent_id, _repend)
                     schedule_agent_bootstrap(agent_id)
                 elif bootstrap == "failed":
                     # A bootstrap that failed outright (timeout/exception in

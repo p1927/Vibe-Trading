@@ -53,7 +53,7 @@ def resume_pending_bootstraps() -> int:
 def resume_stale_pending_bootstraps(*, max_age_s: float = _PENDING_BOOTSTRAP_MAX_AGE_S) -> int:
     """Re-schedule bootstrap when commit succeeded but bootstrap never started."""
     _ensure_integrations_on_path()
-    from trade_integrations.autonomous_agents.store import get_agent, list_agents, save_agent
+    from trade_integrations.autonomous_agents.store import list_agents, update_agent
 
     now = datetime.now(timezone.utc)
     count = 0
@@ -85,17 +85,20 @@ def resume_stale_pending_bootstraps(*, max_age_s: float = _PENDING_BOOTSTRAP_MAX
         if schedule_agent_bootstrap(agent_id):
             count += 1
         else:
-            latest = get_agent(agent_id)
-            if latest and str(latest.get("bootstrap_status") or "") == "pending":
+            def _mark(latest: dict) -> bool:
+                if str(latest.get("bootstrap_status") or "") != "pending":
+                    return False
                 latest["bootstrap_error"] = "bootstrap schedule retry failed"
-                save_agent(latest)
+                return True
+
+            update_agent(agent_id, _mark)
     return count
 
 
 def resume_stale_running_bootstraps(*, max_age_s: float = _STALE_RUNNING_BOOTSTRAP_MAX_AGE_S) -> int:
     """Re-schedule bootstrap stuck at running with no decision (hung prefetch or API restart)."""
     _ensure_integrations_on_path()
-    from trade_integrations.autonomous_agents.store import get_agent, list_agents, save_agent
+    from trade_integrations.autonomous_agents.store import list_agents, update_agent
 
     now = datetime.now(timezone.utc)
     count = 0
@@ -138,9 +141,20 @@ def resume_stale_running_bootstraps(*, max_age_s: float = _STALE_RUNNING_BOOTSTR
             agent_id,
             age_s,
         )
-        agent["bootstrap_status"] = "pending"
-        agent["bootstrap_error"] = f"bootstrap timed out after {int(age_s)}s; retrying"
-        save_agent(agent)
+        def _reset(latest: dict, age_s: float = age_s) -> bool:
+            # Re-check under the lock: a decision or a new turn may have landed since the scan.
+            if (
+                str(latest.get("bootstrap_status") or "") != "running"
+                or latest.get("last_decision")
+                or latest.get("streaming")
+            ):
+                return False
+            latest["bootstrap_status"] = "pending"
+            latest["bootstrap_error"] = f"bootstrap timed out after {int(age_s)}s; retrying"
+            return True
+
+        if update_agent(agent_id, _reset).get("bootstrap_status") != "pending":
+            continue
         if schedule_agent_bootstrap(agent_id):
             count += 1
     return count

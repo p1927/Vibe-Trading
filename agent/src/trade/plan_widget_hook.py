@@ -82,12 +82,10 @@ def mark_user_chat_turn(agent_id: str) -> None:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
-        from trade_integrations.autonomous_agents.store import get_agent, save_agent
+        from trade_integrations.autonomous_agents.store import update_agent
 
-        agent = get_agent(agent_id)
-        if not agent:
-            return
-        agent["active_turn_kind"] = "user_chat"
-        save_agent(agent)
+        update_agent(agent_id, lambda agent: agent.__setitem__("active_turn_kind", "user_chat"))
+    except KeyError:
+        return
     except Exception:
-        logger.debug("mark user chat turn failed for %s", agent_id, exc_info=True)
+        logger.warning("mark user chat turn failed for %s", agent_id, exc_info=True)

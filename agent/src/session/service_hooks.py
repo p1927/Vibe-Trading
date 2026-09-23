@@ -163,17 +163,21 @@ def clear_agent_streaming(agent_id: str) -> None:
 
         ensure_trade_stack_path()
         from trade_integrations.autonomous_agents.bootstrap import safe_finalize_bootstrap_if_ready
-        from trade_integrations.autonomous_agents.store import get_agent, save_agent
+        from trade_integrations.autonomous_agents.store import update_agent
 
-        agent = get_agent(agent_id)
-        if not agent:
-            return
-        if agent.get("streaming"):
+        def _clear(agent: dict) -> bool:
+            if not agent.get("streaming"):
+                return False
             agent["streaming"] = False
-            save_agent(agent)
+            return True
+
+        # Locked field write: a full-record save here erased decisions recorded during the turn.
+        update_agent(agent_id, _clear)
         safe_finalize_bootstrap_if_ready(agent_id)
+    except KeyError:
+        return
     except Exception:
-        logger.debug("clear agent streaming failed for %s", agent_id, exc_info=True)
+        logger.warning("clear agent streaming failed for %s", agent_id, exc_info=True)
 
 
 async def maybe_orchestrator_propose_guard(
