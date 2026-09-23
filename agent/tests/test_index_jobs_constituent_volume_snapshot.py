@@ -27,6 +27,7 @@ def test_run_constituent_volume_snapshot_job_delegates_to_capture_and_append(mon
         "trade_integrations.factors.registry.constituent_factor_keys_for_market",
         lambda market: ("volume_interest_score",),
     )
+    monkeypatch.setattr("nautilus_openalgo_bridge.market_hours.is_real_nse_market_open", lambda: True)
 
     result = index_jobs.run_constituent_volume_snapshot_job(None)
 

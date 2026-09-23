@@ -111,7 +111,9 @@ def test_dispatch_flags_a_dead_source_without_failing_the_job(tmp_path, monkeypa
         "sources_empty": ["web_search_macro"],
         "totals": {"queued": 4, "ingested": 0},
     }
-    monkeypatch.setattr(index_jobs, "run_hub_news_ingest_job", lambda config=None: dead_run)
+    monkeypatch.setattr(
+        index_jobs, "run_hub_news_ingest_job", lambda config=None, *, time_budget_s=None: dead_run
+    )
     job = _ingest_job(tmp_path)
 
     for _ in range(STALE_AFTER_CONSECUTIVE_EMPTY_RUNS):

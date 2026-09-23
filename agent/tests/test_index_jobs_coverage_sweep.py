@@ -71,7 +71,6 @@ def test_run_stock_history_coverage_sweep_job_starts_one_backfill_run_per_week(m
     assert [c.kwargs["week_start"] for c in calls] == ["2026-08-18", "2026-08-11", "2026-08-04"]
     assert all(c.kwargs["include_optional"] and "buckets" not in c.kwargs and "day" not in c.kwargs for c in calls)
     assert calls[0].kwargs["budget_seconds"] <= 1200.0
-    sh.backfill_into_week.assert_not_called()
     assert result["status"] == "ok"
     assert result["ok_count"] == 15
     assert result["had_errors"] is False
@@ -85,7 +84,7 @@ def test_the_autospec_rejects_an_argument_the_real_method_does_not_take():
 
     sh = create_autospec(StockSimulatorClient, instance=True)
     with pytest.raises(TypeError):
-        sh.backfill_into_week(week_start="2026-08-18", not_a_real_parameter=1)
+        sh.start_backfill_run(week_start="2026-08-18", not_a_real_parameter=1)
 
 
 @pytest.mark.unit

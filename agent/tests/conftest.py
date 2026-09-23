@@ -229,3 +229,18 @@ def _reset_env_config():
     os.environ.update(saved_environ)
     reset_env_config()
     reset_bootstrap()
+
+
+@pytest.fixture(autouse=True)
+def _reset_run_log_buffer():
+    """Every test starts with an empty scheduled-job log buffer.
+
+    ``run_log_buffer`` is module-level state keyed by job id, and many tests dispatch a job
+    called ``job-1``: one that logged a stage line left it in the buffer, and the next test
+    reading ``job-1``'s log saw it (``test_run_log_buffer`` failed after the options and
+    calibration stage-sink tests)."""
+    from src.scheduled_research import run_log_buffer
+
+    run_log_buffer._BUFFERS.clear()
+    run_log_buffer._SEQ_COUNTERS.clear()
+    yield

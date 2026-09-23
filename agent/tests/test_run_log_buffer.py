@@ -14,13 +14,6 @@ import pytest
 from src.scheduled_research import run_log_buffer as buf
 
 
-@pytest.fixture(autouse=True)
-def _isolate_buffers():
-    yield
-    buf._BUFFERS.clear()
-    buf._SEQ_COUNTERS.clear()
-
-
 def test_append_and_get_all():
     buf.append_log("job-1", "hello")
     buf.append_log("job-1", "world")
