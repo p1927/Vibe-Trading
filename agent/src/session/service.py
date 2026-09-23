@@ -729,12 +729,15 @@ class SessionService:
         try:
             result = await loop.run_in_executor(
                 _AGENT_EXECUTOR,
-                lambda: agent.run(
-                    user_message=user_message,
-                    history=history,
-                    session_id=session_id,
-                    session_config=session_config,
-                    task_request=attempt.prompt,
+                lambda: service_hooks.run_as_pace_caller(
+                    attempt.turn_kind,
+                    lambda: agent.run(
+                        user_message=user_message,
+                        history=history,
+                        session_id=session_id,
+                        session_config=session_config,
+                        task_request=attempt.prompt,
+                    ),
                 ),
             )
         finally:

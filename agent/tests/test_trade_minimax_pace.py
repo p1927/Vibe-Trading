@@ -42,3 +42,15 @@ def test_other_provider_keeps_the_sdk_default_clients() -> None:
         {"LANGCHAIN_PROVIDER": "openai", "OPENAI_API_KEY": "sk-test", "LANGCHAIN_MODEL_NAME": "gpt-4o-mini"}
     )
     assert "http_client" not in captured
+
+
+def test_agent_loop_runs_labelled_for_the_pace_wait_measurement() -> None:
+    """Trade D288: the agent loop's thread claims pace slots as `interactive` for a person's
+    message and `agent_turn` when the dispatcher passed a turn kind; unlabelled code is `batch`."""
+    from trade_integrations.rate_limit import _PACE_CALLER_KIND
+
+    from src.session.service_hooks import run_as_pace_caller
+
+    assert run_as_pace_caller(None, _PACE_CALLER_KIND.get) == "interactive"
+    assert run_as_pace_caller("strategy_revision", _PACE_CALLER_KIND.get) == "agent_turn"
+    assert _PACE_CALLER_KIND.get() == "batch"

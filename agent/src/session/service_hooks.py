@@ -17,7 +17,7 @@ from the corresponding point in `service.py`'s attempt lifecycle.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 from src.session.models import Session
 
@@ -149,6 +149,24 @@ def emit_provenance_if_needed(
             )
     except Exception:
         logger.exception("Provenance recording failed")
+
+
+def run_as_pace_caller(turn_kind: Optional[str], fn: Callable[[], Any]) -> Any:
+    """Run ``fn`` (the agent loop, on its executor thread) labelled for Trade's pace queue-wait
+    measurement (Trade DECISIONS D288): ``agent_turn`` when the dispatcher passed a turn kind,
+    ``interactive`` for a person's chat message. Every MiniMax slot the loop's chat model claims
+    on this thread carries the label. Standalone vibe-trading runs ``fn`` unlabelled.
+
+    ponytail: only the loop's own thread is labelled; a tool that fans out to its own threads
+    (swarm, sub-agents) or the pre-turn research prefetch claims as ``batch``. Label those
+    entry points too if the measurement shows they matter.
+    """
+    try:
+        from trade_integrations.rate_limit import pace_caller
+    except ImportError:
+        return fn()
+    with pace_caller("agent_turn" if turn_kind else "interactive"):
+        return fn()
 
 
 def clear_agent_streaming(agent_id: str) -> None:
