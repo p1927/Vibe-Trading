@@ -24,6 +24,8 @@ import logging
 import subprocess
 import sys
 import time
+import tomllib
+from pathlib import Path
 from typing import Any
 
 from src.config.accessor import get_env_config
@@ -36,12 +38,14 @@ logger = logging.getLogger(__name__)
 DST_EVAL_ENABLE_SCHEDULER_ENV = "DST_EVAL_ENABLE_SCHEDULER"
 
 JOB_TYPE_RECORDER_DST = "recorder_dst"
+JOB_TYPE_DST_LITE = "dst_lite"
 JOB_TYPE_PREDICTION_EVAL = "prediction_eval"
 JOB_TYPE_INDEX_RESEARCH_EVAL = "index_research_eval"
 JOB_TYPE_AUTONOMOUS_AGENTS_EVAL = "autonomous_agents_eval"
 
 DST_EVAL_JOB_TYPES = frozenset({
     JOB_TYPE_RECORDER_DST,
+    JOB_TYPE_DST_LITE,
     JOB_TYPE_PREDICTION_EVAL,
     JOB_TYPE_INDEX_RESEARCH_EVAL,
     JOB_TYPE_AUTONOMOUS_AGENTS_EVAL,
@@ -57,7 +61,7 @@ def is_dst_eval_scheduler_enabled(value: str | None = None) -> bool:
     return raw in _TRUE_VALUES
 
 
-def run_recorder_dst_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+def _run_pytest(label: str, args: list[str], *, timeout: int) -> dict[str, Any]:
     """Shell out to pytest: the ``@given(...)`` Hypothesis tests have no direct callable.
 
     Uses the root repo's own ``.venv`` (where ``yfinance``/``tradingagents``/pytest all live),
@@ -71,17 +75,14 @@ def run_recorder_dst_job(config: dict[str, Any] | None = None) -> dict[str, Any]
     python_bin = str(venv_python) if venv_python.is_file() else sys.executable
     try:
         proc = subprocess.run(
-            [
-                python_bin, "-m", "pytest", "tests/test_recorder_dst_lite.py",
-                "-m", "recorder_dst", "-q", "--timeout=120",
-            ],
+            [python_bin, "-m", "pytest", *args],
             cwd=str(root),
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=timeout,
         )
     except Exception as exc:
-        logger.exception("recorder_dst run failed to launch")
+        logger.exception("%s run failed to launch", label)
         return {"status": "error", "error": str(exc), "had_errors": True}
     had_errors = proc.returncode != 0
     summary: dict[str, Any] = {
@@ -92,7 +93,48 @@ def run_recorder_dst_job(config: dict[str, Any] | None = None) -> dict[str, Any]
     }
     if had_errors:
         summary["stderr_tail"] = proc.stderr[-2000:]
-    logger.info("recorder_dst run: returncode=%s", proc.returncode)
+    logger.info("%s run: returncode=%s", label, proc.returncode)
+    return summary
+
+
+def run_recorder_dst_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    return _run_pytest(
+        "recorder_dst",
+        ["tests/test_recorder_dst_lite.py", "-m", "recorder_dst", "-q", "--timeout=120"],
+        timeout=300,
+    )
+
+
+def dst_lite_markers(root: Path) -> list[str]:
+    """Every DST-lite marker the Trade root's ``pyproject.toml`` declares, minus ``recorder_dst``.
+
+    ``pyproject.toml`` is the one list: a marker declared there with the ``_dst`` suffix is both
+    excluded from the default run (``addopts``, checked by ``tests/test_dst_lite_markers_have_a_home.py``)
+    and run here, so a new DST-lite domain gets its nightly home by being declared. ``recorder_dst``
+    keeps its own job (``dst-eval-recorder-dst``).
+    """
+    options = tomllib.loads((root / "pyproject.toml").read_text())["tool"]["pytest"]["ini_options"]
+    names = (str(m).split(":", 1)[0].strip() for m in options["markers"])
+    return sorted(n for n in names if n.endswith("_dst") and n != JOB_TYPE_RECORDER_DST)
+
+
+def run_dst_lite_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Every other DST-lite marker, sockets blocked (they exercise in-process primitives only).
+
+    Before this job the six non-recorder markers were excluded from the default run and ran
+    nowhere (Trade backlog 2026-09-23-dst-lite-markers-no-scheduled-home).
+    """
+    root = trade_repo_root()
+    if root is None:
+        return {"status": "error", "error": "trade repo root not found", "had_errors": True}
+    markers = dst_lite_markers(root)
+    summary = _run_pytest(
+        "dst_lite",
+        ["tests", "-m", " or ".join(markers), "-q", "--timeout=300",
+         "--disable-socket", "--allow-unix-socket"],
+        timeout=1800,
+    )
+    summary["markers"] = markers
     return summary
 
 
@@ -202,6 +244,7 @@ def _dispatch_dst_eval_job_body(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     runners = {
         JOB_TYPE_RECORDER_DST: run_recorder_dst_job,
+        JOB_TYPE_DST_LITE: run_dst_lite_job,
         JOB_TYPE_PREDICTION_EVAL: run_prediction_eval_job,
         JOB_TYPE_INDEX_RESEARCH_EVAL: run_index_research_eval_job,
         JOB_TYPE_AUTONOMOUS_AGENTS_EVAL: run_autonomous_agents_eval_job,
@@ -258,6 +301,7 @@ def register_default_dst_eval_jobs(store: ScheduledResearchJobStore) -> int:
 
     jobs = (
         ("dst-eval-recorder-dst", "Local recorder_dst DST-lite suite", cfg.recorder_dst_cron, JOB_TYPE_RECORDER_DST),
+        ("dst-eval-dst-lite", "Local run of every other DST-lite marker (pyproject.toml *_dst)", cfg.dst_lite_cron, JOB_TYPE_DST_LITE),
         ("dst-eval-prediction", "Local prediction_eval golden-dataset run", cfg.prediction_eval_cron, JOB_TYPE_PREDICTION_EVAL),
         ("dst-eval-index-research", "Local index_research_eval golden-dataset run", cfg.index_research_eval_cron, JOB_TYPE_INDEX_RESEARCH_EVAL),
         ("dst-eval-autonomous-agents", "Local autonomous_agents_eval golden-dataset run", cfg.autonomous_agents_eval_cron, JOB_TYPE_AUTONOMOUS_AGENTS_EVAL),

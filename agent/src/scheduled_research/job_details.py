@@ -32,6 +32,7 @@ from .capture_jobs import (
 )
 from .dst_eval_jobs import (
     JOB_TYPE_AUTONOMOUS_AGENTS_EVAL,
+    JOB_TYPE_DST_LITE,
     JOB_TYPE_INDEX_RESEARCH_EVAL,
     JOB_TYPE_PREDICTION_EVAL,
     JOB_TYPE_RECORDER_DST,
@@ -243,6 +244,9 @@ _JOB_DETAILS: Dict[str, JobTypeDetail] = {
     ),
     JOB_TYPE_RECORDING_WAKE: JobTypeDetail(
         "Wakes a paused 'wait for market open' recording job and resumes its worker."
+    ),
+    JOB_TYPE_DST_LITE: JobTypeDetail(
+        "Runs every other DST-lite marker (pyproject.toml *_dst) via pytest, sockets blocked (local-only)."
     ),
     JOB_TYPE_RECORDER_DST: JobTypeDetail(
         "Runs the recorder_dst Hypothesis property-test suite via pytest (local-only, no CI)."

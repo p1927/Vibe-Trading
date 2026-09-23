@@ -698,6 +698,7 @@ class TradeConfig(_EnvBase):
     # --- scheduled_research/dst_eval_jobs.py --------------------------------
     dst_eval_enable_scheduler: str = Field(alias="DST_EVAL_ENABLE_SCHEDULER", default="")
     recorder_dst_cron: str = Field(alias="RECORDER_DST_CRON", default="30 2 * * *")
+    dst_lite_cron: str = Field(alias="DST_LITE_CRON", default="15 2 * * *")
     prediction_eval_cron: str = Field(alias="PREDICTION_EVAL_CRON", default="45 2 * * *")
     index_research_eval_cron: str = Field(alias="INDEX_RESEARCH_EVAL_CRON", default="0 3 * * *")
     autonomous_agents_eval_cron: str = Field(

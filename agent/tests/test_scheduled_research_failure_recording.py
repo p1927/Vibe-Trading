@@ -220,6 +220,26 @@ def test_dst_eval_ok_summary_is_not_a_failure(monkeypatch) -> None:
     assert job.config["_last_result_summary"]["status"] == "ok"
 
 
+def test_dst_lite_job_runs_every_other_declared_dst_marker_with_sockets_blocked(monkeypatch) -> None:
+    """The `dst_lite` job's markers come from Trade's pyproject.toml (the one list), so none of
+    the six DST-lite markers excluded from the default run is left without a scheduled home."""
+    from src.trade.hub_bridge import trade_repo_root
+
+    markers = dst_eval_jobs.dst_lite_markers(trade_repo_root())
+    assert {"autonomous_agents_dst", "watch_registry_dst", "execution_advisor_dst", "sim_clock_dst",
+            "news_impact_engine_dst", "news_resolver_dst"} <= set(markers)
+    assert "recorder_dst" not in markers  # it keeps its own job
+
+    seen = {}
+    monkeypatch.setattr(dst_eval_jobs, "_run_pytest",
+                        lambda label, args, timeout: seen.update(args=args) or {"status": "error", "had_errors": True})
+    job = _job("dst-eval-dst-lite", config={"job_type": "dst_lite"})
+    with pytest.raises(JobRunHadErrorsError):
+        dst_eval_jobs.dispatch_dst_eval_job_sync(job)
+    assert seen["args"][seen["args"].index("-m") + 1] == " or ".join(markers)
+    assert "--disable-socket" in seen["args"]
+
+
 # --- D86 (2026-09-17 revision): every index_jobs branch now fails loud -------------------------
 #
 # The maintainer originally decided (D86, 2026-09-16) that whether a given branch's `had_errors`
