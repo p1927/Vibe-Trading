@@ -27,6 +27,14 @@ Two jobs, split by cost:
   into the hub's gap queue, and dev's hub is a mirror of release's. A failed fetch fails the run
   (D103). Override the window with ``config.lookback_days`` (default 90).
 
+- ``factor_gap_fill`` (every 3 h, Trade DECISIONS D287) is the scheduled refresh that asks the gap
+  planner (Trade D207(4)): ``factors/plan.py:scheduled_gap_fill()`` plans the last
+  ``config.lookback_days`` (default 3650) into the queue and drains at most ``config.drain_limit``
+  factors (default 10) through the one dispatch path. Release-only collection (vendor fetches into
+  release's hub), and it runs in the supervised child (D244/D262): a drain is minutes of fetch and
+  parquet work. A drained factor that failed makes the run failed after the others ran (D36/D282).
+  ``FACTOR_GAP_FILL_CRON`` overrides the schedule.
+
 **Not** in ``job_tier_policy.COLLECTION_JOB_TYPES`` (the two ``factor_health*`` types): this collects nothing and costs no vendor
 quota in its daily form — it is an observability check over data already held, the same category
 as the ``*_eval`` job types that are deliberately allowed to run in dev. It is meaningful on both
@@ -65,9 +73,19 @@ DEFAULT_FACTOR_REFERENCE_CHECK_CRON = "40 6 * * *"
 JOB_TYPE_FACTOR_HEALTH = "factor_health"
 JOB_TYPE_FACTOR_HEALTH_LIVE = "factor_health_live"
 JOB_TYPE_FACTOR_REFERENCE_CHECK = "factor_reference_check"
+JOB_TYPE_FACTOR_GAP_FILL = "factor_gap_fill"
+
+FACTOR_GAP_FILL_CRON_ENV = "FACTOR_GAP_FILL_CRON"
+#: Every 3 h at :20, after the 06:40 reference check has queued its days; ten factors a run works the
+#: queue down in a few days without a run outgrowing its budget.
+DEFAULT_FACTOR_GAP_FILL_CRON = "20 */3 * * *"
+#: The run's dispatch budget (and the child's timeout). Its leases outlive it, so a killed run's jobs
+#: return to the queue only once they lapse.
+FACTOR_GAP_FILL_TIMEOUT_MS = 45 * 60 * 1000
 
 FACTOR_HEALTH_JOB_TYPES = frozenset(
-    {JOB_TYPE_FACTOR_HEALTH, JOB_TYPE_FACTOR_HEALTH_LIVE, JOB_TYPE_FACTOR_REFERENCE_CHECK}
+    {JOB_TYPE_FACTOR_HEALTH, JOB_TYPE_FACTOR_HEALTH_LIVE, JOB_TYPE_FACTOR_REFERENCE_CHECK,
+     JOB_TYPE_FACTOR_GAP_FILL}
 )
 
 _FALSE_VALUES = {"0", "false", "no", "off"}
@@ -125,8 +143,40 @@ def run_factor_reference_check_job(config: dict[str, Any] | None = None) -> dict
     return report
 
 
+def run_factor_gap_fill_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """D287: one bounded plan + drain pass over release's gap queue."""
+    ensure_trade_stack_path()
+    from trade_integrations.factors.plan import scheduled_gap_fill
+
+    config = config or {}
+    report = scheduled_gap_fill(
+        lookback_days=int(config.get("lookback_days") or 3650),
+        drain_limit=int(config.get("drain_limit") or 10),
+        lease_seconds=int(config.get("lease_seconds") or FACTOR_GAP_FILL_TIMEOUT_MS // 1000 + 600),
+    )
+    logger.info(
+        "factor gap fill %s..%s: %d factor(s) with open gaps (%d day(s)), enqueued %s; drained %d "
+        "factor(s) %s, %d day(s) filled; failures %s",
+        report["window"]["start"], report["window"]["end"], report["plan"]["factors_with_open_gaps"],
+        report["plan"]["open_gap_days"], report["enqueued"], report["factors_drained"],
+        report["outcomes"], report["days_filled"], report["failures"] or "none",
+    )
+    return report
+
+
 def dispatch_factor_health_job_sync(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
+    if job_type == JOB_TYPE_FACTOR_GAP_FILL:
+        from src.scheduled_research.index_jobs import LAST_RESULT_CONFIG_KEY
+        from src.scheduled_research.run_outcome import raise_if_run_had_errors
+
+        report = run_factor_gap_fill_job(job.config)
+        job.config[LAST_RESULT_CONFIG_KEY] = {
+            k: report[k] for k in ("status", "window", "enqueued", "factors_drained", "outcomes",
+                                   "days_filled", "failures")
+        }
+        raise_if_run_had_errors(job, report, "factor gap fill")
+        return
     if job_type == JOB_TYPE_FACTOR_REFERENCE_CHECK:
         from src.scheduled_research.run_outcome import raise_if_run_had_errors
 
@@ -142,9 +192,11 @@ def dispatch_factor_health_job_sync(job: ScheduledResearchJob) -> None:
 
 
 async def dispatch_factor_health_job(job: ScheduledResearchJob) -> None:
+    from src.scheduled_research.child_dispatch import in_child
     from src.scheduled_research.run_log_buffer import run_logged
 
-    await run_logged(job, dispatch_factor_health_job_sync)
+    heavy = str(job.config.get("job_type") or "") == JOB_TYPE_FACTOR_GAP_FILL  # D244/D262
+    await run_logged(job, in_child(dispatch_factor_health_job_sync) if heavy else dispatch_factor_health_job_sync)
 
 
 def register_default_factor_health_jobs(store: ScheduledResearchJobStore) -> int:
@@ -203,6 +255,29 @@ def register_default_factor_health_jobs(store: ScheduledResearchJobStore) -> int
             "registered factor reference check job factor-reference-check (%s, paused=%s)",
             reference_cron, not enabled,
         )
+        created += 1
+
+    gap_fill_cron = (os.environ.get(FACTOR_GAP_FILL_CRON_ENV) or DEFAULT_FACTOR_GAP_FILL_CRON).strip()
+    validate_schedule(gap_fill_cron)
+    if store.get("factor-gap-fill") is None:
+        store.upsert(
+            ScheduledResearchJob(
+                id="factor-gap-fill",
+                prompt=(
+                    "Gap fill (D287): plan the missing days/periods of every factor into the queue, "
+                    "then drain a bounded number of factors through the one dispatch path"
+                ),
+                schedule=gap_fill_cron,
+                next_run_at=now_ms,
+                status=JobStatus.PENDING,
+                created_at=now_ms,
+                config={"job_type": JOB_TYPE_FACTOR_GAP_FILL, "lookback_days": 3650, "drain_limit": 10,
+                        "dispatch_timeout_ms": FACTOR_GAP_FILL_TIMEOUT_MS},
+                paused=not enabled,
+                auto_paused_reason=reason,
+            )
+        )
+        logger.info("registered factor gap fill job factor-gap-fill (%s, paused=%s)", gap_fill_cron, not enabled)
         created += 1
 
     # Opt-in only: this one calls every RECORDED factor's live source.
