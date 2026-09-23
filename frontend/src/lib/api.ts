@@ -1881,8 +1881,7 @@ export const api = {
   // /trade/hub/stock-history/coverage — per-week bucket availability gate.
   // ~90 buckets x 5 days of on-disk/parquet existence checks routinely takes
   // 20-40s (observed directly) — the default 20s abort was cutting this off
-  // before it could finish, surfacing as a false "timed out" error identical
-  // to the one postHubStockHistoryBackfill below was already fixed for.
+  // before it could finish, surfacing as a false "timed out" error.
   getHubStockHistoryCoverage: (params: {
     week: string;
     symbol?: string;
@@ -1896,17 +1895,6 @@ export const api = {
       })}`,
       { timeoutMs: 120_000 },
     ),
-  // /trade/hub/stock-history/backfill — run writers for missing buckets.
-  // Backend handlers declare up to 900s each (e.g. index_tape/option_chain's
-  // IndMoney-then-HuggingFace dual-source fetch) — the default 20s abort
-  // was cutting the request off long before a legitimately-slow backfill
-  // could finish, surfacing as a false "timed out" error.
-  postHubStockHistoryBackfill: (req: HubStockHistoryBackfillRequest) =>
-    request<HubStockHistoryBackfillResponse>("/trade/hub/stock-history/backfill", {
-      method: "POST",
-      body: JSON.stringify(req),
-      timeoutMs: 900_000,
-    }),
   // /trade/hub/stock-history/backfill-runs — background per-day backfill (D195): start returns
   // at once with a run whose `stream_url` is the live-log SSE; poll `get` for status/summary.
   startHubStockHistoryBackfillRun: (req: HubStockHistoryBackfillRunRequest) =>
@@ -1978,7 +1966,7 @@ export const api = {
       })}`,
     ),
   // A "max"-period backfill is a real per-index vendor call (yfinance), not a cache read — the
-  // default 20s abort cut this off in practice, same reasoning as postHubStockHistoryBackfill above.
+  // default 20s abort cut this off in practice.
   backfillMarketTicks: (country: string, index?: string) =>
     request<MarketBackfillResponse>("/trade/markets/backfill", {
       method: "POST",
@@ -2419,8 +2407,7 @@ export const api = {
   // Backend `run_hub_news_ingest` chains multiple source legs (RSS, Currents, web-search
   // waterfall, LLM relevance/distillation); its own docstring documents an 11+ minute
   // worst case for a single leg on "full" mode. The default 20s abort was cutting a
-  // legitimately-slow full ingest off before it could finish, same reasoning as
-  // postHubStockHistoryBackfill above.
+  // legitimately-slow full ingest off before it could finish.
   runHubNewsIngest: (body: HubNewsIngestRequest = { mode: "full" }) =>
     request<HubStagingDrainResponse>("/trade/hub/news-pipeline/ingest", {
       method: "POST",
@@ -4830,23 +4817,6 @@ export interface HubStockHistoryBackfillSummary {
   skipped_count: number;
   duration_ms: number;
   results: HubStockHistoryBackfillResult[];
-}
-
-export interface HubStockHistoryBackfillRequest {
-  week: string;
-  symbol?: string;
-  include_optional?: boolean;
-  dry_run?: boolean;
-  max_jobs?: number;
-  buckets?: string[];
-  verify_after?: boolean;
-}
-
-export interface HubStockHistoryBackfillResponse {
-  status: string;
-  summary: HubStockHistoryBackfillSummary;
-  coverage_after?: HubStockHistoryCoverageResponse | null;
-  error?: string | null;
 }
 
 export interface HubStockHistoryBackfillRunRequest {

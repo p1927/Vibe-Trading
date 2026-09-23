@@ -258,22 +258,28 @@ export function SimulatorReplayDetailPanel({
     if (!day) return;
     setBackfilling((prev) => new Set(prev).add(bucket));
     try {
-      const resp = await api.postHubStockHistoryBackfill({
-        week: day.date,
+      // One day, one bucket: stock_simulator's background backfill run (D195), polled until it
+      // finishes, the same API the coverage panel's per-cell button uses.
+      let { run } = await api.startHubStockHistoryBackfillRun({
+        day: day.date,
+        buckets: [bucket],
         symbol: "NIFTY",
         include_optional: true,
-        buckets: [bucket],
-        verify_after: true,
       });
-      if (resp.status !== "ok") {
-        setBackfillResult((prev) => ({ ...prev, [bucket]: { error: resp.error ?? "backfill failed" } }));
+      while (run && run.status === "running") {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        ({ run } = await api.getHubStockHistoryBackfillRun(run.run_id));
+      }
+      if (!run || run.status !== "done") {
+        const error = run?.error ?? `backfill ${run?.status ?? "failed"}`;
+        setBackfillResult((prev) => ({ ...prev, [bucket]: { error } }));
         return;
       }
-      const result = resp.summary.results.find((r) => r.bucket === bucket);
+      const result = run.summary?.results.find((r) => r.bucket === bucket);
       if (result) {
         setBackfillResult((prev) => ({ ...prev, [bucket]: result }));
       }
-      const nextDay = resp.coverage_after?.days.find((d) => d.day === day.date);
+      const nextDay = run.summary?.coverage_after?.days.find((d) => d.day === day.date);
       if (nextDay) setCoverageDay(nextDay);
       // Bars may now exist where they didn't before — re-trigger the fetch.
       if (bucket === INDEX_TAPE_BUCKET[underlying]) setBarsRefreshKey((k) => k + 1);

@@ -123,28 +123,26 @@ describe("Phase 9 — /trade/hub/stock-history/coverage + backfill", () => {
     expect(url).not.toContain("include_optional=");
   });
 
-  it("postHubStockHistoryBackfill POSTs JSON body", async () => {
+  it("startHubStockHistoryBackfillRun POSTs one day's buckets, and the run is polled by id", async () => {
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
-      mockJsonResponse({
-        status: "ok",
-        summary: {
-          week_start: "2026-08-10", week_end: "2026-08-14", symbol: "NIFTY",
-          had_errors: false, ok_count: 1, failed_count: 0, skipped_count: 0,
-          duration_ms: 100, results: [],
-        },
-        coverage_after: null,
-      }),
+      mockJsonResponse({ status: "ok", run: { run_id: "r1", status: "running" } }),
     );
-    await api.postHubStockHistoryBackfill({
-      week: "2026-08-10", buckets: ["macro_factors"], verify_after: true,
+    await api.startHubStockHistoryBackfillRun({
+      day: "2026-08-10", buckets: ["macro_factors"], symbol: "NIFTY", include_optional: true,
     });
     const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(url).toContain("/trade/hub/stock-history/backfill");
+    expect(url).toContain("/trade/hub/stock-history/backfill-runs");
     expect(init.method).toBe("POST");
     const body = JSON.parse(init.body);
-    expect(body.week).toBe("2026-08-10");
+    expect(body.day).toBe("2026-08-10");
     expect(body.buckets).toEqual(["macro_factors"]);
-    expect(body.verify_after).toBe(true);
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      mockJsonResponse({ status: "ok", run: { run_id: "r1", status: "done" } }),
+    );
+    await api.getHubStockHistoryBackfillRun("r1");
+    const pollUrl = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[1][0] as string;
+    expect(pollUrl).toContain("/trade/hub/stock-history/backfill-runs/r1");
   });
 
   it("getHubIndexHistoryDays and getHubIndexHistoryExpiries encode symbol/exchange", async () => {

@@ -17,15 +17,27 @@ def _client():
 
 
 @pytest.mark.unit
-def test_backfill_dry_run_and_coverage_return_the_shapes_the_callers_read():
+def test_coverage_and_eod_series_return_the_shapes_the_callers_read():
     c = _client()
-    summary = c.backfill_into_week(
-        week_start="2026-09-14", dry_run=True, max_jobs=0, verify_after=False, buckets=["macro_factors"]
-    )["data"]
-    for key in ("had_errors", "ok_count", "failed_count", "skipped_count", "coverage_after"):
-        assert key in summary
     assert "week_start" in c.get_coverage_report(week_start="2026-09-14")["data"]
     assert isinstance(c.list_eod_refreshable_series()["series"], list)
+
+
+@pytest.mark.unit
+def test_the_backfill_run_api_the_routes_proxy_answers_through_the_facade():
+    """Every UI backfill goes through stock_simulator's background run API (D195/D204): the
+    `/trade/hub/stock-history/backfill-runs` routes call these client methods by name. Read-only:
+    asks for the active run, starts nothing."""
+    from trade_integrations.stock_simulator.client import StockSimulatorClientError
+
+    c = _client()
+    for name in ("start_backfill_run", "get_backfill_run", "get_active_backfill_run", "cancel_backfill_run"):
+        assert callable(getattr(c, name)), name
+    try:
+        active = c.get_active_backfill_run()
+    except StockSimulatorClientError as exc:
+        pytest.skip(f"stock_simulator service not usable from this checkout: {exc}")
+    assert "run" in active
 
 
 @pytest.mark.unit
