@@ -191,10 +191,14 @@ class LlmVisionOcrEngine:
             return self._client
         from openai import OpenAI
 
+        from src.providers.trade_minimax_pace import with_trade_minimax_pace
+
+        clients = with_trade_minimax_pace(None, config["base_url"])
         self._client = OpenAI(
             api_key=config["api_key"],
             base_url=config["base_url"] or None,
             timeout=_OCR_TIMEOUT,
+            http_client=clients[0] if clients else None,
         )
         self._client_config = dict(config)
         return self._client

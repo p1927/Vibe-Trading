@@ -1660,8 +1660,16 @@ def build_llm(
                 headers["User-Agent"] = custom_ua
         _validate_explicit_headers(headers, source=f"{caps.name} provider configuration")
         kwargs["default_headers"] = headers
-    if get_env_config().llm.vibe_trading_disable_http_proxy:
-        sync_client, async_client = _build_proxy_free_http_clients()
+    from src.providers.trade_minimax_pace import with_trade_minimax_pace
+
+    clients = with_trade_minimax_pace(
+        _build_proxy_free_http_clients()
+        if get_env_config().llm.vibe_trading_disable_http_proxy
+        else None,
+        creds["base_url"],
+    )
+    if clients is not None:
+        sync_client, async_client = clients
         kwargs["http_client"] = sync_client
         kwargs["http_async_client"] = async_client
         kwargs["vibe_owned_http_clients"] = (sync_client, async_client)
