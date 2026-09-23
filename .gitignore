@@ -27,6 +27,12 @@ agent/runs/
 agent/.ui_runtime/
 agent/.tasks/
 agent/uploads/
+# Trade's MLflow artifacts and executor-gateway call log. Both are anchored to Trade's own store
+# and root now; older MLflow experiments still point here, and the test suite's session-finish
+# tripwire (agent/tests/conftest.py) fails a run that writes here, so this only keeps them out of
+# commits.
+agent/mlruns/
+agent/log/
 # Same runtime artifacts, but written to the repo root when the CLI or server
 # is started from there — sessions.db holds real session transcripts and
 # live/ holds broker audit and kill-switch state.

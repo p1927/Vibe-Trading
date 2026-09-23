@@ -67,6 +67,9 @@ def test_news_quality_eval_definition_pins_the_eval_budget() -> None:
         def upsert(self, job, **kw):
             captured.append(job)
 
+        def delete(self, job_id):  # registration retires old ids (_RETIRED_JOB_IDS)
+            return False
+
     index_jobs.register_default_index_jobs(_Store())  # type: ignore[arg-type]
     job = next((j for j in captured if j.id == "nifty-news-quality-eval"), None)
     if job is None:

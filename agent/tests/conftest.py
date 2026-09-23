@@ -86,6 +86,11 @@ os.environ["USERPROFILE"] = str(_SANDBOX_HOME)
 # dir; some Trade modules resolve it at import. Declare a scratch hub before collection (overriding
 # a `.env`-loaded real one), so no vibetrading test can reach a real hub.
 os.environ["TRADE_STACK_HUB_DIR"] = tempfile.mkdtemp(prefix="trade-pytest-hub-")
+# Trade's executor-gateway call log (`executor_gateway.config.EXECUTOR_GATEWAY_DB_PATH`, read at
+# import) defaults to the Trade root's real `log/executor_gateway.db`: an adapter call a test
+# reaches must not add rows to the live spend rollup (nor, as before that path was root-anchored,
+# create `log/` inside this checkout). Must be set before `import trade_integrations` below.
+os.environ["TRADE_LOG_DIR"] = tempfile.mkdtemp(prefix="trade-pytest-log-")
 (_SANDBOX_HOME / ".vibe-trading").mkdir(parents=True, exist_ok=True)
 
 # Same leak, same mechanism, for MLflow: Trade's `mlflow_config.tracking_uri()` lets an
@@ -176,9 +181,26 @@ def _teardown_sandbox() -> None:
 atexit.register(_teardown_sandbox)
 
 
+#: Where a cwd-relative default (MLflow's `./mlruns`, a `log/` dir) lands when a test runs from
+#: agent/. Both are Trade-owned state that belongs in a temp store under tests.
+_CHECKOUT_LEAK_DIRS = (AGENT_DIR / "mlruns", AGENT_DIR / "log")
+
+
+def _checkout_leak_state() -> set[str]:
+    return {str(p) for d in _CHECKOUT_LEAK_DIRS if d.exists() for p in [d, *d.rglob("*")]}
+
+
+_CHECKOUT_LEAK_BASELINE = _checkout_leak_state()
+
+
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001 - pytest hook
-    """Fail the run if anything escaped the sandbox into the user's own state."""
+    """Fail the run if anything escaped the sandbox into the user's own state or the checkout."""
     _assert_real_root_untouched()
+    if leaked := sorted(_checkout_leak_state() - _CHECKOUT_LEAK_BASELINE):
+        raise AssertionError(
+            f"The suite wrote into the checkout: {leaked[:5]} ({len(leaked)} paths). A test "
+            "reached a cwd-relative store; point it at a temp dir here instead of ignoring it."
+        )
 
 
 @pytest.fixture(autouse=True, scope="session")
