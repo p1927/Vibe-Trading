@@ -21,6 +21,7 @@ instead of raising, matching each tier's own "report-only" docstring intent.
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import sys
 import time
@@ -93,8 +94,26 @@ def _run_pytest(label: str, args: list[str], *, timeout: int) -> dict[str, Any]:
     }
     if had_errors:
         summary["stderr_tail"] = proc.stderr[-2000:]
+        # `error` is what the job's `last_error` shows (`run_outcome.run_error_detail`); without it
+        # a failed run read "no error detail in the summary" and the tails were not persisted.
+        summary["error"] = pytest_failure_detail(proc.returncode, proc.stdout, proc.stderr)
+        logger.warning("%s run failed: %s", label, summary["error"])
     logger.info("%s run: returncode=%s", label, proc.returncode)
     return summary
+
+
+_PYTEST_FAILURE_LINE = re.compile(r"^(FAILED|ERROR) |^E   |^ERROR: |^!+ .* !+$|Interrupted:")
+
+
+def pytest_failure_detail(returncode: int, stdout: str, stderr: str, *, limit: int = 1500) -> str:
+    """The lines of a failed pytest run that say why: the short-summary `FAILED`/`ERROR` lines, the
+    first `E   ` lines, a usage `ERROR:` (exit 4) and the `Interrupted:` banner. Falls back to the last
+    non-empty line when none match (a crash before pytest printed anything)."""
+    lines = [ln.rstrip() for ln in (stdout + "\n" + stderr).splitlines()]
+    picked = list(dict.fromkeys(ln for ln in lines if _PYTEST_FAILURE_LINE.search(ln)))
+    if not picked:
+        picked = [ln for ln in lines if ln.strip()][-1:]
+    return f"pytest exit {returncode}: " + " | ".join(picked)[:limit]
 
 
 def run_recorder_dst_job(config: dict[str, Any] | None = None) -> dict[str, Any]:

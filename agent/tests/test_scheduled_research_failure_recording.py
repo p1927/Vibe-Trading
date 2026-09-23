@@ -240,6 +240,26 @@ def test_dst_lite_job_runs_every_other_declared_dst_marker_with_sockets_blocked(
     assert "--disable-socket" in seen["args"]
 
 
+
+def test_a_failed_pytest_run_says_why_in_last_error(monkeypatch) -> None:
+    """A dst-eval pytest run's failure lines reach `last_error` (it read "no error detail in the
+    summary": the tails were in the summary but `run_error_detail` reads `error`)."""
+    import subprocess
+
+    out = ("....F\n=========================== short test summary info ============================\n"
+           "FAILED tests/test_recorder_dst_lite.py::test_no_category_silently_starved - assert 3 == 4\n"
+           "!!!!!!!!!!!!!!!!!!! Interrupted: 5 errors during collection !!!!!!!!!!!!!!!!!!!!\n")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 1, out, ""))
+    job = _job("dst-eval-recorder-dst", config={"job_type": "recorder_dst"})
+    with pytest.raises(JobRunHadErrorsError, match="test_no_category_silently_starved - assert 3 == 4"):
+        dst_eval_jobs.dispatch_dst_eval_job_sync(job)
+    assert "Interrupted: 5 errors during collection" in job.config["_last_result_summary"]["error"]
+
+    usage = "ERROR: usage: python -m pytest [options] [file_or_dir]\nERROR: unrecognized arguments: --x\n"
+    detail = dst_eval_jobs.pytest_failure_detail(4, "", usage)
+    assert detail.startswith("pytest exit 4: ") and "unrecognized arguments: --x" in detail
+    assert dst_eval_jobs.pytest_failure_detail(1, "", "Segmentation fault\n") == "pytest exit 1: Segmentation fault"
+
 # --- D86 (2026-09-17 revision): every index_jobs branch now fails loud -------------------------
 #
 # The maintainer originally decided (D86, 2026-09-16) that whether a given branch's `had_errors`
