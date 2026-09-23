@@ -119,7 +119,10 @@ def _autonomous_watch_target_running(job: ScheduledResearchJob) -> bool:
     try:
         agent = get_agent(agent_id)
     except Exception:
-        logger.debug("autonomous agent lookup failed for %s", agent_id, exc_info=True)
+        # An unreadable record (D36 raises) must not stall the other startup deferrals.
+        # Treat it as running so the watch tick dispatches and records the real error on
+        # the job's failure state instead of being deferred out of sight.
+        logger.warning("autonomous agent lookup failed for %s; dispatching its watch", agent_id, exc_info=True)
         return True
     return bool(agent) and str(agent.get("status") or "") == "running"
 

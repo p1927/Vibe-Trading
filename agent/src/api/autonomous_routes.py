@@ -10,16 +10,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from src.api.security import require_local_or_auth
-from src.trade.hub_bridge import ensure_trade_stack_path
+from src.trade.hub_bridge import ensure_trade_stack_path, trade_repo_root
 
 logger = logging.getLogger(__name__)
 
 autonomous_router = APIRouter(prefix="/autonomous-agents", tags=["autonomous-agents"])
 
-try:
+if trade_repo_root() is not None:  # standalone vibetrading has no Trade stack; a broken one raises
     ensure_trade_stack_path()
-except Exception:
-    pass
 
 
 def _session_service():

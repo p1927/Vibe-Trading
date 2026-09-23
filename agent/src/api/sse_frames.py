@@ -41,7 +41,7 @@ def _load_full_proposal(proposal_id: str) -> Optional[Dict[str, Any]]:
             if isinstance(data, dict) and data.get("type") == "mandate.proposal":
                 return data
     except Exception:  # pragma: no cover - relay must never break the stream
-        logger.debug("mandate.proposal reload failed for %s", proposal_id, exc_info=True)
+        logger.warning("mandate.proposal reload failed for %s", proposal_id, exc_info=True)
     return None
 
 
@@ -84,7 +84,7 @@ def _scheduled_proposal_frame_from_tool_result(event: Any) -> Optional[str]:
 
         proposal = load_proposal(match.group(1))
     except Exception:  # pragma: no cover - relay must never break the stream
-        logger.debug("scheduled proposal reload failed", exc_info=True)
+        logger.warning("scheduled proposal reload failed", exc_info=True)
         return None
     from src.session.events import SSEEvent
 
@@ -106,7 +106,7 @@ def _load_autonomous_proposal(proposal_id: str) -> Optional[Dict[str, Any]]:
         if isinstance(data, dict) and data.get("type") == "autonomous_agent.proposal":
             return data
     except Exception:
-        logger.debug("autonomous_agent.proposal reload failed for %s", proposal_id, exc_info=True)
+        logger.warning("autonomous_agent.proposal reload failed for %s", proposal_id, exc_info=True)
     return None
 
 
@@ -126,7 +126,7 @@ def _load_latest_session_proposal(session_id: str) -> Optional[Dict[str, Any]]:
         if isinstance(data, dict) and data.get("type") == "autonomous_agent.proposal":
             return data
     except Exception:
-        logger.debug("latest autonomous_agent.proposal lookup failed for %s", session_id, exc_info=True)
+        logger.warning("latest autonomous_agent.proposal lookup failed for %s", session_id, exc_info=True)
     return None
 
 
@@ -281,7 +281,7 @@ def _load_live_action_record(audit_id: str) -> Optional[Dict[str, Any]]:
             if isinstance(record, dict) and record.get("audit_id") == audit_id:
                 return record
     except Exception:  # pragma: no cover - relay must never break the stream
-        logger.debug("live.action reload failed for %s", audit_id, exc_info=True)
+        logger.warning("live.action reload failed for %s", audit_id, exc_info=True)
     return None
 
 
@@ -294,7 +294,7 @@ def _load_agent_audit_record(audit_id: str) -> Optional[Dict[str, Any]]:
 
         return load_agent_audit(audit_id)
     except Exception:
-        logger.debug("agent.action reload failed for %s", audit_id, exc_info=True)
+        logger.warning("agent.action reload failed for %s", audit_id, exc_info=True)
     return None
 
 
