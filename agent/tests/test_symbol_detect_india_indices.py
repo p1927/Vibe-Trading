@@ -46,3 +46,24 @@ def test_extract_primary_ticker_uses_registry_index_set(monkeypatch) -> None:
 
     assert symbol_detect.extract_primary_ticker("what about FAKEINDEX today") == "FAKEINDEX"
     assert symbol_detect.infer_asset_type("", "FAKEINDEX") == "options"
+
+
+def test_listing_error_inside_trade_propagates(monkeypatch) -> None:
+    """Inside Trade a listing failure is a bug: it raises instead of returning every
+    capitalised word as a ticker (Trade D36; 2026-09-24-vibe-symbol-sector-loaders-swallow-errors)."""
+    import pytest
+
+    def broken(_symbol: str) -> bool:
+        raise KeyError("registry row missing 'exchange'")
+
+    monkeypatch.setattr(
+        "trade_integrations.dataflows.company_research.india_symbols.is_india_listed_symbol", broken
+    )
+    with pytest.raises(KeyError):
+        symbol_detect._filter_india_listed(["RELIANCE", "WHAT"])
+
+
+def test_standalone_without_trade_keeps_candidates(monkeypatch) -> None:
+    """Standalone vibe-trading has no listing, so every candidate is kept."""
+    monkeypatch.setattr("src.trade.hub_bridge.trade_repo_root", lambda: None)
+    assert symbol_detect._filter_india_listed(["RELIANCE", "WHAT"]) == ["RELIANCE", "WHAT"]

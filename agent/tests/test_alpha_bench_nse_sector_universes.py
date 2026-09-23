@@ -72,16 +72,51 @@ def test_sector_panel_loader_returns_nonempty_panel(
     }
 
 
-def test_sector_panel_degrades_to_empty_on_constituent_failure(
+def test_sector_panel_raises_when_every_constituent_source_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A constituent-fetch failure degrades to an empty panel, not a crash."""
+    """The constituent chain answers [] when every vendor failed: the loader names that cause."""
+    monkeypatch.setattr(constituents_mod, "load_nse_sector_index_constituents", lambda _method_name: [])
+
+    with pytest.raises(RuntimeError, match="no constituents for niftybank_equity_list"):
+        tool._load_nse_sector_panel("niftybank", "niftybank_equity_list", "2024-01-01", "2024-01-31")
+
+
+def test_sector_panel_propagates_internal_constituent_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bug in the constituent load (here a TypeError) is not turned into an empty roster."""
+
+    def broken(_method_name):
+        raise TypeError("ConstituentRow.__init__() missing 1 required argument: 'market'")
+
+    monkeypatch.setattr(constituents_mod, "load_nse_sector_index_constituents", broken)
+
+    with pytest.raises(TypeError):
+        tool._load_nse_sector_panel("niftybank", "niftybank_equity_list", "2024-01-01", "2024-01-31")
+
+
+def test_sector_panel_drops_vendor_failed_symbol_but_propagates_bug(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A vendor error drops that one symbol (WARNING); a programming error propagates."""
     monkeypatch.setattr(
         constituents_mod,
         "load_nse_sector_index_constituents",
-        lambda _method_name: (_ for _ in ()).throw(RuntimeError("niftyindices.com unreachable")),
+        lambda _method_name: [
+            ConstituentRow(symbol="FAKESYM1", name="FAKESYM1", weight=0.5, sector="", market="IN"),
+            ConstituentRow(symbol="FAKESYM2", name="FAKESYM2", weight=0.5, sector="", market="IN"),
+        ],
     )
 
-    panel = tool._load_nse_sector_panel("niftybank", "niftybank_equity_list", "2024-01-01", "2024-01-31")
+    def vendor_down(symbol, **_kwargs):
+        if symbol == "FAKESYM2":
+            raise RuntimeError("yfinance unreachable")
+        return _ohlcv_frame()
 
-    assert panel["_meta"]["constituent_count"] == 0
+    monkeypatch.setattr(india_ohlcv_mod, "load_symbol_ohlcv", vendor_down)
+    panel = tool._load_nse_sector_panel("niftybank", "niftybank_equity_list", "2024-01-01", "2024-01-31")
+    assert set(panel["close"].columns) == {"FAKESYM1"}
+
+    def bug(_symbol, **_kwargs):
+        raise AttributeError("'NoneType' object has no attribute 'empty'")
+
+    monkeypatch.setattr(india_ohlcv_mod, "load_symbol_ohlcv", bug)
+    with pytest.raises(AttributeError):
+        tool._load_nse_sector_panel("niftybank", "niftybank_equity_list", "2024-01-01", "2024-01-31")

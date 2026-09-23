@@ -52,20 +52,24 @@ def _load_nse_sector_panel(
 
     Mirrors ``_load_nifty50_panel``'s shape, parameterized by index. There is
     no hand-picked fallback roster here (unlike nifty50) — these indices don't
-    have a hardcoded survivor list, so a fetch failure degrades to an empty
-    panel and ``_load_universe_panel`` raises rather than silently benching a
-    fabricated basket.
+    have a hardcoded survivor list, so an empty roster raises here, naming the
+    constituent sources, rather than silently benching a fabricated basket.
     """
     from trade_integrations.dataflows.index_research.constituents import (
         load_nse_sector_index_constituents,
     )
 
-    try:
-        rows = load_nse_sector_index_constituents(method_name)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("%s constituent load failed: %s", index_id, exc)
-        rows = []
+    from trade_integrations.autonomous_agents.agent_issues import PROGRAMMING_ERRORS
+
+    # The constituent chain absorbs its own vendor failures (each logged as a WARNING) and
+    # answers [] when every source failed; anything it raises is a bug and propagates (Trade D36).
+    rows = load_nse_sector_index_constituents(method_name)
     symbols = [row.symbol.upper().strip() for row in rows if row.symbol]
+    if not symbols:
+        raise RuntimeError(
+            f"{index_id}: no constituents for {method_name} — niftyindices.com and "
+            "archives.nseindia.com both failed (see the warnings above)"
+        )
 
     from trade_integrations.dataflows.index_research.alpha_bridge.india_ohlcv import (
         load_symbol_ohlcv,
@@ -75,8 +79,10 @@ def _load_nse_sector_panel(
     for code in symbols:
         try:
             frame = load_symbol_ohlcv(code, start_date=start, end_date=end)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("%s fetch failed for %s: %s", index_id, code, exc)
+        except PROGRAMMING_ERRORS:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a vendor tier (yfinance, OpenAlgo) failed
+            logger.warning("%s: OHLCV fetch failed for %s, dropped from the panel: %s", index_id, code, exc)
             continue
         if frame is None or frame.empty or "close" not in frame.columns:
             continue

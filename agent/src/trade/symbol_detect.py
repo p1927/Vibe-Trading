@@ -180,15 +180,21 @@ def extract_primary_ticker(text: str) -> str | None:
 
 
 def _filter_india_listed(candidates: list[str]) -> list[str]:
-    """Keep tickers that match the India symbol universe when trade stack is available."""
-    try:
-        from trade_integrations.dataflows.company_research.india_symbols import (
-            is_india_listed_symbol,
-        )
+    """Keep tickers that match the India symbol universe when the Trade stack is available.
 
-        return [c for c in candidates if is_india_listed_symbol(c)]
-    except Exception:
+    Standalone vibe-trading (no Trade stack) has no listing and keeps every candidate. Inside
+    Trade a listing error is a bug and propagates (Trade D36): the listing already absorbs its
+    own vendor failures, and answering with every capitalised word would feed prose to the
+    chat prefetch as tickers.
+    """
+    from src.trade.hub_bridge import ensure_trade_stack_path, trade_repo_root
+
+    if trade_repo_root() is None:
         return candidates
+    ensure_trade_stack_path()
+    from trade_integrations.dataflows.company_research.india_symbols import is_india_listed_symbol
+
+    return [c for c in candidates if is_india_listed_symbol(c)]
 
 
 def infer_asset_type(text: str, ticker: str | None) -> str:
