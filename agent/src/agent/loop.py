@@ -1278,12 +1278,19 @@ class AgentLoop:
             self.memory.run_dir = str(run_dir)
 
         state_store.save_request(run_dir, user_message, {"session_id": session_id})
+        from src.session.autonomous_agent_profile import is_autonomous_agent_session
+
         self._grounding = GroundingLedger(
             run_dir=run_dir,
             user_message=user_message,
             history=history,
             contextual_identity_constraints=(
                 get_env_config().agent_tuning.vibe_contextual_identity_constraints
+            ),
+            agent_symbols=(
+                list(self._session_config.get("symbols") or [])
+                if is_autonomous_agent_session(self._session_config)
+                else None
             ),
         )
 

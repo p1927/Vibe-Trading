@@ -2880,3 +2880,37 @@ def test_fx_pair_resolution_authorizes_market_data_consumer(tmp_path: Path) -> N
     assert ledger.identity_status == "locked"
     assert ledger.authorized_symbols == {"GBPUSD=X"}
     assert authorization.allowed is True
+
+
+def test_agent_session_locks_own_and_registry_known_symbols(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An agent's own session starts with its committed symbols locked, and every tool
+    resolves registry-known names itself (D214 extended to agent sessions): the first
+    ``get_quote(NIFTY)`` and a later ``get_quote(INDIAVIX)`` are not refused."""
+    import src.agent.grounding as grounding
+
+    known = {"NIFTY": "NIFTY", "^NSEI": "NIFTY", "INDIAVIX": "INDIAVIX"}
+    monkeypatch.setattr(grounding, "registry_known_instrument", lambda s: known.get(str(s).upper()))
+
+    def quote(ledger: GroundingLedger, symbol: str) -> Any:
+        return ledger.authorize_tool_call(
+            "mcp_openalgo_get_quote",
+            {"symbol": symbol, "exchange": "NSE_INDEX"},
+            batch_authorized_symbols=ledger.authorized_symbols,
+            batch_identity_status=ledger.identity_status,
+            call_id=f"q-{symbol}",
+        )
+
+    ledger = GroundingLedger(
+        run_dir=tmp_path, user_message="Bootstrap: research and decide.", agent_symbols=["NIFTY"]
+    )
+    assert ledger.identity_status == "locked"
+    assert quote(ledger, "NIFTY").allowed is True
+    assert quote(ledger, "INDIAVIX").allowed is True
+    # A name the registry does not know still needs a resolver lock.
+    assert quote(ledger, "ZZUNKNOWN").allowed is False
+
+    # Outside an agent session the gate is unchanged.
+    plain = GroundingLedger(run_dir=tmp_path / "plain", user_message="What is NIFTY at?")
+    assert quote(plain, "NIFTY").allowed is False

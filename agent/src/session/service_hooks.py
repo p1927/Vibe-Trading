@@ -305,13 +305,16 @@ async def run_resend_guards(
     SessionBusyError. They apply to disjoint turns, and at most one runs: the first to
     enqueue a turn owns the session again, so a later one could only be refused.
     """
+    # Re-read the config: committing the turn's proposal promotes this orchestrator session
+    # to the agent's session mid-turn, and the turn-start config would still say orchestrator.
+    current = service.get_session(session.session_id) or session
     if await maybe_orchestrator_propose_guard(
         service,
         session.session_id,
         user_message,
         assistant_text,
         tools_called,
-        dict(session.config),
+        dict(current.config),
     ):
         return True
     if await maybe_autonomous_decision_guard(service, session, user_message, tools_called, turn_kind):

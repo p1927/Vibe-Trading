@@ -1044,6 +1044,7 @@ class GroundingLedger:
         user_message: str,
         history: Sequence[Mapping[str, Any]] | None = None,
         contextual_identity_constraints: bool = True,
+        agent_symbols: Iterable[str] | None = None,
     ) -> None:
         """Create a ledger and seed only authoritative prior identities.
 
@@ -1056,6 +1057,11 @@ class GroundingLedger:
                 instructions cannot authorize a new subject.
             contextual_identity_constraints: Whether explicit market words in
                 the original conversation may narrow resolver candidates.
+            agent_symbols: The committed symbols of the autonomous agent whose
+                session this is (``None`` outside an agent session). They were
+                resolved when the agent was proposed, so they start locked, and
+                every tool in the session resolves registry-known names itself
+                (D214, extended from ``propose_autonomous_agent`` to agent sessions).
         """
         self.run_dir = Path(run_dir)
         self.user_message = user_message
@@ -1083,7 +1089,25 @@ class GroundingLedger:
         self._session_symbol_roots: set[str] = set()
 
         self._seed_symbols(user_message, source="user_message")
+        self._agent_session = agent_symbols is not None
+        for symbol in agent_symbols or ():
+            self._seed_agent_symbol(_normalize_symbol(symbol))
         self.persist()
+
+    def _seed_agent_symbol(self, symbol: str) -> None:
+        """Lock one of the agent's committed symbols, via the registry when it knows it."""
+        if not symbol or self._lock_registry_known(symbol, "agent_record"):
+            return
+        self._identities[f"agent:{symbol}"] = IdentityRecord(
+            query=symbol,
+            status="locked",
+            symbol=symbol,
+            venue=_infer_venue(symbol),
+            instrument_type=_infer_instrument_type(symbol),
+            currency=_infer_currency(symbol),
+            source_tool_call_id="agent_record",
+            source=["agent_record"],
+        )
 
     @property
     def authorized_symbols(self) -> set[str]:
@@ -1210,8 +1234,10 @@ class GroundingLedger:
 
         self._identity_required = True
         self._buffer_output = True
-        if tool_name == _REGISTRY_RESOLVING_TOOL or tool_name.endswith(
-            "_" + _REGISTRY_RESOLVING_TOOL
+        if (
+            self._agent_session
+            or tool_name == _REGISTRY_RESOLVING_TOOL
+            or tool_name.endswith("_" + _REGISTRY_RESOLVING_TOOL)
         ):
             requested = symbols
             symbols = tuple(

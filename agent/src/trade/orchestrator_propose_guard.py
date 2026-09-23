@@ -60,17 +60,20 @@ def needs_propose_guard(
         from trade_integrations.autonomous_agents.orchestrator_intent import (
             assistant_claims_proposal_ready,
             build_auto_propose_kwargs,
+            orchestrator_card_awaiting_confirmation,
             orchestrator_has_propose_intent,
         )
     except Exception:
         logger.debug("orchestrator intent import failed for propose guard", exc_info=True)
         return False
 
+    session_id = str(orchestrator_session_id or (session_config or {}).get("session_id") or "").strip()
+    if session_id and orchestrator_card_awaiting_confirmation(session_id, user_message):
+        return False
     if assistant_claims_proposal_ready(assistant_text):
         return True
     if orchestrator_has_propose_intent(user_message, assistant_text):
         return True
-    session_id = str(orchestrator_session_id or (session_config or {}).get("session_id") or "").strip()
     if build_auto_propose_kwargs(
         user_message=user_message,
         assistant_text=assistant_text,
