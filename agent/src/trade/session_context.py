@@ -62,17 +62,15 @@ def is_autonomous_us_equity_session(session_config: dict[str, Any] | None) -> bo
         return False
     if session_execution_market(cfg) != "US":
         return False
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
+    # An autonomous session only exists on the Trade stack, so these imports must work.
+    from src.trade.hub_bridge import ensure_trade_stack_path
 
-        ensure_trade_stack_path()
-        from trade_integrations.autonomous_agents.intent_capabilities import resolve_capabilities
+    ensure_trade_stack_path()
+    from trade_integrations.autonomous_agents.intent_capabilities import resolve_capabilities
 
-        caps = resolve_capabilities(session_config=cfg)
-        if caps:
-            return not caps.get("payoff")
-    except Exception:
-        pass
+    caps = resolve_capabilities(session_config=cfg)
+    if caps:
+        return not caps.get("payoff")
     profile = str(cfg.get("execution_profile") or "")
     if "equity" in profile:
         return True
@@ -128,7 +126,7 @@ def infer_prefetch_asset_type(
 
             if detect_market(key).value == "US":
                 return "stock"
-        except Exception:
+        except (ImportError, ValueError):  # standalone vibetrading / empty ticker
             return "stock"
 
     return infer_asset_type(content, ticker)
@@ -141,16 +139,13 @@ def classify_prefetch_widget_intent(
     """Classify widget intent; autonomous agents use persisted intent.capabilities first."""
     cfg = session_config or {}
     if is_autonomous_agent_session(cfg):
-        try:
-            from src.trade.hub_bridge import ensure_trade_stack_path
+        from src.trade.hub_bridge import ensure_trade_stack_path
 
-            ensure_trade_stack_path()
-            from trade_integrations.autonomous_agents.intent_capabilities import (
-                classify_prefetch_intent_from_capabilities,
-                resolve_capabilities,
-            )
-        except Exception:
-            return "none"
+        ensure_trade_stack_path()
+        from trade_integrations.autonomous_agents.intent_capabilities import (
+            classify_prefetch_intent_from_capabilities,
+            resolve_capabilities,
+        )
 
         caps = resolve_capabilities(session_config=cfg)
         return classify_prefetch_intent_from_capabilities(content, caps)

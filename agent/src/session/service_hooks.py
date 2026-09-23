@@ -68,25 +68,19 @@ def maybe_refresh_agent_intent(
 
 
 def maybe_mark_autonomous_user_turn(session: Session, content: str) -> None:
-    try:
-        from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
-        from src.trade.session_context import is_autonomous_agent_session
+    from src.trade.autonomous_decision_guard import is_autonomous_scheduler_turn
+    from src.trade.session_context import is_autonomous_agent_session
 
-        cfg = dict(session.config or {})
-        if not is_autonomous_agent_session(cfg) or is_autonomous_scheduler_turn(content):
-            return
-        agent_id = str(cfg.get("autonomous_agent_id") or "").strip()
-        if not agent_id:
-            return
-        from src.trade.plan_widget_hook import mark_user_chat_turn
+    cfg = dict(session.config or {})
+    if not is_autonomous_agent_session(cfg) or is_autonomous_scheduler_turn(content):
+        return
+    agent_id = str(cfg.get("autonomous_agent_id") or "").strip()
+    if not agent_id:
+        return
+    from src.trade.plan_widget_hook import mark_user_chat_turn
 
-        mark_user_chat_turn(agent_id)
-    except Exception:
-        logger.debug(
-            "mark autonomous user turn failed for %s",
-            session.session_id,
-            exc_info=True,
-        )
+    # mark_user_chat_turn already warns on a store failure; nothing here to swallow.
+    mark_user_chat_turn(agent_id)
 
 
 def prefetch_research_for_message(

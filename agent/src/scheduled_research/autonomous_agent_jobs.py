@@ -91,7 +91,8 @@ def nudge_watch_job_after_plan_approval(agent_id: str) -> None:
 
         _get_scheduled_research_executor().wake()
     except Exception:
-        logger.debug("watch job wake after plan approval failed for %s", agent_id, exc_info=True)
+        # The job is already PENDING and due, so the next executor tick still runs it.
+        logger.warning("watch job wake after plan approval failed for %s", agent_id, exc_info=True)
 
 
 def _is_index_agent(agent: dict[str, Any]) -> bool:

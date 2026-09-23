@@ -6,12 +6,10 @@ import json
 from typing import Any
 
 from src.agent.tools import BaseTool
-from src.trade.hub_bridge import ensure_trade_stack_path
+from src.trade.hub_bridge import ensure_trade_stack_path, trade_repo_root
 
-try:
+if trade_repo_root() is not None:  # standalone vibetrading has no Trade stack; a broken one raises
     ensure_trade_stack_path()
-except Exception:
-    pass
 
 
 class ProposeAutonomousAgentTool(BaseTool):
