@@ -34,7 +34,9 @@ def run_autonomous_hygiene_pass() -> None:
         resume_stale_running_bootstraps,
     )
     from trade_integrations.autonomous_agents.recovery import run_autonomous_agent_recovery
+    from trade_integrations.autonomous_agents.store import list_agents
 
+    results: dict[str, object] = {}
     for name, step in (
         ("stale pending bootstrap resume", resume_stale_pending_bootstraps),
         ("stale running bootstrap resume", resume_stale_running_bootstraps),
@@ -44,12 +46,15 @@ def run_autonomous_hygiene_pass() -> None:
         ("infra heal", _heal_infra_paused_agents),
     ):
         try:
-            step()
+            results[name] = step()
         except Exception:
             logger.warning("autonomous hygiene: %s failed", name, exc_info=True)
+            results[name] = "failed"
+    # One line per pass (~1/min) so a live check can see the loop is alive and what it did.
+    logger.info("autonomous hygiene pass: agents=%d %s", len(list_agents()), results)
 
 
-def _heal_infra_paused_agents() -> None:
+def _heal_infra_paused_agents() -> int:
     from src.scheduled_research.autonomous_agent_jobs import finalize_infra_heal
     from trade_integrations.autonomous_agents.infra_startup import maybe_heal_infra_paused_agents
     from trade_integrations.autonomous_agents.store import get_agent, list_agents
@@ -59,11 +64,12 @@ def _heal_infra_paused_agents() -> None:
         for a in list_agents()
         if str(a.get("pause_reason") or "") == "infra" and str(a.get("status") or "") == "paused"
     ]
-    maybe_heal_infra_paused_agents()
+    healed = maybe_heal_infra_paused_agents()
     for agent_id in paused:
         updated = get_agent(agent_id) if agent_id else None
         if updated and str(updated.get("status") or "") == "running":
             finalize_infra_heal(agent_id)
+    return healed
 
 
 async def _loop() -> None:
