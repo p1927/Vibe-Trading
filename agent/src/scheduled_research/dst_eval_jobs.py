@@ -284,9 +284,12 @@ def _compact_dst_eval_summary(summary: Any) -> dict[str, Any]:
 
 
 async def dispatch_dst_eval_job(job: ScheduledResearchJob) -> None:
+    # Every dst-eval job runs in a child process (Trade D243): CPU-heavy golden evals on an API
+    # thread ran ~8x slow beside other heavy jobs and could not be stopped at their timeout.
+    from src.scheduled_research.child_dispatch import in_child
     from src.scheduled_research.run_log_buffer import run_logged
 
-    await run_logged(job, dispatch_dst_eval_job_sync)
+    await run_logged(job, in_child(dispatch_dst_eval_job_sync))
 
 
 def register_default_dst_eval_jobs(store: ScheduledResearchJobStore) -> int:
