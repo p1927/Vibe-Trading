@@ -62,8 +62,12 @@ def _is_placeholder_credential(value: str) -> bool:
     return bool(_PLACEHOLDER_CREDENTIAL_RE.search(value))
 
 
-def _check_llm_provider() -> CheckResult:
-    """Verify LLM provider connectivity."""
+def _check_llm_provider(ping: bool = True) -> CheckResult:
+    """Verify LLM provider connectivity.
+
+    ``ping=False`` runs every local configuration check and skips the network round trip; the API
+    boot gate uses it and probes reachability after startup (src/preflight_startup.py).
+    """
     from src.providers.llm import _sync_provider_env, provider_diagnostics
 
     _cfg = get_env_config()
@@ -182,6 +186,14 @@ def _check_llm_provider() -> CheckResult:
             impact="agent cannot function (would otherwise stall on a slow "
             "TLS/auth failure against the real endpoint)",
             critical=True,
+        )
+
+    if not ping:
+        return CheckResult(
+            name=f"LLM ({provider})",
+            status="ready",
+            message=f"{model} via {diagnostics['base_url']} (configured; reachability probed after startup) | {diag_hint}",
+            impact="",
         )
 
     # Ping the base URL
@@ -393,7 +405,12 @@ def run_preflight(console: Optional[Console] = None) -> List[CheckResult]:
     from src.preflight_parallel import run_checks_concurrently
 
     results: List[CheckResult] = [environment_result] + run_checks_concurrently(remaining_checks)
+    print_preflight(console, results)
+    return results
 
+
+def print_preflight(console: Console, results: List[CheckResult], title: str = "Preflight Check") -> None:
+    """Print the status table and the critical-failure / ready-count footer for ``results``."""
     # Build display table
     table = Table(show_header=False, show_edge=False, padding=(0, 1), expand=False)
     table.add_column(width=4)   # icon
@@ -408,7 +425,7 @@ def run_preflight(console: Optional[Console] = None) -> List[CheckResult]:
         table.add_row(icon, f"[{color}]{r.name}[/{color}]", f"[{color}]{detail}[/{color}]")
 
     console.print()
-    console.print("[bold]Preflight Check[/bold]")
+    console.print(f"[bold]{title}[/bold]")
     console.print(table)
 
     has_critical = bool(critical_failures(results))
@@ -425,4 +442,3 @@ def run_preflight(console: Optional[Console] = None) -> List[CheckResult]:
         console.print(f"\n[dim]{ready_count}/{len(results)} services ready[/dim]")
 
     console.print()
-    return results

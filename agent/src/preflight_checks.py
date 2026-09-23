@@ -40,7 +40,9 @@ def check_environment() -> CheckResult:
 
     status = "ready"
     if not report.layers_loaded and not master and not index_on and not monitor_on:
-        status = "warning"
+        # One of CheckResult's four statuses: print_preflight has no display for any other, and
+        # an unknown one (this used to say "warning") raised KeyError and failed API startup.
+        status = "not_configured"
 
     return CheckResult(
         name="Environment",
@@ -81,3 +83,36 @@ def check_prediction_ml() -> CheckResult:
             impact="forecast lab ML tracks unavailable",
             critical=True,
         )
+
+
+def check_prediction_ml_installed() -> CheckResult:
+    """The API boot gate's half of ``check_prediction_ml``: libomp (macOS) and the packages exist.
+
+    Finding them costs nothing; importing them costs seconds of CPU, so the full import check
+    (``check_prediction_ml``) runs after startup with the other probes (src/preflight_startup.py).
+    """
+    import sys
+    from importlib.util import find_spec
+
+    from src.trade.hub_bridge import ensure_trade_stack_path
+
+    ensure_trade_stack_path()
+    from trade_integrations.ml_runtime_env import PREDICTION_ML_MODULES, resolve_libomp_libdir
+
+    missing = [m for m in PREDICTION_ML_MODULES if find_spec(m) is None]
+    if sys.platform == "darwin" and not resolve_libomp_libdir():
+        missing.append("libomp (brew install libomp)")
+    if missing:
+        return CheckResult(
+            name="Prediction ML",
+            status="error",
+            message=f"not installed: {', '.join(missing)}",
+            impact="forecast lab ML tracks unavailable — run: ./scripts/ensure_prediction_ml.sh",
+            critical=True,
+        )
+    return CheckResult(
+        name="Prediction ML",
+        status="ready",
+        message=f"installed: {', '.join(PREDICTION_ML_MODULES)} (imports verified after startup)",
+        impact="",
+    )

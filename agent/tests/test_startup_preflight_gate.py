@@ -21,7 +21,10 @@ TUSHARE_OFF = CheckResult("Tushare", "not_configured", "no token", "CN data degr
 def _stub_startup(monkeypatch: pytest.MonkeyPatch, results: list[CheckResult]) -> list[str]:
     started: list[str] = []
     monkeypatch.setattr("src.config.migrate.migrate_legacy_state", lambda: None)
-    monkeypatch.setattr("src.preflight.run_preflight", lambda console: results)
+    monkeypatch.setattr("src.preflight_startup.run_boot_gate", lambda console: results)
+    monkeypatch.setattr(
+        "src.preflight_startup.start_background_probes", lambda console: started.append("probes")
+    )
     monkeypatch.setattr(
         "src.api.scheduled_routes._start_scheduled_research_executor",
         lambda: started.append("executor"),

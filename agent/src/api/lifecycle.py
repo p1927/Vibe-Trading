@@ -50,8 +50,13 @@ def _configure_process_logging() -> None:
 
 
 async def _run_startup_preflight() -> None:
-    """Run preflight checks on server startup; raise if a critical check failed."""
-    from src.preflight import critical_failures, run_preflight
+    """Run the local preflight gate on server startup; raise if a critical check failed.
+
+    Network probes run after startup instead (src/preflight_startup.py): a startup path does no
+    network I/O.
+    """
+    from src.preflight import critical_failures
+    from src.preflight_startup import run_boot_gate, start_background_probes
 
     from src.config import migrate as _migrate
     # Function-local, like the rest of this module: `channels_routes`/`scheduled_routes` pull in
@@ -70,7 +75,7 @@ async def _run_startup_preflight() -> None:
         _migrate.migrate_legacy_state()  # one-time pre-#904 state move; must never block startup
     except Exception:  # pragma: no cover — best-effort
         logging.getLogger(__name__).warning("Legacy state migration failed", exc_info=True)
-    failed = critical_failures(run_preflight(console))
+    failed = critical_failures(run_boot_gate(console))
     if failed:
         # A check that declares itself critical ("agent cannot function") gates boot, the same
         # as the CLI paths in cli/_legacy.py. Raising here fails the FastAPI lifespan, so uvicorn
@@ -108,6 +113,7 @@ async def _run_startup_preflight() -> None:
 
     if get_env_config().agent_tuning.vibe_trading_channels_auto_start:
         await _start_channel_runtime()
+    start_background_probes(console)
 
 
 async def _stop_scheduled_research_on_shutdown() -> None:
