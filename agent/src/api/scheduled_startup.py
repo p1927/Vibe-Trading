@@ -69,16 +69,6 @@ def boot_scheduled_research_stack(get_store) -> None:
     except Exception:
         logger.exception("failed to boot-pause running autonomous agents")
     try:
-        from trade_integrations.autonomous_agents.recovery import run_autonomous_agent_recovery
-
-        # Reconciles real OpenAlgo position/order state per agent (in addition to
-        # the stale-streaming/bootstrap-finalize passes) so a crash between order
-        # placement and handoff persistence doesn't leave a live position with no
-        # active exit-monitoring. This had no production call site before.
-        run_autonomous_agent_recovery()
-    except Exception:
-        logger.exception("failed to run autonomous agent recovery on boot")
-    try:
         from src.scheduled_research.lifecycle import recover_scheduler_jobs_on_stack_boot
 
         recover_scheduler_jobs_on_stack_boot(get_store())
@@ -150,6 +140,12 @@ def boot_scheduled_research_stack(get_store) -> None:
     # Autonomous-agent hygiene (bootstrap resume, recovery, infra heal): also not gated on the
     # executor's resume flag — pure hygiene runs while the scheduler is paused (D98; ADD
     # autonomous_agents.md § Lifecycle). It used to run on every GET /autonomous-agents poll.
+    # It is also the boot recovery: its first pass runs as soon as startup returns, after the
+    # boot-pause above, and repeats every 60 s. The boot sequence used to run the recovery
+    # passes twice synchronously as well; the stack starts Vibe before
+    # OpenAlgo, so both calls failed with "connection refused" on every restart. A position
+    # reconcile that fails because OpenAlgo is not up yet is retried by the next pass
+    # ([[2026-09-23-boot-reconcile-before-openalgo-up]]).
     try:
         from src.scheduled_research.autonomous_hygiene import start_autonomous_hygiene_loop
 
@@ -179,17 +175,6 @@ def boot_scheduled_research_stack(get_store) -> None:
     # is now exclusively a user action via POST /autonomous-agents/{id}/resume
     # (see autonomous_routes.resume_agent, which re-fires a stuck bootstrap
     # when appropriate).
-    try:
-        from trade_integrations.autonomous_agents.recovery import run_autonomous_agent_recovery
-
-        recovery = run_autonomous_agent_recovery()
-        if any(recovery.values()):
-            logger.info("autonomous agent recovery: %s", recovery)
-    except Exception:
-        # This pass is the only thing that clears a stale agent.streaming=True and
-        # reconciles positions; a silent debug-level failure can leave an agent stuck
-        # skipping every alert as turn_in_flight. Match the boot-pause call site above.
-        logger.exception("autonomous agent recovery on startup failed")
     try:
         if get_env_config().trade.stack_dev.strip().lower() in {"1", "true", "yes", "on"}:
             logger.debug("skipping Nautilus watch ensure in dev mode (use: trade reload nautilus)")
