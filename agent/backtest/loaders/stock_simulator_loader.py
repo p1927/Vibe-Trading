@@ -24,7 +24,7 @@ recording accumulates, more ranges naturally qualify here without any code
 change.
 
 Where the bars come from: an index's daily frame is resampled from its recorded 1-minute tape; a
-company's is its stored daily bars, the close panel (Trade D264, D292), which holds every listed
+company's is its stored daily bars, the close panel (Trade D264, D294), which holds every listed
 company's history, not just the days a session was recorded. A company's tape holds 1-minute bars
 only, so it is never resampled here.
 
@@ -145,7 +145,7 @@ def _company_symbol(symbol: str, exchange: str) -> str:
 def _company_daily_frame(sh: Any, symbol: str, exchange: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """A company's stored daily bars over the range, or ``None`` unless they cover every requested
     day (the loader's full-range-or-omit policy)."""
-    rows = sh.company_bars(symbol=_company_symbol(symbol, exchange), start=start_date, end=end_date)
+    rows = sh.daily_bars(symbol=_company_symbol(symbol, exchange), start=start_date, end=end_date)
     if not rows:
         return None
     frame = pd.DataFrame(rows)

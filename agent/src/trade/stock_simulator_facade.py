@@ -48,9 +48,10 @@ class FacadeHistory:
             lo = hi
         return bars
 
-    def company_bars(self, *, symbol: str, start: str, end: str) -> list[dict[str, Any]]:
-        """One company's stored daily bars (the close panel, D264): ``date, open, high, low, close, volume``."""
-        return self._c.get_company_bars(symbols=[symbol], start=start, end=end)["data"]
+    def daily_bars(self, *, symbol: str, start: str, end: str) -> list[dict[str, Any]]:
+        """One India symbol's stored daily bars from its one home (Trade D292: a company's close panel):
+        ``date, open, high, low, close, volume, source``."""
+        return self._c.get_daily_bars(symbol=symbol, start=start, end=end)["data"]
 
     def bar_at(self, *, symbol: str, exchange: str, sim_now: datetime):
         row = self._c.get_bar_at(symbol=symbol, exchange=exchange, sim_now=sim_now.isoformat())["data"]

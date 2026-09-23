@@ -40,7 +40,7 @@ class _FakeStockHistory:
         self.calls.append({"symbol": symbol, "exchange": exchange})
         return self._bars.get(symbol, [])
 
-    def company_bars(self, *, symbol, start, end):
+    def daily_bars(self, *, symbol, start, end):
         self.calls.append({"company": symbol, "start": start, "end": end})
         return [r for r in self._company.get(symbol, []) if start <= r["date"] <= end]
 
@@ -154,7 +154,7 @@ def test_fetch_aggregates_1min_bars_into_daily_ohlcv(monkeypatch) -> None:
 
 
 def test_company_reads_its_stored_daily_bars_not_the_tape(monkeypatch) -> None:
-    """Trade D292: a company's daily frame is the close panel's bars; its 1-minute tape is never
+    """Trade D294: a company's daily frame is the close panel's bars; its 1-minute tape is never
     resampled (it holds only recorded sessions, and used to hold daily bars posing as 1-minute ones).
     A BSE listing is its own panel symbol."""
     rows = [
