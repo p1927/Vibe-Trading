@@ -31,11 +31,9 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     tmp = Path(tempfile.mkdtemp(prefix="observability_routes_test_"))
     # paths.py resolves everything relative to TRADE_OBSERVABILITY_DIR when set.
     monkeypatch.setenv("TRADE_OBSERVABILITY_DIR", str(tmp))
-    # issues.py memoizes `_open_cache` once populated ("if _open_cache: return") — a stale
-    # cache from an earlier test/process would silently ignore this test's isolated tmp dir,
-    # so it must be cleared per-test the same way other module-level caches in this codebase
-    # (e.g. news_staging_store's get_hub_dir binding) have been found to leak across tests.
-    monkeypatch.setattr(observability_issues, "_open_cache", {})
+    # No module cache to clear: issues.py reads the issue ledger through `read_fold`, keyed by
+    # the file path, so this test's tmp dir is read fresh (it had an `_open_cache` until Trade
+    # d6998be72).
     monkeypatch.setattr(api_server, "_API_KEY", "")
     return TestClient(api_server.app, client=("127.0.0.1", 50000))
 

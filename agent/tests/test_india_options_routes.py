@@ -27,6 +27,13 @@ import src.api.india_options_routes as india_options_routes
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(api_server, "_API_KEY", "")
+    # A hermetic F&O registry. The eligibility check reads OpenAlgo's master contract, which
+    # only a checkout with a loaded OpenAlgo DB has; without it every ticker is
+    # `fno_registry_unpopulated` and the selector returns 400 before the logic under test.
+    from trade_integrations.dataflows.options_research import market as market_mod
+
+    monkeypatch.setattr(market_mod, "has_listed_options", lambda symbol: symbol in {"NIFTY", "BANKNIFTY"})
+    monkeypatch.setattr(market_mod, "is_india_fno_underlying", lambda symbol: symbol in {"RELIANCE"})
     return TestClient(api_server.app, client=("127.0.0.1", 50000))
 
 

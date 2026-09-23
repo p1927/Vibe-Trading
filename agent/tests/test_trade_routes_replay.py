@@ -3,7 +3,7 @@ standalone stock_simulator service instead of proxying through OpenAlgo.
 
 Covers the start_replay call's end_date forwarding (range replay), the
 fail-closed 503 when SIMULATOR_CONTROL_TOKEN isn't configured, and error
-propagation. No network: `StockSimulatorClient`'s underlying `requests.request`
+propagation. No network: `StockSimulatorClient`'s HTTP seam (`client.http_request`, the trade_integrations.http gateway)
 call is stubbed, matching the loopback `TestClient` convention in
 `test_alpha_compare_api.py`.
 """
@@ -57,7 +57,7 @@ def test_start_replay_forwards_end_date_speed_and_loop() -> None:
         captured["headers"] = headers
         return _FakeResponse(200, {"mode": "replay", "clock": {"replay_date": "2024-04-15"}})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().post(
             "/trade/recording/2024-04-15/replay",
             json={"end_date": "2024-04-19", "speed": 10, "loop": True},
@@ -82,7 +82,7 @@ def test_start_replay_omits_end_date_when_not_given() -> None:
         captured["json"] = json
         return _FakeResponse(200, {"mode": "replay"})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().post("/trade/recording/2024-04-15/replay", json={})
 
     assert res.status_code == 200
@@ -93,7 +93,7 @@ def test_start_replay_propagates_service_error() -> None:
     def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(400, {"detail": "date must be YYYY-MM-DD"})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().post("/trade/recording/not-a-date/replay", json={})
 
     assert res.status_code == 400
@@ -114,7 +114,7 @@ def test_seek_replay_forwards_time_to_service() -> None:
         captured["json"] = json
         return _FakeResponse(200, {"clock": {"sim_now": "2024-04-15T11:30:00+05:30"}})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().post("/trade/recording/replay/seek", json={"time": "11:30"})
 
     assert res.status_code == 200
@@ -127,7 +127,7 @@ def test_seek_replay_propagates_service_error() -> None:
     def fake_request(method, url, json=None, params=None, headers=None, timeout=None):
         return _FakeResponse(400, {"detail": "time must be HH:MM[:SS]"})
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().post("/trade/recording/replay/seek", json={"time": "not-a-time"})
 
     assert res.status_code == 400
@@ -153,7 +153,7 @@ def test_replay_status_reads_directly_from_the_service() -> None:
             },
         )
 
-    with patch("requests.request", side_effect=fake_request):
+    with patch("trade_integrations.stock_simulator.client.http_request", side_effect=fake_request):
         res = _client().get("/trade/recording/replay/status")
 
     assert res.status_code == 200

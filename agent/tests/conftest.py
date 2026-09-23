@@ -114,6 +114,36 @@ import trade_integrations  # noqa: E402,F401 -- see ordering note above
 
 os.environ.pop("MLFLOW_TRACKING_URI", None)
 
+# Same leak for Trade's observability feed: events/issues default to the Trade checkout's
+# `log/observability/`, the running dev stack's own feed in the main checkout, so a test's error
+# event opened a real issue there. Point it at scratch, as Trade's own tests/conftest.py does.
+for _obs_var in ("TRADE_OBSERVABILITY_EVENTS_PATH", "TRADE_OBSERVABILITY_ISSUES_PATH"):
+    os.environ.pop(_obs_var, None)
+os.environ["TRADE_OBSERVABILITY_DIR"] = tempfile.mkdtemp(prefix="trade-pytest-observability-")
+# And for Trade's cross-process rate-limit paces (`rate_limit._cross_process_dir`), which are one
+# machine-wide queue shared with the running dev/release tiers: a test must never claim a slot in
+# their MiniMax account pace.
+os.environ["TRADE_RATE_LIMIT_DIR"] = tempfile.mkdtemp(prefix="trade-pytest-rate-limit-")
+
+# A hermetic LLM configuration, for the same reason. Tests that enter the app's lifespan
+# (``with TestClient(app)``) run the real boot gate, which refuses to start without a configured
+# LLM provider (a critical check). Only a shell or checkout whose `.env` configured one (loaded
+# by the import above) could boot, so the suite passed in the main checkout and failed in a
+# worktree. The key is fake and the base URL unroutable: the boot gate checks configuration
+# only (no network), and any call a test reaches fails fast instead of spending a real account.
+# Tests about provider selection set their own values with monkeypatch.
+_PRIOR_SANDBOX_ENV.update(
+    {key: os.environ.get(key) for key in ("LANGCHAIN_PROVIDER", "LANGCHAIN_MODEL_NAME", "OPENAI_API_KEY", "OPENAI_BASE_URL")}
+)
+os.environ.update(
+    {
+        "LANGCHAIN_PROVIDER": "openai",
+        "LANGCHAIN_MODEL_NAME": "pytest-sandbox-model",
+        "OPENAI_API_KEY": "sk-pytest-sandbox",
+        "OPENAI_BASE_URL": "http://127.0.0.1:9/v1",
+    }
+)
+
 # A developer shell that exports MARKET_DATA_ORDER_* would silently reorder
 # the default fallback chains (registry.refresh_source_order_overrides reads
 # them at import time), breaking every default-order assertion in the suite.

@@ -10,8 +10,8 @@ on the process for its duration, ``/health`` included: the failure mode behind t
 ``test_sse_job_streams_off_loop.py``. Trade backlog:
 .claude/backlog/items/2026-09-16-vibe-swarm-handlers-sync-store-io-on-loop.md.
 
-Each test makes every store call block its thread for 0.3s. A probe coroutine on the same
-loop must keep ticking (max gap < 0.2s), and every store call must run on a thread other
+Each test makes every store call block its thread for 0.6s. A probe coroutine on the same
+loop must keep ticking (max gap < 0.45s), and every store call must run on a thread other
 than the loop's.
 """
 

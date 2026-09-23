@@ -90,7 +90,7 @@ def test_news_leg_rebuilds_from_hub_instead_of_serving_a_cached_snapshot(
     _drive("", "NIFTY", alive_ticks=1)
 
     assert calls == [
-        {"ticker": "NIFTY", "doc": None, "limit": 12, "horizon_days": 7, "force_rebuild": True}
+        {"ticker": "NIFTY", "doc": None, "limit": 12, "horizon_days": 7, "force_rebuild": True, "market": "IN"}
     ]
 
 

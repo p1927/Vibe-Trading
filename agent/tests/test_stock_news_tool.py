@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import pytest
 
@@ -174,7 +174,7 @@ class TestExecuteSuccess:
         assert ingest_kwargs["market"] == "CN"
         assert len(ingest.call_args.args[0]) == 2
 
-        query.assert_called_once_with(ticker="600519", market="CN", limit=10)
+        query.assert_called_once_with(ticker="600519", market="CN", limit=10, as_of=ANY)
 
         assert out["ok"] is True
         assert out["market"] == "a_share"
@@ -201,7 +201,7 @@ class TestExecuteSuccess:
         _, ingest_kwargs = ingest.call_args
         assert ingest_kwargs["ticker"] == "CN_MARKET"
         assert ingest_kwargs["market"] == "CN"
-        query.assert_called_once_with(ticker="CN_MARKET", market="CN", limit=20)
+        query.assert_called_once_with(ticker="CN_MARKET", market="CN", limit=20, as_of=ANY)
 
         assert out["ok"] is True
         assert out["market"] == "global"
@@ -234,7 +234,7 @@ class TestExecuteSuccess:
         _, ingest_kwargs = ingest.call_args
         assert ingest_kwargs["ticker"] == "AAPL"
         assert ingest_kwargs["market"] == "US"
-        query.assert_called_once_with(ticker="AAPL", market="US", limit=1)
+        query.assert_called_once_with(ticker="AAPL", market="US", limit=1, as_of=ANY)
 
         assert out["ok"] is True
         assert out["market"] == "us"
@@ -272,7 +272,7 @@ class TestExecuteSuccess:
         _, ingest_kwargs = ingest.call_args
         assert ingest_kwargs["ticker"] == "00700"
         assert ingest_kwargs["market"] == "HK"
-        query.assert_called_once_with(ticker="00700", market="HK", limit=20)
+        query.assert_called_once_with(ticker="00700", market="HK", limit=20, as_of=ANY)
 
         assert out["ok"] is True
         assert out["market"] == "hk"
@@ -304,7 +304,7 @@ class TestExecuteSuccess:
 
         assert out["ok"] is True
         srch.assert_called_once_with("AAPL", 50)
-        query.assert_called_once_with(ticker="AAPL", market="US", limit=50)
+        query.assert_called_once_with(ticker="AAPL", market="US", limit=50, as_of=ANY)
 
 
 class TestExecuteError:

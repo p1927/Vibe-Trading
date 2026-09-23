@@ -43,7 +43,9 @@ def test_healthy_loop_logs_nothing(caplog) -> None:
     caplog.set_level(logging.WARNING, logger=wd.__name__)
 
     async def _scenario() -> None:
-        wd.start_loop_stall_watchdog(probe_interval_s=0.02, stall_threshold_s=0.2)
+        # Threshold well above any scheduling hiccup: under `-n 6` on a shared box a healthy
+        # loop's probe reply was late by more than 0.2 s. A healthy loop never nears 2 s.
+        wd.start_loop_stall_watchdog(probe_interval_s=0.02, stall_threshold_s=2.0)
         try:
             for _ in range(20):
                 await asyncio.sleep(0.02)

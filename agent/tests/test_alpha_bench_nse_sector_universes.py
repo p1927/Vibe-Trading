@@ -48,8 +48,8 @@ def test_sector_panel_loader_returns_nonempty_panel(
         constituents_mod,
         "load_nse_sector_index_constituents",
         lambda _method_name: [
-            ConstituentRow(symbol="FAKESYM1", name="FAKESYM1", weight=0.5, sector=""),
-            ConstituentRow(symbol="FAKESYM2", name="FAKESYM2", weight=0.5, sector=""),
+            ConstituentRow(symbol="FAKESYM1", name="FAKESYM1", weight=0.5, sector="", market="IN"),
+            ConstituentRow(symbol="FAKESYM2", name="FAKESYM2", weight=0.5, sector="", market="IN"),
         ],
     )
     monkeypatch.setattr(

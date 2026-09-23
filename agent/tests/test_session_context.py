@@ -34,7 +34,13 @@ def test_autonomous_us_session_uses_spy_not_nifty_in_preamble() -> None:
     assert resolve_prefetch_ticker(cfg, preamble) == "SPY"
 
 
-def test_chat_session_falls_back_to_message_ticker() -> None:
+def test_chat_session_falls_back_to_message_ticker(monkeypatch) -> None:
+    # The India symbol universe is OpenAlgo's master contract (or an nselib download), which only
+    # a checkout with a loaded OpenAlgo DB has; pin it so the test is about the fallback logic.
+    monkeypatch.setattr(
+        "trade_integrations.dataflows.company_research.india_symbols.is_india_listed_symbol",
+        lambda symbol: symbol == "RELIANCE",
+    )
     assert resolve_prefetch_ticker({}, "What is RELIANCE doing?") == "RELIANCE"
 
 

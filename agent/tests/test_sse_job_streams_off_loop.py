@@ -10,8 +10,8 @@ release on 2026-09-11. Fork 19f04199 fixed that stream (see
 holds the same guard for the rest. Trade backlog:
 .claude/backlog/items/2026-09-16-vibe-sse-job-streams-sync-reads-on-loop.md.
 
-Each test makes every store call block its thread for 0.3s. A probe coroutine on the same
-loop must keep ticking (max gap < 0.2s), and every store call must run on a thread other
+Each test makes every store call block its thread for 0.6s. A probe coroutine on the same
+loop must keep ticking (max gap < 0.45s), and every store call must run on a thread other
 than the loop's.
 """
 
@@ -27,8 +27,11 @@ import pytest
 
 from src.api import trade_routes as routes
 
-_BLOCK_SECONDS = 0.3
-_MAX_LOOP_GAP_SECONDS = 0.2
+# A store call made ON the loop stalls it for at least _BLOCK_SECONDS, so any threshold below
+# that catches it. The margin under the threshold is for scheduling noise: under `-n 6` on a
+# shared box a healthy off-loop probe gap reached 0.27 s, past the old 0.2 s threshold.
+_BLOCK_SECONDS = 0.6
+_MAX_LOOP_GAP_SECONDS = 0.45
 
 
 class _FakeRequest:

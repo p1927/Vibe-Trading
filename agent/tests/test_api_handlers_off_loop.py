@@ -17,8 +17,8 @@ applied to the rest of the handlers found by the Trade backlog sweep
   live OpenAlgo symbol probe).
 
 Run on the loop thread, one slow call freezes every request on the process for its duration,
-``/health`` included. Each test makes every such call block its thread for 0.3s; a probe
-coroutine on the same loop must keep ticking (max gap < 0.2s), and every call must run on a
+``/health`` included. Each test makes every such call block its thread for 0.6s; a probe
+coroutine on the same loop must keep ticking (max gap < 0.45s), and every call must run on a
 thread other than the loop's.
 """
 
