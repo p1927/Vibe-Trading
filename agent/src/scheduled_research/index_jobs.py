@@ -59,6 +59,16 @@ _HUB_NEWS_ENTITY_DRAIN_DISPATCH_TIMEOUT_MS = 40 * 60 * 1000
 # it has the least margin. Sized with 2x headroom over the observed ~9-10min
 # ceiling. See 2026-08-30-hub-news-ingest-tight-light-dispatch-timeout-undersized.
 _HUB_NEWS_LIGHT_TIGHT_INGEST_DISPATCH_TIMEOUT_MS = 20 * 60 * 1000
+# Trade D267 maintenance split. FAST: measured 4.8-8.2 s over four runs on an APFS clone of the
+# release hub (2026-09-23, load average 31-71); 5 min gives ~25x headroom, and a run that nears it
+# has broken D198's 1-2 min rule and should fail visibly. SLOW keeps the old single job's hour:
+# its stages stop between units at 75% of it (the job deadline), and the rest waits for the next run.
+_HUB_NEWS_MAINTENANCE_FAST_DISPATCH_TIMEOUT_MS = 5 * 60 * 1000
+_HUB_NEWS_MAINTENANCE_SLOW_DISPATCH_TIMEOUT_MS = 60 * 60 * 1000
+# Job ids a code change removed. The reconcile deletes them, so no stored copy keeps running the
+# old code path. "nifty-hub-news-entity-maintenance" ran every maintenance stage under one budget
+# and was split in two (Trade D267).
+_RETIRED_JOB_IDS = ("nifty-hub-news-entity-maintenance",)
 JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP = "stock_history_coverage_sweep"
 JOB_TYPE_NEWS_QUALITY_EVAL = "news_quality_eval"
 JOB_TYPE_NEWS_DEDUP_QUALITY_EVAL = "news_dedup_quality_eval"
@@ -1646,20 +1656,40 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "dispatch_timeout_ms": _HUB_NEWS_ENTITY_DRAIN_DISPATCH_TIMEOUT_MS,
             },
         ),
+        # Trade D267: maintenance split by cost, each half with its own dispatch budget, so a slow
+        # LLM/web stage can never starve a cheap one (the single job timed out five runs in a row
+        # and hindsight, second to last, never ran). news_entity_worker's
+        # MAINTENANCE_FAST_STAGES / _SLOW_STAGES decide which stage runs where.
         ScheduledResearchJob(
-            id="nifty-hub-news-entity-maintenance",
-            prompt="Heavy hub news maintenance (repair, backfill, compact)",
+            id="nifty-hub-news-entity-maintenance-fast",
+            prompt="Hub news maintenance, no LLM or web stages",
             schedule=get_env_config().trade.hub_news_entity_maintenance_cron.strip(),
             next_run_at=now_ms,
             status=JobStatus.PENDING,
             created_at=now_ms,
             config={
                 "job_type": JOB_TYPE_HUB_NEWS_ENTITY,
-                "mode": "maintenance",
+                "mode": "maintenance_fast",
                 "ticker": "NIFTY",
                 "batch_size": 200,
                 "lookback_days": 365,
-                "dispatch_timeout_ms": 3_600_000,
+                "dispatch_timeout_ms": _HUB_NEWS_MAINTENANCE_FAST_DISPATCH_TIMEOUT_MS,
+            },
+        ),
+        ScheduledResearchJob(
+            id="nifty-hub-news-entity-maintenance-slow",
+            prompt="Hub news maintenance, LLM and web stages",
+            schedule=get_env_config().trade.hub_news_entity_maintenance_cron.strip(),
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={
+                "job_type": JOB_TYPE_HUB_NEWS_ENTITY,
+                "mode": "maintenance_slow",
+                "ticker": "NIFTY",
+                "batch_size": 200,
+                "lookback_days": 365,
+                "dispatch_timeout_ms": _HUB_NEWS_MAINTENANCE_SLOW_DISPATCH_TIMEOUT_MS,
             },
         ),
         ScheduledResearchJob(
@@ -2273,6 +2303,10 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         sync_scheduled_jobs()
     except Exception as exc:
         logger.warning("hub news pipeline job sync failed: %s", exc)
+
+    for job_id in _RETIRED_JOB_IDS:
+        if store.delete(job_id):
+            logger.info("removed retired default index research job %s", job_id)
 
     for job in defaults:
         existing = store.get(job.id)
