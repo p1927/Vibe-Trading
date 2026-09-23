@@ -47,6 +47,9 @@ class SendMessageRequest(BaseModel):
     turn_kind: Optional[
         Literal["bootstrap", "research", "strategy_revision", "post_execution", "watch_report"]
     ] = None
+    # "system" appends a notice to the chat without starting a turn: how the trade stack's
+    # out-of-process tools (the OpenAlgo MCP server) post into a session.
+    role: Literal["user", "system"] = "user"
 
 
 class MessageResponse(BaseModel):
@@ -655,6 +658,7 @@ def register_sessions_routes(app: FastAPI) -> None:
             result = await svc.send_message(
                 session_id=session_id,
                 content=payload.content,
+                role=payload.role,
                 include_shell_tools=_host_shell_tools_enabled_for_request(http_request),
                 turn_kind=payload.turn_kind,
             )

@@ -187,7 +187,7 @@ def test_send_message_returns_service_result(tmp_path, monkeypatch):
     sid = _create_session(client)
     service = api_server._get_session_service()
 
-    async def _fake_send_message(*, session_id, content, include_shell_tools, turn_kind=None):
+    async def _fake_send_message(*, session_id, content, include_shell_tools, turn_kind=None, role="user"):
         assert session_id == sid
         assert content == "do research"
         return {"message_id": "m1", "attempt_id": "a1"}
@@ -197,6 +197,21 @@ def test_send_message_returns_service_result(tmp_path, monkeypatch):
     response = client.post(f"/sessions/{sid}/messages", json={"content": "do research"})
     assert response.status_code == 200
     assert response.json() == {"message_id": "m1", "attempt_id": "a1"}
+
+
+def test_send_system_message_appends_without_starting_a_turn(tmp_path, monkeypatch):
+    """The trade stack's out-of-process tools post chat notices this way
+    (Trade backlog 2026-09-23-watchers-system-message-noop-in-mcp)."""
+    client = _client(tmp_path, monkeypatch)
+    sid = _create_session(client)
+    response = client.post(
+        f"/sessions/{sid}/messages", json={"content": "[autonomous_watchers] NIFTY", "role": "system"}
+    )
+    assert response.status_code == 200
+    assert "attempt_id" not in response.json()
+    messages = client.get(f"/sessions/{sid}/messages").json()
+    assert [(m["role"], m["content"]) for m in messages] == [("system", "[autonomous_watchers] NIFTY")]
+    assert client.post(f"/sessions/{sid}/messages", json={"content": "x", "role": "assistant"}).status_code == 422
 
 
 def test_send_message_rejects_empty_content(tmp_path, monkeypatch):
@@ -211,7 +226,7 @@ def test_send_message_returns_409_when_session_busy(tmp_path, monkeypatch):
     sid = _create_session(client)
     service = api_server._get_session_service()
 
-    async def _busy(*, session_id, content, include_shell_tools, turn_kind=None):
+    async def _busy(*, session_id, content, include_shell_tools, turn_kind=None, role="user"):
         raise SessionBusyError("already running")
 
     monkeypatch.setattr(service, "send_message", _busy)
