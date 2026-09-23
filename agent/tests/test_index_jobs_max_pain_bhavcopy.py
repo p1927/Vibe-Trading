@@ -9,25 +9,23 @@ from src.scheduled_research import index_jobs
 
 
 @pytest.mark.unit
-def test_run_max_pain_bhavcopy_job_delegates_to_backfill(monkeypatch):
+def test_run_max_pain_bhavcopy_job_delegates_to_refresh(monkeypatch):
+    """The job runs `refresh_max_pain_history`, which also retries recently missed sessions."""
     calls = {}
 
-    def _fake_backfill(start_date, end_date, *, symbol):
-        calls["start_date"] = start_date
-        calls["end_date"] = end_date
+    def _fake_refresh(trading_day, *, symbol):
+        calls["trading_day"] = trading_day
         calls["symbol"] = symbol
-        return {"status": "ok", "days_written": 1, "days_ok": 1}
+        return {"status": "ok", "days_ok": 1}
 
     monkeypatch.setattr(
-        "trade_integrations.dataflows.index_research.oi_bhavcopy_history.backfill_max_pain_history",
-        _fake_backfill,
+        "trade_integrations.dataflows.index_research.oi_bhavcopy_history.refresh_max_pain_history",
+        _fake_refresh,
     )
 
     result = index_jobs.run_max_pain_bhavcopy_job({"symbol": "NIFTY", "trading_day": "2026-08-24"})
 
-    assert calls["start_date"] == "2026-08-24"
-    assert calls["end_date"] == "2026-08-24"
-    assert calls["symbol"] == "NIFTY"
+    assert calls == {"trading_day": "2026-08-24", "symbol": "NIFTY"}
     assert result["status"] == "ok"
 
 
@@ -35,22 +33,19 @@ def test_run_max_pain_bhavcopy_job_delegates_to_backfill(monkeypatch):
 def test_run_max_pain_bhavcopy_job_defaults_trading_day_to_today_ist(monkeypatch):
     calls = {}
 
-    def _fake_backfill(start_date, end_date, *, symbol):
-        calls["start_date"] = start_date
-        calls["end_date"] = end_date
+    def _fake_refresh(trading_day, *, symbol):
+        calls["trading_day"] = trading_day
         return {"status": "ok"}
 
     monkeypatch.setattr(
-        "trade_integrations.dataflows.index_research.oi_bhavcopy_history.backfill_max_pain_history",
-        _fake_backfill,
+        "trade_integrations.dataflows.index_research.oi_bhavcopy_history.refresh_max_pain_history",
+        _fake_refresh,
     )
 
     index_jobs.run_max_pain_bhavcopy_job(None)
 
-    # Same-day single-date range; the exact date depends on when the test
-    # runs, so just assert it's a well-formed ISO date and start==end.
-    assert calls["start_date"] == calls["end_date"]
-    assert len(calls["start_date"]) == 10
+    # The exact date depends on when the test runs: just a well-formed ISO date.
+    assert len(calls["trading_day"]) == 10
 
 
 @pytest.mark.unit

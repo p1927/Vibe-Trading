@@ -1036,10 +1036,14 @@ def run_max_pain_bhavcopy_job(config: dict[str, Any] | None = None) -> dict[str,
     intended wall-clock time matters). `run_oi_snapshot_job` is kept
     running alongside, not removed, as a same-day-freshness path for
     whenever a live broker session exists again.
+
+    Each run also retries the NSE sessions of the last two weeks that have no stored value
+    (``refresh_max_pain_history``): a bhavcopy that was not there yet at 17:30 IST is picked up by
+    a later run instead of staying a permanent hole.
     """
     _ensure_trade_integrations_on_path()
     from trade_integrations.dataflows.index_research.oi_bhavcopy_history import (
-        backfill_max_pain_history,
+        refresh_max_pain_history,
     )
 
     cfg = config or {}
@@ -1047,7 +1051,7 @@ def run_max_pain_bhavcopy_job(config: dict[str, Any] | None = None) -> dict[str,
     trading_day = cfg.get("trading_day") or (
         datetime.now(timezone.utc).astimezone(ZoneInfo("Asia/Kolkata")).date().isoformat()
     )
-    return backfill_max_pain_history(trading_day, trading_day, symbol=symbol)
+    return refresh_max_pain_history(trading_day, symbol=symbol)
 
 
 def run_reinference_tick_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
