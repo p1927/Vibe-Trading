@@ -7,8 +7,9 @@ inherited value (see `.claude/backlog/archive/items/2026-09-16-mlflow-tier-store
 but this fork's `tests/conftest.py` only sandboxed `HOME`/`USERPROFILE` and popped
 `VIBE_TRADING_HOME` — a vibetrading test that reaches a Trade MLflow writer (board routes,
 ledger reconcilers, version stores) from a `.env`-loaded shell could still log into the real
-tier store. `conftest.py` now pops `MLFLOW_TRACKING_URI` beside `VIBE_TRADING_HOME`, the same
-mechanism, at import time.
+tier store. `conftest.py` now points `MLFLOW_TRACKING_URI` at a session sandbox store through
+Trade's `tier_state_guard` (set, not popped: a mid-session `load_trade_env()` re-applies `.env` with
+`setdefault`, which a pop cannot stop but a set value survives).
 
 This runs a real child pytest with the variable exported, exactly as a `.env`-loaded shell
 would, rather than asserting on this process's own environment: the defect was what a process
@@ -59,11 +60,11 @@ def test_a_child_pytest_with_an_inherited_uri_never_resolves_to_it(tmp_path):
 def test_child_process_does_not_see_the_inherited_uri():
     """Only meaningful when run as the child subprocess above, with the variable exported
     before the interpreter starts. Standalone (normal suite run, nothing inherited) it still
-    passes trivially — conftest.py has nothing to pop in that case either."""
+    passes trivially: the sandbox value is all there is."""
     from trade_integrations.observability import mlflow_config
 
-    assert "MLFLOW_TRACKING_URI" not in os.environ, (
-        "conftest.py should have popped an inherited MLFLOW_TRACKING_URI at import time"
+    assert "trade-pytest-" in os.environ.get("MLFLOW_TRACKING_URI", ""), (
+        "conftest.py should have pointed MLFLOW_TRACKING_URI at the session sandbox"
     )
     resolved = mlflow_config.tracking_uri()
     assert "inherited" not in resolved, (

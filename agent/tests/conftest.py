@@ -93,26 +93,21 @@ os.environ["TRADE_STACK_HUB_DIR"] = tempfile.mkdtemp(prefix="trade-pytest-hub-")
 os.environ["TRADE_LOG_DIR"] = tempfile.mkdtemp(prefix="trade-pytest-log-")
 (_SANDBOX_HOME / ".vibe-trading").mkdir(parents=True, exist_ok=True)
 
-# Same leak, same mechanism, for MLflow: Trade's `mlflow_config.tracking_uri()` lets an
-# explicit MLFLOW_TRACKING_URI win over its own per-process pytest temp store, and both
-# tiers' .env set it, so a vibetrading test that reaches a Trade MLflow writer (board
-# routes, ledger reconcilers, version stores) from a .env-loaded shell would log into the
-# tier's REAL store.
-#
-# `import trade_integrations` MUST happen before the pop, not after: importing it is what
-# triggers `trade_integrations.register.apply()` -> `env.load_trade_env()`, which applies
-# Trade's real `.env` (MLFLOW_TRACKING_URI included) via `os.environ.setdefault(...)` the
-# first time anything imports the package. `apply()` only runs once per process (its own
-# `_APPLIED` guard), so forcing that import here, then popping the value it just set,
-# means every later `import trade_integrations` anywhere in the suite is a cached no-op —
-# nothing re-applies the real value afterwards. Popping first and importing later (or not
-# at all) leaves the pop with nothing to remove yet, and the first test that imports
-# trade_integrations re-populates it from the real .env regardless of this pop -- confirmed
-# live: with the pop alone, a case reaching `trade_integrations.observability.mlflow_config`
-# still saw MLFLOW_TRACKING_URI resolve to the real dev store.
+# Same leak, same mechanism, for MLflow and the rest of Trade's per-tier state: both tiers' .env
+# set MLFLOW_TRACKING_URI, and `import trade_integrations` `setdefault`s that `.env` into the
+# process. Deleting the value afterwards (what this block used to do) did not hold: other Trade
+# code runs `load_trade_env()` again mid-session (recorder/ind_client.py at import,
+# `ensure_openalgo_env()`, ...), and that put dev's real `~/.vibe-trading/mlflow.db` back. Trade's
+# `tier_state_guard` SETS every tier-state variable to a session sandbox instead, so a later
+# `setdefault` cannot replace it. It also arms an audit hook that blocks and records any access to
+# a real tier's MLflow store, hub, rate-limit dir, observability feed or executor_gateway.db,
+# checked in `pytest_sessionfinish` below. `import trade_integrations` still comes first, so its
+# one-time `register.apply()` runs before the sandbox values are written.
 import trade_integrations  # noqa: E402,F401 -- see ordering note above
+from trade_integrations import tier_state_guard as _tier_state_guard  # noqa: E402
 
-os.environ.pop("MLFLOW_TRACKING_URI", None)
+_TIER_SANDBOX = Path(tempfile.mkdtemp(prefix="trade-pytest-"))
+_tier_state_guard.install(AGENT_DIR.parents[1], _TIER_SANDBOX)
 
 # Same leak for Trade's observability feed: events/issues default to the Trade checkout's
 # `log/observability/`, the running dev stack's own feed in the main checkout, so a test's error
@@ -199,6 +194,7 @@ def _assert_real_root_untouched() -> None:
 
 def _teardown_sandbox() -> None:
     shutil.rmtree(_SANDBOX_HOME, ignore_errors=True)
+    shutil.rmtree(_TIER_SANDBOX, ignore_errors=True)
     for key, prior in _PRIOR_SANDBOX_ENV.items():
         if prior is None:
             os.environ.pop(key, None)
@@ -226,6 +222,11 @@ _CHECKOUT_LEAK_BASELINE = _checkout_leak_state()
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001 - pytest hook
     """Fail the run if anything escaped the sandbox into the user's own state or the checkout."""
     _assert_real_root_untouched()
+    if blocked := _tier_state_guard.violations():
+        raise AssertionError(
+            "The suite touched real Trade tier state (blocked by tier_state_guard): "
+            + "; ".join(blocked)
+        )
     if leaked := sorted(_checkout_leak_state() - _CHECKOUT_LEAK_BASELINE):
         raise AssertionError(
             f"The suite wrote into the checkout: {leaked[:5]} ({len(leaked)} paths). A test "
