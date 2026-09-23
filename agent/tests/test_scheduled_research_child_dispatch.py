@@ -1,4 +1,4 @@
-"""Heavy scheduled jobs run in a supervised child process (Trade D243): real children, no mocks.
+"""Heavy scheduled jobs run in a supervised child process (Trade D244): real children, no mocks.
 
 The targets below are imported by the child as ``tests.test_scheduled_research_child_dispatch``.
 """

@@ -1,4 +1,4 @@
-"""Run one heavy scheduled job's sync dispatch in a child process (Trade D243, applying D204).
+"""Run one heavy scheduled job's sync dispatch in a child process (Trade D244, applying D204).
 
 Fork-only sidecar (docs/FORK_CONVENTIONS.md). A job's sync dispatch normally runs on an
 ``asyncio.to_thread`` worker inside the API process (``run_log_buffer.run_logged``). A CPU-heavy one
