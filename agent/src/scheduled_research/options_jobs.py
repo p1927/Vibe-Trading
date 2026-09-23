@@ -154,12 +154,12 @@ def _news_since_for_ticker(ticker: str) -> datetime:
 
 def _ticker_needs_refresh(ticker: str, *, config: dict[str, Any] | None = None) -> tuple[bool, list[str]]:
     _ensure_trade_integrations_on_path()
-    from trade_integrations.monitor.news_watcher import check_material_news
+    from trade_integrations.monitor.news_watcher import OPTIONS_PLAN_REFRESH_CONSUMER, check_material_news
     from trade_integrations.monitor.service import MonitorService
 
     reasons: list[str] = []
     since = _news_since_for_ticker(ticker)
-    headlines = check_material_news(ticker, since)
+    headlines = check_material_news(ticker, since, consumer=OPTIONS_PLAN_REFRESH_CONSUMER)
     if headlines:
         reasons.append("material_news")
 
