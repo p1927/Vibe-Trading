@@ -251,6 +251,9 @@ def _hub_news_ingest_collected_nothing(summary: dict[str, Any] | None) -> bool:
 def _index_factor_snapshot_had_errors(summary: dict[str, Any]) -> bool:
     if summary.get("status") == "error":
         return True
+    # D282: a factor that failed inside the snapshot batch (the rest of it was recorded).
+    if (summary.get("snapshot") or {}).get("factor_failures"):
+        return True
     ohlcv = summary.get("ohlcv") or {}
     if isinstance(ohlcv, dict) and ohlcv.get("status") == "error":
         return True
@@ -1308,6 +1311,7 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
             # [[2026-09-07-cold-tier-finalize-crashes-on-truncated-date]].
             raise RuntimeError(
                 f"index factor snapshot for job {job.id} completed with errors: "
+                f"factor_failures={(summary.get('snapshot') or {}).get('factor_failures')!r} "
                 f"cold_tier_finalize={summary.get('cold_tier_finalize')!r} "
                 f"factor_enrichment={summary.get('factor_enrichment')!r}"
             )
