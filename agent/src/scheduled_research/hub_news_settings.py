@@ -4,7 +4,8 @@ Fork-only sidecar for ``index_jobs.py`` (an upstream file), per docs/FORK_CONVEN
 
 India's settings-managed hub-news jobs (``nifty-hub-news-ingest-full``, ``-ingest-light``,
 ``-entity``, ``-entity-maintenance-fast`` and ``-slow``) are written by two things:
-``register_default_index_jobs``'s code defaults, and the Hub news-pipeline settings (``news_pipeline_config`` — env defaults merged with
+``register_default_index_jobs``'s code defaults, and the Hub news-pipeline settings
+(``news_pipeline_config`` — env defaults merged with
 ``reports/hub/_data/news_pipeline/config.json``, edited from the Hub UI and applied by
 ``sync_scheduled_jobs_from_config``). On every boot the sync applied the settings and then the
 defaults loop re-created a job the settings had switched off and reconciled the code's schedule
@@ -49,6 +50,8 @@ def load_pipeline_settings() -> dict[str, Any] | None:
 
 def _settings_owned_fields(settings: dict[str, Any]) -> dict[str, tuple[str, dict[str, Any]]]:
     """job id -> (schedule, config keys) exactly as ``sync_scheduled_jobs_from_config`` writes them."""
+    from src.scheduled_research.index_jobs import HUB_NEWS_MAINTENANCE_FAST_CRON
+
     ticker = settings["ticker"]
     return {
         FULL_JOB_ID: (
@@ -71,14 +74,16 @@ def _settings_owned_fields(settings: dict[str, Any]) -> dict[str, tuple[str, dic
             settings["entity_drain_cron"],
             {"ticker": ticker, "batch_size": settings["entity_batch_size"]},
         ),
-        # Trade D267: both halves of the maintenance split share the one maintenance cron.
-        **{
-            job_id: (
-                settings["entity_maintenance_cron"],
-                {"ticker": ticker, "batch_size": settings["entity_batch_size"]},
-            )
-            for job_id in (MAINTENANCE_FAST_JOB_ID, MAINTENANCE_SLOW_JOB_ID)
-        },
+        # Trade D267: the maintenance cron setting schedules the slow half. The fast half costs
+        # seconds and runs on its own hourly code default, which no setting overrides.
+        MAINTENANCE_SLOW_JOB_ID: (
+            settings["entity_maintenance_cron"],
+            {"ticker": ticker, "batch_size": settings["entity_batch_size"]},
+        ),
+        MAINTENANCE_FAST_JOB_ID: (
+            HUB_NEWS_MAINTENANCE_FAST_CRON,
+            {"ticker": ticker, "batch_size": settings["entity_batch_size"]},
+        ),
     }
 
 

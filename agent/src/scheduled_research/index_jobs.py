@@ -65,6 +65,11 @@ _HUB_NEWS_LIGHT_TIGHT_INGEST_DISPATCH_TIMEOUT_MS = 20 * 60 * 1000
 # its stages stop between units at 75% of it (the job deadline), and the rest waits for the next run.
 _HUB_NEWS_MAINTENANCE_FAST_DISPATCH_TIMEOUT_MS = 5 * 60 * 1000
 _HUB_NEWS_MAINTENANCE_SLOW_DISPATCH_TIMEOUT_MS = 60 * 60 * 1000
+# The fast half runs hourly: it costs seconds, and hindsight annotates at most 50 events a run
+# (run_hindsight_causes_backfill's limit; 50 of 460 scanned were due on the release hub), so a
+# daily run would take weeks to clear a backlog. A code default, not a Hub setting: the settings'
+# `entity_maintenance_cron` schedules only the slow half.
+HUB_NEWS_MAINTENANCE_FAST_CRON = "15 * * * *"
 # Job ids a code change removed. The reconcile deletes them, so no stored copy keeps running the
 # old code path. "nifty-hub-news-entity-maintenance" ran every maintenance stage under one budget
 # and was split in two (Trade D267).
@@ -1667,7 +1672,7 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
         ScheduledResearchJob(
             id="nifty-hub-news-entity-maintenance-fast",
             prompt="Hub news maintenance, no LLM or web stages",
-            schedule=get_env_config().trade.hub_news_entity_maintenance_cron.strip(),
+            schedule=HUB_NEWS_MAINTENANCE_FAST_CRON,
             next_run_at=now_ms,
             status=JobStatus.PENDING,
             created_at=now_ms,
