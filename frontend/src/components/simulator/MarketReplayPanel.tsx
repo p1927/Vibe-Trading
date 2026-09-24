@@ -14,25 +14,24 @@ const HEADER_ROW_PX = 14;
 
 /** Per-country Replay panel — the non-India analog of `SimulatorReplayCalendar` +
  * `SimulatorReplayClock`, scoped to one market instead of India's per-week/minute-bar model.
- * Non-India markets only have **daily-close** granularity in `market_ticks` (live tick_recorder
- * polls plus `tick_backfill.py`'s daily-close backfill — see that module's docstring), so the
- * right parity target is a day-presence calendar (green/white), not India's density heatmap.
+ * Non-India markets have no historical intraday data: a day is replayable when its index's daily
+ * series holds that day's bar (replay interpolates open-to-close from it, D199) or `market_ticks`
+ * holds live tick_recorder polls for it, so the right parity target is a day-presence calendar
+ * (green/white), not India's density heatmap.
  * Arm/pause/resume/seek/speed reuse `MultiMarketReplayService` scoped to `markets: [country]`.
  *
  * Supports arming a single day (click once) or a date range (click a second, different day —
  * the range normalizes to [min, max] regardless of click order) with an optional loop, mirroring
- * India's start+end+loop replay controls. Looping only replays whatever backfilled/recorded days
- * fall in the range — there's no deep historical archive behind this clock, just `market_ticks`
- * rows, so a range with gaps just holds the last known tick through them like any other gap. */
+ * India's start+end+loop replay controls. Looping only replays whatever days in the range have a
+ * daily bar or recorded ticks; a range with gaps holds the last known quote through them like any
+ * other gap. */
 export function MarketReplayPanel({ country, label }: { country: string; label: string }) {
   const {
     days,
     indices,
     loading,
     error,
-    backfillingDay,
     reload: loadCalendar,
-    backfill,
     grid,
     weeks,
     monthLabels,
@@ -273,17 +272,14 @@ export function MarketReplayPanel({ country, label }: { country: string; label: 
                   type="button"
                   title={`${date}${hasData ? ` · ${rows} row${rows === 1 ? "" : "s"}` : " · not recorded"}${hasData && status ? " · click to seek" : ""}`}
                   onClick={() => {
-                    if (!hasData) {
-                      backfill(date);
-                      return;
-                    }
+                    if (!hasData) return;
                     if (status) {
                       seek(date);
                       return;
                     }
                     selectDay(date);
                   }}
-                  disabled={backfillingDay === date || (Boolean(status) && busy)}
+                  disabled={!hasData || (Boolean(status) && busy)}
                   data-testid={`market-replay-day-${date}`}
                   style={{ gridColumn: wi + 2, gridRow: di + 2 }}
                   className={cn(
@@ -292,7 +288,6 @@ export function MarketReplayPanel({ country, label }: { country: string; label: 
                     isInRange && "bg-foreground/30",
                     isEndpoint && "ring-2 ring-foreground",
                     isArmed && "ring-2 ring-amber-400",
-                    backfillingDay === date && "opacity-50",
                   )}
                 />
               );
@@ -304,7 +299,7 @@ export function MarketReplayPanel({ country, label }: { country: string; label: 
             <span className="h-[10px] w-[10px] rounded-[2px] border border-emerald-500/50 bg-emerald-500/50" /> recorded
           </span>
           <span className="inline-flex items-center gap-1">
-            <span className="h-[10px] w-[10px] rounded-[2px] border border-border/40 bg-muted/40" /> missing — click to backfill
+            <span className="h-[10px] w-[10px] rounded-[2px] border border-border/40 bg-muted/40" /> missing
           </span>
           {loading ? <RefreshCw className="h-3 w-3 animate-spin" /> : null}
         </div>

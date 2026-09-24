@@ -4656,25 +4656,6 @@ def get_market_replay_calendar(
     )
 
 
-class BackfillMarketTicksRequest(BaseModel):
-    country: str | None = None
-    index: str | None = None
-    period: str = "max"
-
-
-@trade_router.post("/markets/backfill")
-def backfill_market_ticks(
-    body: BackfillMarketTicksRequest,
-    _auth: None = Depends(require_local_or_auth),
-) -> dict[str, Any]:
-    """Backfill a non-India market's index daily closes into `market_ticks` — proxies
-    `stock_simulator`'s `/tick_recording/backfill`. Idempotent (skips days already present),
-    so the frontend calendar can call this on every click of a missing day."""
-    return _run_control(
-        lambda c: c.backfill_tick_recording(country=body.country, index=body.index, period=body.period)
-    )
-
-
 @trade_router.get("/markets/global_macro/refreshable_series")
 def list_market_global_macro_refreshable_series(
     _auth: None = Depends(require_local_or_auth),

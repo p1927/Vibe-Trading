@@ -1957,7 +1957,7 @@ export const api = {
       `/trade/markets/${encodeURIComponent(country)}/top_constituents${api._hubStockHistoryQS({ top_n: topN })}`,
     ),
   // Per-country `market_ticks` day calendar + idempotent backfill — the non-India analog of
-  // the India-tab Replay calendar / Data-coverage backfill.
+  // the India-tab Replay calendar.
   getMarketReplayCalendar: (country: string, opts?: { lookbackDays?: number; before?: string }) =>
     request<MarketReplayCalendarResponse>(
       `/trade/markets/${encodeURIComponent(country)}/replay/calendar${api._hubStockHistoryQS({
@@ -1965,14 +1965,6 @@ export const api = {
         before: opts?.before,
       })}`,
     ),
-  // A "max"-period backfill is a real per-index vendor call (yfinance), not a cache read — the
-  // default 20s abort cut this off in practice.
-  backfillMarketTicks: (country: string, index?: string) =>
-    request<MarketBackfillResponse>("/trade/markets/backfill", {
-      method: "POST",
-      body: JSON.stringify({ country, index }),
-      timeoutMs: 300_000,
-    }),
   // Cross-market `global_macro_store` series — currencies (usd_inr/usd_cny/usd_jpy/usd_rub/
   // usd_sar/usd_brl) and global factors (gold, oil_brent_daily, oil_wti_daily, vix_daily, us_10y).
   getGlobalMacroHistory: (
@@ -5030,19 +5022,6 @@ export interface MarketReplayCalendarResponse {
   status: string;
   days: MarketReplayCalendarDay[];
   indices: string[];
-}
-
-export interface MarketBackfillResult {
-  country: string;
-  index: string;
-  written?: number;
-  status?: string;
-  error?: string;
-}
-
-export interface MarketBackfillResponse {
-  status: string;
-  results: MarketBackfillResult[];
 }
 
 export interface TickRecordingJob {
