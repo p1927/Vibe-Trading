@@ -320,9 +320,16 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
 
     snapshot_date = cfg.get("snapshot_date")
     if not snapshot_date:
-        from trade_integrations.dataflows.company_research.market import india_trading_date_iso
+        # The settled NSE session the rows describe, never India's calendar date: a run at 02:41 IST
+        # on Tuesday dated Monday's values under Tuesday. While a session runs there is nothing
+        # settled to describe, so the run records nothing (D56, Trade
+        # 2026-09-23-snapshot-stamps-unsettled-weekday).
+        from trade_integrations.stock_simulator.recorder.daily_factor_poller import last_settled_session
 
-        snapshot_date = india_trading_date_iso()[:10]
+        snapshot_date = last_settled_session()
+        if not snapshot_date:
+            logger.info("index factor snapshot skipped: an NSE session is running, none settled to record")
+            return {"skipped": True, "reason": "session_running", "ticker": ticker}
 
     emit_stage_event("stage persist_daily_hub_market_data: starting")
     stage_started = time.monotonic()
