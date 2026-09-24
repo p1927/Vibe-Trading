@@ -144,12 +144,12 @@ def _company_symbol(symbol: str, exchange: str) -> str:
 
 def _company_daily_frame(sh: Any, symbol: str, exchange: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """A company's stored daily bars over the range, or ``None`` unless they cover every requested
-    day (the loader's full-range-or-omit policy)."""
+    session (the loader's full-range-or-omit policy)."""
     rows = sh.daily_bars(symbol=_company_symbol(symbol, exchange), start=start_date, end=end_date)
     if not rows:
         return None
     frame = pd.DataFrame(rows)
-    if not _requested_trading_days(start_date, end_date).issubset(set(frame["date"].astype(str))):
+    if not _requested_trading_days(sh, start_date, end_date).issubset(set(frame["date"].astype(str))):
         return None
     frame.index = pd.to_datetime(frame["date"])
     frame.index.name = "trade_date"
@@ -157,15 +157,16 @@ def _company_daily_frame(sh: Any, symbol: str, exchange: str, start_date: str, e
     return frame[_OUTPUT_COLUMNS].astype(float) if not frame.empty else None
 
 
-def _requested_trading_days(start_date: str, end_date: str) -> set[str]:
-    """Business-day set for the requested range (no market-holiday calendar —
-    a simple, self-contained baseline for the coverage completeness check)."""
-    days = pd.bdate_range(pd.Timestamp(start_date).normalize(), pd.Timestamp(end_date).normalize())
-    return {d.strftime("%Y-%m-%d") for d in days}
+def _requested_trading_days(sh: Any, start_date: str, end_date: str) -> set[str]:
+    """NSE's sessions in the range: the days NIFTY 50 holds a stored daily bar, the session calendar
+    Trade's ``close_on`` uses (D283). A plain weekday calendar counted every NSE weekday holiday as a
+    day the store lacks, so any range spanning one was never full and fell back to Yahoo although the
+    store held every session."""
+    return {str(row["date"])[:10] for row in sh.daily_bars(symbol="NIFTY", start=start_date, end=end_date)}
 
 
 def _has_full_coverage(sh: Any, symbol: str, exchange: str, start_date: str, end_date: str) -> bool:
-    requested = _requested_trading_days(start_date, end_date)
+    requested = _requested_trading_days(sh, start_date, end_date)
     if not requested:
         return False
     recorded = set(sh.recorded_index_days(symbol=symbol, exchange=exchange))

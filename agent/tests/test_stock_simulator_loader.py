@@ -27,8 +27,11 @@ class _FakeBar:
 
 class _FakeStockHistory:
     def __init__(self, bars_by_symbol=None, recorded_days_by_symbol=None, chain=None, latest_bar=None,
-                 company_rows=None):
+                 company_rows=None, sessions=None):
         self._company = company_rows or {}
+        # Default calendar: every weekday of April 2024 (no NSE holiday in the tests' ranges).
+        self._sessions = sessions if sessions is not None else [
+            d.strftime("%Y-%m-%d") for d in pd.bdate_range("2024-04-01", "2024-04-30")]
         self._bars = bars_by_symbol or {}
         self._recorded = recorded_days_by_symbol or {}
         self._chain = chain
@@ -41,6 +44,8 @@ class _FakeStockHistory:
         return self._bars.get(symbol, [])
 
     def daily_bars(self, *, symbol, start, end):
+        if symbol == "NIFTY":  # the NSE session calendar (NIFTY 50's stored bars)
+            return [{"date": d} for d in self._sessions if start <= d <= end]
         self.calls.append({"company": symbol, "start": start, "end": end})
         return [r for r in self._company.get(symbol, []) if start <= r["date"] <= end]
 
@@ -170,6 +175,22 @@ def test_company_reads_its_stored_daily_bars_not_the_tape(monkeypatch) -> None:
     assert "500325.BO" not in out  # one of two requested days: omitted, full range or nothing
     assert [c.get("company") for c in fake.calls] == ["RELIANCE", "500325.BO"]
     assert not any("exchange" in c for c in fake.calls)
+
+
+def test_a_weekday_nse_holiday_is_not_a_missing_day(monkeypatch) -> None:
+    """[[2026-09-24-backtest-loader-weekday-calendar]]: 2024-04-11 (Id-ul-Fitr) was an NSE weekday
+    holiday. A range spanning it is full when the store holds every NSE session; with a weekday
+    calendar both the company and the index were omitted and fell back to Yahoo."""
+    sessions = ["2024-04-10", "2024-04-12"]
+    rows = [{"date": d, "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0, "source": "nselib"}
+            for d in sessions]
+    bars = [_FakeBar(f"{d}T09:15:00", d, 1, 1, 1, 1, 1) for d in sessions]
+    fake = _FakeStockHistory(company_rows={"RELIANCE": rows}, bars_by_symbol={"NIFTY": bars},
+                             recorded_days_by_symbol={"NIFTY": sessions}, sessions=sessions)
+    monkeypatch.setattr(mod, "_ensure_stock_history", lambda: fake)
+    out = DataLoader().fetch(["RELIANCE.NS", "NIFTY"], "2024-04-10", "2024-04-12")
+    assert set(out) == {"RELIANCE.NS", "NIFTY"}
+    assert list(out["RELIANCE.NS"].index.strftime("%Y-%m-%d")) == sessions
 
 
 def test_partial_coverage_omits_symbol(monkeypatch) -> None:
