@@ -66,7 +66,7 @@ class TestRSI:
         assert _compute_rsi(close, 14) is None
 
     def test_rsi_is_trades_one_formula(self):
-        """Trade D322: the tool's RSI is Trade's `technical_features.compute_rsi`, the formula behind
+        """Trade D326: the tool's RSI is Trade's `technical_features.compute_rsi`, the formula behind
         the stored NIFTY RSI; this 21-bar series separates it from the pandas `adjust=True` copy the
         tool used to carry (18.82 there, 29.30 here)."""
         from trade_integrations.dataflows.index_research.technical_features import compute_rsi

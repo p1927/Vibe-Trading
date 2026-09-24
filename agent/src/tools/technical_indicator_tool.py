@@ -103,7 +103,7 @@ def _compute_ema(close: pd.Series, period: int) -> float | None:
 
 
 def _compute_rsi(close: pd.Series, period: int = _RSI_PERIOD) -> float | None:
-    """Latest RSI from the one shared formula (Trade D322); None while it is undefined."""
+    """Latest RSI from the one shared formula (Trade D326); None while it is undefined."""
     value = compute_rsi(close, period).iloc[-1] if len(close) else float("nan")
     return None if pd.isna(value) else float(value)
 

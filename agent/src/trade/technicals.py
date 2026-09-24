@@ -1,4 +1,4 @@
-"""vibetrading's one door to Trade's technical indicators (Trade D322).
+"""vibetrading's one door to Trade's technical indicators (Trade D326).
 
 RSI has one formula, Trade's ``technical_features.compute_rsi`` (the one behind the stored
 ``IN/nifty_rsi_14``); the indicator tool, the Shadow Account extractor/scanner and the generated
