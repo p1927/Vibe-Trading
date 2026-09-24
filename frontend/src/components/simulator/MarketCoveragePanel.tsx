@@ -33,18 +33,17 @@ const HEADER_ROW_PX = 14;
 
 /** Per-country "Data coverage" — the non-India analog of `StockHistoryCoveragePanel`'s
  * per-week bucket grid, scoped to what actually exists for these markets: a day-presence
- * calendar over `market_ticks` (see `MarketReplayPanel`'s docstring for why daily, not
- * per-minute). Click a missing day to backfill it via `tick_backfill.py`'s idempotent
- * daily-close writer — same data source `MarketReplayPanel` reads for its calendar. */
+ * calendar over each index's daily series plus any recorded `market_ticks` (see
+ * `MarketReplayPanel`'s docstring for why daily, not per-minute) — the same data
+ * `MarketReplayPanel` reads for its calendar. The daily series is kept current by the
+ * scheduled data collection; there is nothing to backfill per day from here (D199). */
 export function MarketCoveragePanel({ country }: { country: string }) {
   const {
     days,
     indices,
     loading,
     error,
-    backfillingDay,
     reload,
-    backfill,
     grid,
     weeks,
     monthLabels,
@@ -74,8 +73,7 @@ export function MarketCoveragePanel({ country }: { country: string }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] text-muted-foreground">
           Per-day availability, {grid[0]} → {grid[grid.length - 1]} ({windowDays} days). White
-          cells = data missing; click a cell to backfill it from the same vendor `Recording`
-          uses.
+          cells = no daily bar or recorded tick for that day.
           {missingCount > 0 ? ` ${missingCount} day${missingCount === 1 ? "" : "s"} missing.` : " All days covered."}
         </p>
         <div className="flex items-center gap-1">
@@ -159,7 +157,7 @@ export function MarketCoveragePanel({ country }: { country: string }) {
               const presentIndices = showStripes ? indices.filter((idx) => indexRowsFor(day, idx) > 0) : [];
               const allPresent = showStripes && presentIndices.length === indices.length;
               const title = !hasData
-                ? `${date} · missing — click to backfill`
+                ? `${date} · missing`
                 : showStripes
                   ? `${date} · ${indices.map((idx) => `${idx} ${indexRowsFor(day, idx)}`).join(" · ")}`
                   : `${date} · ${rows} row${rows === 1 ? "" : "s"}`;
@@ -168,8 +166,7 @@ export function MarketCoveragePanel({ country }: { country: string }) {
                   key={date}
                   type="button"
                   title={title}
-                  onClick={() => !hasData && backfill(date)}
-                  disabled={hasData || backfillingDay === date}
+                  disabled
                   data-testid={`market-coverage-day-${date}`}
                   style={{ gridColumn: wi + 2, gridRow: di + 2 }}
                   className={cn(
@@ -190,7 +187,6 @@ export function MarketCoveragePanel({ country }: { country: string }) {
                       indices.map((idx, i) =>
                         indexRowsFor(day, idx) > 0 ? INDEX_STRIPE_CLASSES[i % INDEX_STRIPE_CLASSES.length] : null,
                       ),
-                    backfillingDay === date && "opacity-50",
                   )}
                 />
               );

@@ -5,7 +5,6 @@ import { MarketReplayPanel } from "../MarketReplayPanel";
 
 const apiMock = vi.hoisted(() => ({
   getMarketReplayCalendar: vi.fn(),
-  backfillMarketTicks: vi.fn(),
   getMultiMarketStatus: vi.fn(),
   armMultiMarketReplay: vi.fn(),
   pauseMultiMarketReplay: vi.fn(),
@@ -55,9 +54,7 @@ describe("MarketReplayPanel", () => {
     vi.restoreAllMocks();
   });
 
-  it("clicking a missing day triggers a backfill", async () => {
-    apiMock.backfillMarketTicks.mockResolvedValue({ status: "ok", results: [] });
-
+  it("a day with no data is not selectable", async () => {
     render(<MarketReplayPanel country="US" label="US" />);
 
     await waitFor(() =>
@@ -66,9 +63,9 @@ describe("MarketReplayPanel", () => {
     // "2024-04-30" is inside the 120-day window ending 2024-05-01 (the only recorded day) but
     // isn't in `CALENDAR.days` itself, so it's a deterministic "missing" cell.
     const missingDay = await screen.findByTestId("market-replay-day-2024-04-30");
+    expect(missingDay).toBeDisabled();
     fireEvent.click(missingDay);
-
-    await waitFor(() => expect(apiMock.backfillMarketTicks).toHaveBeenCalledWith("US"));
+    expect(apiMock.armMultiMarketReplay).not.toHaveBeenCalled();
   });
 
   it("selecting the recorded day and arming calls armMultiMarketReplay scoped to the country", async () => {

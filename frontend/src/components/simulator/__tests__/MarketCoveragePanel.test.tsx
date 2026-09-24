@@ -1,11 +1,10 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MarketCoveragePanel } from "../MarketCoveragePanel";
 
 const apiMock = vi.hoisted(() => ({
   getMarketReplayCalendar: vi.fn(),
-  backfillMarketTicks: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({ api: apiMock }));
@@ -45,18 +44,13 @@ describe("MarketCoveragePanel", () => {
     await waitFor(() => expect(screen.getByText(/119 days missing/i)).toBeInTheDocument());
   });
 
-  it("clicking a missing day backfills, and a recorded day is not clickable", async () => {
-    apiMock.backfillMarketTicks.mockResolvedValue({ status: "ok", results: [] });
-
+  it("is read-only: no day starts a backfill (D199, daily closes are never copied into ticks)", async () => {
     render(<MarketCoveragePanel country="US" />);
 
-    const recordedDay = await screen.findByTestId("market-coverage-day-2024-05-01");
-    expect(recordedDay).toBeDisabled();
-
+    expect(await screen.findByTestId("market-coverage-day-2024-05-01")).toBeDisabled();
     const missingDay = await screen.findByTestId("market-coverage-day-2024-04-30");
-    fireEvent.click(missingDay);
-
-    await waitFor(() => expect(apiMock.backfillMarketTicks).toHaveBeenCalledWith("US"));
+    expect(missingDay).toBeDisabled();
+    expect(missingDay.title).toBe("2024-04-30 · missing");
   });
 
   it("shows a per-index legend and marks a partially-covered day distinctly from a fully-covered one for 3+ index markets", async () => {

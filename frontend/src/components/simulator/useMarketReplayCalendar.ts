@@ -71,7 +71,7 @@ function buildWeekGrid(dates: string[]): {
 }
 
 /** Shared data-loading for the per-country `market_ticks` day calendar — used by both
- * `MarketReplayPanel` (replay arm/seek) and `MarketCoveragePanel` (backfill-only), which
+ * `MarketReplayPanel` (replay arm/seek) and `MarketCoveragePanel` (coverage only), which
  * render the same day-presence grid for two different purposes.
  *
  * Pages a `WINDOW_DAYS`-day window at a time via the backend's `lookback_days`/`before` params
@@ -85,7 +85,6 @@ export function useMarketReplayCalendar(country: string) {
   const [indices, setIndices] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [backfillingDay, setBackfillingDay] = useState<string | null>(null);
   // null = the default "most recent WINDOW_DAYS days" window; otherwise an ISO date the window
   // ends on, for paging further back in history.
   const [windowEnd, setWindowEnd] = useState<string | null>(null);
@@ -112,22 +111,6 @@ export function useMarketReplayCalendar(country: string) {
   useEffect(() => {
     setWindowEnd(null);
   }, [country]);
-
-  const backfill = useCallback(
-    async (date: string) => {
-      setBackfillingDay(date);
-      setError(null);
-      try {
-        await api.backfillMarketTicks(country);
-        load();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Backfill failed");
-      } finally {
-        setBackfillingDay(null);
-      }
-    },
-    [country, load],
-  );
 
   const grid = useMemo(() => {
     const end =
@@ -162,9 +145,7 @@ export function useMarketReplayCalendar(country: string) {
     indices,
     loading,
     error,
-    backfillingDay,
     reload: load,
-    backfill,
     grid,
     weeks,
     monthLabels,
