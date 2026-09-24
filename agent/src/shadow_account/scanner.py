@@ -13,6 +13,7 @@ import pandas as pd
 
 from src.shadow_account.backtester import _LIQUID_BASKETS, SUPPORTED_MARKETS
 from src.shadow_account.models import ShadowProfile, ShadowRule
+from src.trade.technicals import compute_rsi
 
 PriceFetcher = Callable[..., pd.DataFrame | None]
 
@@ -194,26 +195,10 @@ def _compute_features(bars: pd.DataFrame, rule: ShadowRule) -> dict[str, float |
                 features["volume_ratio"] = float(volume.iloc[-1] / baseline)
 
     if len(close) >= _RSI_PERIOD:
-        rsi = _compute_rsi(close).iloc[-1]
+        rsi = compute_rsi(close, _RSI_PERIOD).iloc[-1]
         if pd.notna(rsi):
             features["entry_rsi14"] = float(rsi)
     return features
-
-
-def _compute_rsi(close: pd.Series, period: int = _RSI_PERIOD) -> pd.Series:
-    """Causal Wilder-EWM RSI.
-
-    Mirrors ``_compute_rsi`` in ``extractor.py`` so the scanner evaluates the
-    same RSI that produced the extracted ``entry_rsi14`` bounds. Causal by
-    construction: ``RSI[t]`` depends only on closes dated ``<= t``.
-    """
-    delta = close.diff()
-    gain = delta.clip(lower=0)
-    loss = (-delta).clip(lower=0)
-    avg_gain = gain.ewm(alpha=1 / period, min_periods=period).mean()
-    avg_loss = loss.ewm(alpha=1 / period, min_periods=period).mean()
-    rs = avg_gain / avg_loss
-    return 100 - 100 / (1 + rs)
 
 
 def _window_from_rule(rule: ShadowRule, default: int) -> int:

@@ -16,6 +16,7 @@ import pandas as pd
 
 from src.agent.tools import BaseTool
 from src.market_data import fetch_market_data
+from src.trade.technicals import compute_rsi, stored_nifty_technicals
 
 logger = logging.getLogger(__name__)
 
@@ -102,25 +103,9 @@ def _compute_ema(close: pd.Series, period: int) -> float | None:
 
 
 def _compute_rsi(close: pd.Series, period: int = _RSI_PERIOD) -> float | None:
-    """Relative Strength Index (Wilder smoothing) over *period* bars.
-
-    Matches the Wilder-EWM convention already used for RSI elsewhere in this
-    codebase (``shadow_account/extractor.py``, ``shadow_account/scanner.py``,
-    ``skills/technical-basic/example_signal_engine.py``): a plain rolling mean
-    of gains/losses is a materially different, non-Wilder technique and used
-    to diverge from those siblings by several RSI points on ordinary data.
-    """
-    if len(close) < period + 1:
-        return None
-    delta = close.diff()
-    gain = delta.clip(lower=0)
-    loss = (-delta).clip(lower=0)
-    avg_gain = gain.ewm(alpha=1 / period, min_periods=period).mean().iloc[-1]
-    avg_loss = loss.ewm(alpha=1 / period, min_periods=period).mean().iloc[-1]
-    if avg_loss == 0:
-        return 100.0
-    rs = avg_gain / avg_loss
-    return float(100.0 - (100.0 / (1.0 + rs)))
+    """Latest RSI from the one shared formula (Trade D322); None while it is undefined."""
+    value = compute_rsi(close, period).iloc[-1] if len(close) else float("nan")
+    return None if pd.isna(value) else float(value)
 
 
 def _compute_macd(
@@ -217,6 +202,25 @@ class TechnicalIndicatorTool(BaseTool):
         except (TypeError, ValueError):
             lookback = _DEFAULT_LOOKBACK
         lookback = max(10, min(lookback, _MAX_LOOKBACK))
+
+        # NIFTY's daily technicals are the stored values the prediction model serves (Trade D318),
+        # never a recompute over this tool's own window.
+        if interval == "1d":
+            stored = stored_nifty_technicals(symbol)
+            if stored is not None:
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "symbol": symbol,
+                        "interval": interval,
+                        "latest_close": stored["close"],
+                        "latest_date": stored["date"],
+                        "source": "factor_registry",
+                        "indicators": stored["factors"],
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                )
 
         # Fetch enough bars to cover the longest indicator window + buffer.
         end_date = datetime.now().strftime("%Y-%m-%d")

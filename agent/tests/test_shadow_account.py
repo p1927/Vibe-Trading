@@ -1042,7 +1042,6 @@ def test_attribution_is_zero_without_journal(
 from src.shadow_account.extractor import (  # noqa: E402
     _MARKET_KEY_MAP,
     _attach_price_features,
-    _compute_rsi,
     _price_features_as_of,
     _promoted_numeric_features,
 )
@@ -1091,6 +1090,8 @@ def with_price_loader(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.mark.unit
 def test_compute_rsi_is_causal_and_bounded() -> None:
+    from src.trade.technicals import compute_rsi as _compute_rsi
+
     rising = pd.Series(range(1, 40), dtype=float)
     rsi = _compute_rsi(rising)
     assert rsi.isna().sum() == 14  # warmup window
@@ -1673,7 +1674,7 @@ def test_render_signal_engine_with_price_conditions() -> None:
     source = render_signal_engine(profile)
     ok, err = validate_generated(source)
     assert ok, f"validation failed: {err}"
-    assert "_compute_rsi" in source
+    assert "from src.trade.technicals import compute_rsi" in source
     assert "_compute_prior_return" in source
     assert "_conditional_entry" in source
     assert "entry_rsi14_min" in source
@@ -1860,8 +1861,8 @@ def test_generated_engine_keeps_unmatched_markets_flat() -> None:
 
 @pytest.mark.unit
 def test_conditional_entry_emits_signal_when_rsi_in_range() -> None:
-    """RSI in [25, 45] → signal fires."""
-    rule = _rule_with_rsi(25.0, 45.0)
+    """RSI in [40, 50] → signal fires (this sawtooth's RSI dips to 46.8-50.2 on its drop bars)."""
+    rule = _rule_with_rsi(40.0, 50.0)
     idx = _hourly_index(periods=40)
     sideways = pd.Series(
         [10.0 + (i % 6) * 0.5 for i in range(40)], index=idx, dtype=float,

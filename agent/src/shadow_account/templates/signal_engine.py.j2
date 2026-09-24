@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import pandas as pd
 
+# The extractor mined ``entry_rsi14`` bounds with this same RSI (Trade D322).
+from src.trade.technicals import compute_rsi
+
 SHADOW_ID = {{ shadow_id | py_literal }}
 PROFITABLE_ROUNDTRIPS = {{ profitable_roundtrips | py_literal }}
 DATE_RANGE = {{ date_range | py_literal }}
@@ -39,16 +42,6 @@ class SignalEngine:
     rule's holding days. Non-matching codes yield a zero series.
     """
 
-    def _compute_rsi(self, close: pd.Series, period: int = 14) -> pd.Series:
-        """Causal Wilder-EWM RSI (mirrors ``compute_rsi`` in example_signal_engine.py:13)."""
-        delta = close.diff()
-        gain = delta.clip(lower=0)
-        loss = (-delta).clip(lower=0)
-        avg_gain = gain.ewm(alpha=1 / period, min_periods=period).mean()
-        avg_loss = loss.ewm(alpha=1 / period, min_periods=period).mean()
-        rs = avg_gain / avg_loss
-        return 100 - 100 / (1 + rs)
-
     def _compute_prior_return(self, close: pd.Series, window: int = 5) -> pd.Series:
         """Trailing close-to-close return over *window* bars."""
         return close.pct_change(window)
@@ -60,7 +53,7 @@ class SignalEngine:
             rule = self._pick_rule(code)
             if rule is not None:
                 close = df["close"]
-                rsi = self._compute_rsi(close)
+                rsi = compute_rsi(close, 14)
                 prior_ret = self._compute_prior_return(close)
                 sig = self._conditional_entry(
                     df.index, rsi, prior_ret, rule,

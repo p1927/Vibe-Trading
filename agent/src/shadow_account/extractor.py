@@ -28,6 +28,7 @@ import pandas as pd
 
 from src.shadow_account.models import PRICE_FEATURES, ShadowProfile, ShadowRule
 from src.shadow_account.storage import hash_journal, new_shadow_id, now_iso
+from src.trade.technicals import compute_rsi
 from src.tools.trade_journal_parsers import parse_file, records_to_dataframe
 from src.tools.trade_journal_tool import pair_trades_fifo
 
@@ -147,31 +148,6 @@ def extract_shadow_profile(
 
 # ---------------- Feature engineering ----------------
 
-def _compute_rsi(close: pd.Series, period: int = _RSI_PERIOD) -> pd.Series:
-    """Causal Wilder-EWM RSI.
-
-    Mirrors the shape of ``compute_rsi`` in
-    ``agent/src/skills/technical-basic/example_signal_engine.py:13`` — that
-    module lives under a hyphenated (non-importable) skills directory, so the
-    formula is re-implemented here rather than imported. Causal by construction:
-    ``RSI[t]`` depends only on closes dated ``<= t``.
-
-    Args:
-        close: Close-price series indexed by date.
-        period: RSI lookback period.
-
-    Returns:
-        RSI series (0-100), NaN for the warmup window.
-    """
-    delta = close.diff()
-    gain = delta.clip(lower=0)
-    loss = (-delta).clip(lower=0)
-    avg_gain = gain.ewm(alpha=1 / period, min_periods=period).mean()
-    avg_loss = loss.ewm(alpha=1 / period, min_periods=period).mean()
-    rs = avg_gain / avg_loss
-    return 100 - 100 / (1 + rs)
-
-
 def _fetch_price_history(
     symbol: str,
     market: str,
@@ -260,7 +236,7 @@ def _price_features_as_of(
         return out
 
     if len(close) >= _RSI_PERIOD:
-        rsi = _compute_rsi(close).iloc[-1]
+        rsi = compute_rsi(close, _RSI_PERIOD).iloc[-1]
         out["entry_rsi14"] = float(rsi) if pd.notna(rsi) else float("nan")
 
     if len(close) >= _PRIOR_RETURN_WINDOW + 1:

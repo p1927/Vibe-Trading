@@ -49,11 +49,10 @@ class TestRSI:
         assert rsi is not None
         assert 95 <= rsi <= 100
 
-    def test_rsi_flat(self):
-        """Zero change → avg_loss = 0 → RSI = 100 (no downward pressure)."""
+    def test_rsi_flat_is_undefined(self):
+        """No gains and no losses: RSI is undefined (None), never a made-up 100 or 50."""
         close = pd.Series([100.0] * 30, dtype=float)
-        rsi = _compute_rsi(close)
-        assert rsi == 100.0
+        assert _compute_rsi(close) is None
 
     def test_rsi_downtrend(self):
         """All losses, no gains → RSI should approach 0."""
@@ -66,88 +65,37 @@ class TestRSI:
         close = pd.Series([100.0, 101.0], dtype=float)
         assert _compute_rsi(close, 14) is None
 
-    def test_rsi_uses_wilder_ewm_not_rolling_mean(self):
-        """Regression (sibling divergence): the docstring promises Wilder
-        smoothing, which is Wilder's exponential method, not a plain rolling
-        mean of gains/losses -- a materially different, well-known-distinct
-        technique. Classic 15-bar Wilder worked example: seeded avg_gain/
-        avg_loss over the first 14 deltas gives RSI approx 71.80. A rolling-mean
-        implementation gives approx 70.46 for the same input -- close enough to
-        look plausible, far enough to be wrong.
-        """
-        close = pd.Series(
-            [
-                44.34,
-                44.09,
-                44.15,
-                43.61,
-                44.33,
-                44.83,
-                45.10,
-                45.42,
-                45.84,
-                46.08,
-                45.89,
-                46.03,
-                45.61,
-                46.28,
-                46.28,
-            ]
+    def test_rsi_is_trades_one_formula(self):
+        """Trade D322: the tool's RSI is Trade's `technical_features.compute_rsi`, the formula behind
+        the stored NIFTY RSI; this 21-bar series separates it from the pandas `adjust=True` copy the
+        tool used to carry (18.82 there, 29.30 here)."""
+        from trade_integrations.dataflows.index_research.technical_features import compute_rsi
+
+        close = pd.Series([100, 101, 102.5, 104, 103.5, 105, 106.5, 108, 107.5, 109, 110.5,
+                           109.5, 108, 106, 103.5, 101, 98, 95.5, 93, 90.5, 88], dtype=float)
+        assert _compute_rsi(close) == float(compute_rsi(close, 14).iloc[-1])
+        assert _compute_rsi(close) == pytest.approx(29.2960, abs=1e-3)
+
+
+class TestNiftyStoredTechnicals:
+    def test_nifty_daily_reads_the_stored_values_not_its_own_bars(self, monkeypatch):
+        """Trade D318: NIFTY's daily technicals are the registry's stored values; no bar fetch."""
+        stored = {"date": "2026-09-23", "close": 25169.5, "factors": {"nifty_rsi_14": 41.2}}
+        monkeypatch.setattr(
+            "src.tools.technical_indicator_tool.stored_nifty_technicals",
+            lambda symbol: stored if symbol == "NIFTY" else None,
         )
-        rsi = _compute_rsi(close, period=14)
-        assert rsi == pytest.approx(71.8024, abs=0.01)
-        assert rsi != pytest.approx(70.4641, abs=0.01)
 
-    def test_rsi_matches_sibling_wilder_implementations(self):
-        """Regression: must agree with the Wilder-EWM RSI already used
-        elsewhere in this codebase (shadow_account/extractor.py,
-        shadow_account/scanner.py, skills/technical-basic/
-        example_signal_engine.py -- all three implement the identical
-        formula below), on a series that crosses both the 30 and 70
-        thresholds a rolling-mean implementation would place differently.
-        """
-        close = pd.Series(
-            [
-                float(x)
-                for x in [
-                    100,
-                    101,
-                    102.5,
-                    104,
-                    103.5,
-                    105,
-                    106.5,
-                    108,
-                    107.5,
-                    109,
-                    110.5,
-                    109.5,
-                    108,
-                    106,
-                    103.5,
-                    101,
-                    98,
-                    95.5,
-                    93,
-                    90.5,
-                    88,
-                ]
-            ]
-        )
-        period = 14
+        def _no_fetch(**kwargs):
+            raise AssertionError("NIFTY must not be recomputed from fetched bars")
 
-        def sibling_rsi(close: pd.Series, period: int) -> float:
-            delta = close.diff()
-            gain = delta.clip(lower=0)
-            loss = (-delta).clip(lower=0)
-            avg_gain = gain.ewm(alpha=1 / period, min_periods=period).mean()
-            avg_loss = loss.ewm(alpha=1 / period, min_periods=period).mean()
-            rs = avg_gain / avg_loss
-            return float((100 - 100 / (1 + rs)).iloc[-1])
-
-        rsi = _compute_rsi(close, period=period)
-        assert rsi == pytest.approx(sibling_rsi(close, period), abs=1e-9)
-        assert rsi == pytest.approx(18.8237, abs=0.01)
+        monkeypatch.setattr("src.tools.technical_indicator_tool.fetch_market_data", _no_fetch)
+        result = json.loads(TechnicalIndicatorTool().execute(symbol="NIFTY"))
+        assert result["ok"] is True
+        assert result["source"] == "factor_registry"
+        assert result["latest_date"] == "2026-09-23"
+        assert result["latest_close"] == 25169.5
+        assert result["indicators"] == {"nifty_rsi_14": 41.2}
 
 
 class TestMACD:
