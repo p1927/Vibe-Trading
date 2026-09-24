@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import { SimulatorLiveIndexPanel } from "../SimulatorLiveIndexPanel";
+import { EMPTY_REPLAY_MAX_POLL_MS, SimulatorLiveIndexPanel, nextPollDelay } from "../SimulatorLiveIndexPanel";
 
 const apiMock = vi.hoisted(() => ({
   getHubMarketDataTicks: vi.fn(),
@@ -155,5 +155,46 @@ describe("SimulatorLiveIndexPanel", () => {
     void vi.advanceTimersByTimeAsync(0);  // no-op (smoke: component should not throw)
     expect(callsAfterIdle).toBeGreaterThanOrEqual(callsAtStart);
     vi.useRealTimers();
+  });
+
+  it("nextPollDelay doubles per empty replay answer up to the cap, and resets", () => {
+    expect(nextPollDelay(1000, 0)).toBe(1000);
+    expect(nextPollDelay(1000, 1)).toBe(2000);
+    expect(nextPollDelay(1000, 3)).toBe(8000);
+    expect(nextPollDelay(1000, 20)).toBe(EMPTY_REPLAY_MAX_POLL_MS);
+    expect(nextPollDelay(250, 0)).toBe(250);
+  });
+
+  it("backs off while replay answers no bars, and restores the rate on the first bars", async () => {
+    // 2026-09-23-replay-chart-backoff-no-bars: on a replay day with no recorded bars the
+    // chart re-polled at full rate for hours and pinned the simulator.
+    vi.useFakeTimers();
+    // Never paint: under fake timers the chart's draw would run against jsdom's canvas-less
+    // layout. This test is about the poll cadence only.
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    const empty = {
+      status: "ok", symbol: "NIFTY", exchange: "NSE_INDEX", source: "simulator", ticks: [],
+      error: "no recorded bars for NIFTY on 2026-09-22 up to 2026-09-22T10:00:00+05:30",
+    };
+    const withBars = {
+      status: "ok", symbol: "NIFTY", exchange: "NSE_INDEX", source: "simulator",
+      ticks: [{ ts: "2026-09-22T10:00:00+05:30", symbol: "NIFTY", exchange: "NSE_INDEX",
+                price: 25000, source: "simulator" }],
+    };
+    apiMock.getHubMarketDataTicks.mockResolvedValue(empty);
+    apiMock.getHubMarketDataSpot.mockResolvedValue({
+      status: "ok", symbol: "NIFTY", exchange: "NSE_INDEX", spot: null,
+    });
+    render(<SimulatorLiveIndexPanel symbol="NIFTY" isReplayArmed replaySpeed={1} />);  // pollMs 1000
+    await vi.advanceTimersByTimeAsync(60_000);
+    const emptyCalls = apiMock.getHubMarketDataTicks.mock.calls.length;
+    expect(emptyCalls).toBeGreaterThan(1);
+    expect(emptyCalls).toBeLessThan(12);  // 61 at the fixed 1s rate
+
+    apiMock.getHubMarketDataTicks.mockResolvedValue(withBars);
+    await vi.advanceTimersByTimeAsync(EMPTY_REPLAY_MAX_POLL_MS);  // the pending backed-off poll lands
+    const afterBars = apiMock.getHubMarketDataTicks.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(apiMock.getHubMarketDataTicks.mock.calls.length - afterBars).toBeGreaterThanOrEqual(4);
   });
 });

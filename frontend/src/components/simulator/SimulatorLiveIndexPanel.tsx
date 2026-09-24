@@ -121,6 +121,23 @@ async function fetchLastSessionTicks(
   }
 }
 
+/** Longest wait between two replay polls that keep coming back empty. */
+export const EMPTY_REPLAY_MAX_POLL_MS = 30_000;
+
+/**
+ * Delay before the next poll. A replay poll that answers "no recorded bars" (an empty
+ * list with a reason, not an error) cannot change until the sim clock moves to a day
+ * with bars, so each consecutive empty answer doubles the delay up to
+ * `EMPTY_REPLAY_MAX_POLL_MS`; the first non-empty answer, or a change of symbol, armed
+ * state or speed (the fetch effect re-runs), goes back to `pollMs`. Without this the
+ * chart asked at up to 4/sec for hours on a day with no bars
+ * (2026-09-23-replay-chart-backoff-no-bars).
+ */
+export function nextPollDelay(pollMs: number, emptyReplayStreak: number): number {
+  if (emptyReplayStreak <= 0) return pollMs;
+  return Math.max(pollMs, Math.min(pollMs * 2 ** emptyReplayStreak, EMPTY_REPLAY_MAX_POLL_MS));
+}
+
 export function SimulatorLiveIndexPanel({
   symbol,
   exchange = "NSE_INDEX",
@@ -186,10 +203,15 @@ export function SimulatorLiveIndexPanel({
     }
   }, [symbolKey, isReplayArmed]);
 
-  // Fetch loop.
+  // Fetch loop: a setTimeout chain, so the next poll waits for this one and its
+  // delay can back off (`nextPollDelay`). `tick` returns true when a replay poll
+  // came back empty with a reason.
   useEffect(() => {
     let cancelled = false;
-    const tick = async () => {
+    let handle: number | undefined;
+    let emptyReplayStreak = 0;
+    const tick = async (): Promise<boolean> => {
+      let replayEmpty = false;
       try {
         const [ticksRes, spotRes] = await Promise.all([
           api.getHubMarketDataTicks({
@@ -209,7 +231,7 @@ export function SimulatorLiveIndexPanel({
           }),
           api.getHubMarketDataSpot({ symbol, exchange, replay: isReplayArmed }),
         ]);
-        if (cancelled) return;
+        if (cancelled) return false;
         let nextSessionOpen: boolean | null = null;
         if (!isReplayArmed) {
           nextSessionOpen = spotRes.session_open ?? null;
@@ -224,6 +246,7 @@ export function SimulatorLiveIndexPanel({
             volume: t.volume ?? null,
             open: t.open ?? null,
           }));
+          replayEmpty = isReplayArmed && next.length === 0 && Boolean(ticksRes.error);
           if (next.length === 0 && !isReplayArmed && nextSessionOpen === false) {
             // Live window is empty because the market's been closed longer
             // than the rolling lookback — fall back to the last full
@@ -238,7 +261,7 @@ export function SimulatorLiveIndexPanel({
               setEmptyReason(null);
             } else {
               const fallback = await fetchLastSessionTicks(symbol, exchange);
-              if (cancelled) return;
+              if (cancelled) return false;
               if (fallback) {
                 lastSessionCacheRef.current.set(symbolKey, fallback);
                 setTicks(fallback.ticks);
@@ -301,12 +324,18 @@ export function SimulatorLiveIndexPanel({
           setLoading(false);
         }
       }
+      return replayEmpty;
     };
-    tick();
-    const handle = window.setInterval(tick, pollMs);
+    const loop = async () => {
+      const empty = await tick();
+      if (cancelled) return;
+      emptyReplayStreak = empty ? emptyReplayStreak + 1 : 0;
+      handle = window.setTimeout(loop, nextPollDelay(pollMs, emptyReplayStreak));
+    };
+    void loop();
     return () => {
       cancelled = true;
-      window.clearInterval(handle);
+      window.clearTimeout(handle);
     };
   }, [symbolKey, pollMs, isReplayArmed]);
 
