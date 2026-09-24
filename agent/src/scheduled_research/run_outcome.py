@@ -54,19 +54,33 @@ def record_interrupted_run(job: ScheduledResearchJob, reason: str, *, restart_ar
     job.last_error = reason[:_MAX_ERROR_CHARS]
 
 
+#: Most per-part errors named in ``last_error``; the rest are counted, so one bad vendor day with
+#: thirty failed factors still fits the 1000-char field and still says how many failed.
+_MAX_ERROR_PARTS = 8
+
+
 def run_error_detail(summary: Any) -> str:
-    """The error text a handler summary carries: its top-level ``error``, plus any per-part errors."""
-    if not isinstance(summary, dict):
-        return ""
+    """The error text a handler summary carries, wherever it sits: every nested part holding an
+    ``error``, or ``status == "error"`` with a ``reason`` (the global-macro EOD refresh's
+    ``series.<name>`` and ``factors.factors.<market/key>`` parts), named by its path. One reader
+    for every handler's shape, not a key per handler: the EOD refresh's two failed runs of
+    2026-09-21/22 recorded only "no error detail in the summary" because this read ``results.*``
+    alone (.claude/backlog/items/2026-09-23-global-macro-eod-refresh-error-detail-lost.md)."""
     parts: list[str] = []
-    if summary.get("error"):
-        parts.append(str(summary["error"]))
-    results = summary.get("results")
-    if isinstance(results, dict):
-        for name, result in results.items():
-            if isinstance(result, dict) and result.get("error"):
-                parts.append(f"{name}: {result['error']}")
-    return "; ".join(parts)
+
+    def walk(node: Any, path: str, depth: int) -> None:
+        if not isinstance(node, dict) or depth > 4:
+            return
+        text = node.get("error") or (node.get("reason") if node.get("status") == "error" else None)
+        if text:
+            parts.append(f"{path}: {text}" if path else str(text))
+        for key, child in node.items():
+            if isinstance(child, dict):
+                walk(child, f"{path}.{key}" if path else str(key), depth + 1)
+
+    walk(summary, "", 0)
+    shown = "; ".join(parts[:_MAX_ERROR_PARTS])
+    return shown + (f"; (+{len(parts) - _MAX_ERROR_PARTS} more)" if len(parts) > _MAX_ERROR_PARTS else "")
 
 
 def raise_if_run_had_errors(job: ScheduledResearchJob, summary: Any, label: str) -> None:

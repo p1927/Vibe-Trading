@@ -369,3 +369,23 @@ def test_restart_artifact_does_not_count_toward_auto_pause():
     assert job.last_error == "recovered on executor shutdown"
     record_interrupted_run(job, "recovered stale: hang")
     assert job.consecutive_failures == 2
+
+
+def test_nested_part_errors_reach_last_error() -> None:
+    """The global-macro EOD refresh's summary names each failed part as `{status: error, reason}`
+    under `series.<name>` and `factors.factors.<market/key>`; both reach the error text
+    (.claude/backlog/items/2026-09-23-global-macro-eod-refresh-error-detail-lost.md)."""
+    from src.scheduled_research.run_outcome import run_error_detail
+
+    summary = {"status": "error", "had_errors": True,
+               "series": {"vix_daily": {"status": "error", "series": "vix_daily", "reason": "Too Many Requests"},
+                          "gold": {"status": "ok", "rows": 3}},
+               "factors": {"status": "error", "had_errors": True,
+                           "factors": {"GLOBAL/dxy": {"status": "error", "reason": "BackfillExhaustedError: x"}}},
+               "results": {"part": {"error": "boom"}}}
+    detail = run_error_detail(summary)
+    assert "series.vix_daily: Too Many Requests" in detail
+    assert "factors.factors.GLOBAL/dxy: BackfillExhaustedError: x" in detail
+    assert "results.part: boom" in detail and "gold" not in detail
+    many = {"factors": {f"k{i}": {"status": "error", "reason": "r"} for i in range(20)}}
+    assert run_error_detail(many).endswith("(+12 more)")
