@@ -27,8 +27,25 @@ from __future__ import annotations
 from typing import Dict
 
 import numpy as np
-from scipy.optimize import brentq
-from scipy.stats import norm
+
+
+class _LazyNorm:
+    """`scipy.stats.norm`, imported on first use: scipy.stats + scipy.optimize cost the Vibe API
+    ~1.3-1.5 s CPU at startup via options_routes (Trade backlog 2026-09-23-vibe-api-import-cost)."""
+
+    def __getattr__(self, name: str):
+        from scipy.stats import norm as _norm
+
+        return getattr(_norm, name)
+
+
+norm = _LazyNorm()
+
+
+def brentq(*args, **kwargs):
+    from scipy.optimize import brentq as _brentq
+
+    return _brentq(*args, **kwargs)
 
 __all__ = [
     "BARRIER_TYPES",
