@@ -29,7 +29,7 @@ def _autospec_stock_history(monkeypatch, *, summary=None, error=None):
     ([[2026-09-07-coverage-sweep-test-double-stale-after-budget-change]]). An autospec needs no
     upkeep: a renamed or added parameter on the real method is a bind error at the call site.
 
-    Each week is a stock_simulator background run (D195): `start_backfill_run` returns a run that
+    The sweep is one stock_simulator background run (D195): `start_backfill_run` returns a run that
     `get_backfill_run` reports finished with `summary` on the first poll.
     """
     index_jobs._ensure_trade_integrations_on_path()
@@ -52,10 +52,16 @@ def _autospec_stock_history(monkeypatch, *, summary=None, error=None):
 
 
 @pytest.mark.unit
-def test_run_stock_history_coverage_sweep_job_starts_one_backfill_run_per_week(monkeypatch):
+def test_run_stock_history_coverage_sweep_job_starts_one_backfill_run_for_all_weeks(monkeypatch):
     sh = _autospec_stock_history(
         monkeypatch,
-        summary=dict(had_errors=False, ok_count=5, failed_count=0, skipped_count=1),
+        summary=dict(
+            had_errors=False, ok_count=5, failed_count=0, skipped_count=1,
+            results=[
+                {"bucket": "macro_factors", "status": "ok", "duration_ms": 271_400, "handler_type": "inline"},
+                {"bucket": "news", "status": "skipped", "duration_ms": 0, "handler_type": "noop"},
+            ],
+        ),
     )
 
     result = index_jobs.run_stock_history_coverage_sweep_job({"include_optional": True})
@@ -65,15 +71,21 @@ def test_run_stock_history_coverage_sweep_job_starts_one_backfill_run_per_week(m
     assert "error" not in result, result.get("error")
     # Budgeted inside the executor's 30-minute dispatch timeout; see
     # [[2026-09-07-coverage-sweep-times-out-and-stops-backfilling]].
-    # Current week first, then the two before it: a gap from a past week (an outage, an auto-pause)
-    # is still healed after the week rolls over.
-    calls = sh.start_backfill_run.call_args_list
-    assert [c.kwargs["week_start"] for c in calls] == ["2026-08-18", "2026-08-11", "2026-08-04"]
-    assert all(c.kwargs["include_optional"] and "buckets" not in c.kwargs and "day" not in c.kwargs for c in calls)
-    assert calls[0].kwargs["budget_seconds"] <= 1200.0
+    # The current week and the two before it, as ONE run
+    # ([[2026-09-23-coverage-sweep-one-run-all-weeks]]): a gap from a past week (an outage, an
+    # auto-pause) is still healed after the week rolls over, and work many buckets share (the
+    # India factor pipeline) runs once, not once per week.
+    [call] = sh.start_backfill_run.call_args_list
+    assert (call.kwargs["week_start"], call.kwargs["weeks"]) == ("2026-08-18", 3)
+    assert call.kwargs["include_optional"] and "buckets" not in call.kwargs and "day" not in call.kwargs
+    assert call.kwargs["budget_seconds"] <= 1200.0
     assert result["status"] == "ok"
-    assert result["ok_count"] == 15
+    assert result["ok_count"] == 5
     assert result["had_errors"] is False
+    # Per-bucket seconds survive into the persisted job record
+    # ([[2026-09-23-backfill-durations-not-persisted]]); a bucket that never ran has none.
+    assert result["durations"] == {"macro_factors": 271.4}
+    assert index_jobs._compact_result_summary(result)["durations"] == {"macro_factors": 271.4}
 
 
 @pytest.mark.unit
@@ -96,9 +108,9 @@ def test_run_stock_history_coverage_sweep_job_reports_errors(monkeypatch):
 
     result = index_jobs.run_stock_history_coverage_sweep_job({})
     assert "error" not in result, result.get("error")
-    assert sh.start_backfill_run.call_count == 3
+    assert sh.start_backfill_run.call_count == 1
     assert result["status"] == "error"
-    assert result["failed_count"] == 9
+    assert result["failed_count"] == 3
     assert result["had_errors"] is True
 
 
