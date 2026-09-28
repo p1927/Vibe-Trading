@@ -512,13 +512,12 @@ def _count_verified_headlines_since(ticker: str, since: datetime) -> int:
 def _material_news_count(ticker: str) -> int:
     try:
         from trade_integrations.dataflows.entity_registry import india_index_tickers
-        from trade_integrations.monitor.news_watcher import count_material_headlines_since
-        from trade_integrations.monitor.service import MonitorService
+        from trade_integrations.monitor.news_watcher import count_material_headlines_since, news_since
 
         key = ticker.strip().upper()
-        since = MonitorService._news_since(key)
-        if key in india_index_tickers():
-            since = _index_news_since(key, fallback=since)
+        is_index = key in india_index_tickers()
+        since = news_since(key, index=is_index)
+        if is_index:
             hub_count = _count_verified_headlines_since(key, since)
             if hub_count:
                 return hub_count
@@ -526,37 +525,6 @@ def _material_news_count(ticker: str) -> int:
     except Exception:
         logger.exception("Material news count failed for %s", ticker)
         return 0
-
-
-def _index_news_since(ticker: str, *, fallback: datetime) -> datetime:
-    """Prefer index research as_of for index prediction live monitor."""
-    try:
-        from trade_integrations.context.hub import load_index_research_json
-
-        doc = load_index_research_json(ticker)
-    except Exception:
-        return fallback
-    if doc is None:
-        return fallback
-    as_of = getattr(doc, "as_of", None)
-    if as_of is None and isinstance(doc, dict):
-        as_of = doc.get("as_of")
-    if isinstance(as_of, datetime):
-        if as_of.tzinfo is None:
-            return as_of.replace(tzinfo=timezone.utc)
-        return as_of
-    if isinstance(as_of, str):
-        text = as_of.strip()
-        if text.endswith("Z"):
-            text = text[:-1] + "+00:00"
-        try:
-            parsed = datetime.fromisoformat(text)
-        except ValueError:
-            return fallback
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=timezone.utc)
-        return parsed
-    return fallback
 
 
 def _has_open_plan_position(ticker: str) -> bool:

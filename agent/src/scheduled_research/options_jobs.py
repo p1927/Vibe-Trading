@@ -93,27 +93,6 @@ def _ensure_trade_integrations_on_path() -> None:
     ensure_trade_stack_path()
 
 
-def _parse_as_of(value: Any) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value
-    if isinstance(value, str):
-        text = value.strip()
-        if text.endswith("Z"):
-            text = text[:-1] + "+00:00"
-        try:
-            parsed = datetime.fromisoformat(text)
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=timezone.utc)
-        return parsed
-    return None
-
-
 def refresh_options_research(ticker: str, *, config: dict[str, Any] | None = None) -> bool:
     """Run the options research pipeline and persist to hub when eligible."""
     _ensure_trade_integrations_on_path()
@@ -136,29 +115,13 @@ def refresh_options_research(ticker: str, *, config: dict[str, Any] | None = Non
     return True
 
 
-def _news_since_for_ticker(ticker: str) -> datetime:
-    _ensure_trade_integrations_on_path()
-    from trade_integrations.context.hub import load_options_research_json
-
-    doc = load_options_research_json(ticker)
-    if doc is None:
-        return datetime.now(timezone.utc) - timedelta(days=1)
-
-    as_of = _parse_as_of(getattr(doc, "as_of", None))
-    if as_of is None and isinstance(doc, dict):
-        as_of = _parse_as_of(doc.get("as_of"))
-    if as_of is not None:
-        return as_of
-    return datetime.now(timezone.utc) - timedelta(days=1)
-
-
 def _ticker_needs_refresh(ticker: str, *, config: dict[str, Any] | None = None) -> tuple[bool, list[str]]:
     _ensure_trade_integrations_on_path()
-    from trade_integrations.monitor.news_watcher import OPTIONS_PLAN_REFRESH_CONSUMER, check_material_news
+    from trade_integrations.monitor.news_watcher import OPTIONS_PLAN_REFRESH_CONSUMER, check_material_news, news_since
     from trade_integrations.monitor.service import MonitorService
 
     reasons: list[str] = []
-    since = _news_since_for_ticker(ticker)
+    since = news_since(ticker)
     headlines = check_material_news(ticker, since, consumer=OPTIONS_PLAN_REFRESH_CONSUMER)
     if headlines:
         reasons.append("material_news")
