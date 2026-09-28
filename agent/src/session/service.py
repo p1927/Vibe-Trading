@@ -608,6 +608,7 @@ class SessionService:
         if not agent_id:
             return
         await asyncio.to_thread(service_hooks.clear_agent_streaming, agent_id)
+        await service_hooks.drain_pending_post_execution(agent_id)
 
     async def _run_with_agent(
         self,
