@@ -123,7 +123,7 @@ def _preview_hub_capture_factor_snapshot(config: Dict[str, Any]) -> Dict[str, An
     from trade_integrations.hub_capture.gate import should_capture
     from trade_integrations.hub_capture.registry import load_registry
 
-    reg = load_registry(create=False)
+    reg = load_registry()
     entities = reg.get("entities") or []
     entity_id = config.get("entity_id")
     if entity_id:

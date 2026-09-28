@@ -1072,10 +1072,9 @@ class IndexFactorCatalogResponse(BaseModel):
 
 
 class CaptureRegistryEntityPatch(BaseModel):
-    capture_enabled: bool | None = None
-    factor_groups: List[str] | None = None
-    retention_days: Dict[str, int] | None = None
-    schedules: Dict[str, str] | None = None
+    """The capture set is declared in the factor registry (D367); the only editable setting is the switch."""
+
+    capture_enabled: bool
 
 
 class CaptureRegistryUpdateRequest(BaseModel):
@@ -1597,7 +1596,7 @@ def get_capture_registry(
         )
         from trade_integrations.hub_capture.rollup import capture_coverage_stats
 
-        reg = load_registry(create=True)
+        reg = load_registry()
         return CaptureRegistryResponse(
             status="ok",
             registry=reg,
@@ -1625,13 +1624,12 @@ def update_capture_registry(
             build_capture_stats,
             build_factor_tree,
             load_registry,
-            update_entity,
+            set_capture_enabled,
         )
         from trade_integrations.hub_capture.rollup import capture_coverage_stats
 
-        patch = body.patch.model_dump(exclude_none=True)
-        update_entity(key, patch)
-        reg = load_registry(create=False)
+        set_capture_enabled(key, body.patch.capture_enabled)
+        reg = load_registry()
         return CaptureRegistryResponse(
             status="ok",
             registry=reg,

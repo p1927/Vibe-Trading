@@ -3,6 +3,7 @@ import { Database, ExternalLink, Loader2, Newspaper, RefreshCw, Search } from "l
 import { cn } from "@/lib/utils";
 import { api, type HubDiscardedNewsItem, type HubNewsItem, type HubNewsPipelineConfig, type HubStatusQuery, type HubStatusResponse, type ObservabilitySummaryResponse } from "@/lib/api";
 import { RepeatIntervalPicker } from "@/components/RepeatIntervalPicker";
+import { ObservabilityIssuesPanel } from "@/components/ObservabilityIssuesPanel";
 import { NewsPipelineGraph } from "@/components/NewsPipelineGraph";
 import { EventsCalendar } from "@/components/news/EventsCalendar";
 import { FactorRegistryGaps } from "@/components/news/FactorRegistryGaps";
@@ -929,6 +930,7 @@ export function Hub() {
               </span>
             ) : null}
           </div>
+          <ObservabilityIssuesPanel refreshKey={obsSummary?.open_issue_count} />
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             Live news union (staging refs + distilled hub events), references, cache health, and capture stats.
           </p>

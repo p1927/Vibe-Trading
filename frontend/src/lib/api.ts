@@ -2358,6 +2358,13 @@ export const api = {
   },
   getObservabilitySummary: () =>
     request<ObservabilitySummaryResponse>("/trade/observability/summary"),
+  getObservabilityIssues: () =>
+    request<ObservabilityIssuesResponse>("/trade/observability/issues?status=open&limit=100"),
+  resolveObservabilityIssue: (issueId: string) =>
+    request<{ issue_id: string; resolved: boolean }>(
+      `/trade/observability/issues/${encodeURIComponent(issueId)}/resolve`,
+      { method: "POST" },
+    ),
   getHubNewsPipelineConfig: () =>
     request<HubNewsPipelineConfigResponse>("/trade/hub/news-pipeline/config"),
   updateHubNewsPipelineConfig: (body: HubNewsPipelineConfigUpdate) =>
@@ -5618,7 +5625,6 @@ export interface CaptureRegistryEntity {
   kind?: string;
   capture_enabled?: boolean;
   factor_groups?: string[];
-  schedules?: Record<string, string>;
   retention_days?: Record<string, number>;
 }
 
@@ -5654,12 +5660,7 @@ export interface CaptureRegistryResponse {
 
 export interface CaptureRegistryUpdateRequest {
   entity_id?: string;
-  patch: {
-    capture_enabled?: boolean;
-    factor_groups?: string[];
-    retention_days?: Record<string, number>;
-    schedules?: Record<string, string>;
-  };
+  patch: { capture_enabled: boolean };
 }
 
 export interface CaptureRegistryBackfillRequest {
@@ -5960,6 +5961,25 @@ export interface ObservabilitySummaryResponse {
   recent_events: Record<string, unknown>[];
   events_path: string;
   issues_path: string;
+}
+
+export interface ObservabilityIssue {
+  issue_id: string;
+  severity: string;
+  module: string;
+  event: string;
+  status: "open" | "resolved";
+  first_seen: string;
+  last_seen: string;
+  count: number;
+  summary: string;
+  detail: Record<string, unknown>;
+  suggested_action: string;
+}
+
+export interface ObservabilityIssuesResponse {
+  issues: ObservabilityIssue[];
+  open_count: number;
 }
 
 export interface HubStagingDrainResponse {
