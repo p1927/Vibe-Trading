@@ -192,6 +192,18 @@ def clear_agent_streaming(agent_id: str) -> None:
         logger.warning("clear agent streaming failed for %s", agent_id, exc_info=True)
 
 
+async def drain_pending_post_execution(agent_id: str) -> None:
+    """Turn end: send the post-execution review an order placed inside this turn owes."""
+    from src.trade.hub_bridge import ensure_trade_stack_path
+
+    ensure_trade_stack_path()
+    from trade_integrations.autonomous_agents.post_execution import drain_pending_post_execution as drain
+
+    result = await drain(agent_id)
+    if result and result.get("status") == "error":
+        logger.error("deferred post_execution for %s failed: %s", agent_id, result)
+
+
 async def maybe_orchestrator_propose_guard(
     service: "SessionService",
     session_id: str,
