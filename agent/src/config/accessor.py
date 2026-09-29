@@ -62,16 +62,19 @@ def get_env_config() -> EnvConfig:
     global _instance  # noqa: PLW0603
     if _instance is not None:
         return _instance
+    # Import here to avoid a circular import at module-load time and to keep the heavy
+    # Pydantic model out of the import path for callers that only need ``_parse_bool`` or
+    # ``get_env_or``.  It must happen BEFORE taking ``_lock``: importing while holding a plain
+    # lock is an ABBA deadlock with any thread that holds the import lock (mid-import of
+    # ``src.config``) and calls ``get_env_config`` — it wedged the whole API process
+    # ([[2026-09-22-vibe-api-import-lock-deadlock]]).
+    from src.config.env_schema import EnvConfig as _EnvConfig
+
     with _lock:
         # Double-checked locking: another thread may have created the
         # instance while we were waiting for the lock.
         if _instance is not None:
             return _instance
-        # Import here to avoid a circular import at module-load time and
-        # to keep the heavy Pydantic model out of the import path for
-        # callers that only need ``_parse_bool`` or ``get_env_or``.
-        from src.config.env_schema import EnvConfig as _EnvConfig
-
         _instance = _EnvConfig()
     return _instance
 
