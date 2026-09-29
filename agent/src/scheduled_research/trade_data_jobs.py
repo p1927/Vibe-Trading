@@ -163,7 +163,18 @@ def register_default_trade_data_jobs(store: ScheduledResearchJobStore) -> int:
     created = 0
     now_ms = int(time.time() * 1000)
 
-    if not unified_subsumes_fills_and_archive:
+    if unified_subsumes_fills_and_archive:
+        # Registration only adds; rows persisted before the gate existed would keep running the
+        # work the unified jobs already do. Registration stays the one source of truth.
+        for job_id, job_type in (
+            ("hub-trade-fills-export", JOB_TYPE_TRADE_FILLS_EXPORT),
+            ("hub-research-history-archive", JOB_TYPE_RESEARCH_HISTORY_ARCHIVE),
+        ):
+            job = store.get(job_id)
+            if job is not None and job.config.get("job_type") == job_type:
+                store.delete(job_id)
+                logger.info("removed %s: subsumed by the unified hub calibration jobs", job_id)
+    else:
         created += _register_fills_and_archive_jobs(store, now_ms, enabled)
     created += _register_nse_browser_jobs(store, now_ms, enabled)
     return created

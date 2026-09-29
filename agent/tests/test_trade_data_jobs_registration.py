@@ -91,3 +91,15 @@ def test_gate_errors_propagate(monkeypatch, tmp_path):
 
     with pytest.raises(RuntimeError, match="config broken"):
         register_default_trade_data_jobs(store)
+
+
+def test_unified_calibration_removes_the_persisted_subsumed_jobs(monkeypatch, tmp_path):
+    """Rows saved before the gate existed used to survive and run the work twice a day."""
+    store = ScheduledResearchJobStore(tmp_path / "jobs.json")
+    _set_env(monkeypatch, trade_data="1", calibration="1", unified="0")
+    register_default_trade_data_jobs(store)
+    assert SUBSUMED_JOB_IDS <= _ids(store)
+
+    _set_env(monkeypatch, trade_data="1", calibration="1", unified="1")
+    register_default_trade_data_jobs(store)
+    assert _ids(store) == NSE_JOB_IDS
