@@ -26,6 +26,7 @@ RuntimeWarning.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import importlib
 from typing import Any
@@ -54,30 +55,37 @@ def _load_legacy() -> Any:
     return _legacy_mod
 
 
-def _sync_legacy_test_overrides() -> None:
-    """Mirror package-level monkeypatches onto ``_legacy``'s module globals.
+@contextlib.contextmanager
+def _legacy_test_overrides():
+    """Mirror package-level monkeypatches onto ``_legacy``'s module globals for one call.
 
     Tests reach into ``cli.<NAME>`` to override constants, but legacy
-    callables read ``<NAME>`` from their own module namespace. This hook
-    copies any patched value back to ``_legacy`` for the allowlist below.
+    callables read ``<NAME>`` from their own module namespace. This copies any
+    patched value to ``_legacy`` for the allowlist above while the call runs and puts
+    ``_legacy``'s own value back afterwards: a plain ``setattr`` that outlived the call
+    leaked the patch into every later test (monkeypatch only undoes ``cli.<NAME>``).
     """
     legacy = _load_legacy()
     pkg_globals = globals()
+    saved: dict[str, Any] = {}
     for name in _LEGACY_SYNCED_GLOBALS:
-        if name not in pkg_globals:
-            continue
-        new_value = pkg_globals[name]
-        if getattr(legacy, name, None) is not new_value:
-            setattr(legacy, name, new_value)
+        if name in pkg_globals and getattr(legacy, name, None) is not pkg_globals[name]:
+            saved[name] = getattr(legacy, name, None)
+            setattr(legacy, name, pkg_globals[name])
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            setattr(legacy, name, value)
 
 
 def _make_synced_legacy_cmd_wrapper(cmd_name: str):
-    """Return a ``cmd_*`` proxy that syncs patches then reads ``_legacy`` live."""
+    """Return a ``cmd_*`` proxy that applies patches for the call, reading ``_legacy`` live."""
 
     @functools.wraps(getattr(_load_legacy(), cmd_name))
     def _wrapper(*args, **kwargs):
-        _sync_legacy_test_overrides()
-        return getattr(_load_legacy(), cmd_name)(*args, **kwargs)
+        with _legacy_test_overrides():
+            return getattr(_load_legacy(), cmd_name)(*args, **kwargs)
 
     _wrapper.__name__ = cmd_name
     return _wrapper
@@ -97,8 +105,8 @@ def _resolve_legacy_export(name: str) -> Any:
 
 def cmd_init() -> int:
     """Compatibility wrapper for callers patching ``cli._INIT_ENV_PATH``."""
-    _sync_legacy_test_overrides()
-    return _load_legacy().cmd_init()
+    with _legacy_test_overrides():
+        return _load_legacy().cmd_init()
 
 
 def __getattr__(name: str) -> Any:

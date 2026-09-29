@@ -274,7 +274,16 @@ def _reset_env_config():
     from src.config.accessor import reset_env_config
     from src.config.bootstrap import reset_bootstrap
 
-    saved_environ = dict(os.environ)
+    try:
+        saved_environ = dict(os.environ)
+    except RuntimeError as exc:  # "dictionary changed size during iteration"
+        import threading
+
+        raise RuntimeError(
+            f"os.environ was mutated by another thread while {os.environ.get('PYTEST_CURRENT_TEST')} "
+            f"was being set up; a thread left running by an earlier test is writing the environment. "
+            f"Live threads: {[t.name for t in threading.enumerate()]}"
+        ) from exc
     reset_env_config()
     reset_bootstrap()
     yield
