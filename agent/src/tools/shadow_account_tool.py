@@ -309,8 +309,11 @@ class RenderShadowReportTool(BaseTool):
                     delta_pnl=None,
                 )
 
+        signals_unavailable: list[dict[str, str]] = []
         today_signals = (
-            scan_today_signals(profile) if kwargs.get("include_today_signals", True) else []
+            scan_today_signals(profile, unavailable=signals_unavailable)
+            if kwargs.get("include_today_signals", True)
+            else []
         )
         report = render_shadow_report(profile, result, today_signals=today_signals)
         payload = {
@@ -320,6 +323,8 @@ class RenderShadowReportTool(BaseTool):
             "engine": report["engine"],
             "delta_pnl": result.delta_pnl,
             "report_url": f"/shadow-reports/{profile.shadow_id}",
+            # Symbols the today-signals scan could not price (empty signals != scanned clean).
+            "signals_no_data": signals_unavailable,
         }
         if report["pdf_path"]:
             payload["pdf_url"] = f"/shadow-reports/{profile.shadow_id}?format=pdf"
@@ -366,10 +371,16 @@ class ScanShadowSignalsTool(BaseTool):
             return _err(str(exc))
 
         target = kwargs.get("date") or None
-        signals = scan_today_signals(profile, target_date=target, per_market=per_market)
+        unavailable: list[dict[str, str]] = []
+        signals = scan_today_signals(
+            profile, target_date=target, per_market=per_market, unavailable=unavailable
+        )
         return _ok(
             shadow_id=profile.shadow_id,
             target_date=target or "today",
             matches=signals,
+            # Symbols the scan could not price: an empty `matches` with entries here means
+            # "never looked", not "no match today".
+            no_data=unavailable,
             disclaimer="Research use only - not investment advice.",
         )

@@ -972,11 +972,14 @@ def test_scan_shadow_signals_tool(
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     profile = extract_shadow_profile(profitable_journal)
     save_profile(profile)
+    monkeypatch.setattr("src.shadow_account.scanner._default_fetcher", lambda *a: None)
     tool = ScanShadowSignalsTool()
     out = json.loads(tool.execute(shadow_id=profile.shadow_id, date="2026-04-18"))
     assert out["status"] == "ok"
     assert out["disclaimer"]
     assert isinstance(out["matches"], list)
+    # No bars fetched -> the empty result says "never looked", not "no match".
+    assert out["matches"] == [] and out["no_data"]
 
 
 @pytest.mark.unit

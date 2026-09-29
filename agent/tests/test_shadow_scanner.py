@@ -96,10 +96,32 @@ def test_scan_today_signals_skips_missing_and_empty_data() -> None:
 
 
 @pytest.mark.unit
-def test_scan_today_signals_keeps_backwards_compatible_call_signature() -> None:
+def test_scan_today_signals_keeps_backwards_compatible_call_signature(monkeypatch) -> None:
+    monkeypatch.setattr("src.shadow_account.scanner._default_fetcher", lambda *a: None)
     profile = _profile()
 
     assert scan_today_signals(profile, target_date="2026-04-06", per_market=1) == []
+
+
+@pytest.mark.unit
+def test_scan_today_signals_defaults_to_loader_fetch_and_reports_no_data(monkeypatch) -> None:
+    """[[2026-09-24-shadow-scanner-never-fetches-prices]]: the production call (no injected
+    frames) fetches through the extractor's loader path, and an unpriceable symbol is reported."""
+    import src.shadow_account.extractor as extractor
+
+    calls: list[str] = []
+
+    def fake_history(symbol, market, *, start, end):
+        calls.append(symbol)
+        return None
+
+    monkeypatch.setattr(extractor, "_fetch_price_history", fake_history)
+    unavailable: list[dict[str, str]] = []
+    out = scan_today_signals(
+        _profile(), target_date="2026-04-06", per_market=2, unavailable=unavailable
+    )
+    assert out == [] and calls
+    assert {u["symbol"] for u in unavailable} == set(calls)
 
 
 @pytest.mark.unit

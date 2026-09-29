@@ -18,6 +18,19 @@ from src.trade.technicals import compute_rsi
 PriceFetcher = Callable[..., pd.DataFrame | None]
 
 _RSI_PERIOD = 14
+# Calendar days of history fetched per symbol by the default fetcher: RSI(14) warmup plus the
+# 20-day MA / momentum windows, with slack for weekends and holidays.
+_DEFAULT_HISTORY_DAYS = 365
+
+
+def _default_fetcher(symbol: str, market: str, target: date) -> pd.DataFrame | None:
+    """Daily bars via the extractor's loader path (one way to fetch prices, D306)."""
+    from src.shadow_account.extractor import _fetch_price_history
+
+    end = pd.Timestamp(target)
+    return _fetch_price_history(
+        symbol, market, start=end - pd.Timedelta(days=_DEFAULT_HISTORY_DAYS), end=end
+    )
 
 
 def scan_today_signals(
@@ -27,6 +40,7 @@ def scan_today_signals(
     per_market: int = 3,
     price_frames: dict[str, pd.DataFrame] | None = None,
     fetcher: PriceFetcher | None = None,
+    unavailable: list[dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Return a list of {symbol, market, rule_id, reason} matches.
 
@@ -37,7 +51,11 @@ def scan_today_signals(
         price_frames: Optional symbol -> OHLCV frame injection for tests or
             callers that already have market data.
         fetcher: Optional callable used when ``price_frames`` has no symbol.
-            It may accept ``(symbol, market, target_date)`` or fewer args.
+            It may accept ``(symbol, market, target_date)`` or fewer args. With neither
+            ``price_frames`` nor ``fetcher``, bars come from the extractor's loader path.
+        unavailable: Optional out-list; each symbol with no usable bars is appended as
+            ``{symbol, market, rule_id, reason}`` so "never looked" is distinguishable from
+            "looked, no match" (D36).
 
     Returns:
         Possibly-empty list of matched candidates. Always research-only —
@@ -49,6 +67,8 @@ def scan_today_signals(
         d = target_date
     else:
         d = datetime.strptime(str(target_date), "%Y-%m-%d").date()
+    if price_frames is None and fetcher is None:
+        fetcher = _default_fetcher
 
     matches: list[dict[str, Any]] = []
     for rule in profile.rules:
@@ -63,7 +83,16 @@ def scan_today_signals(
             if market_count >= max(0, per_market):
                 break
             frame = _get_price_frame(symbol, market, d, price_frames, fetcher)
-            if frame is None or not _entry_condition_matches(frame, rule, d):
+            if frame is None:
+                if unavailable is not None:
+                    unavailable.append({
+                        "symbol": symbol,
+                        "market": market,
+                        "rule_id": rule.rule_id,
+                        "reason": "no price bars (unmapped market, no data source, or empty result)",
+                    })
+                continue
+            if not _entry_condition_matches(frame, rule, d):
                 continue
             matches.append({
                 "symbol": symbol,
