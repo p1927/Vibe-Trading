@@ -176,11 +176,12 @@ def clear_agent_streaming(agent_id: str) -> None:
         ensure_trade_stack_path()
         from trade_integrations.autonomous_agents.bootstrap import safe_finalize_bootstrap_if_ready
         from trade_integrations.autonomous_agents.store import update_agent
+        from trade_integrations.autonomous_agents.turns import clear_active_turn
 
         def _clear(agent: dict) -> bool:
-            if not agent.get("streaming"):
+            if not (agent.get("streaming") or agent.get("active_turn_kind")):
                 return False
-            agent["streaming"] = False
+            clear_active_turn(agent)  # streaming + active_turn_kind together, never one alone
             return True
 
         # Locked field write: a full-record save here erased decisions recorded during the turn.
