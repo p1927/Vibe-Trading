@@ -15,17 +15,27 @@ How: a daemon thread posts a no-op probe to the loop with ``call_soon_threadsafe
 ``probe_interval_s``. If a probe is still unanswered after ``stall_threshold_s``, it logs one
 WARNING carrying the loop thread's current stack, then one more when the loop recovers, with the
 stall's length. It never touches the loop's work, so it cannot make a stall worse.
+
+Liveness signal: while stalled the same thread also rewrites ``<runtime root>/loop_stall.json``
+every probe interval (``stalled_since`` set, ``updated_at`` fresh) and clears ``stalled_since`` on
+recovery. A wedged loop cannot answer ``/health``, so Trade's ``check_dev_ports.py`` reads this file
+instead of asking the loop (backlog 2026-09-21-loop-stall-watchdog-no-health-signal).
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import sys
 import threading
 import time
 import traceback
+from pathlib import Path
 from typing import Any
+
+from src.config.paths import get_runtime_root
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +52,21 @@ def loop_stall_stats() -> dict[str, Any]:
     """Counters for stalls seen since start (a copy; safe to read from any thread)."""
     with _lock:
         return dict(_stats)
+
+
+STATUS_FILE = "loop_stall.json"
+
+
+def _publish(stalled_since: float | None) -> None:
+    """Write the stall state where an out-of-process checker can read it. Loud on failure."""
+    path = Path(get_runtime_root()) / STATUS_FILE
+    payload = {**loop_stall_stats(), "pid": os.getpid(), "stalled_since": stalled_since, "updated_at": time.time()}
+    try:
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload))
+        os.replace(tmp, path)
+    except OSError:
+        logger.warning("could not write %s", path, exc_info=True)
 
 
 def _format_thread_stack(thread_id: int) -> str:
@@ -77,14 +102,18 @@ def _watch(
             time.monotonic() - sent,
             _format_thread_stack(loop_thread_id),
         )
+        stalled_at = time.time() - (time.monotonic() - sent)
+        _publish(stalled_at)
         while not answered.wait(probe_interval_s):
             if _stop.is_set() or loop.is_closed():
                 return
+            _publish(stalled_at)
         stalled_for = time.monotonic() - sent
         with _lock:
             _stats["stall_count"] += 1
             _stats["max_stall_seconds"] = max(_stats["max_stall_seconds"], round(stalled_for, 1))
             _stats["last_stall_at"] = time.time()
+        _publish(None)
         logger.warning("event loop recovered after a %.1fs stall", stalled_for)
 
 

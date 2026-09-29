@@ -13,7 +13,8 @@ def _block_the_loop_synchronously(seconds: float) -> None:
     time.sleep(seconds)  # the sync call a real stall would be stuck in
 
 
-def test_stall_is_logged_with_the_blocking_frame_then_recovery(caplog) -> None:
+def test_stall_is_logged_with_the_blocking_frame_then_recovery(caplog, tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("VIBE_TRADING_HOME", str(tmp_path))
     caplog.set_level(logging.WARNING, logger=wd.__name__)
     before = wd.loop_stall_stats()["stall_count"]
 
@@ -37,6 +38,11 @@ def test_stall_is_logged_with_the_blocking_frame_then_recovery(caplog) -> None:
     stats = wd.loop_stall_stats()
     assert stats["stall_count"] == before + 1
     assert stats["max_stall_seconds"] >= 0.5
+
+    import json
+
+    status = json.loads((tmp_path / wd.STATUS_FILE).read_text())
+    assert status["stalled_since"] is None and status["stall_count"] == before + 1  # recovery published
 
 
 def test_healthy_loop_logs_nothing(caplog) -> None:
@@ -66,3 +72,30 @@ def test_start_is_idempotent() -> None:
         assert wd._thread is None
 
     asyncio.run(_scenario())
+
+
+def test_stall_is_published_while_it_lasts(tmp_path, monkeypatch) -> None:
+    import json
+    import threading
+
+    monkeypatch.setenv("VIBE_TRADING_HOME", str(tmp_path))
+    seen: list[dict] = []
+
+    async def _scenario() -> None:
+        wd.start_loop_stall_watchdog(probe_interval_s=0.05, stall_threshold_s=0.2)
+        try:
+            await asyncio.sleep(0.1)
+
+            def _peek() -> None:  # from another thread, while the loop is blocked
+                time.sleep(0.6)
+                seen.append(json.loads((tmp_path / wd.STATUS_FILE).read_text()))
+
+            t = threading.Thread(target=_peek)
+            t.start()
+            _block_the_loop_synchronously(1.0)
+            t.join()
+        finally:
+            wd.stop_loop_stall_watchdog()
+
+    asyncio.run(_scenario())
+    assert seen[0]["stalled_since"] is not None and time.time() - seen[0]["updated_at"] < 5
