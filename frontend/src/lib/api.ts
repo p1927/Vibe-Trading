@@ -4198,6 +4198,7 @@ export interface SectorBreadth {
 }
 
 export interface IndexAccuracy {
+  // every number but the walk-forward one: live headline forecasts settled, one per IST issue day and horizon
   sample_count?: number;
   mae_pct?: number | null;
   mae_14d_pct?: number | null;

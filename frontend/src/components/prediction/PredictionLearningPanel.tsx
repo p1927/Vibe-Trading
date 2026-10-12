@@ -11,7 +11,8 @@ export function PredictionLearningPanel({ artifact, history }: Props) {
   const newsCal = artifact.news_shock_calibration;
   const overlay = artifact.event_overlay;
   const sampleCount = accuracy.sample_count ?? 0;
-  // Live settled forecasts (the same definition as the forecast-replay table), never the walk-forward backtest.
+  // Live settled headline forecasts, one per issue day and horizon (the forecast-replay table's rows), for the direction
+  // rate and the MAE alike; never the walk-forward backtest.
   const hitRate = accuracy.direction_hit_rate_14d ?? accuracy.direction_hit_rate;
   const mae = accuracy.mae_14d_pct ?? accuracy.mae_pct;
 
@@ -29,7 +30,7 @@ export function PredictionLearningPanel({ artifact, history }: Props) {
       </p>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="text-[11px]">
-          <span className="text-muted-foreground">Reconciled forecasts</span>
+          <span className="text-muted-foreground">Settled headline forecasts</span>
           <p className="text-lg font-semibold tabular-nums">{sampleCount}</p>
           <p className="text-[10px] text-muted-foreground">
             {matured} of {totalForecasts} in ledger matured
@@ -42,7 +43,7 @@ export function PredictionLearningPanel({ artifact, history }: Props) {
           </p>
         </div>
         <div className="text-[11px]">
-          <span className="text-muted-foreground">MAE (14d)</span>
+          <span className="text-muted-foreground">MAE (last 14 settled)</span>
           <p className="text-lg font-semibold tabular-nums">
             {mae != null ? `${mae.toFixed(2)}%` : "—"}
           </p>
