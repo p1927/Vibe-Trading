@@ -474,7 +474,12 @@ def run_index_research_job(config: dict[str, Any] | None = None) -> dict[str, An
     cfg = config or {}
     ticker = str(cfg.get("ticker") or "NIFTY").strip().upper()
     if cfg.get("run_snapshot_first"):
-        run_index_factor_snapshot_job(cfg)
+        # Timed on its own: it is unbounded by the dispatch budget, and its duration inside this job
+        # had never been measured (scheduled-run stage log, `stage_log.py`).
+        from trade_integrations.dataflows.index_research.pipeline_cancel import timed_stage
+
+        with timed_stage("snapshot_first"):
+            run_index_factor_snapshot_job(cfg)
 
     from src.trade.index_prediction_run_jobs import (
         get_active_job,
@@ -524,6 +529,7 @@ def run_index_research_job(config: dict[str, Any] | None = None) -> dict[str, An
         "job_id": job_id,
         "reused": reused,
         "status": final.get("status"),
+        "error": final.get("error"),
     }
 
 
@@ -550,25 +556,17 @@ def run_index_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[str
             return {"skipped": True, "reason": "manual_run_active", "ticker": ticker}
     except Exception as exc:
         logger.debug("manual run active check skipped: %s", exc)
-    try:
-        doc, reason = run_index_light_refresh(
-            ticker,
-            horizon_days=cfg.get("horizon_days"),
-            force=bool(cfg.get("force")),
-            poll_mode=True,
-        )
-    except Exception as exc:
-        _reraise_pipeline_cancel(exc)
-        # Poll jobs must not enter terminal FAILED on transient pipeline errors.
-        logger.exception("index plan refresh failed for %s", ticker)
-        return {
-            "skipped": False,
-            "ticker": ticker,
-            "reason": "error",
-            "refreshed": False,
-            "error": str(exc),
-        }
-    if reason == "unchanged":
+    # No catch: an error here is a failed run (failure_kind, consecutive_failures, backoff) and the
+    # job stays visible to D32's failed-jobs check, instead of a refresh that wrote no ledger row
+    # being recorded as a normal completed run. The executor retries it on its schedule and never
+    # takes it terminal; a run with no spot (`no_live_spot`) is exempt from auto-pause.
+    doc, reason = run_index_light_refresh(
+        ticker,
+        horizon_days=cfg.get("horizon_days"),
+        force=bool(cfg.get("force")),
+        poll_mode=True,
+    )
+    if reason in ("unchanged", "superseded_by_full_run"):
         return {"skipped": False, "ticker": ticker, "reason": reason, "refreshed": False}
     return {
         "skipped": False,
@@ -1348,6 +1346,9 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
             summary = run_index_research_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("index research completed for job %s: %s", job.id, summary)
+        # The manual-run record the job started ends `error` when the pipeline raised (e.g.
+        # `no_live_spot`); that must fail this scheduled run too, not be recorded as completed.
+        raise_if_run_had_errors(job, summary, "index research")
         return
     if job_type == JOB_TYPE_INDEX_PLAN_REFRESH:
         summary = run_index_plan_refresh_job(job.config)

@@ -198,6 +198,14 @@ def _collection_dispatch_blocked(job: ScheduledResearchJob) -> bool:
     return not collection_job_dispatch_enabled(os.environ.get("STACK_PROFILE", "dev"))
 
 
+def _is_no_live_spot(exc: BaseException) -> bool:
+    try:
+        from trade_integrations.dataflows.index_research.spot_fetch import is_no_live_spot_error
+    except ImportError:
+        return False
+    return is_no_live_spot_error(exc)
+
+
 def _persisted_error(exc: Exception) -> str:
     """Return a bounded, redaction-safe error for durable job state."""
     message = f"{type(exc).__name__}: {exc}"
@@ -1340,6 +1348,12 @@ class ScheduledResearchExecutor:
             finish_named_task(task_id)
             elapsed_ms = int((time.monotonic() - started) * 1000)
             record_dispatch_duration(job, elapsed_ms)  # D11 expected-runtime history
+            # The run's per-stage trail goes on the record whatever the outcome (a timeout included):
+            # the log buffer is gone with the process, and "which stage ate the 30 minutes" was
+            # otherwise unanswerable. See stage_log.py.
+            from src.scheduled_research.stage_log import stage_log_for_run
+
+            job.last_stage_log = stage_log_for_run(job.id, ended_at_ms=int(time.time() * 1000))
             # A cancelled dispatch — task cancellation (`interrupted`) or a PipelineCancelledError
             # (`was_cancelled`) — reports `cancelled`, not `completed`: `dispatch_error is None`
             # alone cannot tell "finished cleanly" from "was stopped before it could fail".
@@ -1429,7 +1443,13 @@ class ScheduledResearchExecutor:
             raw_summary = job.config.pop(LAST_RESULT_CONFIG_KEY, None)
             if isinstance(raw_summary, dict):
                 job.last_result_summary = raw_summary
-            if not barren_collection and job.consecutive_failures >= self._max_consecutive_failures:
+            # A run with no spot to forecast from (`no_live_spot`: the INDmoney token expires daily at
+            # 07:00 IST and is rotated by hand, D358) is a recorded failure like any other, but it is
+            # retried on the schedule rather than auto-paused: pausing the headline refresh until a
+            # human resumes it would outlast the outage it reports.
+            if not (barren_collection or _is_no_live_spot(dispatch_error)) and (
+                job.consecutive_failures >= self._max_consecutive_failures
+            ):
                 # A recurring job (every job in this store carries a schedule)
                 # must not go terminal here: JobStatus.FAILED is excluded from
                 # is_due() forever, which turns a transient dispatch outage
@@ -1814,6 +1834,7 @@ class ScheduledResearchExecutor:
             delivery=job.delivery,
             last_verdict=job.last_verdict,
             last_result_summary=job.last_result_summary,
+            last_stage_log=job.last_stage_log,
             config=job.config,
             **(extra_fields or {}),
         )

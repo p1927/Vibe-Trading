@@ -354,6 +354,7 @@ class ScheduledRunResponse(BaseModel):
     delivery_attempts: int = 0
     delivery_provider_message_id: Optional[str] = None
     last_verdict: Optional[Dict[str, Any]] = None
+    last_stage_log: Optional[List[Dict[str, Any]]] = None
     section: str = "general"
     dispatch_blocked_reason: Optional[str] = None
     monitor: bool = False

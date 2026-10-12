@@ -54,6 +54,7 @@ RUN_STATE_FIELDS = frozenset(
         "paused",
         "auto_paused_reason",
         "last_result_summary",
+        "last_stage_log",
         "config",
     }
 )

@@ -13,7 +13,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 from zoneinfo import ZoneInfo
 
 from .verdict import VerdictRecord
@@ -380,6 +380,11 @@ class ScheduledResearchJob:
             has produced one yet. Populated by the executor from the job's
             ``config["_last_result_summary"]`` scratch key after a successful
             dispatch.
+        last_stage_log: The latest run's per-stage trail (stage, started_at,
+            ended_at, duration_ms, status, error; see ``stage_log.py``), written
+            for every outcome, including a timeout, so a run that timed out
+            still says which stage it was in. ``None`` when the run reported no
+            stages.
     """
 
     id: str
@@ -407,6 +412,7 @@ class ScheduledResearchJob:
     paused: bool = False
     auto_paused_reason: Optional[str] = None
     last_result_summary: Optional[Dict[str, Any]] = None
+    last_stage_log: Optional[List[Dict[str, Any]]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to a plain JSON-serializable dict.
@@ -449,6 +455,7 @@ class ScheduledResearchJob:
                 "paused": self.paused,
                 "auto_paused_reason": self.auto_paused_reason,
                 "last_result_summary": self.last_result_summary,
+                "last_stage_log": self.last_stage_log,
             },
         }
 
@@ -581,6 +588,8 @@ class ScheduledResearchJob:
         last_result_summary = (
             raw_last_result_summary if isinstance(raw_last_result_summary, dict) else None
         )
+        raw_last_stage_log = data.get("last_stage_log")
+        last_stage_log = raw_last_stage_log if isinstance(raw_last_stage_log, list) else None
         return cls(
             id=job_id,
             prompt=prompt,
@@ -607,4 +616,5 @@ class ScheduledResearchJob:
             paused=paused,
             auto_paused_reason=auto_paused_reason,
             last_result_summary=last_result_summary,
+            last_stage_log=last_stage_log,
         )
