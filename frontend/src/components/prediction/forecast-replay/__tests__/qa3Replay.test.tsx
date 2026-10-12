@@ -19,7 +19,10 @@ vi.mock("lightweight-charts", () => ({
 vi.mock("@/lib/lightweightChartOptions", () => ({
   createLightweightChart: () => ({
     applyOptions: () => undefined, subscribeClick: () => undefined, remove: () => undefined, removeSeries: () => undefined,
-    timeScale: () => ({ getVisibleLogicalRange: () => null, setVisibleLogicalRange: () => undefined, fitContent: () => undefined }),
+    timeScale: () => ({
+      getVisibleLogicalRange: () => null, setVisibleLogicalRange: () => undefined, fitContent: () => undefined,
+      subscribeVisibleLogicalRangeChange: () => undefined, options: () => ({ barSpacing: 10 }),
+    }),
     addSeries: (_t: unknown, o: { color?: string; title?: string }) => {
       added.push(o);
       return { setData: () => undefined, attachPrimitive: () => undefined };
@@ -98,13 +101,14 @@ describe("source cap", () => {
     expect(selectionForMode(false, ids.slice(0, 39), ["x", "y", "z"])).toHaveLength(40);
   });
   it("the picker disables the rest and says why at the cap", () => {
+    // `atCap` is the picker's only input for the limit (the count is `toggleSelection`'s job, tested above): three
+    // sources are enough. Rendering 45 made the role queries walk ~135 nodes each, 3.4 s alone and 5.5 s under load.
     const onToggle = vi.fn();
-    const sources = ids.map((i) => src(i));
-    const styles = Object.fromEntries(ids.map((i) => [i, sourceStyle(i, "live")]));
-    render(<SourcePicker sources={sources} selected={ids.slice(0, 40)} provenance={["live"]} styles={styles} atCap onToggleSource={onToggle} onToggleProvenance={vi.fn()} />);
-    expect(screen.getByTestId("source-cap-message").textContent).toContain("At most 40 sources per request");
-    const s41 = screen.getByRole("button", { name: /^s40/ }) as HTMLButtonElement;
-    expect(s41.disabled).toBe(true);
+    const three = ids.slice(0, 3);
+    const styles = Object.fromEntries(three.map((i) => [i, sourceStyle(i, "live")]));
+    render(<SourcePicker sources={three.map((i) => src(i))} selected={three.slice(0, 2)} provenance={["live"]} styles={styles} atCap onToggleSource={onToggle} onToggleProvenance={vi.fn()} />);
+    expect(screen.getByTestId("source-cap-message").textContent).toContain(`At most ${MAX_REPLAY_SOURCES} sources per request`);
+    expect((screen.getByRole("button", { name: /^s2/ }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: /^s0/ }) as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: /^s0/ }));
     expect(onToggle).toHaveBeenCalledWith("s0");

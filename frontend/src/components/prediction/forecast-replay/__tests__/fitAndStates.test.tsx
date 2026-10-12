@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { shadedRecords } from "@/lib/forecastReplay/gap";
-import { fitKey, focusRange, errorSeries } from "@/lib/forecastReplay/paths";
+import { barDates, fitKey, focusRange, errorSeries, rangeAction } from "@/lib/forecastReplay/paths";
+import { labelGapBars, thinLabels } from "@/lib/forecastReplay/labels";
 import { returnImplausibleSummary, rowState } from "@/lib/forecastReplay/horizon";
 import { selectionForMode } from "@/lib/forecastReplay/view";
 import { sourceStyle } from "@/lib/forecastReplay/sourceStyle";
@@ -134,6 +135,38 @@ describe("fitKey", () => {
   });
   it("does not depend on an empty source list being a different identity", () => {
     expect(fitKey("", [""], [], 14, "")).toBe(fitKey("", [""], [], 14, ""));
+  });
+});
+
+describe("rangeAction", () => {
+  it("fits for a new key, and until the fit for this key has been laid out; keeps only once it has", () => {
+    expect(rangeAction("k", { key: "", settled: false })).toBe("fit"); // first run after a (re)mount
+    expect(rangeAction("k", { key: "k", settled: false })).toBe("fit"); // same-frame second run: reading the range now would clobber the fit (QA4)
+    expect(rangeAction("k", { key: "j", settled: true })).toBe("fit"); // new anchor/source/horizon/window
+    expect(rangeAction("k", { key: "k", settled: true })).toBe("keep"); // a refetch of the same view
+  });
+});
+
+describe("barDates", () => {
+  it("is the ascending union of actual dates and every plotted path date", () => {
+    const fan = rec("fan", "2026-09-02", [pt(1, "2026-09-03", 100), pt(21, "2026-10-02", 100)]);
+    expect(barDates(["2026-09-01", "2026-09-02", "2026-09-03"], [fan])).toEqual(["2026-09-01", "2026-09-02", "2026-09-03", "2026-10-02"]);
+  });
+});
+
+describe("thinLabels", () => {
+  it("keeps a label only when it is minBars from the last kept one", () => {
+    expect(thinLabels([0, 1, 2, 3, 4, 5, 6].map((idx) => ({ idx })), 3)).toEqual([true, false, false, true, false, false, true]);
+  });
+  it("the anchor is always kept and pushes its neighbours out", () => {
+    expect(thinLabels([{ idx: 0 }, { idx: 1 }, { idx: 2, priority: true }, { idx: 3 }, { idx: 5 }], 3)).toEqual([false, false, true, false, true]);
+  });
+  it("is independent of input order and keeps the earlier item on one bar", () => {
+    expect(thinLabels([{ idx: 5 }, { idx: 1 }, { idx: 5 }, { idx: 2 }], 2)).toEqual([true, true, false, false]);
+    expect(thinLabels([], 3)).toEqual([]);
+  });
+  it("labelGapBars: about 48px of text per label", () => {
+    expect([labelGapBars(14.87), labelGapBars(5.29), labelGapBars(100), labelGapBars(0)]).toEqual([4, 10, 1, 1]);
   });
 });
 

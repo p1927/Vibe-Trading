@@ -15,7 +15,8 @@ import { createLightweightChart } from "@/lib/lightweightChartOptions";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { ForecastGapPrimitive } from "@/components/charts/forecastGapPrimitive";
 import { GAP_ALPHA, maturedUntil, shadedRecords } from "@/lib/forecastReplay/gap";
-import { band, fitKey, focusRange, recordPath } from "@/lib/forecastReplay/paths";
+import { labelGapBars, thinLabels } from "@/lib/forecastReplay/labels";
+import { band, barDates, fitKey, focusRange, rangeAction, recordPath } from "@/lib/forecastReplay/paths";
 import { baseSeriesColors, type SourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { ReplayActual, ReplayRecord } from "@/lib/forecastReplay/types";
 import { forecastReturnPct } from "@/lib/forecastReplay/view";
@@ -35,6 +36,18 @@ export interface ForecastReplayChartProps {
   height?: number;
   loading?: boolean;
   emptyHint?: string;
+}
+
+/** A marker whose text is only shown when `thinLabels` keeps it at the current zoom. */
+interface Candidate {
+  marker: SeriesMarker<Time>;
+  text?: string;
+  idx: number;
+  priority: boolean;
+}
+interface MarkerGroup {
+  api: ISeriesMarkersPluginApi<Time>;
+  candidates: Candidate[];
 }
 
 const LINE_STYLE = { solid: LineStyle.Solid, dashed: LineStyle.Dashed, dotted: LineStyle.Dotted, approx: LineStyle.LargeDashed };
@@ -78,9 +91,13 @@ export function ForecastReplayChart({
   const actualPathRef = useRef<ISeriesApi<"Line"> | null>(null);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const gapRef = useRef<ForecastGapPrimitive | null>(null);
+  const markerGroupsRef = useRef<MarkerGroup[]>([]);
+  /** Bars a label needs at the zoom the markers were last labelled for; -1 = label again. */
+  const labelGapRef = useRef(-1);
   const dynamicRef = useRef<ISeriesApi<"Line">[]>([]);
-  /** What the visible range was last fitted for; re-fitting only on a new key keeps the user's pan/zoom. */
-  const fitKeyRef = useRef("");
+  /** What the visible range was last fitted for (`settled` once the chart laid that fit out); re-fitting only on a new key keeps the user's pan/zoom. */
+  const fitRef = useRef({ key: "", settled: false });
+  const relabelRef = useRef(() => {});
   const clickRef = useRef(onAnchorChange);
   clickRef.current = onAnchorChange;
   const { dark } = useDarkMode();
@@ -94,11 +111,25 @@ export function ForecastReplayChart({
   );
   const hasActuals = actuals.length > 0;
 
+  // Text on every marker piles up when days sit close together: keep the labels that fit at the current zoom (the anchor always).
+  relabelRef.current = () => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const gap = labelGapBars(chart.timeScale().options().barSpacing);
+    if (gap === labelGapRef.current) return;
+    labelGapRef.current = gap;
+    const labelled = markerGroupsRef.current.flatMap((g) => g.candidates.filter((c) => c.text != null));
+    const kept = thinLabels(labelled.map((c) => ({ idx: c.idx, priority: c.priority })), gap);
+    const keep = new Set(labelled.filter((_, i) => kept[i]));
+    for (const g of markerGroupsRef.current) g.api.setMarkers(g.candidates.map((c) => ({ ...c.marker, text: keep.has(c) ? c.text : undefined })));
+  };
+
   const mount = useCallback(
     (container: HTMLDivElement) => {
       chartRef.current?.remove();
       chartRef.current = null;
       dynamicRef.current = [];
+      markerGroupsRef.current = [];
       const width = container.clientWidth;
       if (width <= 0) return;
       const base = baseSeriesColors();
@@ -109,12 +140,13 @@ export function ForecastReplayChart({
       gapRef.current = new ForecastGapPrimitive();
       baseRef.current.attachPrimitive(gapRef.current);
       actualPathRef.current = chart.addSeries(LineSeries, { color: base.actual, lineWidth: 2, title: "Actual path", lastValueVisible: true, priceLineVisible: false });
+      chart.timeScale().subscribeVisibleLogicalRangeChange(() => relabelRef.current());
       chart.subscribeClick((param) => {
         const day = param.time ? timeToIsoDay(param.time) : null;
         if (day) clickRef.current?.(day);
       });
       chartRef.current = chart;
-      fitKeyRef.current = "";
+      fitRef.current = { key: "", settled: false };
       setActiveChart(chart);
       setEpoch((v) => v + 1);
     },
@@ -139,6 +171,7 @@ export function ForecastReplayChart({
       chartRef.current?.remove();
       chartRef.current = null;
       dynamicRef.current = [];
+      markerGroupsRef.current = [];
       setActiveChart(null);
     };
   }, [mount, hasActuals]);
@@ -150,7 +183,7 @@ export function ForecastReplayChart({
     const key = fitKey(anchorDay, [...focus], drawn.map((r) => r.source_id), horizon, actuals[0]?.date ?? "");
     // Rebuilding the series moves the time scale (the future whitespace is dropped and re-added), so a refetch of the
     // same view puts the user's range back instead of letting it slide.
-    const kept = key === fitKeyRef.current ? chart.timeScale().getVisibleLogicalRange() : null;
+    const kept = rangeAction(key, fitRef.current) === "keep" ? chart.timeScale().getVisibleLogicalRange() : null;
     for (const s of dynamicRef.current) chart.removeSeries(s);
     dynamicRef.current = [];
 
@@ -159,22 +192,23 @@ export function ForecastReplayChart({
 
     const closeByDay = new Map(actuals.map((a) => [a.date, a.close]));
     const sourcesInWindow = new Set(records.filter((r) => sourceStyles[r.source_id] && !r.meta?.overlay).map((r) => r.source_id));
-    const dayMarkers: SeriesMarker<Time>[] = [];
+    const barIdx = new Map(barDates(actuals.map((a) => a.date), drawn).map((d, i) => [d, i]));
+    const dayMarkers: Candidate[] = [];
     for (const r of records) {
       const style = sourceStyles[r.source_id];
       const ret = forecastReturnPct(r, horizon);
       if (!style || r.meta?.overlay || ret == null || !closeByDay.has(r.issue_day)) continue;
       const isAnchor = r.issue_day === anchorDay;
       dayMarkers.push({
-        time: r.issue_day as Time,
-        position: ret >= 0 ? "aboveBar" : "belowBar",
-        shape: isAnchor ? "square" : "circle",
-        color: style.color,
+        marker: { time: r.issue_day as Time, position: ret >= 0 ? "aboveBar" : "belowBar", shape: isAnchor ? "square" : "circle", color: style.color },
         text: sourcesInWindow.size === 1 || (isAnchor && sourcesInWindow.size <= 4) ? fmtPct(ret) : undefined,
+        idx: barIdx.get(r.issue_day) ?? -1,
+        priority: isAnchor,
       });
     }
-    dayMarkers.sort((a, b) => String(a.time).localeCompare(String(b.time)));
-    markersRef.current?.setMarkers(dayMarkers);
+    const byTime = (a: Candidate, b: Candidate) => String(a.marker.time).localeCompare(String(b.marker.time));
+    dayMarkers.sort(byTime);
+    const groups: MarkerGroup[] = markersRef.current ? [{ api: markersRef.current, candidates: dayMarkers }] : [];
 
     for (const r of drawn) {
       const style = sourceStyles[r.source_id];
@@ -194,16 +228,20 @@ export function ForecastReplayChart({
       dynamicRef.current.push(series);
       if (faded) continue;
 
-      const errMarkers: SeriesMarker<Time>[] = r.points
+      const errMarkers: Candidate[] = r.points
         .filter((p) => p.matured && p.error_pct != null)
         .map((p) => ({
-          time: p.target_date as Time,
-          position: "inBar" as const,
-          shape: "circle" as const,
-          color: p.in_band === false ? t.downColor : p.in_band ? t.upColor : t.infoColor,
+          marker: {
+            time: p.target_date as Time,
+            position: "inBar" as const,
+            shape: "circle" as const,
+            color: p.in_band === false ? t.downColor : p.in_band ? t.upColor : t.infoColor,
+          },
           text: fmtPct(p.error_pct),
+          idx: barIdx.get(p.target_date) ?? -1,
+          priority: false,
         }));
-      createSeriesMarkers(series, errMarkers.sort((a, b) => String(a.time).localeCompare(String(b.time))));
+      groups.push({ api: createSeriesMarkers(series, []), candidates: errMarkers.sort(byTime) });
 
       const b = band(r);
       if (b) {
@@ -216,6 +254,9 @@ export function ForecastReplayChart({
         }
       }
     }
+    markerGroupsRef.current = groups;
+    labelGapRef.current = -1;
+    relabelRef.current();
     gapRef.current?.setSpec({
       items: shadedRecords(drawn, anchorDay).map((record) => ({
         record, alpha: GAP_ALPHA[record.provenance] * (record.issue_day === anchorDay ? 1 : 0.5),
@@ -225,7 +266,10 @@ export function ForecastReplayChart({
     if (kept) {
       chart.timeScale().setVisibleLogicalRange(kept);
     } else {
-      fitKeyRef.current = key;
+      const fit = { key, settled: false };
+      fitRef.current = fit;
+      // The chart lays the fit out in its next frame; this callback is queued after the chart's own.
+      requestAnimationFrame(() => { fit.settled = true; });
       // Fit the anchor through the furthest recorded point once per fitKey change.
       const range = focusRange(actuals.map((a) => a.date), drawn, anchorDay, horizon + 2);
       try {

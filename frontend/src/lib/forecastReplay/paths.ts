@@ -17,6 +17,11 @@ export function recordPath(r: ReplayRecord): { vertices: PathVertex[]; approxima
   };
 }
 
+/** The chart's bars: the union of the actual dates and every plotted path date, ascending (its logical index). */
+export function barDates(actualDates: string[], records: ReplayRecord[]): string[] {
+  return [...new Set([...actualDates, ...records.flatMap((r) => recordPath(r).vertices.map((v) => v.date))])].sort();
+}
+
 /**
  * Logical bar range of the chart's time scale: `lead` bars before the anchor through the furthest recorded
  * point of the plotted records (+`pad` bars). Bars are the union of the actual dates and every plotted path date,
@@ -26,7 +31,7 @@ export function recordPath(r: ReplayRecord): { vertices: PathVertex[]; approxima
 export function focusRange(
   actualDates: string[], records: ReplayRecord[], anchorDay: string, fallbackBars: number, lead = 30, pad = 2,
 ): { from: number; to: number } | null {
-  const dates = [...new Set([...actualDates, ...records.flatMap((r) => recordPath(r).vertices.map((v) => v.date))])].sort();
+  const dates = barDates(actualDates, records);
   const idx = dates.indexOf(anchorDay);
   if (idx < 0) return null;
   const sane = records.filter((r) => r.meta?.return_implausible !== true);
@@ -45,6 +50,15 @@ export function fitKey(
   anchorDay: string, focusDays: string[], sourceIds: string[], horizon: number, windowStart: string,
 ): string {
   return [anchorDay, [...focusDays].sort().join(","), [...new Set(sourceIds)].sort().join(","), horizon, windowStart].join("|");
+}
+
+/**
+ * Whether the effect re-fits the visible range or puts the user's range back. `kept` is only trustworthy once the
+ * fit for this key has been laid out: a range read in the same frame as `setVisibleLogicalRange` is still the
+ * pre-layout one, and restoring it clobbers the fit (the chart then opened wide on some loads, QA4).
+ */
+export function rangeAction(key: string, fitted: { key: string; settled: boolean }): "fit" | "keep" {
+  return fitted.key === key && fitted.settled ? "keep" : "fit";
 }
 
 /** p10/p90 at each point that has both; null when the record carries no band. */

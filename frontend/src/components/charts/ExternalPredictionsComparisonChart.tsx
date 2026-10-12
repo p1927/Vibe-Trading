@@ -3,11 +3,9 @@ import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import type { ExternalPredictionSnapshot } from "@/lib/api";
-import {
-  effectiveChartHorizonDays,
-  filterVisiblePredictions,
-  hasHorizonMismatch,
-} from "@/lib/externalPredictionsUtils";
+import { filterVisiblePredictions, hasHorizonMismatch } from "@/lib/externalPredictionsUtils";
+import { externalLabel, externalPointHorizon } from "@/lib/forecastReplay/external";
+import type { ReplayBundle } from "@/lib/forecastReplay/types";
 
 const COLORS = ["#3b82f6", "#8b5cf6", "#f59e0b", "#14b8a6", "#ec4899", "#6366f1", "#22c55e", "#ef4444"];
 
@@ -27,7 +25,8 @@ interface ChartItem {
   name: string;
   mid: number | null;
   targetDate?: string;
-  chartHorizonDays: number;
+  /** Server horizon (trading days) of the target date; null when the replay has no point for it. */
+  chartHorizonDays: number | null;
   mismatch: boolean;
   isInternal?: boolean;
   isDerived?: boolean;
@@ -36,10 +35,12 @@ interface ChartItem {
 interface Props {
   snapshot: ExternalPredictionSnapshot | null;
   horizonDays: number;
+  /** The replay bundle the cards below use: the one source of every horizon and label. */
+  replay?: ReplayBundle | null;
   height?: number;
 }
 
-export function ExternalPredictionsComparisonChart({ snapshot, horizonDays, height = 200 }: Props) {
+export function ExternalPredictionsComparisonChart({ snapshot, horizonDays, replay = null, height = 200 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const { dark } = useDarkMode();
   const theme = getChartTheme();
@@ -50,10 +51,10 @@ export function ExternalPredictionsComparisonChart({ snapshot, horizonDays, heig
     const rows: ChartItem[] = preds.map((p) => {
       const src = snapshot?.sources?.find((s) => s.id === p.source_id);
       return {
-        name: src?.display_name || p.source_id,
+        name: src?.display_name || externalLabel(replay, p.source_id) || p.source_id,
         mid: p.target?.mid ?? null,
         targetDate: p.target_date,
-        chartHorizonDays: effectiveChartHorizonDays(p, horizonDays),
+        chartHorizonDays: externalPointHorizon(replay, p.source_id, p.target_date) ?? (hasHorizonMismatch(p) ? null : horizonDays),
         mismatch: hasHorizonMismatch(p),
         isDerived: src?.kind === "derived",
       };
@@ -73,7 +74,7 @@ export function ExternalPredictionsComparisonChart({ snapshot, horizonDays, heig
       });
     }
     return { items: rows, spot: typeof spotVal === "number" ? spotVal : null };
-  }, [horizonDays, snapshot]);
+  }, [horizonDays, replay, snapshot]);
 
   const labels = items.map((item) => item.name);
   const series = items.map((item) => item.mid);
@@ -109,7 +110,7 @@ export function ExternalPredictionsComparisonChart({ snapshot, horizonDays, heig
             item.name,
             `Target: ${fmtLevel(item.mid)}`,
             `Target date: ${fmtDate(item.targetDate)}`,
-            `Chart horizon: ${item.chartHorizonDays}d`,
+            ...(item.chartHorizonDays != null ? [`Chart horizon: ${item.chartHorizonDays} trading days`] : []),
           ];
           if (item.mismatch) {
             lines.push("Horizon mismatch (uses article target date)");

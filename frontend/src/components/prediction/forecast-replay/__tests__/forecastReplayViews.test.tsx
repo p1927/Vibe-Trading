@@ -7,7 +7,7 @@ import { errorStripOption } from "../ErrorStrip";
 import { sourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { ReplayRecord, ReplaySource } from "@/lib/forecastReplay/types";
 import { forHorizon, maturityBuckets, overlayRecord, rollingMean } from "@/lib/forecastReplay/view";
-import { externalReplayFor, externalSourceId, externalWindow } from "@/lib/forecastReplay/external";
+import { externalLabel, externalPointHorizon, externalReplayFor, externalSourceId, externalWindow } from "@/lib/forecastReplay/external";
 
 const src = (id: string, o: Partial<ReplaySource> = {}): ReplaySource => ({
   source_id: id, family: "f", label: id, provenance: "live", status: "ok", reason: null,
@@ -117,6 +117,21 @@ describe("pure helpers", () => {
     expect(externalWindow([{ as_of: "2026-10-01T05:00:00Z" }, { published_at: "2026-09-20" }], "2026-10-12")).toEqual({ start: "2026-09-06", end: "2026-10-12" });
     expect(externalWindow([{ as_of: "2024-01-01" }], "2026-10-12")).toEqual({ start: "2025-09-12", end: "2026-10-12" });
     expect(externalWindow([], "2026-10-12")).toEqual({ start: "2026-07-14", end: "2026-10-12" });
+  });
+  it("externalPointHorizon is the server's trading-day horizon of the point at that target date, newest issue day first", () => {
+    const bundle = {
+      status: "ok", ticker: "NIFTY", stats: {}, actuals: [],
+      sources: [src("external:a", { label: "Source A" })],
+      records: [rec("external:a", "2026-10-01", 261, { target_date: "2027-10-01" }), rec("external:a", "2026-10-02", 260, { target_date: "2027-10-01" }), rec("external:a", "2026-10-02", 7, { target_date: "2026-10-09" })],
+    };
+    expect(externalPointHorizon(bundle, "a", "2027-10-01")).toBe(260); // not the 365 calendar days the browser used to count
+    expect(externalPointHorizon(bundle, "a", "2026-10-09T00:00:00")).toBe(7);
+    expect(externalPointHorizon(bundle, "a", "2030-01-01")).toBeNull();
+    expect(externalPointHorizon(bundle, "a", undefined)).toBeNull();
+    expect(externalPointHorizon(bundle, "gone", "2027-10-01")).toBeNull();
+    expect(externalPointHorizon(null, "a", "2027-10-01")).toBeNull();
+    expect(externalLabel(bundle, "a")).toBe("Source A");
+    expect(externalLabel(bundle, "gone")).toBeNull();
   });
   it("externalReplayFor slices one source and always explains an empty card", () => {
     const bundle = {

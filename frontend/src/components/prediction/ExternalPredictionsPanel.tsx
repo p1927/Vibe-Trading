@@ -651,7 +651,7 @@ export function ExternalPredictionsPanel({
 
       {snapshot ? (
         <>
-          <ExternalPredictionsComparisonChart snapshot={snapshot} horizonDays={horizonDays} />
+          <ExternalPredictionsComparisonChart snapshot={snapshot} horizonDays={horizonDays} replay={replay.bundle} />
           {mismatchCount > 0 ? (
             <p className="text-[11px] text-amber-800 dark:text-amber-300">
               {mismatchCount} source(s) have horizon mismatch — comparison chart uses each article&apos;s target date horizon.

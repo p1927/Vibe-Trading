@@ -3,7 +3,6 @@ import {
   candidateNeedsEntryUrls,
   computeStreetSummary,
   fmtLevel,
-  effectiveChartHorizonDays,
   filterIssuePredictions,
   filterVisiblePredictions,
   hasHorizonMismatch,
@@ -127,12 +126,10 @@ describe("horizon helpers", () => {
       },
     };
     expect(hasHorizonMismatch(mismatched)).toBe(true);
-    expect(effectiveChartHorizonDays(mismatched, 14)).toBeGreaterThan(14);
   });
 
-  it("uses tab horizon when article horizon matches", () => {
+  it("no mismatch when the article horizon matches the tab", () => {
     expect(hasHorizonMismatch(baseRecord)).toBe(false);
-    expect(effectiveChartHorizonDays(baseRecord, 14)).toBe(14);
   });
 });
 

@@ -47,3 +47,23 @@ export function externalReplayFor(bundle: ReplayBundle | null, sourceId: string,
   }
   return { records, actuals: bundle?.actuals ?? [], note, loading };
 }
+
+/**
+ * The server's own horizon for one forecast's target date: the `horizon_days` of the point (trading days) the
+ * replay recorded for that source at that date, newest issue day first. Null when the bundle has no such point:
+ * the browser never counts days between dates itself.
+ */
+export function externalPointHorizon(bundle: ReplayBundle | null, sourceId: string, targetDate: string | undefined): number | null {
+  if (!targetDate) return null;
+  const records = externalReplayFor(bundle, sourceId, null, false).records;
+  for (const r of [...records].sort((a, b) => b.issue_day.localeCompare(a.issue_day))) {
+    const hit = r.points.find((p) => p.target_date === targetDate.slice(0, 10));
+    if (hit) return hit.horizon_days;
+  }
+  return null;
+}
+
+/** The registry label of an external source (bundle `SourceInfo.label`), for a snapshot row that has no display name. */
+export function externalLabel(bundle: ReplayBundle | null, sourceId: string): string | null {
+  return bundle?.sources.find((s) => s.source_id === externalSourceId(sourceId))?.label ?? null;
+}
