@@ -6,7 +6,9 @@ import { ExternalPredictionsComparisonChart } from "@/components/charts/External
 import { ExternalPredictionsRefreshLogPanel } from "@/components/prediction/ExternalPredictionsRefreshLogPanel";
 import { HORIZON_OPTIONS } from "@/components/prediction/PredictionControls";
 import type { ExternalRefreshPhase } from "@/hooks/useExternalPredictions";
+import { useForecastReplay } from "@/hooks/useForecastReplay";
 import type { ExternalPredictionSnapshot, PipelineLogEntry } from "@/lib/api";
+import { externalReplayFor, externalSourceId, externalWindow } from "@/lib/forecastReplay/external";
 import { filterVisiblePredictions, filterIssuePredictions, computeStreetSummary, validateAddSourceRequest, buildAddSourcePayload, candidateNeedsEntryUrls, parseMultilineList, normalizeDomain, primarySourceDomain, hasHorizonMismatch, snapshotDisplayUpdatedAt } from "@/lib/externalPredictionsUtils";
 import { cn } from "@/lib/utils";
 
@@ -344,8 +346,6 @@ interface Props {
   reattached?: boolean;
   error: string | null;
   horizonDays: number;
-  priceSeries?: Array<{ date?: string; close?: number | null }>;
-  priceLoading?: boolean;
   onHorizonChange: (days: number) => void;
   onRefresh: () => Promise<void>;
   onDiscover: () => Promise<Array<Record<string, unknown>>>;
@@ -364,8 +364,6 @@ export function ExternalPredictionsPanel({
   reattached,
   error,
   horizonDays,
-  priceSeries,
-  priceLoading,
   onHorizonChange,
   onRefresh,
   onDiscover,
@@ -475,6 +473,11 @@ export function ExternalPredictionsPanel({
   const mismatchCount = visiblePredictions.filter((p) => hasHorizonMismatch(p)).length;
   const summary = computeStreetSummary(snapshot, horizonDays);
   const displayUpdatedAt = snapshotDisplayUpdatedAt(snapshot);
+
+  // one request for every card: the registered sources of the visible forecasts, one shared window
+  const replayIds = [...new Set(visiblePredictions.filter((p) => sourceMap.has(p.source_id)).map((p) => externalSourceId(p.source_id)))].sort();
+  const { start, end } = externalWindow(visiblePredictions, new Date().toISOString().slice(0, 10));
+  const replay = useForecastReplay({ ticker: "NIFTY", sources: replayIds, start, end, horizon: horizonDays, provenance: "live" });
 
   return (
     <div className="flex flex-col gap-4">
@@ -695,8 +698,7 @@ export function ExternalPredictionsPanel({
                 record={record}
                 source={sourceMap.get(record.source_id)}
                 horizonDays={horizonDays}
-                priceSeries={priceSeries}
-                priceLoading={priceLoading}
+                replay={externalReplayFor(replay.bundle, record.source_id, replay.error, replay.loading)}
                 onApprovePath={
                   onApprovePath ? () => handleApprovePath(record.source_id) : undefined
                 }

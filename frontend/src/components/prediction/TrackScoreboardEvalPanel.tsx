@@ -88,7 +88,7 @@ export function TrackScoreboardEvalPanel({ report, horizonDays }: Props) {
           >
             {trackIds.map((tid) => (
               <option key={tid} value={tid}>
-                {trackDisplayLabel(tid)}
+                {trackDisplayLabel(tid, report.track_catalog)}
               </option>
             ))}
           </select>
@@ -97,7 +97,7 @@ export function TrackScoreboardEvalPanel({ report, horizonDays }: Props) {
 
       {trackNote ? (
         <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
-          <span className="font-medium text-foreground">{trackDisplayLabel(activeTrackId)}:</span> {trackNote}
+          <span className="font-medium text-foreground">{trackDisplayLabel(activeTrackId, report.track_catalog)}:</span> {trackNote}
         </div>
       ) : null}
 
@@ -130,7 +130,7 @@ export function TrackScoreboardEvalPanel({ report, horizonDays }: Props) {
 
       <div>
         <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-          Recent eval dates — {trackDisplayLabel(activeTrackId)}
+          Recent eval dates — {trackDisplayLabel(activeTrackId, report.track_catalog)}
         </p>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-[11px]">

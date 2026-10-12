@@ -158,7 +158,7 @@ export function TrackScoreboardProgressPanel({
                   trackDone && row?.eval_count ? "bg-emerald-500/10" : "bg-muted/30",
                 )}
               >
-                <span className="truncate capitalize">{trackDisplayLabel(tid)}</span>
+                <span className="truncate">{trackDisplayLabel(tid, report?.track_catalog)}</span>
                 <span className="shrink-0 tabular-nums text-muted-foreground">
                   {row?.eval_count ? `n=${row.eval_count}` : active ? "…" : "—"}
                 </span>

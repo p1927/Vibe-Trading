@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type ForecastReplayParams, type ForecastReplayResponse } from "@/lib/api";
 import { isAbortError } from "@/lib/abort";
 
-/** Fetches the replay bundle; a param change aborts the stale request and keeps the old bundle until the new one lands. */
+/** Fetches the replay bundle (no request while `sources` is empty: the server reads that as "every source"); a param change aborts the stale request and keeps the old bundle until the new one lands. */
 export function useForecastReplay(p: ForecastReplayParams) {
   const [bundle, setBundle] = useState<ForecastReplayResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -13,6 +13,11 @@ export function useForecastReplay(p: ForecastReplayParams) {
   const sourcesKey = p.sources.join(",");
 
   useEffect(() => {
+    if (!sourcesKey) {
+      setBundle(null);
+      setLoading(false);
+      return;
+    }
     const ctl = new AbortController();
     setLoading(true);
     setError(null);

@@ -14,8 +14,6 @@ export interface ReplayViewOptions {
   single?: boolean;
 }
 
-const inferProvenance = (id: string): Provenance => (id.endsWith("@backtest") ? "backtest" : "live");
-
 /**
  * Selection state + the one fetch behind every replay view (day panel, track record). The window ends at
  * the newest day any selected source has history for, so backtest-only selections are not shown empty.
@@ -36,8 +34,9 @@ export function useReplayView(o: ReplayViewOptions) {
   });
 
   const allSources: ReplaySource[] = bundle?.sources ?? [];
+  /** The server's provenance of a source; undefined until the first bundle lists it (nothing is guessed from the id). */
   const provOf = useCallback(
-    (id: string): Provenance => allSources.find((s) => s.source_id === id)?.provenance ?? inferProvenance(id),
+    (id: string): Provenance | undefined => allSources.find((s) => s.source_id === id)?.provenance,
     [allSources],
   );
 
@@ -66,12 +65,12 @@ export function useReplayView(o: ReplayViewOptions) {
       setProvenance((cur) => {
         const next = cur.includes(p) ? cur.filter((x) => x !== p) : [...cur, p];
         // keep >= 1 provenance and >= 1 selected source that the remaining provenances can serve
-        return next.length && selected.some((id) => next.includes(provOf(id))) ? next : cur;
+        return next.length && selected.some((id) => { const q = provOf(id); return q != null && next.includes(q); }) ? next : cur;
       }),
     [selected, provOf],
   );
 
-  const shown = useMemo(() => selected.filter((id) => provenance.includes(provOf(id))), [selected, provenance, provOf]);
+  const shown = useMemo(() => selected.filter((id) => { const p = provOf(id); return !p || provenance.includes(p); }), [selected, provenance, provOf]);
   const styles = useMemo(() => {
     const m: Record<string, SourceStyle> = {};
     for (const s of allSources) m[s.source_id] = sourceStyle(s.source_id, s.provenance, s.label);

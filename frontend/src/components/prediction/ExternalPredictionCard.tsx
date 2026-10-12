@@ -1,8 +1,7 @@
 import { useMemo } from "react";
 import { ExternalLink } from "lucide-react";
 import { ForecastReplayChart } from "@/components/charts/ForecastReplayChart";
-import { recordFromExternal } from "@/lib/forecastReplay/external";
-import { mergePriceSeries } from "@/lib/forecastReplayUtils";
+import type { ExternalReplay } from "@/lib/forecastReplay/external";
 import type { ExternalPredictionRecord, ExternalPredictionSource } from "@/lib/api";
 import { resolveApiBase } from "@/lib/apiBase";
 import { canApproveNavigationPath, formatFetchMethodLabel, formatForecastProvenance, formatHorizonMatch, formatPageKindLabel, hasHorizonMismatch } from "@/lib/externalPredictionsUtils";
@@ -42,8 +41,8 @@ interface Props {
   record: ExternalPredictionRecord;
   source?: ExternalPredictionSource;
   horizonDays: number;
-  priceSeries?: Array<{ date?: string; close?: number | null }>;
-  priceLoading?: boolean;
+  /** This source's slice of the server replay bundle (`GET /forecast-replay`, `external:<id>`). */
+  replay: ExternalReplay;
   onApprovePath?: () => Promise<void>;
   approvingPath?: boolean;
   className?: string;
@@ -53,18 +52,13 @@ export function ExternalPredictionCard({
   record,
   source,
   horizonDays,
-  priceSeries,
-  priceLoading,
+  replay,
   onApprovePath,
   approvingPath,
   className,
 }: Props) {
   const name = source?.display_name || record.source_id;
-  const replayRecord = useMemo(() => recordFromExternal(record, horizonDays), [record, horizonDays]);
-  const replayActuals = useMemo(
-    () => mergePriceSeries([priceSeries ?? []]).map((p) => ({ date: p.date, close: p.close })),
-    [priceSeries],
-  );
+  const replayRecord = replay.records[replay.records.length - 1];
   const replayStyles = useMemo(
     () => ({
       [replayRecord?.source_id ?? ""]: {
@@ -83,7 +77,7 @@ export function ExternalPredictionCard({
     : undefined;
   const horizonLabel = formatHorizonMatch(record);
   const forecastProof = formatForecastProvenance(record);
-  const showHorizonBadge = hasHorizonMismatch(record);
+  const showHorizonBadge = hasHorizonMismatch(record) || replayRecord?.meta.horizon_mismatch === true;
   const showApprove = canApproveNavigationPath(source, horizonDays) && onApprovePath;
   const fetchStatus = record.fetch_status || "unknown";
   const pageKind = String(record.provenance?.page_kind || "");
@@ -240,18 +234,18 @@ export function ExternalPredictionCard({
       <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
         {replayRecord ? (
           <ForecastReplayChart
-            records={[replayRecord]}
-            actuals={replayActuals}
+            records={replay.records}
+            actuals={replay.actuals}
             anchorDay={replayRecord.issue_day}
             horizon={replayRecord.points[0].horizon_days}
             sourceStyles={replayStyles}
-            loading={priceLoading}
+            loading={replay.loading}
             height={280}
             emptyHint="NIFTY 50 index projection from source"
           />
         ) : (
           <div className="flex h-[220px] items-center justify-center rounded-lg bg-muted/20 text-[11px] text-muted-foreground">
-            No forecast levels or target date to chart
+            {replay.loading ? "Loading forecast replay…" : (replay.note ?? "No recorded forecast to chart")}
           </div>
         )}
 

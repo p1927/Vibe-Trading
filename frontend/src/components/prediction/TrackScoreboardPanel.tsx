@@ -240,7 +240,7 @@ export function TrackScoreboardPanel({
 
       {eventOverlayUnavailable ? (
         <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-[11px] text-blue-950 dark:text-blue-100">
-          <p className="font-medium">News shock track ({trackDisplayLabel("event_overlay")}) needs historical data</p>
+          <p className="font-medium">{trackDisplayLabel("event_overlay", report.track_catalog)} track needs historical data</p>
           <p className="mt-1 text-muted-foreground">
             Backfill 2006+ macro, flows, and news factors, then rebuild shock calibration:
             {" "}
@@ -508,7 +508,7 @@ export function TrackScoreboardPanel({
                 {experimentalTracks.map(([tid, row]) => (
                   <tr key={tid} className="border-b border-border/40">
                     <td className="py-1.5 pr-2 font-medium">
-                      {trackDisplayLabel(tid)}
+                      {trackDisplayLabel(tid, report.track_catalog)}
                       <span className="ml-1 text-[9px] text-muted-foreground">(ML)</span>
                     </td>
                     <td className="py-1.5 pr-2 tabular-nums">{fmtPct(row.mae_pct)}</td>

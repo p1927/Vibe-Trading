@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { AlertTriangle } from "lucide-react";
 import { PredictionControls } from "@/components/prediction/PredictionControls";
@@ -37,7 +37,6 @@ import { QuantReviewPanel } from "@/components/prediction/QuantReviewPanel";
 import { ExternalPredictionsPanel } from "@/components/prediction/ExternalPredictionsPanel";
 import { NewsScenarioCanvas } from "@/components/prediction/NewsScenarioCanvas";
 import { useExternalPredictions } from "@/hooks/useExternalPredictions";
-import { useExternalNiftyPriceSeries } from "@/hooks/useExternalNiftyPriceSeries";
 import { useIndexPrediction } from "@/hooks/useIndexPrediction";
 import { useIndexPredictionLive } from "@/hooks/useIndexPredictionLive";
 import { usePlaygroundContext } from "@/hooks/usePlaygroundContext";
@@ -64,8 +63,7 @@ const EmbeddedAgent = lazy(() =>
   import("@/pages/Agent").then((m) => ({ default: m.Agent })),
 );
 
-import { MACRO_DRIFT_FACTORS, niftyCloseSeries, pivotFactorHistoryWide } from "@/lib/factorHistoryUtils";
-import { mergePriceSeries } from "@/lib/forecastReplayUtils";
+import { MACRO_DRIFT_FACTORS } from "@/lib/factorHistoryUtils";
 
 const POLL_STORAGE_KEY = "vibe-prediction-poll-ms";
 const DEFAULT_POLL_MS = 300_000;
@@ -169,9 +167,6 @@ export function Prediction() {
     refresh: refreshExternalPredictions,
     load: reloadExternalPredictions,
   } = useExternalPredictions(horizonDays, externalPredictionsEnabled);
-
-  const { priceSeries: externalPriceSeries, priceLoading: externalPriceLoading } =
-    useExternalNiftyPriceSeries(externalPredictionsEnabled, horizonDays);
 
   const handleExternalDiscover = useCallback(async () => {
     const res = await api.discoverExternalPredictionSources("NIFTY", 12);
@@ -627,32 +622,6 @@ export function Prediction() {
     return spot * (1 + ret / 100);
   })();
 
-  const niftyPriceSeries = useMemo(() => {
-    const wide = pivotFactorHistoryWide(factorHistory);
-    const fromFactors = niftyCloseSeries(wide)
-      .filter((r) => r.close != null)
-      .map((r) => ({ date: r.date, close: r.close as number }));
-    const fromBacktest = (backtest?.nifty_series ?? []).map((p) => ({
-      date: p.date,
-      close: p.close,
-    }));
-    const merged = mergePriceSeries([fromBacktest, fromFactors]);
-    if (!merged.length && artifact?.spot != null && artifact.as_of) {
-      return [{ date: String(artifact.as_of).slice(0, 10), close: artifact.spot }];
-    }
-    return merged;
-  }, [factorHistory, backtest?.nifty_series, artifact?.spot, artifact?.as_of]);
-
-  const externalChartPriceSeries = useMemo(() => {
-    if (externalPriceSeries.length) return externalPriceSeries;
-    return niftyPriceSeries;
-  }, [externalPriceSeries, niftyPriceSeries]);
-
-  const externalChartPriceLoading =
-    externalPredictionsEnabled && externalPriceSeries.length === 0
-      ? externalPriceLoading || (backtestLoading && !niftyPriceSeries.length)
-      : backtestLoading && !externalChartPriceSeries.length;
-
   return (
     <div className="mx-auto flex w-full max-w-[90rem] flex-col gap-4 p-4 pb-10 lg:flex-row lg:items-start lg:gap-5 md:p-6">
       <div className="flex min-w-0 flex-1 flex-col gap-6">
@@ -739,8 +708,6 @@ export function Prediction() {
             reattached={externalReattached}
             error={externalError}
             horizonDays={horizonDays}
-            priceSeries={externalChartPriceSeries}
-            priceLoading={externalChartPriceLoading}
             onHorizonChange={setHorizonDays}
             onRefresh={refreshExternalPredictions}
             onDiscover={handleExternalDiscover}

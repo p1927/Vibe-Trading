@@ -7,7 +7,7 @@ import { errorStripOption } from "../ErrorStrip";
 import { sourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { ReplayRecord, ReplaySource } from "@/lib/forecastReplay/types";
 import { forHorizon, maturityBuckets, overlayRecord, rollingMean } from "@/lib/forecastReplay/view";
-import { recordFromExternal } from "@/lib/forecastReplay/external";
+import { externalReplayFor, externalSourceId, externalWindow } from "@/lib/forecastReplay/external";
 
 const src = (id: string, o: Partial<ReplaySource> = {}): ReplaySource => ({
   source_id: id, family: "f", label: id, provenance: "live", status: "ok", reason: null,
@@ -113,9 +113,30 @@ describe("pure helpers", () => {
     expect(o?.meta.simulated).toBe(true);
     expect(overlayRecord({ spot: 200, expectedReturnPct: 1 }, [], 14)).toBeNull();
   });
-  it("recordFromExternal needs a target date", () => {
-    const base = { source_id: "x", as_of: "2026-10-01T00:00:00Z", spot_at_fetch: 100, target: { low: 95, mid: 105, high: 110 }, target_date: "2026-10-30" };
-    expect(recordFromExternal(base, 14)?.points[0]).toMatchObject({ target_date: "2026-10-30", p50_level: 105, p10_level: 95, horizon_days: 14 });
-    expect(recordFromExternal({ ...base, target_date: undefined }, 14)).toBeNull();
+  it("externalWindow runs from 14 days before the oldest card to today, capped at 395 days", () => {
+    expect(externalWindow([{ as_of: "2026-10-01T05:00:00Z" }, { published_at: "2026-09-20" }], "2026-10-12")).toEqual({ start: "2026-09-06", end: "2026-10-12" });
+    expect(externalWindow([{ as_of: "2024-01-01" }], "2026-10-12")).toEqual({ start: "2025-09-12", end: "2026-10-12" });
+    expect(externalWindow([], "2026-10-12")).toEqual({ start: "2026-07-14", end: "2026-10-12" });
+  });
+  it("externalReplayFor slices one source and always explains an empty card", () => {
+    const bundle = {
+      status: "ok", ticker: "NIFTY", stats: {}, actuals: [{ date: "2026-10-01", close: 100 }],
+      sources: [src("external:a"), src("external:b", { status: "empty", reason: "no history days" }), src("external:c", { status: "error", reason: "boom" }), src("external:d")],
+      records: [rec("external:a", "2026-10-01", 252), rec("external:a", "2026-10-02", 252), rec("external:z", "2026-10-02", 14)],
+    };
+    const a = externalReplayFor(bundle, "a", null, false);
+    expect(a.records.map((r) => r.issue_day)).toEqual(["2026-10-01", "2026-10-02"]);
+    expect([a.note, a.actuals.length]).toEqual([null, 1]);
+    expect(externalReplayFor(bundle, "b", null, false).note).toBe("no history: no history days");
+    expect(externalReplayFor(bundle, "c", null, false).note).toBe("error: boom");
+    expect(externalReplayFor(bundle, "d", null, false).note).toBe("no history: no recorded forecast in this window");
+    expect(externalReplayFor(bundle, "gone", null, false).note).toBe("no history: source not in the replay registry");
+    expect(externalReplayFor(null, "a", "HTTP 422", false).note).toBe("Forecast replay failed: HTTP 422");
+    expect(externalReplayFor(null, "a", null, true)).toMatchObject({ records: [], note: null, loading: true });
+    expect(externalSourceId("a")).toBe("external:a");
+    // two sources with the identical forecast: the server keeps one record and names the other in deduped_with
+    const dup = { ...bundle, records: [{ ...rec("external:a", "2026-10-02", 14), meta: { deduped_with: ["external:d"] } }] };
+    expect(externalReplayFor(dup, "d", null, false)).toMatchObject({ note: null, records: [{ source_id: "external:a" }] });
+    expect(externalReplayFor(dup, "b", null, false).records).toEqual([]);
   });
 });

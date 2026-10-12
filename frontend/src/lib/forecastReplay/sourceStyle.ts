@@ -28,38 +28,12 @@ export const TRACK_CHART_COLORS: Record<string, string> = {
   "combiner:stress_conditional": "#f43f5e",
 };
 
-export const TRACK_LABELS: Record<string, string> = {
-  quant_ridge: "Quant Ridge",
-  quant_ridge_no_overlay: "Quant Ridge (no overlay)",
-  macro_only: "Macro only",
-  macro_only_no_overlay: "Macro only (no overlay)",
-  scenario_anchor: "Scenario anchor",
-  event_overlay: "News shock",
-  naive_zero: "Naive zero",
-  naive_momentum: "Naive momentum",
-  bottom_up: "Bottom up",
-  debate_numeric: "Debate numeric",
-  headline_legacy: "Headline legacy",
-  lightgbm_macro: "LightGBM macro (ML)",
-  xgboost_macro: "XGBoost macro (ML)",
-  arimax_macro: "ARIMAX macro (ML)",
-  darts_macro: "Darts macro (ML)",
-  automl_cached: "AutoML cached (ML)",
-  "combiner:quant_only": "Combiner: quant only",
-  "combiner:equal_weight_2": "Combiner: equal (2)",
-  "combiner:equal_weight_3": "Combiner: equal (3)",
-  "combiner:equal_weight_quant_3": "Combiner: equal quant (3)",
-  "combiner:shrinkage_50": "Combiner: shrinkage",
-  "combiner:inverse_mae_w6": "Combiner: inverse MAE",
-  "combiner:alignment_grid": "Combiner: alignment",
-  "combiner:fixed_legacy": "Combiner: fixed legacy",
-  "combiner:stress_conditional": "Combiner: stress",
-  "combiner:stacked_ridge_meta": "Combiner: stacked ML meta",
-  "combiner:equal_weight_ml_3": "Combiner: equal ML top 3",
-};
-
-export function trackDisplayLabel(trackId: string): string {
-  return TRACK_LABELS[trackId] ?? trackId.replace(/^combiner:/, "").replace(/_/g, " ");
+/**
+ * A track's display label: the server's (`SourceInfo.label`, or the scoreboard report's `track_catalog`) when it
+ * sent one, else the id made readable. There is no label table in the browser (D306).
+ */
+export function trackDisplayLabel(trackId: string, catalog?: Record<string, { label?: string }> | null): string {
+  return catalog?.[trackId]?.label ?? trackId.replace(/^combiner:/, "").replace(/_/g, " ");
 }
 
 export interface SourceStyle {
