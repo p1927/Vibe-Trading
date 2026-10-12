@@ -36,11 +36,11 @@ def test_hub_news_ingest_preview_notes_non_rss_sources_without_enumerating_them(
     detail = job_details.job_type_detail("hub_news_ingest")
 
     result = detail.preview(
-        {"market": "IN", "ticker": "NIFTY", "mode": "full", "sources": "rss,searxng"}
+        {"market": "IN", "ticker": "NIFTY", "mode": "full", "sources": "rss,web_search"}
     )
 
-    # "searxng" is the deprecated alias for "web_search" (2026-09-03 rename); the note names the
-    # resolved source.
+    # The note names the non-rss source. ("searxng" is no longer accepted as an alias of
+    # "web_search": `parse_sources` raises on it, D58.)
     assert "web_search" in result["note"]
 
 
