@@ -2075,6 +2075,17 @@ export const api = {
     if (horizonDays != null) params.set("horizon_days", String(horizonDays));
     return request<IndexPredictionHistoryResponse>(`/trade/index-prediction/history?${params}`);
   },
+  getForecastReplay: (p: ForecastReplayParams, signal?: AbortSignal) => {
+    const params = new URLSearchParams({
+      ticker: p.ticker,
+      sources: p.sources.join(","),
+      start: p.start,
+      end: p.end,
+      horizon: String(p.horizon),
+      provenance: p.provenance,
+    });
+    return request<ForecastReplayResponse>(`/trade/index-prediction/forecast-replay?${params}`, { signal });
+  },
   getIndexFactorHistory: (ticker = "NIFTY", days = 90, factors?: string[]) => {
     const params = new URLSearchParams({ ticker, days: String(days) });
     if (factors?.length) params.set("factors", factors.join(","));
@@ -5225,6 +5236,70 @@ export interface IndexPredictionHistoryResponse {
   daily?: IndexPredictionHistoryRow[];
   intraday?: IndexPredictionHistoryRow[];
   meta?: IndexPredictionHistoryMeta;
+  message?: string;
+}
+
+export type ForecastReplayProvenance = "live" | "replay" | "backtest";
+
+export interface ForecastReplayParams {
+  ticker: string;
+  sources: string[];
+  start: string;
+  end: string;
+  horizon: number;
+  provenance: ForecastReplayProvenance;
+}
+
+export interface ForecastReplayPoint {
+  horizon_days: number;
+  target_date: string;
+  p50_level: number;
+  p10_level: number | null;
+  p90_level: number | null;
+  matured: boolean;
+  actual_level: number | null;
+  error_pts: number | null;
+  error_pct: number | null;
+  in_band: boolean | null;
+  direction_hit: boolean | null;
+}
+
+export interface ForecastReplayRecord {
+  source_id: string;
+  family: string;
+  issued_at: string;
+  issue_day: string;
+  provenance: ForecastReplayProvenance;
+  spot_at_issue: number;
+  points: ForecastReplayPoint[];
+  approximate_path: boolean;
+  meta: Record<string, unknown>;
+}
+
+export interface ForecastReplaySource {
+  source_id: string;
+  family: string;
+  label: string;
+  provenance: ForecastReplayProvenance;
+  status: "ok" | "empty" | "error";
+  reason: string | null;
+  first_day: string | null;
+  last_day: string | null;
+  n_records: number;
+}
+
+export interface ForecastReplayActual {
+  date: string;
+  close: number;
+}
+
+export interface ForecastReplayResponse {
+  status: string;
+  ticker: string;
+  actuals: ForecastReplayActual[];
+  sources: ForecastReplaySource[];
+  records: ForecastReplayRecord[];
+  stats: Record<string, Record<string, number | null>>;
   message?: string;
 }
 
