@@ -227,3 +227,60 @@ OPERATIONAL_TIER_JOB_TYPES: frozenset[str] = frozenset(AUTONOMOUS_JOB_TYPES) | f
 
 def is_operational_tier_job(job_type: str) -> bool:
     return job_type in OPERATIONAL_TIER_JOB_TYPES
+
+
+# --- Host-pressure deferral (one gate, at scheduler dispatch) ---------------------------------------
+# Heavy = LLM / model-training / batch constituent-research collection work: the jobs whose memory and
+# disk footprint turned a starved host into dead runs (2026-10-13-release-host-swap-and-disk-exhaustion-
+# stall-scheduler-runs: swap 12.6/13.3 GB, < 8 GiB disk, simulator read timeouts). A subset of
+# COLLECTION_JOB_TYPES; light jobs (captures, snapshots, monitors, operational tier) always dispatch.
+HEAVY_JOB_TYPES: frozenset[str] = frozenset(
+    {
+        JOB_TYPE_INDEX_RESEARCH,
+        JOB_TYPE_COMPANY_RESEARCH_ARCHIVE,
+        JOB_TYPE_HUB_NEWS_INGEST,
+        JOB_TYPE_HUB_NEWS_ENTITY,
+        JOB_TYPE_HUB_EVENING_MAINTENANCE,
+        JOB_TYPE_HUB_MORNING_CALIBRATION,
+        JOB_TYPE_INDEX_CALIBRATION,
+        JOB_TYPE_FORECAST_ENGINE_REFRESH,
+        JOB_TYPE_FORECAST_PLATFORM_RETRAIN,
+        JOB_TYPE_FINANCIAL_KNOWLEDGE_CURATOR,
+    }
+)
+
+
+def is_heavy_job(job_type: str) -> bool:
+    return job_type in HEAVY_JOB_TYPES
+
+
+def host_pressure_defer_reason(job_type: str, *, probe=None) -> str | None:
+    """`host_pressure:<what>` while the host is starved and *job_type* is heavy, else ``None``.
+
+    The single question both the dispatch pool (to keep the run pending) and the run-record API (to
+    show why) ask. A deferral is never a failure and never auto-pauses: the job stays due and is
+    re-offered every tick until the host recovers. Thresholds: `trade_integrations.host_pressure`.
+    `probe` is the test seam; production reads the real host (cached ~15 s). If the module cannot be
+    imported (vibetrading running without the Trade checkout) the gate is off, loudly, once.
+    """
+    if not is_heavy_job(job_type):
+        return None
+    try:
+        from trade_integrations import host_pressure
+    except ImportError:
+        _warn_gate_off_once()
+        return None
+    verdict = host_pressure.verdict(probe)
+    return verdict.reason if verdict.deferred else None
+
+
+_gate_off_warned = False
+
+
+def _warn_gate_off_once() -> None:
+    global _gate_off_warned
+    if not _gate_off_warned:
+        _gate_off_warned = True
+        import logging
+
+        logging.getLogger(__name__).warning("trade_integrations.host_pressure unavailable: host-pressure gate is OFF")

@@ -179,11 +179,15 @@ class DispatchPool:
         stopping: Callable[[], bool],
         next_due_fn: NextDueFn,
         type_cap: Callable[[str], int | None] = dispatch_concurrency_for_job_type,
+        defer_reason: Callable[[str], str | None] | None = None,
     ) -> None:
         self._global_cap = global_cap
         self._stopping = stopping
         self._next_due_fn = next_due_fn
         self._type_cap = type_cap
+        # Host-pressure gate: `defer_reason(job_type)` -> "host_pressure:<what>" keeps a waiter pending.
+        self._defer_reason = defer_reason
+        self._deferred: dict[str, str] = {}
         self._waiting: dict[str, _Waiter] = {}
         self._running: dict[str, _Waiter] = {}
         self._tasks: set[asyncio.Task] = set()
@@ -197,6 +201,11 @@ class DispatchPool:
     @property
     def running_ids(self) -> list[str]:
         return sorted(self._running)
+
+    @property
+    def deferred(self) -> dict[str, str]:
+        """job id -> `host_pressure:<what>` for waiters held back by the host-pressure gate."""
+        return dict(self._deferred)
 
     def is_long(self, job: ScheduledResearchJob) -> bool:
         threshold = self._long_threshold.get(_job_type(job))
@@ -266,12 +275,22 @@ class DispatchPool:
     def _pump(self) -> None:
         """Fill free slots from the waiters in priority order. Synchronous by design."""
         if self._stopping() or not self._waiting:
+            self._deferred.clear()
             return
         global_cap = max(1, int(self._global_cap()))
+        self._deferred = {k: v for k, v in self._deferred.items() if k in self._waiting}
         for waiter in sorted(self._waiting.values(), key=self._priority):
             if len(self._running) >= global_cap:
                 return
             job_type = waiter.job_type
+            # Heavy job on a starved host: stays pending (never a failure, never paused); light jobs
+            # behind it still get the slot. Re-evaluated on every pump, so it dispatches on recovery.
+            reason = self._defer_reason(job_type) if self._defer_reason else None
+            if reason:
+                self._deferred[str(waiter.job.id)] = reason
+                waiter.resolve()  # a `wait=True` caller must return, not hang until the host recovers
+                continue
+            self._deferred.pop(str(waiter.job.id), None)
             cap = self._type_cap(job_type)
             if cap is not None:
                 active = sum(1 for w in self._running.values() if w.job_type == job_type)

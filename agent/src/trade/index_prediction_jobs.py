@@ -17,6 +17,7 @@ from src.scheduled_research.pause_control import (
     JobAlreadyRunningError,
     JobPausedError,
     set_job_enabled,
+    pull_due_now,
     trigger_job_now,
 )
 from src.scheduled_research.store import ScheduledResearchJobStore
@@ -251,7 +252,7 @@ def resume_index_prediction_job(job_id: str, store: ScheduledResearchJobStore | 
     if job.status != JobStatus.RUNNING:
         now_ms = int(time.time() * 1000)
         job.status = JobStatus.PENDING
-        job.next_run_at = now_ms
+        pull_due_now(job, now_ms)
         job.last_error = None
         job.consecutive_failures = 0
         store.upsert(job)
@@ -317,7 +318,7 @@ def recover_index_prediction_job(job_id: str, store: ScheduledResearchJobStore |
         return {"status": "error", "message": f"index job {job_id} is not running (status={job.status.value})"}
     now_ms = int(time.time() * 1000)
     job.status = JobStatus.PENDING
-    job.next_run_at = now_ms
+    pull_due_now(job, now_ms)
     job.last_error = "recovered manually"
     store.upsert(job)
     _wake_executor()

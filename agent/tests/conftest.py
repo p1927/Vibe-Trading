@@ -294,6 +294,24 @@ def _reset_env_config():
 
 
 @pytest.fixture(autouse=True)
+def _host_pressure_is_healthy(monkeypatch):
+    """The scheduler defers heavy jobs while the real host is starved (disk < 8 GiB, swap, load); a test
+    must not depend on how busy the machine running it is. Healthy values via the probe's own seams;
+    tests of the gate itself inject a probe or override these."""
+    for name, value in (("TRADE_DISK_FREE_GIB", "50"), ("TRADE_SWAP_USED_GIB", "0"), ("TRADE_SWAP_TOTAL_GIB", "0"),
+                        ("TRADE_MEM_PRESSURE_LEVEL", "1"), ("TRADE_LOAD1", "0")):
+        monkeypatch.setenv(name, value)
+    try:
+        from trade_integrations import host_pressure
+    except ImportError:
+        yield
+        return
+    host_pressure._cache = None
+    yield
+    host_pressure._cache = None
+
+
+@pytest.fixture(autouse=True)
 def _reset_run_log_buffer():
     """Every test starts with an empty scheduled-job log buffer.
 

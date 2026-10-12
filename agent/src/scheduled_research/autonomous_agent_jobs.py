@@ -75,6 +75,7 @@ def nudge_watch_job_after_plan_approval(agent_id: str) -> None:
     """Fire the next scheduled watch tick soon after plan approval."""
     if not is_autonomous_scheduler_enabled():
         return
+    from src.scheduled_research.pause_control import pull_due_now
     from src.scheduled_research.store import ScheduledResearchJobStore
 
     store = ScheduledResearchJobStore()
@@ -83,7 +84,7 @@ def nudge_watch_job_after_plan_approval(agent_id: str) -> None:
     if job is None or job.status == JobStatus.RUNNING:
         return
     now_ms = int(time.time() * 1000)
-    job.next_run_at = now_ms
+    pull_due_now(job, now_ms)
     job.status = JobStatus.PENDING
     store.upsert(job)
     try:

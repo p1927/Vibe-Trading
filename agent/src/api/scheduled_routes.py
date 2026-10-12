@@ -444,6 +444,7 @@ def _dispatch_blocked_reason(job: ScheduledResearchJob) -> Optional[str]:
     from src.scheduled_research.executor import is_due
     from src.scheduled_research.job_tier_policy import (
         collection_job_dispatch_enabled,
+        host_pressure_defer_reason,
         is_collection_job,
     )
 
@@ -455,7 +456,8 @@ def _dispatch_blocked_reason(job: ScheduledResearchJob) -> Optional[str]:
         return None
     stack_profile = os.environ.get("STACK_PROFILE", "dev")
     if collection_job_dispatch_enabled(stack_profile):
-        return None
+        # Dispatchable here, but a heavy job is held while the host is starved (HEAVY_JOB_TYPES).
+        return host_pressure_defer_reason(job_type)
     return (
         f"data-collection job type {job_type!r} cannot dispatch on this tier "
         f"(STACK_PROFILE={stack_profile!r}); it will only fire on the release tier"

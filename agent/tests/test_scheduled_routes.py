@@ -14,6 +14,7 @@ without a configured API key.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -1084,3 +1085,48 @@ def test_preview_degrades_gracefully_when_preview_callable_raises(
     body = response.json()
     assert body["preview_available"] is False
     assert body["preview_error"] and "registry file unreadable" in body["preview_error"]
+
+
+# ── trigger must not reset D11 ageing (2026-10-13-trigger-resets-ageing-of-overdue-job) ──
+
+
+def test_trigger_keeps_next_run_at_of_an_already_overdue_job(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    overdue = int(time.time() * 1000) - 6 * 3_600_000
+    _seed(store, id="overdue", next_run_at=overdue)
+
+    assert client.post("/scheduled-runs/overdue/trigger").status_code == 200
+
+    assert store.get("overdue").next_run_at == overdue
+
+
+def test_trigger_is_idempotent_for_ageing(client: TestClient, store: ScheduledResearchJobStore):
+    overdue = int(time.time() * 1000) - 3_600_000
+    _seed(store, id="twice", next_run_at=overdue)
+    for _ in range(3):
+        assert client.post("/scheduled-runs/twice/trigger").status_code == 200
+    assert store.get("twice").next_run_at == overdue
+
+
+def test_trigger_overdue_job_is_aged_for_admission(client: TestClient, store: ScheduledResearchJobStore):
+    """The point of the fix: after a trigger the job still counts as aged for D11 admission."""
+    from src.scheduled_research.dispatch_admission import AGEING_CEILING_MS
+
+    now = int(time.time() * 1000)
+    _seed(store, id="aged", next_run_at=now - AGEING_CEILING_MS - 60_000)
+    client.post("/scheduled-runs/aged/trigger")
+    assert now - store.get("aged").next_run_at >= AGEING_CEILING_MS
+
+
+def test_pull_due_now_variants():
+    from src.scheduled_research.pause_control import pull_due_now
+
+    job = ScheduledResearchJob(id="j", prompt="p", schedule="60000", next_run_at=500, created_at=1)
+    assert pull_due_now(job, 1_000) is False and job.next_run_at == 500  # overdue: untouched
+    job.next_run_at = 1_000
+    assert pull_due_now(job, 1_000) is False and job.next_run_at == 1_000  # due exactly now
+    job.next_run_at = 9_000
+    assert pull_due_now(job, 1_000) is True and job.next_run_at == 1_000  # future: pulled forward
+    job.next_run_at = 0
+    assert pull_due_now(job, 1_000) is True and job.next_run_at == 1_000  # unset: set

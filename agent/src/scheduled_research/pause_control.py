@@ -156,6 +156,22 @@ def cancel_running_job(
     return job
 
 
+def pull_due_now(job: ScheduledResearchJob, now_ms: Optional[int] = None) -> bool:
+    """Make *job* due now without resetting its ageing; return True when ``next_run_at`` changed.
+
+    An already-due job keeps its older ``next_run_at``: D11 ageing measures overdue-ness from it,
+    so resetting it to now threw away hours of ageing and re-waited AGEING_CEILING_MS behind
+    shorter jobs (.claude/backlog/items/2026-10-13-trigger-resets-ageing-of-overdue-job.md).
+    Only a future/unset slot moves to now. The one place every "run it soon" path (trigger,
+    resume, recover, plan-approval nudge) sets ``next_run_at``.
+    """
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    if job.next_run_at and int(job.next_run_at) <= now_ms:
+        return False
+    job.next_run_at = now_ms
+    return True
+
+
 def trigger_job_now(
     job_id: str,
     *,
@@ -164,7 +180,8 @@ def trigger_job_now(
     """Make a job due now, without changing its enabled/paused state.
 
     This does NOT fire the job immediately and grants it no dispatch
-    priority: it only pulls ``next_run_at`` forward to now so the
+    priority: it only pulls a future ``next_run_at`` forward to now (an
+    already-due job keeps its older one, so its D11 ageing survives) so the
     executor's next due-check offers it to D11 admission like any other
     due job, where it can still wait behind an overdue backlog (see
     .claude/backlog/items/2026-09-16-trigger-docstring-promises-immediate-dispatch.md).
@@ -201,6 +218,6 @@ def trigger_job_now(
             f"on this tier (STACK_PROFILE={stack_profile!r}); trigger it against the release "
             "tier instead"
         )
-    job.next_run_at = int(time.time() * 1000)
-    store.upsert(job)
+    if pull_due_now(job):
+        store.upsert(job)
     return job

@@ -9,6 +9,7 @@ exercise it without sleeping or reading wall-clock time.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -31,6 +32,7 @@ from src.scheduled_research.models import (
 from src.scheduled_research.index_jobs import HubNewsIngestCollectedNothingError
 from src.scheduled_research.job_tier_policy import (
     collection_job_dispatch_enabled,
+    host_pressure_defer_reason,
     is_collection_job,
     is_operational_tier_job,
 )
@@ -102,6 +104,56 @@ logger = logging.getLogger(__name__)
 DEFAULT_TICK_INTERVAL_MS = 60 * 1000
 SCHEDULER_ENABLED_ENV = "VIBE_TRADING_ENABLE_SCHEDULER"
 LAST_RESULT_CONFIG_KEY = "_last_result_summary"
+
+#: Largest `last_result_summary` persisted per run (bytes of JSON). It is served whole in every
+#: `/scheduled-runs` list call, so one handler's step result (hub-evening-maintenance carried 995 KB
+#: of scenario drafts, 2026-10-13-scenario-autogen-summary-bloats-scheduled-runs) made the list 1.3 MB
+#: and unreadable to check_dev_ports. Env-overridable; already-stored records are left as they are.
+RESULT_SUMMARY_MAX_BYTES = int(os.environ.get("SCHEDULED_RESEARCH_RESULT_SUMMARY_MAX_BYTES", "65536"))
+
+
+def cap_result_summary(summary: dict[str, Any], max_bytes: int | None = None) -> dict[str, Any]:
+    """*summary* unchanged when small; otherwise a bounded stand-in that keeps the scalar fields
+    (status, counts, error) and names each dropped field with its size, so the record says what was
+    cut instead of silently losing it. The full result lives in the run's own logs/artifacts."""
+    limit = RESULT_SUMMARY_MAX_BYTES if max_bytes is None else max_bytes
+    size = _json_size(summary)
+    if size <= limit:
+        return summary
+    return {**_shrink(summary, limit), "truncated": True, "original_bytes": size}
+
+
+def _json_size(value: Any) -> int:
+    try:
+        return len(json.dumps(value, default=str))
+    except (TypeError, ValueError):
+        return 10**9  # unserialisable: treated as oversized, replaced by a marker
+
+
+def _shrink(node: dict[str, Any], limit: int) -> dict[str, Any]:
+    """Largest fields first: a nested dict keeps its small siblings (per-step statuses, counts) and
+    loses only what does not fit; anything else too big becomes `{"truncated": True, "bytes": n}`."""
+    out = dict(node)
+    for key in sorted(out, key=lambda k: -_json_size(out[k])):
+        if _json_size(out) <= limit:
+            break
+        child = out[key]
+        if isinstance(child, str):  # an error text stays readable, just bounded
+            out[key] = child[:500] + "…[truncated]"
+            continue
+        if isinstance(child, dict) and len(child) > 1:
+            out[key] = _shrink(child, max(limit // 2, 256))
+        if _json_size(out) > limit or _json_size(out[key]) > limit:
+            out[key] = {"truncated": True, "bytes": _json_size(child)}
+    return out
+
+
+def _store_result_summary(job: ScheduledResearchJob) -> None:
+    """The one place a handler's `_last_result_summary` scratch key becomes `job.last_result_summary`."""
+    raw_summary = job.config.pop(LAST_RESULT_CONFIG_KEY, None)
+    if isinstance(raw_summary, dict):
+        job.last_result_summary = cap_result_summary(raw_summary)
+
 
 _MAX_PERSISTED_ERROR_CHARS = 1000
 
@@ -428,7 +480,8 @@ class ScheduledResearchExecutor:
         # D11 (sidecar dispatch_admission.py): one persistent slot pool per loop, so a
         # tick offers its due jobs and returns instead of awaiting their dispatches.
         self._dispatch_pool = DispatchPool(
-            global_cap=lambda: self._dispatch_concurrency, stopping=lambda: self._stopping, next_due_fn=next_due
+            global_cap=lambda: self._dispatch_concurrency, stopping=lambda: self._stopping, next_due_fn=next_due,
+            defer_reason=host_pressure_defer_reason,
         )
         self._operational_dispatch_pool = DispatchPool(
             global_cap=lambda: self._dispatch_concurrency, stopping=lambda: self._stopping, next_due_fn=next_due
@@ -456,6 +509,16 @@ class ScheduledResearchExecutor:
             "start_count": self._start_count,
             "last_started_at": self._last_started_ms,
         }
+
+    def _host_pressure_fields(self) -> dict[str, Any]:
+        """The host-pressure verdict + the jobs it is holding back, for `/scheduled-runs/scheduler/status`."""
+        try:
+            from trade_integrations import host_pressure
+
+            verdict = host_pressure.verdict().as_dict()
+        except Exception as exc:  # status must answer; an unreadable probe is itself reported
+            verdict = {"deferred": False, "reason": "", "details": [], "probe_error": str(exc)}
+        return {"host_pressure": {**verdict, "deferred_jobs": self._dispatch_pool.deferred}}
 
     def liveness(self, now_ms: int | None = None) -> dict[str, Any]:
         """Evidence that the dispatch loop is progressing, not merely alive.
@@ -493,6 +556,8 @@ class ScheduledResearchExecutor:
         operational_max_overdue_ms = 0
         operational_overdue_job_id = ""
         stuck: list[dict[str, Any]] = []
+        # Held back by the host-pressure gate on purpose: reported under `host_pressure`, not as a stall.
+        deferred_ids = set(self._dispatch_pool.deferred)
         try:
             for job in self._store.load().values():
                 # A job this tier may not dispatch is excluded from *both* fault metrics
@@ -510,7 +575,7 @@ class ScheduledResearchExecutor:
                     # Reported, never dispatched. Collected BEFORE the `is_due` filter below,
                     # precisely because `is_due` is what excludes these -- see stuck_jobs.py.
                     stuck.append(stuck_jobs.stuck_row(job, now))
-                if not is_due(job, now):
+                if not is_due(job, now) or str(job.id) in deferred_ids:
                     continue
                 overdue = now - int(job.next_run_at or now)
                 job_type = str((job.config or {}).get("job_type") or "")
@@ -528,6 +593,7 @@ class ScheduledResearchExecutor:
             logger.warning("liveness store read failed", exc_info=True)
             return {
                 **self._restart_fields(),
+                **self._host_pressure_fields(),
                 "running": self.is_running,
                 "tick_count": self._executor_tick_count,
                 "last_tick_started_at": self._last_tick_started_ms,
@@ -548,6 +614,7 @@ class ScheduledResearchExecutor:
             }
         return {
             **self._restart_fields(),
+            **self._host_pressure_fields(),
             "running": self.is_running,
             "tick_count": self._executor_tick_count,
             "last_tick_started_at": self._last_tick_started_ms,
@@ -1319,9 +1386,7 @@ class ScheduledResearchExecutor:
         else:
             job.consecutive_failures = 0
             job.config.pop("_timed_out", None)
-            raw_summary = job.config.pop(LAST_RESULT_CONFIG_KEY, None)
-            if isinstance(raw_summary, dict):
-                job.last_result_summary = raw_summary
+            _store_result_summary(job)
             if isinstance(session_id, str) and session_id:
                 if job.delivery_channel:
                     # Arm the outbox in the same write that records the firing.
@@ -1440,9 +1505,7 @@ class ScheduledResearchExecutor:
             # A handler that attached its summary and then failed on it (run_outcome.
             # raise_if_run_had_errors) should leave *that* summary on the record. Without this,
             # the scratch key rode along in config and the previous run's summary stayed visible.
-            raw_summary = job.config.pop(LAST_RESULT_CONFIG_KEY, None)
-            if isinstance(raw_summary, dict):
-                job.last_result_summary = raw_summary
+            _store_result_summary(job)
             # A run with no spot to forecast from (`no_live_spot`: the INDmoney token expires daily at
             # 07:00 IST and is rotated by hand, D358) is a recorded failure like any other, but it is
             # retried on the schedule rather than auto-paused: pausing the headline refresh until a
