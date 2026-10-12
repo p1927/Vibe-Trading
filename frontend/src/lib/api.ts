@@ -5262,6 +5262,8 @@ export interface ForecastReplayPoint {
   error_pct: number | null;
   in_band: boolean | null;
   direction_hit: boolean | null;
+  /** target_date is a weekday projection past the last realised close. */
+  projected?: boolean;
 }
 
 export interface ForecastReplayRecord {
