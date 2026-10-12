@@ -17,6 +17,25 @@ export function recordPath(r: ReplayRecord): { vertices: PathVertex[]; approxima
   };
 }
 
+/**
+ * Logical bar range of the chart's time scale: `lead` bars before the anchor through the furthest recorded
+ * point of the plotted records (+`pad` bars). Bars are the union of the actual dates and every plotted path date,
+ * which is how the chart indexes them. Implausible records never widen it (unless they are all there is).
+ * Empty records fall back to `fallbackBars` after the anchor; null when the anchor is not on the scale.
+ */
+export function focusRange(
+  actualDates: string[], records: ReplayRecord[], anchorDay: string, fallbackBars: number, lead = 30, pad = 2,
+): { from: number; to: number } | null {
+  const dates = [...new Set([...actualDates, ...records.flatMap((r) => recordPath(r).vertices.map((v) => v.date))])].sort();
+  const idx = dates.indexOf(anchorDay);
+  if (idx < 0) return null;
+  const sane = records.filter((r) => r.meta?.return_implausible !== true);
+  const shown = sane.length ? sane : records;
+  const furthest = shown.flatMap((r) => r.points.map((p) => p.target_date)).sort().pop();
+  const to = furthest ? dates.indexOf(furthest) : idx + fallbackBars;
+  return { from: Math.max(0, idx - lead), to: Math.max(to, idx) + pad };
+}
+
 /** p10/p90 at each point that has both; null when the record carries no band. */
 export function band(r: ReplayRecord): { date: string; p10: number; p90: number }[] | null {
   const b = r.points.flatMap((p) =>
@@ -50,7 +69,7 @@ export function weekGroups(records: ReplayRecord[]): { week_start: string; recor
 export function errorSeries(records: ReplayRecord[], horizon: number) {
   return records.flatMap((r) => {
     const p = r.points.find((q) => q.horizon_days === horizon);
-    return p?.matured && p.error_pct != null && p.error_pts != null
+    return r.meta?.return_implausible !== true && p?.matured && p.error_pct != null && p.error_pts != null
       ? [{ issue_day: r.issue_day, error_pct: p.error_pct, error_pts: p.error_pts, in_band: p.in_band }]
       : [];
   });

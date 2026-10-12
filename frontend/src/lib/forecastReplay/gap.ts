@@ -90,9 +90,9 @@ export function gapPolygons(r: ReplayRecord, actuals: ReplayActual[], xOf: (date
   return out;
 }
 
-/** Records that get a shaded gap: all drawn ones, but with more than `maxSources` sources only the anchor record. */
+/** Records that get a shaded gap: all drawn ones (not overlays or implausible records), but with more than `maxSources` sources only the anchor record. */
 export function shadedRecords(drawn: ReplayRecord[], anchorDay: string, maxSources = 4): ReplayRecord[] {
-  const real = drawn.filter((r) => !r.meta?.overlay);
+  const real = drawn.filter((r) => !r.meta?.overlay && r.meta?.return_implausible !== true);
   if (new Set(real.map((r) => r.source_id)).size <= maxSources) return real;
   const anchor = real.find((r) => r.issue_day === anchorDay);
   return anchor ? [anchor] : [];

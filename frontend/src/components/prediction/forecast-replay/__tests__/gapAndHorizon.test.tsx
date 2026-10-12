@@ -5,7 +5,7 @@ import { bandCount, defaultHorizon, hasPointAt, horizonOptions, spotSuspectSumma
 import { sourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { ReplayPoint, ReplayRecord } from "@/lib/forecastReplay/types";
 import { SourceComparisonTable } from "../SourceComparisonTable";
-import { SpotSuspectBadge } from "../SpotSuspectBadge";
+import { RecordBadges, SpotSuspectBadge } from "../RecordBadges";
 
 const pt = (h: number, target: string, p50: number, o: Partial<ReplayPoint> = {}): ReplayPoint => ({
   horizon_days: h, target_date: target, p50_level: p50, p10_level: null, p90_level: null, matured: false,
@@ -135,7 +135,7 @@ describe("table states", () => {
 
   it("shows 'no 14d point' instead of zero-looking cells, the band count, and the spot badge", () => {
     render(<SourceComparisonTable ids={["fan", "headline"]} stats={stats} styles={styles} records={[fan, head]} horizon={14} />);
-    expect(screen.getByTestId("no-horizon-point").textContent).toBe("no 14d point");
+    expect(screen.getByTestId("row-state-no-point").textContent).toBe("no 14d point");
     expect(screen.getByText("0% (0/1)")).toBeTruthy();
     expect(screen.getByTestId("spot-suspect-badge").textContent).toBe("spot differs from close by 2.3%");
     expect(screen.getByTestId("spot-suspect-badge").getAttribute("title")).toContain("1 record");
@@ -143,7 +143,7 @@ describe("table states", () => {
   it("shows '—' for the band when the source records none", () => {
     const noBand = record("headline", [pt(14, "2026-10-20", 100, { matured: true })]);
     render(<SourceComparisonTable ids={["headline"]} stats={{ headline: { ...stats.headline, in_band_rate: null } }} styles={styles} records={[noBand]} horizon={14} />);
-    expect(screen.queryByTestId("no-horizon-point")).toBeNull();
+    expect(screen.queryByTestId("row-state-no-point")).toBeNull();
     expect(screen.queryByTestId("spot-suspect-badge")).toBeNull();
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });

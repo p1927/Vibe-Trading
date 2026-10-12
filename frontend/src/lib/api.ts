@@ -5276,7 +5276,8 @@ export interface ForecastReplayRecord {
   points: ForecastReplayPoint[];
   approximate_path: boolean;
   /** `spot_suspect`/`spot_close_gap_pct`: recorded spot differs from the issue-day close (set by the server when it can tell). */
-  meta: { spot_suspect?: boolean; spot_close_gap_pct?: number } & Record<string, unknown>;
+  /** `return_implausible`/`return_pct`: the recorded p50 implies a move no real forecast makes (set by the server). */
+  meta: { spot_suspect?: boolean; spot_close_gap_pct?: number; return_implausible?: boolean; return_pct?: number } & Record<string, unknown>;
 }
 
 export interface ForecastReplaySource {

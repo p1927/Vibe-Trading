@@ -1,7 +1,7 @@
-import { bandCount, hasPointAt } from "@/lib/forecastReplay/horizon";
+import { bandCount, rowState } from "@/lib/forecastReplay/horizon";
 import type { SourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { ReplayRecord } from "@/lib/forecastReplay/types";
-import { SpotSuspectBadge } from "./SpotSuspectBadge";
+import { RecordBadges } from "./RecordBadges";
 
 type Stats = Record<string, Record<string, number | string | null>>;
 
@@ -36,17 +36,19 @@ export function SourceComparisonTable({ ids, stats, styles, records, horizon }: 
         <tbody>
           {ids.map((id) => {
             const s = stats[id];
-            const missing = !hasPointAt(records, id, horizon);
+            const state = rowState(records, s, id, horizon);
             const band = bandCount(records, id, horizon);
             return (
               <tr key={id} className="border-b last:border-0">
                 <td className="px-2 py-1">
                   <span className="mr-1.5 inline-block h-2 w-2 rounded-full" style={{ background: styles[id]?.color }} />
                   {styles[id]?.label ?? id}
-                  <SpotSuspectBadge records={records.filter((r) => r.source_id === id)} />
+                  <RecordBadges records={records.filter((r) => r.source_id === id)} />
                 </td>
-                {missing ? (
-                  <td colSpan={5} className="px-2 py-1 text-right text-muted-foreground" data-testid="no-horizon-point">no {horizon}d point</td>
+                {state !== "ok" ? (
+                  <td colSpan={5} className="px-2 py-1 text-right text-muted-foreground" data-testid={`row-state-${state}`}>
+                    {state === "no-point" ? `no ${horizon}d point` : state === "pending" ? `no matured ${horizon}d point yet` : `no evaluations at ${horizon}d`}
+                  </td>
                 ) : (
                   <>
                     <td className="px-2 py-1 text-right tabular-nums">{finite(s?.eval_count) ? s.eval_count : "—"}</td>

@@ -15,7 +15,7 @@ import { createLightweightChart } from "@/lib/lightweightChartOptions";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { ForecastGapPrimitive } from "@/components/charts/forecastGapPrimitive";
 import { GAP_ALPHA, maturedUntil, shadedRecords } from "@/lib/forecastReplay/gap";
-import { band, recordPath } from "@/lib/forecastReplay/paths";
+import { band, focusRange, recordPath } from "@/lib/forecastReplay/paths";
 import type { SourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { ReplayActual, ReplayRecord } from "@/lib/forecastReplay/types";
 import { forecastReturnPct } from "@/lib/forecastReplay/view";
@@ -66,18 +66,8 @@ function lineData(vertices: { date: string; level: number }[]) {
   return [...byDate].sort((a, b) => a[0].localeCompare(b[0])).map(([date, level]) => ({ time: date as Time, value: level }));
 }
 
-function focusWindow(chart: IChartApi, actuals: ReplayActual[], anchorDay: string, horizon: number, pathLen: number) {
-  const idx = actuals.findIndex((a) => a.date === anchorDay);
-  if (idx < 0) {
-    chart.timeScale().fitContent();
-    return;
-  }
-  try {
-    chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, idx - 30), to: idx + Math.max(horizon + 2, pathLen) });
-  } catch {
-    chart.timeScale().fitContent();
-  }
-}
+/** A record the server flagged implausible is drawn but never stretches the price scale. */
+const IGNORE_IN_AUTOSCALE = { autoscaleInfoProvider: () => null };
 
 export function ForecastReplayChart({
   records, actuals, anchorDay, focusDays, horizon, sourceStyles, onAnchorChange, height = 380, loading = false, emptyHint,
@@ -89,6 +79,8 @@ export function ForecastReplayChart({
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const gapRef = useRef<ForecastGapPrimitive | null>(null);
   const dynamicRef = useRef<ISeriesApi<"Line">[]>([]);
+  /** What the visible range was last fitted for; re-fitting only on a new key keeps the user's pan/zoom. */
+  const fitKeyRef = useRef("");
   const clickRef = useRef(onAnchorChange);
   clickRef.current = onAnchorChange;
   const { dark } = useDarkMode();
@@ -122,6 +114,7 @@ export function ForecastReplayChart({
         if (day) clickRef.current?.(day);
       });
       chartRef.current = chart;
+      fitKeyRef.current = "";
       setActiveChart(chart);
       setEpoch((v) => v + 1);
     },
@@ -179,19 +172,19 @@ export function ForecastReplayChart({
     dayMarkers.sort((a, b) => String(a.time).localeCompare(String(b.time)));
     markersRef.current?.setMarkers(dayMarkers);
 
-    let pathLen = 0;
     for (const r of drawn) {
       const style = sourceStyles[r.source_id];
       const faded = r.issue_day !== anchorDay;
       const { vertices, approximate } = recordPath(r);
-      pathLen = Math.max(pathLen, vertices.length);
       const color = r.meta?.overlay ? t.warningColor : style.color;
+      const scaleOpts = r.meta?.return_implausible === true ? IGNORE_IN_AUTOSCALE : {};
       const series = chart.addSeries(LineSeries, {
         color: faded ? withAlpha(color, 0.4) : color,
         lineWidth: faded ? 1 : 2,
         lineStyle: lineStyleOf(style, approximate),
         lastValueVisible: false,
         priceLineVisible: false,
+        ...scaleOpts,
       });
       series.setData(lineData(vertices));
       dynamicRef.current.push(series);
@@ -212,7 +205,7 @@ export function ForecastReplayChart({
       if (b) {
         for (const key of ["p10", "p90"] as const) {
           const s = chart.addSeries(LineSeries, {
-            color: withAlpha(color, 0.5), lineWidth: 1, lineStyle: LineStyle.Dashed, lastValueVisible: false, priceLineVisible: false,
+            color: withAlpha(color, 0.5), lineWidth: 1, lineStyle: LineStyle.Dashed, lastValueVisible: false, priceLineVisible: false, ...scaleOpts,
           });
           s.setData(lineData([{ date: r.issue_day, level: r.spot_at_issue }, ...b.map((x) => ({ date: x.date, level: x[key] }))]));
           dynamicRef.current.push(s);
@@ -225,7 +218,18 @@ export function ForecastReplayChart({
       })),
       actuals, above: t.upColor, below: t.downColor,
     });
-    focusWindow(chart, actuals, anchorDay, horizon, pathLen);
+    // Fit the anchor through the furthest recorded point once per anchor/records change, never on an unrelated re-render.
+    const range = focusRange(actuals.map((a) => a.date), drawn, anchorDay, horizon + 2);
+    const key = `${anchorDay}|${range ? `${range.from}-${range.to}` : "fit"}`;
+    if (key !== fitKeyRef.current) {
+      fitKeyRef.current = key;
+      try {
+        if (range) chart.timeScale().setVisibleLogicalRange(range);
+        else chart.timeScale().fitContent();
+      } catch {
+        chart.timeScale().fitContent();
+      }
+    }
   }, [actuals, records, drawn, anchorDay, horizon, sourceStyles, epoch]);
 
   const legend = useMemo(() => {

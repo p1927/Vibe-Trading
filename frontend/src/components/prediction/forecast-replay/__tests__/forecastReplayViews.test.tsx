@@ -74,7 +74,7 @@ describe("DayStepper", () => {
 });
 
 describe("SourceComparisonTable", () => {
-  it("renders server stats, dashes for null/missing/string values", () => {
+  it("renders server stats, dashes for null values, a stated reason for a source with no evaluations", () => {
     render(
       <SourceComparisonTable
         ids={["a", "b"]}
@@ -88,7 +88,7 @@ describe("SourceComparisonTable", () => {
     expect(rows[1].textContent).toContain("3.96");
     expect(rows[1].textContent).toContain("38%");
     expect(rows[1].textContent).toContain("—");
-    expect(rows[2].textContent).toMatch(/b—/);
+    expect(rows[2].textContent).toBe("bno matured 14d point yet"); // never zero-looking dashes
   });
 });
 

@@ -18,6 +18,19 @@ export function hasPointAt(records: ReplayRecord[], sourceId: string, horizon: n
   return records.some((r) => r.source_id === sourceId && r.points.some((p) => p.horizon_days === horizon));
 }
 
+/**
+ * Why a source's row at `horizon` has no accuracy numbers: `no-point` (no forecast at that horizon),
+ * `pending` (points exist, none matured yet) or `no-eval` (the server evaluated nothing); `ok` otherwise.
+ */
+export type RowState = "no-point" | "pending" | "no-eval" | "ok";
+export function rowState(records: ReplayRecord[], stats: Record<string, number | string | null> | undefined, sourceId: string, horizon: number): RowState {
+  if (!hasPointAt(records, sourceId, horizon)) return "no-point";
+  const evalCount = stats?.eval_count;
+  if (typeof evalCount === "number" && evalCount > 0) return "ok";
+  const matured = records.some((r) => r.source_id === sourceId && r.points.some((p) => p.horizon_days === horizon && p.matured));
+  return matured ? "no-eval" : "pending";
+}
+
 /** Matured points at `horizon` that carry a band, and how many of them landed inside it. */
 export function bandCount(records: ReplayRecord[], sourceId: string, horizon: number): { inside: number; total: number } {
   const pts = records
@@ -32,4 +45,12 @@ export function spotSuspectSummary(records: ReplayRecord[]): { count: number; ga
   if (!flagged.length) return null;
   const gaps = flagged.map((r) => r.meta.spot_close_gap_pct).filter((g): g is number => typeof g === "number" && Number.isFinite(g));
   return { count: flagged.length, gapPct: gaps.length ? gaps.reduce((a, g) => (Math.abs(g) > Math.abs(a) ? g : a)) : null };
+}
+
+/** Records flagged `meta.return_implausible` and the largest |`meta.return_pct`| among them; null when none flagged. */
+export function returnImplausibleSummary(records: ReplayRecord[]): { count: number; returnPct: number | null } | null {
+  const flagged = records.filter((r) => r.meta?.return_implausible === true);
+  if (!flagged.length) return null;
+  const rets = flagged.map((r) => r.meta.return_pct).filter((g): g is number => typeof g === "number" && Number.isFinite(g));
+  return { count: flagged.length, returnPct: rets.length ? rets.reduce((a, g) => (Math.abs(g) > Math.abs(a) ? g : a)) : null };
 }
