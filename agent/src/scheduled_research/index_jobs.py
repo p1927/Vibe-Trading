@@ -264,32 +264,39 @@ def _hub_news_ingest_collected_nothing(summary: dict[str, Any] | None) -> bool:
     return not any(int(totals.get(key) or 0) for key in _INGEST_PROGRESS_TOTALS)
 
 
-def _index_factor_snapshot_had_errors(summary: dict[str, Any]) -> bool:
+def _index_factor_snapshot_errors(summary: dict[str, Any]) -> dict[str, Any]:
+    """The summary's failing steps, `{step: its summary}`; empty when the run had none.
+
+    The job's failure message names these. It used to print only factor_failures,
+    cold_tier_finalize and factor_enrichment, so a run failed by `participant_oi` (a TypeError from a
+    removed keyword) read `factor_failures={}` beside an all-ok finalize and three auto-pauses went
+    by with no visible cause (release 2026-10-13)."""
+    failed: dict[str, Any] = {}
     if summary.get("status") == "error":
-        return True
+        failed["status"] = summary.get("reason")
     # D282: a factor that failed inside the snapshot batch (the rest of it was recorded).
     if (summary.get("snapshot") or {}).get("factor_failures"):
-        return True
+        failed["factor_failures"] = summary["snapshot"]["factor_failures"]
     ohlcv = summary.get("ohlcv") or {}
     if isinstance(ohlcv, dict) and ohlcv.get("status") == "error":
-        return True
+        failed["ohlcv"] = ohlcv
     enrich = summary.get("factor_enrichment") or {}
     if enrich.get("status") == "error" or enrich.get("reason") == "no_nifty_history":
-        return True
+        failed["factor_enrichment"] = enrich
     for key in ("participant_oi", "macro_daily", "cache_flows", "repo_flows", "panel"):
         step = summary.get(key) or {}
         if isinstance(step, dict) and step.get("status") in {"error", "partial"}:
-            return True
+            failed[key] = step
     finalize = summary.get("cold_tier_finalize") or {}
     if isinstance(finalize, dict):
         if finalize.get("status") in {"partial", "error", "skipped"}:
-            return True
+            failed["cold_tier_finalize"] = finalize
         for step_name, step in finalize.items():
             if step_name in {"status", "failed_steps", "trading_day", "reason"}:
                 continue
             if isinstance(step, dict) and step.get("status") in {"error", "partial"}:
-                return True
-    return False
+                failed[f"cold_tier_finalize.{step_name}"] = step
+    return failed
 
 
 def _should_skip_cold_tier_finalize(summary: dict[str, Any]) -> tuple[bool, str]:
@@ -463,7 +470,7 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
             )
             summary["cold_tier_finalize"] = {"status": "error", "reason": str(exc)}
 
-    if _index_factor_snapshot_had_errors(summary):
+    if _index_factor_snapshot_errors(summary):
         summary["had_errors"] = True
     return summary
 
@@ -1361,9 +1368,7 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
             # [[2026-09-07-cold-tier-finalize-crashes-on-truncated-date]].
             raise RuntimeError(
                 f"index factor snapshot for job {job.id} completed with errors: "
-                f"factor_failures={(summary.get('snapshot') or {}).get('factor_failures')!r} "
-                f"cold_tier_finalize={summary.get('cold_tier_finalize')!r} "
-                f"factor_enrichment={summary.get('factor_enrichment')!r}"
+                f"{_index_factor_snapshot_errors(summary)!r}"
             )
         return
     if job_type == JOB_TYPE_INDEX_RESEARCH:
