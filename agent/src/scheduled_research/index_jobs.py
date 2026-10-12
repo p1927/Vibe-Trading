@@ -171,6 +171,9 @@ def _compact_result_summary(result: dict[str, Any] | None) -> dict[str, Any]:
         # The coverage sweep's per-bucket seconds: the only record of a slow bucket once the
         # stock_simulator run's in-memory log is gone.
         "ok_count", "failed_count", "skipped_count", "durations",
+        # forecast_engine_refresh: a degraded run (recipes not yet evaluable, with reason + ETA) is
+        # completed but must say so in the run record, where the scheduler UI and D32's check read it.
+        "insufficient_data",
     ):
         if key in result:
             summary[key] = result[key]
@@ -721,7 +724,10 @@ def run_forecast_engine_refresh_job(
     artifacts (docs/add/forecast_engine.md rule 6: TimesFM runs here, never in a request path).
     The same `refresh_all_recipes` the manual `scripts/run_forecast_engine_latest.py` calls. A
     recipe that errors or is deferred past ``time_budget_s`` makes the summary ``had_errors`` so
-    the run is recorded failed, never completed. Release only (a collection job type)."""
+    the run is recorded failed, never completed. A recipe that is merely not yet evaluable
+    (``insufficient_data``, with its earliest date) makes the run ``degraded``: completed, the reason
+    kept in ``last_result_summary``, never counted toward auto-pause (D402). Release only (a
+    collection job type)."""
     _ensure_trade_integrations_on_path()
     from trade_integrations.forecast_engine.refresh import refresh_all_recipes
 
@@ -1503,7 +1509,9 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
             job.config, time_budget_s=0.75 * dispatch_timeout_ms_for(job) / 1000.0
         )
         _attach_job_result_summary(job, summary)
-        logger.info("forecast engine refresh completed for job %s: %s", job.id, summary)
+        (logger.warning if summary.get("status") == "degraded" else logger.info)(
+            "forecast engine refresh completed for job %s: %s", job.id, summary
+        )
         raise_if_run_had_errors(job, summary, "forecast engine refresh")
         return
     if job_type == JOB_TYPE_MAX_PAIN_BHAVCOPY:
