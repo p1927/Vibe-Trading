@@ -5216,7 +5216,6 @@ export interface IndexPredictionHistoryRow {
   range_high: number;
   actual_return_pct?: number | null;
   direction_correct?: boolean | null;
-  horizon_name?: string;
   bottom_up_return_pct?: number | null;
   macro_delta_pct?: number | null;
   refresh?: string;
