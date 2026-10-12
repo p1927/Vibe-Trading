@@ -15,7 +15,7 @@ import { PredictionMissAnalysisPanel } from "@/components/prediction/PredictionM
 import { IndexFactorLedgerPanel } from "@/components/prediction/IndexFactorLedgerPanel";
 import { ForecastHistorySection } from "@/components/prediction/ForecastHistorySection";
 import { IndexFactorTimelineChart } from "@/components/charts/IndexFactorTimelineChart";
-import { NiftyForecastReplayChart } from "@/components/charts/NiftyForecastReplayChart";
+import { ForecastReplayPanel, ForecastTrackRecord } from "@/components/prediction/forecast-replay";
 import { NiftyMarketContextChart } from "@/components/charts/NiftyMarketContextChart";
 import { PredictionDecompositionChart } from "@/components/charts/PredictionDecompositionChart";
 import { ScenarioTiles } from "@/components/prediction/ScenarioTiles";
@@ -957,27 +957,23 @@ export function Prediction() {
               <div className="space-y-3">
                 <PredictionSectionHeader
                   title="Where Nifty is heading"
-                  subtitle={`Pick any day with a recorded forecast and compare the ${horizonDays}d path to actual Nifty. Orange dashed = forecast; green = actual path.`}
+                  subtitle={`Pick any day with a recorded forecast and compare each source's ${horizonDays}d path and band to actual Nifty (green).`}
                 />
-                <NiftyForecastReplayChart
-                horizonDays={horizonDays}
-                ledgerRows={dailyHistory}
-                backtestEvals={backtest?.daily_evaluations ?? []}
-                priceSeries={niftyPriceSeries}
-                priceLoading={backtestLoading && !niftyPriceSeries.length}
-                liveForecast={
-                  artifact
-                    ? {
-                        asOf: artifact.as_of,
-                        spot: artifact.spot ?? 0,
-                        expectedReturnPct: artifact.prediction?.expected_return_pct ?? 0,
-                        rangeLow: artifact.prediction?.range?.low,
-                        rangeHigh: artifact.prediction?.range?.high,
-                        simulatedReturnPct: simulation?.expected_return_pct,
-                      }
-                    : undefined
-                }
-                height={380}
+                <ForecastReplayPanel
+                  horizon={horizonDays}
+                  defaultSources={["headline", "fan"]}
+                  liveOverlay={
+                    artifact?.spot != null
+                      ? {
+                          asOf: artifact.as_of,
+                          spot: artifact.spot,
+                          expectedReturnPct: artifact.prediction?.expected_return_pct ?? 0,
+                          rangeLow: artifact.prediction?.range?.low,
+                          rangeHigh: artifact.prediction?.range?.high,
+                          simulatedReturnPct: simulation?.expected_return_pct,
+                        }
+                      : undefined
+                  }
                 />
               </div>
             </section>
@@ -1121,6 +1117,7 @@ export function Prediction() {
                 subtitle="Past predictions vs realised Nifty moves."
                 modelRole="verify"
               />
+              <ForecastTrackRecord horizon={horizonDays} />
               <ForecastHistorySection
                 daily={dailyHistory}
                 intraday={intradayHistory}

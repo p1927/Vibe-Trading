@@ -1,6 +1,66 @@
-import { TRACK_CHART_COLORS } from "../trackScoreboardUtils";
-import { trackDisplayLabel } from "../trackScoreboardReplayUtils";
 import type { Provenance } from "./types";
+
+export const TRACK_CHART_COLORS: Record<string, string> = {
+  actual: "#22c55e",
+  headline: "#f59e0b",
+  fan: "#e11d48",
+  quant_ridge: "#3b82f6",
+  quant_ridge_no_overlay: "#2563eb",
+  macro_only: "#8b5cf6",
+  macro_only_no_overlay: "#7c3aed",
+  scenario_anchor: "#f97316",
+  event_overlay: "#ef4444",
+  naive_zero: "#94a3b8",
+  naive_momentum: "#14b8a6",
+  bottom_up: "#0ea5e9",
+  debate_numeric: "#d946ef",
+  headline_legacy: "#78716c",
+  lightgbm_macro: "#059669",
+  xgboost_macro: "#10b981",
+  arimax_macro: "#0891b2",
+  darts_macro: "#6366f1",
+  automl_cached: "#a855f7",
+  "combiner:quant_only": "#6366f1",
+  "combiner:equal_weight_2": "#a855f7",
+  "combiner:equal_weight_3": "#ec4899",
+  "combiner:equal_weight_quant_3": "#db2777",
+  "combiner:shrinkage_50": "#eab308",
+  "combiner:stress_conditional": "#f43f5e",
+};
+
+export const TRACK_LABELS: Record<string, string> = {
+  quant_ridge: "Quant Ridge",
+  quant_ridge_no_overlay: "Quant Ridge (no overlay)",
+  macro_only: "Macro only",
+  macro_only_no_overlay: "Macro only (no overlay)",
+  scenario_anchor: "Scenario anchor",
+  event_overlay: "News shock",
+  naive_zero: "Naive zero",
+  naive_momentum: "Naive momentum",
+  bottom_up: "Bottom up",
+  debate_numeric: "Debate numeric",
+  headline_legacy: "Headline legacy",
+  lightgbm_macro: "LightGBM macro (ML)",
+  xgboost_macro: "XGBoost macro (ML)",
+  arimax_macro: "ARIMAX macro (ML)",
+  darts_macro: "Darts macro (ML)",
+  automl_cached: "AutoML cached (ML)",
+  "combiner:quant_only": "Combiner: quant only",
+  "combiner:equal_weight_2": "Combiner: equal (2)",
+  "combiner:equal_weight_3": "Combiner: equal (3)",
+  "combiner:equal_weight_quant_3": "Combiner: equal quant (3)",
+  "combiner:shrinkage_50": "Combiner: shrinkage",
+  "combiner:inverse_mae_w6": "Combiner: inverse MAE",
+  "combiner:alignment_grid": "Combiner: alignment",
+  "combiner:fixed_legacy": "Combiner: fixed legacy",
+  "combiner:stress_conditional": "Combiner: stress",
+  "combiner:stacked_ridge_meta": "Combiner: stacked ML meta",
+  "combiner:equal_weight_ml_3": "Combiner: equal ML top 3",
+};
+
+export function trackDisplayLabel(trackId: string): string {
+  return TRACK_LABELS[trackId] ?? trackId.replace(/^combiner:/, "").replace(/_/g, " ");
+}
 
 export interface SourceStyle {
   label: string;
@@ -20,7 +80,7 @@ function hashColor(id: string): string {
 
 /** Table colour for known ids (`track:` prefix stripped), stable hash colour otherwise; label from the server first. */
 export function sourceStyle(sourceId: string, provenance: Provenance, label?: string): SourceStyle {
-  const key = sourceId.replace(/^track:/, "");
+  const key = sourceId.replace(/^track:/, "").replace(/@backtest$/, "");
   return {
     label: label ?? trackDisplayLabel(key),
     color: TRACK_CHART_COLORS[key] ?? hashColor(sourceId),

@@ -5247,7 +5247,8 @@ export interface ForecastReplayParams {
   start: string;
   end: string;
   horizon: number;
-  provenance: ForecastReplayProvenance;
+  /** One provenance or a comma list of them ("live,backtest"). */
+  provenance: string;
 }
 
 export interface ForecastReplayPoint {
@@ -5299,7 +5300,7 @@ export interface ForecastReplayResponse {
   actuals: ForecastReplayActual[];
   sources: ForecastReplaySource[];
   records: ForecastReplayRecord[];
-  stats: Record<string, Record<string, number | null>>;
+  stats: Record<string, Record<string, number | string | null>>;
   message?: string;
 }
 

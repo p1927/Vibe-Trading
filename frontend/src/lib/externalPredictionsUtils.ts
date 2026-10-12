@@ -1,5 +1,4 @@
 import type { ExternalPredictionRecord, ExternalPredictionSnapshot, ExternalPredictionSource } from "@/lib/api";
-import type { LiveForecastInput } from "@/lib/forecastReplayUtils";
 
 export interface StreetSummaryStats {
   horizonDays: number;
@@ -228,21 +227,6 @@ export function snapshotDisplayUpdatedAt(snapshot: ExternalPredictionSnapshot | 
   if (completed) return completed;
   const fetched = snapshot?.fetched_at?.trim();
   return fetched || null;
-}
-
-export function recordToLiveForecast(record: ExternalPredictionRecord): LiveForecastInput | undefined {
-  const spot = record.spot_at_fetch;
-  const mid = record.target?.mid;
-  if (spot == null || mid == null || spot <= 0) return undefined;
-  const expectedReturnPct =
-    record.expected_return_pct ?? Math.round((mid / spot - 1) * 10000) / 100;
-  return {
-    asOf: record.as_of,
-    spot,
-    expectedReturnPct,
-    rangeLow: record.target?.low ?? null,
-    rangeHigh: record.target?.high ?? null,
-  };
 }
 
 export function formatHorizonMatch(record: ExternalPredictionRecord): string | null {

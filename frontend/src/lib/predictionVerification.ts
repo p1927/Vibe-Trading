@@ -227,14 +227,14 @@ export function runPredictionUiAudit(
 
   rows.push({
     id: "forecast-chart",
-    component: "NiftyForecastReplayChart",
+    component: "ForecastReplayPanel",
     section: "Timeline",
     modelRole: "display",
     status: statusFrom({
       ok: spotOk && pred.expected_return_pct != null,
       empty: !spotOk,
     }),
-    source: "ledger history + backtest daily_evaluations + live artifact",
+    source: "GET /index-prediction/forecast-replay (ledger, fan, tracks, backtest, engine, external) + live artifact overlay",
     userValue: `${(external.dailyHistoryCount ?? 0) + (external.backtest?.daily_evaluations?.length ?? 0)} forecast anchors`,
     feedsForecast: false,
   });

@@ -1,9 +1,18 @@
+import { useMemo } from "react";
 import { ExternalLink } from "lucide-react";
-import { ExternalPredictionReplayChart } from "@/components/charts/ExternalPredictionReplayChart";
+import { ForecastReplayChart } from "@/components/charts/ForecastReplayChart";
+import { recordFromExternal } from "@/lib/forecastReplay/external";
+import { mergePriceSeries } from "@/lib/forecastReplayUtils";
 import type { ExternalPredictionRecord, ExternalPredictionSource } from "@/lib/api";
 import { resolveApiBase } from "@/lib/apiBase";
 import { canApproveNavigationPath, formatFetchMethodLabel, formatForecastProvenance, formatHorizonMatch, formatPageKindLabel, hasHorizonMismatch } from "@/lib/externalPredictionsUtils";
 import { cn } from "@/lib/utils";
+
+const DIRECTION_COLORS: Record<string, string> = {
+  bullish: "#22c55e",
+  bearish: "#ef4444",
+  neutral: "#94a3b8",
+};
 
 const KIND_LABELS: Record<string, string> = {
   media: "Media",
@@ -51,6 +60,22 @@ export function ExternalPredictionCard({
   className,
 }: Props) {
   const name = source?.display_name || record.source_id;
+  const replayRecord = useMemo(() => recordFromExternal(record, horizonDays), [record, horizonDays]);
+  const replayActuals = useMemo(
+    () => mergePriceSeries([priceSeries ?? []]).map((p) => ({ date: p.date, close: p.close })),
+    [priceSeries],
+  );
+  const replayStyles = useMemo(
+    () => ({
+      [replayRecord?.source_id ?? ""]: {
+        label: name,
+        color: DIRECTION_COLORS[record.direction ?? "neutral"] ?? DIRECTION_COLORS.neutral,
+        dash: [] as number[],
+        hatch: false,
+      },
+    }),
+    [replayRecord, name, record.direction],
+  );
   const url = record.provenance?.url;
   const thumbPath = record.provenance?.thumbnail_url as string | undefined;
   const thumbnailSrc = thumbPath
@@ -213,13 +238,22 @@ export function ExternalPredictionCard({
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
-        <ExternalPredictionReplayChart
-          record={record}
-          horizonDays={horizonDays}
-          priceSeries={priceSeries}
-          priceLoading={priceLoading}
-          height={280}
-        />
+        {replayRecord ? (
+          <ForecastReplayChart
+            records={[replayRecord]}
+            actuals={replayActuals}
+            anchorDay={replayRecord.issue_day}
+            horizon={replayRecord.points[0].horizon_days}
+            sourceStyles={replayStyles}
+            loading={priceLoading}
+            height={280}
+            emptyHint="NIFTY 50 index projection from source"
+          />
+        ) : (
+          <div className="flex h-[220px] items-center justify-center rounded-lg bg-muted/20 text-[11px] text-muted-foreground">
+            No forecast levels or target date to chart
+          </div>
+        )}
 
         <div className="flex flex-col gap-4">
           <div className="space-y-1 rounded-lg bg-muted/30 p-2.5 text-[11px]">

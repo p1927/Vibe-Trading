@@ -6,8 +6,8 @@ import {
   BACKTEST_COMBINER_IDS,
   CANONICAL_TRACK_IDS,
   EXPERIMENTAL_TRACK_IDS,
-  trackDisplayLabel,
 } from "@/lib/trackScoreboardReplayUtils";
+import { trackDisplayLabel } from "@/lib/forecastReplay/sourceStyle";
 import { TrackScoreboardChart } from "@/components/charts/TrackScoreboardChart";
 import { TrackScoreboardEvalPanel } from "@/components/prediction/TrackScoreboardEvalPanel";
 import { TrackScoreboardReplaySection } from "@/components/prediction/TrackScoreboardReplaySection";
@@ -283,7 +283,7 @@ export function TrackScoreboardPanel({
         </div>
       ) : null}
 
-      <TrackScoreboardReplaySection report={report} horizonDays={horizonDays} />
+      <TrackScoreboardReplaySection horizonDays={horizonDays} />
 
       <TrackScoreboardEvalPanel report={report} horizonDays={horizonDays} />
 

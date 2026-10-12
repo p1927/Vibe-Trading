@@ -4,8 +4,8 @@ import type { IndexTrackScoreboardReport } from "@/lib/api";
 import {
   BACKTEST_COMBINER_IDS,
   CANONICAL_TRACK_IDS,
-  trackDisplayLabel,
 } from "@/lib/trackScoreboardReplayUtils";
+import { trackDisplayLabel } from "@/lib/forecastReplay/sourceStyle";
 import { cn } from "@/lib/utils";
 
 const PIPELINE_STEPS = [

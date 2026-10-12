@@ -8,8 +8,8 @@ import {
 } from "@/lib/trackScoreboardUtils";
 import {
   CANONICAL_TRACK_IDS,
-  trackDisplayLabel,
 } from "@/lib/trackScoreboardReplayUtils";
+import { trackDisplayLabel } from "@/lib/forecastReplay/sourceStyle";
 import { cn } from "@/lib/utils";
 
 interface Props {
