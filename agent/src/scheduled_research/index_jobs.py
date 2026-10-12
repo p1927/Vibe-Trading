@@ -74,6 +74,9 @@ HUB_NEWS_MAINTENANCE_FAST_CRON = "15 * * * *"
 # old code path. "nifty-hub-news-entity-maintenance" ran every maintenance stage under one budget
 # and was split in two (Trade D267).
 _RETIRED_JOB_IDS = ("nifty-hub-news-entity-maintenance",)
+# TimesFM refresh of every recipe: runtime measured in docs/add/forecast_engine.md; the run stops
+# starting new recipes at 75% of this (the job deadline) and reports the rest as deferred.
+_FORECAST_ENGINE_REFRESH_DISPATCH_TIMEOUT_MS = 45 * 60 * 1000
 JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP = "stock_history_coverage_sweep"
 JOB_TYPE_NEWS_QUALITY_EVAL = "news_quality_eval"
 JOB_TYPE_NEWS_DEDUP_QUALITY_EVAL = "news_dedup_quality_eval"
@@ -86,6 +89,7 @@ JOB_TYPE_MAX_PAIN_BHAVCOPY = "max_pain_bhavcopy"
 JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT = "constituent_volume_snapshot"
 JOB_TYPE_FORECAST_PLATFORM_RETRAIN = "forecast_platform_retrain"
 JOB_TYPE_QUANTILE_FORECAST_LEDGER_PUSH = "quantile_forecast_ledger_push"
+JOB_TYPE_FORECAST_ENGINE_REFRESH = "forecast_engine_refresh"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -108,6 +112,7 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT,
     JOB_TYPE_FORECAST_PLATFORM_RETRAIN,
     JOB_TYPE_QUANTILE_FORECAST_LEDGER_PUSH,
+    JOB_TYPE_FORECAST_ENGINE_REFRESH,
 })
 
 NEWS_QUALITY_EVAL_CRON_ENV = "NEWS_QUALITY_EVAL_CRON"
@@ -707,6 +712,28 @@ def run_quantile_forecast_ledger_push_job(config: dict[str, Any] | None = None) 
 
     rows_appended = push_forecast_to_ledger(result)
     return {"status": "ok", "rows_appended": rows_appended, "as_of_date": result.get("as_of_date")}
+
+
+def run_forecast_engine_refresh_job(
+    config: dict[str, Any] | None = None, *, time_budget_s: float | None = None
+) -> dict[str, Any]:
+    """Daily refresh of every forecast_engine recipe's cached forecast + walk-forward evaluation
+    artifacts (docs/add/forecast_engine.md rule 6: TimesFM runs here, never in a request path).
+    The same `refresh_all_recipes` the manual `scripts/run_forecast_engine_latest.py` calls. A
+    recipe that errors or is deferred past ``time_budget_s`` makes the summary ``had_errors`` so
+    the run is recorded failed, never completed. Release only (a collection job type)."""
+    _ensure_trade_integrations_on_path()
+    from trade_integrations.forecast_engine.refresh import refresh_all_recipes
+
+    cfg = config or {}
+    return refresh_all_recipes(
+        ticker=str(cfg.get("ticker") or "NIFTY"),
+        horizon=int(cfg.get("horizon") or 5),
+        lookback_days=int(cfg.get("lookback_days") or 90),
+        skip_evaluation=bool(cfg.get("skip_evaluation")),
+        time_budget_s=time_budget_s,
+        log=logger.info,
+    )
 
 
 _BACKFILL_RUN_POLL_SECONDS = 2.0
@@ -1471,6 +1498,14 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         logger.info("futures positioning capture completed for job %s: %s", job.id, summary)
         raise_if_run_had_errors(job, summary, "futures positioning capture")
         return
+    if job_type == JOB_TYPE_FORECAST_ENGINE_REFRESH:
+        summary = run_forecast_engine_refresh_job(
+            job.config, time_budget_s=0.75 * dispatch_timeout_ms_for(job) / 1000.0
+        )
+        _attach_job_result_summary(job, summary)
+        logger.info("forecast engine refresh completed for job %s: %s", job.id, summary)
+        raise_if_run_had_errors(job, summary, "forecast engine refresh")
+        return
     if job_type == JOB_TYPE_MAX_PAIN_BHAVCOPY:
         summary = run_max_pain_bhavcopy_job(job.config)
         _attach_job_result_summary(job, summary)
@@ -1505,6 +1540,7 @@ CHILD_PROCESS_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_CALIBRATION,
     JOB_TYPE_INDEX_PREDICTION_POST_CLOSE,
     JOB_TYPE_FORECAST_PLATFORM_RETRAIN,
+    JOB_TYPE_FORECAST_ENGINE_REFRESH,  # loads a 1.3 GB TimesFM checkpoint and runs inference
 })
 
 
@@ -1611,6 +1647,23 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             status=JobStatus.PENDING,
             created_at=now_ms,
             config={"job_type": JOB_TYPE_FORECAST_PLATFORM_RETRAIN, "ticker": "NIFTY"},
+        ),
+        ScheduledResearchJob(
+            id="nifty-forecast-engine-refresh",
+            prompt=(
+                "Refresh every forecast_engine recipe's TimesFM forecast and walk-forward "
+                "evaluation artifacts (read by the predictions UI and forecast-replay)"
+            ),
+            schedule="30 20 * * 1-5",  # 20:30 IST: after the 17:30 bhavcopy and the evening flow data
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            timezone="Asia/Kolkata",
+            config={
+                "job_type": JOB_TYPE_FORECAST_ENGINE_REFRESH,
+                "ticker": "NIFTY",
+                "dispatch_timeout_ms": _FORECAST_ENGINE_REFRESH_DISPATCH_TIMEOUT_MS,
+            },
         ),
         ScheduledResearchJob(
             id="nifty-quantile-forecast-ledger-push",

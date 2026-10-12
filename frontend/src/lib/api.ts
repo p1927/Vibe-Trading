@@ -1198,7 +1198,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  getGoal: (sid: string) => request<GoalSnapshot>(`/sessions/${sid}/goal`),
+  /** null = the session has no current goal (200); 404 means an unknown session. */
+  getGoal: (sid: string) => request<GoalSnapshot | null>(`/sessions/${sid}/goal`),
   updateGoal: (sid: string, body: UpdateGoalRequest) =>
     request<UpdateGoalResponse>(`/sessions/${sid}/goal`, {
       method: "PATCH",
@@ -2066,12 +2067,8 @@ export const api = {
       body: JSON.stringify(body),
       timeoutMs: 90_000,
     }),
-  getIndexPredictionHistory: (ticker = "NIFTY", limit = 50, horizonDays?: number, dailyLast = true) => {
-    const params = new URLSearchParams({
-      ticker,
-      limit: String(limit),
-      daily_last: String(dailyLast),
-    });
+  getIndexPredictionHistory: (ticker = "NIFTY", limit = 50, horizonDays?: number) => {
+    const params = new URLSearchParams({ ticker, limit: String(limit) });
     if (horizonDays != null) params.set("horizon_days", String(horizonDays));
     return request<IndexPredictionHistoryResponse>(`/trade/index-prediction/history?${params}`);
   },
@@ -4014,7 +4011,7 @@ export interface PlanPrediction {
   /** Real multi-horizon forecast fan (`nifty_forecast_fan.forecast_nifty_fan()`,
    * independently retrained per horizon — not `daily_range_band`'s GBM interpolation),
    * loaded from the most recently persisted `append_prediction_fan()` ledger rows. Sparser
-   * (one point per fan horizon: 1/3/5/10/21 trading days by default, not one per day) but
+   * (one point per fan horizon: 1/3/5/10/14/21 trading days by default, not one per day) but
    * real. Absent when no fan has ever been persisted for this ticker. See
    * .claude/backlog/items/2026-08-26-wire-nifty-forecast-fan-into-consumers.md. */
   forecast_fan?: {
@@ -4206,7 +4203,7 @@ export interface IndexAccuracy {
   mae_14d_pct?: number | null;
   direction_hit_rate?: number | null;
   direction_hit_rate_walk_forward?: number | null;
-  direction_hit_rate_ledger?: number | null;
+  direction_sample_count?: number | null;
   direction_hit_rate_14d?: number | null;
   window_days?: number;
   retrained?: boolean;
@@ -5233,7 +5230,6 @@ export interface IndexPredictionHistoryMeta {
 export interface IndexPredictionHistoryResponse {
   status: string;
   ticker?: string;
-  rows?: IndexPredictionHistoryRow[];
   daily?: IndexPredictionHistoryRow[];
   intraday?: IndexPredictionHistoryRow[];
   meta?: IndexPredictionHistoryMeta;

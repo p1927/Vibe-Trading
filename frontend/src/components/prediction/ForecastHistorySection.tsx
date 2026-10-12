@@ -1,6 +1,12 @@
+import { useMemo } from "react";
 import type { IndexPredictionHistoryMeta, IndexPredictionHistoryRow } from "@/lib/api";
 import { IndexForecastLevelChart } from "@/components/charts/IndexForecastLevelChart";
 import { IndexForecastReturnChart } from "@/components/charts/IndexForecastReturnChart";
+import { useReplayView } from "@/components/prediction/forecast-replay/useReplayView";
+import { issueTimeline } from "@/lib/forecastReplay/timeline";
+
+const HEADLINE = ["headline"];
+const LIVE: ["live"] = ["live"];
 
 function fmtTime(iso: string): string {
   const d = new Date(iso);
@@ -33,9 +39,12 @@ export function ForecastHistorySection({
   horizonDays = 14,
   onOpenCounterfactual,
 }: Props) {
-  const chartRows = daily.length ? daily : intraday.slice(0, 1);
+  // The charts read the headline forecasts from the replay (the one read path for them); the tables below keep the
+  // ledger rows because Bottom-up / Macro / revision triggers exist only there.
+  const view = useReplayView({ ticker: "NIFTY", horizon: horizonDays, defaultSources: HEADLINE, defaultProvenance: LIVE, windowDays: 90 });
+  const chartRows = useMemo(() => issueTimeline(view.records, horizonDays), [view.records, horizonDays]);
   const revisions = meta?.intraday_revisions ?? intraday.length;
-  const uniqueDays = meta?.unique_days ?? daily.length;
+  const uniqueDays = chartRows.length;
 
   return (
     <div className="space-y-3">
@@ -44,9 +53,13 @@ export function ForecastHistorySection({
           Forecast history
         </p>
         <p className="mt-1 text-[11px] text-muted-foreground">
-          {uniqueDays < 2
-            ? `${uniqueDays} calendar day in ledger — charts show today's forecast; more daily points accumulate after each Run analysis on different days.`
-            : `${uniqueDays} days of ${horizonDays}d-horizon forecasts.`}
+          {!view.bundle && view.loading
+            ? "Loading forecast history…"
+            : uniqueDays === 0
+              ? "No recorded forecasts in the last 90 days."
+              : uniqueDays < 2
+                ? `${uniqueDays} calendar day recorded — charts show today's forecast; more daily points accumulate after each Run analysis on different days.`
+                : `${uniqueDays} days of ${horizonDays}d-horizon forecasts.`}
           {revisions > 1 ? ` ${revisions} intraday refreshes logged for today.` : ""}
           {onOpenCounterfactual ? (
             <>
@@ -64,9 +77,12 @@ export function ForecastHistorySection({
         </p>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      {view.error ? (
+        <p className="text-[11px] text-red-600 dark:text-red-400">Forecast history failed: {view.error}</p>
+      ) : null}
+      <div className="grid gap-4 lg:grid-cols-2" data-testid="forecast-history-charts">
         <IndexForecastLevelChart rows={chartRows} horizonDays={horizonDays} height={240} />
-        <IndexForecastReturnChart rows={chartRows} height={240} />
+        <IndexForecastReturnChart rows={chartRows} horizonDays={horizonDays} height={240} />
       </div>
 
       {daily.length >= 1 ? (
