@@ -11,10 +11,8 @@ export function PredictionLearningPanel({ artifact, history }: Props) {
   const newsCal = artifact.news_shock_calibration;
   const overlay = artifact.event_overlay;
   const sampleCount = accuracy.sample_count ?? 0;
-  const hitRate =
-    accuracy.direction_hit_rate_walk_forward ??
-    accuracy.direction_hit_rate_14d ??
-    accuracy.direction_hit_rate;
+  // Live settled forecasts (the same definition as the forecast-replay table), never the walk-forward backtest.
+  const hitRate = accuracy.direction_hit_rate_14d ?? accuracy.direction_hit_rate;
   const mae = accuracy.mae_14d_pct ?? accuracy.mae_pct;
 
   const totalForecasts = history.length;
@@ -38,7 +36,7 @@ export function PredictionLearningPanel({ artifact, history }: Props) {
           </p>
         </div>
         <div className="text-[11px]">
-          <span className="text-muted-foreground">Direction hit rate (14d)</span>
+          <span className="text-muted-foreground">Live direction hit rate (last 14 settled)</span>
           <p className="text-lg font-semibold tabular-nums">
             {hitRate != null ? `${Math.round(hitRate * 100)}%` : "—"}
           </p>

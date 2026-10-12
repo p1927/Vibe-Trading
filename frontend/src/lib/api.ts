@@ -4014,7 +4014,7 @@ export interface PlanPrediction {
   /** Real multi-horizon forecast fan (`nifty_forecast_fan.forecast_nifty_fan()`,
    * independently retrained per horizon — not `daily_range_band`'s GBM interpolation),
    * loaded from the most recently persisted `append_prediction_fan()` ledger rows. Sparser
-   * (one point per fan horizon: 1/3/5/10/21 trading days by default, not one per day) but
+   * (one point per fan horizon: 1/3/5/10/14/21 trading days by default, not one per day) but
    * real. Absent when no fan has ever been persisted for this ticker. See
    * .claude/backlog/items/2026-08-26-wire-nifty-forecast-fan-into-consumers.md. */
   forecast_fan?: {
@@ -4206,7 +4206,7 @@ export interface IndexAccuracy {
   mae_14d_pct?: number | null;
   direction_hit_rate?: number | null;
   direction_hit_rate_walk_forward?: number | null;
-  direction_hit_rate_ledger?: number | null;
+  direction_sample_count?: number | null;
   direction_hit_rate_14d?: number | null;
   window_days?: number;
   retrained?: boolean;
