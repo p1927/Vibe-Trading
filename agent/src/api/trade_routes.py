@@ -834,6 +834,59 @@ class IndexPredictionHistoryResponse(BaseModel):
     message: str = ""
 
 
+class ForecastReplayPoint(BaseModel):
+    horizon_days: int
+    target_date: str
+    p50_level: float
+    p10_level: float | None = None
+    p90_level: float | None = None
+    matured: bool
+    actual_level: float | None = None
+    error_pts: float | None = None
+    error_pct: float | None = None
+    in_band: bool | None = None
+    direction_hit: bool | None = None
+
+
+class ForecastReplayRecord(BaseModel):
+    source_id: str
+    family: str
+    issued_at: str
+    issue_day: str
+    provenance: Literal["live", "replay", "backtest"]
+    spot_at_issue: float
+    points: List[ForecastReplayPoint] = Field(default_factory=list)
+    approximate_path: bool
+    meta: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ForecastReplaySource(BaseModel):
+    source_id: str
+    family: str
+    label: str
+    provenance: Literal["live", "replay", "backtest"]
+    status: Literal["ok", "empty", "error"]
+    reason: str | None = None
+    first_day: str | None = None
+    last_day: str | None = None
+    n_records: int = 0
+
+
+class ForecastReplayActual(BaseModel):
+    date: str
+    close: float
+
+
+class ForecastReplayResponse(BaseModel):
+    status: str
+    ticker: str = ""
+    actuals: List[ForecastReplayActual] = Field(default_factory=list)
+    sources: List[ForecastReplaySource] = Field(default_factory=list)
+    records: List[ForecastReplayRecord] = Field(default_factory=list)
+    stats: Dict[str, Dict[str, Any]] =Field(default_factory=dict)
+    message: str = ""
+
+
 class IndexFactorHistoryResponse(BaseModel):
     status: str
     ticker: str = ""
@@ -5051,6 +5104,62 @@ def get_index_prediction_history(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return IndexPredictionHistoryResponse(status="ok", ticker=key, rows=rows)
+
+
+_FORECAST_REPLAY_MAX_DAYS = 400
+_FORECAST_REPLAY_MAX_SOURCES = 40
+_FORECAST_REPLAY_MAX_HORIZON = 366
+_FORECAST_REPLAY_PROVENANCE = ("live", "replay", "backtest")
+
+
+def _csv(value: str | None) -> list[str]:
+    return list(dict.fromkeys(v.strip() for v in (value or "").split(",") if v.strip()))
+
+
+@trade_router.get("/index-prediction/forecast-replay", response_model=ForecastReplayResponse)
+def get_index_prediction_forecast_replay(
+    ticker: str = "NIFTY",
+    sources: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    horizon: int = 14,
+    provenance: str = "live",
+    revisions: bool = False,
+    _auth: None = Depends(require_local_or_auth),
+) -> ForecastReplayResponse:
+    """Every forecast source's records joined to realised closes (read-only; one bad family is a 200)."""
+    key = (ticker or "NIFTY").strip().upper()
+    try:
+        end_d = datetime.strptime(end, "%Y-%m-%d").date() if end else datetime.now(timezone.utc).date()
+        start_d = datetime.strptime(start, "%Y-%m-%d").date() if start else end_d - timedelta(days=90)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"start/end must be YYYY-MM-DD: {exc}") from exc
+    if start_d > end_d:
+        raise HTTPException(status_code=422, detail=f"start {start_d} is after end {end_d}")
+    if (end_d - start_d).days > _FORECAST_REPLAY_MAX_DAYS:
+        raise HTTPException(status_code=422, detail=f"window is limited to {_FORECAST_REPLAY_MAX_DAYS} days")
+    if not 1 <= horizon <= _FORECAST_REPLAY_MAX_HORIZON:
+        raise HTTPException(status_code=422, detail=f"horizon must be 1..{_FORECAST_REPLAY_MAX_HORIZON}")
+    source_ids = _csv(sources)
+    if len(source_ids) > _FORECAST_REPLAY_MAX_SOURCES:
+        raise HTTPException(status_code=422, detail=f"at most {_FORECAST_REPLAY_MAX_SOURCES} sources per request")
+    prov = _csv(provenance) or ["live"]
+    if bad := [p for p in prov if p not in _FORECAST_REPLAY_PROVENANCE]:
+        raise HTTPException(status_code=422, detail=f"unknown provenance {bad}; valid: {list(_FORECAST_REPLAY_PROVENANCE)}")
+    try:
+        from trade_integrations.dataflows.prediction_ledger_bridge import build_forecast_replay
+
+        bundle = build_forecast_replay(
+            key, source_ids or None, start_d.isoformat(), end_d.isoformat(), horizon, prov, revisions
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("forecast replay failed for %s", key)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return ForecastReplayResponse(status="ok", ticker=key, **bundle)
 
 
 @trade_router.get("/index-prediction/factor-history", response_model=IndexFactorHistoryResponse)
