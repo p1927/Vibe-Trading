@@ -1337,7 +1337,15 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
             )
         return
     if job_type == JOB_TYPE_INDEX_RESEARCH:
-        summary = run_index_research_job(job.config)
+        # The run (snapshot, constituent refresh, predict, ledger + fan) must finish INSIDE the
+        # dispatch timeout: bind that budget so the constituent batch yields to cached docs in time
+        # for the ledger/fan stages (see `run_worker`). Unbound, the batch's own 88-minute deadline
+        # outlived the 30-minute dispatch and the run died before it wrote a single ledger row.
+        _ensure_trade_integrations_on_path()
+        from trade_integrations.job_deadline import job_deadline
+
+        with job_deadline(0.75 * dispatch_timeout_ms_for(job) / 1000.0):
+            summary = run_index_research_job(job.config)
         _attach_job_result_summary(job, summary)
         logger.info("index research completed for job %s: %s", job.id, summary)
         return

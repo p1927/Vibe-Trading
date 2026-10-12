@@ -638,7 +638,10 @@ def run_worker(job_id: str) -> None:
         if refresh_constituents:
             # Leave a safety margin so the batch itself yields control before
             # reconcile_stale_job's wall-clock kill fires.
-            refresh_budget = max(60.0, _REFRESH_WALL_CLOCK_SECONDS - 120.0)
+            # A scheduled dispatch binds its own (shorter) budget; whichever runs out first wins.
+            from trade_integrations.job_deadline import bounded_by_job
+
+            refresh_budget = bounded_by_job(max(60.0, _REFRESH_WALL_CLOCK_SECONDS - 120.0))
         doc = run_index_research(
             key,
             horizon_days=horizon_days,
