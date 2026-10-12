@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForecastReplay } from "@/hooks/useForecastReplay";
 import { sourceStyle, type SourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { Provenance, ReplayRecord, ReplaySource } from "@/lib/forecastReplay/types";
-import { forHorizon, shiftDays } from "@/lib/forecastReplay/view";
+import { forHorizon, selectionForMode, shiftDays } from "@/lib/forecastReplay/view";
 
 export interface ReplayViewOptions {
   ticker: string;
@@ -47,7 +47,9 @@ export function useReplayView(o: ReplayViewOptions) {
   }, [allSources, selected, end]);
 
   useEffect(() => {
-    if (o.single) setSelected((s) => (s.length > 1 ? s.slice(0, 1) : s));
+    setSelected((s) => selectionForMode(Boolean(o.single), s, o.defaultSources));
+    // only the mode switch re-derives the selection; later picks are the user's
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [o.single]);
 
   const toggleSource = useCallback(

@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { shadedRecords } from "@/lib/forecastReplay/gap";
-import { focusRange, errorSeries } from "@/lib/forecastReplay/paths";
+import { fitKey, focusRange, errorSeries } from "@/lib/forecastReplay/paths";
 import { returnImplausibleSummary, rowState } from "@/lib/forecastReplay/horizon";
+import { selectionForMode } from "@/lib/forecastReplay/view";
 import { sourceStyle } from "@/lib/forecastReplay/sourceStyle";
-import type { ReplayPoint, ReplayRecord } from "@/lib/forecastReplay/types";
+import type { ReplayPoint, ReplayRecord, ReplaySource } from "@/lib/forecastReplay/types";
 import { ReturnImplausibleBadge } from "../RecordBadges";
 import { SourceComparisonTable } from "../SourceComparisonTable";
 
@@ -65,6 +66,33 @@ describe("row states", () => {
   });
 });
 
+describe("row states of errored and empty sources", () => {
+  const styles = { a: sourceStyle("a", "live") };
+  const src = (status: ReplaySource["status"], reason: string | null): ReplaySource => ({
+    source_id: "a", family: "f", label: "A", provenance: "live", status, reason, first_day: null, last_day: null, n_records: 0,
+  });
+  const matured = rec("a", "2026-09-02", [pt(14, "2026-09-18", 100, { matured: true })]);
+  it("error wins over every record-based state; empty wins only without a point at the horizon", () => {
+    const err = src("error", "RuntimeError: forced");
+    expect(rowState([], undefined, "a", 14, err)).toBe("error");
+    expect(rowState([matured], { eval_count: 3 }, "a", 14, err)).toBe("error");
+    expect(rowState([], undefined, "a", 14, src("empty", "no rows"))).toBe("empty");
+    expect(rowState([matured], { eval_count: 3 }, "a", 14, src("empty", "x"))).toBe("ok");
+    expect(rowState([matured], undefined, "a", 5, src("empty", "x"))).toBe("empty");
+    expect(rowState([], undefined, "a", 14, src("ok", null))).toBe("no-point");
+  });
+  it("the table shows the server's reason, not 'no 14d point'", () => {
+    const { rerender } = render(<SourceComparisonTable ids={["a"]} stats={{}} styles={styles} records={[]} horizon={14} sources={[src("error", "RuntimeError: forced")]} />);
+    expect(screen.getByTestId("row-state-error").textContent).toBe("error: RuntimeError: forced");
+    rerender(<SourceComparisonTable ids={["a"]} stats={{}} styles={styles} records={[]} horizon={14} sources={[src("empty", "no rows in window")]} />);
+    expect(screen.getByTestId("row-state-empty").textContent).toBe("no history: no rows in window");
+    rerender(<SourceComparisonTable ids={["a"]} stats={{}} styles={styles} records={[]} horizon={14} sources={[src("error", null)]} />);
+    expect(screen.getByTestId("row-state-error").textContent).toBe("error: unknown");
+    rerender(<SourceComparisonTable ids={["a"]} stats={{}} styles={styles} records={[]} horizon={14} />);
+    expect(screen.getByTestId("row-state-no-point").textContent).toBe("no 14d point");
+  });
+});
+
 describe("implausible records", () => {
   const wild = rec("w", "2026-09-02", [pt(14, "2026-09-18", 180, { matured: true, error_pct: -40, error_pts: -80 })], { return_implausible: true, return_pct: 80.04 });
   it("summary picks the largest return; badge text and tooltip carry it", () => {
@@ -86,5 +114,48 @@ describe("implausible records", () => {
   it("badge without a return_pct still renders, with no number", () => {
     render(<ReturnImplausibleBadge records={[rec("w", "2026-09-02", [], { return_implausible: true })]} />);
     expect(screen.getByTestId("return-implausible-badge").textContent).toBe("return looks implausible");
+  });
+});
+
+describe("fitKey", () => {
+  const base = () => fitKey("2026-10-08", ["2026-10-08"], ["a", "b"], 14, "2026-07-10");
+  it("is identical for the same view whatever the order or duplicates of the source ids (a refetch keeps pan/zoom)", () => {
+    expect(base()).toBe("2026-10-08|2026-10-08|a,b|14|2026-07-10");
+    expect(fitKey("2026-10-08", ["2026-10-08"], ["b", "a", "b"], 14, "2026-07-10")).toBe(base());
+  });
+  it("changes for a new anchor, source set, horizon, week focus or window start (those re-fit)", () => {
+    for (const k of [
+      fitKey("2026-10-09", ["2026-10-08"], ["a", "b"], 14, "2026-07-10"),
+      fitKey("2026-10-08", ["2026-10-08"], ["a"], 14, "2026-07-10"),
+      fitKey("2026-10-08", ["2026-10-08"], ["a", "b"], 7, "2026-07-10"),
+      fitKey("2026-10-08", ["2026-10-07", "2026-10-08"], ["a", "b"], 14, "2026-07-10"),
+      fitKey("2026-10-08", ["2026-10-08"], ["a", "b"], 14, "2026-04-12"),
+    ]) expect(k).not.toBe(base());
+  });
+  it("does not depend on an empty source list being a different identity", () => {
+    expect(fitKey("", [""], [], 14, "")).toBe(fitKey("", [""], [], 14, ""));
+  });
+});
+
+describe("selectionForMode", () => {
+  const D = ["track:quant_ridge@backtest", "track:macro_only@backtest"];
+  it("Compare after Single restores the defaults beside the kept source", () => {
+    expect(selectionForMode(false, ["track:quant_ridge@backtest"], D)).toEqual(D);
+    expect(selectionForMode(false, ["track:xgboost_macro@backtest"], D)).toEqual(["track:xgboost_macro@backtest", ...D]);
+  });
+  it("keeps the user's own set and order, adds nothing already there", () => {
+    expect(selectionForMode(false, ["b", "a"], ["a", "b"])).toEqual(["b", "a"]);
+    expect(selectionForMode(false, ["a", "z", "b"], ["a", "b"])).toEqual(["a", "z", "b"]);
+  });
+  it("Single keeps only the first source and leaves one source alone", () => {
+    expect(selectionForMode(true, ["a", "b", "c"], D)).toEqual(["a"]);
+    expect(selectionForMode(true, ["a"], D)).toEqual(["a"]);
+    expect(selectionForMode(true, [], D)).toEqual([]);
+  });
+  it("single -> compare -> single round-trips to the first source", () => {
+    const one = selectionForMode(true, D, D);
+    const both = selectionForMode(false, one, D);
+    expect(both).toEqual(D);
+    expect(selectionForMode(true, both, D)).toEqual([D[0]]);
   });
 });

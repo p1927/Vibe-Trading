@@ -30,10 +30,10 @@ export const TRACK_CHART_COLORS: Record<string, string> = {
 
 /**
  * A track's display label: the server's (`SourceInfo.label`, or the scoreboard report's `track_catalog`) when it
- * sent one, else the id made readable. There is no label table in the browser (D306).
+ * sent one (a bare combiner id is looked up as `combiner:<id>`), else the id made readable. There is no label table in the browser (D306).
  */
 export function trackDisplayLabel(trackId: string, catalog?: Record<string, { label?: string }> | null): string {
-  return catalog?.[trackId]?.label ?? trackId.replace(/^combiner:/, "").replace(/_/g, " ");
+  return catalog?.[trackId]?.label ?? catalog?.[`combiner:${trackId}`]?.label ?? trackId.replace(/^combiner:/, "").replace(/_/g, " ");
 }
 
 export interface SourceStyle {

@@ -34,7 +34,7 @@ export function ForecastTrackRecord({ ticker = "NIFTY", horizon: pageHorizon }: 
       {v.bundle ? (
         <div className={v.loading ? "space-y-3 opacity-60" : "space-y-3"}>
           <ErrorStrip records={v.records} horizon={horizon} ids={v.selected} styles={v.styles} />
-          <SourceComparisonTable ids={v.selected} stats={v.bundle.stats} styles={v.styles} records={v.loaded} horizon={horizon} />
+          <SourceComparisonTable ids={v.selected} stats={v.bundle.stats} styles={v.styles} records={v.loaded} horizon={horizon} sources={v.allSources} />
         </div>
       ) : v.loading ? (
         <p className="text-[11px] text-muted-foreground">Loading forecast replay…</p>

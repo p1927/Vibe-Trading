@@ -1,5 +1,5 @@
 // Horizon choice for the track-record views: only horizons the loaded records actually carry are offered.
-import type { ReplayRecord } from "./types";
+import type { ReplayRecord, ReplaySource } from "./types";
 
 /** Sorted union of every point's horizon_days across `records`. */
 export function horizonOptions(records: ReplayRecord[]): number[] {
@@ -19,11 +19,17 @@ export function hasPointAt(records: ReplayRecord[], sourceId: string, horizon: n
 }
 
 /**
- * Why a source's row at `horizon` has no accuracy numbers: `no-point` (no forecast at that horizon),
- * `pending` (points exist, none matured yet) or `no-eval` (the server evaluated nothing); `ok` otherwise.
+ * Why a source's row at `horizon` has no accuracy numbers. The server's own verdict on the source comes first:
+ * `error` (it failed to read the source; its reason is shown), `empty` (it has no records and says why, unless a loaded
+ * record carries a point at this horizon). Then `no-point` (no forecast at that horizon), `pending` (points exist,
+ * none matured yet) or `no-eval` (the server evaluated nothing); `ok` otherwise.
  */
-export type RowState = "no-point" | "pending" | "no-eval" | "ok";
-export function rowState(records: ReplayRecord[], stats: Record<string, number | string | null> | undefined, sourceId: string, horizon: number): RowState {
+export type RowState = "error" | "empty" | "no-point" | "pending" | "no-eval" | "ok";
+export function rowState(
+  records: ReplayRecord[], stats: Record<string, number | string | null> | undefined, sourceId: string, horizon: number, source?: ReplaySource,
+): RowState {
+  if (source?.status === "error") return "error";
+  if (source?.status === "empty" && !hasPointAt(records, sourceId, horizon)) return "empty";
   if (!hasPointAt(records, sourceId, horizon)) return "no-point";
   const evalCount = stats?.eval_count;
   if (typeof evalCount === "number" && evalCount > 0) return "ok";

@@ -1,6 +1,7 @@
 import { bandCount, rowState } from "@/lib/forecastReplay/horizon";
 import type { SourceStyle } from "@/lib/forecastReplay/sourceStyle";
-import type { ReplayRecord } from "@/lib/forecastReplay/types";
+import type { ReplayRecord, ReplaySource } from "@/lib/forecastReplay/types";
+import { sourceNote } from "@/lib/forecastReplay/view";
 import { RecordBadges } from "./RecordBadges";
 
 type Stats = Record<string, Record<string, number | string | null>>;
@@ -16,10 +17,12 @@ interface Props {
   /** Loaded records of the shown sources (all horizons): tells "no point at this horizon" from "no evaluations". */
   records: ReplayRecord[];
   horizon: number;
+  /** The bundle's source list: an errored or empty source shows the server's reason instead of "no point". */
+  sources?: ReplaySource[];
 }
 
 /** Server-computed accuracy per source at the chosen horizon (no client recomputation). */
-export function SourceComparisonTable({ ids, stats, styles, records, horizon }: Props) {
+export function SourceComparisonTable({ ids, stats, styles, records, horizon, sources = [] }: Props) {
   return (
     <div className="overflow-x-auto rounded-lg border border-border/50">
       <table className="w-full text-[11px]" data-testid="source-comparison">
@@ -36,7 +39,8 @@ export function SourceComparisonTable({ ids, stats, styles, records, horizon }: 
         <tbody>
           {ids.map((id) => {
             const s = stats[id];
-            const state = rowState(records, s, id, horizon);
+            const info = sources.find((x) => x.source_id === id);
+            const state = rowState(records, s, id, horizon, info);
             const band = bandCount(records, id, horizon);
             return (
               <tr key={id} className="border-b last:border-0">
@@ -47,7 +51,7 @@ export function SourceComparisonTable({ ids, stats, styles, records, horizon }: 
                 </td>
                 {state !== "ok" ? (
                   <td colSpan={5} className="px-2 py-1 text-right text-muted-foreground" data-testid={`row-state-${state}`}>
-                    {state === "no-point" ? `no ${horizon}d point` : state === "pending" ? `no matured ${horizon}d point yet` : `no evaluations at ${horizon}d`}
+                    {(state === "error" || state === "empty") && info ? sourceNote(info) : state === "no-point" ? `no ${horizon}d point` : state === "pending" ? `no matured ${horizon}d point yet` : `no evaluations at ${horizon}d`}
                   </td>
                 ) : (
                   <>

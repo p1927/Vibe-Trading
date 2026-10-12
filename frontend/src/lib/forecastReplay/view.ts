@@ -113,6 +113,16 @@ export function groupByFamily(sources: ReplaySource[]): { family: string; source
   return [...m].map(([family, list]) => ({ family, sources: list }));
 }
 
+/**
+ * The selection after the single/compare switch: single keeps one source (the first), compare keeps what was selected
+ * and adds the default sources that are missing, so Compare never opens as a one-source view.
+ */
+export function selectionForMode(single: boolean, selected: string[], defaults: string[]): string[] {
+  if (single) return selected.length > 1 ? selected.slice(0, 1) : selected;
+  const missing = defaults.filter((d) => !selected.includes(d));
+  return missing.length ? [...selected, ...missing] : selected;
+}
+
 export function sourceNote(s: ReplaySource): string | null {
   if (s.status === "ok") return null;
   return s.status === "error" ? `error: ${s.reason ?? "unknown"}` : `no history: ${s.reason ?? "no records"}`;

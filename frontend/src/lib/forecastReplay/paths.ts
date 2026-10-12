@@ -36,6 +36,17 @@ export function focusRange(
   return { from: Math.max(0, idx - lead), to: Math.max(to, idx) + pad };
 }
 
+/**
+ * What the chart's visible range was fitted for. A refetch of the same view (new array identities, one more close,
+ * different last price) yields the same key, so the user's pan/zoom is kept; a new anchor, source set, horizon,
+ * week focus or window start yields a new one and re-fits.
+ */
+export function fitKey(
+  anchorDay: string, focusDays: string[], sourceIds: string[], horizon: number, windowStart: string,
+): string {
+  return [anchorDay, [...focusDays].sort().join(","), [...new Set(sourceIds)].sort().join(","), horizon, windowStart].join("|");
+}
+
 /** p10/p90 at each point that has both; null when the record carries no band. */
 export function band(r: ReplayRecord): { date: string; p10: number; p90: number }[] | null {
   const b = r.points.flatMap((p) =>

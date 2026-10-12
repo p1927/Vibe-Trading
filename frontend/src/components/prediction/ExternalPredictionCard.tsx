@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { ExternalLink } from "lucide-react";
 import { ForecastReplayChart } from "@/components/charts/ForecastReplayChart";
+import { RecordBadges } from "@/components/prediction/forecast-replay/RecordBadges";
 import type { ExternalReplay } from "@/lib/forecastReplay/external";
 import type { ExternalPredictionRecord, ExternalPredictionSource } from "@/lib/api";
 import { resolveApiBase } from "@/lib/apiBase";
@@ -126,6 +127,7 @@ export function ExternalPredictionCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-semibold text-foreground">{name}</h3>
+            {replayRecord ? <RecordBadges records={[replayRecord]} /> : null}
             {source?.kind ? (
               <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                 {KIND_LABELS[source.kind] || source.kind}

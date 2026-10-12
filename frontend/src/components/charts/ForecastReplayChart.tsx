@@ -15,7 +15,7 @@ import { createLightweightChart } from "@/lib/lightweightChartOptions";
 import { useDarkMode } from "@/hooks/useDarkMode";
 import { ForecastGapPrimitive } from "@/components/charts/forecastGapPrimitive";
 import { GAP_ALPHA, maturedUntil, shadedRecords } from "@/lib/forecastReplay/gap";
-import { band, focusRange, recordPath } from "@/lib/forecastReplay/paths";
+import { band, fitKey, focusRange, recordPath } from "@/lib/forecastReplay/paths";
 import type { SourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { ReplayActual, ReplayRecord } from "@/lib/forecastReplay/types";
 import { forecastReturnPct } from "@/lib/forecastReplay/view";
@@ -147,6 +147,10 @@ export function ForecastReplayChart({
     const chart = chartRef.current;
     if (!chart || !baseRef.current || !actualPathRef.current) return;
     const t = getChartTheme();
+    const key = fitKey(anchorDay, [...focus], drawn.map((r) => r.source_id), horizon, actuals[0]?.date ?? "");
+    // Rebuilding the series moves the time scale (the future whitespace is dropped and re-added), so a refetch of the
+    // same view puts the user's range back instead of letting it slide.
+    const kept = key === fitKeyRef.current ? chart.timeScale().getVisibleLogicalRange() : null;
     for (const s of dynamicRef.current) chart.removeSeries(s);
     dynamicRef.current = [];
 
@@ -218,11 +222,12 @@ export function ForecastReplayChart({
       })),
       actuals, above: t.upColor, below: t.downColor,
     });
-    // Fit the anchor through the furthest recorded point once per anchor/records change, never on an unrelated re-render.
-    const range = focusRange(actuals.map((a) => a.date), drawn, anchorDay, horizon + 2);
-    const key = `${anchorDay}|${range ? `${range.from}-${range.to}` : "fit"}`;
-    if (key !== fitKeyRef.current) {
+    if (kept) {
+      chart.timeScale().setVisibleLogicalRange(kept);
+    } else {
       fitKeyRef.current = key;
+      // Fit the anchor through the furthest recorded point once per fitKey change.
+      const range = focusRange(actuals.map((a) => a.date), drawn, anchorDay, horizon + 2);
       try {
         if (range) chart.timeScale().setVisibleLogicalRange(range);
         else chart.timeScale().fitContent();
@@ -230,7 +235,7 @@ export function ForecastReplayChart({
         chart.timeScale().fitContent();
       }
     }
-  }, [actuals, records, drawn, anchorDay, horizon, sourceStyles, epoch]);
+  }, [actuals, records, drawn, focus, anchorDay, horizon, sourceStyles, epoch]);
 
   const legend = useMemo(() => {
     const seen = new Map<string, { style: SourceStyle; approx: boolean }>();

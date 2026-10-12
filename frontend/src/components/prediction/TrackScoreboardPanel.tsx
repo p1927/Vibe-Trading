@@ -320,8 +320,8 @@ export function TrackScoreboardPanel({
             {live.cause_stress_index != null
               ? ` · cause stress ${live.cause_stress_index} (${live.cause_stress_label ?? "—"})`
               : ""}
-            {live.active_combiner ? ` · combiner ${live.active_combiner}` : ""}
-            {live.headline_source ? ` · headline ${live.headline_source}` : ""}
+            {live.active_combiner ? ` · combiner ${trackDisplayLabel(live.active_combiner, report.track_catalog)}` : ""}
+            {live.headline_source ? ` · headline ${trackDisplayLabel(live.headline_source, report.track_catalog)}` : ""}
           </p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {Object.entries(live.forecast_tracks).map(([tid, row]) => {
@@ -335,8 +335,8 @@ export function TrackScoreboardPanel({
                     unavailable && "opacity-50",
                   )}
                 >
-                  <p className="font-medium capitalize">
-                    {tid.replace(/_/g, " ")}
+                  <p className="font-medium">
+                    {trackDisplayLabel(tid, report.track_catalog)}
                     {unavailable ? (
                       <span className="ml-1 text-[9px] font-normal text-muted-foreground">(unavailable)</span>
                     ) : null}
@@ -363,7 +363,7 @@ export function TrackScoreboardPanel({
               if (!cat?.implementation) return null;
               return (
                 <div key={tid} className="rounded-lg border border-border/40 px-3 py-2 text-[10px]">
-                  <p className="font-medium capitalize">{tid.replace(/_/g, " ")}</p>
+                  <p className="font-medium">{trackDisplayLabel(tid, report.track_catalog)}</p>
                   <p className="text-muted-foreground">{cat.implementation}</p>
                 </div>
               );
@@ -383,7 +383,7 @@ export function TrackScoreboardPanel({
               const row = report.tracks?.[tid];
               return (
                 <div key={tid} className="rounded-lg border border-border/50 px-3 py-2 text-[10px]">
-                  <p className="font-medium capitalize">{tid.replace(/_/g, " ")}</p>
+                  <p className="font-medium">{trackDisplayLabel(tid, report.track_catalog)}</p>
                   <p className="text-muted-foreground">{cat?.implementation ?? "—"}</p>
                   <p className="mt-1 tabular-nums">
                     OOS n={row?.eval_count ?? 0}
@@ -415,7 +415,7 @@ export function TrackScoreboardPanel({
                 {tracks.map(([tid, row]) => (
                   <tr key={tid} className="border-b border-border/40">
                     <td className="py-1.5 pr-2 font-medium">
-                      {tid.replace(/_/g, " ")}
+                      {trackDisplayLabel(tid, report.track_catalog)}
                       {tid === "debate_numeric" ? (
                         <span className="ml-1 text-[9px] text-muted-foreground">(live only)</span>
                       ) : row.backtest_eligible === false ? (
@@ -461,7 +461,7 @@ export function TrackScoreboardPanel({
                   const verdict = promo?.verdicts?.[cid];
                   return (
                     <tr key={cid} className="border-b border-border/40">
-                      <td className="py-1.5 pr-2">{cid.replace(/_/g, " ")}</td>
+                      <td className="py-1.5 pr-2">{trackDisplayLabel(cid, report.track_catalog)}</td>
                       <td className="py-1.5 pr-2 tabular-nums">{fmtHitRate(row.direction_hit_rate)}</td>
                       <td className="py-1.5 pr-2 tabular-nums">
                         {verdict?.delta_vs_quant_pp != null ? `${verdict.delta_vs_quant_pp} pp` : "—"}
@@ -509,7 +509,6 @@ export function TrackScoreboardPanel({
                   <tr key={tid} className="border-b border-border/40">
                     <td className="py-1.5 pr-2 font-medium">
                       {trackDisplayLabel(tid, report.track_catalog)}
-                      <span className="ml-1 text-[9px] text-muted-foreground">(ML)</span>
                     </td>
                     <td className="py-1.5 pr-2 tabular-nums">{fmtPct(row.mae_pct)}</td>
                     <td className="py-1.5 pr-2 tabular-nums">{fmtHitRate(row.direction_hit_rate)}</td>
