@@ -70,7 +70,7 @@ describe("row states", () => {
 describe("row states of errored and empty sources", () => {
   const styles = { a: sourceStyle("a", "live") };
   const src = (status: ReplaySource["status"], reason: string | null): ReplaySource => ({
-    source_id: "a", family: "f", label: "A", provenance: "live", status, reason, first_day: null, last_day: null, n_records: 0,
+    source_id: "a", family: "f", label: "A", provenance: "live", status, reason, first_day: null, last_day: null, n_stored: 0, n_returned: null,
   });
   const matured = rec("a", "2026-09-02", [pt(14, "2026-09-18", 100, { matured: true })]);
   it("error wins over every record-based state; empty wins only without a point at the horizon", () => {

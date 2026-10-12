@@ -53,7 +53,7 @@ export function SourcePicker({ sources, selected, provenance, styles, single, at
                   type="button"
                   disabled={(s.status !== "ok" || Boolean(atCap)) && !on}
                   aria-pressed={on}
-                  title={note ?? `${s.label}: ${s.n_records} records ${s.first_day ?? ""} to ${s.last_day ?? ""}`}
+                  title={note ?? `${s.label}: ${s.n_stored} stored records (${s.n_returned ?? "none"} in this view) ${s.first_day ?? ""} to ${s.last_day ?? ""}`}
                   onClick={() => onToggleSource(s.source_id)}
                   className={cn(
                     "inline-flex max-w-[16rem] items-center gap-1 rounded-full border px-2 py-0.5 font-medium transition-colors",
@@ -71,7 +71,7 @@ export function SourcePicker({ sources, selected, provenance, styles, single, at
                       s.status === "ok" ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-amber-500/10 text-amber-700 dark:text-amber-400",
                     )}
                   >
-                    {s.status === "ok" ? `ok · ${s.n_records}` : note}
+                    {s.status === "ok" ? `ok · ${s.n_stored}` : note}
                   </span>
                 </button>
               );

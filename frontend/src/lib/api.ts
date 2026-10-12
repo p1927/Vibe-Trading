@@ -3745,6 +3745,8 @@ export interface ExternalPredictionProvenance {
 
 export interface ExternalPredictionRecord {
   source_id: string;
+  /** The server's one horizon verdict (D398): true = stated target date fits the snapshot's horizon window, false = outside it, null/absent = no date stated. */
+  horizon_fit?: boolean | null;
   symbol?: string;
   horizon_days?: number;
   as_of?: string;
@@ -5300,7 +5302,8 @@ export interface ForecastReplaySource {
   reason: string | null;
   first_day: string | null;
   last_day: string | null;
-  n_records: number;
+  n_stored: number; // records the store holds for the source (whole history, last run per day)
+  n_returned: number | null; // records of the same response for the source; null when the call did not read it
 }
 
 export interface ForecastReplayActual {

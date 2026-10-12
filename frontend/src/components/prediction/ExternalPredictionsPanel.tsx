@@ -486,7 +486,7 @@ export function ExternalPredictionsPanel({
           <div>
             <h2 className="text-sm font-semibold">Street forecast summary</h2>
             <p className="text-[11px] text-muted-foreground">
-              {summary.forecastCount} of {summary.watchlistCount} sources · {horizonDays}d horizon
+              {summary.countedCount} of {summary.watchlistCount} sources state a {horizonDays}d target
               {summary.spot != null ? ` · NIFTY spot ${fmtLevel(summary.spot)}` : ""}
             </p>
           </div>
@@ -504,7 +504,7 @@ export function ExternalPredictionsPanel({
           </p>
         ) : (
           <p className="mt-2 text-[11px] text-muted-foreground">
-            {summary.longHorizon.length
+            {summary.longHorizon.length || summary.undated.length
               ? `No street target at the ${horizonDays}d horizon.`
               : "No cached forecasts — click Refresh to fetch street views."}
           </p>
@@ -513,6 +513,12 @@ export function ExternalPredictionsPanel({
           <p className="mt-1 text-[11px] text-muted-foreground" data-testid="long-horizon-targets">
             Long-horizon targets (not in range):{" "}
             {summary.longHorizon.map((x) => `${sourceMap.get(x.sourceId)?.display_name ?? x.sourceId} ${fmtLevel(x.mid)}`).join(", ")}
+          </p>
+        ) : null}
+        {summary.undated.length ? (
+          <p className="mt-1 text-[11px] text-muted-foreground" data-testid="undated-targets">
+            No target date stated (not counted):{" "}
+            {summary.undated.map((x) => `${sourceMap.get(x.sourceId)?.display_name ?? x.sourceId} ${fmtLevel(x.mid)}`).join(", ")}
           </p>
         ) : null}
       </div>

@@ -3,12 +3,15 @@ import type { ExternalPredictionRecord, ExternalPredictionSnapshot, ExternalPred
 export interface StreetSummaryStats {
   horizonDays: number;
   watchlistCount: number;
-  forecastCount: number;
+  /** Sources whose forecast counts at this horizon (the server's `horizon_fit === true`: a stated date inside the window). */
+  countedCount: number;
   targetMin: number | null;
   targetMax: number | null;
   targetMedian: number | null;
   /** Targets of records flagged as a horizon mismatch (e.g. a year-out target): listed apart, not in the range. */
   longHorizon: { sourceId: string; mid: number }[];
+  /** Records stating no target date (server `horizon_fit == null`, D398): no evidence of their horizon, listed apart. */
+  undated: { sourceId: string; mid: number }[];
   spot: number | null;
   fetchedAt: string | null;
 }
@@ -162,10 +165,10 @@ function horizonMatch(record: ExternalPredictionRecord): HorizonMatchProvenance 
   return record.provenance?.horizon_match as HorizonMatchProvenance | undefined;
 }
 
+/** The server's verdict (`horizon_fit`, validators.horizon_in_window, the same rule as the external_consensus track):
+ * false = a stated date outside the horizon window. This file holds no horizon rule of its own. */
 export function hasHorizonMismatch(record: ExternalPredictionRecord): boolean {
-  const match = horizonMatch(record);
-  if (!match) return false;
-  return match.soft_mismatch === true || match.in_window === false;
+  return record.horizon_fit === false;
 }
 
 export function canApproveNavigationPath(
@@ -285,9 +288,13 @@ export function computeStreetSummary(
   const withMid = visible.flatMap((p) =>
     typeof p.target?.mid === "number" && Number.isFinite(p.target.mid) ? [{ record: p, mid: p.target.mid }] : [],
   );
-  // a horizon-mismatch target (a 12m view inside a 14d range) would distort range and median
-  const mids = withMid.filter((x) => !hasHorizonMismatch(x.record)).map((x) => x.mid).sort((a, b) => a - b);
-  const longHorizon = withMid.filter((x) => hasHorizonMismatch(x.record)).map((x) => ({ sourceId: x.record.source_id, mid: x.mid }));
+  // D398, decided by the server (`horizon_fit`): only a record whose stated date fits the window counts; a year-out
+  // target (false) and an undated one (null/absent: never assumed to fit) are listed apart, not in range or median
+  const listed = (keep: (r: ExternalPredictionRecord) => boolean) =>
+    withMid.filter((x) => keep(x.record)).map((x) => ({ sourceId: x.record.source_id, mid: x.mid }));
+  const mids = withMid.filter((x) => x.record.horizon_fit === true).map((x) => x.mid).sort((a, b) => a - b);
+  const longHorizon = listed((r) => r.horizon_fit === false);
+  const undated = listed((r) => r.horizon_fit !== true && r.horizon_fit !== false);
   const spot =
     snapshot?.internal_forecast?.spot ??
     visible.find((p) => p.spot_at_fetch != null)?.spot_at_fetch ??
@@ -295,11 +302,12 @@ export function computeStreetSummary(
   return {
     horizonDays,
     watchlistCount: snapshot?.sources?.filter((s) => s.watchlisted).length ?? 0,
-    forecastCount: visible.length,
+    countedCount: mids.length,
     targetMin: mids.length ? mids[0] : null,
     targetMax: mids.length ? mids[mids.length - 1] : null,
     targetMedian: mids.length ? mids[Math.floor(mids.length / 2)] : null,
     longHorizon,
+    undated,
     spot: typeof spot === "number" ? spot : null,
     fetchedAt: snapshotDisplayUpdatedAt(snapshot),
   };

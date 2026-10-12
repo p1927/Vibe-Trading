@@ -870,7 +870,8 @@ class ForecastReplaySource(BaseModel):
     reason: str | None = None
     first_day: str | None = None
     last_day: str | None = None
-    n_records: int = 0
+    n_stored: int = 0  # records the store holds for the source (whole history, last run per day): an inventory
+    n_returned: int | None = None  # records of THIS call for the source; null when the call did not read it
 
 
 class ForecastReplayActual(BaseModel):

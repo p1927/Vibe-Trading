@@ -11,7 +11,7 @@ import { externalLabel, externalPointHorizon, externalReplayFor, externalSourceI
 
 const src = (id: string, o: Partial<ReplaySource> = {}): ReplaySource => ({
   source_id: id, family: "f", label: id, provenance: "live", status: "ok", reason: null,
-  first_day: "2026-10-01", last_day: "2026-10-08", n_records: 3, ...o,
+  first_day: "2026-10-01", last_day: "2026-10-08", n_stored: 3, n_returned: 3, ...o,
 });
 const styles = (ids: string[]) => Object.fromEntries(ids.map((i) => [i, sourceStyle(i, "live")]));
 const rec = (id: string, day: string, h: number, o: Partial<ReplayRecord["points"][0]> = {}): ReplayRecord => ({
