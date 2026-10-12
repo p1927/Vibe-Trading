@@ -85,3 +85,20 @@ def test_run_job_forwards_config_to_the_one_refresh_function(monkeypatch):
 
     assert seen["ticker"] == "NIFTY" and seen["horizon"] == 3 and seen["skip_evaluation"] is True
     assert seen["time_budget_s"] == 99.0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("profile", "blocked"), [("dev", True), ("", True), ("release", False)])
+def test_the_executor_gate_blocks_it_outside_release(monkeypatch, profile, blocked):
+    from src.scheduled_research.executor import _collection_dispatch_blocked
+
+    monkeypatch.setenv("STACK_PROFILE", profile)
+    assert _collection_dispatch_blocked(_job()) is blocked
+
+
+@pytest.mark.unit
+def test_registering_the_defaults_twice_keeps_exactly_one_refresh_job(tmp_path):
+    store = ScheduledResearchJobStore(tmp_path / "jobs.json")
+    index_jobs.register_default_index_jobs(store)
+    index_jobs.register_default_index_jobs(store)
+    assert [j.id for j in store.list_jobs() if j.config.get("job_type") == TYPE] == ["nifty-forecast-engine-refresh"]
