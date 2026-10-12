@@ -385,7 +385,6 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
         oi_summary = backfill_participant_oi(
             days=enrich_days,
             max_days=participant_oi_days,
-            sleep_seconds=0.25,
             skip_if_complete=True,
         )
         summary["participant_oi"] = oi_summary
