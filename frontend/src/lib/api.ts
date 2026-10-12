@@ -1198,7 +1198,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  getGoal: (sid: string) => request<GoalSnapshot>(`/sessions/${sid}/goal`),
+  /** null = the session has no current goal (200); 404 means an unknown session. */
+  getGoal: (sid: string) => request<GoalSnapshot | null>(`/sessions/${sid}/goal`),
   updateGoal: (sid: string, body: UpdateGoalRequest) =>
     request<UpdateGoalResponse>(`/sessions/${sid}/goal`, {
       method: "PATCH",
@@ -2066,12 +2067,8 @@ export const api = {
       body: JSON.stringify(body),
       timeoutMs: 90_000,
     }),
-  getIndexPredictionHistory: (ticker = "NIFTY", limit = 50, horizonDays?: number, dailyLast = true) => {
-    const params = new URLSearchParams({
-      ticker,
-      limit: String(limit),
-      daily_last: String(dailyLast),
-    });
+  getIndexPredictionHistory: (ticker = "NIFTY", limit = 50, horizonDays?: number) => {
+    const params = new URLSearchParams({ ticker, limit: String(limit) });
     if (horizonDays != null) params.set("horizon_days", String(horizonDays));
     return request<IndexPredictionHistoryResponse>(`/trade/index-prediction/history?${params}`);
   },
@@ -5233,7 +5230,6 @@ export interface IndexPredictionHistoryMeta {
 export interface IndexPredictionHistoryResponse {
   status: string;
   ticker?: string;
-  rows?: IndexPredictionHistoryRow[];
   daily?: IndexPredictionHistoryRow[];
   intraday?: IndexPredictionHistoryRow[];
   meta?: IndexPredictionHistoryMeta;

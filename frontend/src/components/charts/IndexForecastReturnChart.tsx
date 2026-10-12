@@ -1,42 +1,37 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
-import type { IndexPredictionHistoryRow } from "@/lib/api";
+import type { IssueTimelinePoint } from "@/lib/forecastReplay/timeline";
 
 interface Props {
-  rows: IndexPredictionHistoryRow[];
+  rows: IssueTimelinePoint[];
+  horizonDays?: number;
   height?: number;
 }
 
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+function fmtDate(day: string): string {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" });
 }
 
-export function IndexForecastReturnChart({ rows, height = 200 }: Props) {
+export function IndexForecastReturnChart({ rows, horizonDays = 14, height = 200 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const { dark } = useDarkMode();
 
-  const sorted = useMemo(
-    () => [...rows].sort((a, b) => a.predicted_at.localeCompare(b.predicted_at)),
-    [rows],
-  );
+  const sorted = rows; // issueTimeline() output: ascending by issue day
 
   useEffect(() => {
     if (!ref.current || !sorted.length) return;
     const t = getChartTheme();
     const chart = initEChart(ref.current);
-    const labels = sorted.map((r) => fmtDate(r.predicted_at));
-    const returns = sorted.map((r) => r.expected_return_pct);
-    const actuals = sorted.map((r) =>
-      r.actual_return_pct != null && Number.isFinite(r.actual_return_pct) ? r.actual_return_pct : null,
-    );
+    const labels = sorted.map((r) => fmtDate(r.issueDay));
+    const returns = sorted.map((r) => r.expectedReturnPct);
+    const actuals = sorted.map((r) => r.actualReturnPct);
 
     chart.setOption({
       backgroundColor: "transparent",
       title: {
-        text: "Expected return (14d horizon)",
+        text: `Expected return (${horizonDays}d horizon)`,
         subtext: "Percent move from spot at forecast date",
         left: 0,
         textStyle: { fontSize: 11, color: t.textColor, fontWeight: 600 },
@@ -90,7 +85,7 @@ export function IndexForecastReturnChart({ rows, height = 200 }: Props) {
       ro.disconnect();
       chart.dispose();
     };
-  }, [sorted, dark]);
+  }, [sorted, horizonDays, dark]);
 
   if (!rows.length) {
     return (

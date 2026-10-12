@@ -827,7 +827,6 @@ class IndexPredictionRefreshResponse(BaseModel):
 class IndexPredictionHistoryResponse(BaseModel):
     status: str
     ticker: str = ""
-    rows: List[Dict[str, Any]] = Field(default_factory=list)
     daily: List[Dict[str, Any]] = Field(default_factory=list)
     intraday: List[Dict[str, Any]] = Field(default_factory=list)
     meta: Dict[str, Any] = Field(default_factory=dict)
@@ -5066,46 +5065,31 @@ def get_index_prediction_history(
     ticker: str = "NIFTY",
     limit: int = 50,
     horizon_days: int | None = None,
-    daily_last: bool = True,
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexPredictionHistoryResponse:
-    """Return prediction ledger rows for timeline chart."""
+    """Prediction-ledger rows (last run per day + today's intraday revisions) for the ledger-only columns
+    (bottom-up / macro / direction hit); the headline forecast history is read from /forecast-replay."""
     key = (ticker or "NIFTY").strip().upper()
     try:
-        from trade_integrations.dataflows.prediction_ledger_bridge import (
-            list_forecast_history_bundle,
-            list_prediction_history,
-        )
+        from trade_integrations.dataflows.prediction_ledger_bridge import list_forecast_history_bundle
 
-        if daily_last:
-            bundle = list_forecast_history_bundle(
-                key,
-                limit=max(1, min(limit, 200)),
-                horizon_days=horizon_days,
-            )
-            rows = bundle["daily"]
-            return IndexPredictionHistoryResponse(
-                status="ok",
-                ticker=key,
-                rows=rows,
-                daily=rows,
-                intraday=bundle.get("intraday") or [],
-                meta=bundle.get("meta") or {},
-            )
-
-        rows = list_prediction_history(
+        bundle = list_forecast_history_bundle(
             key,
             limit=max(1, min(limit, 200)),
             horizon_days=horizon_days,
-            daily_last=False,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("index-prediction history failed for %s", key)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    return IndexPredictionHistoryResponse(status="ok", ticker=key, rows=rows)
+    return IndexPredictionHistoryResponse(
+        status="ok",
+        ticker=key,
+        daily=bundle["daily"],
+        intraday=bundle.get("intraday") or [],
+        meta=bundle.get("meta") or {},
+    )
 
 
 _FORECAST_REPLAY_MAX_DAYS = 400

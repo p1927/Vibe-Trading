@@ -2,17 +2,16 @@ import { useEffect, useRef } from "react";
 import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
-import type { IndexPredictionHistoryRow } from "@/lib/api";
+import type { IssueTimelinePoint } from "@/lib/forecastReplay/timeline";
 
 interface Props {
-  rows: IndexPredictionHistoryRow[];
+  rows: IssueTimelinePoint[];
   horizonDays?: number;
   height?: number;
 }
 
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+function fmtDate(day: string): string {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" });
 }
 
 function fmtLevel(v: number | undefined): string {
@@ -23,17 +22,17 @@ function fmtLevel(v: number | undefined): string {
 export function IndexForecastLevelChart({ rows, horizonDays = 14, height = 240 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const { dark } = useDarkMode();
-  const sorted = [...rows].sort((a, b) => a.predicted_at.localeCompare(b.predicted_at));
+  const sorted = rows; // issueTimeline() output: ascending by issue day
 
   useEffect(() => {
     if (!ref.current || sorted.length < 2) return;
     const t = getChartTheme();
     const chart = initEChart(ref.current);
-    const labels = sorted.map((r) => fmtDate(r.predicted_at));
-    const implied = sorted.map((r) => r.implied_level);
-    const bandBase = sorted.map((r) => r.range_low);
-    const bandWidth = sorted.map((r) => Math.max(0, (r.range_high ?? r.range_low) - r.range_low));
-    const spot = sorted.map((r) => r.spot_at_prediction);
+    const labels = sorted.map((r) => fmtDate(r.issueDay));
+    const implied = sorted.map((r) => r.target);
+    const bandBase = sorted.map((r) => r.low);
+    const bandWidth = sorted.map((r) => (r.low != null && r.high != null ? Math.max(0, r.high - r.low) : null));
+    const spot = sorted.map((r) => r.spot);
 
     chart.setOption({
       backgroundColor: "transparent",
@@ -129,13 +128,13 @@ export function IndexForecastLevelChart({ rows, horizonDays = 14, height = 240 }
         <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
           {horizonDays}d forecast level
         </p>
-        <p className="mt-2 text-2xl font-semibold tabular-nums">{fmtLevel(last.implied_level)}</p>
+        <p className="mt-2 text-2xl font-semibold tabular-nums">{fmtLevel(last.target)}</p>
         <p className="mt-1 text-[11px] text-muted-foreground">
-          Spot {fmtLevel(last.spot_at_prediction)} · band {fmtLevel(last.range_low)} –{" "}
-          {fmtLevel(last.range_high)}
+          Spot {fmtLevel(last.spot)} · band {fmtLevel(last.low ?? undefined)} –{" "}
+          {fmtLevel(last.high ?? undefined)}
         </p>
         <p className="mt-2 text-[10px] text-muted-foreground">
-          One ledger point — run again on another day to see the level track chart.
+          One recorded forecast — run again on another day to see the level track chart.
         </p>
       </div>
     );
