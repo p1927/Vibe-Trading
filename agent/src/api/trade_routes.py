@@ -5130,7 +5130,8 @@ def get_index_prediction_forecast_replay(
     _auth: None = Depends(require_local_or_auth),
 ) -> ForecastReplayResponse:
     """Every forecast source's records joined to realised closes (read-only; one bad family is a 200)."""
-    key = (ticker or "NIFTY").strip().upper()
+    sent = (ticker or "NIFTY").strip()  # an unsupported ticker is echoed in the 422 exactly as sent
+    key = sent.upper()
     try:
         end_d = datetime.strptime(end, "%Y-%m-%d").date() if end else datetime.now(timezone.utc).date()
         start_d = datetime.strptime(start, "%Y-%m-%d").date() if start else end_d - timedelta(days=90)
@@ -5152,7 +5153,7 @@ def get_index_prediction_forecast_replay(
         from trade_integrations.dataflows.prediction_ledger_bridge import build_forecast_replay, forecast_replay_error_text
 
         bundle = build_forecast_replay(
-            key, source_ids or None, start_d.isoformat(), end_d.isoformat(), horizon, prov, revisions
+            sent, source_ids or None, start_d.isoformat(), end_d.isoformat(), horizon, prov, revisions
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=forecast_replay_error_text(exc)) from exc

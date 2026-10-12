@@ -48,3 +48,21 @@ describe("ExternalPredictionCard record badges", () => {
     expect(screen.queryByTestId("spot-suspect-badge")).toBeNull();
   });
 });
+
+describe("ExternalPredictionCard horizon badge: the server's horizon_fit is the only rule", () => {
+  const withFit = (horizon_fit: boolean | null) => ({ ...card, horizon_fit }) as unknown as ExternalPredictionRecord;
+  const badge = (fit: boolean | null, meta: ReplayRecord["meta"]) => {
+    const { unmount } = render(<ExternalPredictionCard record={withFit(fit)} horizonDays={14} replay={replay([rec(meta)])} />);
+    const shown = screen.queryByText("Horizon mismatch") !== null;
+    unmount();
+    return shown;
+  };
+
+  it("shows for horizon_fit=false and for nothing else, whatever the replay meta says", () => {
+    expect(badge(false, {})).toBe(true);
+    expect(badge(true, {})).toBe(false);
+    expect(badge(null, {})).toBe(false);
+    expect(badge(true, { horizon_mismatch: true })).toBe(false); // a replay flag is not a second rule
+    expect(badge(null, { horizon_mismatch: true })).toBe(false);
+  });
+});

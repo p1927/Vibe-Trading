@@ -73,7 +73,7 @@ export function ExternalPredictionCard({
     : undefined;
   const horizonLabel = formatHorizonMatch(record);
   const forecastProof = formatForecastProvenance(record);
-  const showHorizonBadge = hasHorizonMismatch(record) || replayRecord?.meta.horizon_mismatch === true;
+  const showHorizonBadge = hasHorizonMismatch(record); // the server's horizon_fit only: one rule (D398)
   const showApprove = canApproveNavigationPath(source, horizonDays) && onApprovePath;
   const fetchStatus = record.fetch_status || "unknown";
   const pageKind = String(record.provenance?.page_kind || "");
