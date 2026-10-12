@@ -75,18 +75,26 @@ export interface LiveOverlay {
 
 export const OVERLAY_SOURCE_ID = "live-overlay";
 
+/** The overlay's expected return: the workbench what-if when set, else the artifact's. */
+function overlayReturn(o: LiveOverlay): { ret: number; simulated: boolean } {
+  const simulated = o.simulatedReturnPct != null && Number.isFinite(o.simulatedReturnPct);
+  return { ret: simulated ? (o.simulatedReturnPct as number) : o.expectedReturnPct, simulated };
+}
+
 /**
- * Today's artifact forecast (plus the workbench simulation) as a synthetic live record. Its target date is
- * copied from the newest recorded point at `horizon` (the browser never computes one); null when none exists.
+ * Today's artifact forecast (plus the workbench simulation) as a synthetic live record. `records` are every loaded
+ * record, whatever horizons they carry. The browser never computes a target date and never borrows a stale one: it is
+ * copied only from a recorded point of the SAME `horizon` on the latest issue day, and only if it falls after the
+ * overlay's own day. Otherwise null (the panel then shows `overlayChip`, no dated point).
  */
 export function overlayRecord(o: LiveOverlay, records: ReplayRecord[], horizon: number): ReplayRecord | null {
-  const ref = [...records].sort((a, b) => a.issue_day.localeCompare(b.issue_day)).reverse()
-    .find((r) => pointAt(r, horizon));
+  const latest = anchorDays(records).pop();
+  const ref = records.find((r) => r.issue_day === latest && pointAt(r, horizon));
   const refPoint = ref && pointAt(ref, horizon);
   if (!ref || !refPoint || !(o.spot > 0)) return null;
-  const simulated = o.simulatedReturnPct != null && Number.isFinite(o.simulatedReturnPct);
-  const ret = simulated ? (o.simulatedReturnPct as number) : o.expectedReturnPct;
+  const { ret, simulated } = overlayReturn(o);
   const day = (o.asOf ?? ref.issue_day).slice(0, 10);
+  if (refPoint.target_date <= day) return null;
   const p50 = o.spot * (1 + ret / 100);
   const band = !simulated && o.rangeLow != null && o.rangeHigh != null;
   return {
@@ -106,6 +114,13 @@ export function overlayRecord(o: LiveOverlay, records: ReplayRecord[], horizon: 
   };
 }
 
+/** The overlay as a legend line when no dated point can be drawn (no recorded date for this horizon); null if unusable. */
+export function overlayChip(o: LiveOverlay, horizon: number): string | null {
+  const { ret, simulated } = overlayReturn(o);
+  if (!(o.spot > 0) || !Number.isFinite(ret)) return null;
+  return `${simulated ? "Live forecast (what-if)" : "Live forecast"}: ${ret >= 0 ? "+" : ""}${ret.toFixed(2)}% over ${horizon}d — no recorded date for this horizon`;
+}
+
 /** Source ids grouped by family, keeping server order. */
 export function groupByFamily(sources: ReplaySource[]): { family: string; sources: ReplaySource[] }[] {
   const m = new Map<string, ReplaySource[]>();
@@ -113,14 +128,30 @@ export function groupByFamily(sources: ReplaySource[]): { family: string; source
   return [...m].map(([family, list]) => ({ family, sources: list }));
 }
 
+/** The server's per-request source limit (`_FORECAST_REPLAY_MAX_SOURCES` in trade_routes.py); the picker stops here. */
+export const MAX_REPLAY_SOURCES = 40;
+
+/** First occurrence of each key wins; the server dedups today, the keys the UI renders must stay unique anyway. */
+export function uniqueBy<T>(items: T[], key: (t: T) => string): T[] {
+  const seen = new Set<string>();
+  return items.filter((i) => { const k = key(i); return seen.has(k) ? false : (seen.add(k), true); });
+}
+
 /**
  * The selection after the single/compare switch: single keeps one source (the first), compare keeps what was selected
- * and adds the default sources that are missing, so Compare never opens as a one-source view.
+ * and adds the default sources that are missing (up to the server limit), so Compare never opens as a one-source view.
  */
 export function selectionForMode(single: boolean, selected: string[], defaults: string[]): string[] {
   if (single) return selected.length > 1 ? selected.slice(0, 1) : selected;
   const missing = defaults.filter((d) => !selected.includes(d));
-  return missing.length ? [...selected, ...missing] : selected;
+  return missing.length ? [...selected, ...missing].slice(0, MAX_REPLAY_SOURCES) : selected;
+}
+
+/** One picker click: single replaces; compare adds (refused at the limit) or removes (never the last one). */
+export function toggleSelection(selected: string[], id: string, single: boolean): string[] {
+  if (single) return [id];
+  if (!selected.includes(id)) return selected.length >= MAX_REPLAY_SOURCES ? selected : [...selected, id];
+  return selected.length > 1 ? selected.filter((x) => x !== id) : selected;
 }
 
 export function sourceNote(s: ReplaySource): string | null {

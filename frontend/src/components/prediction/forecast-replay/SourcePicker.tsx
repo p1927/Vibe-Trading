@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 import type { SourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { Provenance, ReplaySource } from "@/lib/forecastReplay/types";
-import { groupByFamily, sourceNote } from "@/lib/forecastReplay/view";
+import { groupByFamily, MAX_REPLAY_SOURCES, sourceNote } from "@/lib/forecastReplay/view";
 
 const PROVENANCES: Provenance[] = ["live", "replay", "backtest"];
 
@@ -12,12 +12,14 @@ interface Props {
   provenance: Provenance[];
   styles: Record<string, SourceStyle>;
   single?: boolean;
+  /** The server's source limit is reached: unselected sources are disabled and a message says why. */
+  atCap?: boolean;
   onToggleSource: (id: string) => void;
   onToggleProvenance: (p: Provenance) => void;
 }
 
 /** Sources grouped by family with a status chip each; only sources of the active provenances are listed. */
-export function SourcePicker({ sources, selected, provenance, styles, single, onToggleSource, onToggleProvenance }: Props) {
+export function SourcePicker({ sources, selected, provenance, styles, single, atCap, onToggleSource, onToggleProvenance }: Props) {
   const visible = sources.filter((s) => provenance.includes(s.provenance));
   return (
     <div className="space-y-2 rounded-lg border border-border/50 bg-muted/20 p-2.5 text-[10px]" data-testid="source-picker">
@@ -49,7 +51,7 @@ export function SourcePicker({ sources, selected, provenance, styles, single, on
                 <button
                   key={s.source_id}
                   type="button"
-                  disabled={s.status !== "ok" && !on}
+                  disabled={(s.status !== "ok" || Boolean(atCap)) && !on}
                   aria-pressed={on}
                   title={note ?? `${s.label}: ${s.n_records} records ${s.first_day ?? ""} to ${s.last_day ?? ""}`}
                   onClick={() => onToggleSource(s.source_id)}
@@ -79,6 +81,7 @@ export function SourcePicker({ sources, selected, provenance, styles, single, on
       ))}
       {!visible.length ? <p className="text-muted-foreground">{sources.length ? "No sources for the chosen provenance." : "No sources loaded yet."}</p> : null}
       </details>
+      {atCap ? <p className="text-amber-700 dark:text-amber-400" data-testid="source-cap-message">At most {MAX_REPLAY_SOURCES} sources per request: deselect one to add another.</p> : null}
     </div>
   );
 }

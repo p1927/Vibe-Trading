@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForecastReplay } from "@/hooks/useForecastReplay";
 import { sourceStyle, type SourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { Provenance, ReplayRecord, ReplaySource } from "@/lib/forecastReplay/types";
-import { forHorizon, selectionForMode, shiftDays } from "@/lib/forecastReplay/view";
+import { forHorizon, MAX_REPLAY_SOURCES, selectionForMode, shiftDays, toggleSelection, uniqueBy } from "@/lib/forecastReplay/view";
 
 export interface ReplayViewOptions {
   ticker: string;
@@ -19,7 +19,7 @@ export interface ReplayViewOptions {
  * the newest day any selected source has history for, so backtest-only selections are not shown empty.
  */
 export function useReplayView(o: ReplayViewOptions) {
-  const [selected, setSelected] = useState<string[]>(o.defaultSources);
+  const [selected, setSelected] = useState<string[]>(() => [...new Set(o.defaultSources)]);
   const [provenance, setProvenance] = useState<Provenance[]>(o.defaultProvenance);
   const [windowDays, setWindowDays] = useState(o.windowDays ?? 90);
   const [end, setEnd] = useState(() => new Date().toISOString().slice(0, 10));
@@ -33,7 +33,7 @@ export function useReplayView(o: ReplayViewOptions) {
     provenance: provenance.join(","),
   });
 
-  const allSources: ReplaySource[] = bundle?.sources ?? [];
+  const allSources: ReplaySource[] = useMemo(() => uniqueBy(bundle?.sources ?? [], (s) => s.source_id), [bundle]);
   /** The server's provenance of a source; undefined until the first bundle lists it (nothing is guessed from the id). */
   const provOf = useCallback(
     (id: string): Provenance | undefined => allSources.find((s) => s.source_id === id)?.provenance,
@@ -52,15 +52,7 @@ export function useReplayView(o: ReplayViewOptions) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [o.single]);
 
-  const toggleSource = useCallback(
-    (id: string) =>
-      setSelected((s) => {
-        if (o.single) return [id];
-        if (!s.includes(id)) return [...s, id];
-        return s.length > 1 ? s.filter((x) => x !== id) : s;
-      }),
-    [o.single],
-  );
+  const toggleSource = useCallback((id: string) => setSelected((s) => toggleSelection(s, id, Boolean(o.single))), [o.single]);
 
   const toggleProvenance = useCallback(
     (p: Provenance) =>
@@ -80,13 +72,13 @@ export function useReplayView(o: ReplayViewOptions) {
   }, [allSources]);
   /** Every loaded record of the shown sources, whatever horizons it carries (the horizon picker's source). */
   const loaded: ReplayRecord[] = useMemo(
-    () => (bundle?.records ?? []).filter((r) => shown.includes(r.source_id)),
+    () => uniqueBy(bundle?.records ?? [], (r) => `${r.source_id}|${r.issued_at}`).filter((r) => shown.includes(r.source_id)),
     [bundle, shown],
   );
   const records: ReplayRecord[] = useMemo(() => forHorizon(loaded, o.horizon), [loaded, o.horizon]);
 
   return {
     bundle, loading, error, refetch, allSources, selected: shown, provenance, windowDays, setWindowDays,
-    toggleSource, toggleProvenance, styles, records, loaded, end,
+    toggleSource, atSourceCap: !o.single && selected.length >= MAX_REPLAY_SOURCES, toggleProvenance, styles, records, loaded, end,
   };
 }

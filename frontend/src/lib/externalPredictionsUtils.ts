@@ -7,6 +7,8 @@ export interface StreetSummaryStats {
   targetMin: number | null;
   targetMax: number | null;
   targetMedian: number | null;
+  /** Targets of records flagged as a horizon mismatch (e.g. a year-out target): listed apart, not in the range. */
+  longHorizon: { sourceId: string; mid: number }[];
   spot: number | null;
   fetchedAt: string | null;
 }
@@ -294,15 +296,23 @@ export function formatFetchMethodLabel(fetchMethod: string | undefined): string 
   return FETCH_METHOD_LABELS[fetchMethod] ?? fetchMethod.replace(/_/g, " ");
 }
 
+/** Index level, whole points, Indian grouping: the one format of every level on the Street views page. */
+export function fmtLevel(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
+}
+
 export function computeStreetSummary(
   snapshot: ExternalPredictionSnapshot | null,
   horizonDays: number,
 ): StreetSummaryStats {
   const visible = filterVisiblePredictions(snapshot?.predictions);
-  const mids = visible
-    .map((p) => p.target?.mid)
-    .filter((v): v is number => typeof v === "number" && Number.isFinite(v))
-    .sort((a, b) => a - b);
+  const withMid = visible.flatMap((p) =>
+    typeof p.target?.mid === "number" && Number.isFinite(p.target.mid) ? [{ record: p, mid: p.target.mid }] : [],
+  );
+  // a horizon-mismatch target (a 12m view inside a 14d range) would distort range and median
+  const mids = withMid.filter((x) => !hasHorizonMismatch(x.record)).map((x) => x.mid).sort((a, b) => a - b);
+  const longHorizon = withMid.filter((x) => hasHorizonMismatch(x.record)).map((x) => ({ sourceId: x.record.source_id, mid: x.mid }));
   const spot =
     snapshot?.internal_forecast?.spot ??
     visible.find((p) => p.spot_at_fetch != null)?.spot_at_fetch ??
@@ -314,6 +324,7 @@ export function computeStreetSummary(
     targetMin: mids.length ? mids[0] : null,
     targetMax: mids.length ? mids[mids.length - 1] : null,
     targetMedian: mids.length ? mids[Math.floor(mids.length / 2)] : null,
+    longHorizon,
     spot: typeof spot === "number" ? spot : null,
     fetchedAt: snapshotDisplayUpdatedAt(snapshot),
   };

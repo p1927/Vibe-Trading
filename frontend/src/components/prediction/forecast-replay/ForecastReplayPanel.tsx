@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { ForecastReplayChart } from "@/components/charts/ForecastReplayChart";
 import { weekGroups } from "@/lib/forecastReplay/paths";
-import type { SourceStyle } from "@/lib/forecastReplay/sourceStyle";
+import { baseSeriesColors, type SourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { Provenance, ReplayRecord } from "@/lib/forecastReplay/types";
 import {
-  anchorDays, latestMaturedDay, maturityBuckets, OVERLAY_SOURCE_ID, overlayRecord, sourceNote, type LiveOverlay,
+  anchorDays, latestMaturedDay, maturityBuckets, OVERLAY_SOURCE_ID, overlayChip, overlayRecord, sourceNote, type LiveOverlay,
 } from "@/lib/forecastReplay/view";
+import { useDarkMode } from "@/hooks/useDarkMode";
 import { cn } from "@/lib/utils";
 import { DayDetail } from "./DayDetail";
 import { DayStepper } from "./DayStepper";
@@ -38,6 +39,7 @@ export function ForecastReplayPanel({
   single, height = 380, emptyHint, windowDays,
 }: ForecastReplayPanelProps) {
   const v = useReplayView({ ticker, horizon, defaultSources, defaultProvenance, windowDays, single });
+  const { dark } = useDarkMode();
   const [mode, setMode] = useState<Mode>("day");
   const [anchor, setAnchor] = useState<string | null>(null);
 
@@ -50,22 +52,22 @@ export function ForecastReplayPanel({
     }
   }, [liveOverlay?.asOf]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const overlay = useMemo(() => {
-    const rec = liveOverlay ? overlayRecord(liveOverlay, v.records, horizon) : null;
-    // an unsimulated overlay duplicates today's recorded headline: draw it only when it adds information
-    return rec && (rec.meta.simulated || !v.records.some((r) => r.issue_day === rec.issue_day && r.source_id === "headline")) ? rec : null;
-  }, [liveOverlay, v.records, horizon]);
+  const dated = useMemo(() => (liveOverlay ? overlayRecord(liveOverlay, v.loaded, horizon) : null), [liveOverlay, v.loaded, horizon]);
+  // an unsimulated overlay duplicates today's recorded headline: draw it only when it adds information
+  const overlay = dated && (dated.meta.simulated || !v.records.some((r) => r.issue_day === dated.issue_day && r.source_id === "headline")) ? dated : null;
+  // no recorded date at this horizon: say what the what-if is, draw nothing
+  const chip = liveOverlay && !dated ? overlayChip(liveOverlay, horizon) : null;
 
   const records: ReplayRecord[] = useMemo(() => (overlay ? [...v.records, overlay] : v.records), [v.records, overlay]);
   const styles = useMemo(() => {
     const s: Record<string, SourceStyle> = { ...v.styles };
     if (overlay) {
       s[OVERLAY_SOURCE_ID] = {
-        label: overlay.meta.simulated ? "Live forecast (what-if)" : "Live forecast", color: "#a3a3a3", dash: [], hatch: false,
+        label: overlay.meta.simulated ? "Live forecast (what-if)" : "Live forecast", color: baseSeriesColors().overlay, dash: [], hatch: false,
       };
     }
     return s;
-  }, [v.styles, overlay]);
+  }, [v.styles, overlay, dark]);
 
   const actuals = v.bundle?.actuals ?? [];
   const days = useMemo(() => anchorDays(records), [records]);
@@ -104,7 +106,7 @@ export function ForecastReplayPanel({
       </div>
 
       <SourcePicker
-        sources={v.allSources} selected={v.selected} provenance={v.provenance} styles={v.styles} single={single}
+        sources={v.allSources} selected={v.selected} provenance={v.provenance} styles={v.styles} single={single} atCap={v.atSourceCap}
         onToggleSource={v.toggleSource} onToggleProvenance={v.toggleProvenance}
       />
 
@@ -133,6 +135,8 @@ export function ForecastReplayPanel({
         records={records} actuals={actuals} anchorDay={anchorDay} focusDays={focusDays} horizon={horizon}
         sourceStyles={styles} onAnchorChange={setAnchor} height={height} loading={v.loading} emptyHint={emptyHint}
       />
+
+      {chip ? <p className="text-[10px] text-muted-foreground" data-testid="overlay-chip">{chip}</p> : null}
 
       {mode === "week" ? <WeekView weeks={weeks} anchor={anchorDay} horizon={horizon} onAnchorChange={setAnchor} /> : null}
       <DayDetail records={dayRecords} horizon={horizon} styles={styles} />

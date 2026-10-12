@@ -1,3 +1,4 @@
+import { getChartTheme } from "@/lib/chart-theme";
 import type { Provenance } from "./types";
 
 export const TRACK_CHART_COLORS: Record<string, string> = {
@@ -30,10 +31,17 @@ export const TRACK_CHART_COLORS: Record<string, string> = {
 
 /**
  * A track's display label: the server's (`SourceInfo.label`, or the scoreboard report's `track_catalog`) when it
- * sent one (a bare combiner id is looked up as `combiner:<id>`), else the id made readable. There is no label table in the browser (D306).
+ * sent one (a bare combiner id is looked up as `combiner:<id>`), else the raw id, visibly unlabelled rather than a prettified guess.
+ * There is no label table in the browser (D306).
  */
 export function trackDisplayLabel(trackId: string, catalog?: Record<string, { label?: string }> | null): string {
-  return catalog?.[trackId]?.label ?? catalog?.[`combiner:${trackId}`]?.label ?? trackId.replace(/^combiner:/, "").replace(/_/g, " ");
+  return catalog?.[trackId]?.label ?? catalog?.[`combiner:${trackId}`]?.label ?? trackId;
+}
+
+/** The fixed series of the replay chart (Nifty close, actual path, live overlay); the chart draws them and its legend swatches read them. */
+export function baseSeriesColors(): { close: string; actual: string; overlay: string } {
+  const t = getChartTheme();
+  return { close: t.infoColor, actual: t.upColor, overlay: t.warningColor };
 }
 
 export interface SourceStyle {

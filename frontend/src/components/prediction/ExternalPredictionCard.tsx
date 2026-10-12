@@ -5,7 +5,7 @@ import { RecordBadges } from "@/components/prediction/forecast-replay/RecordBadg
 import type { ExternalReplay } from "@/lib/forecastReplay/external";
 import type { ExternalPredictionRecord, ExternalPredictionSource } from "@/lib/api";
 import { resolveApiBase } from "@/lib/apiBase";
-import { canApproveNavigationPath, formatFetchMethodLabel, formatForecastProvenance, formatHorizonMatch, formatPageKindLabel, hasHorizonMismatch } from "@/lib/externalPredictionsUtils";
+import { canApproveNavigationPath, fmtLevel, formatFetchMethodLabel, formatForecastProvenance, formatHorizonMatch, formatPageKindLabel, hasHorizonMismatch } from "@/lib/externalPredictionsUtils";
 import { cn } from "@/lib/utils";
 
 const DIRECTION_COLORS: Record<string, string> = {
@@ -20,11 +20,6 @@ const KIND_LABELS: Record<string, string> = {
   global_bank: "Global bank",
   derived: "Derived",
 };
-
-function fmtLevel(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
-}
 
 function fmtPct(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";

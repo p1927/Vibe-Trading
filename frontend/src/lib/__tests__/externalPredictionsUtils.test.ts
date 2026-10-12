@@ -1,6 +1,8 @@
 import {
   buildAddSourcePayload,
   candidateNeedsEntryUrls,
+  computeStreetSummary,
+  fmtLevel,
   effectiveChartHorizonDays,
   filterIssuePredictions,
   filterVisiblePredictions,
@@ -9,7 +11,7 @@ import {
   snapshotDisplayUpdatedAt,
   validateAddSourceRequest,
 } from "../externalPredictionsUtils";
-import type { ExternalPredictionRecord } from "@/lib/api";
+import type { ExternalPredictionRecord, ExternalPredictionSnapshot } from "@/lib/api";
 
 describe("normalizeDomain", () => {
   it("strips scheme and www", () => {
@@ -160,5 +162,34 @@ describe("snapshotDisplayUpdatedAt", () => {
     expect(snapshotDisplayUpdatedAt({ fetched_at: "2026-07-23T10:00:00+00:00" })).toBe(
       "2026-07-23T10:00:00+00:00",
     );
+  });
+});
+
+describe("computeStreetSummary", () => {
+  const ok = (source_id: string, mid: number, horizon_match?: Record<string, unknown>): ExternalPredictionRecord =>
+    ({ source_id, horizon_days: 14, as_of: "2026-10-12", spot_at_fetch: 25000, target: { mid }, fetch_status: "ok",
+      provenance: horizon_match ? { horizon_match } : {} }) as unknown as ExternalPredictionRecord;
+  const snap = (predictions: ExternalPredictionRecord[]) => ({ predictions, sources: [] }) as unknown as ExternalPredictionSnapshot;
+  const yearOut = { selected_days: 14, target_days_ahead: 261, in_window: false, soft_mismatch: true };
+
+  it("keeps a year-out target out of the range, median and count of the range, and lists it apart (QA C9 numbers)", () => {
+    const s = computeStreetSummary(snap([ok("a", 23550), ok("b", 24100.4), ok("c", 28505.796, yearOut)]), 14);
+    expect([s.targetMin, s.targetMax, s.targetMedian]).toEqual([23550, 24100.4, 24100.4]);
+    expect(s.longHorizon).toEqual([{ sourceId: "c", mid: 28505.796 }]);
+    expect(s.forecastCount).toBe(3);
+  });
+  it("rounds levels to whole points with Indian grouping, the page format", () => {
+    expect(fmtLevel(28505.796)).toBe("28,506");
+    expect(fmtLevel(2350000.4)).toBe("23,50,000");
+    expect(fmtLevel(null)).toBe("—");
+  });
+  it("only mismatched targets: no range, all listed; none mismatched: nothing listed; an in-window flag is not a mismatch", () => {
+    const only = computeStreetSummary(snap([ok("c", 28505, yearOut)]), 14);
+    expect([only.targetMin, only.targetMax, only.targetMedian]).toEqual([null, null, null]);
+    expect(only.longHorizon).toHaveLength(1);
+    const fine = computeStreetSummary(snap([ok("a", 24000, { selected_days: 14, target_days_ahead: 14, in_window: true })]), 14);
+    expect(fine.longHorizon).toEqual([]);
+    expect(fine.targetMedian).toBe(24000);
+    expect(computeStreetSummary(null, 14).longHorizon).toEqual([]);
   });
 });

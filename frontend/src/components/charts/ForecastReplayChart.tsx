@@ -16,7 +16,7 @@ import { useDarkMode } from "@/hooks/useDarkMode";
 import { ForecastGapPrimitive } from "@/components/charts/forecastGapPrimitive";
 import { GAP_ALPHA, maturedUntil, shadedRecords } from "@/lib/forecastReplay/gap";
 import { band, fitKey, focusRange, recordPath } from "@/lib/forecastReplay/paths";
-import type { SourceStyle } from "@/lib/forecastReplay/sourceStyle";
+import { baseSeriesColors, type SourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { ReplayActual, ReplayRecord } from "@/lib/forecastReplay/types";
 import { forecastReturnPct } from "@/lib/forecastReplay/view";
 import { fmtPct } from "@/lib/trackScoreboardUtils";
@@ -101,14 +101,14 @@ export function ForecastReplayChart({
       dynamicRef.current = [];
       const width = container.clientWidth;
       if (width <= 0) return;
-      const t = getChartTheme();
+      const base = baseSeriesColors();
       const chart = createLightweightChart(container, height);
       chart.applyOptions({ width });
-      baseRef.current = chart.addSeries(LineSeries, { color: t.infoColor, lineWidth: 2, title: "Nifty", lastValueVisible: true, priceLineVisible: false });
+      baseRef.current = chart.addSeries(LineSeries, { color: base.close, lineWidth: 2, title: "Nifty", lastValueVisible: true, priceLineVisible: false });
       markersRef.current = createSeriesMarkers(baseRef.current, []);
       gapRef.current = new ForecastGapPrimitive();
       baseRef.current.attachPrimitive(gapRef.current);
-      actualPathRef.current = chart.addSeries(LineSeries, { color: t.upColor, lineWidth: 2, title: "Actual path", lastValueVisible: true, priceLineVisible: false });
+      actualPathRef.current = chart.addSeries(LineSeries, { color: base.actual, lineWidth: 2, title: "Actual path", lastValueVisible: true, priceLineVisible: false });
       chart.subscribeClick((param) => {
         const day = param.time ? timeToIsoDay(param.time) : null;
         if (day) clickRef.current?.(day);
@@ -180,7 +180,7 @@ export function ForecastReplayChart({
       const style = sourceStyles[r.source_id];
       const faded = r.issue_day !== anchorDay;
       const { vertices, approximate } = recordPath(r);
-      const color = r.meta?.overlay ? t.warningColor : style.color;
+      const color = style.color;
       const scaleOpts = r.meta?.return_implausible === true ? IGNORE_IN_AUTOSCALE : {};
       const series = chart.addSeries(LineSeries, {
         color: faded ? withAlpha(color, 0.4) : color,
@@ -237,6 +237,8 @@ export function ForecastReplayChart({
     }
   }, [actuals, records, drawn, focus, anchorDay, horizon, sourceStyles, epoch]);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const base = useMemo(() => baseSeriesColors(), [dark]);
   const legend = useMemo(() => {
     const seen = new Map<string, { style: SourceStyle; approx: boolean }>();
     for (const r of drawn) if (!seen.has(r.source_id)) seen.set(r.source_id, { style: sourceStyles[r.source_id], approx: recordPath(r).approximate });
@@ -255,8 +257,8 @@ export function ForecastReplayChart({
       <div ref={containerRef} className="w-full" style={{ height }} />
       <LightweightChartZoomBar chart={activeChart} />
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
-        <span className="inline-flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-primary" />Nifty close</span>
-        <span className="inline-flex items-center gap-1"><span className="inline-block h-0.5 w-4 bg-emerald-500" />Actual path from anchor</span>
+        <span className="inline-flex items-center gap-1"><span className="inline-block h-0.5 w-4" style={{ background: base.close }} />Nifty close</span>
+        <span className="inline-flex items-center gap-1"><span className="inline-block h-0.5 w-4" style={{ background: base.actual }} />Actual path from anchor</span>
         {legend.map(([id, { style, approx }]) => (
           <span key={id} className="inline-flex items-center gap-1">
             <span className="inline-block h-0.5 w-4" style={{ background: style.color, opacity: style.dash.length ? 0.7 : 1 }} />

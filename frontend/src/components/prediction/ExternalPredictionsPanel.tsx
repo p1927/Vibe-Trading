@@ -9,7 +9,7 @@ import type { ExternalRefreshPhase } from "@/hooks/useExternalPredictions";
 import { useForecastReplay } from "@/hooks/useForecastReplay";
 import type { ExternalPredictionSnapshot, PipelineLogEntry } from "@/lib/api";
 import { externalReplayFor, externalSourceId, externalWindow } from "@/lib/forecastReplay/external";
-import { filterVisiblePredictions, filterIssuePredictions, computeStreetSummary, validateAddSourceRequest, buildAddSourcePayload, candidateNeedsEntryUrls, parseMultilineList, normalizeDomain, primarySourceDomain, hasHorizonMismatch, snapshotDisplayUpdatedAt } from "@/lib/externalPredictionsUtils";
+import { filterVisiblePredictions, filterIssuePredictions, computeStreetSummary, fmtLevel, validateAddSourceRequest, buildAddSourcePayload, candidateNeedsEntryUrls, parseMultilineList, normalizeDomain, primarySourceDomain, hasHorizonMismatch, snapshotDisplayUpdatedAt } from "@/lib/externalPredictionsUtils";
 import { cn } from "@/lib/utils";
 
 function fmtTimestamp(iso: string | undefined): string {
@@ -487,7 +487,7 @@ export function ExternalPredictionsPanel({
             <h2 className="text-sm font-semibold">Street forecast summary</h2>
             <p className="text-[11px] text-muted-foreground">
               {summary.forecastCount} of {summary.watchlistCount} sources · {horizonDays}d horizon
-              {summary.spot != null ? ` · NIFTY spot ${summary.spot.toLocaleString("en-IN")}` : ""}
+              {summary.spot != null ? ` · NIFTY spot ${fmtLevel(summary.spot)}` : ""}
             </p>
           </div>
           <p className="text-[11px] text-muted-foreground">
@@ -498,15 +498,23 @@ export function ExternalPredictionsPanel({
           <p className="mt-2 text-[12px]">
             Target range{" "}
             <span className="font-semibold tabular-nums">
-              {summary.targetMin?.toLocaleString("en-IN")} – {summary.targetMax?.toLocaleString("en-IN")}
+              {fmtLevel(summary.targetMin)} – {fmtLevel(summary.targetMax)}
             </span>{" "}
-            (median {summary.targetMedian.toLocaleString("en-IN")})
+            (median {fmtLevel(summary.targetMedian)})
           </p>
         ) : (
           <p className="mt-2 text-[11px] text-muted-foreground">
-            No cached forecasts — click Refresh to fetch street views.
+            {summary.longHorizon.length
+              ? `No street target at the ${horizonDays}d horizon.`
+              : "No cached forecasts — click Refresh to fetch street views."}
           </p>
         )}
+        {summary.longHorizon.length ? (
+          <p className="mt-1 text-[11px] text-muted-foreground" data-testid="long-horizon-targets">
+            Long-horizon targets (not in range):{" "}
+            {summary.longHorizon.map((x) => `${sourceMap.get(x.sourceId)?.display_name ?? x.sourceId} ${fmtLevel(x.mid)}`).join(", ")}
+          </p>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-card/40 p-3">
