@@ -1,6 +1,6 @@
 import type { SourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { ReplayRecord } from "@/lib/forecastReplay/types";
-import { forecastReturnPct, pointAt } from "@/lib/forecastReplay/view";
+import { forecastReturnPct, keyPoint } from "@/lib/forecastReplay/view";
 import { fmtNiftyLevel } from "@/lib/factorHistoryUtils";
 import { fmtPct } from "@/lib/trackScoreboardUtils";
 
@@ -20,7 +20,7 @@ export function DayDetail({ records, horizon, styles }: Props) {
           <tr className="border-b bg-muted/30 text-left text-muted-foreground">
             <th className="px-2 py-1 font-medium">Source</th>
             <th className="px-2 py-1 text-right font-medium">Spot</th>
-            <th className="px-2 py-1 text-right font-medium">{horizon}d forecast</th>
+            <th className="px-2 py-1 text-right font-medium">Forecast</th>
             <th className="px-2 py-1 text-right font-medium">Target date</th>
             <th className="px-2 py-1 text-right font-medium">Actual</th>
             <th className="px-2 py-1 text-right font-medium">Error</th>
@@ -29,7 +29,7 @@ export function DayDetail({ records, horizon, styles }: Props) {
         </thead>
         <tbody>
           {records.map((r) => {
-            const p = pointAt(r, horizon);
+            const p = keyPoint(r, horizon);
             if (!p) return null;
             const actualPct = p.matured && p.actual_level != null && r.spot_at_issue > 0 ? (p.actual_level / r.spot_at_issue - 1) * 100 : null;
             return (
@@ -41,10 +41,10 @@ export function DayDetail({ records, horizon, styles }: Props) {
                 </td>
                 <td className="px-2 py-1 text-right tabular-nums">{fmtNiftyLevel(r.spot_at_issue)}</td>
                 <td className="px-2 py-1 text-right tabular-nums">
-                  {fmtNiftyLevel(p.p50_level)} <span className="text-muted-foreground">{fmtPct(forecastReturnPct(r, horizon))}</span>
+                  {fmtNiftyLevel(p.p50_level)} <span className="text-muted-foreground">{p.horizon_days}d</span> <span className="text-muted-foreground">{fmtPct(forecastReturnPct(r, horizon))}</span>
                 </td>
                 <td className="px-2 py-1 text-right tabular-nums">{p.target_date}</td>
-                <td className="px-2 py-1 text-right tabular-nums">{actualPct != null ? fmtPct(actualPct) : "Pending"}</td>
+                <td className="px-2 py-1 text-right tabular-nums">{actualPct != null ? fmtPct(actualPct) : r.points.some((q) => q.matured) ? `Pending (${r.points.filter((q) => q.matured).length}/${r.points.length} points matured)` : "Pending"}</td>
                 <td className={`px-2 py-1 text-right tabular-nums ${p.error_pct != null ? (p.in_band === false ? "text-amber-700 dark:text-amber-400" : "") : ""}`}>
                   {p.error_pct != null ? fmtPct(p.error_pct) : "—"}
                 </td>

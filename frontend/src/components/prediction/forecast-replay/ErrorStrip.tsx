@@ -40,10 +40,10 @@ export function errorStripOption(records: ReplayRecord[], horizon: number, ids: 
     days,
     option: {
       tooltip: { trigger: "axis" as const, valueFormatter: (v: unknown) => (typeof v === "number" ? `${v.toFixed(2)}%` : "—") },
-      legend: { top: 0, type: "scroll" as const, textStyle: { color: t.textColor, fontSize: 10 } },
-      grid: { left: 48, right: 16, top: 34, bottom: 28 },
+      legend: { top: 0, left: 0, right: 0, type: "scroll" as const, textStyle: { color: t.textColor, fontSize: 10 } },
+      grid: { left: 48, right: 16, top: 48, bottom: 28 },
       xAxis: { type: "category" as const, data: days.map((d) => d.slice(5)), axisLabel: { fontSize: 9, color: t.textColor } },
-      yAxis: { type: "value" as const, name: "error %", axisLabel: { fontSize: 9, color: t.textColor, formatter: "{value}%" } },
+      yAxis: { type: "value" as const, axisLabel: { fontSize: 9, color: t.textColor, formatter: "{value}%" } },
       series,
     },
   };

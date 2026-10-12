@@ -29,8 +29,14 @@ export function SourcePicker({ sources, selected, provenance, styles, single, on
             {p}
           </label>
         ))}
-        <span className="text-muted-foreground">{single ? "pick one source" : `${selected.length} selected`}</span>
       </div>
+      <details open={visible.length <= 8} className="space-y-2">
+      <summary className="cursor-pointer text-muted-foreground">
+        {single ? "Source" : `Sources (${selected.length})`}:{" "}
+        <span className="font-medium text-foreground">
+          {selected.map((id) => styles[id]?.label ?? id).join(", ") || "none"}
+        </span>
+      </summary>
       {groupByFamily(visible).map(({ family, sources: list }) => (
         <div key={family} className="space-y-1">
           <p className="font-medium text-muted-foreground">{family}</p>
@@ -43,7 +49,7 @@ export function SourcePicker({ sources, selected, provenance, styles, single, on
                 <button
                   key={s.source_id}
                   type="button"
-                  disabled={s.status !== "ok"}
+                  disabled={s.status !== "ok" && !on}
                   aria-pressed={on}
                   title={note ?? `${s.label}: ${s.n_records} records ${s.first_day ?? ""} to ${s.last_day ?? ""}`}
                   onClick={() => onToggleSource(s.source_id)}
@@ -71,7 +77,8 @@ export function SourcePicker({ sources, selected, provenance, styles, single, on
           </div>
         </div>
       ))}
-      {!visible.length ? <p className="text-muted-foreground">No sources for the chosen provenance.</p> : null}
+      {!visible.length ? <p className="text-muted-foreground">{sources.length ? "No sources for the chosen provenance." : "No sources loaded yet."}</p> : null}
+      </details>
     </div>
   );
 }

@@ -2,9 +2,9 @@
 // calendar arithmetic here is the fetch window (`shiftDays`), never a forecast or target date.
 import type { ReplayPoint, ReplayRecord, ReplaySource } from "./types";
 
-/** Records that carry a point at `horizon`; the whole path of such a record is still drawn. */
+/** Records that carry a point at `horizon`, plus multi-point paths (a fan has no exact 14d point but is the story). */
 export function forHorizon(records: ReplayRecord[], horizon: number): ReplayRecord[] {
-  return records.filter((r) => r.points.some((p) => p.horizon_days === horizon));
+  return records.filter((r) => r.points.length > 1 || r.points.some((p) => p.horizon_days === horizon));
 }
 
 export function pointAt(r: ReplayRecord, horizon: number): ReplayPoint | undefined {
@@ -23,9 +23,14 @@ export function shiftDays(iso: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Percent move from spot to the p50 at `horizon`, null when the record has no such point. */
+/** The point at `horizon`, else the record's furthest point (a fan's headline number). */
+export function keyPoint(r: ReplayRecord, horizon: number): ReplayPoint | undefined {
+  return pointAt(r, horizon) ?? r.points.reduce<ReplayPoint | undefined>((a, p) => (!a || p.horizon_days > a.horizon_days ? p : a), undefined);
+}
+
+/** Percent move from spot to the key point's p50, null when the record has no points. */
 export function forecastReturnPct(r: ReplayRecord, horizon: number): number | null {
-  const p = pointAt(r, horizon);
+  const p = keyPoint(r, horizon);
   return p && r.spot_at_issue > 0 ? (p.p50_level / r.spot_at_issue - 1) * 100 : null;
 }
 

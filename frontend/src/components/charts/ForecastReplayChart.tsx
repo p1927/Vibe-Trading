@@ -168,7 +168,7 @@ export function ForecastReplayChart({
         position: ret >= 0 ? "aboveBar" : "belowBar",
         shape: isAnchor ? "square" : "circle",
         color: style.color,
-        text: isAnchor || sourcesInWindow.size === 1 ? fmtPct(ret) : undefined,
+        text: sourcesInWindow.size === 1 || (isAnchor && sourcesInWindow.size <= 4) ? fmtPct(ret) : undefined,
       });
     }
     dayMarkers.sort((a, b) => String(a.time).localeCompare(String(b.time)));
@@ -241,7 +241,7 @@ export function ForecastReplayChart({
           <span key={id} className="inline-flex items-center gap-1">
             <span className="inline-block h-0.5 w-4" style={{ background: style.color, opacity: style.dash.length ? 0.7 : 1 }} />
             {style.label}
-            {style.hatch ? " (backtest)" : style.dash.length ? " (replay)" : ""}
+            {style.hatch && !/backtest/i.test(style.label) ? " (backtest)" : !style.hatch && style.dash.length ? " (replay)" : ""}
             {approx ? " · approx." : ""}
           </span>
         ))}

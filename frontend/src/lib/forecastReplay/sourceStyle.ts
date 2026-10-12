@@ -2,7 +2,7 @@ import type { Provenance } from "./types";
 
 export const TRACK_CHART_COLORS: Record<string, string> = {
   actual: "#22c55e",
-  headline: "#f59e0b",
+  headline: "#ca8a04",
   fan: "#e11d48",
   quant_ridge: "#3b82f6",
   quant_ridge_no_overlay: "#2563eb",

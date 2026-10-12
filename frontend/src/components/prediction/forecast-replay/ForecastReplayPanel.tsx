@@ -61,7 +61,7 @@ export function ForecastReplayPanel({
     const s: Record<string, SourceStyle> = { ...v.styles };
     if (overlay) {
       s[OVERLAY_SOURCE_ID] = {
-        label: overlay.meta.simulated ? "Live forecast (what-if)" : "Live forecast", color: "#f59e0b", dash: [6, 4], hatch: false,
+        label: overlay.meta.simulated ? "Live forecast (what-if)" : "Live forecast", color: "#a3a3a3", dash: [], hatch: false,
       };
     }
     return s;
