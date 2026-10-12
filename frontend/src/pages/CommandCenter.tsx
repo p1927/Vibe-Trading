@@ -25,7 +25,7 @@ const EVENTS_HORIZON_DAYS = 7;
 type DailyBandRow = { days_ahead: number; p10: number; p50: number; p90: number };
 
 /** Fill every day 0..horizonDays by piecewise-linear interpolation between the forecast
- * fan's sparse real per-horizon points (e.g. 1/3/5/10/21 trading days), anchored at `spot`
+ * fan's sparse real per-horizon points (e.g. 1/3/5/10/14/21 trading days), anchored at `spot`
  * for day 0. `IndexEventsForecastChart` only uses a `dailyBand` when it covers every day in
  * its range (see its own `bandByDay` check) — the fan alone (3-5 points inside a 7-day
  * window) wouldn't pass that, so this expansion is what actually makes the real fan usable
@@ -68,7 +68,7 @@ function interpolateFanToDailyBand(
 }
 
 /** Pick the fan point closest to `targetDays` (defaults to this panel's 7-day horizon) — the
- * fan's own horizons (1/3/5/10/21 by default) rarely land exactly on 7, so this is the
+ * fan's own horizons (1/3/5/10/14/21 by default) rarely land exactly on 7, so this is the
  * closest real anchor rather than an interpolated one, kept deliberately simple/honest for a
  * single headline number. */
 function pickHeadlineFanPoint(band: DailyBandRow[] | undefined, targetDays = 7): DailyBandRow | undefined {
