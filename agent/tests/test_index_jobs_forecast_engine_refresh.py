@@ -102,3 +102,120 @@ def test_registering_the_defaults_twice_keeps_exactly_one_refresh_job(tmp_path):
     index_jobs.register_default_index_jobs(store)
     index_jobs.register_default_index_jobs(store)
     assert [j.id for j in store.list_jobs() if j.config.get("job_type") == TYPE] == ["nifty-forecast-engine-refresh"]
+
+
+# --- degraded vs failed, end to end through the real refresh and the real executor (D402) -------------
+
+
+def _hub_helpers():
+    """The Trade test module that seeds a real temp hub (factor store, NIFTY cold tier); one seeding
+    implementation, not a copy. Only the forecaster is stubbed below."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[3] / "tests" / "test_forecast_engine_refresh.py"
+    if not path.is_file():
+        pytest.skip("Trade's tests/test_forecast_engine_refresh.py is not next to this submodule checkout")
+    spec = importlib.util.spec_from_file_location("trade_forecast_engine_refresh_tests", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _real_refresh_on(monkeypatch, tmp_path, *, young: tuple[str, ...], engine=None):
+    """Point the job body's refresh at a hermetic hub where the `young` recipes are too young to evaluate."""
+    from datetime import date
+    from functools import partial
+
+    import trade_integrations.forecast_engine.refresh as refresh_module
+
+    h = _hub_helpers()
+    monkeypatch.setenv("TRADE_STACK_HUB_DIR", str(tmp_path / "hub"))
+    monkeypatch.delenv("TIMESCALE_ENABLED", raising=False)
+    monkeypatch.delenv("TIMESCALE_DATABASE_URL", raising=False)
+    sessions = h._sessions(140, date.today())  # the job asks for lookback_days=90
+    client = h._seed(tmp_path / "hub", sessions=sessions, skip=h._young(young, sessions))
+    real = refresh_module.refresh_all_recipes
+    monkeypatch.setattr(
+        refresh_module, "refresh_all_recipes",
+        partial(real, engine=engine or h._DriftEngine(), checkpoint="test-engine", client=client,
+                lookback_days=30, eval_window_days=40, eval_lookback_days=5),
+    )
+    return h
+
+
+def _run_daily(tmp_path, monkeypatch, *, days: int, max_failures: int = 3):
+    import asyncio
+
+    from src.scheduled_research.executor import ScheduledResearchExecutor
+
+    monkeypatch.setenv("STACK_PROFILE", "release")
+    monkeypatch.setenv("TRADE_STACK_ROOT", str(tmp_path))
+    store = ScheduledResearchJobStore(tmp_path / "jobs.json")
+    store.upsert(_job(dispatch_timeout_ms=600_000))
+    seen: list[tuple[int, str | None]] = []
+
+    async def dispatch(job):
+        index_jobs.dispatch_index_job_sync(job)
+
+    async def scenario():
+        executor = ScheduledResearchExecutor(
+            store, dispatch, max_consecutive_failures=max_failures, retry_base_delay_ms=1, retry_max_delay_ms=1
+        )
+        for day in range(days):
+            await executor.tick(100 + day * 10_000)
+            job = store.get("nifty-forecast-engine-refresh")
+            seen.append((job.consecutive_failures, job.failure_kind))
+
+    asyncio.run(scenario())
+    return store.get("nifty-forecast-engine-refresh"), seen
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("young", [("nifty_derivatives_v1",), ("nifty_derivatives_v1", "nifty_fii_dii_5d_v1")])
+def test_a_recipe_not_yet_evaluable_degrades_every_daily_run_and_never_auto_pauses(tmp_path, monkeypatch, young):
+    """One recipe too young + one ok, and both too young: five simulated daily runs through the real
+    refresh and the real executor. Each is recorded completed (degraded, reason + ETA in the run record),
+    the failure counter never moves, and the job is never auto-paused."""
+    _real_refresh_on(monkeypatch, tmp_path, young=young)
+
+    job, seen = _run_daily(tmp_path, monkeypatch, days=5, max_failures=2)
+
+    assert seen == [(0, None)] * 5
+    assert job.paused is False and job.auto_paused_reason is None and job.consecutive_failures == 0
+    assert job.last_error is None and job.status == JobStatus.COMPLETED
+    summary = job.last_result_summary
+    assert summary["status"] == "degraded" and summary["had_errors"] is False
+    assert set(summary["insufficient_data"]) == set(young)
+    assert all("earliest" in text for text in summary["insufficient_data"].values())
+
+
+@pytest.mark.unit
+def test_a_real_exception_still_fails_each_run_and_auto_pauses_at_the_threshold(tmp_path, monkeypatch):
+    class Boom:
+        def forecast(self, **_kw):
+            raise RuntimeError("model blew up")
+
+    _real_refresh_on(monkeypatch, tmp_path, young=(), engine=Boom())
+
+    job, seen = _run_daily(tmp_path, monkeypatch, days=5, max_failures=3)
+
+    assert [n for n, _ in seen[:3]] == [1, 2, 3] and all(kind == "dispatch" for _, kind in seen[:3])
+    assert job.paused is True and "auto-paused: 3 consecutive" in job.auto_paused_reason
+    assert "model blew up" in job.last_error
+
+
+@pytest.mark.unit
+def test_a_recipe_that_never_matures_fails_the_run_and_counts(tmp_path, monkeypatch):
+    """Variant: insufficient_data past its own promised date is an error (D402), so it fails and counts."""
+    from datetime import date, timedelta
+
+    from trade_integrations.forecast_engine.artifact import PartOutcome, RefreshStatus, write_refresh_status
+
+    _real_refresh_on(monkeypatch, tmp_path, young=("nifty_derivatives_v1",))
+    stale = PartOutcome("insufficient_data", "young", (date.today() - timedelta(days=30)).isoformat())
+    write_refresh_status("NIFTY", RefreshStatus("nifty_derivatives_v1", "2026-01-01T00:00:00+00:00", stale, stale))
+
+    job, seen = _run_daily(tmp_path, monkeypatch, days=1)
+
+    assert seen == [(1, "dispatch")] and "expected evaluable by" in job.last_error
