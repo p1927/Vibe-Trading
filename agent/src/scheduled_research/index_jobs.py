@@ -1631,6 +1631,10 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
                 "ticker": "NIFTY",
                 "run_snapshot_first": True,
                 "refresh_constituents": True,
+                # Weekly job: its snapshot-first stage alone measured 24 min on release (2026-10-13,
+                # 50 per-stock company-research runs), so the 30 min `index_` default starved the
+                # predict/ledger/fan stages behind it 4 runs in 5. Same budget as the daily snapshot.
+                "dispatch_timeout_ms": 3_600_000,
             },
         ),
         ScheduledResearchJob(
@@ -2400,6 +2404,19 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
     for job_id in _RETIRED_JOB_IDS:
         if store.delete(job_id):
             logger.info("removed retired default index research job %s", job_id)
+
+    # Registration only adds: `nifty-index-calibration` persisted before the unified gate existed
+    # keeps running `run_calibration`, which hub-morning-calibration already runs as its
+    # index_calibration step. The two ran concurrently on the same 06:00 cron and ledgers and
+    # starved each other on the single MiniMax lane (release 2026-10-13: hub-morning-calibration
+    # hit 2700 s). Same id+type-matched prune as trade_data_jobs; registration stays the one
+    # source of truth. (`nifty-company-research-archive` is left: hub_freshness still names it as
+    # the writer of corporate_actions/daily.)
+    if skip_unified_duplicates:
+        persisted = store.get("nifty-index-calibration")
+        if persisted is not None and persisted.config.get("job_type") == JOB_TYPE_INDEX_CALIBRATION:
+            store.delete("nifty-index-calibration")
+            logger.info("removed nifty-index-calibration: subsumed by hub-morning-calibration")
 
     for job in defaults:
         existing = store.get(job.id)

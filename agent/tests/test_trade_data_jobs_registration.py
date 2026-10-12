@@ -103,3 +103,38 @@ def test_unified_calibration_removes_the_persisted_subsumed_jobs(monkeypatch, tm
     _set_env(monkeypatch, trade_data="1", calibration="1", unified="1")
     register_default_trade_data_jobs(store)
     assert _ids(store) == NSE_JOB_IDS
+
+
+def test_index_registration_removes_the_persisted_duplicate_calibration_job(monkeypatch, tmp_path):
+    """`nifty-index-calibration` persisted before the unified gate ran run_calibration beside
+    hub-morning-calibration (same 06:00 cron, same ledgers) and starved it to its 2700 s timeout."""
+    from src.scheduled_research import index_jobs
+
+    store = ScheduledResearchJobStore(tmp_path / "jobs.json")
+    _set_env(monkeypatch, trade_data="1", calibration="1", unified="0")
+    index_jobs.register_default_index_jobs(store)
+    assert "nifty-index-calibration" in _ids(store)
+
+    _set_env(monkeypatch, trade_data="1", calibration="1", unified="1")
+    index_jobs.register_default_index_jobs(store)
+    assert "nifty-index-calibration" not in _ids(store)
+    # the weekly research job's snapshot-first stage alone takes ~24 min, so it gets the 60 min budget
+    from src.scheduled_research.staleness import dispatch_timeout_ms_for
+
+    assert dispatch_timeout_ms_for(store.get("nifty-index-research")) == 3_600_000
+
+
+def test_index_registration_keeps_a_same_id_job_of_another_type(monkeypatch, tmp_path):
+    import dataclasses
+
+    from src.scheduled_research import index_jobs
+
+    store = ScheduledResearchJobStore(tmp_path / "jobs.json")
+    _set_env(monkeypatch, trade_data="1", calibration="1", unified="0")
+    index_jobs.register_default_index_jobs(store)
+    job = store.get("nifty-index-calibration")
+    store.upsert(dataclasses.replace(job, config={**job.config, "job_type": "something_else"}))
+
+    _set_env(monkeypatch, trade_data="1", calibration="1", unified="1")
+    index_jobs.register_default_index_jobs(store)
+    assert "nifty-index-calibration" in _ids(store)
