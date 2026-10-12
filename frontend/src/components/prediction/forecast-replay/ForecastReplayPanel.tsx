@@ -126,7 +126,7 @@ export function ForecastReplayPanel({
 
       <DayStepper
         days={days} anchor={anchorDay} onChange={setAnchor}
-        revisions={Math.max(1, ...dayRecords.map((r) => Number(r.meta?.revisions ?? 1)))}
+        revisions={Math.max(1, ...dayRecords.map((r) => r.meta?.revisions ?? 1))}
         buckets={dayRecords.length ? maturityBuckets(dayRecords) : undefined}
         latestMatured={latestMaturedDay(records)}
       />
