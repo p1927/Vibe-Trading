@@ -119,7 +119,16 @@ def test_api_can_cancel_current_goal(tmp_path: Path, monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["goal"]["status"] == "cancelled"
-    assert client.get(f"/sessions/{sid}/goal").status_code == 404
+    after = client.get(f"/sessions/{sid}/goal")
+    assert after.status_code == 200 and after.json() is None
+
+
+def test_api_get_goal_null_without_goal_and_404_for_unknown_session(tmp_path: Path, monkeypatch) -> None:
+    client = _client(tmp_path, monkeypatch)
+    sid = _session_id(client)
+    fresh = client.get(f"/sessions/{sid}/goal")
+    assert fresh.status_code == 200 and fresh.json() is None
+    assert client.get("/sessions/no-such-session/goal").status_code == 404
 
 
 def test_api_can_edit_current_goal_objective(tmp_path: Path, monkeypatch) -> None:

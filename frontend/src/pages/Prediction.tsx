@@ -383,8 +383,8 @@ export function Prediction() {
   const loadHistory = useCallback(async () => {
     setHistoryError(null);
     try {
-      const res = await api.getIndexPredictionHistory("NIFTY", 90, horizonDays, true);
-      setDailyHistory(res.daily ?? res.rows ?? []);
+      const res = await api.getIndexPredictionHistory("NIFTY", 90, horizonDays);
+      setDailyHistory(res.daily ?? []);
       setIntradayHistory(res.intraday ?? []);
       setHistoryMeta(res.meta);
     } catch (e) {

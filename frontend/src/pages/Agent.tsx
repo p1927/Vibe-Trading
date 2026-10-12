@@ -941,12 +941,12 @@ export function Agent({
       return;
     }
     try {
-      const snapshot = await api.getGoal(targetSession);
+      const snapshot = await api.getGoal(targetSession); // null = session has no goal (200)
       if (act().sessionId !== targetSession) return;
       setGoalSnapshot(snapshot);
     } catch (error) {
       if (act().sessionId !== targetSession) return;
-      if (error instanceof ApiError && error.status === 404) {
+      if (error instanceof ApiError && error.status === 404) { // unknown session
         setGoalSnapshot(null);
         setGoalDetailsOpen(false);
         setGoalEditActive(false);
