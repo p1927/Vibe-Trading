@@ -846,6 +846,7 @@ class ForecastReplayPoint(BaseModel):
     error_pct: float | None = None
     in_band: bool | None = None
     direction_hit: bool | None = None
+    projected: bool = False  # target_date is a weekday projection past the last realised close
 
 
 class ForecastReplayRecord(BaseModel):
