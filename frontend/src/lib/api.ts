@@ -5278,6 +5278,7 @@ export interface ForecastReplayRecord {
   /** `spot_suspect`/`spot_close_gap_pct`: recorded spot differs from the issue-day close (set by the server when it can tell). */
   /** `return_implausible`/`return_pct`: the recorded p50 implies a move no real forecast makes (set by the server). */
   /** `revisions`: how many runs (distinct `issued_at`) this source had that issue day, whatever their horizons; the one run-count name. */
+  /** `identical_to`: other SELECTED sources whose forecast coincides with this one (display only; records and stats never depend on the selection). */
   /** `long_horizon_source`: an external_consensus entry written before the track checked its sources' horizons (a year-out target graded as a short horizon). */
   meta: {
     spot_suspect?: boolean;
@@ -5285,6 +5286,7 @@ export interface ForecastReplayRecord {
     return_implausible?: boolean;
     return_pct?: number;
     revisions?: number;
+    identical_to?: string[];
     long_horizon_source?: boolean;
   } & Record<string, unknown>;
 }

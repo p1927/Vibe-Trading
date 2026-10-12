@@ -1,5 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 import { returnImplausibleSummary, spotSuspectSummary } from "@/lib/forecastReplay/horizon";
+import type { SourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { ReplayRecord } from "@/lib/forecastReplay/types";
 
 /** Warning when the recorded spot of a forecast differs from the issue-day close (`meta.spot_suspect`). */
@@ -47,5 +48,16 @@ export function RecordBadges({ records }: { records: ReplayRecord[] }) {
       <SpotSuspectBadge records={records} />
       <ReturnImplausibleBadge records={records} />
     </>
+  );
+}
+
+/** Note when another SELECTED source made the identical forecast (`meta.identical_to`, display only: both sources keep their records and stats). */
+export function SameForecastNote({ record, styles }: { record: ReplayRecord; styles: Record<string, SourceStyle> }) {
+  const ids = Array.isArray(record.meta?.identical_to) ? (record.meta.identical_to as string[]) : [];
+  if (!ids.length) return null;
+  return (
+    <span data-testid="same-forecast-note" className="ml-1.5 text-[9px] text-muted-foreground">
+      same forecast as {ids.map((id) => styles[id]?.label ?? id).join(", ")}
+    </span>
   );
 }

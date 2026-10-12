@@ -149,9 +149,9 @@ describe("pure helpers", () => {
     expect(externalReplayFor(null, "a", "HTTP 422", false).note).toBe("Forecast replay failed: HTTP 422");
     expect(externalReplayFor(null, "a", null, true)).toMatchObject({ records: [], note: null, loading: true });
     expect(externalSourceId("a")).toBe("external:a");
-    // two sources with the identical forecast: the server keeps one record and names the other in deduped_with
-    const dup = { ...bundle, records: [{ ...rec("external:a", "2026-10-02", 14), meta: { deduped_with: ["external:d"] } }] };
-    expect(externalReplayFor(dup, "d", null, false)).toMatchObject({ note: null, records: [{ source_id: "external:a" }] });
-    expect(externalReplayFor(dup, "b", null, false).records).toEqual([]);
+    // two sources with the identical forecast each keep their own records (QA5: nothing is dropped)
+    const twin = { ...bundle, records: [rec("external:a", "2026-10-02", 14), rec("external:d", "2026-10-02", 14)] };
+    expect(externalReplayFor(twin, "d", null, false)).toMatchObject({ note: null, records: [{ source_id: "external:d" }] });
+    expect(externalReplayFor(twin, "a", null, false).records).toHaveLength(1);
   });
 });

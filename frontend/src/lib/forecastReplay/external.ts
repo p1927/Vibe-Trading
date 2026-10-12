@@ -31,14 +31,13 @@ export function externalWindow(cards: Pick<ExternalPredictionRecord, "as_of" | "
 }
 
 /**
- * One card's slice of the shared bundle (`error` = the whole request failed). A forecast identical to another
- * source's is kept once by the server (`meta.deduped_with` on the kept record); the dropped source's card draws that one.
+ * One card's slice of the shared bundle (`error` = the whole request failed): the source's own records, whatever
+ * else was selected (a forecast identical to another source's is only annotated, never dropped).
  */
 export function externalReplayFor(bundle: ReplayBundle | null, sourceId: string, error: string | null, loading: boolean): ExternalReplay {
   const id = externalSourceId(sourceId);
   const all = bundle?.records ?? [];
-  const own = all.filter((r) => r.source_id === id);
-  const records = own.length ? own : all.filter((r) => (r.meta.deduped_with as string[] | undefined)?.includes(id));
+  const records = all.filter((r) => r.source_id === id);
   const info = bundle?.sources.find((s) => s.source_id === id);
   let note: string | null = null;
   if (!records.length) {

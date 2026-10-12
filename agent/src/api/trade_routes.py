@@ -5148,18 +5148,18 @@ def get_index_prediction_forecast_replay(
     if bad := [p for p in prov if p not in _FORECAST_REPLAY_PROVENANCE]:
         raise HTTPException(status_code=422, detail=f"unknown provenance {bad}; valid: {list(_FORECAST_REPLAY_PROVENANCE)}")
     try:
-        from trade_integrations.dataflows.prediction_ledger_bridge import build_forecast_replay
+        from trade_integrations.dataflows.prediction_ledger_bridge import build_forecast_replay, forecast_replay_error_text
 
         bundle = build_forecast_replay(
             key, source_ids or None, start_d.isoformat(), end_d.isoformat(), horizon, prov, revisions
         )
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=forecast_replay_error_text(exc)) from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail=forecast_replay_error_text(exc)) from exc
     except Exception as exc:
         logger.exception("forecast replay failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=forecast_replay_error_text(exc)) from exc
     return ForecastReplayResponse(status="ok", ticker=key, **bundle)
 
 

@@ -3,7 +3,7 @@ import type { ReplayRecord } from "@/lib/forecastReplay/types";
 import { forecastReturnPct, keyPoint } from "@/lib/forecastReplay/view";
 import { fmtNiftyLevel } from "@/lib/factorHistoryUtils";
 import { fmtPct } from "@/lib/trackScoreboardUtils";
-import { RecordBadges } from "./RecordBadges";
+import { RecordBadges, SameForecastNote } from "./RecordBadges";
 
 interface Props {
   records: ReplayRecord[];
@@ -40,6 +40,7 @@ export function DayDetail({ records, horizon, styles }: Props) {
                   {styles[r.source_id]?.label ?? r.source_id}
                   {r.approximate_path ? <span className="ml-1 text-muted-foreground">approx.</span> : null}
                   <RecordBadges records={[r]} />
+                  <SameForecastNote record={r} styles={styles} />
                 </td>
                 <td className="px-2 py-1 text-right tabular-nums">{fmtNiftyLevel(r.spot_at_issue)}</td>
                 <td className="px-2 py-1 text-right tabular-nums">

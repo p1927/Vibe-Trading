@@ -6,6 +6,7 @@ import { sourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { ReplayPoint, ReplayRecord } from "@/lib/forecastReplay/types";
 import { SourceComparisonTable } from "../SourceComparisonTable";
 import { RecordBadges, SpotSuspectBadge } from "../RecordBadges";
+import { DayDetail } from "../DayDetail";
 
 const pt = (h: number, target: string, p50: number, o: Partial<ReplayPoint> = {}): ReplayPoint => ({
   horizon_days: h, target_date: target, p50_level: p50, p10_level: null, p90_level: null, matured: false,
@@ -150,5 +151,20 @@ describe("table states", () => {
   it("badge renders nothing for unflagged records", () => {
     const { container } = render(<SpotSuspectBadge records={[fan]} />);
     expect(container.textContent).toBe("");
+  });
+});
+
+describe("same-forecast note in the day table", () => {
+  const styles = Object.fromEntries(["a", "b", "c"].map((i) => [i, sourceStyle(i, "live")]));
+  const p = [pt(14, "2026-10-20", 101)];
+  it("names the other selected source whose forecast coincides, and only then", () => {
+    const rows = [record("a", p, { identical_to: ["b"] }), record("b", p, { identical_to: ["a"] }), record("c", [pt(14, "2026-10-20", 99)])];
+    render(<DayDetail records={rows} horizon={14} styles={styles} />);
+    const notes = screen.getAllByTestId("same-forecast-note").map((n) => n.textContent);
+    expect(notes).toEqual([`same forecast as ${styles.b.label}`, `same forecast as ${styles.a.label}`]);
+  });
+  it("shows nothing for an empty or absent identical_to", () => {
+    render(<DayDetail records={[record("a", p, { identical_to: [] }), record("b", p)]} horizon={14} styles={styles} />);
+    expect(screen.queryByTestId("same-forecast-note")).toBeNull();
   });
 });
