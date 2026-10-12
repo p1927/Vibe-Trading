@@ -5274,7 +5274,8 @@ export interface ForecastReplayRecord {
   spot_at_issue: number;
   points: ForecastReplayPoint[];
   approximate_path: boolean;
-  meta: Record<string, unknown>;
+  /** `spot_suspect`/`spot_close_gap_pct`: recorded spot differs from the issue-day close (set by the server when it can tell). */
+  meta: { spot_suspect?: boolean; spot_close_gap_pct?: number } & Record<string, unknown>;
 }
 
 export interface ForecastReplaySource {

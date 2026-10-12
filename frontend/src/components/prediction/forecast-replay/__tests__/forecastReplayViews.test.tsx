@@ -80,6 +80,8 @@ describe("SourceComparisonTable", () => {
         ids={["a", "b"]}
         styles={styles(["a", "b"])}
         stats={{ a: { track_id: "a", eval_count: 8, mae_pct: 3.9638, bias_pct: -3.9, direction_hit_rate: 0.375, in_band_rate: null } }}
+        records={[rec("a", "2026-10-01", 14), rec("b", "2026-10-01", 14)]}
+        horizon={14}
       />,
     );
     const rows = screen.getAllByRole("row");

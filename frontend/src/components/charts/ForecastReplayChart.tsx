@@ -13,6 +13,8 @@ import { LightweightChartZoomBar } from "@/components/charts/LightweightChartZoo
 import { getChartTheme } from "@/lib/chart-theme";
 import { createLightweightChart } from "@/lib/lightweightChartOptions";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { ForecastGapPrimitive } from "@/components/charts/forecastGapPrimitive";
+import { GAP_ALPHA, maturedUntil, shadedRecords } from "@/lib/forecastReplay/gap";
 import { band, recordPath } from "@/lib/forecastReplay/paths";
 import type { SourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { ReplayActual, ReplayRecord } from "@/lib/forecastReplay/types";
@@ -85,6 +87,7 @@ export function ForecastReplayChart({
   const baseRef = useRef<ISeriesApi<"Line"> | null>(null);
   const actualPathRef = useRef<ISeriesApi<"Line"> | null>(null);
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const gapRef = useRef<ForecastGapPrimitive | null>(null);
   const dynamicRef = useRef<ISeriesApi<"Line">[]>([]);
   const clickRef = useRef(onAnchorChange);
   clickRef.current = onAnchorChange;
@@ -111,6 +114,8 @@ export function ForecastReplayChart({
       chart.applyOptions({ width });
       baseRef.current = chart.addSeries(LineSeries, { color: t.infoColor, lineWidth: 2, title: "Nifty", lastValueVisible: true, priceLineVisible: false });
       markersRef.current = createSeriesMarkers(baseRef.current, []);
+      gapRef.current = new ForecastGapPrimitive();
+      baseRef.current.attachPrimitive(gapRef.current);
       actualPathRef.current = chart.addSeries(LineSeries, { color: t.upColor, lineWidth: 2, title: "Actual path", lastValueVisible: true, priceLineVisible: false });
       chart.subscribeClick((param) => {
         const day = param.time ? timeToIsoDay(param.time) : null;
@@ -214,6 +219,12 @@ export function ForecastReplayChart({
         }
       }
     }
+    gapRef.current?.setSpec({
+      items: shadedRecords(drawn, anchorDay).map((record) => ({
+        record, alpha: GAP_ALPHA[record.provenance] * (record.issue_day === anchorDay ? 1 : 0.5),
+      })),
+      actuals, above: t.upColor, below: t.downColor,
+    });
     focusWindow(chart, actuals, anchorDay, horizon, pathLen);
   }, [actuals, records, drawn, anchorDay, horizon, sourceStyles, epoch]);
 
@@ -246,6 +257,13 @@ export function ForecastReplayChart({
           </span>
         ))}
         {legend.some(([, l]) => l.approx) ? <span>approx. = straight line to the target, not a recorded path</span> : null}
+        {shadedRecords(drawn, anchorDay).some((r) => maturedUntil(r)) ? (
+          <span className="inline-flex items-center gap-1" data-testid="gap-legend">
+            <span className="inline-block h-2 w-2 rounded-sm" style={{ background: getChartTheme().upColor, opacity: 0.45 }} />
+            <span className="inline-block h-2 w-2 rounded-sm" style={{ background: getChartTheme().downColor, opacity: 0.45 }} />
+            shaded = gap forecast vs actual, matured days only (green: actual above forecast, red: below)
+          </span>
+        ) : null}
         {legend.length ? <span>band = p10/p90 · dots at target dates show the realised error</span> : null}
       </div>
       {!drawn.length ? (

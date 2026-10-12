@@ -77,13 +77,15 @@ export function useReplayView(o: ReplayViewOptions) {
     for (const s of allSources) m[s.source_id] = sourceStyle(s.source_id, s.provenance, s.label);
     return m;
   }, [allSources]);
-  const records: ReplayRecord[] = useMemo(
-    () => forHorizon((bundle?.records ?? []).filter((r) => shown.includes(r.source_id)), o.horizon),
-    [bundle, shown, o.horizon],
+  /** Every loaded record of the shown sources, whatever horizons it carries (the horizon picker's source). */
+  const loaded: ReplayRecord[] = useMemo(
+    () => (bundle?.records ?? []).filter((r) => shown.includes(r.source_id)),
+    [bundle, shown],
   );
+  const records: ReplayRecord[] = useMemo(() => forHorizon(loaded, o.horizon), [loaded, o.horizon]);
 
   return {
     bundle, loading, error, refetch, allSources, selected: shown, provenance, windowDays, setWindowDays,
-    toggleSource, toggleProvenance, styles, records, end,
+    toggleSource, toggleProvenance, styles, records, loaded, end,
   };
 }
