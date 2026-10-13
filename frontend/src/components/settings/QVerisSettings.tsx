@@ -2,35 +2,9 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import { ExternalLink, KeyRound, Loader2, Save, SearchCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { authHeaders } from "@/lib/apiAuth";
+import { api, type QVerisConfig, type QVerisStatus } from "@/lib/api";
 
-type QVerisMode = "free" | "paid";
-
-interface QVerisConfig {
-  enabled: boolean;
-  base_url: string;
-  api_key_masked: string;
-  mode: QVerisMode;
-  budget_credits_per_session: number;
-  configured: boolean;
-  signup_url: string;
-  invite_code: string;
-}
-
-interface QVerisStatus {
-  enabled: boolean;
-  ok: boolean;
-  error: string | null;
-  remaining_credits: number | null;
-  recent: Array<{
-    ts: string;
-    tool_id: string;
-    cost: number;
-    charge_outcome: string;
-  }>;
-  signup_url: string;
-  invite_code: string;
-}
+type QVerisMode = QVerisConfig["mode"];
 
 interface QVerisForm {
   enabled: boolean;
@@ -45,27 +19,6 @@ const fieldClass =
   "w-full rounded-md border bg-background px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60";
 const labelClass = "text-sm font-medium";
 const hintClass = "text-xs text-muted-foreground";
-
-async function requestJson<T>(path: string, options?: RequestInit): Promise<T> {
-  const { headers, ...rest } = options ?? {};
-  const mergedHeaders: Record<string, string> = { "Content-Type": "application/json", ...authHeaders() };
-  if (headers) {
-    new Headers(headers).forEach((value, key) => {
-      mergedHeaders[key] = value;
-    });
-  }
-
-  const response = await fetch(path, { ...rest, headers: mergedHeaders });
-  if (!response.ok) {
-    let message = `HTTP ${response.status}`;
-    try {
-      const body = await response.json();
-      message = body.detail || body.message || message;
-    } catch { /* ignore */ }
-    throw new Error(message);
-  }
-  return response.json() as Promise<T>;
-}
 
 function formFromConfig(config: QVerisConfig): QVerisForm {
   return {
@@ -98,8 +51,8 @@ export function QVerisSettings() {
     setError(null);
     try {
       const [nextConfig, nextStatus] = await Promise.all([
-        requestJson<QVerisConfig>("/qveris/config"),
-        requestJson<QVerisStatus>("/qveris/status"),
+        api.getQverisConfig(),
+        api.getQverisStatus(),
       ]);
       setConfig(nextConfig);
       setForm(formFromConfig(nextConfig));
@@ -117,8 +70,8 @@ export function QVerisSettings() {
     setError(null);
 
     Promise.all([
-      requestJson<QVerisConfig>("/qveris/config"),
-      requestJson<QVerisStatus>("/qveris/status"),
+      api.getQverisConfig(),
+      api.getQverisStatus(),
     ])
       .then(([nextConfig, nextStatus]) => {
         if (!alive) return;
@@ -159,10 +112,7 @@ export function QVerisSettings() {
       const trimmedApiKey = form.api_key.trim();
       if (trimmedApiKey && !window.vibeDesktop) payload.api_key = trimmedApiKey;
 
-      const nextConfig = await requestJson<QVerisConfig>("/qveris/config", {
-        method: "PUT",
-        body: JSON.stringify(payload),
-      });
+      const nextConfig = await api.putQverisConfig(payload);
       if (trimmedApiKey && window.vibeDesktop) {
         await window.vibeDesktop.setCredential("QVERIS_API_KEY", trimmedApiKey);
       }

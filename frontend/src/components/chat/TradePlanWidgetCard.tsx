@@ -137,6 +137,8 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [executed, setExecuted] = useState(false);
   const [execMode, setExecMode] = useState<TradeExecutionMode | null>(null);
+  // A failed mode read must not look like "Live": the card cannot tell paper from live, so it says so and blocks Execute.
+  const [execModeError, setExecModeError] = useState<string | null>(null);
   const [legs, setLegs] = useState<StrategyLeg[]>([]);
   const [draggedCharges, setDraggedCharges] = useState<TradePlanWidget["charges"] | null>(null);
   const [chargesLoading, setChargesLoading] = useState(false);
@@ -146,7 +148,13 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
 
   useEffect(() => {
     const loadMode = () => {
-      api.getTradeExecutionMode().then(setExecMode).catch(() => null);
+      api
+        .getTradeExecutionMode()
+        .then((mode) => {
+          setExecMode(mode);
+          setExecModeError(null);
+        })
+        .catch((err: unknown) => setExecModeError(err instanceof Error ? err.message : "request failed"));
     };
     loadMode();
     window.addEventListener("focus", loadMode);
@@ -583,7 +591,8 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
     (caps && caps.execution === false) ||
     isHoldCash ||
     executeOrders.length === 0 ||
-    (!isPaper && liveBlocked);
+    (!isPaper && liveBlocked) ||
+    (execMode === null && execModeError !== null);
   const executeDisabled = executing || executed || hideExecute;
   const openAlgoUrl = execMode?.switch_url || "";
 
@@ -1008,6 +1017,12 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
               .map((s) => `${s.name} (${s.tier})`)
               .join(" · ")}
           </div>
+        )}
+
+        {execMode === null && execModeError && (
+          <p role="alert" className="text-[10px] text-red-600">
+            Execution mode unknown ({execModeError}) - cannot tell paper from live, so Execute is disabled until it loads.
+          </p>
         )}
 
         {execMode && (

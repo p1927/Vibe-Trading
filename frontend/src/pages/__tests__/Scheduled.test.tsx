@@ -28,6 +28,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getScheduledRunPreview: vi.fn(),
       listSchedulerRegistry: vi.fn(),
       getSchedulerStatus: vi.fn(),
+      resumeScheduler: vi.fn(),
       pauseSchedulerRegistryEntry: vi.fn(),
       resumeSchedulerRegistryEntry: vi.fn(),
       triggerSchedulerRegistryEntry: vi.fn(),
@@ -51,6 +52,7 @@ const mocked = api as unknown as {
   getScheduledRunPreview: ReturnType<typeof vi.fn>;
   listSchedulerRegistry: ReturnType<typeof vi.fn>;
   getSchedulerStatus: ReturnType<typeof vi.fn>;
+  resumeScheduler: ReturnType<typeof vi.fn>;
   pauseSchedulerRegistryEntry: ReturnType<typeof vi.fn>;
   resumeSchedulerRegistryEntry: ReturnType<typeof vi.fn>;
   triggerSchedulerRegistryEntry: ReturnType<typeof vi.fn>;
@@ -966,6 +968,33 @@ describe("Scheduled page loud states", () => {
     mocked.getSchedulerStatus.mockResolvedValue({ enabled: true, running: false });
     renderScheduled();
     expect(await screen.findByTestId("executor-banner")).toHaveTextContent(/paused/i);
+  });
+
+  it("resumes the paused executor from the banner after a confirmation, then re-reads its status", async () => {
+    mocked.getSchedulerStatus
+      .mockResolvedValueOnce({ enabled: true, running: false })
+      .mockResolvedValue({ enabled: true, running: true });
+    mocked.resumeScheduler.mockResolvedValue({ status: "ok", running: true });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderScheduled();
+    fireEvent.click(await screen.findByTestId("executor-resume"));
+    await waitFor(() => expect(mocked.resumeScheduler).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByTestId("executor-banner")).toBeNull());
+  });
+
+  it("does not resume the executor when the confirmation is declined", async () => {
+    mocked.getSchedulerStatus.mockResolvedValue({ enabled: true, running: false });
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderScheduled();
+    fireEvent.click(await screen.findByTestId("executor-resume"));
+    expect(mocked.resumeScheduler).not.toHaveBeenCalled();
+  });
+
+  it("has no resume button when the scheduler is disabled on the server", async () => {
+    mocked.getSchedulerStatus.mockResolvedValue({ enabled: false, running: false });
+    renderScheduled();
+    await screen.findByTestId("executor-banner");
+    expect(screen.queryByTestId("executor-resume")).toBeNull();
   });
 
   it("says so when the scheduler is disabled on the server", async () => {
