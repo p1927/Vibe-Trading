@@ -1,5 +1,10 @@
 """Shared plumbing for the file-backed detached-worker job stores.
 
+The record lifecycle (state machine, reconcile, prune, start/reuse) lives one level up in
+:class:`src.trade.job_store.JobStore` (external_predictions, forecast_engine, index_prediction;
+recording_jobs still carries its own copy, see the backlog item 2026-10-13-vibe-job-stores-unify).
+This module is only the stateless disk/lock/spawn layer under it.
+
 ``index_prediction_run_jobs.py``, ``external_predictions_run_jobs.py``, and
 ``recording_jobs.py`` each independently implement: a ``job.json`` atomic
 read/write (some under an ``fcntl`` cross-process lock, some not), a
@@ -52,6 +57,10 @@ from src.trade import detached_worker
 
 JOB_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 
+# On-disk job.json schema version, written by every store through write_job_json_unsafe. Additive only:
+# readers ignore unknown keys and treat a missing key as version 1 (files written before it existed).
+JOB_SCHEMA_VERSION = 1
+
 
 def job_id_valid(job_id: str | None) -> bool:
     return bool(job_id and JOB_ID_RE.fullmatch(job_id))
@@ -88,7 +97,8 @@ def write_job_json_unsafe(path: Path, payload: dict[str, Any]) -> None:
     know no concurrent writer exists) — this performs no locking itself."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
+    body = {"schema_version": JOB_SCHEMA_VERSION, **payload}
+    tmp.write_text(json.dumps(body, ensure_ascii=False, default=str), encoding="utf-8")
     tmp.replace(path)
 
 

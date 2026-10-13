@@ -2904,20 +2904,6 @@ def get_index_prediction_news_impact(
                     macro[str(row["factor"])] = float(row["value"])
 
         if refresh:
-            from trade_integrations.dataflows.hub_wiki.probe import check_ingest_allowed
-
-            gate = check_ingest_allowed()
-            if gate.get("blocked"):
-                report = news_hub_bridge.resolve_news_impact(
-                    ticker=key, doc=doc, limit=12, horizon_days=horizon_days, market=market_for_ticker(key)
-                )
-                report = dict(report or {})
-                report["ingest_blocked"] = True
-                report["pipeline_paused"] = True
-                report["pause_reason"] = str(gate.get("reason") or "llm_wiki_unavailable")
-                report["user_message"] = str(gate.get("user_message") or "")
-                status = "paused"
-                return IndexNewsImpactResponse(status=status, ticker=key, report=report)
             report = news_hub_bridge.refresh_news_impact(
                 ticker=key,
                 horizon_days=horizon_days,

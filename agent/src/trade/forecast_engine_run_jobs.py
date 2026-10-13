@@ -2,34 +2,25 @@
 over a user-chosen date range — see `trade_integrations.forecast_engine.artifact`'s
 "Named historical runs" section, distinct from the single always-overwritten "latest" evaluation).
 
-Mirrors `external_predictions_run_jobs.py`'s shape closely: jobs persist under
-``log/forecast_engine_run_jobs/{job_id}/job.json`` so SSE polling survives API hot-reload,
-workers run in a detached subprocess, and active-job dedup uses a composite scope key — here
-``(ticker, recipe)`` — so two different recipes can run concurrently but the same recipe can't
-be double-started. No creation lock is needed (unlike recording_jobs.py): this isn't a
-singleton-resource case, just a per-scope one, same as external predictions.
+Jobs persist under ``log/forecast_engine_run_jobs/{job_id}/job.json`` so SSE polling survives API
+hot-reload and workers run in a detached subprocess. The lifecycle is the shared
+:class:`src.trade.job_store.JobStore`; this module keeps the composite ``(ticker, recipe)`` scope key
+(two recipes run concurrently, the same recipe can't be double-started), its serialize/snapshot shape
+and the worker body.
 """
 
 from __future__ import annotations
 
 import logging
-import threading
-import time
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from src.trade import detached_worker, job_runner
+from src.trade import job_runner
+from src.trade.job_store import JobStore, now_iso as _now_iso, worker_alive
 
 logger = logging.getLogger(__name__)
 
-FORECAST_ENGINE_RUN_JOBS: dict[str, dict[str, Any]] = {}
-_ACTIVE_BY_SCOPE: dict[str, str] = {}
-_JOBS_LOCK = threading.RLock()  # re-entrant: start_job calls fail_job (which takes it) while holding it
-
-_JOB_TTL_SECONDS = 60 * 60
-_ACTIVE_STATUSES = frozenset({"queued", "running"})
 # TimesFM evaluation runs are real, multi-minute model inference (one call per cutoff) — give
 # this a generous budget rather than reusing index-prediction's/external-predictions' numbers,
 # which cover very different workloads.
@@ -37,117 +28,13 @@ _WALL_CLOCK_SECONDS = 30 * 60
 _QUEUED_NO_PID_SECONDS = 60
 
 
-def _is_pid_alive(pid: int | None) -> bool:
-    return detached_worker.is_alive(pid)
-
-
-def worker_alive(job: dict[str, Any] | None) -> bool:
-    if job is None:
-        return False
-    status = str(job.get("status") or "")
-    pid = job.get("worker_pid")
-    if status == "queued" and pid is None:
-        return True
-    if pid is None:
-        return status not in _ACTIVE_STATUSES
-    return _is_pid_alive(int(pid))
-
-
-def reconcile_zombie_job(job_id: str) -> bool:
-    job = _get_job_record(job_id)
-    if job is None or job.get("status") not in _ACTIVE_STATUSES:
-        return False
-    if worker_alive(job):
-        return False
-    pid = job.get("worker_pid")
-    reason = detached_worker.describe_exit(pid) if pid is not None else None
-    fail_job(job_id, reason or "worker process exited unexpectedly")
-    return True
-
-
-def _parse_iso_timestamp(ts: str | None) -> float | None:
-    if not ts:
-        return None
-    try:
-        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return None
-
-
-def _job_age_seconds(job: dict[str, Any]) -> float:
-    created = _parse_iso_timestamp(str(job.get("created_at") or ""))
-    if created is None:
-        return 0.0
-    return max(0.0, datetime.now(timezone.utc).timestamp() - created)
-
-
-def reconcile_queued_job(job_id: str) -> bool:
-    """Fail queued jobs whose worker never received a PID."""
-    job = _get_job_record(job_id)
-    if job is None or job.get("status") != "queued":
-        return False
-    if job.get("worker_pid") is not None:
-        return False
-    if _job_age_seconds(job) <= _QUEUED_NO_PID_SECONDS:
-        return False
-    fail_job(job_id, f"worker never spawned after {_QUEUED_NO_PID_SECONDS}s", terminate_worker=True)
-    return True
-
-
-def reconcile_stale_job(job_id: str) -> bool:
-    """Fail running jobs that exceed wall-clock budget."""
-    job = _get_job_record(job_id)
-    if job is None or job.get("status") != "running":
-        return False
-    if not worker_alive(job):
-        return False
-    wall_age = _job_age_seconds(job)
-    if wall_age > _WALL_CLOCK_SECONDS:
-        fail_job(
-            job_id,
-            f"run exceeded wall-clock budget ({int(wall_age)}s > {_WALL_CLOCK_SECONDS}s)",
-            terminate_worker=True,
-        )
-        return True
-    return False
-
-
-def reconcile_job(job_id: str) -> bool:
-    """Run all reconciliation checks. Returns True if job was terminalized."""
-    if reconcile_zombie_job(job_id):
-        return True
-    if reconcile_queued_job(job_id):
-        return True
-    if reconcile_stale_job(job_id):
-        return True
-    return False
-
-
-def reconcile_all_active_jobs() -> int:
-    """Run reconciliation over every job currently marked active — a crashed worker for a job
-    nobody is polling would otherwise sit reporting "running" forever. Returns the number of
-    jobs terminalized."""
-    with _JOBS_LOCK:
-        job_ids = [
-            job_id
-            for job_id, job in FORECAST_ENGINE_RUN_JOBS.items()
-            if job.get("status") in _ACTIVE_STATUSES
-        ]
-    return sum(1 for job_id in job_ids if reconcile_job(job_id))
-
-
-def _terminate_worker(job: dict[str, Any] | None) -> None:
-    if job is None:
-        return
-    job_runner.terminate_worker(job.get("worker_pid"))
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _scope_key(ticker: str, recipe: str) -> str:
     return f"{(ticker or 'NIFTY').strip().upper()}:{(recipe or '').strip()}"
+
+
+def _scope_for(job: dict[str, Any]) -> str:
+    extra = job.get("extra") or {}
+    return _scope_key(str(extra.get("ticker") or "NIFTY"), str(extra.get("recipe") or ""))
 
 
 def _jobs_root() -> Path:
@@ -157,18 +44,6 @@ def _jobs_root() -> Path:
     if root is None:
         root = Path.cwd()
     return root / "log" / "forecast_engine_run_jobs"
-
-
-def _job_dir(job_id: str) -> Path:
-    return _jobs_root() / job_id
-
-
-def _job_file(job_id: str) -> Path:
-    return _job_dir(job_id) / "job.json"
-
-
-def _job_lock_file(job_id: str) -> Path:
-    return _job_dir(job_id) / ".job.lock"
 
 
 def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -185,142 +60,37 @@ def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _write_job_to_disk_unsafe(job: dict[str, Any]) -> None:
-    job_id = str(job.get("job_id") or "")
-    if not job_id_valid(job_id):
-        return
-    job_runner.write_job_json_unsafe(_job_file(job_id), _serialize_job(job))
+FORECAST_ENGINE_RUN_JOBS: dict[str, dict[str, Any]] = {}
+_ACTIVE_BY_SCOPE: dict[str, str] = {}
 
+# Module-level lookups (not captured values) so tests can monkeypatch ``_jobs_root`` /
+# ``_WALL_CLOCK_SECONDS`` / ``_QUEUED_NO_PID_SECONDS`` after import.
+_STORE = JobStore(
+    jobs_ref=lambda: FORECAST_ENGINE_RUN_JOBS,
+    active_ref=lambda: _ACTIVE_BY_SCOPE,
+    jobs_root=lambda: _jobs_root(),
+    serialize=_serialize_job,
+    scope_for=_scope_for,
+    wall_clock_seconds=lambda job: _WALL_CLOCK_SECONDS,
+    queued_no_pid_seconds=lambda: _QUEUED_NO_PID_SECONDS,
+    result_key="result",
+    normalize=lambda payload: payload.setdefault("extra", {}),
+)
 
-def _read_job_from_disk_unsafe(job_id: str) -> dict[str, Any] | None:
-    payload = job_runner.read_job_json_unsafe(_job_file(job_id))
-    if payload is None or not job_id_valid(str(payload.get("job_id") or job_id)):
-        return None
-    payload.setdefault("job_id", job_id)
-    payload.setdefault("logs", [])
-    payload.setdefault("extra", {})
-    return payload
-
-
-def _write_job_to_disk(job: dict[str, Any]) -> None:
-    job_id = str(job.get("job_id") or "")
-    with job_runner.job_file_lock(_job_lock_file(job_id), valid=job_id_valid(job_id), exclusive=True):
-        _write_job_to_disk_unsafe(job)
-
-
-def _read_job_from_disk(job_id: str) -> dict[str, Any] | None:
-    with job_runner.job_file_lock(_job_lock_file(job_id), valid=job_id_valid(job_id), exclusive=False):
-        return _read_job_from_disk_unsafe(job_id)
-
-
-def _mutate_job(job_id: str, mutator) -> dict[str, Any] | None:
-    """Apply an in-memory job mutation under a cross-process file lock (API vs worker
-    subprocess), then persist atomically — see external_predictions_run_jobs.py's own
-    ``_mutate_job`` docstring for why this needs the lock unlike the ``_mutate_job_on_disk``
-    variant the other two systems use."""
-    with job_runner.job_file_lock(_job_lock_file(job_id), valid=job_id_valid(job_id), exclusive=True):
-        with _JOBS_LOCK:
-            job = FORECAST_ENGINE_RUN_JOBS.get(job_id)
-        if job is None:
-            job = _read_job_from_disk_unsafe(job_id)
-            if job is None:
-                return None
-        mutator(job)
-        _write_job_to_disk_unsafe(job)
-        with _JOBS_LOCK:
-            FORECAST_ENGINE_RUN_JOBS[job_id] = job
-        return job
-
-
-def _merge_job_from_disk(job_id: str, memory: dict[str, Any] | None) -> dict[str, Any] | None:
-    disk = _read_job_from_disk(job_id)
-    if disk is None:
-        return memory
-    if memory is None:
-        return disk
-    mem_logs = len(memory.get("logs") or [])
-    disk_logs = len(disk.get("logs") or [])
-    mem_status = str(memory.get("status") or "")
-    disk_status = str(disk.get("status") or "")
-    if disk_logs > mem_logs or disk_status != mem_status:
-        merged = dict(disk)
-        merged.setdefault("job_id", job_id)
-        return merged
-    if disk.get("result") is not None and memory.get("result") is None:
-        merged = dict(memory)
-        merged.update(
-            {
-                "status": disk_status or mem_status,
-                "result": disk.get("result"),
-                "error": disk.get("error"),
-                "worker_pid": disk.get("worker_pid", memory.get("worker_pid")),
-                "_finished_at": disk.get("_finished_at", memory.get("_finished_at")),
-            }
-        )
-        if disk_logs >= mem_logs:
-            merged["logs"] = list(disk.get("logs") or [])
-        return merged
-    return memory
-
-
-def _scope_for(job: dict[str, Any]) -> str:
-    extra = job.get("extra") or {}
-    return _scope_key(str(extra.get("ticker") or "NIFTY"), str(extra.get("recipe") or ""))
-
-
-def _get_job_record(job_id: str) -> dict[str, Any] | None:
-    with _JOBS_LOCK:
-        memory = FORECAST_ENGINE_RUN_JOBS.get(job_id)
-    merged = _merge_job_from_disk(job_id, memory)
-    if merged is not None:
-        with _JOBS_LOCK:
-            FORECAST_ENGINE_RUN_JOBS[job_id] = merged
-            scope = _scope_for(merged)
-            if merged.get("status") in _ACTIVE_STATUSES:
-                _ACTIVE_BY_SCOPE[scope] = job_id
-            elif _ACTIVE_BY_SCOPE.get(scope) == job_id:
-                _ACTIVE_BY_SCOPE.pop(scope, None)
-    return merged
-
-
-def hydrate_jobs_from_disk() -> None:
-    root = _jobs_root()
-    if not root.is_dir():
-        return
-    for path in root.iterdir():
-        if not path.is_dir():
-            continue
-        job_id = path.name
-        if not job_id_valid(job_id):
-            continue
-        job = _read_job_from_disk(job_id)
-        if job is None:
-            continue
-        with _JOBS_LOCK:
-            FORECAST_ENGINE_RUN_JOBS[job_id] = job
-            scope = _scope_for(job)
-            if job.get("status") in _ACTIVE_STATUSES:
-                _ACTIVE_BY_SCOPE[scope] = job_id
-
-
-def _prune_old_jobs() -> None:
-    cutoff = time.time() - _JOB_TTL_SECONDS
-    with _JOBS_LOCK:
-        stale: list[str] = []
-        for job_id, job in FORECAST_ENGINE_RUN_JOBS.items():
-            if job.get("status") in ("done", "error") and job.get("_finished_at", 0) < cutoff:
-                stale.append(job_id)
-        for job_id in stale:
-            job = FORECAST_ENGINE_RUN_JOBS.pop(job_id, None)
-            if job:
-                detached_worker.forget(job.get("worker_pid"))
-                scope = _scope_for(job)
-                if _ACTIVE_BY_SCOPE.get(scope) == job_id:
-                    _ACTIVE_BY_SCOPE.pop(scope, None)
-
-
-def job_id_valid(job_id: str | None) -> bool:
-    return job_runner.job_id_valid(job_id)
+_job_dir = _STORE.job_dir
+_job_file = _STORE.job_file
+_write_job_to_disk = _STORE.write
+_mutate_job = _STORE.mutate
+_get_job_record = _STORE.get_record
+hydrate_jobs_from_disk = _STORE.hydrate
+reconcile_zombie_job = _STORE.reconcile_zombie
+reconcile_queued_job = _STORE.reconcile_queued
+reconcile_stale_job = _STORE.reconcile_stale
+reconcile_job = _STORE.reconcile
+reconcile_all_active_jobs = _STORE.reconcile_all_active
+mark_running = _STORE.mark_running
+fail_job = _STORE.fail
+job_id_valid = job_runner.job_id_valid
 
 
 def _job_snapshot(job: dict[str, Any], *, include_logs: bool = True) -> dict[str, Any]:
@@ -346,21 +116,8 @@ def get_job(job_id: str) -> dict[str, Any] | None:
 
 
 def get_active_job(*, ticker: str, recipe: str) -> dict[str, Any] | None:
-    scope = _scope_key(ticker, recipe)
-    with _JOBS_LOCK:
-        job_id = _ACTIVE_BY_SCOPE.get(scope)
-    if not job_id:
-        return None
-    job = _get_job_record(job_id)
-    if job is None or job.get("status") not in _ACTIVE_STATUSES:
-        with _JOBS_LOCK:
-            if _ACTIVE_BY_SCOPE.get(scope) == job_id:
-                _ACTIVE_BY_SCOPE.pop(scope, None)
-        return None
-    if not worker_alive(job):
-        reconcile_zombie_job(job_id)
-        return None
-    return _job_snapshot(job)
+    job = _STORE.get_active(_scope_key(ticker, recipe))
+    return None if job is None else _job_snapshot(job)
 
 
 def start_job(*, ticker: str, recipe: str, start: str, end: str, horizon: int) -> tuple[str, str, bool]:
@@ -372,27 +129,12 @@ def start_job(*, ticker: str, recipe: str, start: str, end: str, horizon: int) -
     """
     from trade_integrations.forecast_engine.artifact import make_run_id
 
-    _prune_old_jobs()
     key = (ticker or "NIFTY").strip().upper()
     recipe_name = (recipe or "").strip()
-    scope = _scope_key(key, recipe_name)
-    with _JOBS_LOCK:
-        existing_id = _ACTIVE_BY_SCOPE.get(scope)
-        if existing_id:
-            existing = FORECAST_ENGINE_RUN_JOBS.get(existing_id) or _read_job_from_disk(existing_id)
-            if existing and existing.get("status") in _ACTIVE_STATUSES:
-                if existing.get("worker_pid") is not None and not worker_alive(existing):
-                    fail_job(existing_id, "worker process exited unexpectedly")
-                else:
-                    if existing_id not in FORECAST_ENGINE_RUN_JOBS:
-                        FORECAST_ENGINE_RUN_JOBS[existing_id] = existing
-                    extra = existing.get("extra") or {}
-                    return existing_id, str(extra.get("run_id") or ""), True
-
-        job_id = uuid.uuid4().hex
-        run_id = make_run_id(start=start, end=end)
-        job = {
-            "job_id": job_id,
+    job, reused = _STORE.claim(
+        _scope_key(key, recipe_name),
+        lambda: {
+            "job_id": uuid.uuid4().hex,
             "status": "queued",
             "created_at": _now_iso(),
             "logs": [],
@@ -406,57 +148,19 @@ def start_job(*, ticker: str, recipe: str, start: str, end: str, horizon: int) -
                 "start": start,
                 "end": end,
                 "horizon": horizon,
-                "run_id": run_id,
+                "run_id": make_run_id(start=start, end=end),
             },
-        }
-        FORECAST_ENGINE_RUN_JOBS[job_id] = job
-        _ACTIVE_BY_SCOPE[scope] = job_id
-    _write_job_to_disk(job)
-    return job_id, run_id, False
-
-
-def mark_running(job_id: str) -> None:
-    def _apply(job: dict[str, Any]) -> None:
-        if job.get("status") == "queued":
-            job["status"] = "running"
-
-    _mutate_job(job_id, _apply)
+        },
+    )
+    return job["job_id"], str((job.get("extra") or {}).get("run_id") or ""), reused
 
 
 def append_log(job_id: str, message: str, *, level: str = "info") -> None:
-    def _apply(job: dict[str, Any]) -> None:
-        if job.get("status") == "queued":
-            job["status"] = "running"
-        job.setdefault("logs", []).append({"message": message, "level": level, "at": _now_iso()})
-
-    _mutate_job(job_id, _apply)
+    _STORE.append(job_id, {"message": message, "level": level, "at": _now_iso()})
 
 
 def complete_job(job_id: str, *, result: dict[str, Any]) -> None:
-    def _apply(job: dict[str, Any]) -> None:
-        job["status"] = "done"
-        job["result"] = result
-        job["_finished_at"] = time.time()
-        scope = _scope_for(job)
-        if _ACTIVE_BY_SCOPE.get(scope) == job_id:
-            _ACTIVE_BY_SCOPE.pop(scope, None)
-
-    _mutate_job(job_id, _apply)
-
-
-def fail_job(job_id: str, message: str, *, terminate_worker: bool = False) -> None:
-    if terminate_worker:
-        _terminate_worker(_get_job_record(job_id))
-
-    def _apply(job: dict[str, Any]) -> None:
-        job["status"] = "error"
-        job["error"] = message
-        job["_finished_at"] = time.time()
-        scope = _scope_for(job)
-        if _ACTIVE_BY_SCOPE.get(scope) == job_id:
-            _ACTIVE_BY_SCOPE.pop(scope, None)
-
-    _mutate_job(job_id, _apply)
+    _STORE.complete(job_id, result=result)
 
 
 def run_worker(job_id: str) -> None:
@@ -536,16 +240,7 @@ def _agent_dir() -> Path:
 
 
 def spawn_worker(job_id: str) -> None:
-    proc = job_runner.spawn_worker_process(
-        job_id=job_id,
-        worker_module="src.trade.forecast_engine_run_worker",
-        agent_dir=_agent_dir(),
-        worker_log=_job_dir(job_id) / "worker.log",
-    )
-    job = _get_job_record(job_id)
-    if job is not None:
-        job["worker_pid"] = proc.pid
-        _write_job_to_disk(job)
+    _STORE.spawn(job_id, worker_module="src.trade.forecast_engine_run_worker", agent_dir=_agent_dir())
 
 
 def kick_forecast_engine_run(*, ticker: str, recipe: str, start: str, end: str, horizon: int) -> tuple[str, str, str, bool]:
