@@ -170,7 +170,11 @@ def _openalgo_config() -> tuple[str, str]:
 
 
 def _paper_mode_env_enabled() -> bool:
-    return get_env_config().trade.openalgo_paper_mode.strip().lower() in ("1", "true", "yes")
+    # The one parser (fail-safe: only an explicit off unlocks live execution); "on" or a typo used
+    # to read as unlocked here while the Trade bridge read the same variable as locked.
+    from trade_integrations.execution.default_profile import paper_mode_value_enabled
+
+    return paper_mode_value_enabled(get_env_config().trade.openalgo_paper_mode)
 
 
 def _openalgo_analyzer_status(host: str, api_key: str) -> bool:
