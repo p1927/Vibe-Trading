@@ -62,15 +62,22 @@ def job_age_seconds(job: dict[str, Any]) -> float:
     return max(0.0, datetime.now(timezone.utc).timestamp() - created)
 
 
-def worker_alive(job: dict[str, Any] | None) -> bool:
+def worker_alive(
+    job: dict[str, Any] | None,
+    *,
+    pidless_alive: frozenset[str] = frozenset({"queued"}),
+    active_statuses: frozenset[str] = ACTIVE_STATUSES,
+) -> bool:
+    """A job with no pid is alive only in a ``pidless_alive`` status (it legitimately has no worker
+    yet: ``queued``, or recording's ``waiting_for_open``, which a cron wake spawns later)."""
     if job is None:
         return False
     status = str(job.get("status") or "")
     pid = job.get("worker_pid")
-    if status == "queued" and pid is None:
+    if status in pidless_alive and pid is None:
         return True
     if pid is None:
-        return status not in ACTIVE_STATUSES
+        return status not in active_statuses
     return detached_worker.is_alive(int(pid))
 
 
@@ -90,6 +97,12 @@ class JobStore:
         running_no_pid_seconds: Callable[[], float] = lambda: _RUNNING_NO_PID_SECONDS,
         stale_reason: Callable[[dict[str, Any], float], str | None] | None = None,
         normalize: Callable[[dict[str, Any]], None] | None = None,
+        active_statuses: frozenset[str] = ACTIVE_STATUSES,
+        startable_statuses: frozenset[str] = frozenset({"queued"}),
+        pidless_alive_statuses: frozenset[str] = frozenset({"queued"}),
+        run_age_seconds: Callable[[dict[str, Any]], float] = job_age_seconds,
+        on_running: Callable[[dict[str, Any]], None] | None = None,
+        creation_lock: Callable[[], Any] | None = None,
     ) -> None:
         self._jobs_root = jobs_root
         self._serialize = serialize
@@ -101,6 +114,14 @@ class JobStore:
         self._running_no_pid = running_no_pid_seconds
         self._stale_reason = stale_reason
         self._normalize = normalize
+        self._active_statuses = active_statuses
+        self._startable = startable_statuses
+        self._pidless_alive = pidless_alive_statuses
+        self._run_age = run_age_seconds
+        self._on_running = on_running
+        # A cross-process lock around claim(); when set, claim() also scans the jobs dir for a live
+        # job of the same scope that another process created (recording's one-session rule).
+        self._creation_lock = creation_lock
         self._jobs_ref = jobs_ref
         self._active_ref = active_ref
         self.jobs_lock = threading.RLock()
@@ -114,6 +135,17 @@ class JobStore:
     @property
     def active(self) -> dict[str, str]:
         return self._active_ref()
+
+    def alive(self, job: dict[str, Any] | None) -> bool:
+        return worker_alive(job, pidless_alive=self._pidless_alive, active_statuses=self._active_statuses)
+
+    def _is_active(self, job: dict[str, Any] | None) -> bool:
+        return job is not None and job.get("status") in self._active_statuses
+
+    def _promote(self, job: dict[str, Any]) -> None:
+        job["status"] = "running"
+        if self._on_running is not None:
+            self._on_running(job)
 
     # -- paths / disk ---------------------------------------------------------------------------
     def job_dir(self, job_id: str) -> Path:
@@ -154,7 +186,7 @@ class JobStore:
         """Keep the active-by-scope index consistent with ``job``'s status (caller holds jobs_lock)."""
         scope = self._scope_for(job)
         job_id = job["job_id"]
-        if job.get("status") in ACTIVE_STATUSES:
+        if self._is_active(job):
             self.active[scope] = job_id
         elif self.active.get(scope) == job_id:
             self.active.pop(scope, None)
@@ -228,7 +260,7 @@ class JobStore:
                 continue
             with self.jobs_lock:
                 self.jobs[path.name] = job
-                if job.get("status") in ACTIVE_STATUSES:
+                if self._is_active(job):
                     self.active[self._scope_for(job)] = path.name
 
     def prune(self) -> None:
@@ -247,37 +279,19 @@ class JobStore:
                     self.active.pop(scope, None)
 
     def adopt_disk_active(self, scope: str) -> None:
-        """Register in this process's index the newest active job for ``scope`` that ANOTHER process wrote.
+        """Register in this process's index the live active job for ``scope`` that ANOTHER process wrote.
 
-        The index (``active``) and the job cache are per process, but a scheduled child process and the API
-        run the same scope: the disk files are the truth (module docstring), so the active-run guard reads
-        them too. Staleness is the callers' existing reconcile (dead pid, never-started, wall-clock): a
-        lock whose worker died is failed and replaced, never honoured forever."""
-        root = self._jobs_root()
-        if not root.is_dir():
-            return
+        The index (``active``) and the job cache are per process, but a scheduled child and the API run the
+        same scope: the disk files are the truth (module docstring), so the read-side active-run guard reads
+        them too. Staleness is the existing reconcile: a lock whose worker died is failed, never honoured."""
         with self.jobs_lock:
-            known = self.active.get(scope)
-        newest: dict[str, Any] | None = None
-        cutoff = time.time() - _ADOPT_WINDOW_SECONDS
-        for path in root.iterdir():
-            if path.name == known or not path.is_dir() or not job_runner.job_id_valid(path.name):
-                continue
-            try:
-                if (path / "job.json").stat().st_mtime < cutoff:
-                    continue
-            except OSError:
-                continue
-            job = self.read(path.name)
-            if job is None or job.get("status") not in ACTIVE_STATUSES or self._scope_for(job) != scope:
-                continue
-            if newest is None or str(job.get("created_at") or "") > str(newest.get("created_at") or ""):
-                newest = job
-        if newest is not None:
+            if self.active.get(scope) is not None:
+                return
+        found = self._find_live_on_disk(scope)
+        if found is not None:
             with self.jobs_lock:
-                self.jobs[newest["job_id"]] = newest
-                if self.active.get(scope) is None:
-                    self.active[scope] = newest["job_id"]
+                self.jobs[found["job_id"]] = found
+                self.active.setdefault(scope, found["job_id"])
 
     def get_active(self, scope: str) -> dict[str, Any] | None:
         self.adopt_disk_active(scope)
@@ -286,12 +300,12 @@ class JobStore:
         if not job_id:
             return None
         job = self.get_record(job_id)
-        if job is None or job.get("status") not in ACTIVE_STATUSES:
+        if not self._is_active(job):
             with self.jobs_lock:
                 if self.active.get(scope) == job_id:
                     self.active.pop(scope, None)
             return None
-        if not worker_alive(job):
+        if not self.alive(job):
             self.reconcile_zombie(job_id)
             return None
         return job
@@ -299,9 +313,9 @@ class JobStore:
     # -- state machine --------------------------------------------------------------------------
     def mark_running(self, job_id: str) -> None:
         def _apply(job: dict[str, Any]) -> bool:
-            if job.get("status") != "queued":
+            if job.get("status") not in self._startable:
                 return False
-            job["status"] = "running"
+            self._promote(job)
             return True
 
         self.mutate(job_id, _apply)
@@ -310,10 +324,10 @@ class JobStore:
         """Append one log entry (promoting queued->running) plus optional extra top-level fields."""
 
         def _apply(job: dict[str, Any]) -> bool:
-            if job.get("status") not in ACTIVE_STATUSES:
+            if not self._is_active(job):
                 return False
-            if job.get("status") == "queued":
-                job["status"] = "running"
+            if job.get("status") == "queued":  # a waiting_for_open job has no worker: only mark_running wakes it
+                self._promote(job)
             job.setdefault("logs", []).append(entry)
             job.update(extra)
             return True
@@ -322,7 +336,7 @@ class JobStore:
 
     def complete(self, job_id: str, *, status: str = "done", **fields: Any) -> None:
         def _apply(job: dict[str, Any]) -> bool:
-            if job.get("status") not in ACTIVE_STATUSES:
+            if not self._is_active(job):
                 logger.info("complete skipped, job already terminal (job=%s status=%s)", job_id, job.get("status"))
                 return False
             job.update(fields)
@@ -339,7 +353,7 @@ class JobStore:
                 job_runner.terminate_worker(job.get("worker_pid"))
 
         def _apply(job: dict[str, Any]) -> bool:
-            if job.get("status") not in ACTIVE_STATUSES:
+            if not self._is_active(job):
                 return False
             job["status"] = "error"
             job["error"] = message
@@ -350,28 +364,35 @@ class JobStore:
 
     def claim(self, scope: str, make_job: Callable[[], dict[str, Any]]) -> tuple[dict[str, Any], bool]:
         """Reuse the live active job for ``scope`` or create+persist a new one. Returns (job, reused).
-        A dead-worker or never-started active job is failed and replaced, not reused."""
-        # start_lock orders threads of this process; the scope's file lock orders processes, so the
-        # scheduled child and the API cannot both find "no active job" and each start one.
-        claim_lock = self._jobs_root() / f".claim-{re.sub(r'[^A-Za-z0-9_.-]', '_', scope)}.lock"
-        with self._start_lock, job_runner.job_file_lock(claim_lock, valid=True):
+        A dead-worker or never-started active job is failed and replaced, not reused.
+
+        The whole check-then-create runs under a cross-process lock (``creation_lock``, default one file lock
+        per scope) and a live job another process created (found by scanning the jobs dir) is reused too: the
+        in-memory index cannot see it (recording: five concurrent jobs for one session, reproduced live; the
+        scheduled index run and the manual Run analysis: two runs writing one document)."""
+        with self._start_lock, self._creation_lock_for(scope):
             self.prune()
-            self.adopt_disk_active(scope)
             with self.jobs_lock:
                 existing_id = self.active.get(scope)
             existing = self.get_record(existing_id) if existing_id else None
-            if existing is not None and existing.get("status") in ACTIVE_STATUSES:
+            if self._is_active(existing):
                 pid = existing.get("worker_pid")
-                if pid is not None and not worker_alive(existing):
+                if pid is not None and not self.alive(existing):
                     self.fail(existing_id, "worker process exited unexpectedly")
                 elif (
                     existing.get("status") == "running"
                     and pid is None
-                    and job_age_seconds(existing) > self._running_no_pid()
+                    and self._run_age(existing) > self._running_no_pid()
                 ):
                     self.fail(existing_id, "worker never started")
                 else:
                     return existing, True
+            on_disk = self._find_live_on_disk(scope)
+            if on_disk is not None:
+                with self.jobs_lock:
+                    self.jobs[on_disk["job_id"]] = on_disk
+                    self.active[scope] = on_disk["job_id"]
+                return on_disk, True
             job = make_job()
             with self.jobs_lock:
                 self.jobs[job["job_id"]] = job
@@ -379,19 +400,59 @@ class JobStore:
             self.write(job)
             return job, False
 
-    def spawn(self, job_id: str, *, worker_module: str, agent_dir: Path) -> None:
+    def _find_live_on_disk(self, scope: str) -> dict[str, Any] | None:
+        """The live active job of ``scope`` found by scanning the jobs dir, failing any active row whose
+        worker died on the way (a crashed process's stale row must not wedge claim forever). A job file not
+        written for ``_ADOPT_WINDOW_SECONDS`` cannot belong to a live worker and is not read."""
+        root = self._jobs_root()
+        if not root.is_dir():
+            return None
+        live: dict[str, Any] | None = None
+        cutoff = time.time() - _ADOPT_WINDOW_SECONDS
+        for path in sorted(root.iterdir()):
+            if not path.is_dir() or not job_runner.job_id_valid(path.name):
+                continue
+            try:
+                if (path / "job.json").stat().st_mtime < cutoff:
+                    continue
+            except OSError:
+                continue
+            job = self.read(path.name)
+            if not self._is_active(job) or self._scope_for(job) != scope:
+                continue
+            if self.alive(job):
+                live = live or job
+            else:
+                self.fail(path.name, "worker process exited unexpectedly")
+        return live
+
+    def _creation_lock_for(self, scope: str):
+        if self._creation_lock is not None:
+            return self._creation_lock()
+        name = re.sub(r"[^A-Za-z0-9_.-]", "_", scope)
+        return job_runner.job_file_lock(self._jobs_root() / f".claim-{name}.lock", valid=True)
+
+    def spawn(
+        self,
+        job_id: str,
+        *,
+        worker_module: str,
+        agent_dir: Path,
+        env_mutator: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
         proc = job_runner.spawn_worker_process(
             job_id=job_id,
             worker_module=worker_module,
             agent_dir=agent_dir,
             worker_log=self.job_dir(job_id) / "worker.log",
+            env_mutator=env_mutator,
         )
         self.mutate(job_id, lambda job: job.update(worker_pid=proc.pid))
 
     # -- reconcile ------------------------------------------------------------------------------
     def reconcile_zombie(self, job_id: str) -> bool:
         job = self.get_record(job_id)
-        if job is None or job.get("status") not in ACTIVE_STATUSES or worker_alive(job):
+        if not self._is_active(job) or self.alive(job):
             return False
         pid = job.get("worker_pid")
         reason = detached_worker.describe_exit(pid) if pid is not None else None
@@ -412,9 +473,9 @@ class JobStore:
     def reconcile_stale(self, job_id: str) -> bool:
         """Fail running jobs that exceed the wall-clock budget."""
         job = self.get_record(job_id)
-        if job is None or job.get("status") != "running" or not worker_alive(job):
+        if job is None or job.get("status") != "running" or not self.alive(job):
             return False
-        wall_age, budget = job_age_seconds(job), self._wall_clock(job)
+        wall_age, budget = self._run_age(job), self._wall_clock(job)
         reason = (
             f"run exceeded wall-clock budget ({int(wall_age)}s > {budget}s)"
             if wall_age > budget
@@ -431,5 +492,5 @@ class JobStore:
     def reconcile_all_active(self) -> int:
         """Reconcile every active job (a crashed worker nobody polls would read "running" forever)."""
         with self.jobs_lock:
-            job_ids = [i for i, j in self.jobs.items() if j.get("status") in ACTIVE_STATUSES]
+            job_ids = [i for i, j in self.jobs.items() if self._is_active(j)]
         return sum(1 for job_id in job_ids if self.reconcile(job_id))
