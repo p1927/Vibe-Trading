@@ -27,8 +27,10 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+
+from src.api.security import require_local_or_auth
 
 board_router = APIRouter(prefix="/board", tags=["board"])
 
@@ -179,7 +181,7 @@ def get_applied_weight_proposals(weight_id: Optional[str] = None) -> Dict[str, A
     return {"proposals": list_applied_weight_proposals(weight_id=weight_id)}
 
 
-@board_router.post("/weight-proposals/{proposal_id}/apply")
+@board_router.post("/weight-proposals/{proposal_id}/apply", dependencies=[Depends(require_local_or_auth)])
 def apply_weight_proposal(proposal_id: str) -> Dict[str, Any]:
     """Promote one pending proposal into the live weight store. See module docstring for
     why no extra confirmation is added here beyond `apply_pending_weight_proposal`'s own
@@ -192,7 +194,7 @@ def apply_weight_proposal(proposal_id: str) -> Dict[str, Any]:
     return result
 
 
-@board_router.post("/weight-proposals/{proposal_id}/reject")
+@board_router.post("/weight-proposals/{proposal_id}/reject", dependencies=[Depends(require_local_or_auth)])
 def reject_weight_proposal(proposal_id: str, body: RejectWeightProposalRequest) -> Dict[str, Any]:
     """Mark one pending proposal rejected — the "no, this is wrong" counterpart to
     `apply_weight_proposal`. Never touches the live weight store; only records the decision
@@ -205,7 +207,7 @@ def reject_weight_proposal(proposal_id: str, body: RejectWeightProposalRequest) 
     return result
 
 
-@board_router.post("/weight-proposals/{proposal_id}/revert")
+@board_router.post("/weight-proposals/{proposal_id}/revert", dependencies=[Depends(require_local_or_auth)])
 def revert_weight_proposal(proposal_id: str, body: RevertWeightProposalRequest) -> Dict[str, Any]:
     """Undo one already-applied proposal, writing the weight back to its pre-apply value.
     Same no-extra-confirmation reasoning as `apply_weight_proposal`: a named "Revert" click on
@@ -241,7 +243,7 @@ def get_applied_retrain_proposals() -> Dict[str, Any]:
     return {"proposals": list_applied_retrain_proposals()}
 
 
-@board_router.post("/retrain-proposals/{proposal_id}/apply")
+@board_router.post("/retrain-proposals/{proposal_id}/apply", dependencies=[Depends(require_local_or_auth)])
 def apply_retrain_proposal(proposal_id: str) -> Dict[str, Any]:
     """Promote one pending retrain proposal's candidate artifact into the live model store.
     Same no-extra-confirmation reasoning as `apply_weight_proposal`."""
@@ -255,7 +257,7 @@ def apply_retrain_proposal(proposal_id: str) -> Dict[str, Any]:
     return result
 
 
-@board_router.post("/retrain-proposals/{proposal_id}/reject")
+@board_router.post("/retrain-proposals/{proposal_id}/reject", dependencies=[Depends(require_local_or_auth)])
 def reject_retrain_proposal(proposal_id: str, body: RejectRetrainProposalRequest) -> Dict[str, Any]:
     """Mark one pending retrain proposal rejected. Never touches the live model artifact."""
     from trade_integrations.dataflows.index_research.retrain_proposals import (
