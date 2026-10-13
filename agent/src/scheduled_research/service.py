@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Mapping
 
 from src.channels.targets import resolve_delivery_target
-from src.scheduled_research.executor import next_due, scheduler_enabled_from_env
+from src.scheduled_research.executor import first_fire_ms, scheduler_enabled_from_env
 from src.scheduled_research.models import (
     JobStatus,
     ScheduledResearchJob,
@@ -156,9 +156,7 @@ def build_job_from_draft(
         validate_timezone_shape(timezone)
     else:
         validate_timezone(timezone)
-    next_run_at = now
-    if timezone is not None and not is_interval_schedule(expression):
-        next_run_at = next_due(expression, now, timezone)
+    next_run_at = first_fire_ms(expression, now, timezone)
 
     end_at = _parse_end_at(draft.get("end_at"))
     if end_at is not None and end_at <= now:

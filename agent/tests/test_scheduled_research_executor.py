@@ -1037,9 +1037,11 @@ def test_job_type_concurrency_does_not_throttle_other_job_types(
 
     asyncio.run(scenario())
 
-    # "other" is a different job type with no override — it must start
-    # immediately, not wait behind the throttled hub_news_ingest pair.
-    assert started_at["other"] == pytest.approx(min(started_at.values()), abs=0.01)
+    # "other" is a different job type with no override — it must start without waiting behind
+    # the throttled hub_news_ingest pair: ingest-1 only starts once ingest-0's slot frees, so
+    # "other" starting first proves it was not queued behind either. Ordering, not a wall-clock
+    # tolerance: the first dispatch cold-imports lazy modules and stalls the loop for seconds.
+    assert started_at["other"] < started_at["ingest-1"]
     for job_id in ("ingest-0", "ingest-1", "other"):
         saved = store.get(job_id)
         assert saved is not None
@@ -2161,12 +2163,13 @@ def test_operational_tick_is_not_starved_by_a_long_main_tick_dispatch() -> None:
         )
         events: list[str] = []
         slow_job_started = asyncio.Event()
+        release_slow = asyncio.Event()
 
         async def dispatch(job: ScheduledResearchJob) -> None:
             if job.id == "slow-collection-job":
                 slow_job_started.set()
                 events.append("slow-start")
-                await asyncio.sleep(0.2)
+                await release_slow.wait()
                 events.append("slow-end")
             else:
                 events.append(f"{job.id}-dispatched")
@@ -2176,7 +2179,9 @@ def test_operational_tick_is_not_starved_by_a_long_main_tick_dispatch() -> None:
             main = asyncio.create_task(executor.tick(1_500))
             await slow_job_started.wait()
             # The operational tick must complete well before the main tick's slow job does.
-            await asyncio.wait_for(executor._operational_tick(1_500), timeout=0.1)
+            # Deterministic, not a wall-clock race: the slow job stays blocked until this returns.
+            await asyncio.wait_for(executor._operational_tick(1_500), timeout=30)
+            release_slow.set()
             await main
 
         asyncio.run(scenario())

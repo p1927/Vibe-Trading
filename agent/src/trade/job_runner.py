@@ -1,12 +1,11 @@
 """Shared plumbing for the file-backed detached-worker job stores.
 
 The record lifecycle (state machine, reconcile, prune, start/reuse) lives one level up in
-:class:`src.trade.job_store.JobStore` (external_predictions, forecast_engine, index_prediction;
-recording_jobs still carries its own copy, see the backlog item 2026-10-13-vibe-job-stores-unify).
-This module is only the stateless disk/lock/spawn layer under it.
+:class:`src.trade.job_store.JobStore` (external_predictions, forecast_engine, index_prediction and
+recording; backlog item 2026-10-13-vibe-job-stores-unify). This module is only the stateless
+disk/lock/spawn layer under it.
 
-``index_prediction_run_jobs.py``, ``external_predictions_run_jobs.py``, and
-``recording_jobs.py`` each independently implement: a ``job.json`` atomic
+The four job stores each used to independently implement: a ``job.json`` atomic
 read/write (some under an ``fcntl`` cross-process lock, some not), a
 ``spawn_worker`` that ``Popen``s ``python -m src.trade.<name>_worker
 <job_id>`` detached (``start_new_session=True``) and registers it with
@@ -111,36 +110,6 @@ def read_job_json_unsafe(path: Path) -> dict[str, Any] | None:
     except (json.JSONDecodeError, OSError):
         return None
     return payload if isinstance(payload, dict) else None
-
-
-def mutate_job_on_disk(
-    *,
-    job_file: Path,
-    lock_file: Path,
-    valid: bool,
-    job_id: str,
-    serialize: Callable[[dict[str, Any]], dict[str, Any]],
-    mutator: Callable[[dict[str, Any]], bool],
-) -> dict[str, Any] | None:
-    """Atomically read, mutate, and write job.json under an exclusive lock.
-
-    ``mutator`` receives the in-memory dict (already ``dict(...)``-copied,
-    with ``logs`` defaulted to ``[]``) and returns ``True`` to persist the
-    mutation or ``False`` to skip the write (e.g. the job is already
-    terminal). Returns the mutated job dict, or ``None`` if the job wasn't
-    found on disk or the mutator declined.
-    """
-    with job_file_lock(lock_file, valid=valid, exclusive=True):
-        job = read_job_json_unsafe(job_file)
-        if job is None:
-            return None
-        job = dict(job)
-        job.setdefault("logs", [])
-        job.setdefault("job_id", job_id)
-        if not mutator(job):
-            return None
-        write_job_json_unsafe(job_file, serialize(job))
-        return job
 
 
 def terminate_worker(pid: Any) -> None:

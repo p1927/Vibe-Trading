@@ -198,7 +198,10 @@ def emit_trade_widget(
             )
             return False
         attach_capabilities_metadata(widget, session_config=session_config)
-        persist_trade_widget(widget)
+        if persist_trade_widget(widget) is None:
+            # The store refuses an id outside its pattern (a ticker like "M&M"): emitting it would hand
+            # the UI a widget that execute-basket can never load.
+            raise ValueError(f"trade widget id {widget.get('widget_id')!r} is not persistable")
         _emit(event_bus, session_id, "trade_plan.widget", widget)
         _record_widget_emitted(session_id, ticker, now, widget_kind=kind)
         return True

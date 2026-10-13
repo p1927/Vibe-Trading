@@ -28,7 +28,7 @@ def _patch_jobs_root(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(recording_jobs, "_jobs_root", lambda: tmp_path)
     with recording_jobs._JOBS_LOCK:
         recording_jobs.RECORDING_JOBS.clear()
-        recording_jobs._ACTIVE_JOB_ID = None
+        recording_jobs._ACTIVE_BY_SCOPE.clear()
 
 
 def _wait_until(predicate, *, timeout: float = 5.0) -> None:

@@ -1,26 +1,25 @@
-"""In-memory + file-backed job store for stock-simulator day recording.
+"""Recording-session job store (stock-simulator day recording).
 
-Mirrors `index_prediction_run_jobs.py`'s pattern (job.json under
-`log/recording_jobs/{job_id}/job.json`, detached subprocess worker, PID
-liveness/zombie reconciliation) so recording jobs get the same SSE-friendly,
-hot-reload-safe control surface without inventing a new mechanism.
+``job.json`` under ``log/recording_jobs/{job_id}/``, a detached subprocess worker, PID liveness and zombie
+reconciliation, SSE-friendly and hot-reload-safe. The lifecycle (disk-first mutation, reconcile, prune,
+claim) is the shared :class:`src.trade.job_store.JobStore`, the same one the index-prediction,
+external-predictions and forecast-engine stores use (D306). This module keeps what is recording-specific:
+the ``waiting_for_open`` status (a cron wake spawns the worker later, so it has no pid), the run age
+measured from ``run_started_at``, the cross-process creation lock and disk scan (one live session in
+total), the supplement claim, the stop flag, the wake path and the snapshot shape.
 
-Unlike index-prediction runs (keyed per ticker), only one recording session is
-meaningful at a time, so active-job lookup uses a single fixed key rather than
-a per-ticker map.
+Only one recording session is meaningful at a time, so the active index uses one fixed scope.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import threading
-import time
 import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 try:
     import fcntl
@@ -32,15 +31,19 @@ except ImportError:  # pragma: no cover - Windows / minimal builds
 
 from src.config.accessor import get_env_config
 from src.trade import detached_worker, job_runner
+from src.trade.job_store import (
+    JobStore,
+    _parse_iso_timestamp,
+    job_age_seconds as _job_age_seconds,
+    now_iso as _now_iso,
+)
 
 logger = logging.getLogger(__name__)
 
 RECORDING_JOBS: dict[str, dict[str, Any]] = {}
 _ACTIVE_KEY = "recording"
-_ACTIVE_JOB_ID: str | None = None
-_JOBS_LOCK = threading.RLock()
+_ACTIVE_BY_SCOPE: dict[str, str] = {}
 
-_JOB_TTL_SECONDS = 60 * 60
 _ACTIVE_STATUSES = frozenset({"queued", "waiting_for_open", "running"})
 _WALL_CLOCK_SECONDS = int(get_env_config().trade.recording_run_wall_clock_seconds)
 _QUEUED_NO_PID_SECONDS = int(get_env_config().trade.recording_queued_no_pid_seconds)
@@ -48,141 +51,6 @@ _QUEUED_NO_PID_SECONDS = int(get_env_config().trade.recording_queued_no_pid_seco
 
 def _is_pid_alive(pid: int | None) -> bool:
     return detached_worker.is_alive(pid)
-
-
-def worker_alive(job: dict[str, Any] | None) -> bool:
-    if job is None:
-        return False
-    status = str(job.get("status") or "")
-    pid = job.get("worker_pid")
-    # A ``waiting_for_open`` job legitimately has no worker_pid — the
-    # Phase C cron-driven wake path (``set_waiting_for_open_at`` /
-    # ``schedule_recording_wake``) never spawns a worker subprocess
-    # until the scheduled wake fires; the job just sits with a
-    # deferred-wake schedule and no PID. Without this branch,
-    # ``reconcile_zombie_job`` (invoked on every SSE tick and every
-    # ``get_active_job()`` poll) treated that as "worker died" and
-    # immediately failed the job — killing every wait-for-open
-    # recording seconds after arming it, well before market open.
-    if status in ("queued", "waiting_for_open") and pid is None:
-        return True
-    if pid is None:
-        return status not in _ACTIVE_STATUSES
-    return _is_pid_alive(int(pid))
-
-
-def reconcile_zombie_job(job_id: str) -> bool:
-    job = _get_job_record(job_id)
-    if job is None or job.get("status") not in _ACTIVE_STATUSES:
-        return False
-    if worker_alive(job):
-        return False
-    pid = job.get("worker_pid")
-    reason = detached_worker.describe_exit(pid) if pid is not None else None
-    fail_job(job_id, reason or "worker process exited unexpectedly")
-    return True
-
-
-def _parse_iso_timestamp(ts: str | None) -> float | None:
-    if not ts:
-        return None
-    try:
-        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return None
-
-
-def _job_age_seconds(job: dict[str, Any]) -> float:
-    created = _parse_iso_timestamp(str(job.get("created_at") or ""))
-    if created is None:
-        return 0.0
-    return max(0.0, datetime.now(timezone.utc).timestamp() - created)
-
-
-def _run_age_seconds(job: dict[str, Any]) -> float:
-    """Elapsed time since the job actually started *running*.
-
-    Unlike :func:`_job_age_seconds` (measured from ``created_at``, stamped
-    once at job creation), this measures from ``run_started_at`` — stamped
-    by :func:`mark_running` when the job transitions into ``running``.
-    For a ``wait_for_open`` job, ``created_at`` can be hours to days before
-    the deferred wait actually releases, so the wall-clock-budget check
-    (which is about "how long has this recording actually been running")
-    must use this instead. Falls back to ``created_at`` for jobs written
-    before ``run_started_at`` existed, or if it was somehow never stamped.
-    """
-    started = _parse_iso_timestamp(str(job.get("run_started_at") or ""))
-    if started is not None:
-        return max(0.0, datetime.now(timezone.utc).timestamp() - started)
-    return _job_age_seconds(job)
-
-
-def reconcile_queued_job(job_id: str) -> bool:
-    job = _get_job_record(job_id)
-    if job is None:
-        return False
-    status = str(job.get("status") or "")
-    if status == "waiting_for_open":
-        # Worker is sleeping in the deferred-wake loop (Phase 2 of the
-        # wait-for-open plan). Leave it alone — the recorder handles
-        # its own liveness and exits with `stopped_reason="wait_timeout"`
-        # if the wait exceeds `RECORDING_WAIT_MAX_HOURS`.
-        return False
-    if status != "queued":
-        return False
-    if job.get("worker_pid") is not None:
-        return False
-    if _job_age_seconds(job) <= _QUEUED_NO_PID_SECONDS:
-        return False
-    fail_job(job_id, f"worker never spawned after {_QUEUED_NO_PID_SECONDS}s", terminate_worker=True)
-    return True
-
-
-def reconcile_stale_job(job_id: str) -> bool:
-    job = _get_job_record(job_id)
-    if job is None or job.get("status") != "running":
-        return False
-    if not worker_alive(job):
-        return False
-    wall_age = _run_age_seconds(job)
-    if wall_age > _WALL_CLOCK_SECONDS:
-        fail_job(
-            job_id,
-            f"recording exceeded wall-clock budget ({int(wall_age)}s > {_WALL_CLOCK_SECONDS}s)",
-            terminate_worker=True,
-        )
-        return True
-    return False
-
-
-def reconcile_job(job_id: str) -> bool:
-    if reconcile_zombie_job(job_id):
-        return True
-    if reconcile_queued_job(job_id):
-        return True
-    if reconcile_stale_job(job_id):
-        return True
-    return False
-
-
-def reconcile_all_active_jobs() -> int:
-    """Run reconciliation over every job currently marked active.
-
-    Reconciliation otherwise only runs when something calls ``get_active_job``
-    — a crashed worker for a job nobody is polling would sit reporting
-    "running" forever. Returns the number of jobs terminalized.
-    """
-    with _JOBS_LOCK:
-        job_ids = [
-            job_id
-            for job_id, job in RECORDING_JOBS.items()
-            if job.get("status") in _ACTIVE_STATUSES
-        ]
-    return sum(1 for job_id in job_ids if reconcile_job(job_id))
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _jobs_root() -> Path:
@@ -198,10 +66,6 @@ def _job_dir(job_id: str) -> Path:
     return _jobs_root() / job_id
 
 
-def _job_file(job_id: str) -> Path:
-    return _job_dir(job_id) / "job.json"
-
-
 def _stop_flag_file(job_id: str) -> Path:
     return _job_dir(job_id) / "stop.flag"
 
@@ -209,18 +73,6 @@ def _stop_flag_file(job_id: str) -> Path:
 def stop_flag_path(job_id: str) -> Path:
     """Public accessor so the worker process can check the same path."""
     return _stop_flag_file(job_id)
-
-
-def _job_lock_file(job_id: str) -> Path:
-    return _job_dir(job_id) / ".job.lock"
-
-
-@contextmanager
-def _job_file_lock(job_id: str, *, exclusive: bool = True):
-    with job_runner.job_file_lock(
-        _job_lock_file(job_id), valid=job_id_valid(job_id), exclusive=exclusive
-    ):
-        yield
 
 
 def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -247,11 +99,90 @@ def _serialize_job(job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _write_job_to_disk_unsafe(job: dict[str, Any]) -> None:
-    job_id = str(job.get("job_id") or "")
-    if not job_id_valid(job_id):
+def _run_age_seconds(job: dict[str, Any]) -> float:
+    """Elapsed time since the job actually started *running*.
+
+    Unlike :func:`_job_age_seconds` (measured from ``created_at``, stamped
+    once at job creation), this measures from ``run_started_at`` — stamped
+    by :func:`mark_running` when the job transitions into ``running``.
+    For a ``wait_for_open`` job, ``created_at`` can be hours to days before
+    the deferred wait actually releases, so the wall-clock-budget check
+    (which is about "how long has this recording actually been running")
+    must use this instead. Falls back to ``created_at`` for jobs written
+    before ``run_started_at`` existed, or if it was somehow never stamped.
+    """
+    started = _parse_iso_timestamp(str(job.get("run_started_at") or ""))
+    if started is not None:
+        return max(0.0, datetime.now(timezone.utc).timestamp() - started)
+    return _job_age_seconds(job)
+
+
+def _active_job_lock_file() -> Path:
+    return _jobs_root() / "_active.lock"
+
+
+@contextmanager
+def _active_job_creation_lock():
+    """Cross-process exclusive lock guarding recording-job creation.
+
+    ``_ACTIVE_BY_SCOPE`` is only an in-process cache; without this lock, two
+    separate process invocations of ``start_job`` (two ad-hoc scripts, or
+    a persistent server plus a one-off script) can each observe "no
+    active job in my memory" and both create one, since neither can see
+    the other's in-memory state. Reproduced live 2026-08-25: 5
+    concurrently-running recording jobs for the identical underlyings,
+    each started from a process that had no idea about the others.
+    """
+    lock_path = _active_job_lock_file()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    if not _HAS_FCNTL:
+        yield
         return
-    job_runner.write_job_json_unsafe(_job_file(job_id), _serialize_job(job))
+    with open(lock_path, "a+", encoding="utf-8") as lockf:
+        fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
+
+
+# Module-level lookups (not captured values) so tests can monkeypatch ``_jobs_root`` /
+# ``_WALL_CLOCK_SECONDS`` / ``_QUEUED_NO_PID_SECONDS`` after import.
+_STORE = JobStore(
+    jobs_ref=lambda: RECORDING_JOBS,
+    active_ref=lambda: _ACTIVE_BY_SCOPE,
+    jobs_root=lambda: _jobs_root(),
+    serialize=_serialize_job,
+    scope_for=lambda job: _ACTIVE_KEY,
+    wall_clock_seconds=lambda job: _WALL_CLOCK_SECONDS,
+    queued_no_pid_seconds=lambda: _QUEUED_NO_PID_SECONDS,
+    result_key="result",
+    active_statuses=_ACTIVE_STATUSES,
+    # ``waiting_for_open`` legitimately has no worker_pid: the cron-driven wake path spawns the worker
+    # only when the scheduled wake fires. Without it every wait-for-open recording was failed as a dead
+    # worker seconds after arming (reconcile runs on every SSE tick and every get_active_job).
+    startable_statuses=frozenset({"queued", "waiting_for_open"}),
+    pidless_alive_statuses=frozenset({"queued", "waiting_for_open"}),
+    run_age_seconds=lambda job: _run_age_seconds(job),
+    on_running=lambda job: job.__setitem__("run_started_at", _now_iso()),
+    creation_lock=lambda: _active_job_creation_lock(),
+)
+
+_JOBS_LOCK = _STORE.jobs_lock
+_mutate_job_on_disk = _STORE.mutate
+_write_job_to_disk = _STORE.write
+_job_file = _STORE.job_file
+_get_job_record = _STORE.get_record
+hydrate_jobs_from_disk = _STORE.hydrate
+worker_alive = _STORE.alive
+reconcile_zombie_job = _STORE.reconcile_zombie
+reconcile_queued_job = _STORE.reconcile_queued
+reconcile_stale_job = _STORE.reconcile_stale
+reconcile_job = _STORE.reconcile
+reconcile_all_active_jobs = _STORE.reconcile_all_active
+mark_running = _STORE.mark_running
+fail_job = _STORE.fail
+job_id_valid = job_runner.job_id_valid
 
 
 def _supplement_marker_path(session_date: str) -> Path:
@@ -290,110 +221,6 @@ def claim_supplement_run(session_date: str, job_id: str) -> bool:
             return True
         finally:
             fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
-
-
-def _read_job_from_disk_unsafe(job_id: str) -> dict[str, Any] | None:
-    payload = job_runner.read_job_json_unsafe(_job_file(job_id))
-    if payload is None or not job_id_valid(str(payload.get("job_id") or job_id)):
-        return None
-    payload.setdefault("job_id", job_id)
-    payload.setdefault("logs", [])
-    return payload
-
-
-def _write_job_to_disk(job: dict[str, Any]) -> None:
-    job_id = str(job.get("job_id") or "")
-    with _job_file_lock(job_id, exclusive=True):
-        _write_job_to_disk_unsafe(job)
-
-
-def _read_job_from_disk(job_id: str) -> dict[str, Any] | None:
-    with _job_file_lock(job_id, exclusive=False):
-        return _read_job_from_disk_unsafe(job_id)
-
-
-def _mutate_job_on_disk(
-    job_id: str,
-    mutator: Callable[[dict[str, Any]], bool],
-) -> dict[str, Any] | None:
-    return job_runner.mutate_job_on_disk(
-        job_file=_job_file(job_id),
-        lock_file=_job_lock_file(job_id),
-        valid=job_id_valid(job_id),
-        job_id=job_id,
-        serialize=_serialize_job,
-        mutator=mutator,
-    )
-
-
-def _merge_job_from_disk(job_id: str, memory: dict[str, Any] | None) -> dict[str, Any] | None:
-    disk = _read_job_from_disk(job_id)
-    if disk is None:
-        return memory
-    if memory is None:
-        return disk
-    mem_logs = len(memory.get("logs") or [])
-    disk_logs = len(disk.get("logs") or [])
-    mem_status = str(memory.get("status") or "")
-    disk_status = str(disk.get("status") or "")
-    if disk_logs > mem_logs or disk_status != mem_status:
-        merged = dict(disk)
-        merged.setdefault("job_id", job_id)
-        return merged
-    return memory
-
-
-def _get_job_record(job_id: str) -> dict[str, Any] | None:
-    global _ACTIVE_JOB_ID
-    with _JOBS_LOCK:
-        memory = RECORDING_JOBS.get(job_id)
-    merged = _merge_job_from_disk(job_id, memory)
-    if merged is not None:
-        with _JOBS_LOCK:
-            RECORDING_JOBS[job_id] = merged
-            if merged.get("status") in _ACTIVE_STATUSES:
-                _ACTIVE_JOB_ID = job_id
-            elif _ACTIVE_JOB_ID == job_id:
-                _ACTIVE_JOB_ID = None
-    return merged
-
-
-def hydrate_jobs_from_disk() -> None:
-    global _ACTIVE_JOB_ID
-    root = _jobs_root()
-    if not root.is_dir():
-        return
-    for path in root.iterdir():
-        if not path.is_dir():
-            continue
-        job_id = path.name
-        if not job_id_valid(job_id):
-            continue
-        job = _read_job_from_disk(job_id)
-        if job is None:
-            continue
-        with _JOBS_LOCK:
-            RECORDING_JOBS[job_id] = job
-            if job.get("status") in _ACTIVE_STATUSES:
-                _ACTIVE_JOB_ID = job_id
-
-
-def _prune_old_jobs() -> None:
-    cutoff = time.time() - _JOB_TTL_SECONDS
-    with _JOBS_LOCK:
-        stale = [
-            job_id
-            for job_id, job in RECORDING_JOBS.items()
-            if job.get("status") in ("done", "error") and job.get("_finished_at", 0) < cutoff
-        ]
-        for job_id in stale:
-            job = RECORDING_JOBS.pop(job_id, None)
-            if job is not None:
-                detached_worker.forget(job.get("worker_pid"))
-
-
-def job_id_valid(job_id: str | None) -> bool:
-    return job_runner.job_id_valid(job_id)
 
 
 def _job_snapshot(job: dict[str, Any], *, include_logs: bool = True) -> dict[str, Any]:
@@ -462,81 +289,17 @@ def get_job(job_id: str) -> dict[str, Any] | None:
 
 
 def get_active_job() -> dict[str, Any] | None:
+    """The live recording job's snapshot, reconciled first (a dead worker, a never-spawned queued job or
+    an over-budget run is failed here). A job this very call failed is returned once, as ``error``."""
     with _JOBS_LOCK:
-        job_id = _ACTIVE_JOB_ID
+        job_id = _ACTIVE_BY_SCOPE.get(_ACTIVE_KEY)
     if not job_id:
-        return None
-    job = _get_job_record(job_id)
-    if job is None or job.get("status") not in _ACTIVE_STATUSES:
-        return None
-    if not worker_alive(job):
-        reconcile_job(job_id)
-        job = _get_job_record(job_id)
-        if job is not None and job.get("status") == "error":
-            return _job_snapshot(job)
         return None
     reconcile_job(job_id)
     job = _get_job_record(job_id)
     if job is None or job.get("status") not in _ACTIVE_STATUSES:
-        if job is not None and job.get("status") == "error":
-            return _job_snapshot(job)
-        return None
+        return _job_snapshot(job) if job is not None and job.get("status") == "error" else None
     return _job_snapshot(job)
-
-
-def _active_job_lock_file() -> Path:
-    return _jobs_root() / "_active.lock"
-
-
-@contextmanager
-def _active_job_creation_lock():
-    """Cross-process exclusive lock guarding recording-job creation.
-
-    ``_ACTIVE_JOB_ID`` is only an in-process cache; without this lock, two
-    separate process invocations of ``start_job`` (two ad-hoc scripts, or
-    a persistent server plus a one-off script) can each observe "no
-    active job in my memory" and both create one, since neither can see
-    the other's in-memory state. Reproduced live 2026-08-25: 5
-    concurrently-running recording jobs for the identical underlyings,
-    each started from a process that had no idea about the others.
-    """
-    lock_path = _active_job_lock_file()
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    if not _HAS_FCNTL:
-        yield
-        return
-    with open(lock_path, "a+", encoding="utf-8") as lockf:
-        fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
-
-
-def _find_live_active_job_on_disk() -> dict[str, Any] | None:
-    """Ground truth scan across every job dir for one whose worker is
-    actually alive — what an in-memory-only check can't see when called
-    from a process that just started. Along the way, reconciles (fails)
-    any job still marked active on disk whose worker has actually died,
-    so a stale row left by a crashed process can't wedge the lock
-    forever. Must be called while holding ``_active_job_creation_lock``.
-    """
-    root = _jobs_root()
-    if not root.is_dir():
-        return None
-    live: dict[str, Any] | None = None
-    for path in sorted(root.iterdir()):
-        if not path.is_dir() or not job_id_valid(path.name):
-            continue
-        job = _read_job_from_disk(path.name)
-        if job is None or job.get("status") not in _ACTIVE_STATUSES:
-            continue
-        if worker_alive(job):
-            if live is None:
-                live = job
-        else:
-            fail_job(str(job.get("job_id")), "worker process exited unexpectedly")
-    return live
 
 
 def start_job(
@@ -553,7 +316,7 @@ def start_job(
     """Create or reuse the active recording job. Returns (job_id, reused).
 
     ``category_intervals``: per-REST-category cadence in seconds. ``None``
-    (or empty) keeps the legacy behaviour — all three categories share
+    (or empty) keeps the legacy behaviour: all three categories share
     ``poll_interval_s``. The worker applies this directly; this function
     only persists it so the snapshot reflects what the user configured.
 
@@ -562,53 +325,22 @@ def start_job(
     the recorder's ``MaxRateLimiter``.
 
     ``equities``: NIFTY50 trading symbols to record per-equity polls /
-    historical candles for. Empty list → no per-equity work.
+    historical candles for. Empty list means no per-equity work.
 
     ``equity_intervals``: same shape as ``category_intervals`` but for
     the three equity REST polls.
 
     ``historical_config``: ``None`` (skip) or a dict with Indmoney
     interval + lookback days. Pulled once per equity at session start.
+
+    The check-then-create is atomic across processes (``JobStore.claim`` under the creation lock, which
+    also finds a live job another process created): two ad-hoc scripts, or a server plus a script, cannot
+    each create one (reproduced live 2026-08-25: five concurrent jobs for the same underlyings).
     """
-    global _ACTIVE_JOB_ID
-    _prune_old_jobs()
 
-    # Cross-process critical section: everything from "is anything else
-    # active" through "persist the new job" must be atomic w.r.t. any
-    # other process calling start_job concurrently, or two processes can
-    # each see "nothing active" and both create one (see docstring on
-    # ``_active_job_creation_lock``).
-    with _active_job_creation_lock():
-        with _JOBS_LOCK:
-            existing_id = _ACTIVE_JOB_ID
-            existing_mem = RECORDING_JOBS.get(existing_id) if existing_id else None
-
-        if existing_id:
-            existing = existing_mem or _read_job_from_disk(existing_id)
-            if existing and existing.get("status") in _ACTIVE_STATUSES:
-                if existing.get("worker_pid") is not None and not worker_alive(existing):
-                    fail_job(existing_id, "worker process exited unexpectedly")
-                else:
-                    with _JOBS_LOCK:
-                        if existing_id not in RECORDING_JOBS:
-                            RECORDING_JOBS[existing_id] = existing
-                    return existing_id, True
-
-        # This process's memory had nothing active — but another process
-        # may have created a still-live job we've simply never heard of.
-        # Ground-truth that against disk before deciding it's safe to
-        # create a new one.
-        disk_active = _find_live_active_job_on_disk()
-        if disk_active is not None:
-            disk_job_id = str(disk_active["job_id"])
-            with _JOBS_LOCK:
-                RECORDING_JOBS[disk_job_id] = disk_active
-                _ACTIVE_JOB_ID = disk_job_id
-            return disk_job_id, True
-
-        job_id = uuid.uuid4().hex
-        job = {
-            "job_id": job_id,
+    def _make() -> dict[str, Any]:
+        return {
+            "job_id": uuid.uuid4().hex,
             "status": "queued",
             "underlyings": list(underlyings),
             "equities": list(equities or []),
@@ -616,18 +348,12 @@ def start_job(
             # Persist as None for legacy callers so the snapshot truthfully
             # reports "no per-category config" rather than a synthesised map.
             "category_intervals": (
-                {k: int(v) for k, v in category_intervals.items()}
-                if category_intervals
-                else None
+                {k: int(v) for k, v in category_intervals.items()} if category_intervals else None
             ),
             "equity_intervals": (
-                {k: int(v) for k, v in equity_intervals.items()}
-                if equity_intervals
-                else None
+                {k: int(v) for k, v in equity_intervals.items()} if equity_intervals else None
             ),
-            "ws_throttle_hz": (
-                float(ws_throttle_hz) if ws_throttle_hz and ws_throttle_hz > 0 else None
-            ),
+            "ws_throttle_hz": float(ws_throttle_hz) if ws_throttle_hz and ws_throttle_hz > 0 else None,
             "historical_config": (
                 {"interval": str(historical_config["interval"]),
                  "lookback_days": int(historical_config["lookback_days"])}
@@ -646,11 +372,9 @@ def start_job(
             "worker_pid": None,
             "_finished_at": None,
         }
-        with _JOBS_LOCK:
-            RECORDING_JOBS[job_id] = job
-            _ACTIVE_JOB_ID = job_id
-        _write_job_to_disk(job)
-        return job_id, False
+
+    job, reused = _STORE.claim(_ACTIVE_KEY, _make)
+    return str(job["job_id"]), reused
 
 
 def kick_recording(
@@ -728,9 +452,14 @@ def kick_recording(
 
                 set_waiting_for_open_at(job_id, next_open_at=next_open_at)
                 schedule_recording_wake(recording_job_id=job_id, next_open_at=next_open_at)
-        except Exception:
+        except Exception as exc:
+            # Internal failure (not the vendor holiday fetch, which has its own fallback above): spawning
+            # a worker now would record a closed market and read as a started recording. Fail the job we
+            # just created and surface the error; a reused live job is left alone.
             logger.exception("kick_recording: wait_for_open scheduling failed for %s", job_id)
-            market_closed = False
+            if not reused:
+                fail_job(job_id, f"wait_for_open scheduling failed: {exc}")
+            raise
 
     if market_closed:
         # Don't spawn — the wake scheduler owns the lifecycle now.
@@ -746,80 +475,27 @@ def kick_recording(
     return job_id, str(snap.get("status") or "queued"), reused
 
 
-def mark_running(job_id: str) -> None:
-    def mutator(job: dict[str, Any]) -> bool:
-        # Allow transition from ``waiting_for_open`` as well as
-        # ``queued`` — the recorder enters ``waiting_for_open`` during
-        # the deferred-wake wait loop and bumps back to ``running``
-        # once the wait releases.
-        status = str(job.get("status") or "")
-        if status not in _ACTIVE_STATUSES:
-            return False
-        if status in {"queued", "waiting_for_open"}:
-            job["status"] = "running"
-            job["run_started_at"] = _now_iso()
-        return True
-
-    job = _mutate_job_on_disk(job_id, mutator)
-    if job is None:
-        return
-    with _JOBS_LOCK:
-        RECORDING_JOBS[job_id] = job
-
-
-def mark_waiting_for_open(job_id: str) -> bool:
-    """Transition ``queued`` → ``waiting_for_open``. No-op from any other
-    status (including ``waiting_for_open`` itself — the recorder calls
-    this on its first sleep slice and the call must be idempotent if
-    the disk round-trip races the in-memory cache).
-
-    Returns ``True`` if the job transitioned on disk, ``False`` if the
-    job was missing or already past ``queued``.
-    """
-    def mutator(job: dict[str, Any]) -> bool:
-        if str(job.get("status") or "") != "queued":
-            return False
-        job["status"] = "waiting_for_open"
-        return True
-
-    job = _mutate_job_on_disk(job_id, mutator)
-    if job is None:
-        return False
-    with _JOBS_LOCK:
-        RECORDING_JOBS[job_id] = job
-    return True
-
-
-def set_waiting_for_open_at(
-    job_id: str, *, next_open_at: datetime
-) -> bool:
+def set_waiting_for_open_at(job_id: str, *, next_open_at: datetime) -> bool:
     """Persist ``next_open_at`` on a ``queued`` job and flip status to
     ``waiting_for_open``. Used by the cron-driven respawn path (Phase C)
     when the API entry receives ``wait_for_open=True`` and the market is
-    closed — the API persists the wake deadline here and registers a
-    ``ScheduledResearchJob`` separately; no worker subprocess is
-    spawned.
+    closed: the API persists the wake deadline here and registers a
+    ``ScheduledResearchJob`` separately; no worker subprocess is spawned.
 
     No-op from any other status (idempotent). Returns ``True`` on
     transition, ``False`` otherwise.
     """
+
     def mutator(job: dict[str, Any]) -> bool:
         if str(job.get("status") or "") != "queued":
             return False
         job["status"] = "waiting_for_open"
         job["next_open_at"] = (
-            next_open_at.isoformat()
-            if isinstance(next_open_at, datetime)
-            else str(next_open_at)
+            next_open_at.isoformat() if isinstance(next_open_at, datetime) else str(next_open_at)
         )
         return True
 
-    job = _mutate_job_on_disk(job_id, mutator)
-    if job is None:
-        return False
-    with _JOBS_LOCK:
-        RECORDING_JOBS[job_id] = job
-    return True
+    return _mutate_job_on_disk(job_id, mutator) is not None
 
 
 def wake_recording_job(job_id: str) -> bool:
@@ -852,65 +528,11 @@ def wake_recording_job(job_id: str) -> bool:
 
 
 def append_log(job_id: str, entry: dict[str, Any]) -> None:
-    def mutator(job: dict[str, Any]) -> bool:
-        if str(job.get("status") or "") not in _ACTIVE_STATUSES:
-            return False
-        if job.get("status") == "queued":
-            job["status"] = "running"
-            job["run_started_at"] = _now_iso()
-        job.setdefault("logs", []).append(dict(entry))
-        return True
-
-    job = _mutate_job_on_disk(job_id, mutator)
-    if job is None:
-        return
-    with _JOBS_LOCK:
-        RECORDING_JOBS[job_id] = job
+    _STORE.append(job_id, dict(entry))
 
 
 def complete_job(job_id: str, *, result: dict[str, Any]) -> None:
-    def mutator(job: dict[str, Any]) -> bool:
-        if str(job.get("status") or "") not in _ACTIVE_STATUSES:
-            return False
-        job["status"] = "done"
-        job["result"] = result
-        job["session_date"] = result.get("session_date")
-        job["_finished_at"] = time.time()
-        return True
-
-    job = _mutate_job_on_disk(job_id, mutator)
-    if job is None:
-        return
-    with _JOBS_LOCK:
-        RECORDING_JOBS[job_id] = job
-        global _ACTIVE_JOB_ID
-        if _ACTIVE_JOB_ID == job_id:
-            _ACTIVE_JOB_ID = None
-
-
-def fail_job(job_id: str, message: str, *, terminate_worker: bool = False) -> None:
-    job_for_term = _get_job_record(job_id)
-    if job_for_term is None:
-        return
-    if terminate_worker:
-        _terminate_worker(job_for_term)
-
-    def mutator(job: dict[str, Any]) -> bool:
-        if str(job.get("status") or "") not in _ACTIVE_STATUSES:
-            return False
-        job["status"] = "error"
-        job["error"] = message
-        job["_finished_at"] = time.time()
-        return True
-
-    job = _mutate_job_on_disk(job_id, mutator)
-    if job is None:
-        return
-    with _JOBS_LOCK:
-        RECORDING_JOBS[job_id] = job
-        global _ACTIVE_JOB_ID
-        if _ACTIVE_JOB_ID == job_id:
-            _ACTIVE_JOB_ID = None
+    _STORE.complete(job_id, result=result, session_date=result.get("session_date"))
 
 
 def request_stop(job_id: str) -> None:
@@ -960,12 +582,6 @@ def stop_active_job_cooperatively(*, reason: str = "stopped") -> str | None:
     return job_id
 
 
-def _terminate_worker(job: dict[str, Any] | None) -> None:
-    if job is None:
-        return
-    job_runner.terminate_worker(job.get("worker_pid"))
-
-
 def _agent_dir() -> Path:
     # Off-by-one regression fixed here: for .../vibetrading/agent/src/trade/recording_jobs.py,
     # parents[0] is .../src/trade, parents[1] is .../src (has no "src/" subfolder of its own),
@@ -993,19 +609,9 @@ def _mutate_recording_env(env: dict[str, str]) -> None:
 
 def spawn_worker(job_id: str) -> None:
     """Launch the recorder in a detached subprocess (survives API hot-reload)."""
-    proc = job_runner.spawn_worker_process(
-        job_id=job_id,
+    _STORE.spawn(
+        job_id,
         worker_module="src.trade.recording_worker",
         agent_dir=_agent_dir(),
-        worker_log=_job_dir(job_id) / "worker.log",
         env_mutator=_mutate_recording_env,
     )
-
-    def mutator(job: dict[str, Any]) -> bool:
-        job["worker_pid"] = proc.pid
-        return True
-
-    job = _mutate_job_on_disk(job_id, mutator)
-    if job is not None:
-        with _JOBS_LOCK:
-            RECORDING_JOBS[job_id] = job

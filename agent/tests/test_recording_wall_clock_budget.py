@@ -15,6 +15,7 @@ and measures the wall-clock budget against that instead.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -28,7 +29,7 @@ def _patch_jobs_root(monkeypatch, tmp_path: Path) -> None:
     # test in this process doesn't get reused instead.
     with recording_jobs._JOBS_LOCK:
         recording_jobs.RECORDING_JOBS.clear()
-        recording_jobs._ACTIVE_JOB_ID = None
+        recording_jobs._ACTIVE_BY_SCOPE.clear()
 
 
 def test_stale_job_woken_after_long_deferred_wait_is_not_immediately_failed(
@@ -65,9 +66,8 @@ def test_stale_job_woken_after_long_deferred_wait_is_not_immediately_failed(
     # Immediately after waking, reconcile_stale_job must NOT fail the job —
     # this is the bug: it used to compute wall_age from the 66-hour-old
     # created_at and fail instantly.
-    with recording_jobs._JOBS_LOCK:
-        recording_jobs.RECORDING_JOBS[job_id]["worker_pid"] = None
-    monkeypatch.setattr(recording_jobs, "worker_alive", lambda job: True)
+    # A live worker: this very process (the store's liveness check is `detached_worker.is_alive(pid)`).
+    recording_jobs._mutate_job_on_disk(job_id, lambda job: job.update(worker_pid=os.getpid()) or True)
 
     terminalized = recording_jobs.reconcile_stale_job(job_id)
     assert terminalized is False
@@ -82,10 +82,10 @@ def test_stale_job_still_fails_once_run_started_at_exceeds_budget(
 ) -> None:
     _patch_jobs_root(monkeypatch, tmp_path)
     monkeypatch.setattr(recording_jobs, "_WALL_CLOCK_SECONDS", 28800)
-    monkeypatch.setattr(recording_jobs, "worker_alive", lambda job: True)
 
     job_id, _reused = recording_jobs.start_job(underlyings=["NIFTY"])
     recording_jobs.mark_running(job_id)
+    recording_jobs._mutate_job_on_disk(job_id, lambda job: job.update(worker_pid=os.getpid()) or True)
 
     old_run_started_at = (datetime.now(timezone.utc) - timedelta(hours=10)).isoformat()
 

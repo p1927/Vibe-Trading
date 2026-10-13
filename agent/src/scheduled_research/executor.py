@@ -26,6 +26,7 @@ from src.scheduled_research.models import (
     DeliveryStatus,
     JobStatus,
     ScheduledResearchJob,
+    is_interval_schedule,
     parse_cron_field,
     validate_schedule,
     validate_timezone,
@@ -284,6 +285,16 @@ def next_due(schedule: str, after_ms: int, tz: str | None = None) -> int:
         return after_ms + int(spec)
     validate_timezone(tz)
     return _next_cron_due(spec, after_ms, tz)
+
+
+def first_fire_ms(schedule: str, now_ms: int, tz: str | None = None) -> int:
+    """First ``next_run_at`` of a newly created job: the first authored wall-clock occurrence for a
+    timezone-carrying cron (its contract is the authored clock, not the creation moment), else now
+    (interval jobs and timezone-less jobs keep the immediate-first-fire default). The one rule the HTTP
+    create route, the service draft builder and playbook instantiation each used to carry a copy of."""
+    if tz is None or is_interval_schedule(schedule):
+        return now_ms
+    return next_due(schedule, now_ms, tz)
 
 
 def _next_cron_due(schedule: str, after_ms: int, tz: str | None = None) -> int:
@@ -848,7 +859,7 @@ class ScheduledResearchExecutor:
                 continue
             job.status = JobStatus.PENDING
             try:
-                job.next_run_at = next_due(job.schedule, now)
+                job.next_run_at = next_due(job.schedule, now, job.timezone)
             except Exception:
                 logger.warning(
                     "could not advance schedule for shutdown-recovered job %s; deferring one tick",
@@ -1091,7 +1102,7 @@ class ScheduledResearchExecutor:
             record_interrupted_run(job, reason, restart_artifact=startup)
             job.status = JobStatus.PENDING
             try:
-                job.next_run_at = next_due(job.schedule, now)
+                job.next_run_at = next_due(job.schedule, now, job.timezone)
             except Exception:
                 logger.warning(
                     "could not advance schedule for recovered job %s; deferring one tick",
@@ -1160,7 +1171,7 @@ class ScheduledResearchExecutor:
                 # normal tick loop dispatches it starting the very next tick.
                 continue
             try:
-                job.next_run_at = next_due(job.schedule, now)
+                job.next_run_at = next_due(job.schedule, now, job.timezone)
             except Exception:
                 logger.warning(
                     "could not defer overdue job %s on startup; delaying one tick",
