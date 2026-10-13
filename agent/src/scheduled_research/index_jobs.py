@@ -453,7 +453,6 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
             finalize_summary = finalize_daily_cold_tier(
                 flow_lookback_days=flow_lookback,
                 macro_lookback_days=int(cfg.get("macro_lookback_days") or 14),
-                panel_tail_days=int(cfg.get("panel_tail_days") or 14),
             )
             summary["cold_tier_finalize"] = finalize_summary
             emit_stage_event(

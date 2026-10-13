@@ -17,6 +17,13 @@ import pandas as pd
 from src.trade.hub_bridge import ensure_trade_stack_path
 
 
+# Calendar days of daily history that cover Trade's TECHNICAL_WARMUP_SESSIONS (250 sessions, about
+# 362 calendar days at 252 sessions/year, plus slack for holidays). Wilder smoothing is seeded from the
+# first delta, so a short window gives a seed-dominated RSI (6 points off at 27 bars, 0.007 at 120);
+# every daily-RSI caller fetches at least this much history. A test pins it to the Trade constant.
+RSI_WARMUP_CALENDAR_DAYS = 380
+
+
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     """Trade's Wilder RSI series; NaN before ``period`` observations and on a flat stretch."""
     ensure_trade_stack_path()

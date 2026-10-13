@@ -13,14 +13,14 @@ import pandas as pd
 
 from src.shadow_account.backtester import _LIQUID_BASKETS, SUPPORTED_MARKETS
 from src.shadow_account.models import ShadowProfile, ShadowRule
-from src.trade.technicals import compute_rsi
+from src.trade.technicals import RSI_WARMUP_CALENDAR_DAYS, compute_rsi
 
 PriceFetcher = Callable[..., pd.DataFrame | None]
 
 _RSI_PERIOD = 14
-# Calendar days of history fetched per symbol by the default fetcher: RSI(14) warmup plus the
-# 20-day MA / momentum windows, with slack for weekends and holidays.
-_DEFAULT_HISTORY_DAYS = 365
+# Calendar days of history fetched per symbol by the default fetcher: the full RSI warmup,
+# which also covers the 20-day MA / momentum windows.
+_DEFAULT_HISTORY_DAYS = RSI_WARMUP_CALENDAR_DAYS
 
 
 def _default_fetcher(symbol: str, market: str, target: date) -> pd.DataFrame | None:

@@ -217,7 +217,8 @@ class LlmVisionOcrEngine:
 
         for attempt in range(2):
             try:
-                response = client.chat.completions.create(
+                response = self._create_logged(
+                    client, config,
                     model=config["model"],
                     messages=[
                         {
@@ -281,6 +282,18 @@ class LlmVisionOcrEngine:
                 )
                 raise
         return ""
+
+    @staticmethod
+    def _create_logged(client, config: dict[str, str], **kwargs):
+        """One OCR completion, written to Trade's LLM call log (tokens when the provider reports)."""
+        from src.providers.trade_minimax_pace import trade_llm_span
+
+        with trade_llm_span(config["provider"], config["model"], tier="vibe-ocr") as meta:
+            response = client.chat.completions.create(**kwargs)
+            usage = getattr(response, "usage", None)
+            meta["input_tok"] = getattr(usage, "prompt_tokens", None)
+            meta["output_tok"] = getattr(usage, "completion_tokens", None)
+            return response
 
     def confidence(self, image: np.ndarray) -> float | None:
         return None

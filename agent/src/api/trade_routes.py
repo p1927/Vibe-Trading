@@ -170,7 +170,11 @@ def _openalgo_config() -> tuple[str, str]:
 
 
 def _paper_mode_env_enabled() -> bool:
-    return get_env_config().trade.openalgo_paper_mode.strip().lower() in ("1", "true", "yes")
+    # The one parser (fail-safe: only an explicit off unlocks live execution); "on" or a typo used
+    # to read as unlocked here while the Trade bridge read the same variable as locked.
+    from trade_integrations.execution.default_profile import paper_mode_value_enabled
+
+    return paper_mode_value_enabled(get_env_config().trade.openalgo_paper_mode)
 
 
 def _openalgo_analyzer_status(host: str, api_key: str) -> bool:
@@ -2904,20 +2908,6 @@ def get_index_prediction_news_impact(
                     macro[str(row["factor"])] = float(row["value"])
 
         if refresh:
-            from trade_integrations.dataflows.hub_wiki.probe import check_ingest_allowed
-
-            gate = check_ingest_allowed()
-            if gate.get("blocked"):
-                report = news_hub_bridge.resolve_news_impact(
-                    ticker=key, doc=doc, limit=12, horizon_days=horizon_days, market=market_for_ticker(key)
-                )
-                report = dict(report or {})
-                report["ingest_blocked"] = True
-                report["pipeline_paused"] = True
-                report["pause_reason"] = str(gate.get("reason") or "llm_wiki_unavailable")
-                report["user_message"] = str(gate.get("user_message") or "")
-                status = "paused"
-                return IndexNewsImpactResponse(status=status, ticker=key, report=report)
             report = news_hub_bridge.refresh_news_impact(
                 ticker=key,
                 horizon_days=horizon_days,
