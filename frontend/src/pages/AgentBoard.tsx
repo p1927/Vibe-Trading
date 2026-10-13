@@ -35,6 +35,12 @@ function fmtPct(v: number | null | undefined): string {
   return `${(v * 100).toFixed(0)}%`;
 }
 
+/** What a queue entry changes: a number for a weight, the guidance line for an agent_guidance entry. */
+function proposalChange(p: PendingWeightProposal): string {
+  if (p.kind === "agent_guidance") return `Add guidance: "${p.guidance ?? ""}"`;
+  return `${(p.current_value ?? 0).toFixed(3)} → ${(p.proposed_value ?? 0).toFixed(3)}`;
+}
+
 function StatCard({ label, value, tone }: { label: string; value: string; tone?: "up" | "down" | "neutral" }) {
   return (
     <div className="rounded-xl border bg-card p-4 shadow-sm">
@@ -378,7 +384,7 @@ export function AgentBoard() {
                     </td>
                     <td className="px-3 py-2 font-medium">{p.weight_id}</td>
                     <td className="px-3 py-2">
-                      {p.current_value.toFixed(3)} → {p.proposed_value.toFixed(3)}
+                      {proposalChange(p)}
                     </td>
                     <td className="px-3 py-2 max-w-md text-xs text-muted-foreground">{p.rationale}</td>
                     <td className="px-3 py-2">
@@ -441,7 +447,7 @@ export function AgentBoard() {
                       </td>
                       <td className="px-3 py-2 font-medium">{p.weight_id}</td>
                       <td className="px-3 py-2">
-                        {p.current_value.toFixed(3)} → {p.proposed_value.toFixed(3)}
+                        {proposalChange(p)}
                       </td>
                       <td className="px-3 py-2 max-w-md text-xs text-muted-foreground">{p.rationale}</td>
                       <td className="px-3 py-2">
