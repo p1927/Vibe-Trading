@@ -28,7 +28,7 @@ import pandas as pd
 
 from src.shadow_account.models import PRICE_FEATURES, ShadowProfile, ShadowRule
 from src.shadow_account.storage import hash_journal, new_shadow_id, now_iso
-from src.trade.technicals import compute_rsi
+from src.trade.technicals import RSI_WARMUP_CALENDAR_DAYS, compute_rsi
 from src.tools.trade_journal_parsers import parse_file, records_to_dataframe
 from src.tools.trade_journal_tool import pair_trades_fifo
 
@@ -46,9 +46,9 @@ _CATEGORICAL_FEATURES = ("market",)
 _PRICE_FEATURES = PRICE_FEATURES
 _RSI_PERIOD = 14
 _PRIOR_RETURN_WINDOW = 5
-# Calendar buffer added before the earliest buy_dt so the RSI warmup has enough
-# trading bars even across weekends/holidays.
-_PRICE_LOOKBACK_DAYS = 40
+# Calendar buffer added before the earliest buy_dt: the full RSI warmup (Trade's
+# TECHNICAL_WARMUP_SESSIONS), so entry_rsi14 does not depend on where the fetch starts.
+_PRICE_LOOKBACK_DAYS = RSI_WARMUP_CALENDAR_DAYS
 
 # Journal market label → backtest loader-registry market key. Labels with no
 # mapping (e.g. "other") skip the price fetch and degrade to NaN.

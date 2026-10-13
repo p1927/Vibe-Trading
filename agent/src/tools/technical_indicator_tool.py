@@ -16,7 +16,7 @@ import pandas as pd
 
 from src.agent.tools import BaseTool
 from src.market_data import fetch_market_data
-from src.trade.technicals import compute_rsi, stored_nifty_technicals
+from src.trade.technicals import RSI_WARMUP_CALENDAR_DAYS, compute_rsi, stored_nifty_technicals
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +224,9 @@ class TechnicalIndicatorTool(BaseTool):
 
         # Fetch enough bars to cover the longest indicator window + buffer.
         end_date = datetime.now().strftime("%Y-%m-%d")
-        start_date = (datetime.now() - timedelta(days=lookback * 2)).strftime("%Y-%m-%d")
+        # Daily RSI needs the full Wilder warmup whatever ``lookback`` is.
+        days_back = max(lookback * 2, RSI_WARMUP_CALENDAR_DAYS) if interval == "1d" else lookback * 2
+        start_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
         try:
             data = fetch_market_data(
@@ -260,11 +262,13 @@ class TechnicalIndicatorTool(BaseTool):
         close = _extract_close_series(df)
         if close is None or close.empty:
             return json.dumps({"ok": False, "error": "No close price column in data"})
-        close = close.sort_index(kind="stable").tail(lookback)
+        close = close.sort_index(kind="stable")
+        rsi_14 = _compute_rsi(close)  # over the whole fetch: Wilder smoothing needs the warmup
+        close = close.tail(lookback)
 
         # ── Compute indicators ────────────────────────────────────────────
         indicators: dict[str, Any] = {
-            "rsi_14": _compute_rsi(close),
+            "rsi_14": rsi_14,
             "macd": _compute_macd(close),
             "bollinger": _compute_bollinger(close),
         }
