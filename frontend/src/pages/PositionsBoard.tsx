@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import {
   api,
+  errorText,
   type AutonomousAgentInstance,
   type LivePositionGroup,
   type LivePositionSkipped,
@@ -67,9 +68,12 @@ function PositionCard({ group }: { group: LivePositionGroup }) {
         <div
           className={cn(
             "rounded px-2 py-1 text-xs font-medium",
-            (currentPnl ?? 0) >= 0
-              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-              : "bg-red-500/10 text-red-600 dark:text-red-400",
+            // No observed P&L is "unknown" (neutral), not a green zero.
+            currentPnl == null || !Number.isFinite(currentPnl)
+              ? "bg-muted text-muted-foreground"
+              : currentPnl >= 0
+                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                : "bg-red-500/10 text-red-600 dark:text-red-400",
           )}
         >
           Current P&amp;L {fmtInr(currentPnl)}
@@ -98,8 +102,8 @@ export function PositionsBoard() {
         setAgents(res.agents);
         if (res.agents.length > 0) setAgentId((prev) => prev || res.agents[0].id);
       })
-      .catch(() => {
-        if (!cancelled) setError("Failed to load agents.");
+      .catch((err) => {
+        if (!cancelled) setError(`Failed to load agents: ${errorText(err, "request failed")}`);
       });
     return () => {
       cancelled = true;
@@ -115,7 +119,9 @@ export function PositionsBoard() {
         setGroups(res.groups);
         setSkipped(res.skipped);
       })
-      .catch(() => setError("Failed to load live positions for this agent."))
+      .catch((err) =>
+        setError(`Failed to load live positions for this agent: ${errorText(err, "request failed")}`),
+      )
       .finally(() => setLoading(false));
   }, []);
 

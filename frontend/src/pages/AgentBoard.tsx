@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import {
   api,
+  errorText,
   type AgentBoardHindsightSummary,
   type AgentBoardSummary,
   type AgentBoardWealthCurvePoint,
@@ -91,8 +92,8 @@ export function AgentBoard() {
         setAgents(res.agents);
         if (res.agents.length > 0) setAgentId((prev) => prev || res.agents[0].id);
       })
-      .catch(() => {
-        if (!cancelled) setError("Failed to load agents.");
+      .catch((err) => {
+        if (!cancelled) setError(`Failed to load agents: ${errorText(err, "request failed")}`);
       });
     return () => {
       cancelled = true;
@@ -120,7 +121,7 @@ export function AgentBoard() {
         setDecisionQuality(dq.metrics);
         setGradedDecisions(gd.decisions);
       })
-      .catch(() => setError("Failed to load board data for this agent."))
+      .catch((err) => setError(`Failed to load board data for this agent: ${errorText(err, "request failed")}`))
       .finally(() => setLoading(false));
   }, []);
 
@@ -137,11 +138,11 @@ export function AgentBoard() {
     api
       .getPendingWeightProposals()
       .then((res) => setProposals(res.proposals))
-      .catch(() => setProposalError("Failed to load pending weight proposals."));
+      .catch((err) => setProposalError(`Failed to load pending weight proposals: ${errorText(err, "request failed")}`));
     api
       .getAppliedWeightProposals()
       .then((res) => setAppliedProposals(res.proposals))
-      .catch(() => setProposalError("Failed to load applied weight proposals."));
+      .catch((err) => setProposalError(`Failed to load applied weight proposals: ${errorText(err, "request failed")}`));
   }, []);
 
   useEffect(() => {
@@ -156,8 +157,11 @@ export function AgentBoard() {
   const loadActivity = useCallback(() => {
     api
       .getLearningActivity()
-      .then((res) => setActivity(res.entries))
-      .catch(() => setActivityError("Failed to load learning activity."));
+      .then((res) => {
+        setActivity(res.entries);
+        setActivityError(null);
+      })
+      .catch((err) => setActivityError(`Failed to load learning activity: ${errorText(err, "request failed")}`));
   }, []);
 
   useEffect(() => {
@@ -177,7 +181,7 @@ export function AgentBoard() {
           loadActivity();
           if (agentId) loadBoard(agentId);
         })
-        .catch(() => setProposalError(`Failed to apply proposal ${proposalId}.`))
+        .catch((err) => setProposalError(`Failed to apply proposal ${proposalId}: ${errorText(err, "request failed")}`))
         .finally(() => setApplyingId(null));
     },
     [agentId, loadBoard, loadProposals, loadActivity],
@@ -195,7 +199,7 @@ export function AgentBoard() {
           loadProposals();
           loadActivity();
         })
-        .catch(() => setProposalError(`Failed to reject proposal ${proposalId}.`))
+        .catch((err) => setProposalError(`Failed to reject proposal ${proposalId}: ${errorText(err, "request failed")}`))
         .finally(() => setRejectingId(null));
     },
     [loadProposals, loadActivity],
@@ -214,7 +218,7 @@ export function AgentBoard() {
           loadActivity();
           if (agentId) loadBoard(agentId);
         })
-        .catch(() => setProposalError(`Failed to revert proposal ${proposalId}.`))
+        .catch((err) => setProposalError(`Failed to revert proposal ${proposalId}: ${errorText(err, "request failed")}`))
         .finally(() => setRevertingId(null));
     },
     [agentId, loadBoard, loadProposals, loadActivity],
@@ -225,8 +229,11 @@ export function AgentBoard() {
   const loadRetrainProposals = useCallback(() => {
     api
       .getPendingRetrainProposals()
-      .then((res) => setRetrainProposals(res.proposals))
-      .catch(() => setRetrainError("Failed to load pending retrain proposals."));
+      .then((res) => {
+        setRetrainProposals(res.proposals);
+        setRetrainError(null);
+      })
+      .catch((err) => setRetrainError(`Failed to load pending retrain proposals: ${errorText(err, "request failed")}`));
   }, []);
 
   useEffect(() => {
@@ -245,7 +252,7 @@ export function AgentBoard() {
           loadRetrainProposals();
           loadActivity();
         })
-        .catch(() => setRetrainError(`Failed to apply retrain proposal ${proposalId}.`))
+        .catch((err) => setRetrainError(`Failed to apply retrain proposal ${proposalId}: ${errorText(err, "request failed")}`))
         .finally(() => setRetrainApplyingId(null));
     },
     [loadRetrainProposals, loadActivity],
@@ -263,7 +270,7 @@ export function AgentBoard() {
           loadRetrainProposals();
           loadActivity();
         })
-        .catch(() => setRetrainError(`Failed to reject retrain proposal ${proposalId}.`))
+        .catch((err) => setRetrainError(`Failed to reject retrain proposal ${proposalId}: ${errorText(err, "request failed")}`))
         .finally(() => setRetrainRejectingId(null));
     },
     [loadRetrainProposals, loadActivity],

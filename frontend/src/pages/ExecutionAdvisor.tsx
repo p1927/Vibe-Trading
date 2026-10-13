@@ -18,6 +18,19 @@ function fmtPct(v: number | null | undefined): string {
   return `${fmtNum(v * 100, 0)}%`;
 }
 
+/** The panel reads the newest row the scheduled sweep wrote, so it can be old. Past this the
+ * advice is flagged stale: the sweep is not running, or has stopped. */
+export const STALE_ADVICE_MS = 30 * 60_000;
+
+export function adviceAge(advisedAt: string | null | undefined, now: number): { label: string; stale: boolean } {
+  const ts = advisedAt ? Date.parse(advisedAt) : NaN;
+  if (!Number.isFinite(ts)) return { label: "advised at unknown time", stale: true };
+  const ms = Math.max(0, now - ts);
+  const min = Math.floor(ms / 60_000);
+  const label = min < 1 ? "advised just now" : min < 120 ? `advised ${min}m ago` : `advised ${Math.floor(min / 60)}h ago`;
+  return { label, stale: ms > STALE_ADVICE_MS };
+}
+
 function actionBadgeClass(action: string): string {
   if (action === "exit") return "bg-danger/10 text-danger";
   if (action === "tighten_stop") return "bg-amber-500/10 text-amber-600 dark:text-amber-400";
@@ -30,21 +43,47 @@ function fsmStateBadgeClass(state: string): string {
   return "bg-muted text-muted-foreground";
 }
 
-function AdvisoryCard({ advisory }: { advisory: ExecutionAdvisorAdvisory }) {
+function AdvisoryCard({ advisory, now }: { advisory: ExecutionAdvisorAdvisory; now: number }) {
+  // A position opened since the last sweep has no row yet: say so, never render a blank badge.
+  const notYetAdvised = advisory.action == null;
+  const age = notYetAdvised ? null : adviceAge(advisory.advised_at, now);
   return (
-    <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+    <div className="rounded-lg border border-border/60 bg-muted/20 p-3" data-testid="advisory-card">
       <div className="mb-1.5 flex items-center justify-between gap-2">
         <div className="text-sm font-semibold">{advisory.symbol}</div>
         <div className="flex items-center gap-1.5">
-          <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", fsmStateBadgeClass(advisory.fsm_state))}>
-            {advisory.fsm_state}
-          </span>
-          <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", actionBadgeClass(advisory.action))}>
-            {advisory.action}
-          </span>
+          {notYetAdvised ? (
+            <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+              not yet advised
+            </span>
+          ) : (
+            <>
+              {advisory.fsm_state ? (
+                <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", fsmStateBadgeClass(advisory.fsm_state))}>
+                  {advisory.fsm_state}
+                </span>
+              ) : null}
+              <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-medium", actionBadgeClass(advisory.action!))}>
+                {advisory.action}
+              </span>
+            </>
+          )}
         </div>
       </div>
-      <p className="mb-2 text-[11px] text-muted-foreground">{advisory.reason.replace(/_/g, " ")}</p>
+      <p className="mb-2 text-[11px] text-muted-foreground">
+        {notYetAdvised
+          ? "Opened since the last advisory sweep - no advice yet."
+          : advisory.reason.replace(/_/g, " ")}
+        {age ? (
+          <span
+            className={cn("ml-1.5", age.stale && "font-medium text-amber-600 dark:text-amber-400")}
+            data-testid="advice-age"
+          >
+            · {age.label}
+            {age.stale ? " (stale - is the advisory sweep running?)" : ""}
+          </span>
+        ) : null}
+      </p>
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground sm:grid-cols-3">
         <div>
           LTP <span className="font-medium text-foreground">{fmtNum(advisory.ltp)}</span>
@@ -53,7 +92,7 @@ function AdvisoryCard({ advisory }: { advisory: ExecutionAdvisorAdvisory }) {
           Entry <span className="font-medium text-foreground">{fmtNum(advisory.entry_price)}</span>
         </div>
         <div>
-          Direction <span className="font-medium text-foreground">{advisory.entry_direction}</span>
+          Direction <span className="font-medium text-foreground">{advisory.entry_direction ?? "–"}</span>
         </div>
         <div>
           Trail stop <span className="font-medium text-foreground">{fmtNum(advisory.recommended_stop_price)}</span>
@@ -62,7 +101,7 @@ function AdvisoryCard({ advisory }: { advisory: ExecutionAdvisorAdvisory }) {
           Confidence (EMA) <span className="font-medium text-foreground">{fmtPct(advisory.confidence_ema)}</span>
         </div>
         <div>
-          Flip count <span className="font-medium text-foreground">{advisory.consecutive_flip_count}</span>
+          Flip count <span className="font-medium text-foreground">{fmtNum(advisory.consecutive_flip_count, 0)}</span>
         </div>
       </div>
     </div>
@@ -72,9 +111,11 @@ function AdvisoryCard({ advisory }: { advisory: ExecutionAdvisorAdvisory }) {
 function StrategyGroup({
   strategyId,
   advisories,
+  now,
 }: {
   strategyId: string;
   advisories: ExecutionAdvisorAdvisory[];
+  now: number;
 }) {
   return (
     <div>
@@ -83,7 +124,7 @@ function StrategyGroup({
       </div>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {advisories.map((advisory) => (
-          <AdvisoryCard key={advisory.symbol} advisory={advisory} />
+          <AdvisoryCard key={advisory.symbol} advisory={advisory} now={now} />
         ))}
       </div>
     </div>
@@ -185,7 +226,7 @@ export function ExecutionAdvisor() {
             <div className="text-xs text-muted-foreground">
               Advisory only — surfaces recommended hold/tighten-stop/exit actions for every open
               position. Never places, closes, or edits an order.
-              {lastUpdated && ` Updated ${lastUpdated.toLocaleTimeString()}.`}
+              {lastUpdated && ` Fetched ${lastUpdated.toLocaleTimeString()}; each card shows when its advice was written.`}
             </div>
           </div>
           <button
@@ -210,7 +251,12 @@ export function ExecutionAdvisor() {
         {!error && groupEntries.length > 0 && (
           <div className="space-y-4">
             {groupEntries.map(([strategyId, advisories]) => (
-              <StrategyGroup key={strategyId} strategyId={strategyId} advisories={advisories} />
+              <StrategyGroup
+                key={strategyId}
+                strategyId={strategyId}
+                advisories={advisories}
+                now={lastUpdated?.getTime() ?? Date.now()}
+              />
             ))}
           </div>
         )}

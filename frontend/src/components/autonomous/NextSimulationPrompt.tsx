@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Flag, Loader2 } from "lucide-react";
-import { api } from "@/lib/api";
+import { ApiError, api, errorText } from "@/lib/api";
 import type {
   AutonomousAgentInstance,
   NextSimulationChoice,
@@ -46,11 +46,18 @@ export function NextSimulationPrompt({ agent, onStarted, onRefresh }: Props) {
     api
       .getSimulationState(agent.id)
       .then((next) => {
-        if (!cancelled) setState(next);
+        if (!cancelled) {
+          setState(next);
+          setError(null);
+        }
       })
-      .catch(() => {
-        // A missing endpoint (an older release tier) must not break the agent view.
-        if (!cancelled) setState(null);
+      .catch((err) => {
+        if (cancelled) return;
+        setState(null);
+        // Only a missing endpoint (an older release tier) is a quiet "no prompt". Anything else
+        // (auth, 5xx, network) must not silently hide a finished simulation's prompt.
+        if (err instanceof ApiError && (err.status === 404 || err.status === 501)) setError(null);
+        else setError(errorText(err, "request failed"));
       });
     return () => {
       cancelled = true;
@@ -75,7 +82,7 @@ export function NextSimulationPrompt({ agent, onStarted, onRefresh }: Props) {
         setState(next);
         onRefresh?.();
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(errorText(err, String(err)));
       } finally {
         setBusy(null);
       }
@@ -83,7 +90,13 @@ export function NextSimulationPrompt({ agent, onStarted, onRefresh }: Props) {
     [agent.id, onRefresh, onStarted],
   );
 
-  if (!state?.prompt_pending) return null;
+  if (!state?.prompt_pending) {
+    return error && eligible ? (
+      <p role="alert" data-testid="simulation-state-error" className="mx-4 mt-3 text-xs text-destructive">
+        Could not read whether this simulation is complete: {error}
+      </p>
+    ) : null;
+  }
 
   return (
     <div className="mx-4 mt-3 rounded-xl border border-primary/40 bg-primary/5 p-4 text-sm">

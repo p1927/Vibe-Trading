@@ -9,3 +9,6 @@ export function replayPollMs(speed: number | undefined): number {
   const s = Math.max(0.01, Math.min(speed ?? 1, 4));
   return Math.round(1000 / s);
 }
+
+/** The only replay speeds the simulator accepts (docs/DECISIONS.md D19; config.py ALLOWED_REPLAY_SPEEDS). */
+export const REPLAY_SPEEDS = [1, 2, 5] as const;

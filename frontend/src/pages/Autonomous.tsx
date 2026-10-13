@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
-import { api, type AutonomousAgentInstance } from "@/lib/api";
+import { api, errorText, type AutonomousAgentInstance } from "@/lib/api";
 import { AutonomousAgentHub } from "@/components/autonomous/AutonomousAgentHub";
 import { AgentMemoryPanel } from "@/components/autonomous/AgentMemoryPanel";
 import { PlanApprovalBanner } from "@/components/autonomous/PlanApprovalBanner";
@@ -169,6 +169,7 @@ export function Autonomous() {
   );
   const [agent, setAgent] = useState<AutonomousAgentInstance | null>(null);
   const [agentLoadState, setAgentLoadState] = useState<AutonomousAgentLoadState>("idle");
+  const [agentLoadError, setAgentLoadError] = useState<string | null>(null);
   const agentLoadGenRef = useRef(0);
 
   const loadAgent = useCallback(async () => {
@@ -185,10 +186,12 @@ export function Autonomous() {
       if (agentLoadGenRef.current !== gen) return;
       setAgent(a);
       setAgentLoadState("ready");
-    } catch {
+      setAgentLoadError(null);
+    } catch (err) {
       if (agentLoadGenRef.current !== gen) return;
       setAgent(null);
       setAgentLoadState("error");
+      setAgentLoadError(errorText(err, "request failed"));
     }
   }, [agentId]);
 
@@ -343,6 +346,16 @@ export function Autonomous() {
                 Memory
               </button>
             </div>
+          )}
+          {agentLoadError && (
+            <span
+              role="alert"
+              data-testid="agent-load-error"
+              className="ml-auto max-w-md truncate text-xs font-medium text-red-600"
+              title={agentLoadError}
+            >
+              Could not load agent: {agentLoadError}
+            </span>
           )}
           {agent && !isDraftView && view === "chat" && <AgentRuntimeStrip agent={agent} />}
         </header>
