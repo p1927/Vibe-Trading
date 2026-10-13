@@ -7,6 +7,7 @@ import { api, ApiError, type ScheduledRun, type SchedulerRegistryEntry } from "@
 import { LiveLogTail } from "@/components/scheduler/LiveLogTail";
 import { ScheduledJobDetailPanel } from "@/components/scheduler/ScheduledJobDetailPanel";
 import { StatusPill } from "@/components/scheduler/StatusPill";
+import { RunNotes, runStatus } from "@/components/scheduler/runDisplay";
 import { JobsPanel } from "@/components/scheduler/JobsPanel";
 import {
   describeCadence,
@@ -115,6 +116,11 @@ export function Scheduled() {
   // rather than merged into one shape, since these have no pause/resume/
   // delete/cancel controls yet.
   const [registryEntries, setRegistryEntries] = useState<SchedulerRegistryEntry[]>([]);
+  // The cross-service registry and the executor status are secondary reads: their failure must not
+  // break the job list, but it must be visible (an unreachable registry reads as "no extra jobs").
+  const [registryError, setRegistryError] = useState<string | null>(null);
+  const [executor, setExecutor] = useState<{ enabled: boolean; running: boolean } | null>(null);
+  const [executorError, setExecutorError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
@@ -168,15 +174,25 @@ export function Scheduled() {
     refreshController.current = controller;
     const seq = ++refreshSeq.current;
     try {
-      const [rows, registry] = await Promise.all([
+      const [rows, registry, status] = await Promise.all([
         api.listScheduledRuns(controller.signal),
         // A down/unconfigured cross-service source must never break the
-        // page's own job list — degrade to "no extra rows" instead.
-        api.listSchedulerRegistry(controller.signal).catch(() => null),
+        // page's own job list — degrade to "no extra rows", with the reason shown.
+        api.listSchedulerRegistry(controller.signal).then(
+          (value) => ({ value, error: null as string | null }),
+          (err: unknown) => ({ value: null, error: err instanceof Error ? err.message : String(err) }),
+        ),
+        api.getSchedulerStatus(controller.signal).then(
+          (value) => ({ value, error: null as string | null }),
+          (err: unknown) => ({ value: null, error: err instanceof Error ? err.message : String(err) }),
+        ),
       ]);
       if (seq !== refreshSeq.current) return;
       setRuns(rows);
-      setRegistryEntries(registry?.entries ?? []);
+      setRegistryEntries(registry.value?.entries ?? []);
+      setRegistryError(registry.error);
+      setExecutor(status.value);
+      setExecutorError(status.error);
       setListError(null);
     } catch (error) {
       if (seq !== refreshSeq.current || controller.signal.aborted) return;
@@ -446,23 +462,6 @@ export function Scheduled() {
     );
   }
 
-  function statusLabel(run: ScheduledRun): { label: string; tone: "success" | "danger" | "warning" | "neutral" } {
-    switch (run.status) {
-      case "completed":
-        return { label: t("scheduled.statusCompleted"), tone: "success" };
-      case "failed":
-        return { label: t("scheduled.statusFailed"), tone: "danger" };
-      case "running":
-        return { label: t("scheduled.statusRunning"), tone: "warning" };
-      case "cancelled":
-        return { label: t("scheduled.statusCancelled"), tone: "neutral" };
-      case "expired":
-        return { label: t("scheduled.statusExpired", { defaultValue: "Expired" }), tone: "neutral" };
-      default:
-        return { label: t("scheduled.statusPending"), tone: "neutral" };
-    }
-  }
-
   function selectViewMode(mode: "scheduler" | "jobs") {
     setViewMode(mode);
     setSearchParams(
@@ -538,6 +537,40 @@ export function Scheduled() {
           <p className={hintClass}>{t("scheduled.subtitle")}</p>
         </div>
       </header>
+
+      {executorError ? (
+        <p role="alert" className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+          {t("scheduled.executorStatusError", {
+            error: executorError,
+            defaultValue: "Could not read the scheduler executor status: {{error}}",
+          })}
+        </p>
+      ) : executor && (!executor.enabled || !executor.running) ? (
+        <p
+          role="status"
+          data-testid="executor-banner"
+          className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
+        >
+          {executor.enabled
+            ? t("scheduled.executorPaused", {
+                defaultValue:
+                  "The scheduler executor is paused (it always starts paused after a restart). Due jobs wait and nothing runs until it is resumed.",
+              })
+            : t("scheduled.executorDisabled", {
+                defaultValue:
+                  "The scheduler is disabled on this server (VIBE_TRADING_ENABLE_SCHEDULER is off). Nothing will run.",
+              })}
+        </p>
+      ) : null}
+      {registryError && (
+        <p role="alert" className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+          {t("scheduled.registryError", {
+            error: registryError,
+            defaultValue:
+              "Recorder and OpenAlgo scheduler entries could not be loaded, so they are missing below: {{error}}",
+          })}
+        </p>
+      )}
 
       <div className="flex gap-1.5" role="tablist" aria-label={t("scheduled.viewModeLabel")}>
         <button
@@ -811,7 +844,7 @@ export function Scheduled() {
           )}
           <ul className="divide-y">
             {filteredRuns.map((run) => {
-              const status = statusLabel(run);
+              const status = runStatus(t, run);
               const zone = displayZone(run);
               return (
                 <li key={run.id} className="flex flex-wrap items-start gap-3 p-4">
@@ -845,11 +878,7 @@ export function Scheduled() {
                         })}
                       </p>
                     )}
-                    {run.last_error && (
-                      <p className="break-words text-xs text-danger">
-                        {t("scheduled.lastError", { error: run.last_error })}
-                      </p>
-                    )}
+                    <RunNotes run={run} t={t} />
                     {run.delivery_channel && (
                       <p
                         className={

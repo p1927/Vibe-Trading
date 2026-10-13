@@ -6,6 +6,7 @@ import { ResearchContextPanel } from "@/components/research/ResearchContextPanel
 import { SourcesPanel } from "@/components/research/SourcesPanel";
 import { WatchersPanel } from "@/components/research/WatchersPanel";
 import { api, type AgentDebateArtifact, type HubPlanArtifact } from "@/lib/api";
+import { safeRemove, safeSet } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 import { useProvenanceStore, type ContextSection } from "@/stores/provenance";
 
@@ -54,16 +55,11 @@ export function ContextDrawer({
   const [loadingPlan, setLoadingPlan] = useState(false);
   const [planError, setPlanError] = useState<string | null>(null);
   const [planRetryToken, setPlanRetryToken] = useState(0);
+  const [sourcesError, setSourcesError] = useState<string | null>(null);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, drawerOpen ? "expanded" : "collapsed");
-    if (drawerOpen) {
-      try {
-        localStorage.removeItem(LEGACY_STORAGE_KEY);
-      } catch {
-        /* ignore */
-      }
-    }
+    safeSet(STORAGE_KEY, drawerOpen ? "expanded" : "collapsed");
+    if (drawerOpen) safeRemove(LEGACY_STORAGE_KEY);
   }, [drawerOpen]);
 
   useEffect(() => {
@@ -73,12 +69,15 @@ export function ContextDrawer({
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
+    setSourcesError(null);
     api
       .getSessionProvenance(sessionId)
       .then((res) => {
         if (!cancelled && res.sources?.length) setSources(res.sources);
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        if (!cancelled) setSourcesError(err instanceof Error ? err.message : String(err));
+      });
     return () => {
       cancelled = true;
     };
@@ -89,6 +88,8 @@ export function ContextDrawer({
     let cancelled = false;
     setLoadingPlan(true);
     setPlanError(null);
+    // The previous symbol's plan must not stay on screen under the new symbol while this loads/fails.
+    setLocalPlan(null);
     api
       .getHubPlan(ticker, assetType)
       .then((res) => {
@@ -202,7 +203,16 @@ export function ContextDrawer({
             </nav>
 
             <div className="flex-1 overflow-y-auto p-3">
-              {activeSection === "sources" && <SourcesPanel />}
+              {activeSection === "sources" && (
+                <>
+                  {sourcesError && (
+                    <p role="alert" className="mb-2 text-[11px] text-destructive">
+                      Could not load this session's data references: {sourcesError}
+                    </p>
+                  )}
+                  <SourcesPanel />
+                </>
+              )}
 
               {activeSection === "research" && (
                 <div className="space-y-3">

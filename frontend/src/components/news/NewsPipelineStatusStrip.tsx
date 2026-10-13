@@ -35,7 +35,7 @@ export function NewsPipelineStatusStrip({ status }: { status?: HubNewsPipelineSt
     {
       key: "embed",
       label: "Embeddings",
-      value: wiki?.embedding_available ? "available" : "unavailable",
+      value: wiki?.embedding_available === undefined ? "unknown" : wiki.embedding_available ? "available" : "unavailable",
       warn: wiki?.embedding_available === false,
     },
     { key: "sources", label: "Local source files", value: String(wiki?.local_source_md_count ?? "—") },

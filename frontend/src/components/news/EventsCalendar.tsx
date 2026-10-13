@@ -63,6 +63,7 @@ export function EventsCalendar({
   const [historicalStructuralEvents, setHistoricalStructuralEvents] = useState<HistoricalUpcomingEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<CalendarEventItem | null>(null);
 
   const weekStart = useMemo(() => {
@@ -79,12 +80,16 @@ export function EventsCalendar({
     });
   }, [weekStart]);
 
+  // The window the data covers: moving the selected day inside one week must not refetch it.
+  const weekStartIso = toIsoDate(weekDays[0]);
+  const weekEndIso = toIsoDate(weekDays[weekDays.length - 1]);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    const start = toIsoDate(weekDays[0]);
-    const end = toIsoDate(weekDays[weekDays.length - 1]);
+    const start = weekStartIso;
+    const end = weekEndIso;
     api
       .getHubNewsEventsCalendar({ start, end })
       .then((res) => {
@@ -101,7 +106,7 @@ export function EventsCalendar({
     return () => {
       cancelled = true;
     };
-  }, [weekDays, refreshKey]);
+  }, [weekStartIso, weekEndIso, refreshKey]);
 
   useEffect(() => {
     if (!includeStructuralHistory) {
@@ -109,22 +114,24 @@ export function EventsCalendar({
       return;
     }
     let cancelled = false;
-    const start = toIsoDate(weekDays[0]);
-    const end = toIsoDate(weekDays[weekDays.length - 1]);
+    setHistoryError(null);
     api
-      .getIndexPredictionUpcomingEventsHistory({ start, end })
+      .getIndexPredictionUpcomingEventsHistory({ start: weekStartIso, end: weekEndIso })
       .then((res) => {
         if (cancelled) return;
         setHistoricalStructuralEvents(res.events || []);
       })
-      .catch(() => {
-        /* supplementary past-events source — the live forward-looking structuralEvents
-         * prop already renders fine without it, so fail silently here. */
+      .catch((err: unknown) => {
+        // Supplementary past-events source: the forward-looking structuralEvents still render, but
+        // its absence must be visible, not read as "no past events this week".
+        if (cancelled) return;
+        setHistoricalStructuralEvents([]);
+        setHistoryError(err instanceof Error ? err.message : String(err));
       });
     return () => {
       cancelled = true;
     };
-  }, [weekDays, includeStructuralHistory]);
+  }, [weekStartIso, weekEndIso, includeStructuralHistory]);
 
   const allItems = useMemo<CalendarEventItem[]>(() => {
     const news: CalendarEventItem[] = newsEvents.map((data, idx) => ({
@@ -220,8 +227,13 @@ export function EventsCalendar({
       </div>
 
       {error ? (
-        <p className="mb-2 rounded-md border border-dashed bg-muted/10 px-3 py-2 text-[12px] text-muted-foreground">
+        <p role="alert" className="mb-2 rounded-md border border-dashed bg-muted/10 px-3 py-2 text-[12px] text-muted-foreground">
           {error}
+        </p>
+      ) : null}
+      {historyError ? (
+        <p role="alert" className="mb-2 rounded-md border border-dashed bg-muted/10 px-3 py-2 text-[12px] text-muted-foreground">
+          Past structural events could not be loaded for this week: {historyError}
         </p>
       ) : null}
 

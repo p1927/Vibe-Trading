@@ -27,6 +27,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       triggerScheduledRun: vi.fn(),
       getScheduledRunPreview: vi.fn(),
       listSchedulerRegistry: vi.fn(),
+      getSchedulerStatus: vi.fn(),
       pauseSchedulerRegistryEntry: vi.fn(),
       resumeSchedulerRegistryEntry: vi.fn(),
       triggerSchedulerRegistryEntry: vi.fn(),
@@ -49,6 +50,7 @@ const mocked = api as unknown as {
   triggerScheduledRun: ReturnType<typeof vi.fn>;
   getScheduledRunPreview: ReturnType<typeof vi.fn>;
   listSchedulerRegistry: ReturnType<typeof vi.fn>;
+  getSchedulerStatus: ReturnType<typeof vi.fn>;
   pauseSchedulerRegistryEntry: ReturnType<typeof vi.fn>;
   resumeSchedulerRegistryEntry: ReturnType<typeof vi.fn>;
   triggerSchedulerRegistryEntry: ReturnType<typeof vi.fn>;
@@ -101,6 +103,8 @@ function run(overrides: Partial<ScheduledRun> = {}): ScheduledRun {
     paused: false,
     auto_paused_reason: null,
     section: "general",
+    last_result_summary: null,
+    dispatch_blocked_reason: null,
     ...overrides,
   };
 }
@@ -109,6 +113,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocked.listScheduledRuns.mockResolvedValue([]);
   mocked.listSchedulerRegistry.mockResolvedValue({ status: "ok", entries: [], sources: {} });
+  mocked.getSchedulerStatus.mockResolvedValue({ enabled: true, running: true });
   mocked.scheduledRunStreamUrl.mockResolvedValue("http://test/scheduled-runs/x/stream");
   mocked.liveLogStreamUrl.mockImplementation((path: string) => Promise.resolve(`http://test${path}?ticket=t`));
   FakeEventSource.instances = [];
@@ -582,15 +587,15 @@ describe("cross-service registry entries (Mechanism B)", () => {
     expect(screen.getByText("read-only")).toBeInTheDocument();
   });
 
-  it("degrades to no extra rows when the cross-service call fails", async () => {
+  it("degrades to no extra rows, with a visible reason, when the cross-service call fails", async () => {
     mocked.listSchedulerRegistry.mockRejectedValue(new Error("unreachable"));
     mocked.listScheduledRuns.mockResolvedValue([run({ id: "a" })]);
     renderScheduled();
 
-    // The page's own jobs still render; no crash, no dangling error state
-    // from the registry call.
+    // The page's own jobs still render, and the missing rows are explained, not silent.
     expect(await screen.findByText("All (1)")).toBeInTheDocument();
-    expect(screen.queryByText(/Recorder/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Recorder \(/)).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("unreachable");
   });
 
   it("filtering to a recorder section hides scheduled-run rows and vice versa", async () => {
@@ -953,5 +958,70 @@ describe("Scheduled page verdict cell", () => {
     renderScheduled();
 
     expect(await screen.findByText(/No calls/)).toBeInTheDocument();
+  });
+});
+
+describe("Scheduled page loud states", () => {
+  it("says so when the executor is paused (it boots paused by design)", async () => {
+    mocked.getSchedulerStatus.mockResolvedValue({ enabled: true, running: false });
+    renderScheduled();
+    expect(await screen.findByTestId("executor-banner")).toHaveTextContent(/paused/i);
+  });
+
+  it("says so when the scheduler is disabled on the server", async () => {
+    mocked.getSchedulerStatus.mockResolvedValue({ enabled: false, running: false });
+    renderScheduled();
+    expect(await screen.findByTestId("executor-banner")).toHaveTextContent(/disabled/i);
+  });
+
+  it("shows no banner while the executor is running", async () => {
+    mocked.listScheduledRuns.mockResolvedValue([run()]);
+    renderScheduled();
+    await screen.findByRole("listitem");
+    expect(screen.queryByTestId("executor-banner")).toBeNull();
+  });
+
+  it("shows an alert, not nothing, when the executor status cannot be read", async () => {
+    mocked.getSchedulerStatus.mockRejectedValue(new ApiError("status 502", 502));
+    renderScheduled();
+    expect(await screen.findByText(/Could not read the scheduler executor status/)).toBeInTheDocument();
+  });
+
+  it("shows why the recorder/OpenAlgo rows are missing when the registry call fails", async () => {
+    mocked.listScheduledRuns.mockResolvedValue([run()]);
+    mocked.listSchedulerRegistry.mockRejectedValue(new ApiError("registry down", 503));
+    renderScheduled();
+    expect(await screen.findByText(/could not be loaded.*registry down/)).toBeInTheDocument();
+    expect(screen.getByRole("listitem")).toBeInTheDocument();
+  });
+
+  it("surfaces a degraded result summary on a run recorded as completed", async () => {
+    mocked.listScheduledRuns.mockResolvedValue([
+      run({ status: "completed", last_run_at: 1, last_result_summary: { status: "degraded", reason: "vendor timeout" } }),
+    ]);
+    renderScheduled();
+    expect(await screen.findByTestId("result-note-auckland-scan")).toHaveTextContent("Last result: degraded — vendor timeout");
+  });
+
+  it("flags a completed run that recorded no result summary, and stays quiet for a clean one", async () => {
+    mocked.listScheduledRuns.mockResolvedValue([
+      run({ id: "a", status: "completed", last_run_at: 1, last_result_summary: null }),
+      run({ id: "b", status: "completed", last_run_at: 1, last_result_summary: { status: "ok" } }),
+    ]);
+    renderScheduled();
+    expect(await screen.findByTestId("result-note-a")).toHaveTextContent(/no result summary/);
+    expect(screen.queryByTestId("result-note-b")).toBeNull();
+  });
+
+  it("shows why a due job will never dispatch here", async () => {
+    mocked.listScheduledRuns.mockResolvedValue([run({ dispatch_blocked_reason: "collection jobs run on release only" })]);
+    renderScheduled();
+    expect(await screen.findByTestId("dispatch-blocked-auckland-scan")).toHaveTextContent("collection jobs run on release only");
+  });
+
+  it("renders an expired run as Expired in the Jobs view too (one status mapping)", async () => {
+    mocked.listScheduledRuns.mockResolvedValue([run({ status: "expired" })]);
+    renderScheduled("/scheduled?view=jobs");
+    expect(await screen.findByText("Expired")).toBeInTheDocument();
   });
 });

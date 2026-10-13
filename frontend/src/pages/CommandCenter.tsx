@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { ClipboardCheck, Gauge, History } from "lucide-react";
 import {
@@ -160,22 +160,30 @@ function useCommandCenterStream(agentId: string) {
   );
   const [prediction, setPrediction] = useState<IndexPredictionArtifact | null>(null);
   const [news, setNews] = useState<IndexNewsImpactReport | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // One message per stream leg: a good positions frame must not clear a failing prediction leg.
+  const [legErrors, setLegErrors] = useState<Record<string, string>>({});
+  const setLeg = useCallback((leg: string, message: string | null) => {
+    setLegErrors((prev) => {
+      if ((prev[leg] ?? null) === message) return prev;
+      const { [leg]: _drop, ...rest } = prev;
+      return message === null ? rest : { ...rest, [leg]: message };
+    });
+  }, []);
   const baselineRef = useRef<LastSeenPrediction | null | undefined>(undefined);
 
   useEffect(() => {
     onStatusChange(setStatus);
     connect(api.commandCenterStreamUrl(agentId, "NIFTY"), {
       positions: (data) => {
-        setError(null);
+        setLeg("positions", null);
         setPositions({
           groups: (data.groups as LivePositionGroup[]) ?? [],
           skipped: (data.skipped as LivePositionSkipped[]) ?? [],
         });
       },
-      positions_error: (data) => setError(String(data.message ?? "positions stream error")),
+      positions_error: (data) => setLeg("positions", String(data.message ?? "positions stream error")),
       prediction: (data) => {
-        setError(null);
+        setLeg("prediction", null);
         const artifact = (data.artifact as IndexPredictionArtifact | null) ?? null;
         if (baselineRef.current === undefined) baselineRef.current = readLastSeenPrediction();
         setPrediction(artifact);
@@ -189,15 +197,15 @@ function useCommandCenterStream(agentId: string) {
           });
         }
       },
-      prediction_error: (data) => setError(String(data.message ?? "prediction stream error")),
+      prediction_error: (data) => setLeg("prediction", String(data.message ?? "prediction stream error")),
       news: (data) => {
-        setError(null);
+        setLeg("news", null);
         setNews((data.report as IndexNewsImpactReport | null) ?? null);
       },
-      news_error: (data) => setError(String(data.message ?? "news stream error")),
+      news_error: (data) => setLeg("news", String(data.message ?? "news stream error")),
     });
     return () => disconnect();
-  }, [agentId, connect, disconnect, onStatusChange]);
+  }, [agentId, connect, disconnect, onStatusChange, setLeg]);
 
   const revision = useMemo(() => {
     const prev = baselineRef.current;
@@ -230,7 +238,13 @@ function useCommandCenterStream(agentId: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prediction]);
 
-  return { status, positions, prediction, news, error, revision, newEventKeys };
+  return { status, positions, prediction, news, legErrors, revision, newEventKeys };
+}
+
+/** Placeholder text for a panel with no data yet: "Connecting…" only while a connection is being made. */
+function waitingText(status: SSEStatus, whenConnected: string): string {
+  if (status === "connected") return whenConnected;
+  return status === "disconnected" ? "Live feed disconnected — no data." : "Connecting…";
 }
 
 function LiveDot({ status }: { status: SSEStatus }) {
@@ -276,12 +290,17 @@ interface PnlPositionsPanelProps {
   groups: LivePositionGroup[];
   skipped: LivePositionSkipped[];
   status: SSEStatus;
+  /** What to say when there is no agent to show: "none exist" only once the list actually loaded. */
+  noAgentsText: string;
 }
 
-function PnlPositionsPanel({ agents, agentId, onAgentChange, groups, skipped, status }: PnlPositionsPanelProps) {
+function PnlPositionsPanel({ agents, agentId, onAgentChange, groups, skipped, status, noAgentsText }: PnlPositionsPanelProps) {
   // trajectory[0] is today's real observed P&L per LivePositionGroup's documented shape.
   const totalPnl = useMemo(
-    () => groups.reduce((sum, g) => sum + (g.trajectory[0]?.pnl_inr ?? 0), 0),
+    () =>
+      groups.some((g) => g.trajectory[0]?.pnl_inr == null)
+        ? null
+        : groups.reduce((sum, g) => sum + (g.trajectory[0]?.pnl_inr ?? 0), 0),
     [groups],
   );
   const maxExpiryDays = useMemo(
@@ -313,12 +332,14 @@ function PnlPositionsPanel({ agents, agentId, onAgentChange, groups, skipped, st
             <span
               className={cn(
                 "rounded px-2 py-0.5 text-sm font-semibold",
-                totalPnl >= 0
+                totalPnl == null
+                  ? "bg-muted text-muted-foreground"
+                  : totalPnl >= 0
                   ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
                   : "bg-red-500/10 text-red-600 dark:text-red-400",
               )}
             >
-              {fmtInr(totalPnl)}
+              {fmtInr(totalPnl)}{totalPnl == null ? " (a group has no observed P&L)" : ""}
             </span>
           ) : null}
           <Link
@@ -334,11 +355,11 @@ function PnlPositionsPanel({ agents, agentId, onAgentChange, groups, skipped, st
 
       {!agentId ? (
         <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-3 text-center text-xs text-muted-foreground">
-          No autonomous agents exist yet.
+          {noAgentsText}
         </div>
       ) : !hasData ? (
         <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-3 text-center text-xs text-muted-foreground">
-          {status === "connected" ? "No open positions for this agent." : "Connecting…"}
+          {waitingText(status, "No open positions for this agent.")}
         </div>
       ) : (
         <div className="space-y-2">
@@ -491,7 +512,7 @@ function EventsRangePanel({ artifact, newsReport, status, revision, newEventKeys
 
       {!artifact ? (
         <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 p-3 text-center text-xs text-muted-foreground">
-          {status === "connected" ? "No prediction artifact available yet." : "Connecting…"}
+          {waitingText(status, "No prediction artifact available yet.")}
         </div>
       ) : (
         <div className="space-y-2">
@@ -552,16 +573,26 @@ function EventsRangePanel({ artifact, newsReport, status, revision, newEventKeys
           />
 
           <PriorDayPriceStrip day={priorDay?.day ?? null} bars={priorDay?.bars ?? []} currentSpot={artifact.spot} height={64} />
-          <IndexEventsForecastChart
-            spot={artifact.spot ?? 0}
-            horizonDays={EVENTS_HORIZON_DAYS}
-            expectedReturnPct={artifact.prediction?.expected_return_pct ?? 0}
-            rangeLow={artifact.prediction?.range?.low}
-            rangeHigh={artifact.prediction?.range?.high}
-            dailyBand={dailyBand7d}
-            upcomingEvents={events7d}
-            height={220}
-          />
+          {artifact.spot != null && artifact.prediction?.expected_return_pct != null ? (
+            <IndexEventsForecastChart
+              spot={artifact.spot}
+              horizonDays={EVENTS_HORIZON_DAYS}
+              expectedReturnPct={artifact.prediction.expected_return_pct}
+              rangeLow={artifact.prediction.range?.low}
+              rangeHigh={artifact.prediction.range?.high}
+              dailyBand={dailyBand7d}
+              upcomingEvents={events7d}
+              height={220}
+            />
+          ) : (
+            // A missing spot / expected return used to be drawn as a 0-level, 0% forecast.
+            <div
+              role="status"
+              className="rounded-lg border border-dashed border-amber-500/40 bg-amber-500/5 p-3 text-center text-xs text-amber-700 dark:text-amber-400"
+            >
+              Forecast chart unavailable: the prediction artifact has no spot level or expected return.
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -571,6 +602,8 @@ function EventsRangePanel({ artifact, newsReport, status, revision, newEventKeys
 export function CommandCenter() {
   const [agents, setAgents] = useState<AutonomousAgentInstance[]>([]);
   const [agentId, setAgentId] = useState<string>("");
+  const [agentsError, setAgentsError] = useState<string | null>(null);
+  const [agentsLoaded, setAgentsLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -581,25 +614,34 @@ export function CommandCenter() {
       .then((res) => {
         if (cancelled) return;
         setAgents(res.agents);
+        setAgentsLoaded(true);
         if (res.agents.length > 0) setAgentId((prev) => prev || res.agents[0].id);
       })
-      .catch(() => {
-        /* PnlPositionsPanel's own empty state covers "no agents" honestly */
+      .catch((err: unknown) => {
+        if (!cancelled) setAgentsError(err instanceof Error ? err.message : String(err));
       });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const { status, positions, prediction, news, error, revision, newEventKeys } = useCommandCenterStream(agentId);
+  const { status, positions, prediction, news, legErrors, revision, newEventKeys } = useCommandCenterStream(agentId);
+  const errors = [
+    ...(agentsError ? [`Could not load the autonomous agents: ${agentsError}`] : []),
+    ...Object.entries(legErrors).map(([leg, message]) => `${leg}: ${message}`),
+  ];
 
   return (
     <div className="mx-auto min-h-screen max-w-none space-y-2 bg-background p-3 text-foreground">
-      {error ? (
-        <div className="rounded-lg border border-red-500/40 bg-red-500/5 p-2 text-xs text-red-600 dark:text-red-400">
-          {error}
+      {errors.map((message) => (
+        <div
+          key={message}
+          role="alert"
+          className="rounded-lg border border-red-500/40 bg-red-500/5 p-2 text-xs text-red-600 dark:text-red-400"
+        >
+          {message}
         </div>
-      ) : null}
+      ))}
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[2fr_1fr]">
         <div className="space-y-2">
           <PnlPositionsPanel
@@ -609,6 +651,13 @@ export function CommandCenter() {
             groups={positions?.groups ?? []}
             skipped={positions?.skipped ?? []}
             status={status}
+            noAgentsText={
+              agentsError
+                ? "Agents unavailable — see the error above."
+                : agentsLoaded
+                  ? "No autonomous agents exist yet."
+                  : "Loading agents…"
+            }
           />
           <EventsRangePanel
             artifact={prediction}
