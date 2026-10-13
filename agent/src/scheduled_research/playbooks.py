@@ -187,14 +187,12 @@ class ResearchPlaybook:
 
         now = int(time.time() * 1000) if now_ms is None else now_ms
         if next_run_at is None:
-            next_run_at = now
-            if tz is not None and not resolved_schedule.isdigit():
-                # Imported here, not at module scope: the executor pulls in the
-                # env config and the tool-redaction module (~0.5s), which a CLI
-                # that only lists the catalogue should not pay for.
-                from src.scheduled_research.executor import next_due
+            # Imported here, not at module scope: the executor pulls in the
+            # env config and the tool-redaction module (~0.5s), which a CLI
+            # that only lists the catalogue should not pay for.
+            from src.scheduled_research.executor import first_fire_ms
 
-                next_run_at = next_due(resolved_schedule, now, tz)
+            next_run_at = first_fire_ms(resolved_schedule, now, tz)
 
         job_config: Dict[str, Any] = dict(config or {})
         job_config.setdefault("playbook", self.slug)

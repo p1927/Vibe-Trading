@@ -7638,11 +7638,15 @@ export interface ModelVersionTimelineResponse {
 
 export interface PendingWeightProposal {
   id: string;
+  /** "weight" (numeric nudge) or "agent_guidance" (a line added to one agent's guidance); absent on legacy rows = weight. */
+  kind?: "weight" | "agent_guidance";
+  agent_id?: string;
+  guidance?: string;
   weight_id: string;
   created_at: string;
   status: string;
-  current_value: number;
-  proposed_value: number;
+  current_value: number | null;
+  proposed_value: number | null;
   rationale: string;
   source_run_id: string | null;
   source_metrics: Record<string, number>;

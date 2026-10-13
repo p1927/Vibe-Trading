@@ -283,7 +283,11 @@ def _weight_activity_entry(p: Dict[str, Any]) -> Dict[str, Any]:
         "status": p.get("status"),
         "created_at": p.get("created_at"),
         "resolved_at": resolved_at,
-        "summary": f"{p.get('weight_id')}: {p.get('current_value')} → {p.get('proposed_value')}",
+        "summary": (
+            f"{p.get('weight_id')}: add guidance \"{p.get('guidance')}\""
+            if p.get("kind") == "agent_guidance"
+            else f"{p.get('weight_id')}: {p.get('current_value')} → {p.get('proposed_value')}"
+        ),
         "reason": reason,
     }
 

@@ -647,7 +647,7 @@ def register_scheduled_routes(
             validate_timezone_shape,
         )
 
-        from src.scheduled_research.executor import next_due
+        from src.scheduled_research.executor import first_fire_ms
 
         # A job whose id the delete route rejects can never be cancelled
         # through the API, so the id is held to that same rule at creation
@@ -679,16 +679,10 @@ def register_scheduled_routes(
         now_ms = int(time.time() * 1000)
         next_run_at = request.next_run_at
         if next_run_at is None:
-            next_run_at = now_ms
-            if request.timezone is not None and not is_interval_schedule(request.schedule):
-                # A timezone-carrying cron job's contract is the authored wall
-                # clock, so its first fire is the first authored occurrence —
-                # not the creation moment. Interval jobs and timezone-less
-                # jobs keep the pre-existing immediate-first-fire default.
-                try:
-                    next_run_at = next_due(request.schedule, now_ms, request.timezone)
-                except ValueError as exc:
-                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+            try:
+                next_run_at = first_fire_ms(request.schedule, now_ms, request.timezone)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         if request.end_at is not None:
             if request.end_at <= now_ms:

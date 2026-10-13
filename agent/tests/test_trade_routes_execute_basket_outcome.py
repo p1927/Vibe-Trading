@@ -152,3 +152,28 @@ class TestReconciliationAfterExecute:
 
         assert response.status == "success"
         mock_reconcile.assert_not_called()
+
+
+@pytest.mark.unit
+def test_manual_widget_order_records_the_shadow_alignment_check():
+    """The agent tool `execute_basket` refuses agent-less widgets, so this route is the one manual
+    order path and records the human's choice against the prediction ledger (agent_id "")."""
+    with patch("trade_integrations.autonomous_agents.shadow_strategy.record_shadow_alignment") as mock_shadow:
+        response, _, _ = _run_execute_basket(_widget(agent_id=None))
+
+    assert response.status == "success"
+    mock_shadow.assert_called_once_with(
+        agent_id="", symbol="NIFTY", decision="ENTER", agent_strategy="long_call", agent_confidence=None
+    )
+
+
+@pytest.mark.unit
+def test_a_failing_shadow_alignment_never_undoes_the_placed_order():
+    with patch(
+        "trade_integrations.autonomous_agents.shadow_strategy.record_shadow_alignment",
+        side_effect=RuntimeError("boom"),
+    ):
+        response, mock_append, _ = _run_execute_basket(_widget(agent_id=None))
+
+    assert response.status == "success"
+    mock_append.assert_called_once()
