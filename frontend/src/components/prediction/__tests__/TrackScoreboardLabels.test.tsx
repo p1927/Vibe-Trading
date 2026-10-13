@@ -108,6 +108,17 @@ describe("combiner promotion", () => {
     expect(promotionCell({ ...promo, promoted_combiners: ["stacked_ridge_meta"] }, "stacked_ridge_meta").label).toBe("yes");
   });
 
+  it("a raw pass with no bootstrap entry says it is not yet stable, still not 'yes'", () => {
+    const c = promotionCell({ ...promo, bootstrap_ci: {}, verdicts: { x: { promoted: true } } }, "x");
+    expect(c).toMatchObject({ label: "raw pass only", tone: "raw" });
+    expect(c.title).toContain("stable");
+  });
+
+  it("a bootstrap that failed for too few pairs names that reason", () => {
+    const c = promotionCell({ ...promo, bootstrap_ci: { x: { passes: false, reason: "insufficient_pairs" } }, verdicts: { x: { promoted: true } } }, "x");
+    expect(c.title).toContain("insufficient pairs");
+  });
+
   it("a failing combiner says which bar: mae or no", () => {
     expect(promotionCell(promo, "equal_weight_3").label).toBe("mae");
     expect(promotionCell(promo, "quant_only").label).toBe("no");

@@ -24,6 +24,7 @@ function viewTone(view: string | null | undefined): string {
 export function bandSourceLabel(range: { half_width_pct?: number; band_source?: string } | null | undefined): string {
   if (range?.band_source === "walk_forward_oos") return "80% conformal, walk-forward OOS error";
   if (range?.band_source === "prior") return "prior width, not measured (under 20 OOS evaluations)";
+  if (range?.band_source) return `band source: ${range.band_source}`; // a source this page does not know is named, not hidden
   return "width not recorded (run predates D401): run analysis again";
 }
 
@@ -174,6 +175,10 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
           {pred.debate.view ? ` (view ${pred.debate.view})` : ""}. Quant-only return was{" "}
           {fmtPct(pred.quant?.expected_return_pct)}; displayed {fmtPct(pred.expected_return_pct)}. Equation
           card shows quant macro coefficients.
+        </div>
+      ) : pred.debate_merged && !pred.debate ? (
+        <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground" data-testid="debate-unrecorded">
+          An agent debate was merged into this headline; this artifact does not record its figures (run analysis again to see them).
         </div>
       ) : pred.debate_merged ? (
         <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground" data-testid="debate-no-figure">

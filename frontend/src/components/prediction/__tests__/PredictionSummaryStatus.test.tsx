@@ -38,6 +38,31 @@ describe("PredictionSummary band", () => {
   });
 });
 
+describe("variants the first fix did not think of", () => {
+  it("a band source this page does not know is named, not reported as 'not recorded'", () => {
+    expect(bandSourceLabel({ band_source: "walk_forward_oos_v2" })).toBe("band source: walk_forward_oos_v2");
+  });
+
+  it("a non-finite half-width is a dash, never ±NaN%", () => {
+    const t = text(withPred({ range: { low: 1, high: 2, half_width_pct: Number.NaN, band_source: "prior" } }));
+    expect(t).not.toContain("NaN");
+    expect(t).toContain("Range band (± half-width)—");
+  });
+
+  it("an artifact that merged a debate but stored no debate block does not claim a blend or 'no figure'", () => {
+    const t = text(withPred({ debate_merged: true }));
+    expect(t).toContain("does not record its figures");
+    expect(t).not.toContain("60% debate");
+    expect(t).not.toContain("stated no return figure");
+  });
+
+  it("no merged debate, no missing inputs: none of the banners", () => {
+    const t = text(base);
+    expect(t).not.toContain("debate");
+    expect(t).not.toContain("missing from this");
+  });
+});
+
 describe("PredictionSummary model inputs and debate", () => {
   it("lists the inputs the snapshot lacked (D410)", () => {
     const t = text(withPred({ model_missing_features: ["nifty_dividend_yield", "hyg"] }));
