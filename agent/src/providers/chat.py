@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, List, Optional
 from src.config.accessor import get_env_config
 from src.providers.content_filter import is_content_filter_triggered
 from src.providers.llm import build_llm
+from src.providers.trade_minimax_pace import trade_llm_span
 from src.providers.minimax_content import (
     ThinkBlockStreamFilter,
     merge_reasoning,
@@ -530,27 +531,22 @@ class ChatLLM:
             LLMResponse.
         """
         provider, model = self._runtime_provider_model()
-        with self._llm_span(provider, model) as llm_meta:
+        with trade_llm_span(provider, model) as llm_meta:
             llm = self._llm.bind_tools(tools) if tools else self._llm
             config = {"timeout": timeout} if timeout else {}
             ai_message = llm.invoke(messages, config=config)
             response = self._parse_response(ai_message, provider)
-            llm_meta["tool_calls"] = len(response.tool_calls or [])
-            llm_meta["finish_reason"] = response.finish_reason
+            self._note_llm_usage(llm_meta, response)
             return response
 
     @staticmethod
-    def _llm_span(provider: str, model: str):
-        """Trade's per-call observability span, or a no-op one outside the Trade stack.
-
-        The import is resolved before the call: a ``try/except ImportError`` around the whole call
-        re-ran the LLM request whenever anything inside it raised an ImportError.
-        """
-        try:
-            from trade_integrations.observability.hooks import llm_call_span
-        except ImportError:
-            return contextlib.nullcontext({})
-        return llm_call_span(provider=provider, model=model, tier="vibe")
+    def _note_llm_usage(llm_meta: Dict[str, Any], response: "LLMResponse") -> None:
+        """Hand Trade's call log what the provider reported (tokens only when it reported them)."""
+        llm_meta["tool_calls"] = len(response.tool_calls or [])
+        llm_meta["finish_reason"] = response.finish_reason
+        usage = response.usage_metadata or {}
+        llm_meta["input_tok"] = usage.get("input_tokens")
+        llm_meta["output_tok"] = usage.get("output_tokens")
 
     def stream_chat(
         self,
@@ -585,7 +581,7 @@ class ChatLLM:
             Parsed ``LLMResponse``.
         """
         provider, model = self._runtime_provider_model()
-        with self._llm_span(provider, model) as llm_meta:
+        with trade_llm_span(provider, model) as llm_meta:
             response = self._stream_chat_impl(
                 messages,
                 tools=tools,
@@ -595,8 +591,7 @@ class ChatLLM:
                 idle_timeout_s=idle_timeout_s,
                 should_cancel=should_cancel,
             )
-            llm_meta["tool_calls"] = len(response.tool_calls or [])
-            llm_meta["finish_reason"] = response.finish_reason
+            self._note_llm_usage(llm_meta, response)
             return response
 
     def _stream_chat_impl(
