@@ -251,13 +251,15 @@ def resume_index_prediction_job(job_id: str, store: ScheduledResearchJobStore | 
     if job is None or str(job.config.get("job_type") or "") not in INDEX_JOB_TYPES:
         return {"status": "error", "message": f"index job {job_id} not found"}
     job = set_job_enabled(job_id, True, store=store)
-    if job.status != JobStatus.RUNNING:
-        now_ms = int(time.time() * 1000)
-        job.status = JobStatus.PENDING
-        pull_due_now(job, now_ms)
-        job.last_error = None
-        job.consecutive_failures = 0
-        store.upsert(job)
+    # One transaction, field-scoped write: the whole-record `upsert` of the snapshot `set_job_enabled`
+    # returned reverted any run state the executor wrote since, and could demote a run that had just started.
+    with store.transaction():
+        job = store.get(job_id) or job
+        if job.status != JobStatus.RUNNING:
+            pull_due_now(job, int(time.time() * 1000))
+            job = store.update_run_state(
+                job_id, status=JobStatus.PENDING, next_run_at=job.next_run_at, last_error=None, consecutive_failures=0
+            ) or job
     _wake_executor()
     return {"status": "ok", "job": _serialize_job(job)}
 

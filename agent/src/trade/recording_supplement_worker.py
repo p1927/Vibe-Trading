@@ -1,7 +1,7 @@
 """Detached end-of-session supplement worker for stock-simulator recording.
 
-Runs the macro/flow gap-fill (the facade's ``supplement_today``, in-process) in
-its own subprocess so the recorder's main worker can return immediately
+Runs the macro/flow gap-fill (a stock_simulator background backfill run for the session's
+week, the same run the daily coverage sweep starts) in its own subprocess so the recorder's main worker can return immediately
 after ``complete_job`` writes ``status="done"`` to ``job.json``.
 
 Why this lives in its own process
@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,9 @@ from typing import Any
 from src.trade import job_runner
 
 logger = logging.getLogger(__name__)
+
+#: How long the end-of-session gap-fill run may take before it is cancelled (the coverage sweep's default).
+_SUPPLEMENT_BUDGET_SECONDS = 1200.0
 
 
 def _now_iso() -> str:
@@ -133,7 +137,25 @@ def run_supplement(job_id: str, session_date: str) -> None:
             )
             return
 
-        summary = sim_client().supplement_today(session_date=parsed.isoformat())["data"]
+        # The same stock_simulator background backfill run the daily coverage sweep uses (D195). The
+        # simulator client has no `supplement_today`: the call that stood here raised AttributeError, so
+        # the end-of-session gap-fill never ran. A second way to run a week's backfill is a D306 bug.
+        from src.scheduled_research.index_jobs import _backfill_weeks_as_run
+        from trade_integrations.dataflows.index_research.pipeline_cancel import set_stage_sink
+
+        set_stage_sink(
+            lambda message: log({"stage": "supplement", "message": message, "level": "info", "at": _now_iso()})
+        )
+        try:
+            summary = _backfill_weeks_as_run(
+                sim_client(),
+                week_start=parsed.isoformat(),
+                weeks=1,
+                include_optional=True,
+                deadline=time.monotonic() + _SUPPLEMENT_BUDGET_SECONDS,
+            )
+        finally:
+            set_stage_sink(None)
 
         log(
             {
