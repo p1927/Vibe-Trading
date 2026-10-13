@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Disc, Square } from "lucide-react";
-import { api, type GlobalMacroUiCard, type TickRecordingJob } from "@/lib/api";
+import { api, errorText, type GlobalMacroUiCard, type TickRecordingJob } from "@/lib/api";
 
 /** `kind="fx"` tick-recording pool — every `factors/catalog.py`-registered `market="GLOBAL"`/
  * FX-pair factor with a real live-spot source, fetched from `api.getGlobalMacroUiCards()`
@@ -69,11 +69,13 @@ export function MarketRecordingPanel({
         setFxMoneyFlowSymbols(moneyFlow);
         setSelectedSymbols(new Set(currency.map((s) => s.key)));
       })
-      .catch(() => {});
+      .catch((err) => setSyncError(`Symbol list unavailable (${errorText(err, "request failed")}) - nothing can be started.`));
   }, [kind]);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Failed background reads: an empty/old jobs list would otherwise read as "nothing recording".
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     api
@@ -81,8 +83,11 @@ export function MarketRecordingPanel({
       .then((res) => {
         const all = res.jobs ?? [];
         setJobs(all.filter((j) => j.kind === kind && (kind === "fx" || j.country === country)));
+        setSyncError(null);
       })
-      .catch(() => {});
+      .catch((err) =>
+        setSyncError(`Recording status unavailable (${errorText(err, "request failed")}) - the list below may be stale.`),
+      );
   }, [kind, country]);
 
   useEffect(() => {
@@ -170,8 +175,13 @@ export function MarketRecordingPanel({
       </div>
 
       {error ? <p className="text-[11px] text-destructive">{error}</p> : null}
+      {syncError ? (
+        <p role="alert" data-testid="market-recording-sync-error" className="text-[11px] text-amber-700 dark:text-amber-300">
+          {syncError}
+        </p>
+      ) : null}
 
-      {jobs.length === 0 ? (
+      {jobs.length === 0 && !syncError ? (
         <p className="text-[11px] text-muted-foreground">
           No {label} recording in progress. {kind === "index" ? "Only polls while the market is open." : "FX polls around the clock."}
         </p>

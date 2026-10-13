@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Pause, Play, RefreshCw, Square, Timer } from "lucide-react";
-import { api, type MarketReplayCalendarDay, type MultiMarketStatusResponse } from "@/lib/api";
+import { ApiError, api, errorText, type MarketReplayCalendarDay, type MultiMarketStatusResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { ReplaySpeedSelect } from "./ReplaySpeedSelect";
 import { useMarketReplayCalendar } from "./useMarketReplayCalendar";
 
 // Same weekday/cell-sizing convention as India's `StockHistoryCoveragePanel` `YearHeatmap` and
@@ -49,6 +50,7 @@ export function MarketReplayPanel({ country, label }: { country: string; label: 
   const [status, setStatus] = useState<MultiMarketStatusResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [armError, setArmError] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   const selectDay = (date: string) => {
     if (!rangeStart || rangeEnd) {
@@ -74,8 +76,21 @@ export function MarketReplayPanel({ country, label }: { country: string; label: 
   const refreshStatus = useCallback(() => {
     api
       .getMultiMarketStatus()
-      .then((res) => setStatus(res.markets.includes(country) ? res : null))
-      .catch(() => setStatus(null));
+      .then((res) => {
+        setStatus(res.markets.includes(country) ? res : null);
+        setStatusError(null);
+      })
+      .catch((err) => {
+        // The simulator answers 400 "no multi-market session armed" when nothing is armed: that is
+        // the normal idle state. Anything else is unreachable, which is not "not armed": keep the
+        // last status (the poll keeps retrying) and say so.
+        if (err instanceof ApiError && err.status === 400) {
+          setStatus(null);
+          setStatusError(null);
+        } else {
+          setStatusError(`Replay status unavailable (${errorText(err, "request failed")}) - the clock below may be stale.`);
+        }
+      });
   }, [country]);
 
   useEffect(() => {
@@ -306,6 +321,11 @@ export function MarketReplayPanel({ country, label }: { country: string; label: 
       </div>
 
       {armError ? <p className="text-[11px] text-destructive">{armError}</p> : null}
+      {statusError ? (
+        <p role="alert" data-testid="market-replay-status-error" className="text-[11px] text-amber-700 dark:text-amber-300">
+          {statusError}
+        </p>
+      ) : null}
 
       {!status ? (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-background/60 p-3">
@@ -327,15 +347,7 @@ export function MarketReplayPanel({ country, label }: { country: string; label: 
           ) : null}
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             Speed
-            <input
-              type="number"
-              min={0}
-              step={0.5}
-              value={speed}
-              onChange={(e) => setSpeed(Math.max(0, Number(e.target.value) || 0))}
-              className="w-16 rounded border bg-background px-1.5 py-1 text-xs"
-            />
-            ×
+            <ReplaySpeedSelect value={speed} onChange={setSpeed} className="rounded border bg-background px-1.5 py-1 text-xs" />
           </label>
           {rangeEnd ? (
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -385,15 +397,12 @@ export function MarketReplayPanel({ country, label }: { country: string; label: 
             )}
             <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
               Speed
-              <input
-                type="number"
-                min={0}
-                step={0.5}
+              <ReplaySpeedSelect
                 value={speed}
-                onChange={(e) => applySpeed(Math.max(0, Number(e.target.value) || 0))}
-                className="w-14 rounded border bg-background px-1 py-0.5 text-[11px]"
+                onChange={applySpeed}
+                disabled={busy}
+                className="rounded border bg-background px-1 py-0.5 text-[11px]"
               />
-              ×
             </label>
             <button type="button" onClick={stop} disabled={busy} className="inline-flex h-7 items-center gap-1 rounded border border-red-500/40 px-2 text-[11px] text-red-600 hover:bg-red-500/10 disabled:opacity-50">
               <Square className="h-3 w-3" />

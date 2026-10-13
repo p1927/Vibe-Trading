@@ -84,12 +84,13 @@ function formatWatchCondition(cond: NonNullable<AgentIntentSnapshot["watch_condi
   return cond.kind || "condition";
 }
 
-function formatMoney(amount: number | undefined, market: "IN" | "US" | undefined): string {
-  const value = amount ?? 0;
+export function formatMoney(amount: number | null | undefined, market: "IN" | "US" | undefined): string {
+  // A limit the proposal does not carry is unknown, never "0": a zero budget/max-loss reads as a real cap.
+  if (amount == null || !Number.isFinite(amount)) return "not set";
   if (market === "US") {
-    return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+    return `$${amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
   }
-  return `₹${value.toLocaleString()}`;
+  return `₹${amount.toLocaleString()}`;
 }
 
 function ProposalInfraStrip({

@@ -3,12 +3,14 @@ import { ChevronDown, ChevronRight, Pause, Play, Square, Timer } from "lucide-re
 import {
   api,
   ApiError,
+  errorText,
   type MarketRegistryEntry,
   type MultiMarketQuote,
   type MultiMarketStatusResponse,
   type SchedulerRegistryEntry,
 } from "@/lib/api";
 import { COUNTRY_LABELS } from "./GlobalMarketsPanel";
+import { ReplaySpeedSelect } from "./ReplaySpeedSelect";
 
 const ALL_MARKETS = ["IN", "US", "CN", "JP", "RU", "ME", "LATAM", "EU"];
 
@@ -43,6 +45,7 @@ export function MultiMarketReplayPanel() {
   const [status, setStatus] = useState<MultiMarketStatusResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   const [quoteMarket, setQuoteMarket] = useState("");
   const [quoteSymbol, setQuoteSymbol] = useState("");
@@ -103,16 +106,30 @@ export function MultiMarketReplayPanel() {
   };
 
   useEffect(() => {
-    api.getMarketRegistry().then((res) => setRegistry(res.markets ?? [])).catch(() => {});
+    api
+      .getMarketRegistry()
+      .then((res) => setRegistry(res.markets ?? []))
+      .catch((err) =>
+        setError(`Market registry unavailable (${errorText(err, "request failed")}) - quote lookup has no symbols.`),
+      );
   }, []);
 
   const refreshStatus = useCallback(() => {
     api
       .getMultiMarketStatus()
-      .then(setStatus)
-      .catch(() => {
-        // No session armed (or it was torn down elsewhere) — stop polling stale state.
-        setStatus(null);
+      .then((res) => {
+        setStatus(res);
+        setStatusError(null);
+      })
+      .catch((err) => {
+        // 400 "no multi-market session armed" = none armed (or torn down elsewhere): stop polling
+        // stale state. Any other failure is unreachable, not "not armed": keep status and say so.
+        if (err instanceof ApiError && err.status === 400) {
+          setStatus(null);
+          setStatusError(null);
+        } else {
+          setStatusError(`Replay status unavailable (${errorText(err, "request failed")}) - the clock below may be stale.`);
+        }
       });
   }, []);
 
@@ -225,6 +242,11 @@ export function MultiMarketReplayPanel() {
       </p>
 
       {error ? <p className="text-[11px] text-destructive">{error}</p> : null}
+      {statusError ? (
+        <p role="alert" data-testid="multi-market-status-error" className="text-[11px] text-amber-700 dark:text-amber-300">
+          {statusError}
+        </p>
+      ) : null}
 
       <div className="rounded-lg border bg-background/60">
         <button
@@ -352,15 +374,7 @@ export function MultiMarketReplayPanel() {
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
               Speed
-              <input
-                type="number"
-                min={0}
-                step={0.5}
-                value={speed}
-                onChange={(e) => setSpeed(Math.max(0, Number(e.target.value) || 0))}
-                className="w-16 rounded border bg-background px-1.5 py-1 text-xs"
-              />
-              ×
+              <ReplaySpeedSelect value={speed} onChange={setSpeed} className="rounded border bg-background px-1.5 py-1 text-xs" />
             </label>
             <button
               type="button"
@@ -407,15 +421,12 @@ export function MultiMarketReplayPanel() {
               )}
               <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
                 Speed
-                <input
-                  type="number"
-                  min={0}
-                  step={0.5}
+                <ReplaySpeedSelect
                   value={speed}
-                  onChange={(e) => applySpeed(Math.max(0, Number(e.target.value) || 0))}
-                  className="w-14 rounded border bg-background px-1 py-0.5 text-[11px]"
+                  onChange={applySpeed}
+                  disabled={busy}
+                  className="rounded border bg-background px-1 py-0.5 text-[11px]"
                 />
-                ×
               </label>
               <button
                 type="button"

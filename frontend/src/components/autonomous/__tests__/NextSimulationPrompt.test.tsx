@@ -1,7 +1,7 @@
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { vi } from "vitest";
 import { NextSimulationPrompt } from "../NextSimulationPrompt";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import type { AutonomousAgentInstance, SimulationPromptState } from "@/lib/api";
 
 function agent(overrides: Partial<AutonomousAgentInstance> = {}): AutonomousAgentInstance {
@@ -26,6 +26,19 @@ function promptState(overrides: Partial<SimulationPromptState> = {}): Simulation
 
 describe("NextSimulationPrompt", () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it("an auth/5xx failure reading the state is announced, not read as 'no prompt'", async () => {
+    vi.spyOn(api, "getSimulationState").mockRejectedValue(new ApiError("API key required", 401));
+    render(<NextSimulationPrompt agent={agent()} />);
+    expect(await screen.findByTestId("simulation-state-error")).toHaveTextContent(/API key required/);
+  });
+
+  it("a missing endpoint (older release tier, 404) stays quiet", async () => {
+    vi.spyOn(api, "getSimulationState").mockRejectedValue(new ApiError("not found", 404));
+    render(<NextSimulationPrompt agent={agent()} />);
+    await waitFor(() => expect(api.getSimulationState).toHaveBeenCalled());
+    expect(screen.queryByTestId("simulation-state-error")).not.toBeInTheDocument();
+  });
 
   it("offers both configurations plus declining when a pass has completed", async () => {
     vi.spyOn(api, "getSimulationState").mockResolvedValue(promptState());

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   api,
+  errorText,
   type MemoryCommitInfo,
   type MemoryEntryDetail,
   type MemoryEntrySummary,
@@ -95,8 +96,8 @@ function HistoryPanel({ entryId }: { entryId: string }) {
       .then((res) => {
         if (!cancelled) setCommits(res.commits);
       })
-      .catch(() => {
-        if (!cancelled) toast.error("Failed to load history for this entry.");
+      .catch((err) => {
+        if (!cancelled) toast.error(`Failed to load history for this entry: ${errorText(err, "request failed")}`);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -125,7 +126,7 @@ function HistoryPanel({ entryId }: { entryId: string }) {
     api
       .getMemoryEntryDiff(entryId, fromSha, toSha)
       .then((res) => setDiff(res.diff))
-      .catch(() => toast.error("Failed to load diff."))
+      .catch((err) => toast.error(`Failed to load diff: ${errorText(err, "request failed")}`))
       .finally(() => setDiffLoading(false));
   }, [selected, commits, entryId]);
 
@@ -220,7 +221,7 @@ function EntryDetail({
         setEditing(false);
         toast.success("Memory entry updated.");
       })
-      .catch(() => toast.error("Failed to save edit."))
+      .catch((err) => toast.error(`Failed to save edit: ${errorText(err, "request failed")}`))
       .finally(() => setSaving(false));
   }, [entry.id, draft, onChanged]);
 
@@ -235,7 +236,7 @@ function EntryDetail({
         toast.success("Memory entry archived.");
         onArchived();
       })
-      .catch(() => toast.error("Failed to archive entry."))
+      .catch((err) => toast.error(`Failed to archive entry: ${errorText(err, "request failed")}`))
       .finally(() => setArchiving(false));
   }, [entry.id, entry.title, onArchived]);
 
@@ -356,7 +357,7 @@ export function AgentMemoryPanel({ agentId }: { agentId: string }) {
     api
       .listAgentMemory({ agentId, sort })
       .then((res) => setEntries(res.entries))
-      .catch(() => setError("Failed to load memory entries for this agent."))
+      .catch((err) => setError(`Failed to load memory entries for this agent: ${errorText(err, "request failed")}`))
       .finally(() => setLoading(false));
   }, [agentId, sort]);
 
@@ -380,9 +381,9 @@ export function AgentMemoryPanel({ agentId }: { agentId: string }) {
       .then((res) => {
         if (!cancelled) setDetail(res);
       })
-      .catch(() => {
+      .catch((err) => {
         if (!cancelled) {
-          setDetailError("Failed to load this entry.");
+          setDetailError(`Failed to load this entry: ${errorText(err, "request failed")}`);
           toast.error("Failed to load entry.");
         }
       })
@@ -413,7 +414,7 @@ export function AgentMemoryPanel({ agentId }: { agentId: string }) {
         );
         loadList();
       })
-      .catch(() => toast.error("Failed to invalidate cache."))
+      .catch((err) => toast.error(`Failed to invalidate cache: ${errorText(err, "request failed")}`))
       .finally(() => setInvalidating(false));
   }, [loadList]);
 

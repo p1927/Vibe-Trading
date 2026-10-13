@@ -14,7 +14,20 @@ const apiMock = vi.hoisted(() => ({
   seekMultiMarketReplay: vi.fn(),
 }));
 
-vi.mock("@/lib/api", () => ({ api: apiMock }));
+const MockApiError = vi.hoisted(
+  () =>
+    class MockApiError extends Error {
+      constructor(message: string, public status: number) {
+        super(message);
+      }
+    },
+);
+
+vi.mock("@/lib/api", () => ({
+  api: apiMock,
+  ApiError: MockApiError,
+  errorText: (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback),
+}));
 
 const CALENDAR = {
   status: "ok",
@@ -46,7 +59,7 @@ describe("MarketReplayPanel", () => {
   beforeEach(() => {
     Object.values(apiMock).forEach((fn) => fn.mockReset());
     apiMock.getMarketReplayCalendar.mockResolvedValue(CALENDAR);
-    apiMock.getMultiMarketStatus.mockRejectedValue(new Error("no session armed"));
+    apiMock.getMultiMarketStatus.mockRejectedValue(new MockApiError("no multi-market session armed", 400));
   });
 
   afterEach(() => {
@@ -153,5 +166,26 @@ describe("MarketReplayPanel", () => {
     await waitFor(() =>
       expect(apiMock.getMarketReplayCalendar).toHaveBeenLastCalledWith("US", { lookbackDays: 120, before: undefined }),
     );
+  });
+
+  it("not armed (400) is the quiet idle state, not an error", async () => {
+    render(<MarketReplayPanel country="US" label="US" />);
+    await waitFor(() => expect(apiMock.getMultiMarketStatus).toHaveBeenCalled());
+    expect(screen.queryByTestId("market-replay-status-error")).not.toBeInTheDocument();
+  });
+
+  it("an unreachable simulator says so and keeps the last status instead of reading as not armed", async () => {
+    apiMock.getMultiMarketStatus.mockRejectedValue(new MockApiError("simulator down", 503));
+    render(<MarketReplayPanel country="US" label="US" />);
+    const alert = await screen.findByTestId("market-replay-status-error");
+    expect(alert).toHaveTextContent(/simulator down/);
+  });
+
+  it("offers only the allowed replay speeds 1x, 2x, 5x (D19), never a free number box", async () => {
+    render(<MarketReplayPanel country="US" label="US" />);
+    await waitFor(() => expect(apiMock.getMultiMarketStatus).toHaveBeenCalled());
+    const speed = screen.getByRole("combobox", { name: "Replay speed" });
+    expect(Array.from(speed.querySelectorAll("option")).map((o) => o.value)).toEqual(["1", "2", "5"]);
+    expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
   });
 });

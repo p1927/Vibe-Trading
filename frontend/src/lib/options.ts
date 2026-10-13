@@ -340,17 +340,21 @@ export type ExecutionAdvisorAction = "hold" | "tighten_stop" | "exit" | string;
 export interface ExecutionAdvisorAdvisory {
   symbol: string;
   strategy_group_id: string | null;
-  fsm_state: ExecutionAdvisorFsmState;
-  action: ExecutionAdvisorAction;
+  /** Absent on a position the sweep has not advised yet (`reason: "not_yet_advised"`). */
+  fsm_state?: ExecutionAdvisorFsmState | null;
+  /** `null` until the scheduled sweep has advised this position. */
+  action: ExecutionAdvisorAction | null;
   reason: string;
-  recommended_stop_price: number | null;
-  entry_price: number;
-  entry_direction: "bullish" | "bearish" | string;
-  entry_confidence: number | null;
-  live_confidence: number | null;
-  confidence_ema: number | null;
-  consecutive_flip_count: number;
-  ltp: number;
+  /** ISO time of the sweep that wrote this row; `null` when not yet advised. */
+  advised_at?: string | null;
+  recommended_stop_price?: number | null;
+  entry_price?: number | null;
+  entry_direction?: "bullish" | "bearish" | string | null;
+  entry_confidence?: number | null;
+  live_confidence?: number | null;
+  confidence_ema?: number | null;
+  consecutive_flip_count?: number | null;
+  ltp?: number | null;
 }
 
 export interface ExecutionAdvisorResponse {

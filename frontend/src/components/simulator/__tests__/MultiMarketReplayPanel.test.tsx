@@ -3,7 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MultiMarketReplayPanel } from "../MultiMarketReplayPanel";
 
-const MockApiError = vi.hoisted(() => class MockApiError extends Error {});
+const MockApiError = vi.hoisted(
+  () =>
+    class MockApiError extends Error {
+      constructor(message: string, public status: number = 0) {
+        super(message);
+      }
+    },
+);
 
 const apiMock = vi.hoisted(() => ({
   getMarketRegistry: vi.fn(),
@@ -22,6 +29,7 @@ const apiMock = vi.hoisted(() => ({
 vi.mock("@/lib/api", () => ({
   api: apiMock,
   ApiError: MockApiError,
+  errorText: (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback),
 }));
 
 function recordingEntry(overrides: Record<string, unknown> = {}) {
@@ -68,7 +76,7 @@ describe("MultiMarketReplayPanel", () => {
         { code: "US", currency: "USD", timezone: "America/New_York", indices: ["SPX", "NASDAQ", "DOW"] },
       ],
     });
-    apiMock.getMultiMarketStatus.mockRejectedValue(new Error("no session armed"));
+    apiMock.getMultiMarketStatus.mockRejectedValue(new MockApiError("no multi-market session armed", 400));
     apiMock.listSchedulerRegistry.mockResolvedValue({ status: "ok", entries: [], sources: {} });
   });
 
@@ -132,7 +140,9 @@ describe("MultiMarketReplayPanel", () => {
     fireEvent.click(screen.getByText(/arm 2 markets/i));
     await waitFor(() => expect(screen.getByText("Pause")).toBeInTheDocument());
 
-    const [marketSelect, symbolSelect] = screen.getAllByRole("combobox");
+    const [marketSelect, symbolSelect] = screen
+      .getAllByRole("combobox")
+      .filter((el) => el.getAttribute("aria-label") !== "Replay speed");
     fireEvent.change(marketSelect, { target: { value: "US" } });
     await waitFor(() => expect(symbolSelect).not.toBeDisabled());
     fireEvent.change(symbolSelect, { target: { value: "SPX" } });
@@ -230,5 +240,19 @@ describe("MultiMarketReplayPanel", () => {
         expect(screen.getByText(/no recorder categories reported/i)).toBeInTheDocument(),
       );
     });
+  });
+
+  it("a failed market registry load is shown, not an empty symbol list", async () => {
+    apiMock.getMarketRegistry.mockRejectedValue(new MockApiError("registry 502", 502));
+    render(<MultiMarketReplayPanel />);
+    await waitFor(() => expect(screen.getByText(/market registry unavailable.*registry 502/i)).toBeInTheDocument());
+  });
+
+  it("offers only 1x, 2x, 5x replay speeds (D19)", async () => {
+    render(<MultiMarketReplayPanel />);
+    await waitFor(() => expect(screen.getByText(/arm 2 markets/i)).toBeInTheDocument());
+    const speed = screen.getByRole("combobox", { name: "Replay speed" });
+    expect(Array.from(speed.querySelectorAll("option")).map((o) => o.value)).toEqual(["1", "2", "5"]);
+    expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
   });
 });
