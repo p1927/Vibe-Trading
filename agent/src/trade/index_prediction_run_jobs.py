@@ -149,6 +149,7 @@ def get_job(job_id: str) -> dict[str, Any] | None:
 
 def get_active_job(ticker: str) -> dict[str, Any] | None:
     key = (ticker or "NIFTY").strip().upper()
+    _STORE.adopt_disk_active(key)
     with _STORE.jobs_lock:
         job_id = _STORE.active.get(key)
     if not job_id:

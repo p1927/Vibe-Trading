@@ -23,6 +23,7 @@ Per-module hooks are passed as callables so each module's tests can keep monkeyp
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -36,6 +37,9 @@ logger = logging.getLogger(__name__)
 ACTIVE_STATUSES = frozenset({"queued", "running"})
 _JOB_TTL_SECONDS = 60 * 60
 _RUNNING_NO_PID_SECONDS = 30
+#: A job file not written for this long cannot belong to a live worker (every wall-clock budget is far
+#: shorter), so the cross-process scan for another process's active job skips it.
+_ADOPT_WINDOW_SECONDS = 12 * 60 * 60
 
 
 def now_iso() -> str:
@@ -242,7 +246,41 @@ class JobStore:
                 if self.active.get(scope) == job_id:
                     self.active.pop(scope, None)
 
+    def adopt_disk_active(self, scope: str) -> None:
+        """Register in this process's index the newest active job for ``scope`` that ANOTHER process wrote.
+
+        The index (``active``) and the job cache are per process, but a scheduled child process and the API
+        run the same scope: the disk files are the truth (module docstring), so the active-run guard reads
+        them too. Staleness is the callers' existing reconcile (dead pid, never-started, wall-clock): a
+        lock whose worker died is failed and replaced, never honoured forever."""
+        root = self._jobs_root()
+        if not root.is_dir():
+            return
+        with self.jobs_lock:
+            known = self.active.get(scope)
+        newest: dict[str, Any] | None = None
+        cutoff = time.time() - _ADOPT_WINDOW_SECONDS
+        for path in root.iterdir():
+            if path.name == known or not path.is_dir() or not job_runner.job_id_valid(path.name):
+                continue
+            try:
+                if (path / "job.json").stat().st_mtime < cutoff:
+                    continue
+            except OSError:
+                continue
+            job = self.read(path.name)
+            if job is None or job.get("status") not in ACTIVE_STATUSES or self._scope_for(job) != scope:
+                continue
+            if newest is None or str(job.get("created_at") or "") > str(newest.get("created_at") or ""):
+                newest = job
+        if newest is not None:
+            with self.jobs_lock:
+                self.jobs[newest["job_id"]] = newest
+                if self.active.get(scope) is None:
+                    self.active[scope] = newest["job_id"]
+
     def get_active(self, scope: str) -> dict[str, Any] | None:
+        self.adopt_disk_active(scope)
         with self.jobs_lock:
             job_id = self.active.get(scope)
         if not job_id:
@@ -313,8 +351,12 @@ class JobStore:
     def claim(self, scope: str, make_job: Callable[[], dict[str, Any]]) -> tuple[dict[str, Any], bool]:
         """Reuse the live active job for ``scope`` or create+persist a new one. Returns (job, reused).
         A dead-worker or never-started active job is failed and replaced, not reused."""
-        with self._start_lock:
+        # start_lock orders threads of this process; the scope's file lock orders processes, so the
+        # scheduled child and the API cannot both find "no active job" and each start one.
+        claim_lock = self._jobs_root() / f".claim-{re.sub(r'[^A-Za-z0-9_.-]', '_', scope)}.lock"
+        with self._start_lock, job_runner.job_file_lock(claim_lock, valid=True):
             self.prune()
+            self.adopt_disk_active(scope)
             with self.jobs_lock:
                 existing_id = self.active.get(scope)
             existing = self.get_record(existing_id) if existing_id else None

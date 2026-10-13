@@ -319,15 +319,13 @@ def run_index_factor_snapshot_job(config: dict[str, Any] | None = None) -> dict[
 
     cfg = config or {}
     ticker = str(cfg.get("ticker") or "NIFTY").strip().upper()
-    try:
-        from src.trade.index_prediction_run_jobs import get_active_job
+    from src.trade.index_prediction_run_jobs import get_active_job
 
-        active = get_active_job(ticker)
-        if active and str(active.get("status") or "") in {"queued", "running"}:
-            logger.info("index factor snapshot skipped: manual run active for %s", ticker)
-            return {"skipped": True, "reason": "manual_run_active", "ticker": ticker}
-    except Exception as exc:
-        logger.debug("manual run active check skipped: %s", exc)
+    # No catch: a failing guard must fail the run (retried on its schedule), not let two runs write one document.
+    active = get_active_job(ticker)
+    if active and str(active.get("status") or "") in {"queued", "running"}:
+        logger.info("index factor snapshot skipped: manual run active for %s", ticker)
+        return {"skipped": True, "reason": "manual_run_active", "ticker": ticker}
 
     check_pipeline_cancel()
 
@@ -500,22 +498,20 @@ def run_index_research_job(config: dict[str, Any] | None = None) -> dict[str, An
         start_job,
     )
 
-    try:
-        active = get_active_job(ticker)
-        if active and str(active.get("status") or "") in {"queued", "running"}:
-            logger.info(
-                "index research (scheduled) skipped: another run active for %s (job=%s)",
-                ticker,
-                active.get("job_id"),
-            )
-            return {
-                "skipped": True,
-                "reason": "run_active",
-                "ticker": ticker,
-                "active_job_id": active.get("job_id"),
-            }
-    except Exception as exc:
-        logger.debug("active-run check skipped: %s", exc)
+    # No catch: a failing guard must fail the run, not let two runs write one document.
+    active = get_active_job(ticker)
+    if active and str(active.get("status") or "") in {"queued", "running"}:
+        logger.info(
+            "index research (scheduled) skipped: another run active for %s (job=%s)",
+            ticker,
+            active.get("job_id"),
+        )
+        return {
+            "skipped": True,
+            "reason": "run_active",
+            "ticker": ticker,
+            "active_job_id": active.get("job_id"),
+        }
 
     job_id, reused = start_job(
         ticker=ticker,
@@ -558,15 +554,12 @@ def run_index_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[str
 
     cfg = config or {}
     ticker = str(cfg.get("ticker") or "NIFTY").strip().upper()
-    try:
-        from src.trade.index_prediction_run_jobs import get_active_job
+    from src.trade.index_prediction_run_jobs import get_active_job
 
-        active = get_active_job(ticker)
-        if active and str(active.get("status") or "") in {"queued", "running"}:
-            logger.info("index plan refresh skipped: manual run active for %s", ticker)
-            return {"skipped": True, "reason": "manual_run_active", "ticker": ticker}
-    except Exception as exc:
-        logger.debug("manual run active check skipped: %s", exc)
+    active = get_active_job(ticker)
+    if active and str(active.get("status") or "") in {"queued", "running"}:
+        logger.info("index plan refresh skipped: manual run active for %s", ticker)
+        return {"skipped": True, "reason": "manual_run_active", "ticker": ticker}
     # No catch: an error here is a failed run (failure_kind, consecutive_failures, backoff) and the
     # job stays visible to D32's failed-jobs check, instead of a refresh that wrote no ledger row
     # being recorded as a normal completed run. The executor retries it on its schedule and never
