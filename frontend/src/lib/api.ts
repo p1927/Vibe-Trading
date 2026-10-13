@@ -60,9 +60,14 @@ function formatApiDetail(detail: unknown): string {
   return "Request failed";
 }
 
+/** The server's own reason (auth required, 409 detail, timeout) when there is one, else `fallback`.
+ * A bare "Failed to X" drops the reason, which hides an auth failure on a mutating route. */
+export function errorText(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 export function autonomousDeleteErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  return error instanceof Error ? error.message : "Delete failed";
+  return errorText(error, "Delete failed");
 }
 
 const AUTH_REQUIRED_MESSAGE_KEY = "agent.authRequired";
@@ -7290,18 +7295,35 @@ export interface AutonomousAgentsListResponse {
   stack_health?: AutonomousStackHealth;
 }
 
+/** A position still open on the broker book after clear-all. It belongs to no agent, so it was
+ * reported and NOT closed (a human's manual trade is not an agent's). Raw OpenAlgo book row. */
+export interface UnownedPosition {
+  symbol?: string;
+  tradingsymbol?: string;
+  exchange?: string;
+  product?: string;
+  quantity?: number | string;
+  netqty?: number | string;
+}
+
 export interface ClearAllAutonomousAgentsResponse {
-  status: string;
+  /** "ok" only when nothing went wrong; "partial" for a failed stop/delete/flatten, a Nautilus
+   * watch that errored, or an unreadable position book. */
+  status: "ok" | "partial" | string;
   stopped: string[];
   deleted: string[];
   remaining_count: number;
-  flatten?: {
-    openalgo?: { status?: string; remaining_positions?: number; error?: string } | null;
-    alpaca?: Array<{ symbol: string; status?: string; error?: string }>;
-  };
+  /** Per agent id: that agent's own delete-with-flatten outcome. */
+  flatten?: Record<
+    string,
+    { status?: string; error?: string; remaining_positions?: number | null } | null
+  >;
+  unowned_positions?: UnownedPosition[];
+  /** Why the book could not be read; `unowned_positions` is then empty because unknown, not flat. */
+  book_error?: string | null;
   agents_stopped?: boolean;
   artifacts_cleared?: Record<string, number>;
-  nautilus?: Record<string, unknown>;
+  nautilus?: Record<string, unknown> & { error?: string };
   errors?: Array<{ agent_id: string; phase: string; error: string }>;
 }
 

@@ -8,6 +8,7 @@ import {
   type RecordingJobSnapshot,
   type RecordingResult,
   type ReplayCalendarDay,
+  errorText,
 } from "@/lib/api";
 import { EconomyPanel } from "@/components/simulator/EconomyPanel";
 import { COUNTRY_LABELS, GlobalMarketsPanel } from "@/components/simulator/GlobalMarketsPanel";
@@ -16,6 +17,7 @@ import { MarketFactorCoveragePanel } from "@/components/simulator/MarketFactorCo
 import { MarketRecordingPanel } from "@/components/simulator/MarketRecordingPanel";
 import { MarketReplayPanel } from "@/components/simulator/MarketReplayPanel";
 import { MultiMarketReplayPanel } from "@/components/simulator/MultiMarketReplayPanel";
+import { ReplaySpeedSelect } from "@/components/simulator/ReplaySpeedSelect";
 import { SectorIndicesPanel } from "@/components/simulator/SectorIndicesPanel";
 import { SimulatorInstrumentPicker } from "@/components/simulator/SimulatorInstrumentPicker";
 import { SimulatorLiveIndexPanel } from "@/components/simulator/SimulatorLiveIndexPanel";
@@ -178,6 +180,9 @@ export function Simulator() {
   const [logs, setLogs] = useState<PipelineLogEntry[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Background reads (recording status, Auto Record state, constituents) that failed: the badge and
+  // toggle below would otherwise keep showing their last/default value as if it were current.
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [calendarDays, setCalendarDays] = useState<ReplayCalendarDay[]>([]);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   // Distinct from calendarError: the token simply isn't set up yet, not a
@@ -211,7 +216,9 @@ export function Simulator() {
     api
       .getRecordingConstituents()
       .then((res) => setNifty50(res.constituents || []))
-      .catch(() => {});
+      .catch((err) =>
+        setSyncError(`NIFTY 50 list unavailable (${errorText(err, "request failed")}) - only the indices are selectable.`),
+      );
   }, []);
   const chartableSymbols = useMemo(
     () => [
@@ -295,7 +302,12 @@ export function Simulator() {
         },
         controller.signal,
       )
-      .catch(() => {});
+      .catch((err) => {
+        // An abort is the page switching streams; anything else means the live log feed is gone.
+        if (!controller.signal.aborted) {
+          setSyncError(`Recording log stream lost (${errorText(err, "request failed")}); status is still polled.`);
+        }
+      });
   }, [loadCalendar]);
 
   // Reconciles this page's client-held `armedRange` against the server's
@@ -354,11 +366,19 @@ export function Simulator() {
           attachStream(res.job.job_id);
         }
       })
-      .catch(() => {});
+      .catch((err) =>
+        setSyncError(
+          `Could not check for a running recording (${errorText(err, "request failed")}) - the status below may be wrong.`,
+        ),
+      );
     api
       .getAutoRecord()
       .then((res) => setAutoRecordState(res.enabled))
-      .catch(() => {});
+      .catch((err) =>
+        setSyncError(
+          `Auto Record state unknown (${errorText(err, "request failed")}) - the toggle below shows a default, not the server's setting.`,
+        ),
+      );
     reconcileReplayStatus();
     return () => abortRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -381,8 +401,13 @@ export function Simulator() {
         .getRecordingJob(job.job_id)
         .then((res) => {
           if (res.job) setJob(res.job);
+          setSyncError(null);
         })
-        .catch(() => {});
+        .catch((err) =>
+          setSyncError(
+            `Recording status refresh failing (${errorText(err, "request failed")}) - "${job.status}" may be stale.`,
+          ),
+        );
     }, 5000);
     return () => window.clearInterval(interval);
   }, [isActive, job?.job_id]);
@@ -659,6 +684,11 @@ export function Simulator() {
         />
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        {syncError ? (
+          <p role="alert" data-testid="simulator-sync-error" className="text-sm text-amber-700 dark:text-amber-300">
+            {syncError}
+          </p>
+        ) : null}
 
         <StatCard title="Record">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -870,18 +900,12 @@ export function Simulator() {
               <div className="flex flex-wrap items-center gap-4 text-xs">
                 <label className="flex items-center gap-1.5">
                   Speed
-                  <select
+                  <ReplaySpeedSelect
                     value={replaySpeed}
-                    onChange={(e) => handleSpeedChange(Number(e.target.value))}
+                    onChange={handleSpeedChange}
                     disabled={speedUpdating}
-                    className="rounded border bg-background px-1.5 py-0.5 text-xs"
-                    data-testid="simulator-speed"
-                  >
-                    {/* docs/DECISIONS.md D19: only 1x, 2x, 5x. */}
-                    {[1, 2, 5].map((s) => (
-                      <option key={s} value={s}>{s}×</option>
-                    ))}
-                  </select>
+                    testId="simulator-speed"
+                  />
                 </label>
                 <label className="flex items-center gap-1.5">
                   <input

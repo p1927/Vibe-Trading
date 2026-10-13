@@ -5,6 +5,9 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
+# One definition of "is this an autonomous-agent session" (D306); re-exported for the callers
+# that already import it from here.
+from src.session.autonomous_agent_profile import is_autonomous_agent_session
 from src.trade.symbol_detect import extract_primary_ticker, infer_asset_type
 
 if TYPE_CHECKING:
@@ -50,10 +53,6 @@ def session_execution_market(session_config: dict[str, Any] | None) -> str:
 def session_symbols(session_config: dict[str, Any] | None) -> list[str]:
     cfg = session_config or {}
     return [str(s).strip().upper() for s in (cfg.get("symbols") or []) if str(s).strip()]
-
-
-def is_autonomous_agent_session(session_config: dict[str, Any] | None) -> bool:
-    return str((session_config or {}).get("session_kind") or "") == "autonomous_agent"
 
 
 def is_autonomous_us_equity_session(session_config: dict[str, Any] | None) -> bool:

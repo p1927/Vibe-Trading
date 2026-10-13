@@ -20,7 +20,7 @@ def _guard_enabled() -> bool:
 
 def _propose_tool_called(tools_called: set[str] | list[str]) -> bool:
     called = {str(t).strip() for t in tools_called if t}
-    return any(_PROPOSE_TOOL in name or name == _PROPOSE_TOOL for name in called)
+    return any(_PROPOSE_TOOL in name for name in called)  # bare or MCP-prefixed wrapper
 
 
 def emit_autonomous_proposal(event_bus: Any, session_id: str, result: dict[str, Any] | None) -> bool:
@@ -53,19 +53,17 @@ def needs_propose_guard(
     if _propose_tool_called(tools_called):
         return False
 
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
+    # An orchestrator session only exists on the Trade stack: an import failure is a bug and
+    # propagates to service_hooks.maybe_orchestrator_propose_guard, which logs it as an error.
+    from src.trade.hub_bridge import ensure_trade_stack_path
 
-        ensure_trade_stack_path()
-        from trade_integrations.autonomous_agents.orchestrator_intent import (
-            assistant_claims_proposal_ready,
-            build_auto_propose_kwargs,
-            orchestrator_card_awaiting_confirmation,
-            orchestrator_has_propose_intent,
-        )
-    except Exception:
-        logger.debug("orchestrator intent import failed for propose guard", exc_info=True)
-        return False
+    ensure_trade_stack_path()
+    from trade_integrations.autonomous_agents.orchestrator_intent import (
+        assistant_claims_proposal_ready,
+        build_auto_propose_kwargs,
+        orchestrator_card_awaiting_confirmation,
+        orchestrator_has_propose_intent,
+    )
 
     session_id = str(orchestrator_session_id or (session_config or {}).get("session_id") or "").strip()
     if session_id and orchestrator_card_awaiting_confirmation(session_id, user_message):
@@ -114,16 +112,12 @@ async def maybe_enforce_orchestrator_propose(
     ):
         return False
 
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
+    from src.trade.hub_bridge import ensure_trade_stack_path
 
-        ensure_trade_stack_path()
-        from trade_integrations.autonomous_agents.orchestrator_intent import (
-            maybe_auto_propose_after_orchestrator_turn,
-        )
-    except Exception:
-        logger.exception("orchestrator auto-propose import failed")
-        return False
+    ensure_trade_stack_path()
+    from trade_integrations.autonomous_agents.orchestrator_intent import (
+        maybe_auto_propose_after_orchestrator_turn,
+    )
 
     result = maybe_auto_propose_after_orchestrator_turn(
         orchestrator_session_id=session_id,

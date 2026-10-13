@@ -1,6 +1,6 @@
 """Git-backed version history for the memory store.
 
-Every content/quality-affecting mutation to ``~/.vibe-trading/memory/`` gets its own
+Every content/quality-affecting mutation to ``<runtime root>/memory/`` (per tier) gets its own
 git commit, so an entry's history is browsable with plain ``git log``/``git show``/
 ``git diff`` -- see .claude/backlog/items/2026-08-29-memory-agent-id-and-git-versioning.md.
 Deliberately best-effort: a git failure must never block a memory write.

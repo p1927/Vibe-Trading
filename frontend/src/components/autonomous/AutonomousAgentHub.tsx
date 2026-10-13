@@ -2,7 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { Loader2, OctagonX, Plus, Radio, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { ApiError, api, autonomousDeleteErrorMessage, type AutonomousAgentInstance, type AutonomousStackHealth, type LiveStatus } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  autonomousDeleteErrorMessage,
+  errorText,
+  type AutonomousAgentInstance,
+  type AutonomousStackHealth,
+  type ClearAllAutonomousAgentsResponse,
+  type LiveStatus,
+  type UnownedPosition,
+} from "@/lib/api";
 import { AutonomousAgentCard } from "@/components/autonomous/AutonomousAgentCard";
 import { cn } from "@/lib/utils";
 
@@ -126,6 +136,92 @@ export function StackHealthStrip({ health }: { health: AutonomousStackHealth | u
   );
 }
 
+export interface ClearAllReport {
+  clean: boolean;
+  removed: number;
+  /** One line per thing that did not go cleanly; empty when `clean`. */
+  problems: string[];
+  /** Still open on the broker book, owned by no agent: reported, never closed by clear-all. */
+  unowned: string[];
+}
+
+function positionLabel(p: UnownedPosition): string {
+  const qty = p.quantity ?? p.netqty;
+  return `${p.symbol ?? p.tradingsymbol ?? "unknown symbol"}${p.exchange ? ` (${p.exchange})` : ""}${
+    qty != null ? ` x ${qty}` : ""
+  }${p.product ? ` ${p.product}` : ""}`;
+}
+
+/** Turn the clear-all response into what the operator must see. `status: "ok"` is the only clean
+ * answer; a "partial" status, a per-agent flatten that did not finish, a stop/delete error, a
+ * Nautilus error, an unreadable book or any leftover position is each spelled out. */
+export function summarizeClearAll(result: ClearAllAutonomousAgentsResponse): ClearAllReport {
+  const problems: string[] = [];
+  for (const e of result.errors ?? []) problems.push(`${e.agent_id} ${e.phase}: ${e.error}`);
+  for (const [agentId, f] of Object.entries(result.flatten ?? {})) {
+    if (f && f.status && f.status !== "ok") {
+      problems.push(
+        `${agentId} flatten ${f.status}${f.error ? `: ${f.error}` : ""}${
+          f.remaining_positions ? ` (${f.remaining_positions} position(s) remain)` : ""
+        }`,
+      );
+    }
+  }
+  if (result.remaining_count > 0) problems.push(`${result.remaining_count} agent(s) were not deleted`);
+  if (result.nautilus?.error) problems.push(`Nautilus watch: ${String(result.nautilus.error)}`);
+  if (result.book_error) {
+    problems.push(`Broker position book unreadable (${result.book_error}) - open positions are UNKNOWN, not flat`);
+  }
+  const unowned = (result.unowned_positions ?? []).map(positionLabel);
+  if (result.status !== "ok" && problems.length === 0) problems.push(`status ${result.status}`);
+  return {
+    clean: result.status === "ok" && problems.length === 0 && unowned.length === 0,
+    removed: result.deleted?.length ?? 0,
+    problems,
+    unowned,
+  };
+}
+
+function ClearAllReportPanel({ report, onDismiss }: { report: ClearAllReport; onDismiss: () => void }) {
+  if (report.clean) return null;
+  return (
+    <div
+      role="alert"
+      data-testid="clear-all-report"
+      className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium">
+          Clear all removed {report.removed} agent(s) but did not finish cleanly
+        </span>
+        <button type="button" onClick={onDismiss} className="rounded border border-amber-500/40 px-2 py-0.5">
+          Dismiss
+        </button>
+      </div>
+      {report.problems.length > 0 && (
+        <ul className="list-disc pl-4">
+          {report.problems.map((p) => (
+            <li key={p}>{p}</li>
+          ))}
+        </ul>
+      )}
+      {report.unowned.length > 0 && (
+        <div>
+          <p className="font-medium">
+            {report.unowned.length} position(s) still open on the broker, owned by no agent. Clear all does
+            not close them - close them yourself in OpenAlgo:
+          </p>
+          <ul className="list-disc pl-4" data-testid="clear-all-unowned">
+            {report.unowned.map((p, i) => (
+              <li key={`${p}-${i}`}>{p}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface Props {
   onCreateAgent: () => void;
 }
@@ -137,6 +233,8 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
   const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
+  const [liveStatusError, setLiveStatusError] = useState<string | null>(null);
+  const [clearReport, setClearReport] = useState<ClearAllReport | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -162,9 +260,14 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
   const loadLiveStatus = useCallback(async () => {
     try {
       setLiveStatus(await api.getLiveStatus());
+      setLiveStatusError(null);
     } catch (err) {
       if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
         setLiveStatus(null);
+        setLiveStatusError(null);
+      } else {
+        // A failed read is "halt state unknown", never "not halted": the banner must not go quiet.
+        setLiveStatusError(errorText(err, "request failed"));
       }
     }
   }, []);
@@ -286,21 +389,19 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
     try {
       const result = await api.clearAllAutonomousAgents();
       await load();
-      const removed = result.deleted?.length ?? 0;
-      const openalgoLeft = result.flatten?.openalgo?.remaining_positions ?? 0;
-      if (result.status === "partial" || (result.errors?.length ?? 0) > 0) {
-        toast.warning(
-          `Cleared ${removed} agent(s) with warnings${openalgoLeft ? ` — ${openalgoLeft} OpenAlgo position(s) may remain` : ""}`,
-        );
-      } else {
+      const report = summarizeClearAll(result);
+      setClearReport(report);
+      if (report.clean) {
         toast.success(
-          removed > 0
-            ? `Cleared ${removed} agent(s) and stopped Nautilus watch`
+          report.removed > 0
+            ? `Cleared ${report.removed} agent(s) and stopped Nautilus watch`
             : "Autonomous infrastructure cleared",
         );
+      } else {
+        toast.warning(`Cleared ${report.removed} agent(s) with problems - see the report below`);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Clear all failed");
+      toast.error(errorText(err, "Clear all failed"));
     } finally {
       setClearing(false);
     }
@@ -341,6 +442,18 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
       {liveStatus?.global_halted && (
         <GlobalHaltBanner onResumed={() => void loadLiveStatus()} />
       )}
+
+      {liveStatusError && (
+        <div
+          role="alert"
+          data-testid="live-status-error"
+          className="rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"
+        >
+          Live-broker halt state unknown ({liveStatusError}) - do not assume trading is not halted.
+        </div>
+      )}
+
+      {clearReport && <ClearAllReportPanel report={clearReport} onDismiss={() => setClearReport(null)} />}
 
       <StackHealthStrip health={stackHealth} />
 

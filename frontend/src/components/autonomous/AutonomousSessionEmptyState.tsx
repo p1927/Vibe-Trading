@@ -52,10 +52,11 @@ export function AutonomousSessionEmptyState({ agent, agentId, loadState = "idle"
       <div className="mx-auto max-w-lg space-y-3 rounded-xl border border-red-500/40 bg-red-500/5 px-4 py-5 text-sm">
         <div className="flex items-center gap-2 font-medium text-red-700 dark:text-red-300">
           <ServerCrash className="h-4 w-4 shrink-0" />
-          Agent not found
+          Could not load agent
         </div>
         <p className="text-red-800/90 dark:text-red-200/90">
-          Could not load agent <span className="font-mono">{agentId}</span>. Return to the hub or create a new agent.
+          Could not load agent <span className="font-mono">{agentId}</span> (not found, signed out, or the
+          API is unreachable - the reason is in the page header). Return to the hub or create a new agent.
         </p>
       </div>
     );

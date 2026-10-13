@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 EXTERNAL_PREDICTIONS_RUN_JOBS: dict[str, dict[str, Any]] = {}
 _ACTIVE_BY_SCOPE: dict[str, str] = {}
-_JOBS_LOCK = threading.Lock()
+_JOBS_LOCK = threading.RLock()  # re-entrant: start_job calls fail_job (which takes it) while holding it
 
 _JOB_TTL_SECONDS = 60 * 60
 _ACTIVE_STATUSES = frozenset({"queued", "running"})

@@ -306,18 +306,14 @@ class ContextBuilder:
             skill_block = orchestrator_skill_block(self.skills_loader)
             if skill_block:
                 base = f"{base}\n{skill_block}"
-            try:
-                from src.trade.hub_bridge import ensure_trade_stack_path
+            from src.trade.hub_bridge import ensure_trade_stack_path
 
-                ensure_trade_stack_path()
-                from trade_integrations.autonomous_agents.intent_orchestrator_footer import (
-                    format_orchestrator_arq_footer,
-                )
+            ensure_trade_stack_path()  # an orchestrator session only exists on the Trade stack
+            from trade_integrations.autonomous_agents.intent_orchestrator_footer import (
+                format_orchestrator_arq_footer,
+            )
 
-                base = f"{base}{format_orchestrator_arq_footer(self._session_config)}"
-            except Exception:
-                logger.debug("orchestrator ARQ footer skipped", exc_info=True)
-            return base
+            return f"{base}{format_orchestrator_arq_footer(self._session_config)}"
         elif session_kind == "news_scenario_advisor":
             base = _NEWS_SCENARIO_SYSTEM_PROMPT.format(
                 tool_descriptions=self._format_tool_descriptions(),
@@ -422,11 +418,9 @@ class ContextBuilder:
         if self._persistent_memory:
             try:
                 recalls = self._persistent_memory.find_relevant(user_message, max_results=3)
-                try:
-                    from src.trade.session_context import memory_matches_session
-                    recalls = [r for r in recalls if memory_matches_session(r, self._session_config)]
-                except Exception:
-                    pass
+                from src.trade.session_context import memory_matches_session
+
+                recalls = [r for r in recalls if memory_matches_session(r, self._session_config)]
                 if recalls:
                     from src.memory.outage_staleness import UNVERIFIED_RECALL_SUFFIX
 
@@ -441,8 +435,10 @@ class ContextBuilder:
                         f"<recalled-memories>\n{recall_block}\n</recalled-memories>\n\n"
                         f"{user_message}"
                     )
-            except Exception as exc:
-                logger.debug("Auto-recall failed: %s", exc)
+            except Exception:
+                # No recall block is injected (a broken session filter must not leak unfiltered
+                # cross-market memories), and the failure is visible.
+                logger.warning("Auto-recall failed", exc_info=True)
 
         messages.append({"role": "user", "content": enriched})
         return messages

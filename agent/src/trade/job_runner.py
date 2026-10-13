@@ -158,8 +158,9 @@ def spawn_worker_process(
     agent_dir: Path,
     worker_log: Path,
     env_mutator: Callable[[dict[str, str]], None] | None = None,
+    extra_args: tuple[str, ...] = (),
 ) -> subprocess.Popen:
-    """Launch ``python -m <worker_module> <job_id>`` detached (survives API
+    """Launch ``python -m <worker_module> <job_id> [extra_args...]`` detached (survives API
     hot-reload), register it with :mod:`detached_worker` for reap-aware
     liveness, and return the ``Popen`` handle so the caller can persist
     ``proc.pid`` onto its own job record.
@@ -175,7 +176,7 @@ def spawn_worker_process(
         env_mutator(env)
     try:
         proc = subprocess.Popen(
-            [sys.executable, "-m", worker_module, job_id],
+            [sys.executable, "-m", worker_module, job_id, *extra_args],
             cwd=str(agent_dir),
             env=env,
             start_new_session=True,
