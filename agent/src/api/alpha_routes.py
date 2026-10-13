@@ -250,27 +250,29 @@ def _make_progress_cb(
     return _cb
 
 
-def _run_bench_blocking(job_id: str, zoo: str, universe: str, period: str, top: int) -> None:
-    """Synchronous bench worker (called via ``asyncio.to_thread``)."""
-    from src.factors.bench_runner import run_bench  # local import: heavy deps
+def _run_job_blocking(
+    jobs: dict[str, dict[str, Any]],
+    job_id: str,
+    label: str,
+    compute: Callable[[Callable[[int, int, str], None]], dict[str, Any]],
+    project: Callable[[dict[str, Any]], dict[str, Any]],
+) -> None:
+    """Shared synchronous job worker (called via ``asyncio.to_thread``) for bench and compare.
 
+    ``compute`` runs the heavy work given the progress callback; ``project`` picks what the job
+    keeps of a successful result. A raised exception is logged and surfaced as a fixed phrase.
+    """
     with _JOBS_LOCK:
-        job = ALPHA_BENCH_JOBS.get(job_id)
+        job = jobs.get(job_id)
         if job is not None:
             job["status"] = "running"
 
     try:
-        result = run_bench(
-            zoo=zoo,
-            universe=universe,
-            period=period,
-            top=top,
-            on_progress=_make_progress_cb(job_id),
-        )
-    except Exception as exc:  # noqa: BLE001 — worker must never crash the loop
-        logger.exception("alpha bench worker crashed (job=%s)", job_id)
+        result = compute(_make_progress_cb(job_id, jobs))
+    except Exception as exc:  # noqa: BLE001 - worker must never crash the loop
+        logger.exception("alpha %s worker crashed (job=%s)", label, job_id)
         with _JOBS_LOCK:
-            job = ALPHA_BENCH_JOBS.get(job_id)
+            job = jobs.get(job_id)
             if job is not None:
                 job["status"] = "error"
                 job["error"] = _safe_error(exc)
@@ -278,72 +280,103 @@ def _run_bench_blocking(job_id: str, zoo: str, universe: str, period: str, top: 
         return
 
     with _JOBS_LOCK:
-        job = ALPHA_BENCH_JOBS.get(job_id)
+        job = jobs.get(job_id)
         if job is None:
             return
         if result.get("status") != "ok":
             job["status"] = "error"
-            # bench_runner's own error string is curated (universe load failed,
-            # forward returns failed, etc.) — safe to surface.
+            # The runners' own error strings are curated (universe load failed, too few ids,
+            # nothing evaluable, ...) - safe to surface.
             job["error"] = result.get("error", "unknown")
         else:
-            # Strip the bulky per-alpha lists — the API contract returns
-            # summary-only on the result event. We keep ``n_skipped`` (the
-            # count) which ``_result_for_wire`` reshapes into ``skipped``.
-            slim = {
-                k: v for k, v in result.items() if k not in ("rows", "skipped")
-            }
             job["status"] = "done"
-            job["result"] = slim
+            job["result"] = project(result)
         job["_finished_at"] = time.time()
+
+
+def _run_bench_blocking(job_id: str, zoo: str, universe: str, period: str, top: int) -> None:
+    """Bench worker: LLM-free, pandas-heavy."""
+    from src.factors.bench_runner import run_bench  # local import: heavy deps
+
+    # Strip the bulky per-alpha lists: the API contract returns summary-only on the result
+    # event. ``n_skipped`` (the count) stays; ``_result_for_wire`` reshapes it into ``skipped``.
+    _run_job_blocking(
+        ALPHA_BENCH_JOBS,
+        job_id,
+        "bench",
+        lambda cb: run_bench(zoo=zoo, universe=universe, period=period, top=top, on_progress=cb),
+        lambda result: {k: v for k, v in result.items() if k not in ("rows", "skipped")},
+    )
 
 
 def _run_compare_blocking(
     job_id: str, alpha_ids: list[str], universe: str, period: str, sort: str
 ) -> None:
-    """Synchronous compare worker (called via ``asyncio.to_thread``).
-
-    Unlike bench, the comparison's product IS the per-alpha ranking, so the full
-    (already-slim) envelope is stored as the job result.
-    """
+    """Compare worker: the product IS the per-alpha ranking, so the full (already-slim)
+    envelope is stored as the job result."""
     from src.factors.compare_runner import compare_alphas  # local import: heavy deps
 
-    with _JOBS_LOCK:
-        job = ALPHA_COMPARE_JOBS.get(job_id)
-        if job is not None:
-            job["status"] = "running"
+    _run_job_blocking(
+        ALPHA_COMPARE_JOBS,
+        job_id,
+        "compare",
+        lambda cb: compare_alphas(alpha_ids, universe, period, sort=sort, on_progress=cb),
+        lambda result: result,
+    )
 
-    try:
-        result = compare_alphas(
-            alpha_ids,
-            universe,
-            period,
-            sort=sort,
-            on_progress=_make_progress_cb(job_id, ALPHA_COMPARE_JOBS),
-        )
-    except Exception as exc:  # noqa: BLE001 — worker must never crash the loop
-        logger.exception("alpha compare worker crashed (job=%s)", job_id)
-        with _JOBS_LOCK:
-            job = ALPHA_COMPARE_JOBS.get(job_id)
-            if job is not None:
-                job["status"] = "error"
-                job["error"] = _safe_error(exc)
-                job["_finished_at"] = time.time()
-        return
 
+def _queue_job(
+    jobs: dict[str, dict[str, Any]],
+    sem: asyncio.Semaphore,
+    max_concurrent: int,
+    busy_detail: str,
+    label: str,
+    fields: dict[str, Any],
+    n_total: int,
+    worker: Callable[..., None],
+    *worker_args: Any,
+) -> dict[str, Any]:
+    """Register a queued job, run ``worker`` on a thread under ``sem``, return the 202 body.
+
+    One path for bench and compare (they were two copies): 429 at the concurrency cap, prune
+    old jobs, record the job, and hold the task so the loop cannot collect it mid-run.
+    """
+    # Peek at the counter rather than acquire(block=False): the acquire happens inside the
+    # task after the 202 is returned. _value is a CPython detail stable since 3.0.
+    if sem.locked() or getattr(sem, "_value", max_concurrent) <= 0:
+        raise HTTPException(status_code=429, detail=busy_detail)
+
+    _prune_old_jobs()
+
+    job_id = uuid.uuid4().hex
     with _JOBS_LOCK:
-        job = ALPHA_COMPARE_JOBS.get(job_id)
-        if job is None:
-            return
-        if result.get("status") != "ok":
-            job["status"] = "error"
-            # compare_alphas' error string is curated (too few ids, nothing
-            # evaluable, bubbled bench error) — safe to surface.
-            job["error"] = result.get("error", "unknown")
-        else:
-            job["status"] = "done"
-            job["result"] = result
-        job["_finished_at"] = time.time()
+        jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            **fields,
+            "created_at": _now_iso(),
+            "progress": {"n_done": 0, "n_total": n_total, "current_alpha_id": None},
+            "result": None,
+            "error": None,
+        }
+
+    async def _runner() -> None:
+        async with sem:
+            try:
+                await asyncio.to_thread(worker, job_id, *worker_args)
+            except Exception:  # noqa: BLE001 - never escape the loop
+                logger.exception("%s runner outer task crashed (job=%s)", label, job_id)
+                with _JOBS_LOCK:
+                    job = jobs.get(job_id)
+                    if job is not None and job["status"] not in ("done", "error"):
+                        job["status"] = "error"
+                        job["error"] = "internal error; see server logs"
+                        job["_finished_at"] = time.time()
+
+    task = asyncio.create_task(_runner())
+    _RUNNING_TASKS.add(task)
+    task.add_done_callback(_RUNNING_TASKS.discard)
+    return {"status": "ok", "job_id": job_id}
 
 
 # ---------------------------------------------------------------------------
@@ -513,60 +546,20 @@ def register_alpha_routes(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=f"invalid period: {exc}")
 
-        # Concurrency cap. We peek at the semaphore counter rather than
-        # ``acquire(block=False)`` so the actual acquire happens inside the
-        # worker (after the 202 is returned). _value is a CPython
-        # implementation detail but it's been stable since 3.0 and asyncio's
-        # own ``locked()`` uses it.
-        sem = _get_bench_semaphore()
-        # ``locked()`` returns True iff the counter is 0; defensive check.
-        if sem.locked() or getattr(sem, "_value", MAX_CONCURRENT_BENCHES) <= 0:
-            raise HTTPException(
-                status_code=429,
-                detail="too many running benches; wait for one to finish",
-            )
-
-        _prune_old_jobs()
-
-        job_id = uuid.uuid4().hex
-        with _JOBS_LOCK:
-            ALPHA_BENCH_JOBS[job_id] = {
-                "job_id": job_id,
-                "status": "queued",
-                "zoo": payload.zoo,
-                "universe": payload.universe,
-                "period": payload.period,
-                "top": payload.top,
-                "created_at": _now_iso(),
-                "progress": {"n_done": 0, "n_total": 0, "current_alpha_id": None},
-                "result": None,
-                "error": None,
-            }
-
-        async def _runner() -> None:
-            async with sem:
-                try:
-                    await asyncio.to_thread(
-                        _run_bench_blocking,
-                        job_id,
-                        payload.zoo,
-                        payload.universe,
-                        payload.period,
-                        payload.top,
-                    )
-                except Exception:  # noqa: BLE001 — never escape the loop
-                    logger.exception("bench runner outer task crashed (job=%s)", job_id)
-                    with _JOBS_LOCK:
-                        job = ALPHA_BENCH_JOBS.get(job_id)
-                        if job is not None and job["status"] not in ("done", "error"):
-                            job["status"] = "error"
-                            job["error"] = "internal error; see server logs"
-                            job["_finished_at"] = time.time()
-
-        task = asyncio.create_task(_runner())
-        _RUNNING_TASKS.add(task)
-        task.add_done_callback(_RUNNING_TASKS.discard)
-        return {"status": "ok", "job_id": job_id}
+        return _queue_job(
+            ALPHA_BENCH_JOBS,
+            _get_bench_semaphore(),
+            MAX_CONCURRENT_BENCHES,
+            "too many running benches; wait for one to finish",
+            "bench",
+            {"zoo": payload.zoo, "universe": payload.universe, "period": payload.period, "top": payload.top},
+            0,
+            _run_bench_blocking,
+            payload.zoo,
+            payload.universe,
+            payload.period,
+            payload.top,
+        )
 
     # -----------------------------------------------------------------------
     # GET /alpha/bench/{job_id}/stream
@@ -603,54 +596,25 @@ def register_alpha_routes(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=f"invalid period: {exc}")
 
-        sem = _get_compare_semaphore()
-        if sem.locked() or getattr(sem, "_value", MAX_CONCURRENT_COMPARES) <= 0:
-            raise HTTPException(
-                status_code=429,
-                detail="too many running comparisons; wait for one to finish",
-            )
-
-        _prune_old_jobs()
-
-        job_id = uuid.uuid4().hex
-        with _JOBS_LOCK:
-            ALPHA_COMPARE_JOBS[job_id] = {
-                "job_id": job_id,
-                "status": "queued",
+        return _queue_job(
+            ALPHA_COMPARE_JOBS,
+            _get_compare_semaphore(),
+            MAX_CONCURRENT_COMPARES,
+            "too many running comparisons; wait for one to finish",
+            "compare",
+            {
                 "alpha_ids": payload.alpha_ids,
                 "universe": payload.universe,
                 "period": payload.period,
                 "sort": payload.sort,
-                "created_at": _now_iso(),
-                "progress": {"n_done": 0, "n_total": len(payload.alpha_ids), "current_alpha_id": None},
-                "result": None,
-                "error": None,
-            }
-
-        async def _runner() -> None:
-            async with sem:
-                try:
-                    await asyncio.to_thread(
-                        _run_compare_blocking,
-                        job_id,
-                        payload.alpha_ids,
-                        payload.universe,
-                        payload.period,
-                        payload.sort,
-                    )
-                except Exception:  # noqa: BLE001 — never escape the loop
-                    logger.exception("compare runner outer task crashed (job=%s)", job_id)
-                    with _JOBS_LOCK:
-                        job = ALPHA_COMPARE_JOBS.get(job_id)
-                        if job is not None and job["status"] not in ("done", "error"):
-                            job["status"] = "error"
-                            job["error"] = "internal error; see server logs"
-                            job["_finished_at"] = time.time()
-
-        task = asyncio.create_task(_runner())
-        _RUNNING_TASKS.add(task)
-        task.add_done_callback(_RUNNING_TASKS.discard)
-        return {"status": "ok", "job_id": job_id}
+            },
+            len(payload.alpha_ids),
+            _run_compare_blocking,
+            payload.alpha_ids,
+            payload.universe,
+            payload.period,
+            payload.sort,
+        )
 
     # -----------------------------------------------------------------------
     # GET /alpha/compare/{job_id}/stream

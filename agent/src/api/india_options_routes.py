@@ -30,6 +30,7 @@ from fastapi import Depends, FastAPI, Query
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
+from src.api.helpers import redacted_error_detail
 from src.tools.india_options_chain_tool import IndiaOptionsChainTool, list_india_underlyings
 from src.tools.india_options_research_tool import IndiaOptionsResearchTool
 
@@ -291,7 +292,7 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
             chain_envelope = await _fetch_india_chain_envelope(ticker, expiry_date, source)
         except Exception as exc:  # noqa: BLE001 — never leak a stack frame to clients
             logger.warning("pop-overlay chain fetch failed (ticker=%s): %s", ticker, exc)
-            return JSONResponse(status_code=502, content={"ok": False, "error": str(exc)})
+            return JSONResponse(status_code=502, content={"ok": False, "error": redacted_error_detail(exc)})
 
         data = chain_envelope["data"]
         expiration_epoch = data.get("expiration")
@@ -447,7 +448,7 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
             instrument = await asyncio.to_thread(resolve_options_instrument, ticker_norm)
         except Exception as exc:  # noqa: BLE001 — never leak a stack frame to clients
             logger.warning("selector instrument resolution failed (ticker=%s): %s", ticker_norm, exc)
-            return JSONResponse(status_code=400, content={"ok": False, "error": str(exc)})
+            return JSONResponse(status_code=400, content={"ok": False, "error": redacted_error_detail(exc)})
 
         try:
             from trade_integrations.dataflows.options_research.sources.chain_openalgo import (
@@ -588,7 +589,13 @@ def register_india_options_routes(app: FastAPI, require_auth: AuthDep) -> None:
             "recommended": recommended,
             "implementation_steps": implementation_steps,
         }
-        persist_trade_widget(widget)
+        if persist_trade_widget(widget) is None:
+            # The store refuses an id outside its pattern (a ticker like "M&M"); reporting ok
+            # would hand the UI a widget_id execute-basket can never load.
+            return JSONResponse(
+                status_code=400,
+                content={"ok": False, "error": f"cannot build a trade-plan widget id for {ticker_norm!r}"},
+            )
 
         orders: list[dict[str, Any]] = []
         for step in implementation_steps:

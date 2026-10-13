@@ -59,7 +59,7 @@ def serve_main(argv: list[str] | None = None) -> int:
         from trade_integrations.service_lock import acquire_service_lock
 
         acquire_service_lock("vibetrading-agent", port=args.port)
-    except (ImportError, RuntimeError):
+    except ImportError:
         pass  # trade_integrations not on path (standalone vibe-trading install)
 
     if not _is_loopback_bind_host(args.host) and not _configured_api_key():
@@ -76,7 +76,7 @@ def serve_main(argv: list[str] | None = None) -> int:
     if args.dev and frontend_root.exists():
         print("[dev] Starting Vite dev server on :5173 ...")
         vite_proc = subprocess.Popen(
-            ["npx", "vite", "--host", "0.0.0.0"],
+            ["npx", "vite", "--host", "127.0.0.1"],  # dev server: loopback only, like the API's default bind
             cwd=str(frontend_root),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

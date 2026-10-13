@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import tempfile
@@ -15,6 +16,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.api._compat import host_attr as _host_attr
 from src.config.paths import get_runs_dir, get_runtime_root, get_sessions_dir, get_uploads_dir
+from src.tools.redaction import redact_internal_paths, redact_text
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -332,3 +336,33 @@ def _validate_path_param(value: str, kind: str) -> None:
     """Reject path parameters that could escape the parent directory."""
     if not _SAFE_PATH_PARAM_RE.fullmatch(value or ""):
         raise HTTPException(status_code=400, detail=f"invalid {kind}")
+
+
+def is_unsafe_path_component(value: str) -> bool:
+    """True when *value* could climb out of the directory it is joined onto.
+
+    Names (tickers like ``M&M``, index names like ``NIFTY 50``) are looser than ids, so this
+    rejects only what changes the path: a separator, NUL/control char, or a bare ``.``/``..``.
+    """
+    return value in {".", ".."} or any(c in "/\\" or ord(c) < 32 for c in value)
+
+
+def safe_path_component(value: str, kind: str) -> str:
+    """Return *value* unchanged, or raise 400 when it is an unsafe path component."""
+    if is_unsafe_path_component(value):
+        raise HTTPException(status_code=400, detail=f"invalid {kind}")
+    return value
+
+
+_ERROR_DETAIL_MAX_CHARS = 300
+
+
+def redacted_error_detail(exc: BaseException) -> str:
+    """Client-safe text for an upstream failure; also logs the redacted one-liner.
+
+    Call inside the ``except`` block. A raw ``str(exc)`` can carry filesystem paths or a
+    credential-bearing URL; this keeps the diagnosis (type + message) and drops those.
+    """
+    text = redact_internal_paths(redact_text(str(exc) or type(exc).__name__))[:_ERROR_DETAIL_MAX_CHARS]
+    logger.warning("upstream failure surfaced to client: %s: %s", type(exc).__name__, text)
+    return text

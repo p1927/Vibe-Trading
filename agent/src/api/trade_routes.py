@@ -12,8 +12,9 @@ from typing import Any, Callable, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from src.api.helpers import is_unsafe_path_component, redacted_error_detail, safe_path_component
 from src.api.security import require_event_stream_auth, require_local_or_auth
 from src.config.accessor import get_env_config
 from trade_integrations.market_registry import market_for_ticker
@@ -22,7 +23,31 @@ from trade_integrations.ui_links import trade_ui_deep_link
 
 logger = logging.getLogger(__name__)
 
-trade_router = APIRouter(prefix="/trade", tags=["trade"])
+# Query keys these routes join onto hub/artifact paths (``hub_dir / ticker / ...``,
+# ``runs / recipe / f"{run_id}.json"``). Path params are checked for every route as well.
+_PATHISH_QUERY_KEYS = ("ticker", "entity_id", "symbol", "exchange", "recipe", "run_id", "agent_id", "source_id")
+
+
+async def _reject_unsafe_path_inputs(request: Request) -> None:
+    """Router-wide: refuse a path param or path-joined query value that could leave its directory.
+
+    ``../`` in a ticker/recipe/run_id reached ``mkdir``/``read_text`` in the hub and
+    forecast-engine stores, and ``..`` as ``country``/``job_id`` was interpolated, unquoted,
+    into the URL the stock_simulator client calls with its control token.
+    """
+    values = list(request.path_params.values())
+    for key in _PATHISH_QUERY_KEYS:
+        values.extend(request.query_params.getlist(key))
+    if any(is_unsafe_path_component(str(v)) for v in values):
+        raise HTTPException(status_code=400, detail="invalid path component")
+
+
+trade_router = APIRouter(prefix="/trade", tags=["trade"], dependencies=[Depends(_reject_unsafe_path_inputs)])
+
+
+def _ticker_key(raw: str | None, default: str = "NIFTY") -> str:
+    """Canonical (upper-case, stripped) ticker/entity id from a request; 400 when path-unsafe."""
+    return safe_path_component((raw or default).strip().upper(), "ticker")
 
 _WIDGET_ID_RE = re.compile(r"(?:tp|ts|ti|ns)_[A-Z][A-Z0-9]*_[0-9a-f]{12}")
 _WIDGET_ID_INLINE_RE = re.compile(r"((?:tp|ts|ti|ns)_[A-Z][A-Z0-9]*_[0-9a-f]{12})")
@@ -222,7 +247,7 @@ def trade_charges(
         raise
     except Exception as exc:
         logger.warning("trade charges failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail=redacted_error_detail(exc)) from exc
     return TradeChargesResponse(status="success", charges=charges)
 
 
@@ -233,29 +258,27 @@ def execute_basket(
 ) -> ExecuteBasketResponse:
     """Place a multi-leg basket order via OpenAlgo REST (after user confirms in widget)."""
     orders = list(body.orders or [])
-    widget: dict | None = None
-    if not orders and body.widget_id:
-        widget = load_trade_widget(body.widget_id)
-        if not widget:
-            raise HTTPException(status_code=404, detail="Widget not found")
+    widget: dict | None = load_trade_widget(body.widget_id) if body.widget_id else None
+    if widget is None and body.widget_id and not orders:
+        raise HTTPException(status_code=404, detail="Widget not found")
+    if widget is not None:
+        # Checked whether the orders come from the widget or from the request body: a
+        # bridge agent's plan only executes through its approval flow, so naming its widget
+        # must not unlock a free-form order list.
         agent_id = str(widget.get("autonomous_agent_id") or widget.get("agent_id") or "").strip()
         if agent_id:
-            try:
-                from trade_integrations.execution.enforce import is_bridge_autonomous_agent
+            from trade_integrations.execution.enforce import is_bridge_autonomous_agent
 
-                if is_bridge_autonomous_agent(agent_id):
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Direct execute-basket blocked for autonomous agents — use plan approval flow",
-                    )
-            except HTTPException:
-                raise
-            except ImportError:
-                pass
-        for step in widget.get("implementation_steps") or []:
-            if step.get("action") == "execute_basket" and step.get("payload"):
-                orders = (step["payload"] or {}).get("orders") or []
-                break
+            if is_bridge_autonomous_agent(agent_id):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Direct execute-basket blocked for autonomous agents — use plan approval flow",
+                )
+        if not orders:
+            for step in widget.get("implementation_steps") or []:
+                if step.get("action") == "execute_basket" and step.get("payload"):
+                    orders = (step["payload"] or {}).get("orders") or []
+                    break
     if not orders:
         raise HTTPException(status_code=400, detail="No orders to execute")
 
@@ -291,7 +314,7 @@ def execute_basket(
         )
     except RuntimeError as exc:
         logger.warning("OpenAlgo basket order failed: %s", exc)
-        raise HTTPException(status_code=502, detail=f"OpenAlgo request failed: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"OpenAlgo request failed: {redacted_error_detail(exc)}") from exc
 
     if body_json.get("status") == "error":
         raise HTTPException(
@@ -532,7 +555,7 @@ def get_plan_context(
     _auth: None = Depends(require_local_or_auth),
 ) -> Dict[str, Any]:
     """Live staleness, spot drift, and news context for mounted trade widgets."""
-    key = (ticker or "").strip().upper()
+    key = _ticker_key(ticker, default="")
     if not key:
         raise HTTPException(status_code=400, detail="ticker required")
 
@@ -548,7 +571,7 @@ def get_plan_context(
         report = MonitorService().evaluate_ticker(key)
     except Exception as exc:
         logger.exception("plan-context failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
     if report is None:
         return {
@@ -601,7 +624,7 @@ def get_hub_plan(
     _auth: None = Depends(require_local_or_auth),
 ) -> HubPlanResponse:
     """Load structured trade plan from the shared hub for the research side panel."""
-    key = (ticker or "").strip().upper()
+    key = _ticker_key(ticker, default="")
     if not key:
         raise HTTPException(status_code=400, detail="ticker required")
     asset_type = (asset or "options").strip().lower()
@@ -618,7 +641,7 @@ def get_hub_plan(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("hub-plan failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
     if artifact is None:
         return HubPlanResponse(status="not_found", ticker=key, asset_type=asset_type, message="No hub plan")
@@ -938,11 +961,20 @@ class ForecastEngineEvaluationResponse(BaseModel):
 
 
 class ForecastEngineRunStartRequest(BaseModel):
+    # ``start``/``end`` become the run_id (an artifact file name) and ``recipe``/``ticker`` path
+    # segments, so a free string here was a write outside the artifact directory.
     ticker: str = "NIFTY"
     recipe: str
-    start: str
-    end: str
+    start: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    end: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     horizon: int = 5
+
+    @field_validator("ticker", "recipe")
+    @classmethod
+    def _path_safe(cls, value: str) -> str:
+        if is_unsafe_path_component(value):
+            raise ValueError("must be a plain name, not a path")
+        return value
 
 
 class ForecastEngineRunStartResponse(BaseModel):
@@ -1382,12 +1414,6 @@ class IndexQuantReviewResponse(BaseModel):
     message: str = ""
 
 
-class RunIndexQuantReviewRequest(BaseModel):
-    ticker: str = "NIFTY"
-    horizon_days: int | None = 14
-    refresh: bool = False
-
-
 class ExternalPredictionsResponse(BaseModel):
     status: str = "ok"
     ticker: str = "NIFTY"
@@ -1537,7 +1563,7 @@ def get_index_prediction(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexPredictionResponse:
     """Load cached index research artifact for the prediction page."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from src.trade.hub_bridge import load_hub_plan_artifact, prefetch_index_hub_plan
 
@@ -1551,49 +1577,13 @@ def get_index_prediction(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("index-prediction GET failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
     if artifact is None:
         return IndexPredictionResponse(status="not_found", ticker=key, message="No index research")
     if horizon_days is not None and artifact.get("horizon", {}).get("days") != horizon_days:
         artifact["_horizon_mismatch"] = True
     _attach_latest_forecast_fan(artifact, key)
-    return IndexPredictionResponse(
-        status="ok",
-        ticker=key,
-        artifact=artifact,
-        degraded_reason=_index_artifact_degraded_reason(artifact),
-    )
-
-
-@trade_router.post("/index-prediction/run", response_model=IndexPredictionResponse)
-def run_index_prediction(
-    body: RunIndexPredictionRequest,
-    _auth: None = Depends(require_local_or_auth),
-) -> IndexPredictionResponse:
-    """Run full index research pipeline and persist to hub."""
-    key = (body.ticker or "NIFTY").strip().upper()
-    try:
-        from trade_integrations.context.hub import save_index_research
-        from trade_integrations.dataflows.index_research.aggregator import run_index_research
-        from src.trade.hub_bridge import _index_doc_to_panel, ensure_trade_stack_path
-
-        ensure_trade_stack_path()
-        doc = run_index_research(
-            key,
-            horizon_days=body.horizon_days,
-            refresh_constituents=body.refresh_constituents,
-            run_forecast_lab=body.run_forecast_lab,
-        )
-        save_index_research(doc)
-        artifact = _index_doc_to_panel(doc)
-        artifact["asset_type"] = "index"
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("index-prediction run failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
     return IndexPredictionResponse(
         status="ok",
         ticker=key,
@@ -1616,7 +1606,7 @@ def get_index_prediction_factors(
         return IndexFactorCatalogResponse(status="ok", **payload)
     except Exception as exc:
         logger.exception("index-prediction factors catalog failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/capture-registry", response_model=CaptureRegistryResponse)
@@ -1625,7 +1615,7 @@ def get_capture_registry(
     _auth: None = Depends(require_local_or_auth),
 ) -> CaptureRegistryResponse:
     """Return hub capture registry, factor tiers, and storage stats."""
-    key = entity_id.strip().upper()
+    key = _ticker_key(entity_id, default="")
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -1647,7 +1637,7 @@ def get_capture_registry(
         )
     except Exception as exc:
         logger.exception("capture-registry get failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.put("/capture-registry", response_model=CaptureRegistryResponse)
@@ -1656,7 +1646,7 @@ def update_capture_registry(
     _auth: None = Depends(require_local_or_auth),
 ) -> CaptureRegistryResponse:
     """Update capture settings for an entity (v1: NIFTY)."""
-    key = body.entity_id.strip().upper()
+    key = _ticker_key(body.entity_id, default="")
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -1680,7 +1670,7 @@ def update_capture_registry(
         )
     except Exception as exc:
         logger.exception("capture-registry update failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/capture-registry/backfill")
@@ -1689,7 +1679,7 @@ def run_capture_registry_backfill(
     _auth: None = Depends(require_local_or_auth),
 ) -> Dict[str, Any]:
     """Backfill proprietary NIFTY factor history (participant OI, flows)."""
-    key = body.entity_id.strip().upper()
+    key = _ticker_key(body.entity_id, default="")
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -1699,7 +1689,7 @@ def run_capture_registry_backfill(
         return run_capture_backfill(entity_id=key, days=max(30, min(body.days, 730)))
     except Exception as exc:
         logger.exception("capture-registry backfill failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/capture-registry/intraday")
@@ -1708,7 +1698,7 @@ def run_capture_registry_intraday(
     _auth: None = Depends(require_local_or_auth),
 ) -> Dict[str, Any]:
     """Run one intraday chain capture now (OpenAlgo → hub)."""
-    key = entity_id.strip().upper()
+    key = _ticker_key(entity_id, default="")
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -1718,7 +1708,7 @@ def run_capture_registry_intraday(
         return run_intraday_capture(entity_id=key)
     except Exception as exc:
         logger.exception("capture-registry intraday failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/hub/status", response_model=HubStatusResponse)
@@ -1738,7 +1728,7 @@ def get_hub_status(
     ``detail=full`` additionally runs the LLM-Wiki network probes in the news_pipeline block.
     The default is deliberately cheap: this endpoint is polled every 30s by the Hub page.
     """
-    key = entity_id.strip().upper()
+    key = _ticker_key(entity_id, default="")
     size = max(1, min(int(page_size or 20), 100))
     current_page = max(1, int(page or 1))
     try:
@@ -1779,7 +1769,7 @@ def get_hub_status(
         return HubStatusResponse(status="ok", hub=hub, news_page=HubNewsPage(**page_meta))
     except Exception as exc:
         logger.exception("hub status failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/hub/staging/drain", response_model=HubStagingDrainResponse)
@@ -1789,7 +1779,7 @@ def drain_hub_staging(
     _auth: None = Depends(require_local_or_auth),
 ) -> HubStagingDrainResponse:
     """Manually process a batch of queued staging news refs."""
-    key = entity_id.strip().upper()
+    key = _ticker_key(entity_id, default="")
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -1806,7 +1796,7 @@ def drain_hub_staging(
         return HubStagingDrainResponse(status="ok", summary=summary)
     except Exception as exc:
         logger.exception("hub staging drain failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/hub/news-pipeline/config", response_model=HubNewsPipelineConfigResponse)
@@ -1823,7 +1813,7 @@ def get_hub_news_pipeline_config(
         return HubNewsPipelineConfigResponse(status="ok", config=get_pipeline_config())
     except Exception as exc:
         logger.exception("hub news pipeline config read failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.patch("/hub/news-pipeline/config", response_model=HubNewsPipelineConfigResponse)
@@ -1845,7 +1835,7 @@ def patch_hub_news_pipeline_config(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("hub news pipeline config update failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/hub/news-events/calendar", response_model=HubNewsEventsCalendarResponse)
@@ -1912,7 +1902,7 @@ def get_hub_news_events_calendar(
         return HubNewsEventsCalendarResponse(status="ok", events=events)
     except Exception as exc:
         logger.exception("hub news events calendar read failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 class ModelAdapterRateLimit(BaseModel):
@@ -1986,7 +1976,7 @@ def get_model_adapters(
         return ModelAdaptersResponse(status="ok", adapters=adapters)
     except Exception as exc:
         logger.exception("model adapters list failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.patch("/model-adapters/{adapter_id}", response_model=ModelAdaptersResponse)
@@ -2018,7 +2008,7 @@ def patch_model_adapter(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("model adapter update failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/hub/news-pipeline/maintenance", response_model=HubStagingDrainResponse)
@@ -2028,7 +2018,7 @@ def run_hub_news_maintenance_now(
     _auth: None = Depends(require_local_or_auth),
 ) -> HubStagingDrainResponse:
     """Run full entity maintainer: repair, backfill, compact, cleanup, rollup."""
-    key = entity_id.strip().upper()
+    key = _ticker_key(entity_id, default="")
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -2058,7 +2048,7 @@ def run_hub_news_maintenance_now(
         return HubStagingDrainResponse(status="ok", summary=summary)
     except Exception as exc:
         logger.exception("hub news maintenance failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/hub/news-pipeline/ingest", response_model=HubStagingDrainResponse)
@@ -2067,7 +2057,7 @@ def run_hub_news_ingest_now(
     _auth: None = Depends(require_local_or_auth),
 ) -> HubStagingDrainResponse:
     """Trigger ingest immediately (full or light mode)."""
-    key = (body.ticker or "NIFTY").strip().upper()
+    key = _ticker_key(body.ticker)
     mode = (body.mode or "full").strip().lower()
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
@@ -2103,7 +2093,7 @@ def run_hub_news_ingest_now(
         return HubStagingDrainResponse(status="ok", summary=summary)
     except Exception as exc:
         logger.exception("hub news ingest now failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/hub/factor-registry-gaps", response_model=FactorRegistryGapReviewResponse)
@@ -2134,7 +2124,7 @@ def get_factor_registry_gaps(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("factor registry gap review failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/hub/factor-registry-gaps/decision", response_model=FactorRegistryGapDecisionResponse)
@@ -2169,7 +2159,7 @@ def decide_factor_registry_gap_route(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("factor registry gap decision failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/hub/news/discard", response_model=HubNewsDiscardResponse)
@@ -2178,7 +2168,7 @@ def discard_hub_news(
     _auth: None = Depends(require_local_or_auth),
 ) -> HubNewsDiscardResponse:
     """Discard one news item or discard similar cluster."""
-    key = (body.entity_id or "NIFTY").strip().upper()
+    key = _ticker_key(body.entity_id)
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -2236,7 +2226,7 @@ def discard_hub_news(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("hub news discard failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/hub/news/discard/undo", response_model=HubNewsDiscardResponse)
@@ -2262,7 +2252,7 @@ def undo_hub_news_discard(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("hub news discard undo failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/hub/news/discarded", response_model=HubNewsDiscardedListResponse)
@@ -2272,7 +2262,7 @@ def list_hub_discarded_news(
     _auth: None = Depends(require_local_or_auth),
 ) -> HubNewsDiscardedListResponse:
     """List soft-discarded news items (30d retention)."""
-    key = entity_id.strip().upper()
+    key = _ticker_key(entity_id, default="")
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -2283,7 +2273,7 @@ def list_hub_discarded_news(
         return HubNewsDiscardedListResponse(status="ok", items=items, count=len(items))
     except Exception as exc:
         logger.exception("hub discarded news list failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/hub/news-pipeline/trace/summary", response_model=HubNewsPipelineTraceSummaryResponse)
@@ -2292,7 +2282,7 @@ def get_hub_news_pipeline_trace_summary(
     _auth: None = Depends(require_local_or_auth),
 ) -> HubNewsPipelineTraceSummaryResponse:
     """Per-source and per-stage counts for the Hub news pipeline node diagram."""
-    key = entity_id.strip().upper()
+    key = _ticker_key(entity_id, default="")
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -2303,7 +2293,7 @@ def get_hub_news_pipeline_trace_summary(
         return HubNewsPipelineTraceSummaryResponse(status="ok", summary=summary)
     except Exception as exc:
         logger.exception("hub news pipeline trace summary failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/hub/news-pipeline/trace/items", response_model=HubNewsPipelineTraceItemsResponse)
@@ -2316,7 +2306,7 @@ def list_hub_news_pipeline_trace_items(
     _auth: None = Depends(require_local_or_auth),
 ) -> HubNewsPipelineTraceItemsResponse:
     """List traced refs at a given pipeline node (source and/or stage+status)."""
-    key = entity_id.strip().upper()
+    key = _ticker_key(entity_id, default="")
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -2333,7 +2323,7 @@ def list_hub_news_pipeline_trace_items(
         return HubNewsPipelineTraceItemsResponse(status="ok", items=items, count=len(items))
     except Exception as exc:
         logger.exception("hub news pipeline trace items failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/index-prediction/simulate", response_model=SimulateIndexPredictionResponse)
@@ -2342,7 +2332,7 @@ def simulate_index_prediction(
     _auth: None = Depends(require_local_or_auth),
 ) -> SimulateIndexPredictionResponse:
     """What-if: adjust macro factors and recompute index forecast."""
-    key = (body.ticker or "NIFTY").strip().upper()
+    key = _ticker_key(body.ticker)
     try:
         from trade_integrations.context.hub import load_index_research_json
         from trade_integrations.dataflows.index_research.cascade.calibration_store import (
@@ -2399,7 +2389,7 @@ def simulate_index_prediction(
         return SimulateIndexPredictionResponse(status="ok", ticker=key, simulation=simulation)
     except Exception as exc:
         logger.exception("index-prediction simulate failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/playground-context", response_model=IndexPlaygroundContextResponse)
@@ -2409,7 +2399,7 @@ def get_index_playground_context(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexPlaygroundContextResponse:
     """Headlines, events, and ranked factors for the factor impact workbench."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from trade_integrations.context.hub import load_index_research_json
         from trade_integrations.dataflows.index_research.playground_context import (
@@ -2443,7 +2433,7 @@ def get_index_playground_context(
         return IndexPlaygroundContextResponse(status="ok", ticker=key, context=ctx)
     except Exception as exc:
         logger.exception("index-prediction playground-context failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/backtest", response_model=IndexBacktestResponse)
@@ -2456,7 +2446,7 @@ def get_index_prediction_backtest(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexBacktestResponse:
     """Load cached walk-forward backtest or recompute from factor history."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from trade_integrations.dataflows.index_research.backtest_runner import (
             load_backtest_report,
@@ -2494,7 +2484,7 @@ def get_index_prediction_backtest(
         return IndexBacktestResponse(status=status, ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction backtest failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/forecast-lab", response_model=IndexForecastLabResponse)
@@ -2509,7 +2499,7 @@ def index_prediction_forecast_lab(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexForecastLabResponse:
     """Plug-and-play forecast lab — independent tracks + optional combiner."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from trade_integrations.dataflows.index_research.prediction_algorithms.api import run_forecast_lab
         from trade_integrations.dataflows.index_research.prediction_algorithms.config import (
@@ -2517,7 +2507,6 @@ def index_prediction_forecast_lab(
             lab_enabled,
         )
         from trade_integrations.dataflows.index_research.prediction_algorithms.context_builder import (
-            build_track_context,
             context_from_hub,
         )
         from trade_integrations.dataflows.index_research.prediction_algorithms.promotion import (
@@ -2544,7 +2533,6 @@ def index_prediction_forecast_lab(
         if use_cache:
             ctx = context_from_hub(key, horizon_days=hz)
         if ctx is None:
-            ctx = build_track_context(ticker=key, spot=0.0, horizon_days=hz)
             return IndexForecastLabResponse(
                 status="error",
                 ticker=key,
@@ -2592,7 +2580,7 @@ def index_prediction_forecast_lab(
         )
     except Exception as exc:
         logger.exception("index-prediction forecast-lab failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/track-scoreboard", response_model=IndexTrackScoreboardResponse)
@@ -2606,7 +2594,7 @@ def get_index_track_scoreboard(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexTrackScoreboardResponse:
     """Load cached per-track scoreboard or recompute walk-forward."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.scoreboard import (
             load_scoreboard,
@@ -2677,7 +2665,7 @@ def get_index_track_scoreboard(
         return IndexTrackScoreboardResponse(status=status, ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction track-scoreboard failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/execution-backtest", response_model=IndexExecutionBacktestResponse)
@@ -2694,10 +2682,10 @@ def get_index_execution_backtest(
     if not exec_sim_enabled():
         return IndexExecutionBacktestResponse(
             status="disabled",
-            ticker=(ticker or "NIFTY").strip().upper(),
+            ticker=_ticker_key(ticker),
             message="Set INDEX_PREDICTION_EXEC_SIM_ENABLED=1",
         )
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from trade_integrations.dataflows.index_research.execution_sim.runner import (
             execution_backtest_path,
@@ -2722,7 +2710,7 @@ def get_index_execution_backtest(
         return IndexExecutionBacktestResponse(status=status, ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction execution-backtest failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/miss-analysis", response_model=IndexMissAnalysisResponse)
@@ -2734,7 +2722,7 @@ def get_index_prediction_miss_analysis(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexMissAnalysisResponse:
     """Load cached prediction miss RCA or recompute from backtest eval rows."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from trade_integrations.dataflows.index_research.prediction_miss_analysis import (
             load_miss_analysis_report,
@@ -2768,38 +2756,7 @@ def get_index_prediction_miss_analysis(
         return IndexMissAnalysisResponse(status=status, ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction miss-analysis failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-
-@trade_router.post("/index-prediction/miss-analysis/run", response_model=IndexMissAnalysisResponse)
-def run_index_prediction_miss_analysis(
-    ticker: str = "NIFTY",
-    days: int = 365,
-    horizon_days: int | None = None,
-    _auth: None = Depends(require_local_or_auth),
-) -> IndexMissAnalysisResponse:
-    """Recompute prediction miss RCA from walk-forward backtest."""
-    key = (ticker or "NIFTY").strip().upper()
-    try:
-        from trade_integrations.dataflows.index_research.backtest_runner import run_and_save_backtest
-        from trade_integrations.dataflows.index_research.prediction_miss_analysis import (
-            run_and_save_miss_analysis,
-        )
-        from src.trade.hub_bridge import ensure_trade_stack_path
-
-        ensure_trade_stack_path()
-        backtest = run_and_save_backtest(days=days, horizon_days=horizon_days)
-        report = run_and_save_miss_analysis(
-            days=days,
-            horizon_days=horizon_days,
-            ticker=key,
-            backtest_report=backtest,
-        )
-        status = str(report.get("status") or "ok")
-        return IndexMissAnalysisResponse(status=status, ticker=key, report=report)
-    except Exception as exc:
-        logger.exception("index-prediction miss-analysis run failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/quant-review", response_model=IndexQuantReviewResponse)
@@ -2810,7 +2767,7 @@ def get_index_quant_review(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexQuantReviewResponse:
     """Load cached India Quant Reviewer artifact (second opinion vs Ridge)."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from trade_integrations.bridge.quant_review import run_quant_review
         from trade_integrations.context.hub import (
@@ -2829,30 +2786,7 @@ def get_index_quant_review(
         return IndexQuantReviewResponse(status="ok", ticker=key, review=review)
     except Exception as exc:
         logger.exception("index-prediction quant-review failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-
-@trade_router.post("/index-prediction/quant-review/run", response_model=IndexQuantReviewResponse)
-def run_index_quant_review(
-    body: RunIndexQuantReviewRequest,
-    _auth: None = Depends(require_local_or_auth),
-) -> IndexQuantReviewResponse:
-    """Run India Quant Reviewer and persist to hub."""
-    key = (body.ticker or "NIFTY").strip().upper()
-    try:
-        from trade_integrations.bridge.quant_review import run_quant_review
-        from src.trade.hub_bridge import ensure_trade_stack_path
-
-        ensure_trade_stack_path()
-        review = run_quant_review(
-            key,
-            horizon_days=body.horizon_days,
-            save=True,
-        )
-        return IndexQuantReviewResponse(status="ok", ticker=key, review=review)
-    except Exception as exc:
-        logger.exception("index-prediction quant-review run failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/data-audit", response_model=IndexDataAuditResponse)
@@ -2864,7 +2798,7 @@ def get_index_prediction_data_audit(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexDataAuditResponse:
     """Load hub data completeness audit for prediction RCA."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from trade_integrations.dataflows.index_research.hub_data_audit import (
             load_data_audit_report,
@@ -2891,7 +2825,7 @@ def get_index_prediction_data_audit(
         return IndexDataAuditResponse(status=status, ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction data-audit failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/counterfactual", response_model=IndexCounterfactualResponse)
@@ -2903,7 +2837,7 @@ def get_index_prediction_counterfactual(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexCounterfactualResponse:
     """Load cached counterfactual decomposition or recompute from backtest eval rows."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from trade_integrations.dataflows.index_research.prediction_counterfactual import (
             load_counterfactual_report,
@@ -2937,7 +2871,7 @@ def get_index_prediction_counterfactual(
         return IndexCounterfactualResponse(status=status, ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction counterfactual failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/news-impact", response_model=IndexNewsImpactResponse)
@@ -2953,7 +2887,7 @@ def get_index_prediction_news_impact(
     Default load is hub-read-only (``resolve_news_impact``). ``refresh=true`` runs
     index-level ingest for NIFTY only (tiered sources allowed) — not Nifty-50 batch.
     """
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from trade_integrations.context.hub import load_index_research_json
         from trade_integrations.dataflows import news_hub_bridge
@@ -3000,7 +2934,7 @@ def get_index_prediction_news_impact(
         return IndexNewsImpactResponse(status=status, ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction news-impact failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/news-impact/factor-timeline")
@@ -3016,7 +2950,7 @@ def get_index_prediction_news_factor_timeline(
     Anchored to the current index doc's spot; no cascading/second-order effects (see
     news_factor_scenario.py's module docstring for why).
     """
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     if not factor_id.strip():
         raise HTTPException(status_code=400, detail="factor_id is required")
     try:
@@ -3031,7 +2965,7 @@ def get_index_prediction_news_factor_timeline(
         return result
     except Exception as exc:
         logger.exception("index-prediction news factor-timeline failed for %s/%s", key, factor_id)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/index-prediction/news-scenarios/session", response_model=NewsScenarioSessionResponse)
@@ -3040,10 +2974,12 @@ def create_news_scenario_session(
     _auth: None = Depends(require_local_or_auth),
 ) -> NewsScenarioSessionResponse:
     """Create or resume a news-scenario advisor Vibe session bound to pipeline_as_of."""
-    key = (body.ticker or "NIFTY").strip().upper()
+    key = _ticker_key(body.ticker)
     pipeline_as_of = (body.pipeline_as_of or "").strip()
     if not pipeline_as_of:
         raise HTTPException(status_code=400, detail="pipeline_as_of is required")
+    if body.session_id:
+        safe_path_component(body.session_id, "session_id")
     try:
         from src.api.state import _get_session_service
         from src.trade.hub_bridge import ensure_trade_stack_path
@@ -3117,7 +3053,7 @@ def create_news_scenario_session(
         if isinstance(exc, (MissingSnapshotError, StaleSnapshotError)):
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         logger.exception("news-scenario session create failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.patch(
@@ -3169,7 +3105,7 @@ def patch_news_scenario_session(
         if isinstance(exc, NewsScenarioError):
             raise HTTPException(status_code=400, detail=exc.to_dict()) from exc
         logger.exception("news-scenario session patch failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/news-scenarios/recent", response_model=NewsEventScenarioResponse)
@@ -3178,7 +3114,7 @@ def list_news_scenarios(
     limit: int = 10,
     _auth: None = Depends(require_local_or_auth),
 ) -> NewsEventScenarioResponse:
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
         from trade_integrations.dataflows.news_hub_bridge import (
@@ -3190,7 +3126,7 @@ def list_news_scenarios(
         return NewsEventScenarioResponse(status="ok", ticker=key, scenarios=rows)
     except Exception as exc:
         logger.exception("list news scenarios failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get(
@@ -3202,7 +3138,7 @@ def get_news_scenario(
     ticker: str = "NIFTY",
     _auth: None = Depends(require_local_or_auth),
 ) -> NewsEventScenarioResponse:
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
         from trade_integrations.dataflows.news_hub_bridge import (
@@ -3220,7 +3156,7 @@ def get_news_scenario(
         return NewsEventScenarioResponse(status="ok", ticker=key, scenario=scenario)
     except Exception as exc:
         logger.exception("get news scenario failed for %s", scenario_id)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get(
@@ -3233,7 +3169,7 @@ def get_external_predictions(
     _auth: None = Depends(require_local_or_auth),
 ) -> ExternalPredictionsResponse:
     """Return cached third-party NIFTY forecasts (no live fetch)."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
         from trade_integrations.dataflows.index_research.external_predictions.store import (
@@ -3251,7 +3187,7 @@ def get_external_predictions(
         )
     except Exception as exc:
         logger.exception("get external predictions failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post(
@@ -3263,7 +3199,7 @@ def refresh_external_predictions(
     _auth: None = Depends(require_local_or_auth),
 ) -> ExternalPredictionsResponse:
     """Fetch latest third-party forecasts from watchlisted sources."""
-    key = (body.ticker or "NIFTY").strip().upper()
+    key = _ticker_key(body.ticker)
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
         from trade_integrations.dataflows.index_research.external_predictions.refresh import (
@@ -3284,14 +3220,14 @@ def refresh_external_predictions(
         )
     except Exception as exc:
         logger.exception("refresh external predictions failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 def _kick_external_predictions_refresh(body: ExternalPredictionsRefreshRequest) -> tuple[str, str, bool]:
     from src.trade.external_predictions_run_jobs import kick_external_predictions_refresh
 
     return kick_external_predictions_refresh(
-        ticker=(body.ticker or "NIFTY").strip().upper(),
+        ticker=_ticker_key(body.ticker),
         horizon_days=body.horizon_days,
     )
 
@@ -3440,7 +3376,7 @@ def list_external_prediction_sources(
     watchlisted_only: bool = False,
     _auth: None = Depends(require_local_or_auth),
 ) -> ExternalPredictionSourcesResponse:
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
         from trade_integrations.dataflows.index_research.external_predictions.source_registry import (
@@ -3458,7 +3394,7 @@ def list_external_prediction_sources(
         )
     except Exception as exc:
         logger.exception("list external prediction sources failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post(
@@ -3470,7 +3406,7 @@ def add_external_prediction_source(
     ticker: str = "NIFTY",
     _auth: None = Depends(require_local_or_auth),
 ) -> ExternalPredictionSourcesResponse:
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
         from trade_integrations.dataflows.index_research.external_predictions.source_registry import (
@@ -3511,7 +3447,7 @@ def add_external_prediction_source(
         raise
     except Exception as exc:
         logger.exception("add external prediction source failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.delete(
@@ -3523,7 +3459,7 @@ def remove_external_prediction_source(
     ticker: str = "NIFTY",
     _auth: None = Depends(require_local_or_auth),
 ) -> ExternalPredictionSourcesResponse:
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
         from trade_integrations.dataflows.index_research.external_predictions.source_registry import (
@@ -3549,7 +3485,7 @@ def remove_external_prediction_source(
         )
     except Exception as exc:
         logger.exception("remove external prediction source failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get(
@@ -3561,7 +3497,7 @@ def discover_external_prediction_sources(
     limit: int = 12,
     _auth: None = Depends(require_local_or_auth),
 ) -> ExternalPredictionSourcesResponse:
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
         from trade_integrations.dataflows.index_research.external_predictions.discover import (
@@ -3582,7 +3518,7 @@ def discover_external_prediction_sources(
         )
     except Exception as exc:
         logger.exception("discover external prediction sources failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post(
@@ -3596,7 +3532,7 @@ def approve_external_prediction_path(
     _auth: None = Depends(require_local_or_auth),
 ) -> ExternalPredictionSourcesResponse:
     """Promote auto-saved navigation path to user-approved for fast-path replay."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     sid = (source_id or "").strip().lower()
     if not sid:
         raise HTTPException(status_code=400, detail="source_id required")
@@ -3629,7 +3565,7 @@ def approve_external_prediction_path(
         raise
     except Exception as exc:
         logger.exception("approve external prediction path failed for %s", sid)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/external-predictions/sources/{source_id}/thumbnail")
@@ -3639,7 +3575,7 @@ def get_external_prediction_thumbnail(
     run_id: str | None = None,
     _auth: None = Depends(require_local_or_auth),
 ):
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     sid = (source_id or "").strip().lower()
     if not sid:
         raise HTTPException(status_code=400, detail="source_id required")
@@ -3658,7 +3594,7 @@ def get_external_prediction_thumbnail(
         raise
     except Exception as exc:
         logger.exception("external prediction thumbnail failed for %s", sid)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/verified-news", response_model=IndexVerifiedNewsResponse)
@@ -3678,7 +3614,7 @@ def get_index_verified_news(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexVerifiedNewsResponse:
     """Filter verified hub news by date, symbol, topic, factor, or theme tags."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
 
     def _csv(raw: str | None) -> list[str] | None:
         if not raw:
@@ -3714,7 +3650,7 @@ def get_index_verified_news(
         )
     except Exception as exc:
         logger.exception("index-prediction verified-news failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/index-prediction/day-attribution", response_model=DayAttributionResponse)
@@ -3742,7 +3678,7 @@ def get_index_day_attribution(
         return DayAttributionResponse(status="ok", date=str(payload.get("date") or date), attribution=payload)
     except Exception as exc:
         logger.exception("day-attribution failed for %s", date)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 _INDEX_PREDICTION_RUN_POLL_SECONDS = 0.5
@@ -3946,7 +3882,7 @@ async def _command_center_event_stream(agent_id: str, ticker: str, request: Requ
                     last_emit = now
             except Exception as exc:  # noqa: BLE001 — one leg's failure must not kill the stream
                 logger.warning("command-center stream: positions poll failed", exc_info=exc)
-                yield _command_center_sse_frame("positions_error", {"message": str(exc)})
+                yield _command_center_sse_frame("positions_error", {"message": redacted_error_detail(exc)})
                 last_emit = now
 
         if now - last_prediction_poll >= _COMMAND_CENTER_PREDICTION_POLL_SECONDS:
@@ -3969,7 +3905,7 @@ async def _command_center_event_stream(agent_id: str, ticker: str, request: Requ
                     last_emit = now
             except Exception as exc:  # noqa: BLE001
                 logger.warning("command-center stream: prediction poll failed", exc_info=exc)
-                yield _command_center_sse_frame("prediction_error", {"message": str(exc)})
+                yield _command_center_sse_frame("prediction_error", {"message": redacted_error_detail(exc)})
                 last_emit = now
 
         if now - last_news_poll >= _COMMAND_CENTER_NEWS_POLL_SECONDS:
@@ -3997,7 +3933,7 @@ async def _command_center_event_stream(agent_id: str, ticker: str, request: Requ
                     last_emit = now
             except Exception as exc:  # noqa: BLE001
                 logger.warning("command-center stream: news poll failed", exc_info=exc)
-                yield _command_center_sse_frame("news_error", {"message": str(exc)})
+                yield _command_center_sse_frame("news_error", {"message": redacted_error_detail(exc)})
                 last_emit = now
 
         if now - last_emit >= _COMMAND_CENTER_HEARTBEAT_SECONDS:
@@ -4015,7 +3951,7 @@ async def command_center_stream(
 ) -> StreamingResponse:
     """SSE: push positions/prediction/news updates to the Command Center dashboard as they
     change, so the page never needs a manual refresh button or client-side poll timer."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     return StreamingResponse(
         _command_center_event_stream(agent_id.strip(), key, request),
         media_type="text/event-stream",
@@ -4030,7 +3966,7 @@ async def command_center_stream(
 def _kick_index_prediction_run(body: RunIndexPredictionRequest) -> tuple[str, str, bool]:
     from src.trade.index_prediction_run_jobs import spawn_worker, start_job
 
-    key = (body.ticker or "NIFTY").strip().upper()
+    key = _ticker_key(body.ticker)
     job_id, reused = start_job(
         ticker=key,
         horizon_days=body.horizon_days,
@@ -4279,6 +4215,8 @@ def _normalize_recording_request(
         "SENSEX",
     ]
     equities = [e.strip().upper() for e in body.equities if e.strip()]
+    for symbol in (*underlyings, *equities):
+        safe_path_component(symbol, "symbol")
     if body.include_nifty50_constituents:
         from trade_integrations.dataflows.index_research.constituents import (
             load_nifty50_constituents,
@@ -4352,8 +4290,11 @@ def list_recording_sessions(
 
         for symbol in client.get_recorded_equities()["data"]:
             days.update(client.get_recorded_index_days(symbol=symbol, exchange="NSE")["data"])
-    except StockSimulatorClientError:
+    except StockSimulatorClientError as exc:
+        # An outage must not read as "no recorded days": the replay picker would show an empty
+        # list with nothing to retry.
         logger.exception("stock_simulator unavailable while listing recording sessions")
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
     return RecordingSessionsResponse(sessions=sorted(days, reverse=True))
 
@@ -4412,7 +4353,7 @@ def _run_control(fn):
         return fn(client)
     except StockSimulatorClientError as exc:
         status = exc.status_code if exc.status_code and exc.status_code >= 400 else 502
-        raise HTTPException(status_code=status, detail=str(exc)) from exc
+        raise HTTPException(status_code=status, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.post("/recording/{day}/replay", response_model=ReplayStatusResponse)
@@ -4517,7 +4458,7 @@ def get_replay_calendar(
         payload = client.calendar()
     except StockSimulatorClientError as exc:
         status = exc.status_code if exc.status_code and exc.status_code >= 400 else 502
-        raise HTTPException(status_code=status, detail=str(exc)) from exc
+        raise HTTPException(status_code=status, detail=redacted_error_detail(exc)) from exc
     return {"configured": True, **payload}
 
 
@@ -5025,7 +4966,7 @@ def refresh_index_prediction(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexPredictionRefreshResponse:
     """Lightweight macro + cached-constituent refresh for live polling."""
-    key = (body.ticker or "NIFTY").strip().upper()
+    key = _ticker_key(body.ticker)
     try:
         from trade_integrations.dataflows.index_research.light_refresh import run_index_light_refresh
         from src.trade.hub_bridge import _index_doc_to_panel, ensure_trade_stack_path
@@ -5043,7 +4984,7 @@ def refresh_index_prediction(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("index-prediction refresh failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
     return IndexPredictionRefreshResponse(
         status="ok",
@@ -5062,7 +5003,7 @@ def get_index_prediction_history(
 ) -> IndexPredictionHistoryResponse:
     """Prediction-ledger rows (last run per day + today's intraday revisions) for the ledger-only columns
     (bottom-up / macro / direction hit); the headline forecast history is read from /forecast-replay."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from trade_integrations.dataflows.prediction_ledger_bridge import list_forecast_history_bundle
 
@@ -5075,7 +5016,7 @@ def get_index_prediction_history(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("index-prediction history failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
     return IndexPredictionHistoryResponse(
         status="ok",
         ticker=key,
@@ -5151,7 +5092,7 @@ def get_index_factor_history(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexFactorHistoryResponse:
     """Return macro factor time series for historical charts."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from trade_integrations.dataflows.prediction_ledger_bridge import (
             list_factor_history_series,
@@ -5169,7 +5110,7 @@ def get_index_factor_history(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("index-prediction factor-history failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
     return IndexFactorHistoryResponse(
         status="ok",
@@ -5207,7 +5148,7 @@ def get_forecast_engine_recipes(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("forecast-engine-recipes failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
     return ForecastEngineRecipesResponse(status="ok", recipes=recipes, default_recipe=DEFAULT_RECIPE_NAME)
 
@@ -5223,7 +5164,7 @@ def get_forecast_engine_latest(
     refreshed offline by scripts/run_forecast_engine_latest.py. `recipe` defaults to the
     registry's default recipe when omitted. `available=False` (not a 404/502) when no artifact
     has been generated yet -- this is an expected, normal state, not a service failure."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -5237,7 +5178,7 @@ def get_forecast_engine_latest(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("forecast-engine-latest failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
     if artifact is None:
         return ForecastEngineArtifactResponse(
@@ -5271,7 +5212,7 @@ def get_forecast_engine_evaluation(
     """One recipe's walk-forward backtest history -- predicted vs actual NIFTY over past forecast
     cutoffs (docs/add/forecast_engine.md rule 5), refreshed offline by the same job as the latest
     forecast. `available=False` when no evaluation has been run for this recipe yet."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -5285,7 +5226,7 @@ def get_forecast_engine_evaluation(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("forecast-engine-evaluation failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
     if artifact is None:
         return ForecastEngineEvaluationResponse(
@@ -5426,7 +5367,7 @@ def get_forecast_engine_runs(
     _auth: None = Depends(require_local_or_auth),
 ) -> ForecastEngineRunListResponse:
     """Past named runs for one recipe -- newest first."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -5440,7 +5381,7 @@ def get_forecast_engine_runs(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("forecast-engine-runs failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
     return ForecastEngineRunListResponse(runs=[ForecastEngineRunSummary(**r) for r in runs])
 
@@ -5457,7 +5398,7 @@ def get_forecast_engine_run_detail(
     """One past run's full evaluation detail -- same field shape as
     ``/index-prediction/forecast-engine-evaluation`` (the "latest" evaluation), just for a named
     historical run instead of the always-overwritten latest one."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -5471,7 +5412,7 @@ def get_forecast_engine_run_detail(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("forecast-engine-run-detail failed for %s/%s", key, run_id)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
     if artifact is None:
         return ForecastEngineEvaluationResponse(
@@ -5505,7 +5446,7 @@ def get_constituent_history(
     _auth: None = Depends(require_local_or_auth),
 ) -> ConstituentHistoryResponse:
     """Return archived company research trend for one Nifty constituent."""
-    key = (symbol or "").strip().upper()
+    key = _ticker_key(symbol, default="")
     if not key:
         return ConstituentHistoryResponse(status="error", message="symbol required")
     try:
@@ -5520,7 +5461,7 @@ def get_constituent_history(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("constituent-history failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
     return ConstituentHistoryResponse(
         status="ok",
@@ -5545,7 +5486,7 @@ def get_index_prediction_jobs(
         payload = list_index_prediction_jobs()
     except Exception as exc:
         logger.exception("index-prediction jobs list failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
     return IndexPredictionJobsResponse(
         status=payload.get("status", "ok"),
         env=payload.get("env") or {},
@@ -5572,7 +5513,7 @@ def pause_index_prediction_job(
         payload = pause_index_prediction_job(job_id)
     except Exception as exc:
         logger.exception("pause index job %s failed", job_id)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
     if payload.get("status") == "error":
         return IndexPredictionJobsResponse(status="error", message=str(payload.get("message") or "not found"))
     return IndexPredictionJobsResponse(status="ok", job=payload.get("job"))
@@ -5592,7 +5533,7 @@ def resume_index_prediction_job_route(
         payload = resume_index_prediction_job(job_id)
     except Exception as exc:
         logger.exception("resume index job %s failed", job_id)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
     if payload.get("status") == "error":
         return IndexPredictionJobsResponse(status="error", message=str(payload.get("message") or "not found"))
     return IndexPredictionJobsResponse(status="ok", job=payload.get("job"))
@@ -5612,7 +5553,7 @@ def recover_index_prediction_job_route(
         payload = recover_index_prediction_job(job_id)
     except Exception as exc:
         logger.exception("recover index job %s failed", job_id)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
     if payload.get("status") == "error":
         return IndexPredictionJobsResponse(status="error", message=str(payload.get("message") or "not found"))
     return IndexPredictionJobsResponse(status="ok", job=payload.get("job"))
@@ -5640,7 +5581,7 @@ def trigger_index_prediction_job_route(
         payload = trigger_index_prediction_job(job_id)
     except Exception as exc:
         logger.exception("trigger index job %s failed", job_id)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
     if payload.get("status") == "error":
         return IndexPredictionJobsResponse(status="error", message=str(payload.get("message") or "not found"))
     return IndexPredictionJobsResponse(status="ok", job=payload.get("job"))
@@ -5664,7 +5605,7 @@ def cancel_index_prediction_job_route(
         payload = cancel_index_prediction_job(job_id)
     except Exception as exc:
         logger.exception("cancel index job %s failed", job_id)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
     if payload.get("status") == "error":
         return IndexPredictionJobsResponse(status="error", message=str(payload.get("message") or "not found"))
     return IndexPredictionJobsResponse(status="ok", job=payload.get("job"))
@@ -5677,7 +5618,7 @@ def get_index_prediction_snapshots(
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexPredictionSnapshotsResponse:
     """Return versioned index research snapshots."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from trade_integrations.dataflows.index_research.snapshots import (
             list_index_research_snapshots,
@@ -5688,7 +5629,7 @@ def get_index_prediction_snapshots(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("index-prediction snapshots failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
     return IndexPredictionSnapshotsResponse(status="ok", ticker=key, snapshots=snapshots)
 
@@ -5709,7 +5650,7 @@ def get_index_prediction_upcoming_events_history(
     `index_research/history` snapshot archive, each with a realized market outcome attached
     for dates that have already matured. See
     .claude/backlog/items/2026-09-06-scheduled-calendar-event-outcome-tracking-gap.md."""
-    key = (ticker or "NIFTY").strip().upper()
+    key = _ticker_key(ticker)
     try:
         from datetime import date as _date
 
@@ -5733,7 +5674,7 @@ def get_index_prediction_upcoming_events_history(
         return HistoricalUpcomingEventsResponse(status="ok", events=events)
     except Exception as exc:
         logger.exception("index-prediction upcoming-events history failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
 @trade_router.get("/agent-debate", response_model=AgentDebateResponse)
@@ -5742,7 +5683,7 @@ def get_agent_debate(
     _auth: None = Depends(require_local_or_auth),
 ) -> AgentDebateResponse:
     """Load cached TradingAgents debate summary from the hub."""
-    key = (ticker or "").strip().upper()
+    key = _ticker_key(ticker, default="")
     if not key:
         raise HTTPException(status_code=400, detail="ticker required")
     try:
@@ -5764,7 +5705,7 @@ def run_debate(
     _auth: None = Depends(require_local_or_auth),
 ) -> AgentDebateResponse:
     """Start TradingAgents multi-agent debate (async) or return cached hub summary."""
-    key = (body.ticker or "").strip().upper()
+    key = _ticker_key(body.ticker, default="")
     if not key:
         raise HTTPException(status_code=400, detail="ticker required")
     asset_type = (body.asset_type or "options").strip().lower()
@@ -5812,17 +5753,17 @@ def run_debate(
                             svc.event_bus.emit(
                                 session_id,
                                 "research.debate",
-                                {"ticker": key, "status": "error", "message": str(exc)},
+                                {"ticker": key, "status": "error", "message": redacted_error_detail(exc)},
                             )
                     except Exception:
-                        pass
+                        logger.exception("could not relay the run-debate failure for %s to session %s", key, session_id)
 
         threading.Thread(target=_worker, daemon=True, name=f"debate-{key}").start()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("run-debate failed for %s", key)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
     return AgentDebateResponse(status="running", ticker=key, running=True)
 
 
@@ -5998,7 +5939,7 @@ def hub_market_data_ticks(
             logger.exception("hub market-data ticks (replay) failed for %s/%s", symbol, exchange)
             return HubMarketDataTicksResponse(
                 status="error", symbol=symbol.upper(), exchange=exchange.upper(),
-                source="empty", ticks=[], error=str(exc),
+                source="empty", ticks=[], error=redacted_error_detail(exc),
             )
 
     from trade_integrations.dataflows.stock_history_bridge import get_recent_market_ticks
@@ -6027,7 +5968,7 @@ def hub_market_data_ticks(
         logger.exception("hub market-data ticks failed for %s/%s", symbol, exchange)
         return HubMarketDataTicksResponse(
             status="error", symbol=symbol.upper(), exchange=exchange.upper(),
-            source="empty", ticks=[], error=str(exc),
+            source="empty", ticks=[], error=redacted_error_detail(exc),
         )
 
 
@@ -6225,7 +6166,7 @@ def hub_market_data_option_expiries(
         logger.exception("hub market-data option-expiries failed for %s/%s", symbol, exchange)
         return HubMarketDataOptionExpiriesResponse(
             status="error", underlying=symbol.upper(), exchange=exchange.upper(),
-            expiries=[], error=str(exc),
+            expiries=[], error=redacted_error_detail(exc),
         )
 
 
@@ -6254,7 +6195,7 @@ def hub_macro_factor_panel(
     except Exception as exc:
         logger.exception("hub macro-factors panel failed for %s/%s", start, end)
         return HubMacroFactorPanelResponse(
-            status="error", start=start, end=end, rows=[], columns=[], error=str(exc),
+            status="error", start=start, end=end, rows=[], columns=[], error=redacted_error_detail(exc),
         )
 
 
@@ -6287,7 +6228,7 @@ def hub_macro_factor_dates(
     except Exception as exc:
         logger.exception("hub macro-factors dates failed")
         return HubMacroFactorDatesResponse(
-            status="error", dates=[], error=str(exc),
+            status="error", dates=[], error=redacted_error_detail(exc),
         )
 
 
@@ -6307,7 +6248,7 @@ def hub_index_history_days(
         logger.exception("hub index-history days failed")
         return HubIndexHistoryDaysResponse(
             status="error", symbol=symbol.upper(), exchange=exchange.upper(),
-            days=[], error=str(exc),
+            days=[], error=redacted_error_detail(exc),
         )
 
 
@@ -6327,7 +6268,7 @@ def hub_index_history_expiries(
         logger.exception("hub index-history expiries failed")
         return HubIndexHistoryExpiriesResponse(
             status="error", symbol=symbol.upper(), exchange=exchange.upper(),
-            expiries=[], error=str(exc),
+            expiries=[], error=redacted_error_detail(exc),
         )
 
 
@@ -6357,7 +6298,7 @@ def hub_index_history_bars(
         logger.exception("hub index-history bars failed")
         return HubIndexHistoryBarsResponse(
             status="error", symbol=symbol.upper(), exchange=exchange.upper(),
-            bars=[], error=str(exc),
+            bars=[], error=redacted_error_detail(exc),
         )
 
 
@@ -6380,7 +6321,7 @@ def hub_replay_day_overview(
         return HubReplayDayOverviewResponse(status="ok", **overview)
     except Exception as exc:
         logger.exception("hub replay day-overview failed for %s", date)
-        return HubReplayDayOverviewResponse(status="error", date=date, error=str(exc))
+        return HubReplayDayOverviewResponse(status="error", date=date, error=redacted_error_detail(exc))
 
 
 @trade_router.get("/hub/constituents/panel", response_model=HubConstituentsPanelResponse)
@@ -6401,7 +6342,7 @@ def hub_constituents_panel(
         return HubConstituentsPanelResponse(status="ok", rows=rows)
     except StockSimulatorClientError as exc:
         logger.exception("hub constituents panel failed")
-        return HubConstituentsPanelResponse(status="error", rows=[], error=str(exc))
+        return HubConstituentsPanelResponse(status="error", rows=[], error=redacted_error_detail(exc))
 
 
 @trade_router.get("/hub/stock-history/coverage", response_model=HubStockHistoryCoverageResponse)
@@ -6431,7 +6372,7 @@ def hub_stock_history_coverage(
         logger.exception("stock-history coverage failed for week=%s", week)
         return HubStockHistoryCoverageResponse(
             status="error", week_start="", week_end="",
-            symbol=symbol, is_complete=False, error=str(exc),
+            symbol=symbol, is_complete=False, error=redacted_error_detail(exc),
         )
 
 
@@ -6453,7 +6394,7 @@ def _backfill_run_call(fn_name: str, *args: Any, **kwargs: Any) -> dict[str, Any
         payload = getattr(client, fn_name)(*args, **kwargs)
     except StockSimulatorClientError as exc:
         status = exc.status_code if exc.status_code and exc.status_code >= 400 else 502
-        raise HTTPException(status_code=status, detail=str(exc)) from exc
+        raise HTTPException(status_code=status, detail=redacted_error_detail(exc)) from exc
     return {"status": "ok", "run": payload.get("run")}
 
 

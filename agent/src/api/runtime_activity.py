@@ -1,14 +1,17 @@
-"""Track in-flight HTTP work and named background tasks for dev transparency."""
+"""Log slow / in-flight HTTP requests and named background tasks for dev transparency.
+
+``runtime_activity_middleware`` is registered in ``api_server.py``; a request that takes 2s or
+longer (time to response headers for a stream) is logged on ``uvicorn.error``, and
+``STACK_DEV`` logs every request. ``register_named_task``/``finish_named_task`` log long-running
+background work (the scheduled-research executor)."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import Response
@@ -95,89 +98,9 @@ def finish_named_task(task_id: str) -> None:
     logger.info("[runtime] -task %s (%.1fs)", name, elapsed)
 
 
-def snapshot() -> dict[str, Any]:
-    now = time.monotonic()
-    with _lock:
-        requests = [
-            {
-                "method": record.method,
-                "path": record.path,
-                "query": record.query,
-                "elapsed_s": round(now - record.started_at, 1),
-                "client": record.client,
-            }
-            for record in _active_requests.values()
-        ]
-        named_tasks = [
-            {"name": name, "elapsed_s": round(now - started_at, 1)}
-            for name, started_at in _named_tasks.values()
-        ]
-    return {"requests": requests, "named_tasks": named_tasks}
-
-
-def log_shutdown_wait(
-    phase: str,
-    *,
-    connection_count: int,
-    uvicorn_task_count: int,
-) -> None:
-    """Log what is still running while uvicorn waits to reload/stop."""
-    snap = snapshot()
-    request_count = len(snap["requests"])
-    named_count = len(snap["named_tasks"])
-    logger.info(
-        "[runtime] shutdown wait (%s): uvicorn_connections=%d uvicorn_tasks=%d "
-        "tracked_requests=%d named_tasks=%d",
-        phase,
-        connection_count,
-        uvicorn_task_count,
-        request_count,
-        named_count,
-    )
-    for item in sorted(snap["requests"], key=lambda row: -row["elapsed_s"]):
-        suffix = f"?{item['query']}" if item["query"] else ""
-        logger.info(
-            "[runtime]   in-flight %s %s%s (%.1fs, %s)",
-            item["method"],
-            item["path"],
-            suffix,
-            item["elapsed_s"],
-            item["client"],
-        )
-    for item in sorted(snap["named_tasks"], key=lambda row: -row["elapsed_s"]):
-        logger.info(
-            "[runtime]   background %s (%.1fs)",
-            item["name"],
-            item["elapsed_s"],
-        )
-    if connection_count and not request_count:
-        logger.info(
-            "[runtime]   note: open connections with no tracked request yet (handshake/SSE idle)"
-        )
-
-
 async def runtime_activity_middleware(request: Request, call_next) -> Response:
     request_id = begin_request(request)
     try:
         return await call_next(request)
     finally:
         end_request(request_id)
-
-
-def tracked_create_task(coro, *, name: str) -> asyncio.Task | None:
-    """Create a named asyncio task and log when it finishes."""
-    task_id = register_named_task(name)
-
-    async def _runner() -> Any:
-        try:
-            return await coro
-        finally:
-            finish_named_task(task_id)
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        logger.error("[runtime] cannot create task %s: no running event loop", name)
-        finish_named_task(task_id)
-        return None
-    return loop.create_task(_runner(), name=name)

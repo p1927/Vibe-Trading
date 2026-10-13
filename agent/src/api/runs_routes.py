@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import math
 import os
 import statistics
@@ -20,6 +21,8 @@ from typing import Any, Awaitable, Callable, Deque, Dict, Generator, List, Optio
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -38,27 +41,34 @@ _FACTOR_MAX_GROUP_COLUMNS = 100
 
 
 def _load_json_file(path: Path) -> Optional[Dict[str, Any]]:
-    """Load JSON from disk if present."""
+    """Load a JSON object from disk; ``None`` when absent, loud (WARNING) when unreadable.
+
+    A corrupt artifact used to be swallowed and look exactly like "this run has no such file".
+    """
+    if not path.exists():
+        return None
     try:
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        pass
-    return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        logger.warning("run artifact %s is unreadable; serving it as absent", path, exc_info=True)
+        return None
+    if not isinstance(payload, dict):
+        logger.warning("run artifact %s is not a JSON object; serving it as absent", path)
+        return None
+    return payload
 
 
 def _load_csv_to_dict(path: Path, limit: Optional[int] = None) -> List[Dict[str, Any]]:
-    """Load CSV rows into a list of dictionaries."""
+    """Load CSV rows into a list of dictionaries; ``[]`` when absent, loud (WARNING) when unreadable."""
+    if not path.exists():
+        return []
     try:
-        if not path.exists():
-            return []
         with path.open("r", encoding="utf-8", newline="") as handle:
             rows = [dict(row) for row in csv.DictReader(handle)]
-        if limit is not None:
-            rows = rows[:limit]
-        return rows
-    except Exception:
+    except (OSError, UnicodeError, csv.Error):
+        logger.warning("run artifact %s is unreadable; serving it as empty", path, exc_info=True)
         return []
+    return rows if limit is None else rows[:limit]
 
 
 def _finite_float(value: Any) -> Optional[float]:
@@ -751,12 +761,7 @@ def _build_response_from_run_dir(
     if metrics_csv_path.exists():
         response.artifacts_metrics_csv = _load_csv_to_dict(metrics_csv_path)
 
-    run_card_path = run_dir / "run_card.json"
-    if run_card_path.exists():
-        try:
-            response.run_card = json.loads(run_card_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
+    response.run_card = _load_json_file(run_dir / "run_card.json")
 
     risk_xray = _load_json_file(run_dir / "artifacts" / "risk_xray.json")
     if risk_xray is not None:
@@ -765,12 +770,7 @@ def _build_response_from_run_dir(
     if rebalance_notes is not None:
         response.rebalance_notes = rebalance_notes
 
-    llm_usage_path = run_dir / "llm_usage.json"
-    if llm_usage_path.exists():
-        try:
-            response.llm_usage = json.loads(llm_usage_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
+    response.llm_usage = _load_json_file(run_dir / "llm_usage.json")
 
     trades_path = run_dir / "artifacts" / "trades.csv"
     if trades_path.exists():
@@ -784,12 +784,7 @@ def _build_response_from_run_dir(
     if target_positions_path.exists():
         response.artifacts_target_positions_csv = _load_csv_to_dict(target_positions_path)
 
-    validation_path = run_dir / "artifacts" / "validation.json"
-    if validation_path.exists():
-        try:
-            response.validation = json.loads(validation_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
+    response.validation = _load_json_file(run_dir / "artifacts" / "validation.json")
 
     if response.artifacts_equity_csv:
         filtered_equity = []
@@ -988,7 +983,7 @@ def register_runs_routes(
         result = {}
         for f in ["signal_engine.py"]:
             p = run_dir / f
-            if p.exists():
+            if p.is_file() and not p.is_symlink():  # a symlink would read outside the run dir
                 result[f] = p.read_text(encoding="utf-8")
         return result
 
@@ -1004,7 +999,7 @@ def register_runs_routes(
         """
         _host_validate_path_param(run_id, "run_id")
         pine_path = _host_RUNS_DIR() / run_id / "artifacts" / "strategy.pine"
-        if not pine_path.exists():
+        if not pine_path.is_file() or pine_path.is_symlink():
             return {"exists": False, "content": None}
         return {
             "exists": True,

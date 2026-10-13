@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import sys as _sys
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Security
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
+from src.api.helpers import redacted_error_detail
+from src.api.security import require_auth, require_settings_write_auth
 
 from src.tools.qveris_tool import (
     INVITE_CODE,
@@ -26,7 +27,6 @@ from src.tools.qveris_tool import (
 )
 
 qveris_router = APIRouter()
-_security = HTTPBearer(auto_error=False)
 
 
 class QVerisConfigResponse(BaseModel):
@@ -62,29 +62,6 @@ class QVerisStatusResponse(BaseModel):
     recent: list[dict[str, Any]]
     signup_url: str
     invite_code: str
-
-
-def _host():
-    host = _sys.modules.get("api_server") or _sys.modules.get("agent.api_server")
-    if host is None:
-        raise RuntimeError("api_server module is not loaded")
-    return host
-
-
-async def _require_auth(
-    request: Request,
-    cred: HTTPAuthorizationCredentials | None = Security(_security),
-) -> None:
-    """Delegate read auth to api_server.require_auth."""
-    await _host().require_auth(request, cred)
-
-
-async def _require_settings_write_auth(
-    request: Request,
-    cred: HTTPAuthorizationCredentials | None = Security(_security),
-) -> None:
-    """Delegate write auth to api_server.require_settings_write_auth."""
-    await _host().require_settings_write_auth(request, cred)
 
 
 def _config_response(config: QVerisConfig) -> QVerisConfigResponse:
@@ -140,7 +117,7 @@ def _events_from_usage(payload: dict[str, Any]) -> list[dict[str, Any]]:
 @qveris_router.get(
     "/qveris/config",
     response_model=QVerisConfigResponse,
-    dependencies=[Depends(_require_auth)],
+    dependencies=[Depends(require_auth)],
 )
 async def get_qveris_config() -> QVerisConfigResponse:
     """Return redacted QVeris config."""
@@ -150,7 +127,7 @@ async def get_qveris_config() -> QVerisConfigResponse:
 @qveris_router.put(
     "/qveris/config",
     response_model=QVerisConfigResponse,
-    dependencies=[Depends(_require_settings_write_auth)],
+    dependencies=[Depends(require_settings_write_auth)],
 )
 async def put_qveris_config(update: QVerisConfigUpdate) -> QVerisConfigResponse:
     """Persist QVeris config changes."""
@@ -181,7 +158,7 @@ async def put_qveris_config(update: QVerisConfigUpdate) -> QVerisConfigResponse:
 @qveris_router.get(
     "/qveris/status",
     response_model=QVerisStatusResponse,
-    dependencies=[Depends(_require_auth)],
+    dependencies=[Depends(require_auth)],
 )
 async def get_qveris_status() -> QVerisStatusResponse:
     """Return QVeris availability, credits, and recent usage."""
@@ -230,7 +207,7 @@ async def get_qveris_status() -> QVerisStatusResponse:
         return QVerisStatusResponse(
             enabled=cfg.enabled,
             ok=False,
-            error=str(exc),
+            error=redacted_error_detail(exc),
             remaining_credits=None,
             recent=[],
             signup_url=SIGNUP_URL,

@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from src.api.helpers import redacted_error_detail
 from src.session.events import SSEEvent
 from src.session.service import SessionBusyError
 
@@ -631,7 +632,10 @@ def register_sessions_routes(app: FastAPI) -> None:
         try:
             raw = await asyncio.to_thread(_generate)
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"title generation failed: {exc}")
+            logger.exception("session title generation failed for %s", session_id)
+            raise HTTPException(
+                status_code=502, detail=f"title generation failed: {redacted_error_detail(exc)}"
+            ) from exc
 
         title = raw.splitlines()[0].strip().strip("\"'“”「」『』").strip() if raw else ""
         chars = list(title)

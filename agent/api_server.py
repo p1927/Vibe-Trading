@@ -114,6 +114,7 @@ from src.api.state import (  # noqa: F401, E402
 console = Console()
 logger = logging.getLogger(__name__)
 
+from src.api.runtime_activity import runtime_activity_middleware  # noqa: E402
 from src.api.channels_routes import (  # noqa: E402
     _start_channel_runtime,
     _stop_channel_runtime,
@@ -162,6 +163,7 @@ app.add_middleware(
 app.middleware("http")(_reject_untrusted_loopback_host)
 app.middleware("http")(_spa_html_deep_link_fallback)
 app.middleware("http")(_apply_security_headers)
+app.middleware("http")(runtime_activity_middleware)
 
 
 # Route registration + re-exports

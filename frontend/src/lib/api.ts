@@ -1688,11 +1688,6 @@ export const api = {
     if (refresh) params.set("refresh", "true");
     return request<IndexPredictionResponse>(`/trade/index-prediction?${params}`);
   },
-  runIndexPrediction: (body: RunIndexPredictionRequest) =>
-    request<IndexPredictionResponse>("/trade/index-prediction/run", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
   startIndexPredictionRun: (body: RunIndexPredictionRequest) =>
     request<IndexPredictionRunStartResponse>("/trade/index-prediction/run/start", {
       method: "POST",
@@ -2186,23 +2181,11 @@ export const api = {
     if (horizonDays != null) params.set("horizon_days", String(horizonDays));
     return request<IndexMissAnalysisResponse>(`/trade/index-prediction/miss-analysis?${params}`);
   },
-  runIndexPredictionMissAnalysis: (ticker = "NIFTY", days = 365, horizonDays?: number) => {
-    const params = new URLSearchParams({ ticker, days: String(days) });
-    if (horizonDays != null) params.set("horizon_days", String(horizonDays));
-    return request<IndexMissAnalysisResponse>(`/trade/index-prediction/miss-analysis/run?${params}`, {
-      method: "POST",
-    });
-  },
   getIndexQuantReview: (ticker = "NIFTY", refresh = false, horizonDays?: number) => {
     const params = new URLSearchParams({ ticker, refresh: String(refresh) });
     if (horizonDays != null) params.set("horizon_days", String(horizonDays));
     return request<IndexQuantReviewResponse>(`/trade/index-prediction/quant-review?${params}`);
   },
-  runIndexQuantReview: (ticker = "NIFTY", horizonDays?: number) =>
-    request<IndexQuantReviewResponse>("/trade/index-prediction/quant-review/run", {
-      method: "POST",
-      body: JSON.stringify({ ticker, horizon_days: horizonDays ?? 14, refresh: true }),
-    }),
   getIndexPredictionDataAudit: (ticker = "NIFTY", refresh = false, days = 365, horizonDays = 14) => {
     const params = new URLSearchParams({
       ticker,

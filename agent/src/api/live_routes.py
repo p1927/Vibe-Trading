@@ -30,6 +30,8 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from src.api.helpers import redacted_error_detail
+
 logger = logging.getLogger(__name__)
 
 
@@ -646,6 +648,24 @@ def _build_live_runner(broker: str) -> Any:
     return runner
 
 
+def _log_runner_exit(broker: str) -> Callable[["asyncio.Task[Any]"], None]:
+    """Done-callback: a runner that died on an exception is logged, not left to GC.
+
+    The task is fire-and-forget, so without this a crashed live runner left no log line and the
+    status panel only showed ``alive: false`` (asyncio reports an unretrieved exception at
+    garbage collection, if at all).
+    """
+
+    def _cb(task: "asyncio.Task[Any]") -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("live runner for %s crashed", broker, exc_info=exc)
+
+    return _cb
+
+
 async def _drive_runner(runner: Any) -> None:
     """Run a runner's ``run_loop`` to completion, sync or async."""
     result = runner.run_loop()
@@ -1042,10 +1062,14 @@ def register_live_routes(
         except LiveRunnerUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"could not construct runner: {exc}") from exc
+            logger.exception("could not construct the live runner for %s", broker)
+            raise HTTPException(
+                status_code=500, detail=f"could not construct runner: {redacted_error_detail(exc)}"
+            ) from exc
 
         task = asyncio.ensure_future(h._drive_runner(runner))
         tasks[broker] = task
+        task.add_done_callback(_log_runner_exit(broker))
         task.add_done_callback(
             lambda t, b=broker: tasks.pop(b, None) if tasks.get(b) is t else None
         )

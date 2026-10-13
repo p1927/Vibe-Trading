@@ -19,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.responses import Response
 
+from src.api.helpers import redacted_error_detail
 from src.config.accessor import get_env_config
 
 if TYPE_CHECKING:
@@ -211,8 +212,8 @@ class CreateScheduledRunRequest(BaseModel):
         None,
         description=(
             "Job id; auto-generated UUID when omitted. Must match the id rule "
-            "the delete route enforces: letters, digits, '_' and '-', 1-128 "
-            "characters."
+            "every {job_id} route enforces: letters, digits, '_', ':' and '-', "
+            "1-128 characters."
         ),
     )
     prompt: str = Field(
@@ -656,7 +657,7 @@ def register_scheduled_routes(
                 status_code=422,
                 detail=(
                     "job id must be 1-128 characters of letters, digits, "
-                    "'_' or '-'"
+                    "'_', ':' or '-'"
                 ),
             )
 
@@ -955,7 +956,7 @@ def register_scheduled_routes(
             return ScheduledJobPreviewResponse(
                 description=detail.description,
                 preview_available=False,
-                preview_error=str(exc),
+                preview_error=redacted_error_detail(exc),
             )
 
     @app.get(
@@ -1007,7 +1008,8 @@ def register_scheduled_routes(
             # loader refuses must be visible as a broken template rather than
             # vanish from the catalogue.
             raise HTTPException(
-                status_code=500, detail=f"playbook catalogue is unreadable: {exc}"
+                status_code=500,
+                detail=f"playbook catalogue is unreadable: {redacted_error_detail(exc)}",
             ) from exc
         return [PlaybookResponse(**pb.to_dict()) for pb in playbooks]
 
@@ -1066,7 +1068,7 @@ def register_scheduled_routes(
         # never be removed through DELETE /scheduled-runs/{job_id}, which
         # rejects it with 400.
         if request.id is not None:
-            _host_validate_path_param(request.id, "id")
+            _validate_job_id_path_param(request.id)
 
         try:
             playbook = get_playbook(slug)
@@ -1130,7 +1132,7 @@ def register_scheduled_routes(
         dependencies=[Depends(require_auth)],
     )
     async def get_scheduled_run(job_id: str) -> ScheduledRunResponse:
-        _host_validate_path_param(job_id, "job_id")
+        _validate_job_id_path_param(job_id)
         job = await asyncio.to_thread(_get_scheduled_research_store().get, job_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"scheduled run {job_id} not found")

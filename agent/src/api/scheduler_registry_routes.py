@@ -29,6 +29,8 @@ from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException
 
+from src.api.helpers import redacted_error_detail
+
 logger = logging.getLogger(__name__)
 
 AuthDep = Callable[..., Awaitable[Any] | Any]
@@ -68,10 +70,10 @@ def _stock_simulator_entries() -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
         return entries, {"status": "ok"}
     except StockSimulatorClientError as exc:
         logger.warning("scheduler-registry: stock_simulator unreachable: %s", exc)
-        return [], {"status": "unreachable", "error": str(exc)}
+        return [], {"status": "unreachable", "error": redacted_error_detail(exc)}
     except Exception as exc:  # pragma: no cover - defensive, mirrors client's own catch-all
         logger.exception("scheduler-registry: unexpected error querying stock_simulator")
-        return [], {"status": "unreachable", "error": str(exc)}
+        return [], {"status": "unreachable", "error": redacted_error_detail(exc)}
 
 
 def _openalgo_entries() -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
@@ -104,10 +106,47 @@ def _openalgo_entries() -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
     except RuntimeError as exc:
         # OpenAlgoClient() raises this when OPENALGO_API_KEY isn't configured.
         logger.warning("scheduler-registry: openalgo not configured: %s", exc)
-        return [], {"status": "unreachable", "error": str(exc)}
+        return [], {"status": "unreachable", "error": redacted_error_detail(exc)}
     except Exception as exc:  # pragma: no cover - defensive, mirrors client's own catch-all
         logger.exception("scheduler-registry: unexpected error querying openalgo")
-        return [], {"status": "unreachable", "error": str(exc)}
+        return [], {"status": "unreachable", "error": redacted_error_detail(exc)}
+
+
+async def _openalgo_job_action(method: str, source: str, job_id: str) -> Dict[str, Any]:
+    """Run one ``OpenAlgoClient`` scheduler-job method (pause/resume/trigger) off the loop."""
+    try:
+        from trade_integrations.execution.openalgo_client import OpenAlgoClient
+
+        await asyncio.to_thread(getattr(OpenAlgoClient(), method), source, job_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("scheduler-registry: openalgo %s failed for %s/%s", method, source, job_id)
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
+    return {"status": "ok"}
+
+
+async def _stock_simulator_job_action(method: str, job_id: str) -> Dict[str, Any]:
+    """Run one ``StockSimulatorClient`` scheduler-job method (pause/resume/trigger) off the loop."""
+    try:
+        from trade_integrations.stock_simulator.client import (
+            StockSimulatorClient,
+            StockSimulatorClientError,
+        )
+
+        client = StockSimulatorClient()
+        if not client.is_configured:
+            raise HTTPException(status_code=503, detail="stock_simulator not configured")
+        await asyncio.to_thread(getattr(client, method), job_id)
+    except StockSimulatorClientError as exc:
+        status = exc.status_code if exc.status_code and exc.status_code < 500 else 502
+        raise HTTPException(status_code=status, detail=redacted_error_detail(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("scheduler-registry: stock_simulator %s failed for %s", method, job_id)
+        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
+    return {"status": "ok"}
 
 
 def register_scheduler_registry_routes(
@@ -161,120 +200,39 @@ def register_scheduler_registry_routes(
         dependencies=[Depends(require_auth)],
     )
     async def scheduler_registry_openalgo_pause(source: str, job_id: str) -> Dict[str, Any]:
-        try:
-            from trade_integrations.execution.openalgo_client import OpenAlgoClient
-
-            await asyncio.to_thread(OpenAlgoClient().pause_scheduler_job, source, job_id)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        except Exception as exc:
-            logger.exception("scheduler-registry: failed to pause openalgo job %s/%s", source, job_id)
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {"status": "ok"}
+        return await _openalgo_job_action("pause_scheduler_job", source, job_id)
 
     @app.post(
         "/scheduler-registry/openalgo/{source}/{job_id}/resume",
         dependencies=[Depends(require_auth)],
     )
     async def scheduler_registry_openalgo_resume(source: str, job_id: str) -> Dict[str, Any]:
-        try:
-            from trade_integrations.execution.openalgo_client import OpenAlgoClient
-
-            await asyncio.to_thread(OpenAlgoClient().resume_scheduler_job, source, job_id)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        except Exception as exc:
-            logger.exception("scheduler-registry: failed to resume openalgo job %s/%s", source, job_id)
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {"status": "ok"}
+        return await _openalgo_job_action("resume_scheduler_job", source, job_id)
 
     @app.post(
         "/scheduler-registry/openalgo/{source}/{job_id}/trigger",
         dependencies=[Depends(require_auth)],
     )
     async def scheduler_registry_openalgo_trigger(source: str, job_id: str) -> Dict[str, Any]:
-        try:
-            from trade_integrations.execution.openalgo_client import OpenAlgoClient
-
-            await asyncio.to_thread(OpenAlgoClient().trigger_scheduler_job_now, source, job_id)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        except Exception as exc:
-            logger.exception("scheduler-registry: failed to trigger openalgo job %s/%s", source, job_id)
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {"status": "ok"}
+        return await _openalgo_job_action("trigger_scheduler_job_now", source, job_id)
 
     @app.post(
         "/scheduler-registry/stock-simulator/{job_id}/pause",
         dependencies=[Depends(require_auth)],
     )
     async def scheduler_registry_stock_simulator_pause(job_id: str) -> Dict[str, Any]:
-        try:
-            from trade_integrations.stock_simulator.client import (
-                StockSimulatorClient,
-                StockSimulatorClientError,
-            )
-
-            client = StockSimulatorClient()
-            if not client.is_configured:
-                raise HTTPException(status_code=503, detail="stock_simulator not configured")
-            await asyncio.to_thread(client.pause_scheduler_job, job_id)
-        except StockSimulatorClientError as exc:
-            status = exc.status_code if exc.status_code and exc.status_code < 500 else 502
-            raise HTTPException(status_code=status, detail=str(exc)) from exc
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("scheduler-registry: failed to pause stock_simulator job %s", job_id)
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {"status": "ok"}
+        return await _stock_simulator_job_action("pause_scheduler_job", job_id)
 
     @app.post(
         "/scheduler-registry/stock-simulator/{job_id}/resume",
         dependencies=[Depends(require_auth)],
     )
     async def scheduler_registry_stock_simulator_resume(job_id: str) -> Dict[str, Any]:
-        try:
-            from trade_integrations.stock_simulator.client import (
-                StockSimulatorClient,
-                StockSimulatorClientError,
-            )
-
-            client = StockSimulatorClient()
-            if not client.is_configured:
-                raise HTTPException(status_code=503, detail="stock_simulator not configured")
-            await asyncio.to_thread(client.resume_scheduler_job, job_id)
-        except StockSimulatorClientError as exc:
-            status = exc.status_code if exc.status_code and exc.status_code < 500 else 502
-            raise HTTPException(status_code=status, detail=str(exc)) from exc
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("scheduler-registry: failed to resume stock_simulator job %s", job_id)
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {"status": "ok"}
+        return await _stock_simulator_job_action("resume_scheduler_job", job_id)
 
     @app.post(
         "/scheduler-registry/stock-simulator/{job_id}/trigger-now",
         dependencies=[Depends(require_auth)],
     )
     async def scheduler_registry_stock_simulator_trigger(job_id: str) -> Dict[str, Any]:
-        try:
-            from trade_integrations.stock_simulator.client import (
-                StockSimulatorClient,
-                StockSimulatorClientError,
-            )
-
-            client = StockSimulatorClient()
-            if not client.is_configured:
-                raise HTTPException(status_code=503, detail="stock_simulator not configured")
-            await asyncio.to_thread(client.trigger_scheduler_job_now, job_id)
-        except StockSimulatorClientError as exc:
-            status = exc.status_code if exc.status_code and exc.status_code < 500 else 502
-            raise HTTPException(status_code=status, detail=str(exc)) from exc
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("scheduler-registry: failed to trigger stock_simulator job %s", job_id)
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        return {"status": "ok"}
+        return await _stock_simulator_job_action("trigger_scheduler_job_now", job_id)
