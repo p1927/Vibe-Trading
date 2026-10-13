@@ -128,15 +128,13 @@ def _env_override_db_path() -> Path | None:
 def _default_db_path() -> Path:
     """Default database location: ``<runtime-root>/strategy_discovery.db``.
 
-    Uses the shared runtime root helper (which honours ``VIBE_TRADING_HOME``)
-    when available, falling back to ``~/.vibe-trading`` otherwise.
+    Always this tier's runtime root (``VIBE_TRADING_HOME``). It used to fall back to a literal
+    ``~/.vibe-trading`` on any exception, which on release would have written evidence into dev's
+    root with no error; ``src.config.paths`` is always importable, so there is nothing to tolerate.
     """
-    try:
-        from src.config.paths import get_runtime_root
+    from src.config.paths import get_runtime_root
 
-        return get_runtime_root() / _DEFAULT_DB_FILENAME
-    except Exception:  # noqa: BLE001 — config layer optional for this package
-        return Path.home() / ".vibe-trading" / _DEFAULT_DB_FILENAME
+    return get_runtime_root() / _DEFAULT_DB_FILENAME
 
 
 def _validate_row_for_write(row: EvidenceRow) -> None:
