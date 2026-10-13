@@ -2,7 +2,7 @@
 
 Covers
 ``.claude/backlog/items/2026-08-25-recording-active-job-guard-not-cross-process.md``:
-``_ACTIVE_JOB_ID`` (``recording_jobs.py``) used to be only an in-process
+``_ACTIVE_BY_SCOPE`` (``recording_jobs.py``) used to be only an in-process
 cache, so two independent process invocations of ``start_job`` each saw
 "nothing active in my memory" and both created a job. Reproduced live:
 5 concurrently-running ``recording_worker`` subprocesses for the identical
@@ -63,7 +63,7 @@ def test_two_concurrent_processes_converge_on_one_job(tmp_path: Path) -> None:
     """Two genuinely separate processes calling start_job at the same time
     for the same window must not both create a job — exactly one creates,
     the other reuses. Without the cross-process lock, both would see an
-    empty in-memory _ACTIVE_JOB_ID and both create (the live bug)."""
+    empty in-memory _ACTIVE_BY_SCOPE and both create (the live bug)."""
     jobs_root = tmp_path / "recording_jobs"
 
     # Started together (no ordering guarantee) so they genuinely race for

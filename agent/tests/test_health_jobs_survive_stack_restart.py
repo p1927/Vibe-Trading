@@ -16,6 +16,7 @@ that 27 factors were stale on disk.
 from __future__ import annotations
 
 import time
+from contextlib import contextmanager
 
 import pytest
 
@@ -47,6 +48,11 @@ class _Store:
 
     def save(self, jobs):
         self._jobs = jobs
+
+    @contextmanager
+    def transaction(self):
+        # The real store's flock-backed load/mutate/save lock; the in-memory stub needs none.
+        yield
 
 
 def _running(job_id: str, job_type: str) -> ScheduledResearchJob:

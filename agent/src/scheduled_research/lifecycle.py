@@ -53,7 +53,7 @@ def _advance_recovered_job(
         job.paused = True
         job.auto_paused_reason = auto_pause_reason
     try:
-        job.next_run_at = next_due(job.schedule, now_ms)
+        job.next_run_at = next_due(job.schedule, now_ms, job.timezone)
     except Exception:
         logger.warning(
             "could not advance schedule for recovered job %s; deferring one tick",

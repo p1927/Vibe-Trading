@@ -156,6 +156,12 @@ def prepare_advisory_widget(body: ApproveCandidateRequest) -> Dict[str, Any]:
     from trade_integrations.trade_widgets.store import persist_trade_widget
 
     widget = build_options_trade_widget(body.ticker, refresh=False)
-    persist_trade_widget(widget)
+    if persist_trade_widget(widget) is None:
+        # The store refuses an id outside its pattern (a ticker like "M&M"); an unpersisted widget_id
+        # is one /trade/execute-basket can never load.
+        raise HTTPException(
+            status_code=400,
+            detail=f"cannot persist a trade-plan widget for {body.ticker!r}: invalid widget id {widget.get('widget_id')!r}",
+        )
     orders = _orders_for_strategy(widget, body.strategy_name)
     return {"widget_id": widget.get("widget_id"), "orders": orders, "widget": widget}
