@@ -429,6 +429,24 @@ def execute_basket(
                         body.widget_id,
                         exc_info=True,
                     )
+                try:
+                    # Did the human's choice agree with the prediction ledger
+                    # ([[2026-08-25-manual-trades-no-shadow-alignment-check]]); this route is the one
+                    # manual order path (the agent tool `execute_basket` refuses agent-less widgets),
+                    # so the check lives here. An agent-less comparison row carries agent_id "".
+                    from trade_integrations.autonomous_agents.shadow_strategy import record_shadow_alignment
+
+                    record_shadow_alignment(
+                        agent_id=agent_id_on_widget,
+                        symbol=underlying,
+                        decision="ENTER",
+                        agent_strategy=(widget.get("recommended") or {}).get("name"),
+                        agent_confidence=None,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to record shadow alignment for widget %s", body.widget_id, exc_info=True
+                    )
 
             # Reconcile this underlying's open ledger entries right now, agent
             # or not — see
