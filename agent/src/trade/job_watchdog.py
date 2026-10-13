@@ -25,10 +25,26 @@ _watchdog_stop = threading.Event()
 _watchdog_lock = threading.RLock()
 
 
-def _hydrate_all() -> None:
-    from src.trade import external_predictions_run_jobs, index_prediction_run_jobs, recording_jobs
+def _job_stores():
+    """Every file-backed job store: the one list the watchdog reconciles (a store missing here
+    reports a crashed, unpolled worker as "running" forever)."""
+    from src.trade import (
+        external_predictions_run_jobs,
+        forecast_engine_run_jobs,
+        index_prediction_run_jobs,
+        recording_jobs,
+    )
 
-    for module in (index_prediction_run_jobs, recording_jobs, external_predictions_run_jobs):
+    return (
+        index_prediction_run_jobs,
+        recording_jobs,
+        external_predictions_run_jobs,
+        forecast_engine_run_jobs,
+    )
+
+
+def _hydrate_all() -> None:
+    for module in _job_stores():
         try:
             module.hydrate_jobs_from_disk()
         except Exception:  # pragma: no cover - hydration must never block startup
@@ -37,10 +53,8 @@ def _hydrate_all() -> None:
 
 def reconcile_all_job_stores() -> int:
     """Run reconciliation over every active job in every job store. Returns total terminalized."""
-    from src.trade import external_predictions_run_jobs, index_prediction_run_jobs, recording_jobs
-
     total = 0
-    for module in (index_prediction_run_jobs, recording_jobs, external_predictions_run_jobs):
+    for module in _job_stores():
         try:
             total += module.reconcile_all_active_jobs()
         except Exception:  # pragma: no cover - one store's failure must not skip the others

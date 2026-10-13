@@ -244,8 +244,11 @@ class SessionService:
     def delete_session(self, session_id: str) -> bool:
         """Delete a session."""
         self.event_bus.clear(session_id)
+        from src.provenance.store import get_provenance_store
+
         deleted = self.store.delete_session(session_id)
         self._search_index.delete_session(session_id)
+        get_provenance_store().clear_session(session_id)
         return deleted
 
     async def send_message(
@@ -365,14 +368,20 @@ class SessionService:
                 timeout=max(5.0, prefetch_timeout),
             )
         except asyncio.TimeoutError:
-            import logging
-
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "Research prefetch timed out after %.0fs for session %s attempt %s",
                 prefetch_timeout,
                 session.session_id,
                 attempt.attempt_id,
             )
+            if attempt.turn_kind:
+                # A scheduler turn's [agent_context] is its only copy of learning/progress
+                # (service_hooks.prefetch_research_for_message raises for the same reason): run
+                # without it and the agent decides blind. Fail the turn; the dispatcher retries.
+                self._fail_attempt_before_run(
+                    session, attempt, f"research prefetch timed out after {prefetch_timeout:.0f}s"
+                )
+                return
             research_context = ""
         except asyncio.CancelledError:
             # cancel_current() can land here — before _run_attempt (and the
@@ -408,11 +417,7 @@ class SessionService:
             self._release_session(session.session_id)
             raise
         except Exception as exc:
-            attempt.mark_failed(error=str(exc))
-            self.store.update_attempt(attempt)
-            self.event_bus.emit(session.session_id, "attempt.failed", {"attempt_id": attempt.attempt_id, "error": str(exc)})
-            self._active_tasks.pop(session.session_id, None)
-            self._release_session(session.session_id)
+            self._fail_attempt_before_run(session, attempt, str(exc))
             return
         await self._run_attempt(
             session,
@@ -420,6 +425,14 @@ class SessionService:
             include_shell_tools=include_shell_tools,
             research_context=research_context,
         )
+
+    def _fail_attempt_before_run(self, session: Session, attempt: Attempt, error: str) -> None:
+        """Fail an attempt that never reached ``_run_attempt`` and release the session claim."""
+        attempt.mark_failed(error=error)
+        self.store.update_attempt(attempt)
+        self.event_bus.emit(session.session_id, "attempt.failed", {"attempt_id": attempt.attempt_id, "error": error})
+        self._active_tasks.pop(session.session_id, None)
+        self._release_session(session.session_id)
 
     def get_messages(self, session_id: str, limit: int = 100) -> list[Message]:
         """Return the message history."""

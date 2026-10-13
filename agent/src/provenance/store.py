@@ -8,6 +8,11 @@ from typing import Dict, List
 from src.provenance.models import ProvenanceSource
 
 _MAX_RAW = 12_000
+# An autonomous agent's session lives for weeks and records a source per tool call; unbounded, the
+# registry (raw payload up to _MAX_RAW each) grew until the API restarted.
+# ponytail: oldest sources drop first; the registry is in-memory and per-process, so it is also
+# empty after a restart. Persist it if the UI ever needs history older than this window.
+_MAX_SOURCES_PER_SESSION = 500
 
 
 class ProvenanceStore:
@@ -28,6 +33,7 @@ class ProvenanceStore:
                     bucket[idx] = source
                     return source
             bucket.append(source)
+            del bucket[: max(0, len(bucket) - _MAX_SOURCES_PER_SESSION)]
             return source
 
     def list_session(self, session_id: str) -> list[ProvenanceSource]:

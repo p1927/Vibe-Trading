@@ -50,16 +50,14 @@ def needs_bootstrap_finalize_guard(
     if not _tool_matches(called, _DECISION_TOOL):
         return False
 
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
+    # An autonomous session only exists on the Trade stack, so these imports must work; a failure
+    # propagates to service_hooks.maybe_bootstrap_finalize_guard, which logs it as an error.
+    from src.trade.hub_bridge import ensure_trade_stack_path
 
-        ensure_trade_stack_path()
-        from trade_integrations.autonomous_agents.bootstrap import bootstrap_finalize_prerequisites_met
-        from trade_integrations.autonomous_agents.store import get_agent
-        from trade_integrations.execution.profile import resolve_profile
-    except Exception:
-        logger.debug("bootstrap finalize guard import failed", exc_info=True)
-        return False
+    ensure_trade_stack_path()
+    from trade_integrations.autonomous_agents.bootstrap import bootstrap_finalize_prerequisites_met
+    from trade_integrations.autonomous_agents.store import get_agent
+    from trade_integrations.execution.profile import resolve_profile
 
     agent = get_agent(agent_id)
     if not agent or str(agent.get("bootstrap_status") or "") != "running":
@@ -91,14 +89,10 @@ async def maybe_retry_bootstrap_widget(
         return False
 
     agent_id = str((session_config or {}).get("autonomous_agent_id") or "").strip()
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
+    from src.trade.hub_bridge import ensure_trade_stack_path
 
-        ensure_trade_stack_path()
-        from trade_integrations.autonomous_agents.store import get_agent
-    except Exception:
-        logger.exception("bootstrap finalize guard: trade stack unavailable for agent %s", agent_id)
-        return False
+    ensure_trade_stack_path()
+    from trade_integrations.autonomous_agents.store import get_agent
 
     agent = get_agent(agent_id) or {}
     symbols = list(agent.get("symbols") or ["NIFTY"])

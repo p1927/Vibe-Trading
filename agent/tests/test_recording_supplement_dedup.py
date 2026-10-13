@@ -63,3 +63,33 @@ def test_spawn_supplement_worker_skips_when_date_already_claimed(
     )
     pid = spawn_supplement_worker("job-b", "2026-08-25", cycles=5)
     assert pid is None
+
+
+def test_spawn_supplement_worker_runs_from_the_agent_root_and_is_reaped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The child must start in ``.../agent`` (where ``-m src...`` resolves to THIS checkout, not
+    whatever ``src`` the venv's .pth names) and be registered for reaping, like every worker."""
+    from src.trade import detached_worker
+
+    seen: dict = {}
+
+    class _Proc:
+        pid = 424242
+
+    def fake_popen(cmd, **kwargs):
+        seen["cmd"], seen["kwargs"] = cmd, kwargs
+        return _Proc()
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    registered: list = []
+    monkeypatch.setattr(detached_worker, "register", registered.append)
+
+    pid = spawn_supplement_worker("a" * 32, "2026-08-25", cycles=5)
+
+    assert pid == 424242
+    assert seen["cmd"][1:] == ["-m", "src.trade.recording_supplement_worker", "a" * 32, "2026-08-25"]
+    cwd = Path(seen["kwargs"]["cwd"])
+    assert (cwd / "src" / "trade" / "recording_supplement_worker.py").is_file()
+    assert seen["kwargs"]["start_new_session"] is True
+    assert len(registered) == 1

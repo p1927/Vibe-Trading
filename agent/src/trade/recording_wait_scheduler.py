@@ -330,8 +330,13 @@ async def _maybe_rearm_auto_record() -> None:
 
 async def _recording_wake_poll_loop(store: "ScheduledResearchJobStore") -> None:
     while True:
-        await _recording_wake_poll_tick(store)
-        await _maybe_rearm_auto_record()
+        # One bad tick must not end the loop: it is the only thing that wakes a wait_for_open
+        # recording and re-arms Auto Record, and a dead task fails silently.
+        try:
+            await _recording_wake_poll_tick(store)
+            await _maybe_rearm_auto_record()
+        except Exception:
+            logger.exception("recording_wake poller: tick failed; retrying in %.0fs", _POLL_INTERVAL_S)
         await asyncio.sleep(_POLL_INTERVAL_S)
 
 

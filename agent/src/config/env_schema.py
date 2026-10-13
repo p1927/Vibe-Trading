@@ -843,9 +843,6 @@ class TradeConfig(_EnvBase):
     index_prediction_queued_no_pid_seconds: str = Field(
         alias="INDEX_PREDICTION_QUEUED_NO_PID_SECONDS", default="60",
     )
-    index_prediction_watchdog_interval_seconds: str = Field(
-        alias="INDEX_PREDICTION_WATCHDOG_INTERVAL_SECONDS", default="60",
-    )
 
     # --- trade/recording_jobs.py ----------------------------------------------
     recording_run_wall_clock_seconds: str = Field(

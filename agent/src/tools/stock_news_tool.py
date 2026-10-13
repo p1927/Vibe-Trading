@@ -36,14 +36,12 @@ from typing import Any
 from backtest.loaders import eastmoney_client, yahoo_client
 
 from src.agent.tools import BaseTool
-from src.trade.hub_bridge import ensure_trade_stack_path
+from src.trade.hub_bridge import ensure_trade_stack_path, trade_repo_root
 
 logger = logging.getLogger(__name__)
 
-try:
+if trade_repo_root() is not None:  # standalone vibetrading has no Trade stack; a broken one raises
     ensure_trade_stack_path()
-except Exception:
-    pass
 
 # Synthetic hub ticker for broad China-market ("global" scope) headlines —
 # mirrors how India global news is bucketed under the "NIFTY" ticker.
