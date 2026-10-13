@@ -5,9 +5,9 @@ import type { HubNewsPipelineStatus } from "@/lib/api";
  * `hub_news_pipeline_status()` payload already on the wire from /trade/hub/status, so no extra
  * request.
  *
- * Shows only what no other part of the Hub page renders. Pause reason, migration-needed and the
- * last worker batch are NOT repeated here: the page already shows them from `news_staging` /
- * `gates` (the banners at the top and the staging card). See
+ * Shows only what no other part of the Hub page renders. Pause reason and the last worker
+ * batch are NOT repeated here: the page already shows them from `news_staging` (the banner at the
+ * top and the staging card). See
  * 2026-09-07-hub-news-pipeline-status-transported-unrendered.
  */
 export function NewsPipelineStatusStrip({ status }: { status?: HubNewsPipelineStatus | null }) {

@@ -1754,12 +1754,6 @@ def get_hub_status(
         hub = build_hub_status(
             entity_id=key, news_limit=pool_size, news_since=news_since, detail=detail
         )
-        gates = hub.get("gates") or {}
-        if not gates.get("hub_ready", True):
-            blocking = list(gates.get("blocking") or [])
-            message = str((blocking[0] or {}).get("user_message") or "Hub migration required")
-            return HubStatusResponse(status="migration_required", hub=hub, message=message)
-
         page_meta = apply_news_feed_to_hub(
             hub,
             ticker=key,

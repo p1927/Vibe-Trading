@@ -29,6 +29,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       listSchedulerRegistry: vi.fn(),
       getSchedulerStatus: vi.fn(),
       resumeScheduler: vi.fn(),
+      pauseScheduler: vi.fn(),
       pauseSchedulerRegistryEntry: vi.fn(),
       resumeSchedulerRegistryEntry: vi.fn(),
       triggerSchedulerRegistryEntry: vi.fn(),
@@ -53,6 +54,7 @@ const mocked = api as unknown as {
   listSchedulerRegistry: ReturnType<typeof vi.fn>;
   getSchedulerStatus: ReturnType<typeof vi.fn>;
   resumeScheduler: ReturnType<typeof vi.fn>;
+  pauseScheduler: ReturnType<typeof vi.fn>;
   pauseSchedulerRegistryEntry: ReturnType<typeof vi.fn>;
   resumeSchedulerRegistryEntry: ReturnType<typeof vi.fn>;
   triggerSchedulerRegistryEntry: ReturnType<typeof vi.fn>;
@@ -1001,6 +1003,26 @@ describe("Scheduled page loud states", () => {
     mocked.getSchedulerStatus.mockResolvedValue({ enabled: false, running: false });
     renderScheduled();
     expect(await screen.findByTestId("executor-banner")).toHaveTextContent(/disabled/i);
+  });
+
+  it("pauses the running executor from the page after a confirmation, then re-reads its status", async () => {
+    mocked.getSchedulerStatus
+      .mockResolvedValueOnce({ enabled: true, running: true })
+      .mockResolvedValue({ enabled: true, running: false });
+    mocked.pauseScheduler.mockResolvedValue({ status: "ok", running: false });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderScheduled();
+    fireEvent.click(await screen.findByTestId("executor-pause"));
+    await waitFor(() => expect(mocked.pauseScheduler).toHaveBeenCalledTimes(1));
+    expect(await screen.findByTestId("executor-banner")).toHaveTextContent(/paused/i);
+  });
+
+  it("does not pause the executor when the confirmation is declined", async () => {
+    mocked.getSchedulerStatus.mockResolvedValue({ enabled: true, running: true });
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderScheduled();
+    fireEvent.click(await screen.findByTestId("executor-pause"));
+    expect(mocked.pauseScheduler).not.toHaveBeenCalled();
   });
 
   it("shows no banner while the executor is running", async () => {
