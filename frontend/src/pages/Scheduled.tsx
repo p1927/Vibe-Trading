@@ -121,6 +121,7 @@ export function Scheduled() {
   const [registryError, setRegistryError] = useState<string | null>(null);
   const [executor, setExecutor] = useState<{ enabled: boolean; running: boolean } | null>(null);
   const [executorError, setExecutorError] = useState<string | null>(null);
+  const [resumingExecutor, setResumingExecutor] = useState(false);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
@@ -211,6 +212,24 @@ export function Scheduled() {
       clearInterval(timer);
     };
   }, [refresh]);
+
+  // The executor always boots paused (D98): a human resumes it, and resuming starts every overdue job.
+  const resumeExecutor = async () => {
+    const overdue = t("scheduled.executorResumeConfirm", {
+      defaultValue: "Resume the scheduler? Every overdue job becomes due and starts running.",
+    });
+    if (!window.confirm(overdue)) return;
+    setResumingExecutor(true);
+    try {
+      await api.resumeScheduler();
+      setExecutorError(null);
+      await refresh();
+    } catch (error) {
+      setExecutorError(error instanceof ApiError ? error.message : String(error));
+    } finally {
+      setResumingExecutor(false);
+    }
+  };
 
   // Auto-disarm an armed delete after a few seconds (blur is unreliable on
   // Safari/iOS, where buttons do not take focus on click).
@@ -560,6 +579,17 @@ export function Scheduled() {
                 defaultValue:
                   "The scheduler is disabled on this server (VIBE_TRADING_ENABLE_SCHEDULER is off). Nothing will run.",
               })}
+          {executor.enabled && (
+            <button
+              type="button"
+              data-testid="executor-resume"
+              disabled={resumingExecutor}
+              onClick={() => void resumeExecutor()}
+              className="ml-2 rounded border border-warning/40 px-2 py-0.5 font-medium hover:bg-warning/10 disabled:opacity-50"
+            >
+              {t("scheduled.executorResume", { defaultValue: "Resume executor" })}
+            </button>
+          )}
         </p>
       ) : null}
       {registryError && (

@@ -1,5 +1,7 @@
+import { resolveApiBase } from "@/lib/apiBase";
 import { safeGet, safeRemove, safeSet } from "@/lib/storage";
 
+const BASE = resolveApiBase();
 const STORAGE_KEY = "vibe_trading_api_auth_key";
 
 export function getApiAuthKey(): string {
@@ -36,7 +38,7 @@ export function authHeaders(): Record<string, string> {
 export async function withAuthTicket(url: string): Promise<string> {
   const key = getApiAuthKey();
   if (!key) return url;
-  const res = await fetch("/auth/sse-ticket", {
+  const res = await fetch(`${BASE}/auth/sse-ticket`, {
     method: "POST",
     headers: authHeaders(),
   });

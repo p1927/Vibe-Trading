@@ -27,6 +27,32 @@ import type {
 
 const BASE = resolveApiBase();
 
+export interface QVerisConfig {
+  enabled: boolean;
+  base_url: string;
+  api_key_masked: string;
+  mode: "free" | "paid";
+  budget_credits_per_session: number;
+  configured: boolean;
+  signup_url: string;
+  invite_code: string;
+}
+
+export interface QVerisStatus {
+  enabled: boolean;
+  ok: boolean;
+  error: string | null;
+  remaining_credits: number | null;
+  recent: Array<{
+    ts: string;
+    tool_id: string;
+    cost: number;
+    charge_outcome: string;
+  }>;
+  signup_url: string;
+  invite_code: string;
+}
+
 export class ApiError extends Error {
   status: number;
   detail?: unknown;
@@ -1053,6 +1079,15 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(settings),
     }),
+  getQverisConfig: () => request<QVerisConfig>("/qveris/config"),
+  getQverisStatus: () => request<QVerisStatus>("/qveris/status"),
+  putQverisConfig: (payload: {
+    enabled: boolean;
+    base_url: string;
+    mode: QVerisConfig["mode"];
+    budget_credits_per_session: number;
+    api_key?: string;
+  }) => request<QVerisConfig>("/qveris/config", { method: "PUT", body: JSON.stringify(payload) }),
   getConnections: () => request<ConnectionsResponse>("/api/connections"),
   createConnection: (payload: { id: string; profile_id: string; label: string }) =>
     request<{ status: string; connection: LocalConnection }>("/api/connections", {

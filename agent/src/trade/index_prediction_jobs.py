@@ -308,20 +308,3 @@ def cancel_index_prediction_job(job_id: str, store: ScheduledResearchJobStore | 
     except JobNotRunningError as exc:
         return {"status": "error", "message": str(exc)}
     return {"status": "ok", "job": _serialize_job(job)}
-
-
-def recover_index_prediction_job(job_id: str, store: ScheduledResearchJobStore | None = None) -> dict[str, Any]:
-    """Reset a stuck RUNNING job to pending and schedule an immediate retry."""
-    store = store or ScheduledResearchJobStore()
-    job = store.get(job_id)
-    if job is None or str(job.config.get("job_type") or "") not in INDEX_JOB_TYPES:
-        return {"status": "error", "message": f"index job {job_id} not found"}
-    if job.status != JobStatus.RUNNING:
-        return {"status": "error", "message": f"index job {job_id} is not running (status={job.status.value})"}
-    now_ms = int(time.time() * 1000)
-    job.status = JobStatus.PENDING
-    pull_due_now(job, now_ms)
-    job.last_error = "recovered manually"
-    store.upsert(job)
-    _wake_executor()
-    return {"status": "ok", "job": _serialize_job(job)}

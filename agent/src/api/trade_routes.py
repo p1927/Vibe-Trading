@@ -5529,26 +5529,6 @@ def resume_index_prediction_job_route(
     return IndexPredictionJobsResponse(status="ok", job=payload.get("job"))
 
 
-@trade_router.post("/index-prediction/jobs/{job_id}/recover", response_model=IndexPredictionJobsResponse)
-def recover_index_prediction_job_route(
-    job_id: str,
-    _auth: None = Depends(require_local_or_auth),
-) -> IndexPredictionJobsResponse:
-    """Reset a stuck RUNNING index prediction cron job to pending."""
-    try:
-        from src.trade.index_prediction_jobs import recover_index_prediction_job
-        from src.trade.hub_bridge import ensure_trade_stack_path
-
-        ensure_trade_stack_path()
-        payload = recover_index_prediction_job(job_id)
-    except Exception as exc:
-        logger.exception("recover index job %s failed", job_id)
-        raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
-    if payload.get("status") == "error":
-        return IndexPredictionJobsResponse(status="error", message=str(payload.get("message") or "not found"))
-    return IndexPredictionJobsResponse(status="ok", job=payload.get("job"))
-
-
 @trade_router.post("/index-prediction/jobs/{job_id}/trigger", response_model=IndexPredictionJobsResponse)
 def trigger_index_prediction_job_route(
     job_id: str,
