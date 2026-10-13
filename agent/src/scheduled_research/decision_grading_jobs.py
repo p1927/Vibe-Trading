@@ -33,6 +33,7 @@ import time
 from typing import Any
 
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.run_outcome import finish_run
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -91,7 +92,10 @@ def dispatch_decision_grading_job_sync(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     if job_type != JOB_TYPE_DECISION_GRADING_SWEEP:
         raise ValueError(f"unsupported decision_grading job_type: {job_type!r}")
-    run_decision_grading_sweep()
+    # The summary goes on the record: a sweep that scored nothing must not read like one that did
+    # (release's `decision-grading-sweep` showed `last_result_summary: null`,
+    # 2026-10-13-grading-sweep-result-discarded).
+    finish_run(job, run_decision_grading_sweep(), "decision grading sweep")
 
 
 async def dispatch_decision_grading_job(job: ScheduledResearchJob) -> None:

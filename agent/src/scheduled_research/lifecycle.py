@@ -84,6 +84,13 @@ def recover_persisted_scheduler_jobs(
             user decision to stop the schedule.
     """
     store = store or ScheduledResearchJobStore()
+    with store.transaction():  # the load..save below must not interleave with another writer
+        return _recover_running_jobs(store, mode=mode, reason=reason, auto_pause=auto_pause)
+
+
+def _recover_running_jobs(
+    store: ScheduledResearchJobStore, *, mode: RecoverMode, reason: str, auto_pause: bool
+) -> int:
     now_ms = int(time.time() * 1000)
     jobs = store.load()
     recovered = 0

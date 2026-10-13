@@ -9,6 +9,7 @@ exercise it without sleeping or reading wall-clock time.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import os
@@ -41,7 +42,7 @@ from src.scheduled_research.store import ScheduledResearchJobStore
 from src.scheduled_research import stuck_jobs
 # Fork-only sidecar: D11 shortest-expected-runtime-first slot admission (docs/DECISIONS.md).
 from src.scheduled_research.dispatch_admission import DispatchPool, record_dispatch_duration
-from src.scheduled_research.run_outcome import record_interrupted_run
+from src.scheduled_research.run_outcome import LAST_RESULT_CONFIG_KEY, record_interrupted_run
 # Stale-run detection and watchdog tuning live in staleness.py (a file we
 # fully own) and are re-exported here so this module's existing internal
 # call sites and external importers (lifecycle.py, index_prediction_jobs.py,
@@ -103,7 +104,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TICK_INTERVAL_MS = 60 * 1000
 SCHEDULER_ENABLED_ENV = "VIBE_TRADING_ENABLE_SCHEDULER"
-LAST_RESULT_CONFIG_KEY = "_last_result_summary"
 
 #: Largest `last_result_summary` persisted per run (bytes of JSON). It is served whole in every
 #: `/scheduled-runs` list call, so one handler's step result (hub-evening-maintenance carried 995 KB
@@ -338,6 +338,19 @@ def _day_matches(dt: date, doms: set[int] | None, months: set[int] | None, dows:
     if doms is not None and dows is not None:
         return day_of_month_matches or day_of_week_matches
     return day_of_month_matches and day_of_week_matches
+
+
+def _in_store_transaction(method):
+    """Run an executor method that holds a ``load()`` snapshot across its own ``save()`` inside the
+    store's transaction, so a route's ``asyncio.to_thread`` write cannot land between the two and be
+    overwritten (``ScheduledResearchJobStore.transaction``)."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._store.transaction():
+            return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 #: Wall-clock ms when this process imported the executor, i.e. when it booted. Reported by
@@ -787,6 +800,7 @@ class ScheduledResearchExecutor:
                 return
             await asyncio.sleep(0.01)
 
+    @_in_store_transaction
     def recover_all_running_on_shutdown(
         self, now_ms: int | None = None, *, auto_pause_reason: str | None = None
     ) -> int:
@@ -1018,6 +1032,7 @@ class ScheduledResearchExecutor:
             jobs, now, run=_dispatch_one, population=self._store.load().values(), wait=wait
         )
 
+    @_in_store_transaction
     def _expire_elapsed_jobs(self, now_ms: int) -> int:
         """Persist jobs whose configured end boundary has elapsed."""
         jobs = self._store.load()
@@ -1038,6 +1053,7 @@ class ScheduledResearchExecutor:
             self._store.save(jobs)
         return changed
 
+    @_in_store_transaction
     def recover_stale_running(self, now_ms: int | None = None, *, startup: bool = False) -> int:
         """Reset jobs left ``RUNNING`` after a crash or hung dispatch.
 
@@ -1096,6 +1112,7 @@ class ScheduledResearchExecutor:
             self._recovered_stale_running = True
         return recovered
 
+    @_in_store_transaction
     def defer_startup_backlog(self, now_ms: int | None = None) -> int:
         """Push overdue pending jobs to their next schedule slot (once per process).
 

@@ -174,6 +174,11 @@ def defer_fresh_registrations(
     if defer_ms <= 0:
         return 0
     now = int(time.time() * 1000) if now_ms is None else now_ms
+    with store.transaction():  # the load..save below must not interleave with another writer
+        return _defer_never_run_jobs(store, now, defer_ms)
+
+
+def _defer_never_run_jobs(store: ScheduledResearchJobStore, now: int, defer_ms: int) -> int:
     jobs = store.load()
     deferred = 0
     for job in jobs.values():

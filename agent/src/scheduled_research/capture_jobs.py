@@ -10,6 +10,7 @@ from typing import Any
 
 from src.config.accessor import get_env_config
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.run_outcome import finish_run
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -73,13 +74,30 @@ def run_hub_capture_factor_snapshot_job(config: dict[str, Any] | None = None) ->
     return summary
 
 
+def _flag_entity_errors(summary: dict[str, Any]) -> dict[str, Any]:
+    """Mark a capture summary ``had_errors`` (with the reason) when an entity's capture failed.
+
+    ``run_intraday_capture`` reports a failed chain fetch or write per entity and rolls the run up
+    to ``partial``, which nothing read, so a capture that wrote nothing was recorded ``completed``.
+    """
+    failed = {
+        eid: entity.get("error") or entity.get("errors") or "capture failed"
+        for eid, entity in (summary.get("entities") or {}).items()
+        if isinstance(entity, dict) and entity.get("status") == "error"
+    }
+    if failed:
+        summary["had_errors"] = True
+        summary["error"] = "; ".join(f"{eid}: {reason}" for eid, reason in failed.items())
+    return summary
+
+
 def dispatch_hub_capture_job_sync(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_HUB_CAPTURE_INTRADAY:
-        run_hub_capture_intraday_job(job.config)
+        finish_run(job, _flag_entity_errors(run_hub_capture_intraday_job(job.config)), "hub intraday capture")
         return
     if job_type == JOB_TYPE_HUB_CAPTURE_FACTOR_SNAPSHOT:
-        run_hub_capture_factor_snapshot_job(job.config)
+        finish_run(job, run_hub_capture_factor_snapshot_job(job.config), "hub factor snapshot capture")
         return
     raise ValueError(f"unsupported hub_capture job_type: {job_type!r}")
 

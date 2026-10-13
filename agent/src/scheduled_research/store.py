@@ -14,10 +14,17 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Iterator, List, Optional
+
+try:  # POSIX only; elsewhere the in-process lock below still serialises threads
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
 
 from src.config.paths import get_runtime_root
 from src.scheduled_research.models import ScheduledResearchJob, validate_schedule, validate_timezone_shape
@@ -71,6 +78,11 @@ def _default_store_path() -> Path:
     return get_runtime_root() / "scheduled_research" / _STORE_FILENAME
 
 
+_HELD = threading.local()  # per thread: store path -> transaction() re-entry depth
+_THREAD_LOCKS: dict[str, threading.Lock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
+
+
 class CorruptStoreError(RuntimeError):
     """Raised when the store exists but cannot be parsed.
 
@@ -111,6 +123,44 @@ class ScheduledResearchJobStore:
         """
         self.path: Path = path if path is not None else _default_store_path()
 
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Hold the store exclusively for a load, mutate, save sequence.
+
+        Every read-modify-write the store itself does (``upsert``, ``update_run_state``,
+        ``delete``) runs in one, and a caller that holds a ``load()`` snapshot across its own
+        ``save()`` (the executor's recovery and deferral passes) wraps that sequence in one too.
+        Before this the routes' ``asyncio.to_thread`` writers and the executor's loop-thread
+        writes interleaved their load and save, so one silently overwrote the other. The lock is
+        a ``flock`` on a sidecar file, so it also keeps the ``trade`` CLI's recovery pass and the
+        API process apart. It is re-entrant per thread and per path, across store instances (the
+        autonomous-agent jobs build a fresh store on every call).
+        """
+        key = str(self.path)
+        depths: dict[str, int] = _HELD.__dict__.setdefault("depths", {})
+        if depths.get(key):
+            depths[key] += 1
+            try:
+                yield
+            finally:
+                depths[key] -= 1
+            return
+        with _THREAD_LOCKS_GUARD:
+            thread_lock = _THREAD_LOCKS.setdefault(key, threading.Lock())
+        with thread_lock:
+            fd = -1
+            if fcntl is not None:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                fd = os.open(self.path.with_name(self.path.name + ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            depths[key] = 1
+            try:
+                yield
+            finally:
+                depths[key] = 0
+                if fd >= 0:
+                    os.close(fd)  # closing releases the flock
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -124,11 +174,14 @@ class ScheduledResearchJobStore:
 
         Raises:
             CorruptStoreError: When the file exists but cannot be parsed.
+            OSError: When the file exists but cannot be read (the file is left in place).
         """
         if not self.path.exists():
             return {}
+        # An OSError here (EMFILE under load, EIO, a permission change) says nothing about the
+        # file's content: it propagates and the file stays. Only a parse failure quarantines.
+        raw = self.path.read_text(encoding="utf-8")
         try:
-            raw = self.path.read_text(encoding="utf-8")
             envelope = json.loads(raw)
             jobs_raw = self._extract_jobs(envelope)
             result: Dict[str, ScheduledResearchJob] = {}
@@ -136,7 +189,7 @@ class ScheduledResearchJobStore:
                 job = ScheduledResearchJob.from_dict(item)
                 result[job.id] = job
             return result
-        except (OSError, ValueError, KeyError, TypeError) as exc:
+        except (ValueError, KeyError, TypeError) as exc:
             quarantined = self._quarantine(str(exc))
             raise CorruptStoreError(self.path, quarantined, str(exc)) from exc
 
@@ -153,34 +206,34 @@ class ScheduledResearchJobStore:
         Raises:
             OSError: When the directory cannot be created or the write fails.
         """
-        target = self.path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(self._envelope(jobs), ensure_ascii=False, indent=2)
+        with self.transaction():
+            target = self.path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            payload = json.dumps(self._envelope(jobs), ensure_ascii=False, indent=2)
 
-        last_exc: OSError | None = None
-        for attempt in range(5):
-            tmp = target.with_name(f".{target.name}.{os.getpid()}.{attempt}.tmp")
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            try:
-                os.write(fd, payload.encode("utf-8"))
-                os.fsync(fd)
-            finally:
-                os.close(fd)
+            last_exc: OSError | None = None
+            for attempt in range(5):
+                tmp = target.with_name(f".{target.name}.{os.getpid()}.{attempt}.tmp")
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "wb") as handle:  # os.write may write short; the file object loops
+                    handle.write(payload.encode("utf-8"))
+                    handle.flush()
+                    os.fsync(handle.fileno())
 
-            try:
-                os.replace(tmp, target)
-                self._fsync_dir(target.parent)
-                return
-            except OSError as exc:
-                last_exc = exc
                 try:
-                    tmp.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                time.sleep(0.05 * (attempt + 1))
+                    os.replace(tmp, target)
+                    self._fsync_dir(target.parent)
+                    return
+                except OSError as exc:
+                    last_exc = exc
+                    try:
+                        tmp.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    time.sleep(0.05 * (attempt + 1))
 
-        if last_exc is not None:
-            raise last_exc
+            if last_exc is not None:
+                raise last_exc
 
     def upsert(self, job: ScheduledResearchJob, *, validate: bool = True) -> None:
         """Insert or replace a job by id.
@@ -208,9 +261,10 @@ class ScheduledResearchJobStore:
         if validate:
             validate_schedule(job.schedule)
             validate_timezone_shape(job.timezone)
-        jobs = self.load()
-        jobs[job.id] = job
-        self.save(jobs)
+        with self.transaction():
+            jobs = self.load()
+            jobs[job.id] = job
+            self.save(jobs)
 
     def update_run_state(self, job_id: str, **state_fields) -> Optional[ScheduledResearchJob]:
         """Patch only the named run-state fields of one job.
@@ -241,14 +295,15 @@ class ScheduledResearchJobStore:
         unknown = set(state_fields) - RUN_STATE_FIELDS
         if unknown:
             raise ValueError(f"not run-state fields: {sorted(unknown)}")
-        jobs = self.load()
-        job = jobs.get(job_id)
-        if job is None:
-            return None
-        for key, value in state_fields.items():
-            setattr(job, key, value)
-        self.save(jobs)
-        return job
+        with self.transaction():
+            jobs = self.load()
+            job = jobs.get(job_id)
+            if job is None:
+                return None
+            for key, value in state_fields.items():
+                setattr(job, key, value)
+            self.save(jobs)
+            return job
 
     def get(self, job_id: str) -> Optional[ScheduledResearchJob]:
         """Return a job by id, or ``None`` when it does not exist.
@@ -293,12 +348,13 @@ class ScheduledResearchJobStore:
             ``True`` when the job was found and removed; ``False`` when it was
             not in the store.
         """
-        jobs = self.load()
-        if job_id not in jobs:
-            return False
-        del jobs[job_id]
-        self.save(jobs)
-        return True
+        with self.transaction():
+            jobs = self.load()
+            if job_id not in jobs:
+                return False
+            del jobs[job_id]
+            self.save(jobs)
+            return True
 
     # ------------------------------------------------------------------
     # Internal helpers

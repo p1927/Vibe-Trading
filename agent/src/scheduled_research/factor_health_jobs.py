@@ -167,8 +167,7 @@ def run_factor_gap_fill_job(config: dict[str, Any] | None = None) -> dict[str, A
 def dispatch_factor_health_job_sync(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_FACTOR_GAP_FILL:
-        from src.scheduled_research.index_jobs import LAST_RESULT_CONFIG_KEY
-        from src.scheduled_research.run_outcome import raise_if_run_had_errors
+        from src.scheduled_research.run_outcome import LAST_RESULT_CONFIG_KEY, raise_if_run_had_errors
 
         report = run_factor_gap_fill_job(job.config)
         job.config[LAST_RESULT_CONFIG_KEY] = {

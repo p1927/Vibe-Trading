@@ -49,11 +49,9 @@ async def _dispatch_recording_wake_job_inner(job) -> None:
     config = getattr(job, "config", None) or {}
     recording_job_id = str(config.get("recording_job_id") or "").strip()
     if not recording_job_id:
-        logger.error(
-            "recording_wake job %s missing recording_job_id in config",
-            job.id,
-        )
-        return
+        # Raised, not logged: a wake job with no recording id can never wake anything and used to
+        # be recorded `completed` on every fire (D36).
+        raise ValueError(f"recording_wake job {job.id} has no recording_job_id in its config")
     logger.info(
         "recording_wake dispatch firing for recording job %s",
         recording_job_id,

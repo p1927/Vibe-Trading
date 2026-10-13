@@ -9,6 +9,7 @@ from typing import Any
 
 from src.config.accessor import get_env_config
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.run_outcome import finish_run
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -110,16 +111,16 @@ def run_nse_repo_consistency_job(config: dict[str, Any] | None = None) -> dict[s
 def dispatch_trade_data_job_sync(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_TRADE_FILLS_EXPORT:
-        run_trade_fills_export_job(job.config)
+        finish_run(job, run_trade_fills_export_job(job.config), "trade fills export")
         return
     if job_type == JOB_TYPE_RESEARCH_HISTORY_ARCHIVE:
-        run_research_history_archive_job(job.config)
+        finish_run(job, run_research_history_archive_job(job.config), "research history archive")
         return
     if job_type == JOB_TYPE_NSE_MACRO_REFRESH:
-        run_nse_macro_refresh_job(job.config)
+        finish_run(job, run_nse_macro_refresh_job(job.config), "nse macro refresh")
         return
     if job_type == JOB_TYPE_NSE_REPO_CONSISTENCY:
-        run_nse_repo_consistency_job(job.config)
+        finish_run(job, run_nse_repo_consistency_job(job.config), "nse repo consistency")
         return
     raise ValueError(f"unsupported trade_data job_type: {job_type!r}")
 

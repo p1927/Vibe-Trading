@@ -257,8 +257,7 @@ def _dispatch_dst_eval_job_body(job: ScheduledResearchJob) -> None:
     own record changes.
     See .claude/backlog/items/2026-09-11-job-errors-recorded-as-success.md.
     """
-    from src.scheduled_research.index_jobs import LAST_RESULT_CONFIG_KEY
-    from src.scheduled_research.run_outcome import raise_if_run_had_errors
+    from src.scheduled_research.run_outcome import LAST_RESULT_CONFIG_KEY, raise_if_run_had_errors
 
     job_type = str(job.config.get("job_type") or "")
     runners = {

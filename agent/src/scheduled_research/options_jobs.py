@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -12,6 +11,7 @@ from typing import Any
 
 from src.config.accessor import get_env_config
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.run_outcome import finish_run
 from src.trade.hub_bridge import ensure_trade_stack_path
 
 logger = logging.getLogger(__name__)
@@ -195,7 +195,11 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
         if extra:
             watchlist = sorted(set(watchlist) | extra)
     except Exception:
-        pass
+        # Not swallowed: the agents' and watches' symbols are half of what this job refreshes, and
+        # `pass` here silently narrowed it to the static watchlist on every run while it read
+        # `completed`. A failed lookup is a failed run (D36), retried on schedule.
+        logger.exception("options plan refresh could not read the watch/agent symbols")
+        raise
 
     if not watchlist:
         logger.info("options plan refresh skipped: no agent/watch symbols in scope")
@@ -343,15 +347,12 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
             widget["autonomous_agent_id"] = ledger_agent_id
         new_widget_id = widget.get("widget_id")
         if new_widget_id:
-            from src.config.paths import get_runtime_root
+            # The one widget writer (it validates the id and resolves this tier's home through
+            # `vibe_trading_home()`); this used to write `<runtime root>/trade_widgets` itself.
+            from trade_integrations.trade_widgets.store import persist_trade_widget
 
-            widget_dir = get_runtime_root() / "trade_widgets"
-            widget_dir.mkdir(parents=True, exist_ok=True)
-            widget_path = widget_dir / f"{new_widget_id}.json"
-            widget_path.write_text(
-                json.dumps(widget, indent=2, default=str),
-                encoding="utf-8",
-            )
+            if persist_trade_widget(widget) is None:
+                raise ValueError(f"options widget {new_widget_id!r} for {underlying} was not persisted: bad widget id")
 
         refreshed.append(
             {
@@ -406,10 +407,12 @@ def _dispatch_options_job_body(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_OPTIONS_PLAN_REFRESH:
         summary = run_options_plan_refresh_job(job.config)
+        finish_run(job, summary, "options plan refresh")
         logger.info("options plan refresh completed for job %s: %s", job.id, summary)
         return
     if job_type == JOB_TYPE_OPTIONS_POSITION_MONITOR:
         summary = run_options_position_monitor_job(job.config)
+        finish_run(job, summary, "options position monitor")
         logger.info("options position monitor completed for job %s: %s", job.id, summary)
         return
     raise ValueError(f"unsupported options job_type: {job_type!r}")
