@@ -26,6 +26,11 @@ from src.scheduled_research.models import ScheduledResearchJob
 #: The kind a recovered (never-completed) run is recorded under. See the module docstring.
 RECOVERED_FAILURE_KIND = "dispatch"
 
+#: The ``job.config`` scratch key a handler leaves its result summary under; the executor moves it
+#: to ``job.last_result_summary`` when the run ends (``executor._store_result_summary``). The one
+#: definition: ``executor``, ``index_jobs`` and ``hub_calibration_jobs`` each used to carry a copy.
+LAST_RESULT_CONFIG_KEY = "_last_result_summary"
+
 _MAX_ERROR_CHARS = 1000
 
 
@@ -104,9 +109,24 @@ def raise_if_run_had_errors(job: ScheduledResearchJob, summary: Any, label: str)
     raise JobRunHadErrorsError(f"{label} for job {job.id} reported errors: {detail}")
 
 
+def finish_run(job: ScheduledResearchJob, summary: Any, label: str) -> None:
+    """End a handler the one way: leave its summary on the record, then fail the run if it says so.
+
+    Many handlers computed a summary and dropped it (``last_result_summary: null`` on the record, so
+    an operator could not tell a run that did nothing from one that worked), and several never read
+    it for ``had_errors`` either, so a failed run read ``completed``. The executor caps the stored
+    summary (``executor.cap_result_summary``), so this attaches it whole.
+    """
+    if isinstance(summary, dict) and summary:
+        job.config[LAST_RESULT_CONFIG_KEY] = summary
+    raise_if_run_had_errors(job, summary, label)
+
+
 __all__ = [
     "JobRunHadErrorsError",
+    "LAST_RESULT_CONFIG_KEY",
     "RECOVERED_FAILURE_KIND",
+    "finish_run",
     "raise_if_run_had_errors",
     "record_interrupted_run",
     "run_error_detail",

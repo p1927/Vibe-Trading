@@ -11,6 +11,7 @@ from typing import Any
 
 from src.config.accessor import get_env_config
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.run_outcome import finish_run
 from src.trade.hub_bridge import ensure_trade_stack_path
 
 logger = logging.getLogger(__name__)
@@ -194,7 +195,11 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
         if extra:
             watchlist = sorted(set(watchlist) | extra)
     except Exception:
-        pass
+        # Not swallowed: the agents' and watches' symbols are half of what this job refreshes, and
+        # `pass` here silently narrowed it to the static watchlist on every run while it read
+        # `completed`. A failed lookup is a failed run (D36), retried on schedule.
+        logger.exception("options plan refresh could not read the watch/agent symbols")
+        raise
 
     if not watchlist:
         logger.info("options plan refresh skipped: no agent/watch symbols in scope")
@@ -400,10 +405,12 @@ def _dispatch_options_job_body(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_OPTIONS_PLAN_REFRESH:
         summary = run_options_plan_refresh_job(job.config)
+        finish_run(job, summary, "options plan refresh")
         logger.info("options plan refresh completed for job %s: %s", job.id, summary)
         return
     if job_type == JOB_TYPE_OPTIONS_POSITION_MONITOR:
         summary = run_options_position_monitor_job(job.config)
+        finish_run(job, summary, "options position monitor")
         logger.info("options position monitor completed for job %s: %s", job.id, summary)
         return
     raise ValueError(f"unsupported options job_type: {job_type!r}")

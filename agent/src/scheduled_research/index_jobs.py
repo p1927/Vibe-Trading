@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from src.config.accessor import get_env_config, get_env_or
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
-from src.scheduled_research.run_outcome import raise_if_run_had_errors
+from src.scheduled_research.run_outcome import LAST_RESULT_CONFIG_KEY, finish_run, raise_if_run_had_errors
 from src.scheduled_research.staleness import EVAL_JOB_DISPATCH_TIMEOUT_MS, dispatch_timeout_ms_for
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
@@ -117,8 +117,6 @@ INDEX_JOB_TYPES = frozenset({
 
 NEWS_QUALITY_EVAL_CRON_ENV = "NEWS_QUALITY_EVAL_CRON"
 DEFAULT_NEWS_QUALITY_EVAL_CRON = "0 2 * * *"
-
-LAST_RESULT_CONFIG_KEY = "_last_result_summary"
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
@@ -1389,6 +1387,7 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         return
     if job_type == JOB_TYPE_INDEX_PLAN_REFRESH:
         summary = run_index_plan_refresh_job(job.config)
+        finish_run(job, summary, "index plan refresh")
         logger.info("index plan refresh completed for job %s: %s", job.id, summary)
         return
     if job_type == JOB_TYPE_INDEX_CALIBRATION:

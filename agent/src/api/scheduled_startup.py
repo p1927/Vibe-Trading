@@ -214,22 +214,29 @@ async def shutdown_scheduled_research_stack(get_store, executor: Any) -> None:
             keeps ownership of clearing its own module-level reference after
             this returns.
     """
-    logger.info("scheduled research shutdown: recovering jobs and stopping executor")
-    try:
-        from src.scheduled_research.lifecycle import recover_scheduler_jobs_on_stack_shutdown
-
-        recover_scheduler_jobs_on_stack_shutdown(get_store())
-    except Exception:
-        logger.exception("failed to recover scheduler jobs on API shutdown")
+    logger.info("scheduled research shutdown: stopping executor and recovering jobs")
     if executor is not None:
         # Process-restart interruption, not a deliberate user pause: mark any
         # job this shutdown catches mid-RUNNING as auto-paused with a clear
         # reason so `GET /scheduled-runs` can distinguish it from a real hang
         # without cross-referencing log/vibe-api.log (see
         # 2026-09-02-vibetrading-dev-reload-thrashing.md).
+        #
+        # First, then the store-level recovery below: `stop()` drains in-flight dispatches for a
+        # bounded grace so a run finishing milliseconds into shutdown keeps its own completion.
+        # The store-level pass used to run before it, reset every RUNNING job to PENDING and paused
+        # it at once, and so discarded exactly the completions the drain exists to keep (the run was
+        # recorded "recovered on stack shutdown"). It now only catches what `stop()` could not: RUNNING
+        # records with no live executor (a crash leftover, or an executor never resumed).
         await executor.stop(
             auto_pause_reason="auto-paused: process restart (executor shutdown)"
         )
+    try:
+        from src.scheduled_research.lifecycle import recover_scheduler_jobs_on_stack_shutdown
+
+        recover_scheduler_jobs_on_stack_shutdown(get_store())
+    except Exception:
+        logger.exception("failed to recover scheduler jobs on API shutdown")
     try:
         from src.trade.recording_wait_scheduler import stop_recording_wake_poller
 

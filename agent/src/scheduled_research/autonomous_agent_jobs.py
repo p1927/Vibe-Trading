@@ -388,8 +388,8 @@ async def _dispatch_autonomous_job_inner(job: ScheduledResearchJob) -> None:
 
     agent_id = str((job.config or {}).get("autonomous_agent_id") or "")
     if not agent_id:
-        logger.warning("autonomous job missing agent id: %s", job.id)
-        return
+        # Raised, not logged: the job can never do anything and would be recorded `completed` forever.
+        raise ValueError(f"autonomous job {job.id} has no autonomous_agent_id in its config")
 
     job_type = str((job.config or {}).get("job_type") or "")
     try:
@@ -446,7 +446,7 @@ async def _dispatch_autonomous_job_inner(job: ScheduledResearchJob) -> None:
         await dispatch_full_reasoning(agent_id, turn_kind="research")
         return
 
-    logger.warning("unknown autonomous job type %s", job_type)
+    raise ValueError(f"unsupported autonomous job_type: {job_type!r} (job {job.id})")
 
 
 def dispatch_autonomous_job_sync(job: ScheduledResearchJob) -> None:

@@ -14,6 +14,7 @@ from typing import Any
 
 from src.config.accessor import get_env_config
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.run_outcome import finish_run
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -62,10 +63,26 @@ def run_financial_knowledge_curator_job(config: dict[str, Any] | None = None) ->
     return report
 
 
+def _flag_curator_failure(report: dict[str, Any]) -> dict[str, Any]:
+    """Mark the report ``had_errors`` when the curator did not do its work.
+
+    The curator reports ``ok: False`` for a failed run and for a failed ingest trigger (nested under
+    ``ingest``) and returned it to a handler that dropped it, so a run that curated nothing was
+    recorded ``completed``. ``skipped`` (no new sources, or no generative adapter configured) is a
+    visible no-op, not a failure: the summary carries the reason.
+    """
+    ingest = report.get("ingest")
+    ingest_failed = isinstance(ingest, dict) and ingest.get("ok") is False
+    if (report.get("ok") is False and not report.get("skipped")) or ingest_failed:
+        report["had_errors"] = True
+        report.setdefault("error", (ingest or {}).get("error") if ingest_failed else "curation failed")
+    return report
+
+
 def dispatch_financial_knowledge_job_sync(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_FINANCIAL_KNOWLEDGE_CURATOR:
-        run_financial_knowledge_curator_job(job.config)
+        finish_run(job, _flag_curator_failure(run_financial_knowledge_curator_job(job.config)), "financial knowledge curator")
         return
     raise ValueError(f"unsupported financial_knowledge job_type: {job_type!r}")
 

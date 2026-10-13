@@ -37,6 +37,14 @@ from .dst_eval_jobs import (
     JOB_TYPE_PREDICTION_EVAL,
     JOB_TYPE_RECORDER_DST,
 )
+from .decision_grading_jobs import JOB_TYPE_DECISION_GRADING_SWEEP
+from .execution_advisor_jobs import JOB_TYPE_EXECUTION_ADVISOR_SWEEP
+from .factor_health_jobs import (
+    JOB_TYPE_FACTOR_GAP_FILL,
+    JOB_TYPE_FACTOR_HEALTH,
+    JOB_TYPE_FACTOR_HEALTH_LIVE,
+    JOB_TYPE_FACTOR_REFERENCE_CHECK,
+)
 from .financial_knowledge_jobs import JOB_TYPE_FINANCIAL_KNOWLEDGE_CURATOR
 from .hub_calibration_jobs import (
     JOB_TYPE_HUB_EVENING_MAINTENANCE,
@@ -45,6 +53,7 @@ from .hub_calibration_jobs import (
 from .index_jobs import (
     JOB_TYPE_COMPANY_RESEARCH_ARCHIVE,
     JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT,
+    JOB_TYPE_FORECAST_ENGINE_REFRESH,
     JOB_TYPE_FORECAST_PLATFORM_RETRAIN,
     JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH,
     JOB_TYPE_HUB_NEWS_ENTITY,
@@ -209,6 +218,10 @@ _JOB_DETAILS: Dict[str, JobTypeDetail] = {
     JOB_TYPE_FORECAST_PLATFORM_RETRAIN: JobTypeDetail(
         "Retrains the forecast-platform model (LLM/ML pipeline)."
     ),
+    JOB_TYPE_FORECAST_ENGINE_REFRESH: JobTypeDetail(
+        "Refreshes every forecast-engine recipe's TimesFM forecast and walk-forward evaluation "
+        "artifacts (read by the predictions UI and forecast replay)."
+    ),
     JOB_TYPE_QUANTILE_FORECAST_LEDGER_PUSH: JobTypeDetail(
         "Pushes quantile forecast entries to the prediction ledger."
     ),
@@ -244,6 +257,32 @@ _JOB_DETAILS: Dict[str, JobTypeDetail] = {
     ),
     JOB_TYPE_RECORDING_WAKE: JobTypeDetail(
         "Wakes a paused 'wait for market open' recording job and resumes its worker."
+    ),
+    JOB_TYPE_DECISION_GRADING_SWEEP: JobTypeDetail(
+        "Grades every autonomous agent's matured decisions on this tier (live, stopped or deleted) "
+        "against realized market moves, then proposes weight changes per existing agent."
+    ),
+    JOB_TYPE_EXECUTION_ADVISOR_SWEEP: JobTypeDetail(
+        "Steps the execution advisor's state machine once for every open position on this tier and "
+        "records the advice to the advisory ledger."
+    ),
+    JOB_TYPE_FACTOR_HEALTH: JobTypeDetail(
+        "Checks that every factor the catalog marks RECORDED has data stored, and reports factors "
+        "whose writer has stopped. Fails the run on a catalog that claims data it does not hold."
+    ),
+    JOB_TYPE_FACTOR_HEALTH_LIVE: JobTypeDetail(
+        "The factor health check plus a live-vendor freshness probe of every RECORDED factor."
+    ),
+    JOB_TYPE_FACTOR_REFERENCE_CHECK: JobTypeDetail(
+        "Compares each venue's stored reference calendar with a fresh vendor fetch and queues the "
+        "missing days as gap jobs."
+    ),
+    JOB_TYPE_FACTOR_GAP_FILL: JobTypeDetail(
+        "Plans every factor's missing days into the gap queue, then drains a bounded number of "
+        "factors through the one dispatch path."
+    ),
+    "external_predictions_refresh": JobTypeDetail(
+        "Fetches external forecasts per ticker and horizon in a detached worker (release only)."
     ),
     JOB_TYPE_DST_LITE: JobTypeDetail(
         "Runs every other DST-lite marker (pyproject.toml *_dst) via pytest, sockets blocked (local-only)."

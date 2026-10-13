@@ -9,6 +9,7 @@ from typing import Any
 
 from src.config.accessor import get_env_config
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.run_outcome import LAST_RESULT_CONFIG_KEY, finish_run  # noqa: F401 (re-export)
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -23,13 +24,6 @@ DEFAULT_EVENING_CRON = "35 18 * * *"
 
 JOB_TYPE_HUB_MORNING_CALIBRATION = "hub_morning_calibration"
 JOB_TYPE_HUB_EVENING_MAINTENANCE = "hub_evening_maintenance"
-
-#: Same scratch key `index_jobs.py`'s `_attach_job_result_summary` writes and
-#: `executor.py`'s `_dispatch` pops into `job.last_result_summary` after a successful
-#: dispatch. Reusing the established name/mechanism rather than inventing a second one for
-#: this module -- see .claude/backlog/items/2026-09-07-scenario-autogen-stale-pipeline-bind.md
-#: (its errors-must-surface requirement is what this wiring satisfies).
-LAST_RESULT_CONFIG_KEY = "_last_result_summary"
 
 HUB_CALIBRATION_JOB_TYPES = frozenset({
     JOB_TYPE_HUB_MORNING_CALIBRATION,
@@ -81,28 +75,19 @@ def run_hub_evening_maintenance_job(config: dict[str, Any] | None = None) -> dic
     return summary
 
 
-def _attach_job_result_summary(job: ScheduledResearchJob, summary: dict[str, Any]) -> None:
-    """Write `summary` into `job.config[LAST_RESULT_CONFIG_KEY]` so the executor surfaces it
-    as `job.last_result_summary` once dispatch completes. Both the morning and evening
-    summaries already carry a top-level `status` plus a `steps` dict with one entry per
-    sub-step (`_rollup_pipeline_status` rolls sub-step status into it) -- including, for the
-    evening job, `steps.scenario_autogen.by_ticker.<ticker>.errors`, which is otherwise only
-    visible as WARNING log lines. Attached whole (not compacted) since these summaries are
-    small, bounded by the fixed set of daily steps -- unlike the high-volume ingest jobs in
-    `index_jobs.py` that need `_compact_result_summary` to stay a reasonable size."""
-    if isinstance(summary, dict):
-        job.config[LAST_RESULT_CONFIG_KEY] = summary
-
-
 def _dispatch_hub_calibration_job_body(job: ScheduledResearchJob) -> None:
+    """Attach the run's summary (``run_outcome.finish_run``; the executor caps it) and fail the run
+    when the orchestrator's rolled-up ``status`` is ``error``. Both summaries carry a top-level
+    ``status`` that ``_rollup_pipeline_status`` derives from every step, including the evening job's
+    ``steps.scenario_autogen.by_ticker.<ticker>.errors``, which is otherwise only WARNING log lines.
+    This used to attach and never read the status, so a rolled-up ``error`` was recorded
+    ``completed`` (D86: every handler fails loud)."""
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_HUB_MORNING_CALIBRATION:
-        summary = run_hub_morning_calibration_job(job.config)
-        _attach_job_result_summary(job, summary)
+        finish_run(job, run_hub_morning_calibration_job(job.config), "hub morning calibration")
         return
     if job_type == JOB_TYPE_HUB_EVENING_MAINTENANCE:
-        summary = run_hub_evening_maintenance_job(job.config)
-        _attach_job_result_summary(job, summary)
+        finish_run(job, run_hub_evening_maintenance_job(job.config), "hub evening maintenance")
         return
     raise ValueError(f"unsupported hub_calibration job_type: {job_type!r}")
 

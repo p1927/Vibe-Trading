@@ -18,8 +18,10 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+
+from src.api.security import require_local_or_auth
 
 advisory_router = APIRouter(prefix="/board/advisory", tags=["board"])
 
@@ -142,7 +144,7 @@ def get_advisory_forecast() -> Dict[str, Any]:
     return {"status": "ok", "forecast": forecast}
 
 
-@advisory_router.post("/approve")
+@advisory_router.post("/approve", dependencies=[Depends(require_local_or_auth)])
 def prepare_advisory_widget(body: ApproveCandidateRequest) -> Dict[str, Any]:
     """Build and persist a trade-plan widget for `ticker`, resolving `strategy_name`'s own
     order legs (falling back to the widget's recommended strategy) so the frontend can hand

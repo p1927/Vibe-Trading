@@ -4,11 +4,8 @@ Domain: `2026-08-21-agent-api-route-coverage-audit`. `watch_routes.py` is a thin
 `trade_integrations.watch_registry.api`'s `mcp_*` functions — real file-backed CRUD, no broker
 calls — so these drive the real store through the real HTTP surface, isolated to a tmp hub dir.
 
-Note: unlike every other privileged router audited in this backlog (`live_routes`,
-`autonomous_routes`), no endpoint here has an auth dependency — every `/watches/*` route is
-reachable with no credentials. Not fixed here (out of scope for a coverage-audit pass — a
-behavior change like that needs a product decision, not a drive-by test-file fix), but worth
-flagging for whoever picks up the "wire real auth" follow-up.
+Mutating routes (create/update/delete) require `require_local_or_auth`; reads stay open, same
+as the other read-only boards. The guard test is `tests/test_mutating_routes_auth.py`.
 """
 
 from __future__ import annotations

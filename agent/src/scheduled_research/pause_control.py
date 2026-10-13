@@ -107,15 +107,15 @@ def set_job_enabled(
     job = store.get(job_id)
     if job is None:
         return None
-    job.paused = not enabled
-    job.auto_paused_reason = None
+    # update_run_state, not upsert: this names only the fields a pause/resume owns, so it cannot
+    # write a stale copy of the executor's status/next_run_at/last_result_summary back over a run
+    # that finished since `get` (the reason `store.update_run_state` exists).
+    fields: dict = {"paused": not enabled, "auto_paused_reason": None}
     if enabled:
-        job.consecutive_failures = 0
-        job.failure_kind = None
+        fields.update(consecutive_failures=0, failure_kind=None)
         if job.status == JobStatus.FAILED:
-            job.status = JobStatus.PENDING
-    store.upsert(job)
-    return job
+            fields["status"] = JobStatus.PENDING
+    return store.update_run_state(job_id, **fields)
 
 
 def cancel_running_job(
@@ -149,11 +149,12 @@ def cancel_running_job(
         raise JobNotRunningError(
             f"job {job_id} is not running (status={job.status.value})"
         )
-    job.status = JobStatus.CANCELLED
-    job.last_error = "cancelled by user"
-    job.config["_cancel_requested"] = True
-    store.upsert(job)
-    return job
+    return store.update_run_state(
+        job_id,
+        status=JobStatus.CANCELLED,
+        last_error="cancelled by user",
+        config={**job.config, "_cancel_requested": True},
+    )
 
 
 def pull_due_now(job: ScheduledResearchJob, now_ms: Optional[int] = None) -> bool:
@@ -219,5 +220,5 @@ def trigger_job_now(
             "tier instead"
         )
     if pull_due_now(job):
-        store.upsert(job)
+        return store.update_run_state(job_id, next_run_at=job.next_run_at)
     return job
