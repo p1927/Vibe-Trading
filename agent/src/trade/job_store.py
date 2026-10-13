@@ -275,7 +275,12 @@ class JobStore:
                 if self.active.get(scope) == job_id:
                     self.active.pop(scope, None)
 
-    def get_active(self, scope: str) -> dict[str, Any] | None:
+    def get_active(self, scope: str, *, report_failure: bool = False) -> dict[str, Any] | None:
+        """The live job of ``scope``, reconciled first (dead worker, never spawned, over budget).
+
+        ``report_failure`` returns a job this very call failed, once, so the caller shows the error instead
+        of "no active job" (the index-prediction and recording panels); the next call finds nothing active.
+        """
         with self.jobs_lock:
             job_id = self.active.get(scope)
         if not job_id:
@@ -286,10 +291,11 @@ class JobStore:
                 if self.active.get(scope) == job_id:
                     self.active.pop(scope, None)
             return None
-        if not self.alive(job):
-            self.reconcile_zombie(job_id)
-            return None
-        return job
+        self.reconcile(job_id)
+        job = self.get_record(job_id)
+        if self._is_active(job):
+            return job
+        return job if report_failure and job is not None and job.get("status") == "error" else None
 
     # -- state machine --------------------------------------------------------------------------
     def mark_running(self, job_id: str) -> None:

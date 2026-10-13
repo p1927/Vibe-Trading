@@ -148,26 +148,8 @@ def get_job(job_id: str) -> dict[str, Any] | None:
 
 
 def get_active_job(ticker: str) -> dict[str, Any] | None:
-    key = (ticker or "NIFTY").strip().upper()
-    with _STORE.jobs_lock:
-        job_id = _STORE.active.get(key)
-    if not job_id:
-        return None
-    job = _get_job_record(job_id)
-    if job is None or job.get("status") not in _ACTIVE_STATUSES:
-        with _STORE.jobs_lock:
-            if _STORE.active.get(key) == job_id:
-                _STORE.active.pop(key, None)
-        return None
-    # Reconcile (dead worker, never spawned, over budget); a job it just failed is still reported once
-    # so the caller sees the error instead of "no active job".
-    reconcile_job(job_id)
-    job = _get_job_record(job_id)
-    if job is not None and job.get("status") == "error":
-        return _job_snapshot(job)
-    if job is None or job.get("status") not in _ACTIVE_STATUSES:
-        return None
-    return _job_snapshot(job)
+    job = _STORE.get_active((ticker or "NIFTY").strip().upper(), report_failure=True)
+    return None if job is None else _job_snapshot(job)
 
 
 def start_job(
