@@ -154,15 +154,10 @@ def get_autonomous_agent_pnl_history(
 
 
 class EvaluateExitDecisionRequest(BaseModel):
-    ticker: str = Field(..., min_length=1)
-    exit_decision_at: str = Field(..., min_length=1)
-    exit_rationale: Optional[str] = None
-    exit_strategy: Optional[str] = None
-    exit_direction: Optional[str] = None
-    reference_price: Optional[float] = None
-    exchange: str = "NSE"
-    market: str = "IN"
-    news_lookback_days: int = 3
+    decision_id: str = Field(..., min_length=1)
+
+
+_EXIT_NEWS_HORIZONS = ("T+1d", "T+3d")
 
 
 @autonomous_router.post("/{agent_id}/exit-evaluations")
@@ -171,58 +166,38 @@ def record_exit_evaluation_route(
     body: EvaluateExitDecisionRequest,
     _auth: None = Depends(require_local_or_auth),
 ) -> Dict[str, Any]:
-    """Backtest workflow entrypoint for
-    `.claude/backlog/items/2026-08-30-agent-exit-evaluation-during-replay.md`: run the agent
-    through a replayed date, place a trade, propose an exit, then once that date has actually
-    passed, call this to check the exit against real (force_live) subsequent price/news without
-    disarming the global replay session."""
-    from trade_integrations.autonomous_agents.exit_evaluation import evaluate_exit_decision
-    from trade_integrations.stock_simulator.client import StockSimulatorClientError
+    """Grade one EXIT decision now, on the one decision-evaluation path (D306): each news horizon
+    is scored against real (force_live) later price and news, with the real-news alignment and the
+    LLM rationale match carried on the row. Backtest entrypoint for
+    `.claude/backlog/items/2026-08-30-agent-exit-evaluation-during-replay.md`."""
+    from trade_integrations.autonomous_agents.decision_evaluation import evaluate_decision
     from trade_integrations.autonomous_agents.store import get_agent
 
     if not get_agent(agent_id):
         raise HTTPException(status_code=404, detail="agent not found")
     try:
-        return evaluate_exit_decision(
-            agent_id,
-            ticker=body.ticker,
-            exit_decision_at=body.exit_decision_at,
-            exit_rationale=body.exit_rationale,
-            exit_strategy=body.exit_strategy,
-            exit_direction=body.exit_direction,
-            reference_price=body.reference_price,
-            exchange=body.exchange,
-            market=body.market,
-            news_lookback_days=body.news_lookback_days,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except StockSimulatorClientError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        rows = [
+            evaluate_decision(agent_id=agent_id, decision_id=body.decision_id, horizon=horizon)
+            for horizon in _EXIT_NEWS_HORIZONS
+        ]
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+    return {"agent_id": agent_id, "evaluations": rows}
 
 
 @autonomous_router.get("/{agent_id}/exit-evaluations")
 def list_exit_evaluations_route(agent_id: str) -> Dict[str, Any]:
-    import numpy as np
-    import pandas as pd
+    """The news-carrying (EXIT, T+1d/T+3d) rows of the decision-evaluation ledger."""
+    import json
 
-    from trade_integrations.autonomous_agents.exit_evaluation_ledger import load_exit_evaluations
+    from trade_integrations.autonomous_agents.decision_evaluation_ledger import load_decision_evaluations
     from trade_integrations.autonomous_agents.store import get_agent
 
     if not get_agent(agent_id):
         raise HTTPException(status_code=404, detail="agent not found")
-    series = load_exit_evaluations(agent_id)
-    # NaN (unscored numeric fields like reference_price/price_move_pct) isn't valid JSON —
-    # normalize to None before serializing.
-    series = series.astype(object).where(pd.notnull(series), None)
-    records = series.to_dict("records")
-    for record in records:
-        # A list-valued column (real_headlines_sample) round-trips through parquet as a
-        # numpy.ndarray, which pydantic/FastAPI can't JSON-serialize.
-        for key, value in record.items():
-            if isinstance(value, np.ndarray):
-                record[key] = value.tolist()
-    return {"agent_id": agent_id, "evaluations": records}
+    frame = load_decision_evaluations(agent_id)
+    frame = frame[frame["decision"].astype(str).isin(["EXIT", "exit"]) & frame["horizon"].isin(_EXIT_NEWS_HORIZONS)]
+    return {"agent_id": agent_id, "evaluations": json.loads(frame.to_json(orient="records", date_format="iso"))}
 
 
 @autonomous_router.post("/commit")

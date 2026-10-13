@@ -103,10 +103,7 @@ def _save_test_agent(agent_id: str) -> None:
 
 
 def test_exit_evaluation_post_for_unknown_agent_is_a_client_error(client: TestClient) -> None:
-    response = client.post(
-        "/autonomous-agents/does-not-exist/exit-evaluations",
-        json={"ticker": "NIFTY", "exit_decision_at": "2026-08-20T10:00:00+00:00"},
-    )
+    response = client.post("/autonomous-agents/does-not-exist/exit-evaluations", json={"decision_id": "dl_1"})
 
     assert response.status_code == 404
 
@@ -117,49 +114,71 @@ def test_exit_evaluation_get_for_unknown_agent_is_a_client_error(client: TestCli
     assert response.status_code == 404
 
 
-def test_exit_evaluation_post_records_and_get_lists_it(
+def test_exit_evaluation_post_for_unknown_decision_is_a_client_error(client: TestClient) -> None:
+    _save_test_agent("agent-exit-eval-nodecision")
+    response = client.post("/autonomous-agents/agent-exit-eval-nodecision/exit-evaluations", json={"decision_id": "dl_x"})
+
+    assert response.status_code == 404
+
+
+def test_exit_evaluation_post_grades_on_the_decision_ledger_and_get_lists_it(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No Authorization header sent — loopback bypass, same as
-    `test_clear_all_agents_succeeds_via_loopback_auth` above."""
+    `test_clear_all_agents_succeeds_via_loopback_auth` above. The EXIT is graded by the one
+    decision-evaluation path (D306); the grading inputs are stubbed at its own seams."""
+    from trade_integrations.autonomous_agents import decision_context_ledger as ctx
+    from trade_integrations.autonomous_agents import decision_evaluation as grading
+    from trade_integrations.autonomous_agents.decision_context_ledger import record_decision_context
+    from trade_integrations.autonomous_agents.decision_ledger import decision_ledger_path
     from trade_integrations.dataflows.news_hub_bridge import replay_gate
-    from trade_integrations.stock_simulator.client import StockSimulatorClient
+    from trade_integrations.observability.store import append_jsonl
 
     agent_id = "agent-exit-eval"
     _save_test_agent(agent_id)
-
-    def fake_get_quote(self, symbol, exchange, *, force_live=False):
-        assert force_live is True
-        return {"status": "ok", "mode": "live", "data": {"ltp": 25200.0}}
-
-    monkeypatch.setattr(StockSimulatorClient, "get_quote", fake_get_quote)
-    monkeypatch.setattr(
-        replay_gate,
-        "current_headlines",
-        lambda **kw: [{"title": "rate cut", "actual_impact": {"nifty_points": 30.0}}],
-    )
-
-    response = client.post(
-        f"/autonomous-agents/{agent_id}/exit-evaluations",
-        json={
-            "ticker": "NIFTY",
-            "exit_decision_at": "2026-08-20T10:00:00+00:00",
-            "exit_rationale": "target hit",
-            "exit_direction": "LONG",
-            "reference_price": 25000.0,
+    decided_at = "2026-09-01T06:00:00+00:00"
+    append_jsonl(
+        decision_ledger_path(),
+        {
+            "kind": "decision", "decision_id": "dl_1", "ts": decided_at, "agent_id": agent_id,
+            "symbol": "NIFTY", "decision": "EXIT", "rationale": "target hit", "outcome": {"status": "pending"},
         },
     )
+    record_decision_context(
+        decision_id="dl_1", agent_id=agent_id, spot_at_decision=24000.0, captured_at=decided_at,
+        market_feedback_absent_reason="not_gathered:test",
+        candidate_set=[{"candidate_rank": 0, "strategy_name": "long_call", "expiry_date": "2026-09-25", "legs": []}],
+    )
+    monkeypatch.setattr(ctx, "capture_spot_at_decision", lambda *a, **k: (25000.0, None, "test"))
+    monkeypatch.setattr(grading, "_track_actual", lambda **k: (500.0, "outcome_ledger"))
+    monkeypatch.setattr(grading, "_track_ledger_recommendation", lambda **k: None)
+    monkeypatch.setattr(grading, "evaluate_oracle", lambda **k: (None, None))
+    monkeypatch.setattr(
+        replay_gate, "current_headlines",
+        lambda **kw: [{"title": "rate cut", "actual_impact": {"nifty_points": 30.0}}],
+    )
+    monkeypatch.setattr(
+        "trade_integrations.dataflows.model_adapters.generate_json_text",
+        lambda prompt, **kw: '{"label": "supported", "confidence": 0.8, "reason": "matches"}',
+    )
+    from datetime import datetime, timezone
+
+    monkeypatch.setattr(grading, "current_utc", lambda **kw: datetime(2026, 9, 11, tzinfo=timezone.utc))
+
+    response = client.post(f"/autonomous-agents/{agent_id}/exit-evaluations", json={"decision_id": "dl_1"})
 
     assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["verdict"] == "early_exit"
-    assert body["news_alignment"] == "consistent"
+    rows = response.json()["evaluations"]
+    assert [r["horizon"] for r in rows] == ["T+1d", "T+3d"]
+    assert rows[0]["news_alignment"] == "consistent"
+    assert rows[0]["news_semantic_match"] == "supported"
 
     list_response = client.get(f"/autonomous-agents/{agent_id}/exit-evaluations")
     assert list_response.status_code == 200
     evaluations = list_response.json()["evaluations"]
-    assert len(evaluations) == 1
-    assert evaluations[0]["exit_decision_at"] == "2026-08-20T10:00:00+00:00"
+    assert len(evaluations) == 2
+    assert evaluations[0]["decision_id"] == "dl_1"
+    assert evaluations[0]["real_headlines_sample"] == ["rate cut"]
 
 
 def test_drafts_get_is_explicitly_not_allowed(client: TestClient) -> None:
