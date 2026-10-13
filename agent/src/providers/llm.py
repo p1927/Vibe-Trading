@@ -7,6 +7,7 @@ import os
 from copy import copy
 from urllib.parse import urlparse
 import re
+import threading
 from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
@@ -1277,6 +1278,27 @@ def _ensure_dotenv() -> None:
     )
 
 
+_ENV_MIRROR_LOCK = threading.Lock()
+
+
+def _mirror_env(updates: Mapping[str, Optional[str]]) -> None:
+    """Apply ``key -> value`` (``None`` = unset) to ``os.environ``, touching only keys that differ.
+
+    ``_sync_provider_env`` runs on whichever thread makes an LLM call. Rewriting the same
+    values every call kept adding/removing keys from other threads' view of the environment
+    (``RuntimeError: dictionary changed size during iteration`` in anything iterating
+    ``os.environ``). Writing only a real change makes the steady state read-only, and the
+    lock serialises the rare real change (a provider switch).
+    """
+    with _ENV_MIRROR_LOCK:
+        for key, value in updates.items():
+            if value is None:
+                if key in os.environ:
+                    del os.environ[key]
+            elif os.environ.get(key) != value:
+                os.environ[key] = value
+
+
 def _sync_provider_env() -> None:
     """Map provider-specific env vars to OPENAI_* for ChatOpenAI.
 
@@ -1292,15 +1314,13 @@ def _sync_provider_env() -> None:
     if provider in {"openai-codex", "openai_codex"}:
         codex_url = get_env_config().llm.openai_codex_base_url
         # SDK-side env setup, not Vibe-Trading config reads
-        os.environ["OPENAI_API_BASE"] = codex_url
-        os.environ["OPENAI_BASE_URL"] = codex_url
-        os.environ.pop("OPENAI_API_KEY", None)
+        _mirror_env(
+            {"OPENAI_API_BASE": codex_url, "OPENAI_BASE_URL": codex_url, "OPENAI_API_KEY": None}
+        )
         return
 
     if provider in {"copilot", "github-copilot"}:
-        os.environ.pop("OPENAI_API_BASE", None)
-        os.environ.pop("OPENAI_BASE_URL", None)
-        os.environ.pop("OPENAI_API_KEY", None)
+        _mirror_env({"OPENAI_API_BASE": None, "OPENAI_BASE_URL": None, "OPENAI_API_KEY": None})
         return
 
     creds = get_llm_credentials(provider, get_env_config().llm.langchain_model_name)
@@ -1308,11 +1328,13 @@ def _sync_provider_env() -> None:
     base_url = creds["base_url"]
 
     # SDK-side env setup, not Vibe-Trading config reads
+    updates: dict[str, Optional[str]] = {}
     if api_key:
-        os.environ["OPENAI_API_KEY"] = api_key
+        updates["OPENAI_API_KEY"] = api_key
     if base_url:
-        os.environ["OPENAI_API_BASE"] = base_url
-        os.environ["OPENAI_BASE_URL"] = base_url
+        updates["OPENAI_API_BASE"] = base_url
+        updates["OPENAI_BASE_URL"] = base_url
+    _mirror_env(updates)
 
 
 def _supports_top_level_reasoning_effort(caps: ProviderCapabilities) -> bool:
