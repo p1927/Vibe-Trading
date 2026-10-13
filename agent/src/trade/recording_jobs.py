@@ -166,6 +166,7 @@ _STORE = JobStore(
     run_age_seconds=lambda job: _run_age_seconds(job),
     on_running=lambda job: job.__setitem__("run_started_at", _now_iso()),
     creation_lock=lambda: _active_job_creation_lock(),
+    adopt_window_seconds=None,  # a waiting_for_open job has no worker and an untouched file for days
 )
 
 _JOBS_LOCK = _STORE.jobs_lock

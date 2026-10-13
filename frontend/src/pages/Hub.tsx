@@ -706,7 +706,6 @@ export function Hub() {
   }, [scheduleExpanded]);
 
   const hub = data?.hub;
-  const gates = hub?.gates;
   const sourceAvailability = hub?.source_availability;
   const newsMaintainer = hub?.news_maintainer;
   const staging = hub?.news_staging;
@@ -967,23 +966,6 @@ export function Hub() {
       ) : null}
       {maintainerSummary ? (
         <p className="text-sm text-muted-foreground">{maintainerSummary}</p>
-      ) : null}
-
-      {data?.status === "migration_required" || gates?.hub_ready === false ? (
-        <div
-          role="status"
-          className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-950 dark:text-red-100"
-        >
-          <p className="font-medium">Hub migration required</p>
-          <p className="mt-1 text-[13px] leading-relaxed opacity-90">
-            {data?.message ||
-              gates?.blocking?.[0]?.user_message ||
-              "Legacy news records must migrate to events SSOT before the hub is reliable."}
-          </p>
-          {gates?.blocking?.[0]?.action ? (
-            <p className="mt-2 font-mono text-[11px] opacity-80">{gates.blocking[0].action}</p>
-          ) : null}
-        </div>
       ) : null}
 
       {staging?.pipeline_paused ? (

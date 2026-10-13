@@ -23,9 +23,9 @@ Per-module hooks are passed as callables so each module's tests can keep monkeyp
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
-from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -37,6 +37,9 @@ logger = logging.getLogger(__name__)
 ACTIVE_STATUSES = frozenset({"queued", "running"})
 _JOB_TTL_SECONDS = 60 * 60
 _RUNNING_NO_PID_SECONDS = 30
+#: A job file not written for this long cannot belong to a live worker (every wall-clock budget is far
+#: shorter), so the cross-process scan for another process's active job skips it.
+_ADOPT_WINDOW_SECONDS = 12 * 60 * 60
 
 
 def now_iso() -> str:
@@ -100,6 +103,7 @@ class JobStore:
         run_age_seconds: Callable[[dict[str, Any]], float] = job_age_seconds,
         on_running: Callable[[dict[str, Any]], None] | None = None,
         creation_lock: Callable[[], Any] | None = None,
+        adopt_window_seconds: float | None = _ADOPT_WINDOW_SECONDS,
     ) -> None:
         self._jobs_root = jobs_root
         self._serialize = serialize
@@ -119,6 +123,9 @@ class JobStore:
         # A cross-process lock around claim(); when set, claim() also scans the jobs dir for a live
         # job of the same scope that another process created (recording's one-session rule).
         self._creation_lock = creation_lock
+        # None = no window: a store whose active job can legitimately have no worker for days (recording's
+        # ``waiting_for_open``) must not lose it to the file-age skip.
+        self._adopt_window = adopt_window_seconds
         self._jobs_ref = jobs_ref
         self._active_ref = active_ref
         self.jobs_lock = threading.RLock()
@@ -275,12 +282,28 @@ class JobStore:
                 if self.active.get(scope) == job_id:
                     self.active.pop(scope, None)
 
+    def adopt_disk_active(self, scope: str) -> None:
+        """Register in this process's index the live active job for ``scope`` that ANOTHER process wrote.
+
+        The index (``active``) and the job cache are per process, but a scheduled child and the API run the
+        same scope: the disk files are the truth (module docstring), so the read-side active-run guard reads
+        them too. Staleness is the existing reconcile: a lock whose worker died is failed, never honoured."""
+        with self.jobs_lock:
+            if self.active.get(scope) is not None:
+                return
+        found = self._find_live_on_disk(scope)
+        if found is not None:
+            with self.jobs_lock:
+                self.jobs[found["job_id"]] = found
+                self.active.setdefault(scope, found["job_id"])
+
     def get_active(self, scope: str, *, report_failure: bool = False) -> dict[str, Any] | None:
         """The live job of ``scope``, reconciled first (dead worker, never spawned, over budget).
 
         ``report_failure`` returns a job this very call failed, once, so the caller shows the error instead
         of "no active job" (the index-prediction and recording panels); the next call finds nothing active.
         """
+        self.adopt_disk_active(scope)
         with self.jobs_lock:
             job_id = self.active.get(scope)
         if not job_id:
@@ -353,10 +376,11 @@ class JobStore:
         """Reuse the live active job for ``scope`` or create+persist a new one. Returns (job, reused).
         A dead-worker or never-started active job is failed and replaced, not reused.
 
-        With a ``creation_lock`` the whole check-then-create runs under that cross-process lock and a
-        live job another process created (found by scanning the jobs dir) is reused too: the in-memory
-        index cannot see it (recording: five concurrent jobs for one session, reproduced live)."""
-        with self._start_lock, (self._creation_lock() if self._creation_lock else nullcontext()):
+        The whole check-then-create runs under a cross-process lock (``creation_lock``, default one file lock
+        per scope) and a live job another process created (found by scanning the jobs dir) is reused too: the
+        in-memory index cannot see it (recording: five concurrent jobs for one session, reproduced live; the
+        scheduled index run and the manual Run analysis: two runs writing one document)."""
+        with self._start_lock, self._creation_lock_for(scope):
             self.prune()
             with self.jobs_lock:
                 existing_id = self.active.get(scope)
@@ -373,13 +397,12 @@ class JobStore:
                     self.fail(existing_id, "worker never started")
                 else:
                     return existing, True
-            if self._creation_lock is not None:
-                on_disk = self._find_live_on_disk(scope)
-                if on_disk is not None:
-                    with self.jobs_lock:
-                        self.jobs[on_disk["job_id"]] = on_disk
-                        self.active[scope] = on_disk["job_id"]
-                    return on_disk, True
+            on_disk = self._find_live_on_disk(scope)
+            if on_disk is not None:
+                with self.jobs_lock:
+                    self.jobs[on_disk["job_id"]] = on_disk
+                    self.active[scope] = on_disk["job_id"]
+                return on_disk, True
             job = make_job()
             with self.jobs_lock:
                 self.jobs[job["job_id"]] = job
@@ -389,13 +412,20 @@ class JobStore:
 
     def _find_live_on_disk(self, scope: str) -> dict[str, Any] | None:
         """The live active job of ``scope`` found by scanning the jobs dir, failing any active row whose
-        worker died on the way (a crashed process's stale row must not wedge claim forever)."""
+        worker died on the way (a crashed process's stale row must not wedge claim forever). A job file not
+        written for the adopt window cannot belong to a live worker and is not read."""
         root = self._jobs_root()
         if not root.is_dir():
             return None
         live: dict[str, Any] | None = None
+        cutoff = None if self._adopt_window is None else time.time() - self._adopt_window
         for path in sorted(root.iterdir()):
             if not path.is_dir() or not job_runner.job_id_valid(path.name):
+                continue
+            try:
+                if cutoff is not None and (path / "job.json").stat().st_mtime < cutoff:
+                    continue
+            except OSError:
                 continue
             job = self.read(path.name)
             if not self._is_active(job) or self._scope_for(job) != scope:
@@ -405,6 +435,12 @@ class JobStore:
             else:
                 self.fail(path.name, "worker process exited unexpectedly")
         return live
+
+    def _creation_lock_for(self, scope: str):
+        if self._creation_lock is not None:
+            return self._creation_lock()
+        name = re.sub(r"[^A-Za-z0-9_.-]", "_", scope)
+        return job_runner.job_file_lock(self._jobs_root() / f".claim-{name}.lock", valid=True)
 
     def spawn(
         self,

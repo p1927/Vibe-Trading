@@ -217,3 +217,15 @@ def test_supplement_worker_starts_the_simulator_backfill_run(rec, monkeypatch) -
     assert "bucket macro_factors done" in messages, "run progress reaches the job log"
     assert any(m.startswith("complete: had_errors=False ok=3 failed=0 skipped=1") for m in messages), messages
     assert not any(m.startswith("failed:") for m in messages)
+
+
+def test_a_waiting_recording_is_found_by_another_process_however_old_its_file(rec) -> None:
+    """The cross-process scan skips job files not written for 12 h (no live worker writes that rarely), but a
+    `waiting_for_open` recording has no worker at all and its file sits untouched from Friday evening to Monday."""
+    job_id, _ = rec.start_job(underlyings=["NIFTY"], wait_for_open=True)
+    assert rec.set_waiting_for_open_at(job_id, next_open_at=datetime(2099, 1, 1, tzinfo=timezone.utc))
+    three_days_ago = time.time() - 3 * 86400
+    os.utime(rec._job_file(job_id), (three_days_ago, three_days_ago))
+    rec.RECORDING_JOBS.clear()
+    rec._ACTIVE_BY_SCOPE.clear()  # a script process that never saw the job
+    assert rec.start_job(underlyings=["BANKNIFTY"]) == (job_id, True)

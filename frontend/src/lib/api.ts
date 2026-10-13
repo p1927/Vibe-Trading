@@ -17,7 +17,6 @@ import type {
 import type {
   NewsDerivedConceptsResponse,
   FactorDetailResponse,
-  FactorListResponse,
   FinancialKnowledgeStatusResponse,
   StrategyListResponse,
   TrackRecordResponse,
@@ -1245,11 +1244,6 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
-  addGoalEvidence: (sid: string, body: AddGoalEvidenceRequest) =>
-    request<AddGoalEvidenceResponse>(`/sessions/${sid}/goal/evidence`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
   updateGoalStatus: (sid: string, body: UpdateGoalStatusRequest) =>
     request<UpdateGoalStatusResponse>(`/sessions/${sid}/goal/status`, {
       method: "PATCH",
@@ -1273,20 +1267,6 @@ export const api = {
     return url;
   },
 
-  // Swarm API
-  listSwarmPresets: () => request<SwarmPreset[]>("/swarm/presets"),
-  createSwarmRun: (preset_name: string, user_vars: Record<string, string>) =>
-    request<{ id: string; status: string }>("/swarm/runs", {
-      method: "POST",
-      body: JSON.stringify({ preset_name, user_vars }),
-    }),
-  listSwarmRuns: () => request<SwarmRunSummary[]>("/swarm/runs"),
-  getSwarmRun: (id: string) => request<Record<string, unknown>>(`/swarm/runs/${id}`),
-  swarmSseUrl: (id: string) => withAuthTicket(`${BASE}/swarm/runs/${id}/events`),
-  cancelSwarmRun: (id: string) =>
-    request<{ status: string }>(`/swarm/runs/${id}/cancel`, { method: "POST" }),
-  retrySwarmRun: (id: string) =>
-    request<{ id: string; status: string; preset_name: string }>(`/swarm/runs/${id}/retry`, { method: "POST" }),
   getLLMSettings: () => request<LLMSettings>("/settings/llm"),
   updateLLMSettings: (settings: UpdateLLMSettingsRequest) =>
     request<LLMSettings>("/settings/llm", {
@@ -1307,11 +1287,6 @@ export const api = {
   getChannelStatus: () => request<ChannelRuntimeStatus>("/channels/status"),
   startChannels: () => request<ChannelRuntimeActionResponse>("/channels/start", { method: "POST" }),
   stopChannels: () => request<ChannelRuntimeActionResponse>("/channels/stop", { method: "POST" }),
-  runChannelPairingCommand: (body: ChannelPairingCommandRequest) =>
-    request<ChannelPairingCommandResponse>("/channels/pairing/command", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
   // Alpha Zoo API
   listAlphas: (params: AlphaListParams = {}) => {
     const q = new URLSearchParams();
@@ -1495,12 +1470,6 @@ export const api = {
     request<FinancialKnowledgeStatusResponse>("/knowledge/financial-knowledge/status", {
       cache: "no-store",
     }),
-  getKnowledgeFactors: (category?: string) => {
-    const q = new URLSearchParams();
-    if (category) q.set("category", category);
-    return request<FactorListResponse>(`/knowledge/factors?${q.toString()}`, { cache: "no-store" });
-  },
-
   // Connector runtime channel — privileged surface actions (NOT agent tools).
   // commit is the ONLY action that writes a mandate; halt trips the kill switch.
   commitMandate: (body: CommitMandateRequest) =>
@@ -1534,11 +1503,6 @@ export const api = {
   resumeAutonomousAgent: (agentId: string) =>
     request<{ status: string; agent: AutonomousAgentInstance; halt_cleared?: string | null }>(
       `/autonomous-agents/${encodeURIComponent(agentId)}/resume`,
-      { method: "POST" },
-    ),
-  stopAutonomousAgent: (agentId: string) =>
-    request<{ status: string; agent: AutonomousAgentInstance }>(
-      `/autonomous-agents/${encodeURIComponent(agentId)}/stop`,
       { method: "POST" },
     ),
   deleteAutonomousAgent: (agentId: string, opts?: { flattenPositions?: boolean }) => {
@@ -1728,22 +1692,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  runIndexForecastLab: (
-    ticker = "NIFTY",
-    horizonDays?: number,
-    mode: "tracks_only" | "combine" = "tracks_only",
-    persist = true,
-  ) =>
-    request<IndexForecastLabResponse>("/trade/index-prediction/forecast-lab", {
-      method: "POST",
-      body: JSON.stringify({
-        ticker,
-        horizon_days: horizonDays,
-        mode,
-        persist,
-        use_hub_cache: true,
-      }),
-    }),
   getActiveIndexPredictionRun: (ticker = "NIFTY") =>
     request<IndexPredictionRunActiveResponse>(
       `/trade/index-prediction/run/active?ticker=${encodeURIComponent(ticker)}`,
@@ -1777,8 +1725,6 @@ export const api = {
       `/trade/recording/${encodeURIComponent(jobId)}/stop`,
       { method: "POST" },
     ),
-  listRecordingSessions: () =>
-    request<RecordingSessionsResponse>("/trade/recording/sessions"),
   getRecordingConstituents: () =>
     request<RecordingConstituentsResponse>("/trade/recording/constituents"),
   streamRecordingJob: streamRecordingJob,
@@ -1868,27 +1814,9 @@ export const api = {
         replay: params.replay ? "1" : undefined,
       })}`,
     ),
-  getHubMacroFactorPanel: (params: { start: string; end: string }) =>
-    request<HubMacroFactorPanelResponse>(
-      `/trade/hub/macro-factors/panel${api._hubStockHistoryQS({
-        start: params.start,
-        end: params.end,
-      })}`,
-    ),
-  getHubMacroFactorLatest: () =>
-    request<HubMacroFactorLatestResponse>("/trade/hub/macro-factors/latest"),
-  getHubMacroFactorDates: () =>
-    request<HubMacroFactorDatesResponse>("/trade/hub/macro-factors/dates"),
   getHubIndexHistoryDays: (params: { symbol?: string; exchange?: string }) =>
     request<HubIndexHistoryDaysResponse>(
       `/trade/hub/index-history/days${api._hubStockHistoryQS({
-        symbol: params.symbol ?? "NIFTY",
-        exchange: params.exchange ?? "NSE_INDEX",
-      })}`,
-    ),
-  getHubIndexHistoryExpiries: (params: { symbol?: string; exchange?: string }) =>
-    request<HubIndexHistoryExpiriesResponse>(
-      `/trade/hub/index-history/expiries${api._hubStockHistoryQS({
         symbol: params.symbol ?? "NIFTY",
         exchange: params.exchange ?? "NSE_INDEX",
       })}`,
@@ -1905,14 +1833,6 @@ export const api = {
   getHubReplayDayOverview: (date: string) =>
     request<HubReplayDayOverviewResponse>(
       `/trade/hub/replay/day-overview${api._hubStockHistoryQS({ date })}`,
-    ),
-  getHubConstituentsPanel: (params?: { start?: string; end?: string; limit?: number }) =>
-    request<HubConstituentsPanelResponse>(
-      `/trade/hub/constituents/panel${api._hubStockHistoryQS({
-        start: params?.start,
-        end: params?.end,
-        limit: params?.limit,
-      })}`,
     ),
   // /trade/hub/stock-history/coverage — per-week bucket availability gate.
   // ~90 buckets x 5 days of on-disk/parquet existence checks routinely takes
@@ -1957,33 +1877,12 @@ export const api = {
         period,
       })}`,
     ),
-  getLiveMarketSpot: (
-    country: string,
-    index: string,
-    opts?: { max_age_seconds?: number; force_refresh?: boolean },
-  ) =>
-    request<MarketLiveSpotResponse>(
-      `/trade/markets/${encodeURIComponent(country)}/live_spot/${encodeURIComponent(index)}${api._hubStockHistoryQS({
-        max_age_seconds: opts?.max_age_seconds,
-        force_refresh: opts?.force_refresh ? "1" : undefined,
-      })}`,
-    ),
-  getMarketPolicyFactors: (country: string, series: string) =>
-    request<MarketPolicyFactorsResponse>(
-      `/trade/markets/${encodeURIComponent(country)}/factors/${encodeURIComponent(series)}`,
-    ),
-  getMarketFlowOfFunds: (country: string, series: string) =>
-    request<MarketFlowOfFundsResponse>(
-      `/trade/markets/${encodeURIComponent(country)}/flow/${encodeURIComponent(series)}`,
-    ),
   getMarketEconomyFactor: (country: string, series: string) =>
     request<MarketEconomyFactorResponse>(
       `/trade/markets/${encodeURIComponent(country)}/economy/${encodeURIComponent(series)}`,
     ),
   getMarketFactorCoverage: () =>
     request<MarketFactorCoverageResponse>("/trade/markets/factor_coverage"),
-  getMarketSectorIndices: (country: string) =>
-    request<MarketSectorIndicesResponse>(`/trade/markets/${encodeURIComponent(country)}/sector_indices`),
   getMarketBundle: (country: string, period = "3mo") =>
     request<MarketBundleResponse>(
       `/trade/markets/${encodeURIComponent(country)}/bundle${api._hubStockHistoryQS({ period })}`,
@@ -2146,8 +2045,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ticker: params.ticker ?? "NIFTY", ...params }),
     }),
-  getForecastEngineRunStatus: (jobId: string) =>
-    request<ForecastEngineRunJobResponse>(`/trade/index-prediction/forecast-engine-run/${encodeURIComponent(jobId)}`),
   getForecastEngineRuns: (ticker = "NIFTY", recipe?: string) => {
     const params = new URLSearchParams({ ticker });
     if (recipe) params.set("recipe", recipe);
@@ -2169,10 +2066,6 @@ export const api = {
       `/trade/index-prediction/constituent-history?${params}`,
     );
   },
-  getIndexPredictionSnapshots: (ticker = "NIFTY", limit = 10) =>
-    request<IndexPredictionSnapshotsResponse>(
-      `/trade/index-prediction/snapshots?ticker=${encodeURIComponent(ticker)}&limit=${limit}`,
-    ),
   getIndexPredictionBacktest: (
     ticker = "NIFTY",
     refresh = false,
@@ -2220,15 +2113,6 @@ export const api = {
     const params = new URLSearchParams({ ticker, refresh: String(refresh) });
     if (horizonDays != null) params.set("horizon_days", String(horizonDays));
     return request<IndexQuantReviewResponse>(`/trade/index-prediction/quant-review?${params}`);
-  },
-  getIndexPredictionDataAudit: (ticker = "NIFTY", refresh = false, days = 365, horizonDays = 14) => {
-    const params = new URLSearchParams({
-      ticker,
-      refresh: String(refresh),
-      days: String(days),
-      horizon_days: String(horizonDays),
-    });
-    return request<IndexDataAuditResponse>(`/trade/index-prediction/data-audit?${params}`);
   },
   getIndexPredictionCounterfactual: (ticker = "NIFTY", refresh = false, days = 365, horizonDays = 14) => {
     const params = new URLSearchParams({
@@ -2319,10 +2203,6 @@ export const api = {
       { signal },
     ),
   streamExternalPredictionsJob: streamExternalPredictionsJob,
-  listExternalPredictionSources: (ticker = "NIFTY", watchlistedOnly = false) =>
-    request<ExternalPredictionSourcesResponse>(
-      `/trade/index-prediction/external-predictions/sources?ticker=${encodeURIComponent(ticker)}&watchlisted_only=${watchlistedOnly}`,
-    ),
   addExternalPredictionSource: (body: ExternalPredictionSourceRequest, ticker = "NIFTY") =>
     request<ExternalPredictionSourcesResponse>(
       `/trade/index-prediction/external-predictions/sources?ticker=${encodeURIComponent(ticker)}`,
@@ -2344,14 +2224,6 @@ export const api = {
     ),
   getIndexPredictionJobs: () =>
     request<IndexPredictionJobsResponse>("/trade/index-prediction/jobs"),
-  pauseIndexPredictionJob: (jobId: string) =>
-    request<IndexPredictionJobsResponse>(`/trade/index-prediction/jobs/${encodeURIComponent(jobId)}/pause`, {
-      method: "POST",
-    }),
-  resumeIndexPredictionJob: (jobId: string) =>
-    request<IndexPredictionJobsResponse>(`/trade/index-prediction/jobs/${encodeURIComponent(jobId)}/resume`, {
-      method: "POST",
-    }),
   cancelIndexPredictionJob: (jobId: string) =>
     request<IndexPredictionJobsResponse>(`/trade/index-prediction/jobs/${encodeURIComponent(jobId)}/cancel`, {
       method: "POST",
@@ -2472,11 +2344,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  listHubDiscardedNews: (entityId = "NIFTY", limit = 50) =>
-    request<HubNewsDiscardedListResponse>(
-      `/trade/hub/news/discarded?entity_id=${encodeURIComponent(entityId)}&limit=${encodeURIComponent(String(limit))}`,
-    ),
-    drainHubStaging: (entityId = "NIFTY", limit = 20) =>
+  drainHubStaging: (entityId = "NIFTY", limit = 20) =>
     request<HubStagingDrainResponse>(
       `/trade/hub/staging/drain?entity_id=${encodeURIComponent(entityId)}&limit=${encodeURIComponent(String(limit))}`,
       { method: "POST" },
@@ -2560,7 +2428,6 @@ export const api = {
       { method: "POST", body: JSON.stringify({ reason }) },
     ),
   getPendingRetrainProposals: () => request<RetrainProposalsResponse>("/board/retrain-proposals"),
-  getAppliedRetrainProposals: () => request<RetrainProposalsResponse>("/board/retrain-proposals/applied"),
   applyRetrainProposal: (proposalId: string) =>
     request<ApplyRetrainProposalResponse>(
       `/board/retrain-proposals/${encodeURIComponent(proposalId)}/apply`,
@@ -7771,11 +7638,15 @@ export interface ModelVersionTimelineResponse {
 
 export interface PendingWeightProposal {
   id: string;
+  /** "weight" (numeric nudge) or "agent_guidance" (a line added to one agent's guidance); absent on legacy rows = weight. */
+  kind?: "weight" | "agent_guidance";
+  agent_id?: string;
+  guidance?: string;
   weight_id: string;
   created_at: string;
   status: string;
-  current_value: number;
-  proposed_value: number;
+  current_value: number | null;
+  proposed_value: number | null;
   rationale: string;
   source_run_id: string | null;
   source_metrics: Record<string, number>;

@@ -25,7 +25,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 const mocked = api as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
 function status(hub: Record<string, unknown> = {}) {
-  return { status: "ok", hub: { generated_at: "2026-10-13T00:00:00Z", gates: { hub_ready: true }, ...hub } };
+  return { status: "ok", hub: { generated_at: "2026-10-13T00:00:00Z", ...hub } };
 }
 
 beforeEach(() => {

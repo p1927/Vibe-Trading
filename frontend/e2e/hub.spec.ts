@@ -15,8 +15,7 @@ import { trackConsoleErrors } from './helpers/apiMock'
  *   1. Render baseline — page mounts with the real
  *      GET /trade/hub/status?entity_id=NIFTY response. The dev hub
  *      is populated at the time of writing
- *      (staging.queued=98, 12 distinct tickers queued, hub_ready
- *      gates pass), so the page renders the populated StatCards
+ *      (staging.queued=98, 12 distinct tickers queued), so the page renders the populated StatCards
  *      (queue, factor coverage, capture stats). The "News &
  *      references" section defaults to the "List" view.
  *
@@ -50,7 +49,6 @@ type LiveHubStatus = {
   hub: {
     generated_at: string
     entity_id: string
-    gates: { hub_ready: boolean; blocking: unknown[] }
     news_staging?: {
       queued?: number
       by_ticker?: Array<{ ticker: string; queued: number }>
@@ -77,7 +75,7 @@ test.describe('Hub — render baseline (live API)', () => {
     const consoleErrors = trackConsoleErrors(page)
     const live = await fetchLiveHubStatus(request)
     console.log(
-      `[hub] live /trade/hub/status entity_id=${live.hub?.entity_id} staging_queued=${live.hub?.news_staging?.queued} ready=${live.hub?.gates?.hub_ready}`,
+      `[hub] live /trade/hub/status entity_id=${live.hub?.entity_id} staging_queued=${live.hub?.news_staging?.queued}`,
     )
 
     await page.goto('/hub')

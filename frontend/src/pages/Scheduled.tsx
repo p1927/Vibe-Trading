@@ -231,6 +231,24 @@ export function Scheduled() {
     }
   };
 
+  // Master pause: the operator's stop button for every global job (due jobs wait, in-flight ones finish).
+  const pauseExecutor = async () => {
+    const ok = t("scheduled.executorPauseConfirm", {
+      defaultValue: "Pause the scheduler? No global job is dispatched until it is resumed.",
+    });
+    if (!window.confirm(ok)) return;
+    setResumingExecutor(true);
+    try {
+      await api.pauseScheduler();
+      setExecutorError(null);
+      await refresh();
+    } catch (error) {
+      setExecutorError(error instanceof ApiError ? error.message : String(error));
+    } finally {
+      setResumingExecutor(false);
+    }
+  };
+
   // Auto-disarm an armed delete after a few seconds (blur is unreliable on
   // Safari/iOS, where buttons do not take focus on click).
   useEffect(() => {
@@ -590,6 +608,18 @@ export function Scheduled() {
               {t("scheduled.executorResume", { defaultValue: "Resume executor" })}
             </button>
           )}
+        </p>
+      ) : executor ? (
+        <p className="text-right text-xs text-muted-foreground">
+          <button
+            type="button"
+            data-testid="executor-pause"
+            disabled={resumingExecutor}
+            onClick={() => void pauseExecutor()}
+            className="rounded border px-2 py-0.5 hover:bg-muted/50 disabled:opacity-50"
+          >
+            {t("scheduled.executorPause", { defaultValue: "Stop executor" })}
+          </button>
         </p>
       ) : null}
       {registryError && (

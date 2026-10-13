@@ -55,7 +55,6 @@ describe("mutating routes send the Bearer key", () => {
     ["delete agent", () => api.deleteAutonomousAgent("aa_1", { flattenPositions: true })],
     ["pause", () => api.pauseAutonomousAgent("aa_1")],
     ["resume", () => api.resumeAutonomousAgent("aa_1")],
-    ["stop", () => api.stopAutonomousAgent("aa_1")],
     ["commit", () => api.commitAutonomousAgent({ proposal_id: "p", consent_ack: true })],
     ["next simulation", () => api.answerNextSimulation("aa_1", { configuration: "decline" })],
     ["apply weight proposal", () => api.applyWeightProposal("w1")],

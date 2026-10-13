@@ -196,3 +196,25 @@ def test_apply_already_applied_weight_proposal_is_a_client_error(client: TestCli
 
     second = client.post(f"/board/weight-proposals/{proposal_id}/apply")
     assert second.status_code == 400
+
+
+def test_agent_guidance_proposal_is_listed_applied_and_shown_in_learning_activity(client: TestClient) -> None:
+    """D424: the typed `agent_guidance` entry rides the same queue and board routes as a weight
+    proposal; applying it appends one line to that agent's `user_guidance`."""
+    from trade_integrations.autonomous_agents.store import load_agent
+    from trade_integrations.weight_model import propose_agent_guidance
+
+    _make_agent("aa_guid1")
+    proposed = propose_agent_guidance("aa_guid1", "Cite only facts from your context.", rationale="judge")
+    proposal_id = proposed["proposal"]["id"]
+
+    listed = client.get("/board/weight-proposals").json()["proposals"]
+    assert [(p["id"], p["kind"], p["guidance"]) for p in listed] == [
+        (proposal_id, "agent_guidance", "Cite only facts from your context.")
+    ]
+    assert client.post(f"/board/weight-proposals/{proposal_id}/apply").status_code == 200
+    assert [g["text"] for g in load_agent("aa_guid1")["user_guidance"]] == ["Cite only facts from your context."]
+
+    activity = client.get("/board/learning-activity")
+    assert activity.status_code == 200
+    assert "add guidance" in activity.text
