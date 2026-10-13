@@ -71,6 +71,12 @@ function buildCron(parsed: ParsedCron): string {
   }
 }
 
+// `options` plus `current` when it is not one of them: a stored every-20-minutes cron or minute 7 must
+// show its real value, not silently display the first option while the field still holds another.
+export function withValue(options: number[], current: number): number[] {
+  return options.includes(current) ? options : [...options, current].sort((a, b) => a - b);
+}
+
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
@@ -125,7 +131,7 @@ export function RepeatIntervalPicker({
             onChange={(e) => emit({ minuteInterval: parseInt(e.target.value, 10) })}
             className="rounded-md border bg-background px-2 py-1.5 text-[12px] disabled:opacity-50"
           >
-            {MINUTE_OPTIONS.map((n) => (
+            {withValue(MINUTE_OPTIONS, effective.minuteInterval).map((n) => (
               <option key={n} value={n}>
                 every {n} min
               </option>
@@ -153,7 +159,7 @@ export function RepeatIntervalPicker({
               onChange={(e) => emit({ minute: parseInt(e.target.value, 10) })}
               className="rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] disabled:opacity-50"
             >
-              {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => (
+              {withValue([0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55], effective.minute).map((m) => (
                 <option key={m} value={m}>
                   {pad2(m)}m
                 </option>
