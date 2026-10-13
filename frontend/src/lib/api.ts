@@ -1579,16 +1579,6 @@ export const api = {
       method: "POST",
     }),
 
-  listWatches: (params: { sessionId?: string; agentId?: string }) => {
-    const q = new URLSearchParams();
-    if (params.agentId) {
-      q.set("agent_id", params.agentId);
-    } else if (params.sessionId) {
-      q.set("session_id", params.sessionId);
-    }
-    const qs = q.toString();
-    return request<WatchesListResponse>(`/watches${qs ? `?${qs}` : ""}`);
-  },
   getWatchesLive: (params: { sessionId?: string; agentId?: string }) => {
     const q = new URLSearchParams();
     if (params.agentId) {
