@@ -1,10 +1,10 @@
-import type { TFunction } from "i18next";
 import { ChevronDown, ChevronRight, Loader2, Pause, Play, PlayCircle, Square } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { api, type ScheduledRun, type SchedulerRegistryEntry } from "@/lib/api";
 import { LiveLogTail } from "@/components/scheduler/LiveLogTail";
-import { StatusPill, type StatusTone } from "@/components/scheduler/StatusPill";
+import { StatusPill } from "@/components/scheduler/StatusPill";
+import { RunNotes, runStatus } from "@/components/scheduler/runDisplay";
 
 const hintClass = "text-xs text-muted-foreground";
 
@@ -23,21 +23,6 @@ interface JobsPanelProps {
   onResumeAllAutoPaused: () => void;
   streamUrlFor: (run: ScheduledRun) => () => Promise<string>;
   formatNextRun: (run: ScheduledRun) => string;
-}
-
-function jobStatusLabel(t: TFunction, run: ScheduledRun): { label: string; tone: StatusTone } {
-  switch (run.status) {
-    case "completed":
-      return { label: t("scheduled.statusCompleted"), tone: "success" };
-    case "failed":
-      return { label: t("scheduled.statusFailed"), tone: "danger" };
-    case "running":
-      return { label: t("scheduled.statusRunning"), tone: "warning" };
-    case "cancelled":
-      return { label: t("scheduled.statusCancelled"), tone: "neutral" };
-    default:
-      return { label: t("scheduled.statusPending"), tone: "neutral" };
-  }
 }
 
 type JobRow =
@@ -197,7 +182,7 @@ function RunRow({
   formatNextRun: (run: ScheduledRun) => string;
 }) {
   const { t } = useTranslation();
-  const status = jobStatusLabel(t, run);
+  const status = runStatus(t, run);
   const canTrigger = !run.paused && run.status !== "running";
 
   return (
@@ -215,11 +200,7 @@ function RunRow({
           ) : null}
         </div>
         <p className={hintClass}>{formatNextRun(run)}</p>
-        {run.last_error && (
-          <p className="break-words text-xs text-danger">
-            {t("scheduled.lastError", { error: run.last_error })}
-          </p>
-        )}
+        <RunNotes run={run} t={t} />
       </div>
       <div className="flex items-center gap-1.5">
         {run.status === "running" && (

@@ -18,10 +18,10 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "corpus", label: "Corpus Health" },
 ];
 
-function ScoreBadge({ score }: { score: number }) {
+function ScoreBadge({ score }: { score?: number | null }) {
   return (
     <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-      {score.toFixed(2)}
+      {typeof score === "number" && Number.isFinite(score) ? score.toFixed(2) : "—"}
     </span>
   );
 }
@@ -61,6 +61,7 @@ function WikiTab() {
   const [error, setError] = useState<string | null>(null);
   const [openSlug, setOpenSlug] = useState<string | null>(null);
   const [pageContent, setPageContent] = useState<Record<string, string>>({});
+  const [pageNote, setPageNote] = useState<Record<string, string>>({});
   const [pageLoading, setPageLoading] = useState<string | null>(null);
 
   const load = useCallback(async (q: string) => {
@@ -91,9 +92,14 @@ function WikiTab() {
       setPageLoading(slug);
       try {
         const page = await api.getKnowledgeWikiPage(slug);
-        setPageContent((prev) => ({ ...prev, [slug]: page.found ? page.content ?? "" : "Page not found." }));
+        if (page.found) {
+          setPageContent((prev) => ({ ...prev, [slug]: page.content ?? "" }));
+          setPageNote((prev) => ({ ...prev, [slug]: "" }));
+        } else {
+          setPageNote((prev) => ({ ...prev, [slug]: "Page not found (or its front matter is unreadable)." }));
+        }
       } catch (e) {
-        setPageContent((prev) => ({
+        setPageNote((prev) => ({
           ...prev,
           [slug]: e instanceof ApiError ? `Failed to load: ${e.message}` : "Failed to load.",
         }));
@@ -138,7 +144,7 @@ function WikiTab() {
                   </div>
                 ) : (
                   <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">
-                    {pageContent[entry.slug]}
+                    {pageNote[entry.slug] || pageContent[entry.slug]}
                   </pre>
                 )}
                 {entry.sources?.length ? (
@@ -331,7 +337,7 @@ function NewsDerivedTab() {
 }
 
 function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes)) return "0 B";
+  if (!Number.isFinite(bytes)) return "—";
   const units = ["B", "KB", "MB", "GB"];
   let value = Math.abs(bytes);
   let unitIndex = 0;

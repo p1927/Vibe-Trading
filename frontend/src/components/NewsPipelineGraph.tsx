@@ -178,6 +178,8 @@ export function NewsPipelineGraph({ entityId = "NIFTY" }: { entityId?: string })
       setSelected(node);
       setLoadingItems(true);
       setError(null);
+      // A failed load must not leave the previous node's items under this node's label.
+      setItems([]);
       try {
         const res = await api.listHubNewsPipelineTraceItems({
           entityId,

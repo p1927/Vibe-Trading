@@ -62,4 +62,13 @@ describe("NewsPipelineStatusStrip", () => {
     const { container } = render(<NewsPipelineStatusStrip status={undefined} />);
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("reads an unreported embedding flag as unknown, not unavailable", () => {
+    render(
+      <NewsPipelineStatusStrip
+        status={{ ...SUMMARY, llm_wiki: { ...SUMMARY.llm_wiki, embedding_available: undefined } }}
+      />,
+    );
+    expect(screen.getByTestId("news-pipeline-status-embed")).toHaveTextContent("unknown");
+  });
 });

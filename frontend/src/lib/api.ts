@@ -2632,6 +2632,11 @@ export interface ScheduledRun {
   // from config.job_type ("prediction", "options", "trade_data", "hub",
   // "autonomous_agent", "recording", or "general" for an ad-hoc job).
   section: string;
+  // The handler's compact result of the latest run (status/had_errors/reason/error ...), present for
+  // every job type; null until a run has finished. How a `degraded`/`partial` run shows up.
+  last_result_summary: Record<string, unknown> | null;
+  // Why a due, unpaused job will never dispatch on this process (e.g. a collection job off release).
+  dispatch_blocked_reason: string | null;
 }
 
 // Plain-English description + best-effort live preview for one job, fetched
@@ -5965,6 +5970,8 @@ export interface HubStatusPayload {
     user_message?: string;
     llm_wiki_ok?: boolean;
     llm_wiki_required?: boolean;
+    /** D393: LLM-Wiki is down, so only its dependent steps wait; ingest/verify/stories keep running. */
+    wiki_deferred?: boolean;
     minimax_configured?: boolean;
     queued?: number;
     by_ticker?: Array<{ ticker: string; queued: number }>;

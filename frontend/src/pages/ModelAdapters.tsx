@@ -19,6 +19,20 @@ type Draft = {
   max_concurrent: number;
 };
 
+// MiniMax's request rate is one shared account pace (minimax_queue.account_rpm), not this per-adapter
+// field: the registry ignores an rpm override for it, so the field is shown read-only instead of
+// pretending to be editable.
+const SHARED_PACE_PROVIDERS = new Set(["minimax"]);
+
+/** Why this draft cannot be saved, or null. The backend persists whatever it is sent, and one bad
+ * value (0 rpm, a fraction for priority) would break every adapter lookup until hand-edited. */
+function draftProblem(draft: Draft, sharedPace: boolean): string | null {
+  if (!Number.isInteger(draft.priority)) return "Priority must be a whole number.";
+  if (!sharedPace && !(Number.isInteger(draft.rpm) && draft.rpm >= 1)) return "Requests / min must be a whole number of at least 1.";
+  if (!(Number.isInteger(draft.max_concurrent) && draft.max_concurrent >= 1)) return "Max concurrent must be a whole number of at least 1.";
+  return null;
+}
+
 function draftFromAdapter(adapter: ModelAdapter): Draft {
   return {
     priority: adapter.priority,
@@ -82,7 +96,9 @@ export function ModelAdapters() {
       const res = await api.updateModelAdapter(adapter.adapter_id, {
         priority: draft.priority,
         fallback_adapter_id: draft.fallback_adapter_id || null,
-        rate_limit: { rpm: draft.rpm, max_concurrent: draft.max_concurrent },
+        rate_limit: SHARED_PACE_PROVIDERS.has(adapter.provider)
+          ? { max_concurrent: draft.max_concurrent }
+          : { rpm: draft.rpm, max_concurrent: draft.max_concurrent },
       });
       const list = res.adapters ?? [];
       setAdapters(list);
@@ -129,10 +145,17 @@ export function ModelAdapters() {
         return (
           <div key={kind} className="space-y-3">
             <h2 className="text-sm font-semibold capitalize text-muted-foreground">{kind} adapters</h2>
+            {kind === "generative" && !list.some((a) => a.enabled) && (
+              <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+                No generative adapter is enabled, so news distillation pauses unless the rule fallback is on.
+              </p>
+            )}
             <div className="grid gap-3 sm:grid-cols-2">
               {list.map((adapter) => {
                 const draft = drafts[adapter.adapter_id] ?? draftFromAdapter(adapter);
                 const isBusy = busy === adapter.adapter_id;
+                const sharedPace = SHARED_PACE_PROVIDERS.has(adapter.provider);
+                const problem = draftProblem(draft, sharedPace);
                 return (
                   <StatCard key={adapter.adapter_id} title={adapter.adapter_id}>
                     <div className="space-y-3">
@@ -160,6 +183,7 @@ export function ModelAdapters() {
                           <span className="text-muted-foreground">Priority</span>
                           <input
                             type="number"
+                            step={1}
                             value={draft.priority}
                             onChange={(e) => patchDraft(adapter.adapter_id, { priority: Number(e.target.value) })}
                             className="w-full rounded border border-border bg-background px-2 py-1 text-sm"
@@ -186,6 +210,9 @@ export function ModelAdapters() {
                           <span className="text-muted-foreground">Requests / min</span>
                           <input
                             type="number"
+                            min={1}
+                            disabled={sharedPace}
+                            title={sharedPace ? "Set by the shared MiniMax account pace, not per adapter." : undefined}
                             value={draft.rpm}
                             onChange={(e) => patchDraft(adapter.adapter_id, { rpm: Number(e.target.value) })}
                             className="w-full rounded border border-border bg-background px-2 py-1 text-sm"
@@ -195,6 +222,7 @@ export function ModelAdapters() {
                           <span className="text-muted-foreground">Max concurrent</span>
                           <input
                             type="number"
+                            min={1}
                             value={draft.max_concurrent}
                             onChange={(e) => patchDraft(adapter.adapter_id, { max_concurrent: Number(e.target.value) })}
                             className="w-full rounded border border-border bg-background px-2 py-1 text-sm"
@@ -202,9 +230,19 @@ export function ModelAdapters() {
                         </label>
                       </div>
 
+                      {sharedPace && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Requests / min is the shared MiniMax account pace; it is not set here.
+                        </p>
+                      )}
+                      {problem && (
+                        <p role="alert" className="text-[11px] text-red-700 dark:text-red-300">
+                          {problem}
+                        </p>
+                      )}
                       <button
                         onClick={() => saveDraft(adapter)}
-                        disabled={isBusy}
+                        disabled={isBusy || problem !== null}
                         className="w-full rounded-lg border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
                       >
                         {isBusy ? "Saving…" : "Save"}

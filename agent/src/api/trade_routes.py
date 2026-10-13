@@ -2002,7 +2002,13 @@ def patch_model_adapter(
         ensure_trade_stack_path()
         from trade_integrations.dataflows.model_adapters import list_adapters, update_adapter
 
-        patch = {k: v for k, v in body.model_dump().items() if v is not None}
+        # exclude_unset, not "drop every None": an explicit fallback_adapter_id=null is how the UI
+        # clears a fallback ("(none)"); dropping it made that selection a silent no-op.
+        patch = {
+            k: v
+            for k, v in body.model_dump(exclude_unset=True).items()
+            if v is not None or k == "fallback_adapter_id"
+        }
         update_adapter(adapter_id, patch)
         adapters = [_model_adapter_to_dict(spec) for spec in list_adapters()]
         return ModelAdaptersResponse(status="ok", adapters=adapters)

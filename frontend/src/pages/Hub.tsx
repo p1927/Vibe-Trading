@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { Database, ExternalLink, Loader2, Newspaper, RefreshCw, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type HubDiscardedNewsItem, type HubNewsItem, type HubNewsPipelineConfig, type HubStatusQuery, type HubStatusResponse, type ObservabilitySummaryResponse } from "@/lib/api";
+import { safeGet, safeSet } from "@/lib/storage";
 import { RepeatIntervalPicker } from "@/components/RepeatIntervalPicker";
 import { ObservabilityIssuesPanel } from "@/components/ObservabilityIssuesPanel";
 import { NewsPipelineGraph } from "@/components/NewsPipelineGraph";
@@ -10,6 +11,12 @@ import { FactorRegistryGaps } from "@/components/news/FactorRegistryGaps";
 import { NewsPipelineStatusStrip } from "@/components/news/NewsPipelineStatusStrip";
 
 type NewsFilter = "all" | "staging" | "distilled" | "discarded";
+
+/** A number field's parsed value, or `fallback` only when the text is not a number (so 0 is a real 0). */
+function numberOr(raw: string, fallback: number, parse: (text: string) => number): number {
+  const n = parse(raw);
+  return Number.isNaN(n) ? fallback : n;
+}
 
 function matchesNewsProvenance(provenance: string | undefined, filter: NewsFilter): boolean {
   if (filter === "all") return true;
@@ -616,15 +623,10 @@ export function Hub() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [secondaryError, setSecondaryError] = useState<string | null>(null);
   const [newsFilter, setNewsFilter] = useState<NewsFilter>("all");
   const [showQueue, setShowQueue] = useState(false);
-  const [scheduleExpanded, setScheduleExpanded] = useState(() => {
-    try {
-      return localStorage.getItem("vibe-hub-schedule-expanded") === "1";
-    } catch {
-      return false;
-    }
-  });
+  const [scheduleExpanded, setScheduleExpanded] = useState(() => safeGet("vibe-hub-schedule-expanded") === "1");
   const [newsView, setNewsView] = useState<"list" | "pipeline" | "events">("list");
   const [newsSection, setNewsSection] = useState<"ranked" | "all">("ranked");
   const [searchInput, setSearchInput] = useState("");
@@ -652,16 +654,27 @@ export function Hub() {
   const load = useCallback(async () => {
     setError(null);
     try {
+      // The config and the issue count are secondary reads: their failure must not blank the page,
+      // but it must show (a missing schedule card used to look like "no schedule exists").
+      const secondaryErrors: string[] = [];
+      const secondary = <T,>(label: string, call: Promise<T>) =>
+        call.catch((err: unknown) => {
+          secondaryErrors.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
+          return null;
+        });
       const [res, cfgRes, obsRes] = await Promise.all([
         api.getHubStatus("NIFTY", newsQuery),
-        api.getHubNewsPipelineConfig().catch(() => null),
-        api.getObservabilitySummary().catch(() => null),
+        secondary("News pipeline schedule", api.getHubNewsPipelineConfig()),
+        secondary("Open issue count", api.getObservabilitySummary()),
       ]);
       setData(res);
       setObsSummary(obsRes);
-      if (cfgRes?.config) {
-        setPipelineConfig(cfgRes.config);
-        setPipelineDraft(cfgRes.config);
+      setSecondaryError(secondaryErrors.length ? `Could not load ${secondaryErrors.join("; ")}` : null);
+      // Never clobber an unsaved draft with the 30s poll.
+      const cfg = cfgRes?.config;
+      if (cfg) {
+        setPipelineConfig(cfg);
+        setPipelineDraft((draft) => draft ?? cfg);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load hub status");
@@ -689,11 +702,7 @@ export function Hub() {
   }, [searchQuery, newsFilter, newsSection, showQueue]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem("vibe-hub-schedule-expanded", scheduleExpanded ? "1" : "0");
-    } catch {
-      // ignore storage failures (private browsing, etc.)
-    }
+    safeSet("vibe-hub-schedule-expanded", scheduleExpanded ? "1" : "0");
   }, [scheduleExpanded]);
 
   const hub = data?.hub;
@@ -776,15 +785,12 @@ export function Hub() {
     setBusy(discardSimilar ? "discard-similar" : "discard");
     setError(null);
     try {
-      const res = await api.discardHubNews({
+      await api.discardHubNews({
         entity_id: "NIFTY",
         item_id: itemId,
         source_kind: resolveSourceKind(item),
         discard_similar: discardSimilar,
       });
-      if (discardSimilar && res.similar_preview?.similar_count != null) {
-        setError(null);
-      }
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Discard failed");
@@ -830,7 +836,7 @@ export function Hub() {
     try {
       const res = await api.runHubNewsIngest({ mode, ticker: "NIFTY" });
       if (res.status === "paused") {
-        setError(res.message || "News ingest is paused — check LLM-Wiki and MiniMax configuration.");
+        setError(res.message || "News ingest is paused — check the MiniMax/NVIDIA model adapter configuration.");
       }
       await load();
     } catch (err) {
@@ -847,7 +853,7 @@ export function Hub() {
     try {
       const res = await api.runHubNewsMaintenance("NIFTY", 365);
       if (res.status === "paused") {
-        setError(res.message || "Maintainer paused — check migration, LLM-Wiki, or MiniMax configuration.");
+        setError(res.message || "Maintainer paused — check the migration state or the MiniMax/NVIDIA model adapter configuration.");
       } else if (res.summary?.had_errors) {
         setError("Maintainer finished with errors — see stage summary below.");
       }
@@ -954,6 +960,11 @@ export function Hub() {
       </div>
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {secondaryError ? (
+        <p role="alert" className="text-sm text-destructive">
+          {secondaryError}
+        </p>
+      ) : null}
       {maintainerSummary ? (
         <p className="text-sm text-muted-foreground">{maintainerSummary}</p>
       ) : null}
@@ -982,14 +993,27 @@ export function Hub() {
         >
           <p className="font-medium">News distillation paused</p>
           <p className="mt-1 text-[13px] leading-relaxed opacity-90">
-            {staging.pause_reason === "llm_wiki_unavailable"
-              ? staging.user_message ||
-                "LLM-Wiki is not running — start LLM Wiki.app and set LLM_WIKI_PROJECT_ID in .env."
-              : staging.pause_reason ||
-                "Configure MINIMAX_API_KEY and MINIMAX_BASE_URL in .env, then use Drain staging to process queued headlines."}
+            {staging.pause_reason ||
+              "Configure MINIMAX_API_KEY and MINIMAX_BASE_URL in .env, then use Drain staging to process queued headlines."}
           </p>
           <p className="mt-2 text-[12px] tabular-nums opacity-80">
             {newsInventory?.pending_count ?? staging.queued ?? 0} headline(s) waiting in staging queue.
+          </p>
+        </div>
+      ) : null}
+
+      {staging?.wiki_deferred ? (
+        <div
+          role="status"
+          data-testid="wiki-deferred-banner"
+          className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100"
+        >
+          <p className="font-medium">LLM-Wiki is not running</p>
+          <p className="mt-1 text-[13px] leading-relaxed opacity-90">
+            {staging.user_message ||
+              "Start LLM Wiki.app and set LLM_WIKI_PROJECT_ID in .env."}{" "}
+            Only the wiki-dependent steps (search dedup, the wiki rescan) wait; news ingest, verification and story
+            creation keep running.
           </p>
         </div>
       ) : null}
@@ -1071,7 +1095,7 @@ export function Hub() {
                 min={20}
                 max={500}
                 value={pipelineDraft.entity_batch_size ?? 200}
-                onChange={(e) => patchDraft({ entity_batch_size: parseInt(e.target.value, 10) || 200 })}
+                onChange={(e) => patchDraft({ entity_batch_size: numberOr(e.target.value, 200, (v) => parseInt(v, 10)) })}
                 className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
               />
             </label>
@@ -1083,7 +1107,7 @@ export function Hub() {
                 max={0.99}
                 step={0.01}
                 value={pipelineDraft.cluster_threshold ?? 0.8}
-                onChange={(e) => patchDraft({ cluster_threshold: parseFloat(e.target.value) || 0.8 })}
+                onChange={(e) => patchDraft({ cluster_threshold: numberOr(e.target.value, 0.8, parseFloat) })}
                 className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
               />
             </label>
@@ -1123,7 +1147,7 @@ export function Hub() {
                 step={0.05}
                 value={pipelineDraft.relevance_min_confidence ?? 0.55}
                 onChange={(e) =>
-                  patchDraft({ relevance_min_confidence: parseFloat(e.target.value) || 0.55 })
+                  patchDraft({ relevance_min_confidence: numberOr(e.target.value, 0.55, parseFloat) })
                 }
                 className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px]"
               />
@@ -1144,7 +1168,7 @@ export function Hub() {
                 min={1}
                 max={20}
                 value={pipelineDraft.wiki_search_top_k ?? 5}
-                onChange={(e) => patchDraft({ wiki_search_top_k: parseInt(e.target.value, 10) || 5 })}
+                onChange={(e) => patchDraft({ wiki_search_top_k: numberOr(e.target.value, 5, (v) => parseInt(v, 10)) })}
                 disabled={!(pipelineDraft.wiki_search_enabled ?? true)}
                 className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] disabled:opacity-50"
               />
@@ -1157,7 +1181,7 @@ export function Hub() {
                 max={500}
                 value={pipelineDraft.wiki_search_max_per_pass ?? 150}
                 onChange={(e) =>
-                  patchDraft({ wiki_search_max_per_pass: parseInt(e.target.value, 10) || 150 })
+                  patchDraft({ wiki_search_max_per_pass: numberOr(e.target.value, 150, (v) => parseInt(v, 10)) })
                 }
                 disabled={!(pipelineDraft.wiki_search_enabled ?? true)}
                 className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] disabled:opacity-50"
@@ -1172,7 +1196,7 @@ export function Hub() {
                 step={0.01}
                 value={pipelineDraft.wiki_search_min_score ?? 0.75}
                 onChange={(e) =>
-                  patchDraft({ wiki_search_min_score: parseFloat(e.target.value) || 0.75 })
+                  patchDraft({ wiki_search_min_score: numberOr(e.target.value, 0.75, parseFloat) })
                 }
                 disabled={!(pipelineDraft.wiki_search_enabled ?? true)}
                 className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-[12px] disabled:opacity-50"
@@ -1279,19 +1303,19 @@ export function Hub() {
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <Newspaper className="h-4 w-4 text-muted-foreground" />
             <span className="font-semibold tabular-nums text-amber-700 dark:text-amber-300">
-              {newsInventory?.pending_count ?? staging?.queued ?? 0} pending in queue
+              {newsInventory?.pending_count ?? staging?.queued ?? "—"} pending in queue
             </span>
             <span className="text-muted-foreground">·</span>
             <span className="tabular-nums">
-              {newsInventory?.staging_in_union ?? 0} staging live
+              {newsInventory?.staging_in_union ?? "—"} staging live
             </span>
             <span className="text-muted-foreground">·</span>
             <span className="tabular-nums">
-              {newsInventory?.distilled_in_union ?? 0} distilled
+              {newsInventory?.distilled_in_union ?? "—"} distilled
             </span>
             <span className="text-muted-foreground">·</span>
             <span className="tabular-nums text-red-700 dark:text-red-300">
-              {newsInventory?.discarded_count ?? 0} discarded (30d)
+              {newsInventory?.discarded_count ?? "—"} discarded (30d)
             </span>
           </div>
           {newsView === "list" ? (
@@ -1423,10 +1447,11 @@ export function Hub() {
           <div className="space-y-1 text-sm">
             <p>
               <span className="text-muted-foreground">Queued:</span>{" "}
-              <span className="font-semibold tabular-nums">{staging?.queued ?? 0}</span>
+              <span className="font-semibold tabular-nums">{staging?.queued ?? "—"}</span>
             </p>
             <p className="text-[11px] text-muted-foreground">
-              Entity pipeline: {staging?.entity_pipeline_enabled ? "on" : "off"}
+              Entity pipeline:{" "}
+              {staging?.entity_pipeline_enabled === undefined ? "unknown" : staging.entity_pipeline_enabled ? "on" : "off"}
             </p>
             {staging?.worker_last ? (
               <p className="text-[11px] text-muted-foreground">
@@ -1514,7 +1539,9 @@ export function Hub() {
                 <p className="text-lg font-semibold tabular-nums">{constituentCache.total}</p>
               </div>
             </div>
-          ) : null}
+          ) : (
+            <p className="text-sm text-muted-foreground">Not reported by the hub</p>
+          )}
         </StatCard>
 
         <StatCard title="Capture registry">
@@ -1523,7 +1550,7 @@ export function Hub() {
             <div className="space-y-1 text-sm">
               <p>
                 <span className="text-muted-foreground">Enabled:</span>{" "}
-                {capture?.stats?.capture_enabled === false ? "no" : "yes"}
+                {capture?.stats?.capture_enabled === undefined ? "unknown" : capture.stats.capture_enabled ? "yes" : "no"}
               </p>
               {capture?.stats?.channel ? (
                 <p className="text-[11px] text-muted-foreground">
@@ -1551,7 +1578,9 @@ export function Hub() {
                   : ""}
               </p>
             </div>
-          ) : null}
+          ) : (
+            <p className="text-sm text-muted-foreground">Not reported by the hub</p>
+          )}
         </StatCard>
 
         <StatCard title="Source health">
