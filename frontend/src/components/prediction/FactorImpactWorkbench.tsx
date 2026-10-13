@@ -188,6 +188,8 @@ export function FactorImpactWorkbench({
       });
       if (res.status === "error" || res.status === "not_found") {
         setSimError(res.message || "Simulation failed");
+        setSimulation(null); // the previous what-if no longer matches the controls: not drawn on the replay either
+        onSimulationChange?.(null);
         return;
       }
       if (res.simulation) {
@@ -196,6 +198,8 @@ export function FactorImpactWorkbench({
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Simulation request failed";
+      setSimulation(null);
+      onSimulationChange?.(null);
       if (err instanceof ApiError && (err.status === 405 || err.status === 404)) {
         setSimError(`${msg} — restart trade API on port 8899.`);
       } else {

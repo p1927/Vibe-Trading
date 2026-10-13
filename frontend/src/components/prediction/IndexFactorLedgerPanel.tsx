@@ -61,7 +61,7 @@ export function IndexFactorLedgerPanel({ daily, intraday = [], horizonDays = 14 
                 className="border-b border-border/40"
               >
                 <td className="py-1.5 pr-2 tabular-nums whitespace-nowrap">
-                  {row.predicted_at.slice(0, 16).replace("T", " ")}
+                  {row.issue_day ?? "—"} {row.predicted_at.slice(11, 16)} UTC
                 </td>
                 <td className="py-1.5 pr-2 tabular-nums">{fmtLevel(row.spot_at_prediction)}</td>
                 <td className="py-1.5 pr-2 tabular-nums">{fmtLevel(row.implied_level)}</td>

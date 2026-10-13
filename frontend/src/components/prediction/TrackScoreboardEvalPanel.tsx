@@ -5,10 +5,8 @@ import {
   fmtHitRate,
   fmtNum,
   fmtPct,
+  scoreboardIds,
 } from "@/lib/trackScoreboardUtils";
-import {
-  CANONICAL_TRACK_IDS,
-} from "@/lib/trackScoreboardReplayUtils";
 import { trackDisplayLabel } from "@/lib/forecastReplay/sourceStyle";
 import { cn } from "@/lib/utils";
 
@@ -30,19 +28,15 @@ const TRACK_NOTES: Record<string, string> = {
 };
 
 export function TrackScoreboardEvalPanel({ report, horizonDays }: Props) {
-  const trackIds = useMemo(
-    () =>
-      CANONICAL_TRACK_IDS.filter((tid) =>
-        (report.daily_evaluations ?? []).some((r) => r.track_id === tid),
-      ),
-    [report.daily_evaluations],
-  );
+  const trackIds = useMemo(() => {
+    const ids = scoreboardIds(report);
+    const withRows = new Set((report.daily_evaluations ?? []).map((r) => r.track_id));
+    return [...ids.live, ...ids.experimental].filter((tid) => withRows.has(tid));
+  }, [report]);
 
-  const [selectedTrackId, setSelectedTrackId] = useState<string>(trackIds[0] ?? "quant_ridge");
+  const [selectedTrackId, setSelectedTrackId] = useState<string>(trackIds[0] ?? "");
 
-  const activeTrackId = trackIds.includes(selectedTrackId as (typeof trackIds)[number])
-    ? selectedTrackId
-    : trackIds[0] ?? "";
+  const activeTrackId = trackIds.includes(selectedTrackId) ? selectedTrackId : trackIds[0] ?? "";
   const summaryRow = report.tracks?.[activeTrackId];
   const stats = useMemo(() => {
     const fromDaily = computeTrackEvalStats(report.daily_evaluations, activeTrackId);

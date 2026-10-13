@@ -4013,9 +4013,18 @@ export interface PlanPrediction {
   expected_return_pct?: number | null;
   bottom_up_return_pct?: number | null;
   macro_delta_pct?: number | null;
-  range?: { low?: number; high?: number; confidence?: number } | null;
+  /** p10/p90 = expected ± `half_width_pct` (D401: the 80% split-conformal quantile of the walk-forward OOS error, or the
+   * documented prior when fewer than 20 evaluations: `band_source` "walk_forward_oos" | "prior"). Both are absent on an
+   * artifact written before D401. `confidence` is the ridge R² clamped to 0.35-0.95, NOT the band's coverage. */
+  range?: { low?: number; high?: number; confidence?: number; half_width_pct?: number; band_source?: "walk_forward_oos" | "prior" | string } | null;
+  /** Model features the live snapshot lacked, read at their training mean (D410); absent on an older artifact. */
+  model_missing_features?: string[];
+  /** `direction` is "debate" only when the debate stated a return or a confidence (it moved the headline), else "quant". */
+  provenance?: { direction?: "debate" | "quant" | string; debate_as_of?: string | null } & Record<string, unknown>;
+  /** The agent debate's own parsed figures: null = the debate did not state one (the merge then uses the quant value). */
+  debate?: { expected_return_pct?: number | null; direction_confidence?: number | null; view?: string | null } | null;
   /** Real day-by-day p10/p50/p90 NIFTY level band, GBM-calibrated from `range`'s own
-   * ±1 MAE terminal endpoints — see `compute_daily_range_band` in predictor.py. One row
+   * ±half-width terminal endpoints — see `compute_daily_range_band` in predictor.py. One row
    * per trading day 0..horizon.days; absent on artifacts predating this field. */
   daily_range_band?: Array<{ days_ahead: number; p10: number; p50: number; p90: number }>;
   /** Real multi-horizon forecast fan (`nifty_forecast_fan.forecast_nifty_fan()`,
@@ -5217,7 +5226,10 @@ export interface IndexPredictionRefreshResponse {
 }
 
 export interface IndexPredictionHistoryRow {
+  /** UTC instant of the run. Never shown as a date: the page shows `issue_day`. */
   predicted_at: string;
+  /** The IST issue day the server buckets this run by (the replay's and the accuracy's one key). */
+  issue_day?: string;
   horizon_days: number;
   spot_at_prediction: number;
   expected_return_pct: number;
@@ -6374,8 +6386,22 @@ export interface IndexTrackPromotionVerdict {
   mae_passes?: boolean;
 }
 
+/** Bootstrap bar of one raw-promoted combiner (`promotion._bootstrap_margin_ci`, Bonferroni-corrected for the family). */
+export interface IndexTrackBootstrapCi {
+  passes?: boolean;
+  reason?: string;
+  lower_bound_pp?: number;
+  margin_pp?: number;
+  n_pairs?: number;
+  min_pairs?: number;
+  family_size?: number;
+}
+
 export interface IndexTrackPromotion {
   eval_count?: number;
+  /** Combiners that passed this run's thresholds; `promoted_combiners` is the subset that also passed stability + the bootstrap bar. */
+  raw_promoted_combiners?: string[];
+  bootstrap_ci?: Record<string, IndexTrackBootstrapCi>;
   quant_direction_hit_rate?: number;
   quant_mae_pct?: number | null;
   headline_direction_bootstrap_ci?: IndexDirectionBootstrapCI | null;
@@ -6390,8 +6416,10 @@ export interface IndexTrackLiveSnapshot {
   spot?: number | null;
   forecast_tracks?: Record<
     string,
-    { expected_return_pct?: number; view?: string; available?: boolean }
+    { expected_return_pct?: number; view?: string; available?: boolean; provenance?: { reason?: string } & Record<string, unknown> }
   >;
+  /** Set when the live forecast lab failed: the snapshot's `forecast_tracks` is then empty. */
+  forecast_lab_error?: string | null;
   cause_stress_index?: number | null;
   cause_stress_label?: string | null;
   active_combiner?: string | null;
@@ -6435,6 +6463,8 @@ export interface IndexTrackScoreboardReport {
       label?: string;
       implementation?: string;
       backtest_eligible?: boolean;
+      /** Gated ML / fusion tracks; the scoreboard lists them apart from the live tracks. */
+      experimental?: boolean;
       metrics?: IndexTrackMetrics;
     }
   >;

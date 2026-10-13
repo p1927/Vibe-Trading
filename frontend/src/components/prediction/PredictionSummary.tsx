@@ -20,6 +20,13 @@ function viewTone(view: string | null | undefined): string {
   return "border-muted bg-muted/40 text-muted-foreground";
 }
 
+/** The band's provenance as the server recorded it (D401); an artifact written before D401 has none. */
+export function bandSourceLabel(range: { half_width_pct?: number; band_source?: string } | null | undefined): string {
+  if (range?.band_source === "walk_forward_oos") return "80% conformal, walk-forward OOS error";
+  if (range?.band_source === "prior") return "prior width, not measured (under 20 OOS evaluations)";
+  return "width not recorded (run predates D401): run analysis again";
+}
+
 interface CardProps {
   label: string;
   value: string;
@@ -56,7 +63,7 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
   const accuracy = artifact.accuracy || {};
   const regime = artifact.regime || {};
   const view = String(pred.view || "neutral");
-  const rangeConf = range.confidence ?? pred.confidence;
+  const halfWidth = range.half_width_pct;
   const directionConf = pred.direction_confidence;
   const modelDirectionScore = pred.direction_model_score ?? pred.direction_confidence_raw;
   const hitRate =
@@ -159,11 +166,27 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
           {fmtPct(pred.expected_return_pct)}. Macro attribution reflects the reconciled headline.
         </div>
       ) : null}
-      {pred.debate_merged ? (
-        <div className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-[11px] text-violet-950 dark:text-violet-200">
-          Headline includes agent debate blend (60% debate · 40% quant). Quant-only return was{" "}
+      {pred.debate_merged && pred.debate?.expected_return_pct != null ? (
+        <div className="rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-[11px] text-violet-950 dark:text-violet-200" data-testid="debate-blend">
+          Headline includes agent debate blend (60% debate · 40% quant). The debate{" "}
+          {pred.provenance?.debate_as_of ? `of ${String(pred.provenance.debate_as_of).slice(0, 10)} ` : ""}stated{" "}
+          {fmtPct(pred.debate.expected_return_pct)}
+          {pred.debate.view ? ` (view ${pred.debate.view})` : ""}. Quant-only return was{" "}
           {fmtPct(pred.quant?.expected_return_pct)}; displayed {fmtPct(pred.expected_return_pct)}. Equation
           card shows quant macro coefficients.
+        </div>
+      ) : pred.debate_merged ? (
+        <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground" data-testid="debate-no-figure">
+          An agent debate was read{pred.provenance?.debate_as_of ? ` (${String(pred.provenance.debate_as_of).slice(0, 10)})` : ""}
+          {pred.debate?.view ? `, view ${pred.debate.view}` : ""}, but it stated no return figure: the headline return is the quant value
+          {pred.provenance?.direction === "debate" ? " (its confidence blends into the direction)" : ""}.
+        </div>
+      ) : null}
+      {pred.model_missing_features?.length ? (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200" data-testid="missing-features">
+          {pred.model_missing_features.length} model input{pred.model_missing_features.length === 1 ? " was" : "s were"} missing from this
+          snapshot and read at the training mean (no effect from them):{" "}
+          {pred.model_missing_features.join(", ")}.
         </div>
       ) : null}
       {lowMomentum ? (
@@ -229,7 +252,7 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
       <StatCard
         label="Expected range"
         value={`${fmtNum(range.low)} – ${fmtNum(range.high)}`}
-        sub="Index points at horizon"
+        sub={`Index points at horizon · ${bandSourceLabel(range)}`}
       />
       <StatCard
         label="Model direction score"
@@ -254,12 +277,8 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
         }
       />
       <StatCard
-        label="Range band (MAE)"
-        value={
-          rangeConf != null && Number.isFinite(Number(rangeConf))
-            ? `${Math.round(Number(rangeConf) * (Number(rangeConf) <= 1 ? 100 : 1))}%`
-            : "—"
-        }
+        label="Range band (± half-width)"
+        value={halfWidth != null && Number.isFinite(Number(halfWidth)) ? `±${Number(halfWidth).toFixed(2)}%` : "—"}
         sub={
           pred.bottom_up_return_pct != null || pred.macro_delta_pct != null
             ? `Bottom-up ${fmtPct(pred.bottom_up_return_pct)} · Macro ${fmtPct(pred.macro_delta_pct)}`

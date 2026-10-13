@@ -1,6 +1,6 @@
 // Pure: the replay bundle's records as one point per issue day (target level, band, expected vs realised return).
 // The history charts of the track-record section read this, so the headline history has one read path (the replay).
-import { pointAt } from "./view";
+import { actualReturnPct, pointAt } from "./view";
 import type { ReplayRecord } from "./types";
 
 export interface IssueTimelinePoint {
@@ -38,6 +38,6 @@ export function issueTimeline(records: ReplayRecord[], horizon: number): IssueTi
       low: p.p10_level,
       high: p.p90_level,
       expectedReturnPct: (p.p50_level / r.spot_at_issue - 1) * 100,
-      actualReturnPct: p.matured && p.actual_level != null ? (p.actual_level / r.spot_at_issue - 1) * 100 : null,
+      actualReturnPct: actualReturnPct(r, p),
     }));
 }

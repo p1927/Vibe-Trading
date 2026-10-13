@@ -1,12 +1,7 @@
 import { Loader2, PanelRight, Play } from "lucide-react";
 import { useState } from "react";
 import type { IndexTrackScoreboardReport } from "@/lib/api";
-import { fmtHitRate, fmtPct } from "@/lib/trackScoreboardUtils";
-import {
-  BACKTEST_COMBINER_IDS,
-  CANONICAL_TRACK_IDS,
-  EXPERIMENTAL_TRACK_IDS,
-} from "@/lib/trackScoreboardReplayUtils";
+import { fmtHitRate, fmtPct, promotionCell, scoreboardIds } from "@/lib/trackScoreboardUtils";
 import { trackDisplayLabel } from "@/lib/forecastReplay/sourceStyle";
 import { TrackScoreboardChart } from "@/components/charts/TrackScoreboardChart";
 import { TrackScoreboardEvalPanel } from "@/components/prediction/TrackScoreboardEvalPanel";
@@ -121,16 +116,19 @@ export function TrackScoreboardPanel({
     );
   }
 
-  const tracks = CANONICAL_TRACK_IDS.map((tid) => [tid, report.tracks?.[tid] ?? { track_id: tid, eval_count: 0 }] as const);
-  const experimentalTracks = EXPERIMENTAL_TRACK_IDS.map(
+  const ids = scoreboardIds(report);
+  const liveTrackIds = ids.live;
+  const tracks = ids.live.map((tid) => [tid, report.tracks?.[tid] ?? { track_id: tid, eval_count: 0 }] as const);
+  const experimentalTracks = ids.experimental.map(
     (tid) =>
       [
         tid,
         report.tracks?.[tid] ?? { track_id: tid, eval_count: 0, mae_pct: null, direction_hit_rate: null },
       ] as const,
   );
-  const combiners = BACKTEST_COMBINER_IDS.map((cid) => [cid, report.combiners?.[cid] ?? { track_id: cid, eval_count: 0 }] as const);
+  const combiners = ids.combiners.map((cid) => [cid, report.combiners?.[cid] ?? { track_id: cid, eval_count: 0 }] as const);
   const live = report.live;
+  const liveTrackRows = Object.entries(live?.forecast_tracks ?? {});
   const eventOverlayUnavailable =
     report.tracks?.event_overlay?.backtest_eligible !== false &&
     (report.tracks?.event_overlay?.eval_count ?? 0) === 0 &&
@@ -214,6 +212,13 @@ export function TrackScoreboardPanel({
         </div>
       ) : null}
 
+      {report.needs_refresh && !recomputing ? (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200" data-testid="scoreboard-stale">
+          Cached scoreboard is stale{report.as_of ? ` (computed ${String(report.as_of).slice(0, 16).replace("T", " ")} UTC)` : ""} — the numbers below
+          may predate the current track set and promotion bar. Recompute scoreboard to refresh them.
+        </div>
+      ) : null}
+
       {evalCount === 0 ? (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-950 dark:text-red-100">
           <p className="font-medium">Scoreboard has no OOS eval rows — charts and metrics stay empty.</p>
@@ -283,7 +288,7 @@ export function TrackScoreboardPanel({
         </div>
       ) : null}
 
-      <TrackScoreboardReplaySection horizonDays={horizonDays} />
+      <TrackScoreboardReplaySection horizonDays={horizonDays} report={report} />
 
       <TrackScoreboardEvalPanel report={report} horizonDays={horizonDays} />
 
@@ -309,7 +314,17 @@ export function TrackScoreboardPanel({
         <TrackScoreboardChart chart={report.chart} showCombiners={showCombiners} height={320} />
       </div>
 
-      {live?.forecast_tracks ? (
+      {live?.forecast_lab_error ? (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-800 dark:text-red-300" data-testid="live-lab-error">
+          Live forecast lab failed: {live.forecast_lab_error}
+        </div>
+      ) : live && liveTrackRows.length === 0 ? (
+        <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground" data-testid="live-snapshot-empty">
+          No live track snapshot in this report — Run analysis to compute the live tracks.
+        </div>
+      ) : null}
+
+      {live && liveTrackRows.length ? (
         <div className="rounded-xl border bg-card p-4 shadow-sm">
           <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
             Live track snapshot
@@ -324,9 +339,10 @@ export function TrackScoreboardPanel({
             {live.headline_source ? ` · headline ${trackDisplayLabel(live.headline_source, report.track_catalog)}` : ""}
           </p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {Object.entries(live.forecast_tracks).map(([tid, row]) => {
-              const r = row as { expected_return_pct?: number; view?: string; available?: boolean };
+            {liveTrackRows.map(([tid, row]) => {
+              const r = row;
               const unavailable = r.available === false;
+              const reason = r.provenance?.reason ? String(r.provenance.reason).replace(/_/g, " ") : null;
               return (
                 <div
                   key={tid}
@@ -338,7 +354,9 @@ export function TrackScoreboardPanel({
                   <p className="font-medium">
                     {trackDisplayLabel(tid, report.track_catalog)}
                     {unavailable ? (
-                      <span className="ml-1 text-[9px] font-normal text-muted-foreground">(unavailable)</span>
+                      <span className="ml-1 text-[9px] font-normal text-muted-foreground" data-testid={`unavailable-${tid}`}>
+                        (unavailable{reason ? `: ${reason}` : ""})
+                      </span>
                     ) : null}
                   </p>
                   <p className="tabular-nums text-base font-semibold">
@@ -358,7 +376,7 @@ export function TrackScoreboardPanel({
             Track catalog
           </p>
           <div className="grid gap-2 sm:grid-cols-2">
-            {CANONICAL_TRACK_IDS.map((tid) => {
+            {liveTrackIds.map((tid) => {
               const cat = report.track_catalog?.[tid];
               if (!cat?.implementation) return null;
               return (
@@ -375,10 +393,10 @@ export function TrackScoreboardPanel({
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-xl border bg-card p-4 shadow-sm lg:col-span-2">
           <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Track implementations ({CANONICAL_TRACK_IDS.length} live · {BACKTEST_COMBINER_IDS.length} combiners)
+            Track implementations ({liveTrackIds.length} live · {combiners.length} combiners)
           </p>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {CANONICAL_TRACK_IDS.map((tid) => {
+            {liveTrackIds.map((tid) => {
               const cat = report.track_catalog?.[tid];
               const row = report.tracks?.[tid];
               return (
@@ -459,6 +477,7 @@ export function TrackScoreboardPanel({
               <tbody>
                 {combiners.map(([cid, row]) => {
                   const verdict = promo?.verdicts?.[cid];
+                  const cell = promotionCell(promo, cid);
                   return (
                     <tr key={cid} className="border-b border-border/40">
                       <td className="py-1.5 pr-2">{trackDisplayLabel(cid, report.track_catalog)}</td>
@@ -466,14 +485,17 @@ export function TrackScoreboardPanel({
                       <td className="py-1.5 pr-2 tabular-nums">
                         {verdict?.delta_vs_quant_pp != null ? `${verdict.delta_vs_quant_pp} pp` : "—"}
                       </td>
-                      <td className="py-1.5">
-                        {verdict?.promoted ? (
-                          <span className="text-emerald-600 dark:text-emerald-400">yes</span>
-                        ) : (
-                          <span className="text-muted-foreground">
-                            {verdict?.mae_passes === false ? "mae" : "no"}
-                          </span>
-                        )}
+                      <td className="py-1.5" title={cell.title}>
+                        <span
+                          data-testid={`promote-${cid}`}
+                          className={cn(
+                            cell.tone === "yes" && "text-emerald-600 dark:text-emerald-400",
+                            cell.tone === "raw" && "text-amber-700 dark:text-amber-400",
+                            cell.tone === "no" && "text-muted-foreground",
+                          )}
+                        >
+                          {cell.label}
+                        </span>
                       </td>
                     </tr>
                   );

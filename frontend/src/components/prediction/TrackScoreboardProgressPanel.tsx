@@ -1,18 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { Activity, CheckCircle2, Circle, Loader2, Timer } from "lucide-react";
 import type { IndexTrackScoreboardReport } from "@/lib/api";
-import {
-  BACKTEST_COMBINER_IDS,
-  CANONICAL_TRACK_IDS,
-} from "@/lib/trackScoreboardReplayUtils";
+import { scoreboardIds } from "@/lib/trackScoreboardUtils";
 import { trackDisplayLabel } from "@/lib/forecastReplay/sourceStyle";
 import { cn } from "@/lib/utils";
 
 const PIPELINE_STEPS = [
   { id: "connect", label: "Connect to scoreboard API", afterMs: 0 },
   { id: "history", label: "Load 730d aligned factor history", afterMs: 3_000 },
-  { id: "walkforward", label: "Walk-forward OOS eval (10 tracks × ~88 dates)", afterMs: 12_000 },
-  { id: "combiners", label: "Score 8 combiners + promotion gates", afterMs: 90_000 },
+  { id: "walkforward", label: "Walk-forward OOS eval (every track × every eval date)", afterMs: 12_000 },
+  { id: "combiners", label: "Score the combiners + promotion gates", afterMs: 90_000 },
   { id: "charts", label: "Build replay charts + nifty series", afterMs: 120_000 },
   { id: "live", label: "Attach live hub forecast snapshot", afterMs: 135_000 },
 ] as const;
@@ -67,8 +64,10 @@ export function TrackScoreboardProgressPanel({
 
   if (!open) return null;
 
-  const lastAsOf = report?.as_of ?? (report as { as_of?: string } | null)?.as_of;
+  const lastAsOf = report?.as_of;
   const evalCount = report?.eval_count ?? 0;
+  const ids = scoreboardIds(report);
+  const trackIds = [...ids.live, ...ids.experimental];
 
   return (
     <aside
@@ -144,11 +143,12 @@ export function TrackScoreboardProgressPanel({
         </ul>
 
         <p className="mb-2 mt-4 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Forecast tracks ({CANONICAL_TRACK_IDS.length})
+          Forecast tracks ({trackIds.length})
         </p>
+        {!trackIds.length ? <p className="text-[10px] text-muted-foreground">The track list arrives with the first scoreboard report.</p> : null}
         <ul className="space-y-1">
-          {CANONICAL_TRACK_IDS.map((tid, idx) => {
-            const trackDone = !active || idx < Math.floor((activeStepIndex / PIPELINE_STEPS.length) * CANONICAL_TRACK_IDS.length);
+          {trackIds.map((tid, idx) => {
+            const trackDone = !active || idx < Math.floor((activeStepIndex / PIPELINE_STEPS.length) * trackIds.length);
             const row = report?.tracks?.[tid];
             return (
               <li
@@ -168,7 +168,7 @@ export function TrackScoreboardProgressPanel({
         </ul>
 
         <p className="mb-2 mt-4 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Combiners ({BACKTEST_COMBINER_IDS.length})
+          Combiners ({ids.combiners.length})
         </p>
         <p className="text-[10px] text-muted-foreground">
           {active

@@ -105,7 +105,7 @@ export function ForecastHistorySection({
                   key={`${row.predicted_at}:${row.horizon_days}:${idx}`}
                   className="border-b border-border/40"
                 >
-                  <td className="px-3 py-2 tabular-nums">{row.predicted_at.slice(0, 10)}</td>
+                  <td className="px-3 py-2 tabular-nums">{row.issue_day ?? "—"}</td>
                   <td className="px-3 py-2 tabular-nums">{fmtLevel(row.spot_at_prediction)}</td>
                   <td className="px-3 py-2 tabular-nums">{fmtLevel(row.implied_level)}</td>
                   <td className="px-3 py-2 tabular-nums">{fmtPct(row.expected_return_pct)}</td>
