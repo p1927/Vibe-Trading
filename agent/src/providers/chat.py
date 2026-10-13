@@ -6,6 +6,7 @@ ChatLLM is designed specifically for the AgentLoop ReAct cycle.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import html
 import inspect
 import logging
@@ -529,23 +530,27 @@ class ChatLLM:
             LLMResponse.
         """
         provider, model = self._runtime_provider_model()
+        with self._llm_span(provider, model) as llm_meta:
+            llm = self._llm.bind_tools(tools) if tools else self._llm
+            config = {"timeout": timeout} if timeout else {}
+            ai_message = llm.invoke(messages, config=config)
+            response = self._parse_response(ai_message, provider)
+            llm_meta["tool_calls"] = len(response.tool_calls or [])
+            llm_meta["finish_reason"] = response.finish_reason
+            return response
+
+    @staticmethod
+    def _llm_span(provider: str, model: str):
+        """Trade's per-call observability span, or a no-op one outside the Trade stack.
+
+        The import is resolved before the call: a ``try/except ImportError`` around the whole call
+        re-ran the LLM request whenever anything inside it raised an ImportError.
+        """
         try:
             from trade_integrations.observability.hooks import llm_call_span
-
-            with llm_call_span(provider=provider, model=model, tier="vibe") as llm_meta:
-                llm = self._llm.bind_tools(tools) if tools else self._llm
-                config = {"timeout": timeout} if timeout else {}
-                ai_message = llm.invoke(messages, config=config)
-                response = self._parse_response(ai_message)
-                llm_meta["tool_calls"] = len(response.tool_calls or [])
-                llm_meta["finish_reason"] = response.finish_reason
-                return response
         except ImportError:
-            pass
-        llm = self._llm.bind_tools(tools) if tools else self._llm
-        config = {"timeout": timeout} if timeout else {}
-        ai_message = llm.invoke(messages, config=config)
-        return self._parse_response(ai_message)
+            return contextlib.nullcontext({})
+        return llm_call_span(provider=provider, model=model, tier="vibe")
 
     def stream_chat(
         self,
@@ -580,24 +585,8 @@ class ChatLLM:
             Parsed ``LLMResponse``.
         """
         provider, model = self._runtime_provider_model()
-        try:
-            from trade_integrations.observability.hooks import llm_call_span
-
-            with llm_call_span(provider=provider, model=model, tier="vibe") as llm_meta:
-                response = self._stream_chat_impl(
-                    messages,
-                    tools=tools,
-                    on_text_chunk=on_text_chunk,
-                    on_reasoning_chunk=on_reasoning_chunk,
-                    timeout=timeout,
-                    idle_timeout_s=idle_timeout_s,
-                    should_cancel=should_cancel,
-                )
-                llm_meta["tool_calls"] = len(response.tool_calls or [])
-                llm_meta["finish_reason"] = response.finish_reason
-                return response
-        except ImportError:
-            return self._stream_chat_impl(
+        with self._llm_span(provider, model) as llm_meta:
+            response = self._stream_chat_impl(
                 messages,
                 tools=tools,
                 on_text_chunk=on_text_chunk,
@@ -606,6 +595,9 @@ class ChatLLM:
                 idle_timeout_s=idle_timeout_s,
                 should_cancel=should_cancel,
             )
+            llm_meta["tool_calls"] = len(response.tool_calls or [])
+            llm_meta["finish_reason"] = response.finish_reason
+            return response
 
     def _stream_chat_impl(
         self,
@@ -672,7 +664,7 @@ class ChatLLM:
                     "non-streaming invoke."
                 )
                 return self.chat(messages, tools=tools, timeout=timeout)
-            response = self._parse_response(accumulated)
+            response = self._parse_response(accumulated, provider)
             if think_filter is not None:
                 trailing_text, trailing_reasoning = think_filter.flush()
                 if trailing_reasoning and on_reasoning_chunk:
@@ -722,8 +714,12 @@ class ChatLLM:
         return by_id, by_index
 
     @staticmethod
-    def _parse_response(ai_message: Any) -> LLMResponse:
+    def _parse_response(ai_message: Any, provider: Optional[str] = None) -> LLMResponse:
         """Convert a LangChain AIMessage (or AIMessageChunk) to ``LLMResponse``.
+
+        ``provider`` is the provider that produced ``ai_message``; a fallback instance
+        (``build_fallback``) differs from the globally configured one, so callers pass theirs.
+        Omitted, the configured provider is assumed.
 
         Single source for reasoning: ``additional_kwargs["reasoning_content"]``,
         populated by ``ChatOpenAIWithReasoning`` on both stream and non-stream paths.
@@ -782,7 +778,7 @@ class ChatLLM:
 
         content = _text_content(ai_message.content)
         reasoning_content = additional_kwargs.get("reasoning_content")
-        provider = get_env_config().llm.langchain_provider.strip().lower()
+        provider = (provider or get_env_config().llm.langchain_provider).strip().lower()
         if provider == "minimax" and content:
             content, embedded_thinking = split_minimax_think_blocks(content)
             reasoning_content = merge_reasoning(reasoning_content, embedded_thinking)

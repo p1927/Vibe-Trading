@@ -49,6 +49,8 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.trade import job_runner
+
 logger = logging.getLogger(__name__)
 
 
@@ -163,8 +165,7 @@ def run_supplement(job_id: str, session_date: str) -> None:
 
 
 def _agent_dir() -> Path:
-    here = Path(__file__).resolve()
-    return here.parents[1]
+    return job_runner.agent_dir_from_here(__file__)
 
 
 def spawn_supplement_worker(
@@ -229,30 +230,16 @@ def spawn_supplement_worker(
         )
         return None
 
-    agent_dir = _agent_dir()
-    log_path = _log_path(job_id)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_handle = log_path.open("ab")
-
-    import os
-    import subprocess
-
-    env = os.environ.copy()
-    proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "src.trade.recording_supplement_worker",
-            job_id,
-            session_date,
-        ],
-        cwd=str(agent_dir),
-        env=env,
-        start_new_session=True,
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
+    # The one spawn path (job_runner): right cwd (agent root, not agent/src), reap-aware handle,
+    # and the same NSE_REPLAY_DATA_ROOT resolution the recorder uses.
+    proc = job_runner.spawn_worker_process(
+        job_id=job_id,
+        worker_module="src.trade.recording_supplement_worker",
+        agent_dir=_agent_dir(),
+        worker_log=_log_path(job_id),
+        env_mutator=jobs._mutate_recording_env,
+        extra_args=(session_date,),
     )
-    log_handle.close()
     return proc.pid
 
 

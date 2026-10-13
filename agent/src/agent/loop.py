@@ -1718,14 +1718,9 @@ class AgentLoop:
                         and iteration == 1
                         and not self._forced_tool_call_retry_used
                     ):
-                        try:
-                            from src.trade.hub_bridge import requires_first_answer_tool_call
-                            must_call_tool = requires_first_answer_tool_call(
-                                user_message, self._session_config
-                            )
-                        except ImportError:
-                            must_call_tool = False
-                        if must_call_tool:
+                        from src.trade.hub_bridge import requires_first_answer_tool_call
+
+                        if requires_first_answer_tool_call(user_message, self._session_config):
                             self._forced_tool_call_retry_used = True
                             self._awaiting_forced_retry_verification = True
                             trace.write(
@@ -2706,19 +2701,23 @@ class AgentLoop:
             self._emit("tool_heartbeat", payload)
 
         t0 = _time.perf_counter()
-        try:
+        from src.trade.hub_bridge import ensure_trade_stack_path, trade_repo_root
+
+        # Standalone vibetrading has no Trade stack and so no order guard. Inside the monorepo a
+        # failing import is a bug and must stop the call, never silently switch the guard off.
+        if trade_repo_root() is not None:
+            ensure_trade_stack_path()
             from trade_integrations.execution.enforce import assert_direct_order_tool_allowed
 
             cfg = self._session_config or {}
-            assert_direct_order_tool_allowed(
-                tool_name=tool_name,
-                session_kind=str(cfg.get("session_kind") or ""),
-                autonomous_agent_id=str(cfg.get("autonomous_agent_id") or ""),
-            )
-        except PermissionError as exc:
-            return json.dumps({"status": "error", "error": str(exc)}), 0
-        except ImportError:
-            pass
+            try:
+                assert_direct_order_tool_allowed(
+                    tool_name=tool_name,
+                    session_kind=str(cfg.get("session_kind") or ""),
+                    autonomous_agent_id=str(cfg.get("autonomous_agent_id") or ""),
+                )
+            except PermissionError as exc:
+                return json.dumps({"status": "error", "error": str(exc)}), 0
 
         _tool_timeout = _tool_timeout_seconds()
         timeout = _tool_timeout if _tool_timeout > 0 else None
@@ -3353,6 +3352,8 @@ class AgentLoop:
                 self._emit("provenance.source", {"source": source.to_dict()})
             return source
         except Exception:
+            # An audit-trail gap must be visible: log it (the loop itself never depends on it).
+            logger.warning("provenance not recorded for tool %s", tc.name, exc_info=True)
             return None
 
     def _update_memory(self, tool_name: str) -> None:

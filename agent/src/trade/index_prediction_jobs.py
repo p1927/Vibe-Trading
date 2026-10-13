@@ -64,15 +64,14 @@ def _job_display_label(job: ScheduledResearchJob) -> str:
 
 
 def _entity_backpressure_threshold() -> int:
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
+    # No fallback value: a made-up 400 here read as the real threshold. The only caller,
+    # _hub_news_pipeline_health, reports a failure as {"error": ...}.
+    from src.trade.hub_bridge import ensure_trade_stack_path
 
-        ensure_trade_stack_path()
-        from trade_integrations.dataflows.news_hub_bridge import entity_backpressure_threshold
+    ensure_trade_stack_path()
+    from trade_integrations.dataflows.news_hub_bridge import entity_backpressure_threshold
 
-        return entity_backpressure_threshold()
-    except Exception:
-        return 400
+    return entity_backpressure_threshold()
 
 
 def _hub_news_pipeline_health() -> dict[str, Any]:

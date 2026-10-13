@@ -10,7 +10,6 @@ uses the Alpaca broker plugin inside OpenAlgo.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -28,9 +27,6 @@ PROFILE_ENVIRONMENTS = {
     "live-readonly": "live",
     "live": "live",
 }
-
-_IN_INDEX = frozenset({"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "NIFTY50"})
-_US_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9.-]{0,14}$")
 
 _OPEN_STATUS = frozenset({"open", "trigger pending", "pending", "partially filled"})
 
@@ -209,42 +205,30 @@ def _brokerinfo(client: "_RestClient") -> dict[str, Any]:
 
 
 def _resolve_india(symbol: str) -> tuple[str, str]:
-    try:
-        from trade_integrations.openalgo.symbols import resolve_openalgo_symbol
+    """Trade's one symbol resolver (D30: spellings and NSE renames live in the entity registry).
 
-        return resolve_openalgo_symbol(symbol)
-    except Exception:  # noqa: BLE001
-        raw = symbol.strip().upper()
-        if raw in _IN_INDEX or raw.startswith("^"):
-            mapping = {
-                "^NSEI": ("NIFTY", "NSE_INDEX"),
-                "NIFTY50": ("NIFTY", "NSE_INDEX"),
-                "^BSESN": ("SENSEX", "BSE_INDEX"),
-                "NIFTY": ("NIFTY", "NSE_INDEX"),
-                "BANKNIFTY": ("BANKNIFTY", "NSE_INDEX"),
-                "FINNIFTY": ("FINNIFTY", "NSE_INDEX"),
-                "MIDCPNIFTY": ("MIDCPNIFTY", "NSE_INDEX"),
-                "SENSEX": ("SENSEX", "BSE_INDEX"),
-            }
-            if raw in mapping:
-                return mapping[raw]
-        if raw.endswith(".NS"):
-            return raw[:-3], "NSE"
-        if raw.endswith(".BO"):
-            return raw[:-3], "BSE"
-        return raw, "NSE"
+    This connector used to carry its own copy of the alias table as a silent fallback; it answered
+    differently (no ``TATAMOTORS -> TMPV`` rename) exactly when the real resolver was broken.
+    """
+    from src.trade.hub_bridge import ensure_trade_stack_path
+
+    ensure_trade_stack_path()
+    from trade_integrations.openalgo.symbols import resolve_openalgo_symbol
+
+    return resolve_openalgo_symbol(symbol)
 
 
 def _is_us_symbol(symbol: str) -> bool:
-    raw = symbol.strip().upper()
-    if raw.endswith((".NS", ".BO")) or raw in _IN_INDEX or raw.startswith("^"):
-        return False
-    try:
-        from trade_integrations.dataflows.company_research.market import Market, detect_market
+    from src.agent.instrument_identity import india_index_tickers
+    from src.trade.hub_bridge import ensure_trade_stack_path
 
-        return detect_market(raw) == Market.US
-    except Exception:  # noqa: BLE001
-        return bool(_US_SYMBOL_RE.fullmatch(raw))
+    ensure_trade_stack_path()
+    from trade_integrations.dataflows.company_research.market import Market, detect_market
+
+    raw = symbol.strip().upper()
+    if raw.endswith((".NS", ".BO")) or raw in india_index_tickers() or raw.startswith("^"):
+        return False
+    return detect_market(raw) == Market.US
 
 
 def _assert_mode(cfg: OpenAlgoConfig, analyze: bool) -> dict[str, Any] | None:
@@ -530,8 +514,8 @@ def get_quote(symbol: str, *, config: OpenAlgoConfig | None = None, **_: Any) ->
     if _is_us_symbol(clean):
         return _us_quote(clean, cfg)
 
-    oa_symbol, exchange = _resolve_india(clean)
     try:
+        oa_symbol, exchange = _resolve_india(clean)
         client = _client(cfg)
         if not cfg.is_paper:
             mode_error = _assert_mode(cfg, client.analyzer_status())
@@ -598,13 +582,13 @@ def get_historical_bars(
         return {"status": "error", "error": "symbol is required"}
 
     if _is_us_symbol(clean):
-        return _us_history(clean, period=period, limit=limit)
+        return _us_history(clean, cfg, period=period, limit=limit)
 
-    oa_symbol, exchange = _resolve_india(clean)
     interval = _history_interval(period)
     end = date.today()
     start = end - timedelta(days=max(int(limit), 1))
     try:
+        oa_symbol, exchange = _resolve_india(clean)
         client = _client(cfg)
         if not cfg.is_paper:
             mode_error = _assert_mode(cfg, client.analyzer_status())
@@ -641,8 +625,7 @@ def get_historical_bars(
     return {"status": "ok", "symbol": clean, "market": "IN", "period": period, "bars": bars}
 
 
-def _us_history(symbol: str, *, period: str, limit: int) -> dict[str, Any]:
-    cfg = load_config()
+def _us_history(symbol: str, cfg: OpenAlgoConfig, *, period: str, limit: int) -> dict[str, Any]:
     interval = _history_interval(period)
     end = date.today()
     start = end - timedelta(days=max(int(limit), 1))
@@ -745,7 +728,10 @@ def place_order(
     if type_token not in ("market", "limit"):
         return {"status": "error", "error": "order_type must be 'market' or 'limit'"}
 
-    oa_symbol, exchange = _resolve_india(clean)
+    try:
+        oa_symbol, exchange = _resolve_india(clean)
+    except Exception as exc:  # noqa: BLE001 - an unmappable symbol is an order refusal, not a crash
+        return {"status": "error", "error": f"cannot resolve {clean!r} for OpenAlgo: {exc}"}
     if exchange.endswith("_INDEX"):
         return {"status": "error", "error": "index symbols cannot be ordered; use an equity or F&O symbol."}
 
@@ -806,8 +792,8 @@ def cancel_order(
     if not clean_id:
         return {"status": "error", "error": "order_id is required"}
 
-    oa_symbol, exchange = _resolve_india(symbol or "")
     try:
+        oa_symbol, exchange = _resolve_india(symbol or "")
         client = _client(cfg)
         mode_error = _assert_mode(cfg, client.analyzer_status())
         if mode_error:

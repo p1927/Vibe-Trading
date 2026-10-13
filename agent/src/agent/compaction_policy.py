@@ -63,18 +63,3 @@ def adjust_cut_idx_for_tool_batches(body: list, cut_idx: int) -> int:
     while 0 < cut_idx < len(body) and body[cut_idx].get("role") == "tool":
         cut_idx += 1
     return cut_idx
-
-
-def compute_tail_cut_idx(body: list, tail_budget: int) -> int:
-    """Choose head/tail split index honoring a token budget on the preserved tail."""
-    accumulated = 0
-    cut_idx = len(body)
-    for i in range(len(body) - 1, -1, -1):
-        content = body[i].get("content", "")
-        msg_tokens = (len(str(content)) // 4) + 10
-        if accumulated + msg_tokens > tail_budget:
-            cut_idx = i + 1
-            break
-        accumulated += msg_tokens
-        cut_idx = i
-    return adjust_cut_idx_for_tool_batches(body, cut_idx)
