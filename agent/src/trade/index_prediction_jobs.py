@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -45,6 +46,8 @@ JOB_DESCRIPTIONS: dict[str, str] = {
     "hub_news_ingest": "Fetches RSS, SearXNG, and watcher headlines into the staging queue.",
     "news_quality_eval": "Scores news enrichment quality against the golden dataset via MLflow + DeepEval (default nightly, 02:00 UTC).",
 }
+
+logger = logging.getLogger(__name__)
 
 
 def _job_display_label(job: ScheduledResearchJob) -> str:
@@ -165,7 +168,7 @@ def _wake_executor() -> None:
         if callable(wake):
             wake()
     except Exception:
-        pass
+        logger.warning("scheduled executor wake failed", exc_info=True)
 
 
 def _serialize_job(job: ScheduledResearchJob) -> dict[str, Any]:

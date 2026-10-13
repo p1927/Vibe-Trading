@@ -47,7 +47,7 @@ def _resolve_guard_widget_intent(user_message: str, session_config: dict | None)
         if is_autonomous_agent_session(session_config):
             return classify_prefetch_widget_intent(session_config, user_message)
     except Exception:
-        pass
+        logger.warning("autonomous widget-intent classification failed; using message classifier", exc_info=True)
     from src.trade.widget_intent import classify_widget_intent
 
     return classify_widget_intent(user_message)
@@ -70,7 +70,7 @@ def needs_widget_guard(
             if is_autonomous_scheduler_turn(user_message):
                 return False
     except Exception:
-        pass
+        logger.warning("autonomous scheduler-turn check failed in widget guard", exc_info=True)
 
     intent = _resolve_guard_widget_intent(user_message, session_config)
     if intent not in ("options_strategy", "execute_refresh"):
@@ -99,7 +99,7 @@ def _extract_ticker(
             if ticker:
                 return ticker
     except Exception:
-        pass
+        logger.warning("prefetch ticker resolution failed; falling back to regex", exc_info=True)
     for text in (user_message, assistant_text):
         match = _TICKER_RE.search(text.upper())
         if match:
@@ -125,38 +125,23 @@ def maybe_inject_widget(
         return False
 
     try:
-        from trade_integrations.autonomous_agents.intent_capabilities import attach_capabilities_metadata
         from trade_integrations.dataflows.options_research.market import is_options_research_eligible
-        from trade_integrations.dataflows.options_research.widget_payload import build_options_trade_widget
-        from trade_integrations.trade_widgets.presentability import is_widget_presentable
-        from trade_integrations.trade_widgets.store import persist_trade_widget
 
         if not is_options_research_eligible(ticker):
             return False
-
         intent = _resolve_guard_widget_intent(user_message, session_config)
         if intent not in ("options_strategy", "execute_refresh"):
             logger.debug("Widget guard skip: intent=%s is not options for session=%s", intent, session_id)
             return False
+        from src.trade.hub_bridge import emit_trade_widget
 
-        widget = build_options_trade_widget(ticker, refresh=False, widget_intent=intent)
-        if not is_widget_presentable(widget, intent, session_config=session_config):
-            logger.debug(
-                "Widget guard skip: presentability failed intent=%s ticker=%s session=%s",
-                intent,
-                ticker,
-                session_id,
-            )
-            return False
-        attach_capabilities_metadata(widget, session_config=session_config)
-        persist_trade_widget(widget)
-        if event_bus is not None and session_id:
-            event_bus.emit(session_id, "trade_plan.widget", widget)
-            from src.trade.plan_widget_hook import notify_trade_plan_widget
-
-            notify_trade_plan_widget(session_id, widget)
-        logger.info("Widget guard injected trade_plan.widget for %s session=%s", ticker, session_id)
-        return True
+        emitted = emit_trade_widget(
+            event_bus, session_id, ticker, kind="options", widget_intent=intent,
+            session_config=session_config, dedup=False,
+        )
+        if emitted:
+            logger.info("Widget guard injected trade_plan.widget for %s session=%s", ticker, session_id)
+        return emitted
     except Exception:
         logger.exception("Widget guard failed for ticker=%s", ticker)
         return False

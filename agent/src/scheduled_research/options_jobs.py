@@ -347,12 +347,10 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
             widget["autonomous_agent_id"] = ledger_agent_id
         new_widget_id = widget.get("widget_id")
         if new_widget_id:
-            # The one widget writer (it validates the id and resolves this tier's home through
-            # `vibe_trading_home()`); this used to write `<runtime root>/trade_widgets` itself.
             from trade_integrations.trade_widgets.store import persist_trade_widget
 
             if persist_trade_widget(widget) is None:
-                raise ValueError(f"options widget {new_widget_id!r} for {underlying} was not persisted: bad widget id")
+                raise RuntimeError(f"thesis-break widget id {new_widget_id!r} is not a valid trade widget id")
 
         refreshed.append(
             {

@@ -97,6 +97,7 @@ async def maybe_retry_bootstrap_widget(
         ensure_trade_stack_path()
         from trade_integrations.autonomous_agents.store import get_agent
     except Exception:
+        logger.exception("bootstrap finalize guard: trade stack unavailable for agent %s", agent_id)
         return False
 
     agent = get_agent(agent_id) or {}

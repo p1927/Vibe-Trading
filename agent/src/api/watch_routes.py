@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
+from src.api.security import require_local_or_auth
 from src.trade.hub_bridge import ensure_trade_stack_path
 
 watch_router = APIRouter(prefix="/watches", tags=["watches"])
@@ -52,7 +53,7 @@ def list_watches_live_route(
     return build_watches_live_snapshot(session_id=session_id, agent_id=agent_id)
 
 
-@watch_router.post("/session/{session_id}")
+@watch_router.post("/session/{session_id}", dependencies=[Depends(require_local_or_auth)])
 def create_session_watch(session_id: str, body: CreateWatchRequest) -> Dict[str, Any]:
     from trade_integrations.watch_registry.api import mcp_create_watch
 
@@ -71,7 +72,7 @@ def create_session_watch(session_id: str, body: CreateWatchRequest) -> Dict[str,
     return result
 
 
-@watch_router.post("/agent/{agent_id}")
+@watch_router.post("/agent/{agent_id}", dependencies=[Depends(require_local_or_auth)])
 def create_agent_watch(agent_id: str, body: CreateWatchRequest) -> Dict[str, Any]:
     from trade_integrations.autonomous_agents.store import get_agent
     from trade_integrations.watch_registry.api import mcp_create_watch
@@ -96,7 +97,7 @@ def create_agent_watch(agent_id: str, body: CreateWatchRequest) -> Dict[str, Any
     return result
 
 
-@watch_router.patch("/{watch_id}")
+@watch_router.patch("/{watch_id}", dependencies=[Depends(require_local_or_auth)])
 def update_watch_route(watch_id: str, body: UpdateWatchRequest) -> Dict[str, Any]:
     from trade_integrations.watch_registry.api import mcp_update_watch
 
@@ -106,7 +107,7 @@ def update_watch_route(watch_id: str, body: UpdateWatchRequest) -> Dict[str, Any
     return result
 
 
-@watch_router.delete("/{watch_id}")
+@watch_router.delete("/{watch_id}", dependencies=[Depends(require_local_or_auth)])
 def delete_watch_route(watch_id: str) -> Dict[str, Any]:
     from trade_integrations.watch_registry.api import mcp_delete_watch
 
