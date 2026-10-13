@@ -142,23 +142,22 @@ def _record_widget_emitted(
     session_widget_emitted.setdefault(session_id, {})[key] = now
 
 
-def _annotate_widget_intent(widget: dict[str, Any], widget_intent: str) -> dict[str, Any]:
-    from trade_integrations.trade_widgets.presentability import apply_widget_metadata
-
-    return apply_widget_metadata(widget, widget_intent)
-
-
-def _maybe_emit_options_widget(
+def emit_trade_widget(
     event_bus: EventBus | None,
     session_id: str,
     ticker: str,
     *,
-    widget_intent: str = "options_strategy",
+    kind: str,
+    widget_intent: str,
     session_config: dict[str, Any] | None = None,
-) -> None:
+    dedup: bool = True,
+) -> bool:
+    """The one build -> capability gate -> presentability -> persist -> emit path for a trade
+    widget (kind "options" or "index"). Used by the research prefetch and the widget guard
+    (D306). Returns True when the widget was emitted."""
     now = time.time()
-    if not _should_emit_widget(session_id, ticker, now, widget_kind="options"):
-        return
+    if dedup and not _should_emit_widget(session_id, ticker, now, widget_kind=kind):
+        return False
     try:
         ensure_trade_stack_path()
         from trade_integrations.autonomous_agents.intent_capabilities import (
@@ -166,88 +165,46 @@ def _maybe_emit_options_widget(
             prefetch_widget_intent_allowed,
             resolve_capabilities,
         )
-        from trade_integrations.dataflows.options_research.widget_payload import (
-            build_options_trade_widget,
+        from trade_integrations.trade_widgets.presentability import (
+            apply_widget_metadata,
+            is_widget_presentable,
         )
-        from trade_integrations.trade_widgets.presentability import is_widget_presentable
         from trade_integrations.trade_widgets.store import persist_trade_widget
+
+        if kind == "options":
+            from trade_integrations.dataflows.options_research.widget_payload import (
+                build_options_trade_widget as build,
+            )
+        elif kind == "index":
+            from trade_integrations.dataflows.index_research.widget_payload import (
+                build_index_trade_widget as build,
+            )
+        else:
+            raise ValueError(f"unknown trade widget kind {kind!r}")
 
         caps = resolve_capabilities(session_config=session_config)
         if not prefetch_widget_intent_allowed(widget_intent, caps):
             logger.debug(
-                "Skip options widget emit: capabilities block intent=%s session=%s",
-                widget_intent,
-                session_id,
+                "Skip %s widget emit: capabilities block intent=%s session=%s",
+                kind, widget_intent, session_id,
             )
-            return
-        refresh = widget_intent == "execute_refresh"
-        widget = build_options_trade_widget(ticker, refresh=refresh, widget_intent=widget_intent)
-        _annotate_widget_intent(widget, widget_intent)
+            return False
+        widget = build(ticker, refresh=widget_intent == "execute_refresh", widget_intent=widget_intent)
+        apply_widget_metadata(widget, widget_intent)
         if not is_widget_presentable(widget, widget_intent, session_config=session_config):
             logger.debug(
-                "Skip options widget emit: presentability failed intent=%s ticker=%s session=%s",
-                widget_intent,
-                ticker,
-                session_id,
+                "Skip %s widget emit: presentability failed intent=%s ticker=%s session=%s",
+                kind, widget_intent, ticker, session_id,
             )
-            return
+            return False
         attach_capabilities_metadata(widget, session_config=session_config)
         persist_trade_widget(widget)
         _emit(event_bus, session_id, "trade_plan.widget", widget)
-        _record_widget_emitted(session_id, ticker, now, widget_kind="options")
+        _record_widget_emitted(session_id, ticker, now, widget_kind=kind)
+        return True
     except Exception:
-        logger.exception("Failed to auto-emit options widget for %s", ticker)
-
-
-def _maybe_emit_index_widget(
-    event_bus: EventBus | None,
-    session_id: str,
-    ticker: str,
-    *,
-    widget_intent: str = "index_outlook",
-    session_config: dict[str, Any] | None = None,
-) -> None:
-    now = time.time()
-    if not _should_emit_widget(session_id, ticker, now, widget_kind="index"):
-        return
-    try:
-        ensure_trade_stack_path()
-        from trade_integrations.autonomous_agents.intent_capabilities import (
-            attach_capabilities_metadata,
-            prefetch_widget_intent_allowed,
-            resolve_capabilities,
-        )
-        from trade_integrations.dataflows.index_research.widget_payload import (
-            build_index_trade_widget,
-        )
-        from trade_integrations.trade_widgets.presentability import is_widget_presentable
-        from trade_integrations.trade_widgets.store import persist_trade_widget
-
-        caps = resolve_capabilities(session_config=session_config)
-        if not prefetch_widget_intent_allowed(widget_intent, caps):
-            logger.debug(
-                "Skip index widget emit: capabilities block intent=%s session=%s",
-                widget_intent,
-                session_id,
-            )
-            return
-        refresh = widget_intent == "execute_refresh"
-        widget = build_index_trade_widget(ticker, refresh=refresh, widget_intent=widget_intent)
-        _annotate_widget_intent(widget, widget_intent)
-        if not is_widget_presentable(widget, widget_intent, session_config=session_config):
-            logger.debug(
-                "Skip index widget emit: presentability failed intent=%s ticker=%s session=%s",
-                widget_intent,
-                ticker,
-                session_id,
-            )
-            return
-        attach_capabilities_metadata(widget, session_config=session_config)
-        persist_trade_widget(widget)
-        _emit(event_bus, session_id, "trade_plan.widget", widget)
-        _record_widget_emitted(session_id, ticker, now, widget_kind="index")
-    except Exception:
-        logger.exception("Failed to auto-emit index widget for %s", ticker)
+        logger.exception("Failed to auto-emit %s widget for %s", kind, ticker)
+        return False
 
 
 def _staleness_report_to_dict(report: Any) -> dict[str, Any]:
@@ -707,10 +664,11 @@ def prefetch_research_for_message(
                 and _options_auto_widget_enabled()
                 and widget_intent in ("options_strategy", "execute_refresh")
             ):
-                _maybe_emit_options_widget(
+                emit_trade_widget(
                     event_bus,
                     session_id,
                     ticker,
+                    kind="options",
                     widget_intent=widget_intent,
                     session_config=session_config,
                 )
@@ -731,10 +689,11 @@ def prefetch_research_for_message(
                     and _index_auto_widget_enabled()
                     and widget_intent == "index_outlook"
                 ):
-                    _maybe_emit_index_widget(
+                    emit_trade_widget(
                         event_bus,
                         session_id,
                         ticker,
+                        kind="index",
                         widget_intent=widget_intent,
                         session_config=session_config,
                     )

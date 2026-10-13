@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -343,15 +342,10 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
             widget["autonomous_agent_id"] = ledger_agent_id
         new_widget_id = widget.get("widget_id")
         if new_widget_id:
-            from src.config.paths import get_runtime_root
+            from trade_integrations.trade_widgets.store import persist_trade_widget
 
-            widget_dir = get_runtime_root() / "trade_widgets"
-            widget_dir.mkdir(parents=True, exist_ok=True)
-            widget_path = widget_dir / f"{new_widget_id}.json"
-            widget_path.write_text(
-                json.dumps(widget, indent=2, default=str),
-                encoding="utf-8",
-            )
+            if persist_trade_widget(widget) is None:
+                raise RuntimeError(f"thesis-break widget id {new_widget_id!r} is not a valid trade widget id")
 
         refreshed.append(
             {

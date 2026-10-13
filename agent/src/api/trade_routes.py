@@ -8,7 +8,6 @@ import re
 import threading
 import asyncio
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -39,18 +38,6 @@ _WIDGET_TOOL_NAMES = frozenset(
         "mcp_openalgo_get_news_scenario_widget",
     }
 )
-
-
-def trade_widget_dir() -> Path:
-    from trade_integrations.trade_widgets.store import trade_widget_dir as _dir
-
-    return _dir()
-
-
-def trade_widget_dir() -> Path:
-    from trade_integrations.trade_widgets.store import trade_widget_dir as _dir
-
-    return _dir()
 
 
 def _widget_id_from_preview(preview: str) -> Optional[str]:
