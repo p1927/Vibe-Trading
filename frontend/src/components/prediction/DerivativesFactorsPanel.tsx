@@ -32,10 +32,12 @@ export function DerivativesFactorsPanel({ days = 365, onLoadState }: Props) {
   const [series, setSeries] = useState<IndexFactorHistoryPoint[]>([]);
   const [coverageNotes, setCoverageNotes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setError(null);
     void api
       .getIndexDerivativesHistory(days, [...DERIVATIVES_FACTORS, NIFTY_CLOSE_FACTOR])
       .then((res) => {
@@ -50,7 +52,9 @@ export function DerivativesFactorsPanel({ days = 365, onLoadState }: Props) {
         if (!cancelled) {
           setSeries([]);
           setCoverageNotes([]);
-          onLoadState?.(0, e instanceof Error ? e.message : "Derivatives history failed");
+          const msg = e instanceof Error ? e.message : "Derivatives history failed";
+          setError(msg);
+          onLoadState?.(0, msg);
         }
       })
       .finally(() => {
@@ -206,6 +210,10 @@ export function DerivativesFactorsPanel({ days = 365, onLoadState }: Props) {
       </p>
       {loading ? (
         <p className="mt-3 text-[11px] text-muted-foreground">Loading derivatives factor history…</p>
+      ) : error ? (
+        <p className="mt-3 text-[11px] text-red-600 dark:text-red-400" data-testid="derivatives-error">
+          Derivatives history failed to load: {error}
+        </p>
       ) : !chartOption ? (
         <div className="mt-3 space-y-1 text-[11px] text-muted-foreground">
           <p>No derivatives history in factor store for this window.</p>

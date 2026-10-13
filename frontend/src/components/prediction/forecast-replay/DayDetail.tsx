@@ -1,6 +1,6 @@
 import type { SourceStyle } from "@/lib/forecastReplay/sourceStyle";
 import type { ReplayRecord } from "@/lib/forecastReplay/types";
-import { forecastReturnPct, keyPoint } from "@/lib/forecastReplay/view";
+import { actualReturnPct, forecastReturnPct, keyPoint } from "@/lib/forecastReplay/view";
 import { fmtNiftyLevel } from "@/lib/factorHistoryUtils";
 import { fmtPct } from "@/lib/trackScoreboardUtils";
 import { RecordBadges, SameForecastNote } from "./RecordBadges";
@@ -32,7 +32,7 @@ export function DayDetail({ records, horizon, styles }: Props) {
           {records.map((r) => {
             const p = keyPoint(r, horizon);
             if (!p) return null;
-            const actualPct = p.matured && p.actual_level != null && r.spot_at_issue > 0 ? (p.actual_level / r.spot_at_issue - 1) * 100 : null;
+            const actualPct = actualReturnPct(r, p);
             return (
               <tr key={`${r.source_id}-${r.issued_at}`} className="border-b last:border-0">
                 <td className="px-2 py-1">

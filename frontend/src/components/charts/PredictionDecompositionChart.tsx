@@ -23,10 +23,12 @@ export function PredictionDecompositionChart({ rows, height = 200 }: Props) {
 
   const labels = useMemo(
     () =>
-      sorted.map((r) => {
-        const d = new Date(r.predicted_at);
-        return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
-      }),
+      // the IST issue day (the server's key), formatted as the calendar date it is: no timezone shift
+      sorted.map((r) =>
+        r.issue_day
+          ? new Date(`${r.issue_day}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "UTC" })
+          : "—",
+      ),
     [sorted],
   );
 
@@ -34,8 +36,9 @@ export function PredictionDecompositionChart({ rows, height = 200 }: Props) {
     if (!ref.current || !sorted.length) return;
     const t = getChartTheme();
     const chart = initEChart(ref.current);
-    const bottom = sorted.map((r) => Number(r.bottom_up_return_pct ?? 0));
-    const macro = sorted.map((r) => Number(r.macro_delta_pct ?? 0));
+    // a part the ledger row does not carry is a gap, not a 0% bar
+    const bottom = sorted.map((r) => (r.bottom_up_return_pct == null ? null : Number(r.bottom_up_return_pct)));
+    const macro = sorted.map((r) => (r.macro_delta_pct == null ? null : Number(r.macro_delta_pct)));
 
     chart.setOption({
       backgroundColor: "transparent",

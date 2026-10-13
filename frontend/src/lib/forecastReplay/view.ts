@@ -34,7 +34,16 @@ export function forecastReturnPct(r: ReplayRecord, horizon: number): number | nu
   return p && r.spot_at_issue > 0 ? (p.p50_level / r.spot_at_issue - 1) * 100 : null;
 }
 
-export type Maturity = "matured" | "partial" | "pending";
+/**
+ * Realised move from the record's spot to the close at the point's target date, in percent; null until it matured.
+ * The one place the browser turns the server's `actual_level` into a return (the same ratio as the server's
+ * `realised_outcome`, over the server's own numbers; the day-detail table and the history charts both read it).
+ */
+export function actualReturnPct(r: ReplayRecord, p: ReplayPoint): number | null {
+  return p.matured && p.actual_level != null && r.spot_at_issue > 0 ? (p.actual_level / r.spot_at_issue - 1) * 100 : null;
+}
+
+export type Maturity ="matured" | "partial" | "pending";
 
 /** Whether every / some / none of a record's points have matured. */
 export function maturity(r: ReplayRecord): Maturity {

@@ -96,7 +96,8 @@ export function Prediction() {
   const [pollMs, setPollMs] = useState(() => {
     try {
       const raw = localStorage.getItem(POLL_STORAGE_KEY);
-      return raw != null ? Number(raw) : DEFAULT_POLL_MS;
+      const ms = raw != null ? Number(raw) : NaN;
+      return Number.isFinite(ms) && ms >= 0 ? ms : DEFAULT_POLL_MS; // a corrupt stored value must not switch live refresh off
     } catch {
       return DEFAULT_POLL_MS;
     }
@@ -234,7 +235,10 @@ export function Prediction() {
     if (predictionMode !== NEWS_SCENARIO_MODE || pipelineStale) return;
     void api.listRecentNewsScenarios("NIFTY", 8).then((res) => {
       setRecentScenarios((res.scenarios ?? []) as Array<Record<string, unknown>>);
-    }).catch(() => setRecentScenarios([]));
+    }).catch((e) => {
+      setRecentScenarios([]);
+      setNewsSessionError(e instanceof Error ? `Recent scenarios failed: ${e.message}` : "Recent scenarios failed");
+    });
   }, [predictionMode, pipelineStale, newsScenarioWidget?.scenario_id]);
 
   const handleLoadRecentScenario = useCallback(async (scenarioId: string) => {
@@ -442,10 +446,9 @@ export function Prediction() {
   const loadTrackScoreboardCached = useCallback(async () => {
     setTrackScoreboardError(null);
     try {
-      const fetchScoreboard = api.getIndexTrackScoreboard;
-      if (typeof fetchScoreboard !== "function") return;
-      const cachedRes = await fetchScoreboard("NIFTY", false, 730, horizonDays, 5, true);
+      const cachedRes = await api.getIndexTrackScoreboard("NIFTY", false, 730, horizonDays, 5, true);
       if (cachedRes.report) setTrackScoreboard(cachedRes.report);
+      else if (cachedRes.status !== "ok") setTrackScoreboardError(cachedRes.message || "Track scoreboard unavailable");
     } catch (e) {
       setTrackScoreboardError(e instanceof Error ? e.message : "Track scoreboard request failed");
     }
@@ -930,11 +933,12 @@ export function Prediction() {
                   horizon={horizonDays}
                   defaultSources={["headline", "fan"]}
                   liveOverlay={
-                    artifact?.spot != null
+                    // no forecast (plan incomplete, no return) draws no overlay: a missing return is never a 0% forecast
+                    artifact?.spot != null && Number.isFinite(artifact.prediction?.expected_return_pct)
                       ? {
                           asOf: artifact.as_of,
                           spot: artifact.spot,
-                          expectedReturnPct: artifact.prediction?.expected_return_pct ?? 0,
+                          expectedReturnPct: artifact.prediction!.expected_return_pct as number,
                           rangeLow: artifact.prediction?.range?.low,
                           rangeHigh: artifact.prediction?.range?.high,
                           simulatedReturnPct: simulation?.expected_return_pct,

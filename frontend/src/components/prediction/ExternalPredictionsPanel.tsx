@@ -381,9 +381,12 @@ export function ExternalPredictionsPanel({
 
   const handleDiscover = useCallback(async () => {
     setDiscovering(true);
+    setAddFlowError(null);
     try {
       const rows = await onDiscover();
       setCandidates(rows);
+    } catch (err) {
+      setAddFlowError(err instanceof Error ? `Discover sources failed: ${err.message}` : "Discover sources failed.");
     } finally {
       setDiscovering(false);
     }
@@ -419,7 +422,7 @@ export function ExternalPredictionsPanel({
         setPendingAddCandidate(candidate);
         return;
       }
-      void handleAdd(candidate);
+      handleAdd(candidate).catch(() => undefined); // handleAdd already put the failure in addFlowError
     },
     [handleAdd],
   );
@@ -443,8 +446,11 @@ export function ExternalPredictionsPanel({
   const handleRemove = useCallback(
     async (sourceId: string) => {
       setBusySourceId(sourceId);
+      setAddFlowError(null);
       try {
         await onRemoveSource(sourceId);
+      } catch (err) {
+        setAddFlowError(err instanceof Error ? `Remove source failed: ${err.message}` : "Remove source failed.");
       } finally {
         setBusySourceId(null);
       }
@@ -456,8 +462,11 @@ export function ExternalPredictionsPanel({
     async (sourceId: string) => {
       if (!onApprovePath) return;
       setApprovingSourceId(sourceId);
+      setAddFlowError(null);
       try {
         await onApprovePath(sourceId);
+      } catch (err) {
+        setAddFlowError(err instanceof Error ? `Approve navigation path failed: ${err.message}` : "Approve navigation path failed.");
       } finally {
         setApprovingSourceId(null);
       }

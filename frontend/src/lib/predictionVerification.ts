@@ -196,7 +196,7 @@ export function runPredictionUiAudit(
       ok: spotOk && !artifact.spot_error && artifact.spot_source === "openalgo",
       warn: spotOk && artifact.spot_source !== "openalgo",
     }),
-    source: "OpenAlgo LIVE quote (INDmoney) — no history fallback",
+    source: "OpenAlgo LIVE quote (INDmoney); never a replayed quote: with the market closed or the simulator replaying it is the last real close (`last_close:<date>`, D397)",
     userValue: artifact.spot_error
       ? artifact.spot_error
       : spotOk
@@ -235,7 +235,7 @@ export function runPredictionUiAudit(
       empty: !spotOk,
     }),
     source: "GET /index-prediction/forecast-replay (ledger, fan, tracks, backtest, engine, external) + live artifact overlay",
-    userValue: `${(external.dailyHistoryCount ?? 0) + (external.backtest?.daily_evaluations?.length ?? 0)} forecast anchors`,
+    userValue: `${external.dailyHistoryCount ?? 0} ledger days · ${external.backtest?.daily_evaluations?.length ?? 0} backtest eval rows (the panel's own day count is in its stepper)`,
     feedsForecast: false,
   });
 

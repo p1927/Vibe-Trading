@@ -80,6 +80,8 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
   const [shockPct, setShockPct] = useState(0);
   const [simulation, setSimulation] = useState<IndexSimulationResult | null>(null);
   const [simulating, setSimulating] = useState(false);
+  const [simError, setSimError] = useState<string | null>(null);
+  const [contextError, setContextError] = useState<string | null>(null);
   const [factorNews, setFactorNews] = useState<Record<string, PlaygroundTrigger[]>>({});
   const [cascadeRules, setCascadeRules] = useState<Record<string, CascadeDownstreamRule[]>>(CASCADE_DOWNSTREAM);
   const [contextLoading, setContextLoading] = useState(true);
@@ -94,6 +96,7 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
   useEffect(() => {
     let cancelled = false;
     setContextLoading(true);
+    setContextError(null);
     void api
       .getIndexPlaygroundContext(artifact.ticker || "NIFTY")
       .then((res) => {
@@ -104,8 +107,10 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
           setCascadeRules(ctx.cascade_downstream as Record<string, CascadeDownstreamRule[]>);
         }
       })
-      .catch(() => {
-        if (!cancelled) setFactorNews({});
+      .catch((e) => {
+        if (cancelled) return;
+        setFactorNews({});
+        setContextError(e instanceof Error ? e.message : "Linked news failed to load");
       })
       .finally(() => {
         if (!cancelled) setContextLoading(false);
@@ -137,9 +142,11 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
   const runSimulate = useCallback(async () => {
     if (shockPct === 0) {
       setSimulation(null);
+      setSimError(null);
       return;
     }
     setSimulating(true);
+    setSimError(null);
     try {
       const res = await api.simulateIndexPrediction({
         ticker: artifact.ticker || "NIFTY",
@@ -149,8 +156,13 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
         cascade: true,
       });
       if (res.simulation) setSimulation(res.simulation);
-    } catch {
+      else {
+        setSimulation(null);
+        setSimError(res.message || "Simulation returned no result");
+      }
+    } catch (e) {
       setSimulation(null);
+      setSimError(e instanceof Error ? e.message : "Simulation request failed");
     } finally {
       setSimulating(false);
     }
@@ -298,6 +310,10 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
             </div>
           )}
 
+          {chartMode === "shock" && simError ? (
+            <p className="text-[11px] text-red-600 dark:text-red-400" data-testid="causal-sim-error">Simulation failed: {simError}</p>
+          ) : null}
+
           {chartMode === "shock" && simulation?.expected_return_pct != null && shockPct !== 0 ? (
             <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[10px]">
               <span className="font-medium">Nifty spot today:</span> {fmtLevel(spot)}
@@ -338,6 +354,8 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
           </p>
           {contextLoading ? (
             <p className="text-[11px] text-muted-foreground">Loading headlines…</p>
+          ) : contextError ? (
+            <p className="text-[11px] text-red-600 dark:text-red-400">Linked news failed to load: {contextError}</p>
           ) : newsItems.length ? (
             <div className="max-h-[420px] space-y-1.5 overflow-y-auto">
               {newsItems.map((item, i) => (

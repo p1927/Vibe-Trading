@@ -41,8 +41,9 @@ export function ForecastEngineRunPanel({ ticker = "NIFTY", recipe, horizon = 5, 
     try {
       const res = await api.getForecastEngineRuns(ticker, recipe);
       setRuns(res.runs ?? []);
-    } catch {
+    } catch (e) {
       setRuns([]);
+      setError(e instanceof Error ? `Past runs failed to load: ${e.message}` : "Past runs failed to load");
     } finally {
       setLoadingRuns(false);
     }
