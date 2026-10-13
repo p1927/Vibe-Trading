@@ -72,3 +72,22 @@ def test_think_blocks_follow_the_producing_provider_not_the_configured_one(monke
     assert (minimax.content, minimax.reasoning_content) == ("answer", "plan")
     assert other.content == "<think>plan</think>answer"
     reset_env_config()
+
+
+def test_chat_hands_provider_usage_to_trades_call_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Trade logs one ``adapter_calls`` row per LLM call; the chat model supplies the token counts."""
+    import contextlib
+
+    import src.providers.chat as chat_mod
+
+    seen: dict = {}
+
+    @contextlib.contextmanager
+    def span(provider, model, tier="vibe"):
+        yield seen
+        seen["span"] = (provider, model, tier)
+
+    monkeypatch.setattr(chat_mod, "trade_llm_span", span)
+    msg = AIMessage(content="ok", usage_metadata={"input_tokens": 7, "output_tokens": 3, "total_tokens": 10})
+    _chat_llm(lambda messages, config=None: msg).chat([{"role": "user", "content": "hi"}])
+    assert (seen["input_tok"], seen["output_tok"], seen["span"]) == (7, 3, ("minimax", "m", "vibe"))

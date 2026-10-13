@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("trade_integrations")
 
-from trade_integrations.nse_browser.minimax_queue import apace_httpx_request, pace_httpx_request
+from trade_integrations.dataflows.model_adapters.minimax_queue import apace_httpx_request, pace_httpx_request
 
 
 def _build(env: dict[str, str]) -> dict[str, object]:
