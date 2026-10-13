@@ -876,8 +876,8 @@ class MCPRemoteTool(BaseTool):
             spec: Resolved local metadata for the remote tool.
             default_session_id: Current host session id, injected into the
                 call arguments as ``vibe_session_id`` when the remote tool's
-                schema declares that parameter and the model omits it. The
-                model has no way to know the host session id itself.
+                schema declares that parameter; a model-supplied value is overwritten.
+                The model has no way to know the host session id itself.
         """
         self._adapter = adapter
         self._spec = spec
@@ -903,7 +903,7 @@ class MCPRemoteTool(BaseTool):
         return json.dumps(payload, ensure_ascii=False, default=_json_default)
 
     def _with_injected_session_id(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Fill in ``vibe_session_id`` when the remote tool declares it and needs it.
+        """Set ``vibe_session_id`` to the host session id when the remote tool declares it.
 
         The LLM has no way to know the host session id, so any remote tool
         that accepts a ``vibe_session_id`` parameter can only ever receive it
@@ -919,9 +919,9 @@ class MCPRemoteTool(BaseTool):
             return arguments
         if "vibe_session_id" not in _collect_top_level_property_names(self.parameters):
             return arguments
-        if arguments.get("vibe_session_id"):
-            return arguments
 
+        # Always overwrite: the host session id is the truth, and a model-supplied value would let a
+        # raw-order refusal (openalgo mcp/agent_order_guard.py) be dodged with a made-up id.
         filled = dict(arguments)
         filled["vibe_session_id"] = self._default_session_id
         return filled

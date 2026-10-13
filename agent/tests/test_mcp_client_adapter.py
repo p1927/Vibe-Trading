@@ -337,7 +337,7 @@ def test_remote_tool_injects_default_session_id_when_model_omits_it() -> None:
     }
 
 
-def test_remote_tool_does_not_override_an_explicit_session_id() -> None:
+def test_remote_tool_overwrites_a_model_supplied_session_id() -> None:
     state = {
         "list_calls": 0,
         "call_calls": 0,
@@ -370,7 +370,8 @@ def test_remote_tool_does_not_override_an_explicit_session_id() -> None:
 
     tool.execute(symbols=["NIFTY"], vibe_session_id="sess-explicit")
 
-    assert state["call_records"][0]["arguments"]["vibe_session_id"] == "sess-explicit"
+    # A made-up id must not dodge openalgo's agent raw-order refusal (agent_order_guard).
+    assert state["call_records"][0]["arguments"]["vibe_session_id"] == "sess-abc123"
 
 
 def test_remote_tool_without_vibe_session_id_param_is_unaffected() -> None:
