@@ -36,7 +36,6 @@ _ALLOWED = {
     "src/config/paths.py",
     # Falls back to the literal only if src.config.paths cannot be imported at all
     # (the package is usable without the config layer).
-    "src/strategy_discovery/evidence_store.py",
     # The sandbox HOME's own layout (the subprocess gets no VIBE_TRADING_HOME, so its
     # runtime root IS <sandbox>/.vibe-trading), plus the no-VIBE_TRADING_HOME fallback in
     # _sandbox_reexpose_source. Pinned by test_sandbox_reexposes_the_tier_root below.

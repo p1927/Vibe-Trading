@@ -36,6 +36,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from src.live.mandate.ceilings import CeilingError, server_ceilings, tighten
 from src.live.mandate.model import MANDATE_SCHEMA_VERSION
 from src.live.paths import broker_dir
 
@@ -106,6 +107,12 @@ _CEILING_ALIASES: dict[str, str] = {
     # instrument whitelist
     "instruments": "allowed_instruments",
     "allowed_instruments": "allowed_instruments",
+    # asset-class whitelist (market) and the INR loss / lot caps of the server ceilings
+    "asset_classes": "asset_classes",
+    "max_daily_loss_inr": "max_daily_loss_inr",
+    "max_total_exposure_usd": "max_total_exposure_usd",
+    "account_funding_usd": "account_funding_usd",
+    "max_lots": "max_lots",
 }
 
 
@@ -382,7 +389,7 @@ def _profile_fits_ceilings(profile: Mapping[str, Any], ceilings: Mapping[str, An
                 return False
             if prof_lev > ceiling_lev:
                 return False
-        elif key == "allowed_instruments":
+        elif key in ("allowed_instruments", "asset_classes"):
             # A whitelist may only be narrowed, never widened at commit time.
             if not isinstance(ceiling_value, list) or not isinstance(prof_value, list):
                 return False
@@ -431,9 +438,8 @@ def commit_mandate(
         broker: Broker key, e.g. ``"robinhood"``.
         account_ref: Opaque broker account identifier (never credentials).
         session_id: Originating session id, recorded in the consent record.
-        ceilings_ref: Optional ceiling snapshot to validate against. When
-            omitted, the snapshot stored on the proposal record is used (the
-            authoritative one the user saw).
+        ceilings_ref: Optional broker-reported account ceilings; they can only
+            LOWER the server ceilings (:mod:`src.live.mandate.ceilings`).
         lifetime_days: Mandate lifetime in days (default 30).
         flatten_on_halt: Whether a kill-switch trip flattens open positions
             (vs. cancel-only). ``None`` (the default — keeps this param
@@ -461,8 +467,13 @@ def commit_mandate(
 
     resolved = _resolve_profile(proposal, ordinal, adjustments)
 
-    ceilings = dict(ceilings_ref) if ceilings_ref is not None else dict(proposal.get("ceilings") or {})
-    if ceilings and not _profile_fits_ceilings(resolved, ceilings):
+    # Ceilings are SERVER-side, re-read now: never the proposal's stored snapshot (the model
+    # supplied it). ``ceilings_ref`` is the broker's own account snapshot and can only lower them.
+    try:
+        ceilings = tighten(server_ceilings(broker), ceilings_ref)
+    except CeilingError as exc:
+        raise CommitError(str(exc)) from exc
+    if not _profile_fits_ceilings(resolved, ceilings):
         raise CommitError("resolved profile exceeds the account ceilings — refusing to commit")
 
     created = _utcnow()
@@ -582,7 +593,7 @@ def _profile_to_universe(profile: Mapping[str, Any]) -> dict[str, Any]:
         A ``universe`` dict in the persisted mandate schema.
     """
     return {
-        "asset_classes": list(profile.get("asset_classes") or ["us_equity"]),
+        "asset_classes": list(profile.get("asset_classes") or ["in_equity"]),
         "min_market_cap_usd": profile.get("min_market_cap_usd"),
         "min_avg_daily_volume_usd": profile.get("min_avg_daily_volume_usd"),
         "exclude_symbols": list(profile.get("exclude_symbols") or []),

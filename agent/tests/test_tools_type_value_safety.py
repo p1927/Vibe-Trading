@@ -296,8 +296,8 @@ def test_qveris_execute_accepts_a_genuinely_empty_parameters_object(
     monkeypatch.setattr(qt.QVerisExecuteTool, "_client", lambda self: FakeClient())
 
     payload = json.loads(
-        qt.QVerisExecuteTool().execute(
-            tool_id="tool_1", parameters={}, session_id="s1", expected_cost="1 credit"
+        qt.QVerisExecuteTool(default_session_id="s1").execute(
+            tool_id="tool_1", parameters={}, expected_cost="1 credit"
         )
     )
 
@@ -489,7 +489,7 @@ def test_scan_shadow_signals_absent_per_market_defaults_to_three(monkeypatch: py
 
     monkeypatch.setattr(sat, "load_profile", lambda shadow_id: SimpleNamespace(shadow_id=shadow_id))
 
-    def fake_scan(profile: Any, target_date: Any = None, per_market: int = 3) -> list[Any]:
+    def fake_scan(profile: Any, target_date: Any = None, per_market: int = 3, unavailable: Any = None) -> list[Any]:
         seen.update({"shadow_id": profile.shadow_id, "target_date": target_date, "per_market": per_market})
         return []
 

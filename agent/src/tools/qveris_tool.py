@@ -381,7 +381,19 @@ def _positive_int(value: Any, field: str, default: int) -> int:
 
 
 class _QVerisBaseTool(BaseTool):
-    """Shared availability and client helpers for QVeris tools."""
+    """Shared availability and client helpers for QVeris tools.
+
+    The billable budget is keyed on the HOST-assigned session id (``default_session_id``, injected
+    by ``build_registry`` via ``session_injected_classes``), never on a model argument: a
+    model-chosen ``session_id`` let the model rotate it and reset its own spending cap. A host
+    without sessions (the MCP server) shares the one ``"default"`` budget.
+    """
+
+    def __init__(self, default_session_id: str | None = None, **_kwargs: Any) -> None:
+        self._default_session_id = str(default_session_id or "").strip() or None
+
+    def _session_id(self) -> str:
+        return self._default_session_id or "default"
 
     @classmethod
     def check_available(cls) -> bool:
@@ -410,7 +422,6 @@ class QVerisSearchTool(_QVerisBaseTool):
                 "maximum": 100,
                 "default": 20,
             },
-            "session_id": {"type": "string"},
         },
         "required": ["query"],
     }
@@ -435,7 +446,7 @@ class QVerisSearchTool(_QVerisBaseTool):
         payload = self._client().search(
             query.strip(),
             limit=limit,
-            session_id=kwargs.get("session_id"),
+            session_id=self._session_id(),
         )
         return _json_response({"ok": True, **payload})
 
@@ -454,7 +465,6 @@ class QVerisInspectTool(_QVerisBaseTool):
                 "description": "QVeris tool ids from qveris_search.",
             },
             "search_id": {"type": "string"},
-            "session_id": {"type": "string"},
         },
         "required": ["tool_ids"],
     }
@@ -465,7 +475,7 @@ class QVerisInspectTool(_QVerisBaseTool):
         payload = self._client().inspect(
             list(kwargs["tool_ids"]),
             search_id=kwargs.get("search_id"),
-            session_id=kwargs.get("session_id"),
+            session_id=self._session_id(),
         )
         return _json_response({"ok": True, **payload})
 
@@ -485,7 +495,6 @@ class QVerisExecuteTool(_QVerisBaseTool):
             "tool_id": {"type": "string"},
             "parameters": {"type": "object"},
             "search_id": {"type": "string"},
-            "session_id": {"type": "string"},
             "model": {"type": "string"},
             "max_response_size": {"type": "integer", "default": 20480},
             "expected_cost": {
@@ -530,7 +539,7 @@ class QVerisExecuteTool(_QVerisBaseTool):
             inspected = client.inspect(
                 [tool_id],
                 search_id=kwargs.get("search_id"),
-                session_id=kwargs.get("session_id"),
+                session_id=self._session_id(),
             )
         except Exception:  # noqa: BLE001 - an unreachable marketplace must not
             inspected = None  # crash the caller; it degrades to the hint below.
@@ -595,7 +604,7 @@ class QVerisExecuteTool(_QVerisBaseTool):
         client = self._client()
         tool_id = raw_tool_id.strip()
         quote = self._quote(client, tool_id, kwargs)
-        session_id = str(kwargs.get("session_id") or "default")
+        session_id = self._session_id()
         budget = max(float(cfg.budget_credits_per_session), 0.0)
         expected = _parse_expected_cost(quote.get("expected_cost"))
         with _SESSION_BUDGET_LOCK:
@@ -630,7 +639,7 @@ class QVerisExecuteTool(_QVerisBaseTool):
                 tool_id,
                 parameters=parameters,
                 search_id=kwargs.get("search_id"),
-                session_id=kwargs.get("session_id"),
+                session_id=session_id,
                 model=kwargs.get("model"),
                 max_response_size=max_response_size,
             )

@@ -2,8 +2,9 @@
 
 The agent calls this tool when the user expresses a live-trading intent (or when
 a mandate breach needs widening options). It synthesizes 2-4 numbered candidate
-mandate profiles, **every one clamped to the account ceilings** so even the most
-aggressive option can never request more than the broker allows, persists the
+mandate profiles, **every one clamped to the SERVER ceilings** (``src.live.mandate.ceilings``:
+Trade's risk config, India/INR by default) so even the most aggressive option can never request
+more than the server allows; a model-supplied ``ceilings`` is only a request at or below them, persists the
 proposal so the surface commit endpoint can re-validate it, and returns the
 ``mandate.proposal`` payload (Consent §1 shape).
 
@@ -22,6 +23,7 @@ import uuid
 from typing import Any
 
 from src.agent.tools import BaseTool
+from src.live.mandate.ceilings import CeilingError, check_request, server_ceilings
 from src.live.mandate.commit import _normalize_limits, save_proposal
 
 #: Ordered profile templates synthesized when the caller gives no explicit
@@ -57,19 +59,18 @@ class ProposeMandateProfilesTool(BaseTool):
         "properties": {
             "broker": {
                 "type": "string",
-                "description": "Broker key, e.g. 'robinhood'.",
+                "description": "Order-capable broker/connector key, e.g. 'openalgo'.",
             },
             "intent": {
                 "type": "string",
-                "description": "Normalized user intent, e.g. 'aggressive tech, ~$5000'.",
+                "description": "Normalized user intent, e.g. 'large-cap NIFTY stocks, ~Rs 10000'.",
             },
             "ceilings": {
                 "type": "object",
                 "description": (
-                    "Account hard-ceiling snapshot the profiles are clamped to "
-                    "(e.g. account_funding_usd, max_total_exposure_usd, leverage, "
-                    "instruments). Every proposed profile is bounded by these; the "
-                    "tool can only clamp DOWN, never up."
+                    "OPTIONAL lower limits you want (e.g. max_order_notional_usd, "
+                    "max_trades_per_day, instruments). The real ceilings are fixed "
+                    "server-side; a value above them is REJECTED, never raised."
                 ),
             },
             "session_id": {
@@ -95,7 +96,7 @@ class ProposeMandateProfilesTool(BaseTool):
                 ),
             },
         },
-        "required": ["broker", "ceilings"],
+        "required": ["broker"],
     }
     repeatable = True
     is_readonly = True
@@ -104,8 +105,9 @@ class ProposeMandateProfilesTool(BaseTool):
         """Synthesize, persist, and return a ``mandate.proposal`` payload.
 
         Args:
-            **kwargs: ``broker`` and ``ceilings`` required; optional ``intent``,
-                ``session_id``, ``reauth_for``, ``flatten_on_halt``.
+            **kwargs: ``broker`` required; optional ``ceilings`` (a request at or
+                below the server ceilings), ``intent``, ``session_id``, ``reauth_for``,
+                ``flatten_on_halt``.
 
         Returns:
             JSON string of the ``mandate.proposal`` payload, or an error
@@ -114,12 +116,16 @@ class ProposeMandateProfilesTool(BaseTool):
         broker = str(kwargs.get("broker") or "").strip().lower()
         if not broker:
             return json.dumps({"status": "error", "error": "broker is required"}, ensure_ascii=False)
-        ceilings = kwargs.get("ceilings")
-        if not isinstance(ceilings, dict):
+        requested = kwargs.get("ceilings")
+        if requested is not None and not isinstance(requested, dict):
             return json.dumps(
-                {"status": "error", "error": "ceilings (object) is required"},
+                {"status": "error", "error": "ceilings must be an object when given"},
                 ensure_ascii=False,
             )
+        try:
+            ceilings = check_request(requested or {}, server_ceilings(broker))
+        except CeilingError as exc:
+            return json.dumps({"status": "error", "error": f"invalid ceilings: {exc}"}, ensure_ascii=False)
 
         intent = str(kwargs.get("intent") or "").strip()
         session_id = kwargs.get("session_id")
@@ -146,8 +152,7 @@ class ProposeMandateProfilesTool(BaseTool):
                 "funded_by": "user",
             },
             "ceilings_ref": str(ceilings.get("ceilings_ref") or f"caps_{uuid.uuid4().hex}"),
-            # The full snapshot is stored on the record so commit re-validates
-            # the resolved profile against exactly what the user saw.
+            # What the user saw. Commit re-validates against the SERVER ceilings, not this.
             "ceilings": dict(ceilings),
             "profiles": profiles,
             "funding_note": (
@@ -202,7 +207,8 @@ class ProposeMandateProfilesTool(BaseTool):
         ceil_daily = canon.get("max_trades_per_day")
         ceil_daily = int(ceil_daily) if ceil_daily is not None else None
         instruments = list(canon.get("allowed_instruments") or ["equity"])
-        universe = ceilings.get("universe") or ["AAPL", "MSFT", "NVDA", "GOOGL"]
+        universe = ceilings.get("universe") or []
+        asset_classes = list(canon.get("asset_classes") or ceilings.get("asset_classes") or [])
         # Leverage is always clamped to the ceiling; default cash-only.
         leverage = canon.get("leverage", "none")
 
@@ -232,6 +238,7 @@ class ProposeMandateProfilesTool(BaseTool):
                 "daily_trade_cap": daily,
                 "leverage": leverage,
                 "instruments": instruments,
+                "asset_classes": asset_classes,
                 "flatten_on_halt": flatten_on_halt,
                 "notes": tpl["notes"],
             }

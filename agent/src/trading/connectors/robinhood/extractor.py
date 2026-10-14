@@ -18,6 +18,8 @@ bypass).
 
 from __future__ import annotations
 
+import math
+
 from src.live.enforcement import OrderIntent
 from src.live.mandate.model import InstrumentType
 
@@ -152,14 +154,19 @@ def _extract_size(kwargs: dict) -> tuple[float | None, float | None]:
 
 
 def _first_positive_float(kwargs: dict, keys: tuple[str, ...]) -> float | None:
-    """Return the first present key's value as a positive float, else ``None``."""
+    """Return the LARGEST positive value among the present size keys, else ``None``.
+
+    The broker may honour any of several aliases; reading only the first present one let
+    ``{"notional_usd": 1, "dollar_amount": 100000}`` be sized at 1. An invalid present key denies.
+    """
+    values = []
     for key in keys:
         if key in kwargs:
             try:
                 value = float(kwargs[key])
             except (TypeError, ValueError):
                 return None
-            if value != value or value <= 0:  # NaN or non-positive
+            if not math.isfinite(value) or value <= 0:
                 return None
-            return value
-    return None
+            values.append(value)
+    return max(values) if values else None

@@ -18,6 +18,7 @@ class _Entry:
     description: str
     body: str
     memory_type: str = "project"
+    keywords: tuple = ()
 
 
 def test_autonomous_us_session_uses_spy_not_nifty_in_preamble() -> None:
@@ -109,8 +110,12 @@ def test_filters_e2e_memory_on_autonomous_in_session() -> None:
         title="Bootstrap retry heuristic",
         description="dev",
         body="Commit from cached context rather than burn further context on idempotent reads.",
+        keywords=("e2e-test",),
     )
     assert memory_matches_session(entry, cfg) is False
+    # the tag decides, not the wording: untagged text that used to match is a real memory now
+    untagged = _Entry(title=entry.title, description=entry.description, body=entry.body)
+    assert memory_matches_session(untagged, cfg) is True
 
 
 def test_keeps_trading_memory_on_autonomous_in_session() -> None:

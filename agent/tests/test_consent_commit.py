@@ -408,7 +408,7 @@ def test_adjust_instruments_narrowing_subset_commits(live_runtime: Path) -> None
     result = commit_mandate(
         proposal_id=proposal_id,
         ordinal=1,
-        adjustments={"instruments": ["equity"]},
+        adjustments={"instruments": ["equity"], "leverage": "none"},  # server ceiling is cash-only
         consent_ack=True,
         broker="robinhood",
     )

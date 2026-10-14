@@ -105,6 +105,7 @@ def session_injected_classes() -> frozenset[type[BaseTool]]:
         UpdateResearchGoalStatusTool,
     )
     from src.tools.propose_autonomous_agent_tool import ProposeAutonomousAgentTool
+    from src.tools.qveris_tool import QVerisExecuteTool, QVerisInspectTool, QVerisSearchTool
     from src.tools.scheduled_research_tool import ScheduledResearchTool
 
     return frozenset(
@@ -116,6 +117,9 @@ def session_injected_classes() -> frozenset[type[BaseTool]]:
             RunResearchAutopilotTool,
             ScheduledResearchTool,
             ProposeAutonomousAgentTool,
+            QVerisSearchTool,
+            QVerisInspectTool,
+            QVerisExecuteTool,
         }
     )
 

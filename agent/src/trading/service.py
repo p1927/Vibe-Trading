@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import sys
 from typing import Any
 
@@ -78,7 +79,36 @@ def _allowed_override_keys(module: Any) -> frozenset[str]:
 #: connector profile id already fixes that (paper vs live, host), so a caller
 #: (an LLM tool argument, a REST body) may never move it. Futu's ``host`` is the
 #: operator's local OpenD gateway, the only one a caller may legitimately name.
-_ENDPOINT_OVERRIDE_KEYS = frozenset({"profile", "host", "base_url", "testnet_host"})
+_ENDPOINT_OVERRIDE_KEYS = frozenset({"profile", "host", "base_url", "testnet_host", "port", "terminal_path"})
+#: Account/credential selectors a model-supplied override must never change, per connector: they
+#: would place orders on another live account (tiger), or pick the terminal/login (mt5).
+_PINNED_OVERRIDE_KEYS = {
+    "tiger": frozenset({"account", "tiger_id", "private_key_path"}),
+    "mt5": frozenset({"login", "password", "server"}),
+}
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_SAFE_ID_RE = re.compile(r"^[0-9A-Za-z_:][0-9A-Za-z_.:-]{0,63}$")
+
+
+def _bad_id(value: Any, what: str) -> dict[str, Any] | None:
+    """Error envelope unless ``value`` is a plain broker id (never a path: ids reach URL paths)."""
+    text = str(value).strip()
+    if not _SAFE_ID_RE.fullmatch(text) or ".." in text:
+        return {"status": "error", "error": f"{what} must be a plain id (letters, digits, - _ : .), got {text[:40]!r}"}
+    return None
+
+
+def _bad_number(value: Any, what: str) -> dict[str, Any] | None:
+    """Error envelope unless ``value`` is None or a finite positive number (NaN/inf pass ``<= 0``)."""
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return {"status": "error", "error": f"{what} must be a number"}
+    if not math.isfinite(number) or number <= 0:
+        return {"status": "error", "error": f"{what} must be a finite positive number"}
+    return None
 
 
 def _sdk_config(
@@ -99,7 +129,12 @@ def _sdk_config(
     allowed = {
         key: value
         for key, value in dict(overrides or {}).items()
-        if key not in _ENDPOINT_OVERRIDE_KEYS or (key == "host" and profile.connector == "futu")
+        if key not in _PINNED_OVERRIDE_KEYS.get(profile.connector, ())
+        and (
+            key not in _ENDPOINT_OVERRIDE_KEYS
+            # futu's OpenD host is local-only: the live trade-password hash is sent to it.
+            or (key == "host" and profile.connector == "futu" and str(value).strip() in _LOOPBACK_HOSTS)
+        )
     }
     config = _build_sdk_config(profile, module, allowed)
     actual = getattr(config, "environment", None)
@@ -711,6 +746,9 @@ def place_order(
     if profile.readonly:
         return _unsupported(profile, "orders.place")
 
+    for what, value in (("quantity", quantity), ("notional", notional), ("limit_price", limit_price)):
+        if (error := _bad_number(value, what)) is not None:
+            return _with_profile(profile, error)
     module = _sdk_module(profile.connector)
     config = _sdk_config(profile, module, overrides)
     place_kwargs = {
@@ -771,6 +809,8 @@ def cancel_order(
         return _unsupported(profile, "orders.cancel")
     if profile.readonly:
         return _unsupported(profile, "orders.cancel")
+    if (error := _bad_id(order_id, "order_id")) is not None:
+        return _with_profile(profile, error)
     module = _sdk_module(profile.connector)
     config = _sdk_config(profile, module, overrides)
     result = module.cancel_order(config, order_id, symbol=symbol)
@@ -947,6 +987,8 @@ def close_position(
     profile = profile_by_id(profile_id)
     if profile.connector != "etoro":
         return _unsupported_etoro(profile, "positions.close")
+    if (error := _bad_id(position_id, "position_id")) is not None:
+        return _with_profile(profile, error)
     overrides = dict(overrides)
     overrides.pop("session_id", None)
     module = _sdk_module(profile.connector)
@@ -987,6 +1029,8 @@ def cancel_close_order(
     profile = profile_by_id(profile_id)
     if profile.connector != "etoro":
         return _unsupported_etoro(profile, "orders.cancel_close")
+    if (error := _bad_id(order_id, "order_id")) is not None:
+        return _with_profile(profile, error)
     overrides = dict(overrides)
     overrides.pop("session_id", None)
     module = _sdk_module(profile.connector)
@@ -1025,6 +1069,8 @@ def edit_position_stops(
     profile = profile_by_id(profile_id)
     if profile.connector != "etoro":
         return _unsupported_etoro(profile, "positions.edit")
+    if (error := _bad_id(position_id, "position_id")) is not None:
+        return _with_profile(profile, error)
     overrides = dict(overrides)
     overrides.pop("session_id", None)
     module = _sdk_module(profile.connector)

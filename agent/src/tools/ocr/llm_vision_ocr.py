@@ -126,7 +126,8 @@ def _resolve_provider_config() -> dict[str, str]:
     key_env, base_env = provider_env_names(provider, model_name)
 
     if key_env is not None:
-        api_key = os.getenv(key_env, "") or os.getenv("OPENAI_API_KEY", "")  # noqa: env-gate
+        # No cross-provider key fallback: OPENAI_API_KEY must never be sent to another provider.
+        api_key = os.getenv(key_env, "")  # noqa: env-gate
     else:
         # Provider unknown to provider_env_names() — fall back to OPENAI_API_KEY.
         # Ollama (a local no-auth provider) uses "ollama" as a placeholder key
@@ -257,7 +258,7 @@ class LlmVisionOcrEngine:
                     config["model"],
                     exc,
                 )
-                return ""
+                raise
             except APIStatusError as exc:
                 # 5xx server errors are transient — retry once.
                 if exc.status_code >= 500 and attempt == 0:
@@ -281,7 +282,7 @@ class LlmVisionOcrEngine:
                     exc,
                 )
                 raise
-        return ""
+        raise AssertionError("unreachable: the retry loop always returns or raises")
 
     @staticmethod
     def _create_logged(client, config: dict[str, str], **kwargs):

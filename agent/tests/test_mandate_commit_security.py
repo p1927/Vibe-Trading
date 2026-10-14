@@ -34,7 +34,7 @@ def _proposal(proposal_id: str) -> dict[str, object]:
                 "daily_trade_cap": 2,
                 "leverage": "none",
                 "instruments": ["equity"],
-                "asset_classes": ["us_equity"],
+                "asset_classes": ["in_equity"],
                 "exclude_symbols": ["GME"],
             }
         ],

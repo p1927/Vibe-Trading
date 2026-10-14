@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 # One definition of "is this an autonomous-agent session" (D306); re-exported for the callers
 # that already import it from here.
+from src.memory.e2e_retag import E2E_TAG
 from src.session.autonomous_agent_profile import is_autonomous_agent_session
 from src.trade.symbol_detect import extract_primary_ticker, infer_asset_type
 
@@ -28,17 +29,6 @@ _IN_MARKET_MARKERS = frozenset(
 _US_BACKEND_MARKERS = frozenset({"ALPACA", "ALPACA-PAPER"})
 
 _INJECTION_TITLE_RE = re.compile(r"prompt[- ]injection", re.I)
-
-_E2E_MEMORY_MARKERS = (
-    "handoff cycle",
-    "cached context",
-    "synthetic alert",
-    "idempotent reads",
-    "verification reads",
-    "e2e phase",
-    "integration test",
-    "commit from cached",
-)
 
 
 def session_execution_market(session_config: dict[str, Any] | None) -> str:
@@ -162,10 +152,9 @@ def memory_matches_session(
     """Filter auto-recall so cross-market injection notes do not bleed into other sessions."""
     cfg = session_config or {}
     market = session_execution_market(cfg)
-    blob_lower = f"{entry.title} {entry.description} {entry.body}".lower()
 
     if is_autonomous_agent_session(cfg) and not cfg.get("e2e_integration_test"):
-        if any(marker in blob_lower for marker in _E2E_MEMORY_MARKERS):
+        if E2E_TAG in getattr(entry, "keywords", ()):
             return False
         if _INJECTION_TITLE_RE.search(entry.title.lower()):
             return False

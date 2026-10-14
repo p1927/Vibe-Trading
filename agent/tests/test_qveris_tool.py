@@ -149,10 +149,9 @@ def test_paid_mode_rejects_when_expected_cost_exceeds_budget(monkeypatch):
     monkeypatch.setattr(qt.QVerisExecuteTool, "_client", lambda self: FakeClient())
 
     payload = json.loads(
-        qt.QVerisExecuteTool().execute(
+        qt.QVerisExecuteTool(default_session_id="s1").execute(
             tool_id="tool_1",
             parameters={},
-            session_id="s1",
             expected_cost="2 credits",
         )
     )
@@ -189,14 +188,13 @@ def test_parallel_execute_reserves_shared_session_budget(monkeypatch):
 
     client = FakeClient()
     monkeypatch.setattr(qt.QVerisExecuteTool, "_client", lambda self: client)
-    tool = qt.QVerisExecuteTool()
+    tool = qt.QVerisExecuteTool(default_session_id="shared")
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(
             tool.execute,
             tool_id="tool_1",
             parameters={},
-            session_id="shared",
             expected_cost="0.75 credits",
         )
         assert entered.wait(timeout=2)
@@ -204,7 +202,6 @@ def test_parallel_execute_reserves_shared_session_budget(monkeypatch):
             tool.execute,
             tool_id="tool_2",
             parameters={},
-            session_id="shared",
             expected_cost="0.75 credits",
         )
         second_payload = json.loads(second.result(timeout=2))
@@ -240,11 +237,10 @@ def test_failed_execute_releases_credit_reservation(monkeypatch):
 
     client = FailOnceClient()
     monkeypatch.setattr(qt.QVerisExecuteTool, "_client", lambda self: client)
-    tool = qt.QVerisExecuteTool()
+    tool = qt.QVerisExecuteTool(default_session_id="retry")
     call = {
         "tool_id": "tool_1",
         "parameters": {},
-        "session_id": "retry",
         "expected_cost": "1 credit",
     }
 
@@ -337,10 +333,9 @@ def test_zero_expected_cost_from_the_caller_cannot_clear_the_budget_gate(monkeyp
     monkeypatch.setattr(qt.QVerisExecuteTool, "_client", lambda self: FakeClient())
 
     payload = json.loads(
-        qt.QVerisExecuteTool().execute(
+        qt.QVerisExecuteTool(default_session_id="attack").execute(
             tool_id="tool_1",
             parameters={},
-            session_id="attack",
             expected_cost=0.0,
         )
     )
@@ -373,8 +368,8 @@ def test_an_unverifiable_zero_quote_fails_closed(monkeypatch):
     monkeypatch.setattr(qt.QVerisExecuteTool, "_client", lambda self: FakeClient())
 
     payload = json.loads(
-        qt.QVerisExecuteTool().execute(
-            tool_id="tool_1", parameters={}, session_id="offline", expected_cost=0
+        qt.QVerisExecuteTool(default_session_id="offline").execute(
+            tool_id="tool_1", parameters={}, expected_cost=0
         )
     )
 
@@ -404,10 +399,45 @@ def test_an_honest_caller_quote_is_still_honoured(monkeypatch):
     monkeypatch.setattr(qt.QVerisExecuteTool, "_client", lambda self: FakeClient())
 
     payload = json.loads(
-        qt.QVerisExecuteTool().execute(
-            tool_id="tool_1", parameters={}, session_id="honest", expected_cost="2 credits"
+        qt.QVerisExecuteTool(default_session_id="honest").execute(
+            tool_id="tool_1", parameters={}, expected_cost="2 credits"
         )
     )
 
     assert payload["ok"] is True
     assert qt._SESSION_SPEND["honest"] == pytest.approx(1.0)
+
+
+def test_model_supplied_session_id_cannot_reset_the_budget(monkeypatch):
+    """The cap is keyed on the host-assigned session; rotating a model argument changes nothing."""
+    qt.save_qveris_config(
+        qt.QVerisConfig(enabled=True, api_key="sk-live", mode="paid", budget_credits_per_session=1.0)
+    )
+
+    class FakeClient:
+        def execute(self, *args, **kwargs):
+            return {"success": True, "cost": 1.0, "result": {}}
+
+    monkeypatch.setattr(qt.QVerisExecuteTool, "_client", lambda self: FakeClient())
+    tool = qt.QVerisExecuteTool(default_session_id="host-1")
+    first = json.loads(tool.execute(tool_id="t", parameters={}, expected_cost="1 credit"))
+    assert first["ok"] is True
+    for rotated in ("fresh-1", "fresh-2", ""):
+        out = json.loads(
+            tool.execute(tool_id="t", parameters={}, expected_cost="1 credit", session_id=rotated)
+        )
+        assert out["status"] == "budget_exceeded"
+    assert set(qt._SESSION_SPEND) == {"host-1"}
+    # a host without sessions (MCP) shares ONE default key, not a model-chosen one
+    other = qt.QVerisExecuteTool()
+    ok = json.loads(other.execute(tool_id="t", parameters={}, expected_cost="1 credit", session_id="x"))
+    assert ok["ok"] is True
+    again = json.loads(other.execute(tool_id="t", parameters={}, expected_cost="1 credit", session_id="y"))
+    assert again["status"] == "budget_exceeded"
+    assert set(qt._SESSION_SPEND) == {"host-1", "default"}
+
+
+def test_qveris_tools_get_the_host_session_id():
+    from src.tools import session_injected_classes
+
+    assert {qt.QVerisSearchTool, qt.QVerisInspectTool, qt.QVerisExecuteTool} <= session_injected_classes()

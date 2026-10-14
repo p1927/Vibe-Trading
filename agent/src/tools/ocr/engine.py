@@ -163,7 +163,8 @@ def get_ocr_engine() -> OcrEngine | None:
             if engine.is_available():
                 return engine
         except Exception as exc:
-            logger.warning("OCR engine '%s' failed: %s", choice, exc)
+            raise RuntimeError(f"OCR engine {choice!r} was requested but failed: {exc}") from exc
+        raise RuntimeError(f"OCR engine {choice!r} was requested but is not available")
 
     # Unknown engine → fallback to auto
     logger.warning("Unknown OCR engine '%s', falling back to 'auto'", choice)
