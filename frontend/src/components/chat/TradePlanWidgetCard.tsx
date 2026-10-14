@@ -406,7 +406,8 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
       ? { ...widget.live_context, ...livePlan.liveContext }
       : widget.live_context;
   const isStale = staleness?.status === "stale";
-  const showFreshStrip = staleness?.status === "fresh";
+  // The creation-time verdict is not current once the live check fails: say so instead of "Plan current".
+  const showFreshStrip = staleness?.status === "fresh" && !livePlan.error;
   const spotDriftPct = staleness?.spot_drift_pct;
   const planIncomplete = widget.plan_status === "incomplete" || widget.plan_status === "partial";
   const viewLabel = formatViewLabel(pred.view) || "Neutral / range-bound";
@@ -729,6 +730,15 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
                 Live {formatInr(liveContext.spot)} vs plan {formatInr(liveContext.plan_spot)}
               </span>
             ) : null}
+          </p>
+        )}
+
+        {livePlan.error && (
+          <p
+            data-testid="plan-live-check-failed"
+            className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-200"
+          >
+            Live plan check unavailable ({livePlan.error}); the plan may be outdated.
           </p>
         )}
 

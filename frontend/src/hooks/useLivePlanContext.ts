@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { api, type TradePlanLiveContext, type TradePlanStaleness } from "@/lib/api";
+import { useMemo } from "react";
+import type { TradePlanLiveContext, TradePlanStaleness } from "@/lib/api";
+import { usePlanContext } from "@/hooks/usePlanContext";
 
 const POLL_INTERVAL_MS = 60_000;
 
@@ -7,58 +8,20 @@ export interface LivePlanContextState {
   monitorEnabled: boolean;
   staleness: TradePlanStaleness | null;
   liveContext: TradePlanLiveContext | null;
-  materialNewsCount: number;
-  openPosition: boolean;
+  /** The live read failed: staleness/liveContext are unknown, not "monitor off". */
+  error: string | null;
 }
 
-const DISABLED_STATE: LivePlanContextState = {
-  monitorEnabled: false,
-  staleness: null,
-  liveContext: null,
-  materialNewsCount: 0,
-  openPosition: false,
-};
-
 export function useLivePlanContext(ticker: string | undefined): LivePlanContextState {
-  const [payload, setPayload] = useState<Awaited<ReturnType<typeof api.getPlanContext>> | null>(
-    null,
-  );
-
-  useEffect(() => {
-    const key = (ticker || "").trim().toUpperCase();
-    if (!key) {
-      setPayload(null);
-      return;
-    }
-
-    let cancelled = false;
-
-    const poll = async () => {
-      try {
-        const response = await api.getPlanContext(key);
-        if (!cancelled) setPayload(response);
-      } catch {
-        /* ignore transient poll errors */
-      }
-    };
-
-    void poll();
-    const intervalId = window.setInterval(poll, POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [ticker]);
-
+  const key = (ticker || "").trim().toUpperCase();
+  const { context, error } = usePlanContext(key, { pollMs: POLL_INTERVAL_MS });
   return useMemo(() => {
-    if (!payload?.monitor_enabled) return DISABLED_STATE;
+    if (!context?.monitor_enabled) return { monitorEnabled: false, staleness: null, liveContext: null, error };
     return {
       monitorEnabled: true,
-      staleness: payload.staleness ?? null,
-      liveContext: payload.live_context ?? null,
-      materialNewsCount: payload.material_news_count ?? 0,
-      openPosition: payload.open_position ?? false,
+      staleness: context.staleness ?? null,
+      liveContext: context.live_context ?? null,
+      error: null,
     };
-  }, [payload]);
+  }, [context, error]);
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type IndexPredictionArtifact } from "@/lib/api";
 import { finiteOrNull } from "@/lib/finite";
-import { useLatestRequest } from "@/hooks/useLatestRequest";
+import { usePlanContext } from "@/hooks/usePlanContext";
 
 interface Props {
   ticker?: string;
@@ -24,8 +24,11 @@ export function useIndexPredictionLive({
   const [countdownSec, setCountdownSec] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   // null = unknown (not read yet, the read failed, or it carried no count): never shown as "0 material headlines".
-  const [materialNewsCount, setMaterialNewsCount] = useState<number | null>(null);
-  const beginContext = useLatestRequest();
+  const { context } = usePlanContext(ticker, {
+    pollMs,
+    enabled: enabled && pollMs > 0 && !pauseWhileRunning,
+  });
+  const materialNewsCount = finiteOrNull(context?.material_news_count);
   const onUpdateRef = useRef(onUpdate);
   onUpdateRef.current = onUpdate;
   const refreshInFlightRef = useRef(false);
@@ -62,27 +65,15 @@ export function useIndexPredictionLive({
     }
   }, [ticker, horizonDays]);
 
-  const loadContext = useCallback(async () => {
-    const isCurrent = beginContext(); // a slow answer for the previous ticker / poll tick must not land
-    try {
-      const ctx = await api.getPlanContext(ticker);
-      if (isCurrent()) setMaterialNewsCount(finiteOrNull(ctx.material_news_count));
-    } catch {
-      if (isCurrent()) setMaterialNewsCount(null); // the old count is no longer current
-    }
-  }, [beginContext, ticker]);
-
   useEffect(() => {
     if (!enabled || pollMs <= 0 || pauseWhileRunning) {
       setCountdownSec(0);
       return;
     }
 
-    void loadContext();
     void refreshLight();
 
     const pollId = window.setInterval(() => {
-      void loadContext();
       void refreshLight();
     }, pollMs);
 
@@ -98,7 +89,7 @@ export function useIndexPredictionLive({
       window.clearInterval(pollId);
       window.clearInterval(tickId);
     };
-  }, [enabled, pollMs, pauseWhileRunning, refreshLight, loadContext]);
+  }, [enabled, pollMs, pauseWhileRunning, refreshLight]);
 
   return { lastReason, countdownSec, materialNewsCount, refreshing, pausedForAnalysis: pauseWhileRunning };
 }
