@@ -16,7 +16,7 @@ from typing import Any
 
 from src.config.accessor import get_env_config
 from src.trade import job_runner
-from src.trade.job_store import JobStore, now_iso as _now_iso, worker_alive
+from src.trade.job_store import JobStore, now_iso as _now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -274,11 +274,6 @@ def spawn_worker(job_id: str) -> None:
 
 def kick_external_predictions_refresh(*, ticker: str, horizon_days: int) -> tuple[str, str, bool]:
     job_id, reused = start_job(ticker=ticker, horizon_days=horizon_days)
-    if not reused:
-        spawn_worker(job_id)
-    else:
-        existing = _get_job_record(job_id)
-        if existing is not None and not worker_alive(existing):
-            spawn_worker(job_id)
+    _STORE.ensure_worker(job_id, reused, spawn_worker)
     snap = get_job(job_id) or {}
     return job_id, str(snap.get("status") or "queued"), reused

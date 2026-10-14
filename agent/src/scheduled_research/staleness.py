@@ -99,6 +99,24 @@ _JOB_TYPE_DISPATCH_CONCURRENCY: dict[str, int] = {
 _JOB_TYPE_DISPATCH_CONCURRENCY_ENV_PREFIX = "SCHEDULED_RESEARCH_DISPATCH_CONCURRENCY_"
 
 
+_WARNED_ENV: set[tuple[str, str]] = set()
+
+
+def _env_int(raw: str, name: str, default: int, floor: int) -> int:
+    """Parse one numeric env knob. Unset means *default*; an unparsable value also runs on *default*
+    but is named in the log once, so ``SCHEDULED_RESEARCH_DISPATCH_TIMEOUT_MS=45m`` is not a silent no-op."""
+    raw = raw.strip()
+    if not raw:
+        return default
+    try:
+        return max(floor, int(raw))
+    except ValueError:
+        if (name, raw) not in _WARNED_ENV:
+            _WARNED_ENV.add((name, raw))
+            logger.warning("%s=%r is not an integer; using the default %d", name, raw, default)
+        return default
+
+
 def _autonomous_watch_target_running(job: ScheduledResearchJob) -> bool:
     """Return whether the agent bound to an autonomous_agent_watch job is running.
 
@@ -130,11 +148,7 @@ def _autonomous_watch_target_running(job: ScheduledResearchJob) -> bool:
 
 def _startup_grace_ms() -> int:
     """Delay before the first executor tick so the API can serve health checks."""
-    raw = get_env_config().trade.scheduled_research_startup_grace_ms.strip()
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        return DEFAULT_STARTUP_GRACE_MS
+    return _env_int(get_env_config().trade.scheduled_research_startup_grace_ms, STARTUP_GRACE_ENV, DEFAULT_STARTUP_GRACE_MS, 0)
 
 
 def _fresh_registration_defer_ms() -> int:
@@ -144,11 +158,12 @@ def _fresh_registration_defer_ms() -> int:
     every default scheduled job back-to-back on every code save. Set to 0 to
     restore the pre-fix behaviour (every reload fires everything).
     """
-    raw = get_env_config().trade.scheduled_research_fresh_defer_ms.strip()
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        return DEFAULT_FRESH_REGISTRATION_DEFER_MS
+    return _env_int(
+        get_env_config().trade.scheduled_research_fresh_defer_ms,
+        FRESH_REGISTRATION_DEFER_ENV,
+        DEFAULT_FRESH_REGISTRATION_DEFER_MS,
+        0,
+    )
 
 
 def defer_fresh_registrations(
@@ -213,19 +228,16 @@ def _defer_never_run_jobs(store: ScheduledResearchJobStore, now: int, defer_ms: 
 
 
 def _stale_running_ms() -> int:
-    raw = get_env_config().trade.scheduled_research_stale_running_ms.strip()
-    try:
-        return max(60_000, int(raw))
-    except ValueError:
-        return DEFAULT_STALE_RUNNING_MS
+    return _env_int(get_env_config().trade.scheduled_research_stale_running_ms, STALE_RUNNING_ENV, DEFAULT_STALE_RUNNING_MS, 60_000)
 
 
 def _index_plan_refresh_stale_ms() -> int:
-    raw = get_env_config().trade.index_plan_refresh_stale_ms.strip()
-    try:
-        return max(60_000, int(raw))
-    except ValueError:
-        return DEFAULT_INDEX_PLAN_REFRESH_STALE_MS
+    return _env_int(
+        get_env_config().trade.index_plan_refresh_stale_ms,
+        INDEX_PLAN_REFRESH_STALE_ENV,
+        DEFAULT_INDEX_PLAN_REFRESH_STALE_MS,
+        60_000,
+    )
 
 
 def _watchdog_buffer_ms() -> int:
@@ -286,11 +298,12 @@ def dispatch_timeout_ms_for(job: ScheduledResearchJob) -> int:
         return _JOB_DISPATCH_TIMEOUT_MS[job_type]
     if job_type.startswith("index_"):
         return _INDEX_JOB_DISPATCH_TIMEOUT_MS
-    raw_env = get_env_config().trade.scheduled_research_dispatch_timeout_ms.strip()
-    try:
-        return max(60_000, int(raw_env))
-    except ValueError:
-        return DEFAULT_DISPATCH_TIMEOUT_MS
+    return _env_int(
+        get_env_config().trade.scheduled_research_dispatch_timeout_ms,
+        DISPATCH_TIMEOUT_ENV,
+        DEFAULT_DISPATCH_TIMEOUT_MS,
+        60_000,
+    )
 
 
 def dispatch_concurrency_for_job_type(job_type: str) -> int | None:
@@ -306,10 +319,7 @@ def dispatch_concurrency_for_job_type(job_type: str) -> int | None:
     env_name = _JOB_TYPE_DISPATCH_CONCURRENCY_ENV_PREFIX + job_type.upper()
     raw_env = os.getenv(env_name, "").strip()
     if raw_env:
-        try:
-            parsed = int(raw_env)
-        except ValueError:
-            parsed = 0
+        parsed = _env_int(raw_env, env_name, 0, 0)
         if parsed > 0:
             return parsed
     return _JOB_TYPE_DISPATCH_CONCURRENCY.get(job_type)
@@ -341,19 +351,21 @@ def _request_pipeline_cancel_on_dispatch_timeout(job_id: str, job_type: str) -> 
 
 
 def _watchdog_interval_ms() -> int:
-    raw = get_env_config().trade.scheduled_research_watchdog_interval_ms.strip()
-    try:
-        return max(10_000, int(raw))
-    except ValueError:
-        return DEFAULT_WATCHDOG_INTERVAL_MS
+    return _env_int(
+        get_env_config().trade.scheduled_research_watchdog_interval_ms,
+        WATCHDOG_INTERVAL_ENV,
+        DEFAULT_WATCHDOG_INTERVAL_MS,
+        10_000,
+    )
 
 
 def _default_failure_threshold() -> int:
-    raw = get_env_config().trade.scheduled_research_failure_threshold.strip()
-    try:
-        return max(1, int(raw))
-    except ValueError:
-        return DEFAULT_FAILURE_THRESHOLD
+    return _env_int(
+        get_env_config().trade.scheduled_research_failure_threshold,
+        FAILURE_THRESHOLD_ENV,
+        DEFAULT_FAILURE_THRESHOLD,
+        1,
+    )
 
 
 def _failure_threshold_for(job: ScheduledResearchJob) -> int:

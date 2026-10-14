@@ -184,8 +184,10 @@ class SkillsLoader:
             if skill.name == name:
                 return f'<skill name="{name}">\n{skill.body}\n</skill>'
 
-        # Fallback: check user skills directory on disk (mid-session created skills)
-        if self._user_skills_dir:
+        # Fallback: check user skills directory on disk (mid-session created skills).
+        # ``name`` is model-supplied: a bare directory name only, never a path
+        # (``../x`` or an absolute path would load any SKILL.md on disk).
+        if self._user_skills_dir and name and Path(name).name == name and name not in {".", ".."}:
             skill = _load_skill_dir(self._user_skills_dir / name)
             if skill:
                 self.skills.append(skill)

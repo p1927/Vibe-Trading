@@ -48,6 +48,9 @@ def build_stage_log(entries: list[dict[str, Any]], *, ended_at_ms: int) -> list[
             continue
         name, at = match["name"], int(entry.get("at") or 0)
         if match["start"]:
+            earlier = open_by_name.get(name)
+            if earlier is not None:  # started again with no end line: the first one ended where this began
+                earlier.update(ended_at=at, duration_ms=max(0, at - int(earlier["started_at"])))
             record = {
                 "stage": name, "started_at": at, "ended_at": None,
                 "duration_ms": None, "status": "unfinished", "error": None,

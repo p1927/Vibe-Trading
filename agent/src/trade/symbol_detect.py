@@ -160,6 +160,9 @@ def extract_primary_ticker(text: str) -> str | None:
         if re.search(rf"\b{re.escape(index)}\b", upper):
             return index.replace("^", "") if index.startswith("^") else index
 
+    # Tickers typed in capitals come first: "what is your idea for HDFCBANK" must not resolve to the
+    # listed symbol IDEA (any capitalised-by-upper() word that is also a listing wins otherwise).
+    typed_upper = {m.group(1).split(".")[0] for m in _TICKER_RE.finditer(text)}
     candidates: list[str] = []
     for match in _TICKER_RE.finditer(upper):
         token = match.group(1).rstrip(".")
@@ -171,6 +174,7 @@ def extract_primary_ticker(text: str) -> str | None:
         if len(token) < 2 or len(token) > 12 or token.isdigit():
             continue
         candidates.append(token)
+    candidates.sort(key=lambda c: c not in typed_upper)  # stable: text order inside each group
 
     if not candidates:
         return None

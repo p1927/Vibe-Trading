@@ -85,7 +85,6 @@ def test_run_stock_history_coverage_sweep_job_starts_one_backfill_run_for_all_we
     # Per-bucket seconds survive into the persisted job record
     # ([[2026-09-23-backfill-durations-not-persisted]]); a bucket that never ran has none.
     assert result["durations"] == {"macro_factors": 271.4}
-    assert index_jobs._compact_result_summary(result)["durations"] == {"macro_factors": 271.4}
 
 
 @pytest.mark.unit

@@ -410,6 +410,18 @@ class JobStore:
             self.write(job)
             return job, False
 
+    def ensure_worker(self, job_id: str, reused: bool, spawn: Callable[[str], None]) -> None:
+        """Spawn the worker of a job :meth:`claim` just created, or respawn one a reused job lost.
+
+        The one start-or-respawn rule every kick path (index prediction, external predictions,
+        forecast engine, recording) shared as a copy: a pid-less ``queued`` job still counts as alive
+        (``self.alive``; recording also counts ``waiting_for_open``), so a second caller never starts a second worker for it."""
+        if reused:
+            existing = self.get_record(job_id)
+            if existing is None or self.alive(existing):
+                return
+        spawn(job_id)
+
     def _find_live_on_disk(self, scope: str) -> dict[str, Any] | None:
         """The live active job of ``scope`` found by scanning the jobs dir, failing any active row whose
         worker died on the way (a crashed process's stale row must not wedge claim forever). A job file not

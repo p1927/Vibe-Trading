@@ -147,6 +147,9 @@ def run_dst_lite_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     if root is None:
         return {"status": "error", "error": "trade repo root not found", "had_errors": True}
     markers = dst_lite_markers(root)
+    if not markers:
+        # `-m ""` would select every test in the repo (a 30-minute run of the whole suite).
+        return {"status": "error", "error": "no *_dst marker declared in pyproject.toml", "had_errors": True}
     summary = _run_pytest(
         "dst_lite",
         ["tests", "-m", " or ".join(markers), "-q", "--timeout=300",
@@ -247,7 +250,7 @@ def dispatch_dst_eval_job_sync(job: ScheduledResearchJob) -> None:
 
 
 def _dispatch_dst_eval_job_body(job: ScheduledResearchJob) -> None:
-    """Route one dst-eval job, attach its summary, and fail the run when the summary says it failed.
+    """Route one dst-eval job, attach its whole summary (the executor caps it), and fail the run when the summary says it failed.
 
     Every runner here catches its own errors and *returns* ``{"status": "error", "had_errors":
     True}``, and this function used to discard that return value. So the executor took its success
@@ -257,7 +260,7 @@ def _dispatch_dst_eval_job_body(job: ScheduledResearchJob) -> None:
     own record changes.
     See .claude/backlog/items/2026-09-11-job-errors-recorded-as-success.md.
     """
-    from src.scheduled_research.run_outcome import LAST_RESULT_CONFIG_KEY, raise_if_run_had_errors
+    from src.scheduled_research.run_outcome import finish_run
 
     job_type = str(job.config.get("job_type") or "")
     runners = {
@@ -271,34 +274,8 @@ def _dispatch_dst_eval_job_body(job: ScheduledResearchJob) -> None:
     if runner is None:
         raise ValueError(f"unsupported dst_eval job_type: {job_type!r}")
     summary = runner(job.config)
-    compact = _compact_dst_eval_summary(summary)
-    if compact:
-        job.config[LAST_RESULT_CONFIG_KEY] = compact
-    logger.info("dst_eval %s completed for job %s: %s", job_type, job.id, compact)
-    raise_if_run_had_errors(job, summary, f"dst_eval {job_type}")
-
-
-def _compact_dst_eval_summary(summary: Any) -> dict[str, Any]:
-    """Status, error, and each sub-eval's status/error/scored/skipped counts. Small enough to persist."""
-    if not isinstance(summary, dict):
-        return {}
-    compact: dict[str, Any] = {
-        k: summary[k]
-        for k in ("status", "had_errors", "error", "returncode", "scored_count", "skipped_case_count")
-        if k in summary
-    }
-    results = summary.get("results")
-    if isinstance(results, dict):
-        compact["results"] = {
-            name: {
-                k: r[k]
-                for k in ("status", "error", "scored_count", "skipped_case_count", "mlflow_run_id")
-                if k in r
-            }
-            for name, r in results.items()
-            if isinstance(r, dict)
-        }
-    return compact
+    logger.info("dst_eval %s completed for job %s: %s", job_type, job.id, summary)
+    finish_run(job, summary, f"dst_eval {job_type}")
 
 
 async def dispatch_dst_eval_job(job: ScheduledResearchJob) -> None:

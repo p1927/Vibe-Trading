@@ -108,9 +108,12 @@ def parse_verdict_section(briefing: str) -> tuple[str, List[VerdictItem]]:
         exists, ``contract_violation`` when it exists but a body line does not
         match the contract, and ``ok`` otherwise, including an empty section.
     """
-    heading = _HEADING_RE.search(briefing)
-    if heading is None:
+    # The section is the briefing's tail: take the LAST `## Verdict` heading, so an earlier mention
+    # of the heading (a quoted example, an explanation) cannot be parsed as the verdict.
+    headings = list(_HEADING_RE.finditer(briefing))
+    if not headings:
         return PARSE_NO_SECTION, []
+    heading = headings[-1]
 
     body = briefing[heading.end() :]
     next_heading = _NEXT_HEADING_RE.search(body)

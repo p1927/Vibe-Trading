@@ -166,26 +166,19 @@ def run_factor_gap_fill_job(config: dict[str, Any] | None = None) -> dict[str, A
 
 def dispatch_factor_health_job_sync(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
-    if job_type == JOB_TYPE_FACTOR_GAP_FILL:
-        from src.scheduled_research.run_outcome import LAST_RESULT_CONFIG_KEY, raise_if_run_had_errors
+    from src.scheduled_research.run_outcome import attach_summary, finish_run
 
-        report = run_factor_gap_fill_job(job.config)
-        job.config[LAST_RESULT_CONFIG_KEY] = {
-            k: report[k] for k in ("status", "window", "enqueued", "factors_drained", "outcomes",
-                                   "days_filled", "failures")
-        }
-        raise_if_run_had_errors(job, report, "factor gap fill")
+    if job_type == JOB_TYPE_FACTOR_GAP_FILL:
+        finish_run(job, run_factor_gap_fill_job(job.config), "factor gap fill")
         return
     if job_type == JOB_TYPE_FACTOR_REFERENCE_CHECK:
-        from src.scheduled_research.run_outcome import raise_if_run_had_errors
-
-        raise_if_run_had_errors(job, run_factor_reference_check_job(job.config), "factor reference check")
+        finish_run(job, run_factor_reference_check_job(job.config), "factor reference check")
         return
     if job_type == JOB_TYPE_FACTOR_HEALTH:
-        run_factor_health_job(job.config)
+        attach_summary(job, run_factor_health_job(job.config))
         return
     if job_type == JOB_TYPE_FACTOR_HEALTH_LIVE:
-        run_factor_health_job({**job.config, "include_live_freshness": True})
+        attach_summary(job, run_factor_health_job({**job.config, "include_live_freshness": True}))
         return
     raise ValueError(f"unsupported factor_health job_type: {job_type!r}")
 

@@ -10,7 +10,6 @@ import concurrent.futures
 import logging
 import threading
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
@@ -22,6 +21,7 @@ from src.session.models import (
     AttemptStatus,
     Message,
     Principal,
+    _utc_now_iso,
     Session,
 )
 from src.session import service_hooks
@@ -318,7 +318,7 @@ class SessionService:
                 service_hooks.maybe_mark_autonomous_user_turn(session, content)
             # Off-loop: this can call the LLM (rate-limited), which must never block the event loop.
             await asyncio.to_thread(service_hooks.maybe_refresh_agent_intent, self, session, content, message.message_id)
-            session.updated_at = datetime.now().isoformat()
+            session.updated_at = _utc_now_iso()
             self.store.update_session(session)
             self.event_bus.emit(session_id, "attempt.created", {"attempt_id": attempt.attempt_id, "prompt": content})
 

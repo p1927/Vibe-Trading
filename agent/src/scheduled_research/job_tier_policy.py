@@ -119,11 +119,10 @@ COLLECTION_JOB_TYPES: frozenset[str] = frozenset(
         JOB_TYPE_FACTOR_REFERENCE_CHECK,
         # The scheduled gap fill (Trade D287) fetches every queued gap from vendors into the hub.
         JOB_TYPE_FACTOR_GAP_FILL,
-        # Literal, not a constant: no pipeline claims this job_type, so it falls
-        # through `try_dispatch_pipeline_job` to the legacy agent-prompt path and
-        # there is no handler module to import a constant from. The gate is
-        # applied in `executor.tick` against `config.job_type`, so it still binds
-        # on that path.
+        # Literal, not a constant: no pipeline claims this job_type any more (the job
+        # id is retired in `index_jobs._RETIRED_JOB_IDS` and dispatch refuses an
+        # unclaimed type), so there is no handler module to import a constant from.
+        # Kept so a stale stored copy still cannot collect on dev before it is deleted.
         #
         # Gated because it is external-vendor collection: a daily cron spawns a
         # detached worker that fetches external forecasts per ticker/horizon.

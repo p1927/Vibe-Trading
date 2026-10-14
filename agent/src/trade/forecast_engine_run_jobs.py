@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from src.trade import job_runner
-from src.trade.job_store import JobStore, now_iso as _now_iso, worker_alive
+from src.trade.job_store import JobStore, now_iso as _now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -246,11 +246,6 @@ def spawn_worker(job_id: str) -> None:
 def kick_forecast_engine_run(*, ticker: str, recipe: str, start: str, end: str, horizon: int) -> tuple[str, str, str, bool]:
     """Returns ``(job_id, run_id, job_status, reused)``."""
     job_id, run_id, reused = start_job(ticker=ticker, recipe=recipe, start=start, end=end, horizon=horizon)
-    if not reused:
-        spawn_worker(job_id)
-    else:
-        existing = _get_job_record(job_id)
-        if existing is not None and not worker_alive(existing):
-            spawn_worker(job_id)
+    _STORE.ensure_worker(job_id, reused, spawn_worker)
     snap = get_job(job_id) or {}
     return job_id, run_id, str(snap.get("status") or "queued"), reused

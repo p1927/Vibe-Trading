@@ -11,6 +11,7 @@ from typing import Any
 
 from src.config.accessor import get_env_config
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.index_jobs import _reraise_pipeline_cancel
 from src.scheduled_research.run_outcome import finish_run
 from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -209,6 +210,7 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
     skipped: list[str] = []
     ineligible: list[str] = []
     timed_out: list[str] = []
+    errors: dict[str, dict[str, str]] = {}
 
     for raw_ticker in watchlist:
         ticker = str(raw_ticker).strip().upper()
@@ -221,7 +223,15 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
             ineligible.append(ticker)
             continue
 
-        needs_refresh, reasons = _ticker_needs_refresh(ticker, config=cfg)
+        try:
+            needs_refresh, reasons = _ticker_needs_refresh(ticker, config=cfg)
+        except Exception as exc:
+            _reraise_pipeline_cancel(exc)
+            # One ticker's failure must not starve the rest of the watchlist on every run; it is
+            # reported (`errors`, had_errors) so the run still ends failed.
+            logger.exception("options plan refresh: staleness check failed for %s", ticker)
+            errors[ticker] = {"error": f"staleness check: {exc}"}
+            continue
         if not needs_refresh:
             skipped.append(ticker)
             continue
@@ -251,6 +261,12 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
                 )
                 timed_out.append(ticker)
                 continue
+            except Exception as exc:
+                _reraise_pipeline_cancel(exc)
+                logger.exception("options plan refresh failed for %s", ticker)
+                emit_stage_event(f"stage options_plan_refresh[{ticker}]: failed: {exc}")
+                errors[ticker] = {"error": str(exc)}
+                continue
         finally:
             pool.shutdown(wait=False)
 
@@ -264,6 +280,10 @@ def run_options_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[s
 
     return {
         "skipped": False,
+        # A timed-out ticker is a plan that needed a refresh and did not get one: visible as
+        # `degraded` (not a failure, so one chronically slow ticker cannot auto-pause the whole job).
+        **({"status": "degraded"} if timed_out else {}),
+        **({"had_errors": True, "errors": errors} if errors else {}),
         "reconciled_predictions": reconciled,
         "refreshed": refreshed,
         "unchanged": skipped,
@@ -279,126 +299,154 @@ def run_options_position_monitor_job(config: dict[str, Any] | None = None) -> di
         return {"skipped": True, "reason": "monitor_disabled"}
 
     _ensure_trade_integrations_on_path()
-    from trade_integrations.context.hub import save_options_research
-    from trade_integrations.dataflows.options_research.aggregator import run_options_research
-    from trade_integrations.dataflows.options_research.widget_payload import (
-        build_options_trade_widget_from_doc,
-    )
     from trade_integrations.monitor.execution_ledger import list_open_entries
     from trade_integrations.monitor.service import MonitorService
-
-    from trade_integrations.dataflows.index_research.pipeline_cancel import emit_stage_event
 
     cfg = config or {}
     service = MonitorService()
     broken: list[dict[str, Any]] = []
     refreshed: list[dict[str, Any]] = []
-
+    errors: dict[str, dict[str, str]] = {}
     for entry in list_open_entries():
         widget_id = str(entry.get("widget_id") or "").strip()
-        underlying = str(entry.get("underlying") or "").strip().upper()
-        if not widget_id or not underlying:
-            continue
+        try:
+            _monitor_open_entry(service, entry, cfg, broken, refreshed, errors)
+        except Exception as exc:
+            _reraise_pipeline_cancel(exc)
+            # One position's failure must not stop thesis checks on every other open position.
+            logger.exception("options position monitor failed for widget=%s", widget_id)
+            errors[widget_id or "?"] = {"error": str(exc)}
 
-        emit_stage_event(f"stage options_position_monitor[{underlying}]: evaluating thesis")
-        stage_started = time.monotonic()
-        report = service.evaluate_position_thesis(widget_id)
-        emit_stage_event(
-            f"stage options_position_monitor[{underlying}]: thesis evaluated in "
-            f"{int((time.monotonic() - stage_started) * 1000)}ms (broken={bool(report and report.broken)})"
-        )
-        if report is None or not report.broken:
-            continue
+    return {
+        "skipped": False,
+        **({"had_errors": True, "errors": errors} if errors else {}),
+        "broken": broken,
+        "refreshed": refreshed,
+    }
 
-        broken.append(
-            {
-                "widget_id": widget_id,
-                "underlying": underlying,
-                "reasons": report.reasons,
-                "severity": report.severity,
-            }
-        )
 
-        from trade_integrations.dataflows.options_research.market import is_options_research_eligible
+def _monitor_open_entry(
+    service: Any,
+    entry: dict[str, Any],
+    cfg: dict[str, Any],
+    broken: list[dict[str, Any]],
+    refreshed: list[dict[str, Any]],
+    errors: dict[str, dict[str, str]],
+) -> None:
+    """One open ledger entry: evaluate its thesis; on a break, refresh the widget and alert the agent."""
+    from trade_integrations.context.hub import save_options_research
+    from trade_integrations.dataflows.index_research.pipeline_cancel import emit_stage_event
+    from trade_integrations.dataflows.options_research.aggregator import run_options_research
+    from trade_integrations.dataflows.options_research.widget_payload import (
+        build_options_trade_widget_from_doc,
+    )
 
-        if not is_options_research_eligible(underlying):
-            continue
+    widget_id = str(entry.get("widget_id") or "").strip()
+    underlying = str(entry.get("underlying") or "").strip().upper()
+    if not widget_id or not underlying:
+        return
 
-        emit_stage_event(f"stage options_position_monitor[{underlying}]: running options research")
-        stage_started = time.monotonic()
-        doc = run_options_research(
+    emit_stage_event(f"stage options_position_monitor[{underlying}]: evaluating thesis")
+    stage_started = time.monotonic()
+    report = service.evaluate_position_thesis(widget_id)
+    emit_stage_event(
+        f"stage options_position_monitor[{underlying}]: thesis evaluated in "
+        f"{int((time.monotonic() - stage_started) * 1000)}ms (broken={bool(report and report.broken)})"
+    )
+    if report is None or not report.broken:
+        return
+
+    broken.append(
+        {
+            "widget_id": widget_id,
+            "underlying": underlying,
+            "reasons": report.reasons,
+            "severity": report.severity,
+        }
+    )
+
+    from trade_integrations.dataflows.options_research.market import is_options_research_eligible
+
+    if not is_options_research_eligible(underlying):
+        return
+
+    emit_stage_event(f"stage options_position_monitor[{underlying}]: running options research")
+    stage_started = time.monotonic()
+    doc = run_options_research(
+        underlying,
+        expiry_date=cfg.get("expiry_date"),
+        lookahead_days=cfg.get("lookahead_days"),
+    )
+    emit_stage_event(
+        f"stage options_position_monitor[{underlying}]: options research done in "
+        f"{int((time.monotonic() - stage_started) * 1000)}ms"
+    )
+    save_options_research(doc)
+    revision_reason = "; ".join(report.reasons)
+    widget = build_options_trade_widget_from_doc(
+        doc,
+        supersedes=widget_id,
+        revision_reason=revision_reason,
+    )
+    ledger_agent_id = str(entry.get("agent_id") or "").strip()
+    if ledger_agent_id:
+        widget["autonomous_agent_id"] = ledger_agent_id
+    new_widget_id = widget.get("widget_id")
+    if new_widget_id:
+        from trade_integrations.trade_widgets.store import persist_trade_widget
+
+        if persist_trade_widget(widget) is None:
+            raise RuntimeError(f"thesis-break widget id {new_widget_id!r} is not a valid trade widget id")
+
+    refreshed.append(
+        {
+            "old_widget_id": widget_id,
+            "new_widget_id": new_widget_id,
+            "underlying": underlying,
+            "revision_reason": revision_reason,
+        }
+    )
+    logger.info(
+        "thesis break for %s (%s) — refreshed widget %s",
+        underlying,
+        revision_reason,
+        new_widget_id,
+    )
+
+    if not is_options_thesis_break_auto_dispatch_enabled():
+        # Widget refresh + event log already emitted above; skip the
+        # LLM-firing auto-dispatch path to avoid a per-tick cascade
+        # when many positions are broken (OPTIONS_AUTO_DISPATCH_THESIS_BREAK=0).
+        logger.info(
+            "thesis break for %s widget=%s — auto-dispatch suppressed "
+            "(OPTIONS_AUTO_DISPATCH_THESIS_BREAK=0)",
             underlying,
-            expiry_date=cfg.get("expiry_date"),
-            lookahead_days=cfg.get("lookahead_days"),
+            widget_id,
         )
-        emit_stage_event(
-            f"stage options_position_monitor[{underlying}]: options research done in "
-            f"{int((time.monotonic() - stage_started) * 1000)}ms"
-        )
-        save_options_research(doc)
-        revision_reason = "; ".join(report.reasons)
-        widget = build_options_trade_widget_from_doc(
-            doc,
-            supersedes=widget_id,
-            revision_reason=revision_reason,
-        )
-        ledger_agent_id = str(entry.get("agent_id") or "").strip()
-        if ledger_agent_id:
-            widget["autonomous_agent_id"] = ledger_agent_id
-        new_widget_id = widget.get("widget_id")
-        if new_widget_id:
-            from trade_integrations.trade_widgets.store import persist_trade_widget
+        return
+    # Shared alert-turn path (Trade sidecar): a normal strategy_revision turn
+    # via nautilus_openalgo_bridge.vibe_trigger, not a bespoke session prompt.
+    try:
+        from trade_integrations.autonomous_agents.thesis_break import dispatch_options_thesis_break
 
-            if persist_trade_widget(widget) is None:
-                raise RuntimeError(f"thesis-break widget id {new_widget_id!r} is not a valid trade widget id")
-
-        refreshed.append(
-            {
-                "old_widget_id": widget_id,
-                "new_widget_id": new_widget_id,
-                "underlying": underlying,
-                "revision_reason": revision_reason,
-            }
+        result = dispatch_options_thesis_break(
+            underlying=underlying,
+            widget_id=widget_id,
+            reasons=list(report.reasons or []),
+            new_plan_widget_id=str(new_widget_id or "").strip() or None,
         )
         logger.info(
-            "thesis break for %s (%s) — refreshed widget %s",
+            "thesis break dispatch for %s widget=%s: %s",
             underlying,
-            revision_reason,
-            new_widget_id,
+            widget_id,
+            result.get("status"),
         )
-
-        if not is_options_thesis_break_auto_dispatch_enabled():
-            # Widget refresh + event log already emitted above; skip the
-            # LLM-firing auto-dispatch path to avoid a per-tick cascade
-            # when many positions are broken (OPTIONS_AUTO_DISPATCH_THESIS_BREAK=0).
-            logger.info(
-                "thesis break for %s widget=%s — auto-dispatch suppressed "
-                "(OPTIONS_AUTO_DISPATCH_THESIS_BREAK=0)",
-                underlying,
-                widget_id,
-            )
-            continue
-        # Shared alert-turn path (Trade sidecar): a normal strategy_revision turn
-        # via nautilus_openalgo_bridge.vibe_trigger, not a bespoke session prompt.
-        try:
-            from trade_integrations.autonomous_agents.thesis_break import dispatch_options_thesis_break
-
-            result = dispatch_options_thesis_break(
-                underlying=underlying,
-                widget_id=widget_id,
-                reasons=list(report.reasons or []),
-                new_plan_widget_id=str(new_widget_id or "").strip() or None,
-            )
-            logger.info(
-                "thesis break dispatch for %s widget=%s: %s",
-                underlying,
-                widget_id,
-                result.get("status"),
-            )
-        except Exception:
-            logger.warning("thesis break agent dispatch failed for %s", underlying, exc_info=True)
-
-    return {"skipped": False, "broken": broken, "refreshed": refreshed}
+    except Exception as exc:
+        _reraise_pipeline_cancel(exc)
+        # The widget is already refreshed, but the agent was never told its position's thesis broke:
+        # a failed alert is a failed run (had_errors), not a log line under a `completed` record.
+        logger.exception("thesis break agent dispatch failed for %s", underlying)
+        errors[f"{widget_id}:dispatch"] = {"error": str(exc)}
 
 
 def _dispatch_options_job_body(job: ScheduledResearchJob) -> None:

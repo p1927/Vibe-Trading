@@ -14,6 +14,9 @@ from typing import Dict
 from .autonomous_agent_jobs import AUTONOMOUS_JOB_TYPES
 from .capture_jobs import HUB_CAPTURE_JOB_TYPES
 from .decision_grading_jobs import DECISION_GRADING_JOB_TYPES
+from .dst_eval_jobs import DST_EVAL_JOB_TYPES
+from .execution_advisor_jobs import EXECUTION_ADVISOR_JOB_TYPES
+from .factor_health_jobs import FACTOR_HEALTH_JOB_TYPES
 from .financial_knowledge_jobs import FINANCIAL_KNOWLEDGE_JOB_TYPES
 from .hub_calibration_jobs import HUB_CALIBRATION_JOB_TYPES
 from .index_jobs import INDEX_JOB_TYPES
@@ -24,16 +27,18 @@ from .trade_data_jobs import TRADE_DATA_JOB_TYPES
 GENERAL_SECTION = "general"
 
 # Order matters only in that each job type must appear in exactly one set;
+# (the DST/eval jobs sit with prediction, factor health with hub, the execution advisor with the
+# agents: before, those three families all landed in "general" beside ad-hoc prompt jobs.)
 # INDEX_JOB_TYPES already covers the hub_news_* types (they feed the index
 # prediction pipeline), so hub calibration/capture are their own "hub"
 # section rather than folded into "prediction".
 _SECTION_JOB_TYPES: Dict[str, frozenset] = {
-    "prediction": INDEX_JOB_TYPES,
+    "prediction": INDEX_JOB_TYPES | DST_EVAL_JOB_TYPES,
     "options": OPTIONS_JOB_TYPES,
     "trade_data": TRADE_DATA_JOB_TYPES,
-    "hub": HUB_CALIBRATION_JOB_TYPES | HUB_CAPTURE_JOB_TYPES,
+    "hub": HUB_CALIBRATION_JOB_TYPES | HUB_CAPTURE_JOB_TYPES | FACTOR_HEALTH_JOB_TYPES,
     "knowledge": FINANCIAL_KNOWLEDGE_JOB_TYPES,
-    "autonomous_agent": AUTONOMOUS_JOB_TYPES | DECISION_GRADING_JOB_TYPES,
+    "autonomous_agent": AUTONOMOUS_JOB_TYPES | DECISION_GRADING_JOB_TYPES | EXECUTION_ADVISOR_JOB_TYPES,
     "recording": RECORDING_WAKE_JOB_TYPES,
 }
 

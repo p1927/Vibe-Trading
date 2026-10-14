@@ -22,8 +22,6 @@ _IN_MARKET_MARKERS = frozenset(
         "MIDCPNIFTY",
         "SENSEX",
         "INDIAVIX",
-        "LONG_STRADDLE",
-        "21JUL26",
     }
 )
 

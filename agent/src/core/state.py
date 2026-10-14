@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -79,8 +80,11 @@ class RunStateStore:
     @staticmethod
     def _write_json(path: Path, data: Any) -> None:
         # Write + fsync so a crash can't leave a truncated/empty state.json.
+        # Temp file + os.replace: writing the final name in place leaves it truncated if the process dies mid-write.
         payload = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
-        with open(path, "wb") as f:
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        with open(tmp, "wb") as f:
             f.write(payload)
             f.flush()
             os.fsync(f.fileno())
+        os.replace(tmp, path)

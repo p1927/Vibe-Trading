@@ -453,15 +453,8 @@ def kick_recording(
                 fail_job(job_id, f"wait_for_open scheduling failed: {exc}")
             raise
 
-    if market_closed:
-        # Don't spawn — the wake scheduler owns the lifecycle now.
-        pass
-    elif not reused:
-        spawn_worker(job_id)
-    else:
-        existing = _get_job_record(job_id)
-        if existing is not None and not worker_alive(existing):
-            spawn_worker(job_id)
+    if not market_closed:  # a closed market spawns nothing: the wake scheduler owns the lifecycle now
+        _STORE.ensure_worker(job_id, reused, spawn_worker)
 
     snap = get_job(job_id) or {}
     return job_id, str(snap.get("status") or "queued"), reused
@@ -538,40 +531,32 @@ def request_stop(job_id: str) -> None:
     )
 
 
-def stop_active_job_cooperatively(*, reason: str = "stopped") -> str | None:
-    """Stop whatever recording job is currently active, however it's active.
+def stop_job(job_id: str, *, reason: str = "stopped by user while waiting for market open") -> str:
+    """The one way a recording job is stopped (``POST /trade/recording/{job_id}/stop``). Returns the outcome message.
 
-    Shared by the manual ``POST /trade/recording/{job_id}/stop`` route and
-    the API process's own shutdown hook, so both paths handle the same two
-    cases identically:
+    - ``waiting_for_open``: no worker subprocess exists yet to poll the cooperative stop flag (the
+      recorder never spawns during the wait), so cancel the scheduled wake and end the job directly.
+    - ``queued``/``running``: write the cooperative stop flag. The worker is a detached subprocess
+      (survives API restarts by design, see ``spawn_worker``) and exits on its own when it sees the
+      flag, so the caller does not wait for it. (A shutdown hook never needs this: the worker is meant
+      to outlive the API.)
 
-    - ``waiting_for_open``: no worker subprocess exists yet to poll the
-      cooperative stop flag (Phase C — the recorder never spawns during
-      the wait), so cancel the scheduled wake and end the job directly.
-    - ``queued``/``running``: write the cooperative stop flag. The worker
-      is a detached subprocess (survives API restarts by design — see
-      ``spawn_worker``'s docstring), so it keeps polling that flag and
-      exits on its own even after this API process has already gone away;
-      the caller does not need to wait for it here.
-
-    Returns the job id that was stopped, or ``None`` if nothing was active.
+    The route validates the id and that the job is active; the caller of this function owns that.
     """
-    job = get_active_job()
-    if job is None:
-        return None
-    job_id = str(job["job_id"])
-    status = str(job.get("status") or "")
-    if status == "waiting_for_open":
+    job = _get_job_record(job_id)
+    if job is not None and str(job.get("status") or "") == "waiting_for_open":
         try:
             from src.trade.recording_wait_scheduler import cancel_recording_wake
 
             cancel_recording_wake(recording_job_id=job_id)
         except Exception:
+            # The job is ended below either way; a wake that is left behind fires later and finds a
+            # job that is no longer waiting.
             logger.exception("failed to cancel recording wake for %s on stop", job_id)
         fail_job(job_id, reason)
-        return job_id
+        return "wait cancelled"
     request_stop(job_id)
-    return job_id
+    return "stop requested"
 
 
 def _agent_dir() -> Path:

@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from src.config.accessor import get_env_config, get_env_or
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
-from src.scheduled_research.run_outcome import LAST_RESULT_CONFIG_KEY, finish_run, raise_if_run_had_errors
+from src.scheduled_research.run_outcome import LAST_RESULT_CONFIG_KEY, attach_summary, finish_run
 from src.scheduled_research.staleness import EVAL_JOB_DISPATCH_TIMEOUT_MS, dispatch_timeout_ms_for
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
@@ -73,7 +73,9 @@ HUB_NEWS_MAINTENANCE_FAST_CRON = "15 * * * *"
 # Job ids a code change removed. The reconcile deletes them, so no stored copy keeps running the
 # old code path. "nifty-hub-news-entity-maintenance" ran every maintenance stage under one budget
 # and was split in two (Trade D267).
-_RETIRED_JOB_IDS = ("nifty-hub-news-entity-maintenance",)
+# "nifty-external-predictions-refresh" had its pipeline removed (external predictions are a
+# user-triggered async job now); a stored copy would fail every run as an unclaimed job_type.
+_RETIRED_JOB_IDS = ("nifty-hub-news-entity-maintenance", "nifty-external-predictions-refresh")
 # TimesFM refresh of every recipe: runtime measured in docs/add/forecast_engine.md; the run stops
 # starting new recipes at 75% of this (the job deadline) and reports the rest as deferred.
 _FORECAST_ENGINE_REFRESH_DISPATCH_TIMEOUT_MS = 45 * 60 * 1000
@@ -155,69 +157,9 @@ def _ensure_trade_integrations_on_path() -> None:
     ensure_trade_stack_path()
 
 
-def _compact_result_summary(result: dict[str, Any] | None) -> dict[str, Any]:
-    """Shrink a job result dict for persistence on ScheduledResearchJob."""
-    if not isinstance(result, dict):
-        return {}
-    summary: dict[str, Any] = {}
-    for key in (
-        "mode", "skipped", "pipeline_paused", "pause_reason", "had_errors", "status", "error",
-        # Golden-eval summaries: a case skipped for overrunning its budget must be visible in
-        # the job record, not only in MLflow (eval_support.case_budget).
-        "article_count", "case_count", "scored_count", "skipped_case_count", "skipped_cases",
-        "mlflow_run_id",
-        # The coverage sweep's per-bucket seconds: the only record of a slow bucket once the
-        # stock_simulator run's in-memory log is gone.
-        "ok_count", "failed_count", "skipped_count", "durations",
-        # forecast_engine_refresh: a degraded run (recipes not yet evaluable, with reason + ETA) is
-        # completed but must say so in the run record, where the scheduler UI and D32's check read it.
-        "insufficient_data",
-    ):
-        if key in result:
-            summary[key] = result[key]
-    staging = result.get("staging")
-    if isinstance(staging, dict):
-        summary["staging"] = {
-            k: staging.get(k)
-            for k in ("processed", "created", "updated", "skipped", "errors", "paused")
-            if k in staging
-        }
-    for stage in ("repair", "backfill", "compact_events", "cleanup", "rollup"):
-        part = result.get(stage)
-        if isinstance(part, dict):
-            summary[stage] = {
-                k: part.get(k)
-                for k in ("status", "error", "skipped", "repaired", "groups_merged", "rows_removed")
-                if k in part
-            }
-    finalize = result.get("cold_tier_finalize")
-    if isinstance(finalize, dict):
-        summary["cold_tier_finalize"] = {
-            "status": finalize.get("status"),
-            "reason": finalize.get("reason"),
-            "failed_steps": finalize.get("failed_steps") or [],
-            "trading_day": finalize.get("trading_day"),
-        }
-    totals = result.get("totals")
-    if isinstance(totals, dict):
-        summary["totals"] = dict(totals)
-    return summary
-
-
 # Totals keys that represent real ingest progress. ``error`` is deliberately
 # excluded: a run that only produced errors has still collected nothing.
 _INGEST_PROGRESS_TOTALS = ("queued", "ingested", "verified", "created", "updated")
-
-
-def _attach_job_result_summary(job: ScheduledResearchJob, result: dict[str, Any] | None) -> None:
-    summary = _compact_result_summary(result)
-    if summary:
-        job.config[LAST_RESULT_CONFIG_KEY] = summary
-    if isinstance(result, dict) and result.get("had_errors"):
-        job.config[LAST_RESULT_CONFIG_KEY] = {
-            **summary,
-            "warning": "one or more pipeline stages reported errors",
-        }
 
 
 class HubNewsIngestCollectedNothingError(RuntimeError):
@@ -491,6 +433,7 @@ def run_index_research_job(config: dict[str, Any] | None = None) -> dict[str, An
             run_index_factor_snapshot_job(cfg)
 
     from src.trade.index_prediction_run_jobs import (
+        _STORE,
         get_active_job,
         get_job,
         mark_worker_pid,
@@ -519,16 +462,11 @@ def run_index_research_job(config: dict[str, Any] | None = None) -> dict[str, An
         refresh_constituents=bool(cfg.get("refresh_constituents")),
         run_forecast_lab=True,
     )
-    if not reused:
-        mark_worker_pid(job_id, os.getpid())
-        run_worker(job_id)  # blocking; dispatch_index_job already runs off the event loop
-    else:
-        from src.trade.index_prediction_run_jobs import _get_job_record, worker_alive
+    def _run_here(run_id: str) -> None:
+        mark_worker_pid(run_id, os.getpid())
+        run_worker(run_id)  # blocking; dispatch_index_job already runs off the event loop
 
-        existing = _get_job_record(job_id)
-        if existing is not None and not worker_alive(existing):
-            mark_worker_pid(job_id, os.getpid())
-            run_worker(job_id)
+    _STORE.ensure_worker(job_id, reused, _run_here)
     final = get_job(job_id) or {}
     return {
         "skipped": False,
@@ -706,6 +644,7 @@ def run_quantile_forecast_ledger_push_job(config: dict[str, Any] | None = None) 
     try:
         result = forecast_nifty_range(as_of=cfg.get("as_of"), factor_start=cfg.get("factor_start", "2020-01-01"))
     except Exception as exc:
+        _reraise_pipeline_cancel(exc)
         logger.exception("quantile forecast ledger push: forecast_nifty_range failed")
         return {"status": "error", "error": str(exc)}
 
@@ -1194,6 +1133,7 @@ def run_hub_news_entity_job(config: dict[str, Any] | None = None) -> dict[str, A
             )
         return summary
     except Exception as exc:
+        _reraise_pipeline_cancel(exc)
         logger.exception("hub news entity job failed")
         return {"status": "error", "error": str(exc), "had_errors": True}
 
@@ -1238,6 +1178,7 @@ def run_hub_news_ingest_job(
             )
         return summary
     except Exception as exc:
+        _reraise_pipeline_cancel(exc)
         logger.exception("hub news ingest job failed (mode=%s)", mode)
         return {"status": "error", "error": str(exc), "mode": mode, "had_errors": True}
 
@@ -1256,6 +1197,7 @@ def run_news_quality_eval_job(config: dict[str, Any] | None = None) -> dict[str,
         summary = run_news_golden_eval()
         return summary
     except Exception as exc:
+        _reraise_pipeline_cancel(exc)
         logger.exception("news quality golden eval failed")
         return {"status": "error", "error": str(exc), "had_errors": True}
 
@@ -1276,6 +1218,7 @@ def run_news_dedup_quality_eval_job(config: dict[str, Any] | None = None) -> dic
         summary = run_news_dedup_golden_eval()
         return summary
     except Exception as exc:
+        _reraise_pipeline_cancel(exc)
         logger.exception("news dedup quality golden eval failed")
         return {"status": "error", "error": str(exc), "had_errors": True}
 
@@ -1343,7 +1286,7 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
     job_type = str(job.config.get("job_type") or "")
     if job_type == JOB_TYPE_INDEX_FACTOR_SNAPSHOT:
         summary = run_index_factor_snapshot_job(job.config)
-        _attach_job_result_summary(job, summary)
+        attach_summary(job, summary)
         logger.info("index factor snapshot completed for job %s: %s", job.id, summary)
         if summary.get("had_errors"):
             # `run_index_factor_snapshot_job` swallows every stage's own exception into
@@ -1371,11 +1314,10 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
 
         with job_deadline(0.75 * dispatch_timeout_ms_for(job) / 1000.0):
             summary = run_index_research_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("index research completed for job %s: %s", job.id, summary)
         # The manual-run record the job started ends `error` when the pipeline raised (e.g.
         # `no_live_spot`); that must fail this scheduled run too, not be recorded as completed.
-        raise_if_run_had_errors(job, summary, "index research")
+        finish_run(job, summary, "index research")
         return
     if job_type == JOB_TYPE_INDEX_PLAN_REFRESH:
         summary = run_index_plan_refresh_job(job.config)
@@ -1384,39 +1326,33 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         return
     if job_type == JOB_TYPE_INDEX_CALIBRATION:
         summary = run_index_calibration_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("index calibration completed for job %s: %s", job.id, summary)
-        raise_if_run_had_errors(job, summary, "index calibration")
+        finish_run(job, summary, "index calibration")
         return
     if job_type == JOB_TYPE_FORECAST_PLATFORM_RETRAIN:
         summary = run_forecast_platform_retrain_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("forecast platform retrain completed for job %s: %s", job.id, summary)
-        raise_if_run_had_errors(job, summary, "forecast platform retrain")
+        finish_run(job, summary, "forecast platform retrain")
         return
     if job_type == JOB_TYPE_QUANTILE_FORECAST_LEDGER_PUSH:
         summary = run_quantile_forecast_ledger_push_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("quantile forecast ledger push completed for job %s: %s", job.id, summary)
-        raise_if_run_had_errors(job, summary, "quantile forecast ledger push")
+        finish_run(job, summary, "quantile forecast ledger push")
         return
     if job_type == JOB_TYPE_COMPANY_RESEARCH_ARCHIVE:
         summary = run_company_research_archive_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("company research archive completed for job %s: %s", job.id, summary)
-        raise_if_run_had_errors(job, summary, "company research archive")
+        finish_run(job, summary, "company research archive")
         return
     if job_type == JOB_TYPE_INDEX_PREDICTION_POST_CLOSE:
         summary = run_index_prediction_post_close_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("index prediction post-close completed for job %s: %s", job.id, summary)
-        raise_if_run_had_errors(job, summary, "index prediction post-close")
+        finish_run(job, summary, "index prediction post-close")
         return
     if job_type == JOB_TYPE_HUB_NEWS_ENTITY:
         summary = run_hub_news_entity_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("hub news entity pipeline completed for job %s: %s", job.id, summary)
-        raise_if_run_had_errors(job, summary, "hub news entity pipeline")
+        finish_run(job, summary, "hub news entity pipeline")
         return
     if job_type == JOB_TYPE_HUB_NEWS_INGEST:
         from src.scheduled_research.ingest_source_streaks import record_source_zero_streaks
@@ -1424,7 +1360,7 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         summary = run_hub_news_ingest_job(
             job.config, time_budget_s=0.75 * dispatch_timeout_ms_for(job) / 1000.0
         )
-        _attach_job_result_summary(job, summary)
+        attach_summary(job, summary)
         # A source that fetches nothing run after run is flagged (a signal, never a failure):
         # zero rows reads the same as a quiet cycle unless someone counts the repetition.
         record_source_zero_streaks(job, summary, summary_config_key=LAST_RESULT_CONFIG_KEY)
@@ -1455,77 +1391,66 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         return
     if job_type == JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP:
         summary = run_stock_history_coverage_sweep_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("stock_history coverage sweep completed for job %s: %s", job.id, summary)
-        raise_if_run_had_errors(job, summary, "stock_history coverage sweep")
+        finish_run(job, summary, "stock_history coverage sweep")
         return
     if job_type == JOB_TYPE_NEWS_QUALITY_EVAL:
         summary = run_news_quality_eval_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("news quality golden eval completed for job %s: %s", job.id, summary)
         # The handler catches its own error and *returns* had_errors. Without this raise, the
         # executor recorded the run `completed` with failure_kind None. Observed on release:
         # 09-08 (MLflow schema error) and 09-10 ("No Experiment with id=2 exists").
         # See .claude/backlog/items/2026-09-11-job-errors-recorded-as-success.md.
-        raise_if_run_had_errors(job, summary, "news quality golden eval")
+        finish_run(job, summary, "news quality golden eval")
         return
     if job_type == JOB_TYPE_NEWS_DEDUP_QUALITY_EVAL:
         summary = run_news_dedup_quality_eval_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("news dedup quality golden eval completed for job %s: %s", job.id, summary)
-        raise_if_run_had_errors(job, summary, "news dedup quality golden eval")
+        finish_run(job, summary, "news dedup quality golden eval")
         return
     if job_type == JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH:
         summary = run_global_macro_eod_refresh_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("global macro EOD refresh completed for job %s: %s", job.id, summary)
-        raise_if_run_had_errors(job, summary, "global macro EOD refresh")
+        finish_run(job, summary, "global macro EOD refresh")
         return
     if job_type == JOB_TYPE_OI_SNAPSHOT:
         summary = run_oi_snapshot_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("OI snapshot capture completed for job %s: %s", job.id, summary)
-        raise_if_run_had_errors(job, summary, "OI snapshot capture")
+        finish_run(job, summary, "OI snapshot capture")
         return
     if job_type == JOB_TYPE_PUMP_DUMP_PROXY:
         summary = run_pump_dump_proxy_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("pump-dump proxy capture completed for job %s: %s", job.id, summary)
-        raise_if_run_had_errors(job, summary, "pump-dump proxy capture")
+        finish_run(job, summary, "pump-dump proxy capture")
         return
     if job_type == JOB_TYPE_FUTURES_POSITIONING:
         summary = run_futures_positioning_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("futures positioning capture completed for job %s: %s", job.id, summary)
-        raise_if_run_had_errors(job, summary, "futures positioning capture")
+        finish_run(job, summary, "futures positioning capture")
         return
     if job_type == JOB_TYPE_FORECAST_ENGINE_REFRESH:
         summary = run_forecast_engine_refresh_job(
             job.config, time_budget_s=0.75 * dispatch_timeout_ms_for(job) / 1000.0
         )
-        _attach_job_result_summary(job, summary)
         (logger.warning if summary.get("status") == "degraded" else logger.info)(
             "forecast engine refresh completed for job %s: %s", job.id, summary
         )
-        raise_if_run_had_errors(job, summary, "forecast engine refresh")
+        finish_run(job, summary, "forecast engine refresh")
         return
     if job_type == JOB_TYPE_MAX_PAIN_BHAVCOPY:
         summary = run_max_pain_bhavcopy_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("max pain bhavcopy capture completed for job %s: %s", job.id, summary)
-        raise_if_run_had_errors(job, summary, "max pain bhavcopy capture")
+        finish_run(job, summary, "max pain bhavcopy capture")
         return
     if job_type == JOB_TYPE_REINFERENCE_TICK:
         summary = run_reinference_tick_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("reinference tick completed for job %s: %s", job.id, summary)
-        raise_if_run_had_errors(job, summary, "reinference tick")
+        finish_run(job, summary, "reinference tick")
         return
     if job_type == JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT:
         summary = run_constituent_volume_snapshot_job(job.config)
-        _attach_job_result_summary(job, summary)
         logger.info("constituent volume snapshot completed for job %s: %s", job.id, summary)
-        raise_if_run_had_errors(job, summary, "constituent volume snapshot")
+        finish_run(job, summary, "constituent volume snapshot")
         return
     raise ValueError(f"unsupported index job_type: {job_type!r}")
 

@@ -613,7 +613,7 @@ _CURRENCY_ALIASES = {
     "CNY": ("cny", "cnh", "rmb", "人民币", "¥", "￥"),
     "HKD": ("hkd", "hk$", "港元", "港币"),
     "KRW": ("krw", "韩元", "韩圜"),
-    "INR": ("inr", "印度卢比", "卢比"),
+    "INR": ("inr", "₹", "rupee", "印度卢比", "卢比"),
     "CAD": ("cad", "c$", "加元", "加拿大元"),
 }
 _SYMBOL_HEADERS = {"symbol", "ticker", "code", "标的", "代码", "证券代码"}
@@ -2826,7 +2826,7 @@ class GroundingLedger:
         normalized = expression.replace("×", "*").replace("÷", "/").replace(",", "").strip()
         try:
             tree = ast.parse(normalized, mode="eval")
-        except (SyntaxError, ValueError):
+        except (SyntaxError, ValueError, RecursionError):
             return None
         inputs: list[float] = []
 
@@ -2859,7 +2859,7 @@ class GroundingLedger:
 
         try:
             value = visit(tree)
-        except (TypeError, ValueError, ZeroDivisionError, OverflowError):
+        except (TypeError, ValueError, ZeroDivisionError, OverflowError, RecursionError):
             return None
         if len(inputs) < 2 or not math.isfinite(value):
             return None

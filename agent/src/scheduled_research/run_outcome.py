@@ -109,6 +109,12 @@ def raise_if_run_had_errors(job: ScheduledResearchJob, summary: Any, label: str)
     raise JobRunHadErrorsError(f"{label} for job {job.id} reported errors: {detail}")
 
 
+def attach_summary(job: ScheduledResearchJob, summary: Any) -> None:
+    """Leave a handler's summary on the record (the executor caps it, ``executor.cap_result_summary``)."""
+    if isinstance(summary, dict) and summary:
+        job.config[LAST_RESULT_CONFIG_KEY] = summary
+
+
 def finish_run(job: ScheduledResearchJob, summary: Any, label: str) -> None:
     """End a handler the one way: leave its summary on the record, then fail the run if it says so.
 
@@ -117,12 +123,12 @@ def finish_run(job: ScheduledResearchJob, summary: Any, label: str) -> None:
     it for ``had_errors`` either, so a failed run read ``completed``. The executor caps the stored
     summary (``executor.cap_result_summary``), so this attaches it whole.
     """
-    if isinstance(summary, dict) and summary:
-        job.config[LAST_RESULT_CONFIG_KEY] = summary
+    attach_summary(job, summary)
     raise_if_run_had_errors(job, summary, label)
 
 
 __all__ = [
+    "attach_summary",
     "JobRunHadErrorsError",
     "LAST_RESULT_CONFIG_KEY",
     "RECOVERED_FAILURE_KIND",

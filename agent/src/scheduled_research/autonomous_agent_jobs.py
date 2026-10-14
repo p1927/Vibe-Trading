@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import time
 from typing import Any
@@ -69,6 +70,50 @@ def _resolve_watch_job_timing(
     if str(existing.schedule) == str(watch_ms) and existing.status == JobStatus.PENDING:
         return existing.next_run_at, created_at, last_run_at
     return default_next, created_at, last_run_at
+
+
+_D80_PAUSE_REASON = "autonomous scheduler disabled (D80)"
+
+
+def _register_job(store, job: ScheduledResearchJob, *, scheduler_enabled: bool) -> None:
+    """The one way an agent job is (re)registered: replace its definition, keep its run state.
+
+    A restart or resume calls ``register_agent_jobs`` again; a plain ``upsert`` of a fresh record
+    undid an operator pause or a failure auto-pause, zeroed the failure counters and gave the job a
+    new ``created_at`` that ``_persist_completion`` reads as "replaced during dispatch" (the run in
+    flight lost its result). Here an existing record keeps ``created_at``, ``last_*``, failure state
+    and its pause; only the definition (prompt/schedule/config) changes, plus the due time. A run in flight is left untouched. The D80 switch still decides
+    the pause of a new job, and an existing one paused *only by that switch* follows it back on.
+    """
+    with store.transaction():
+        existing = store.get(job.id)
+        if existing is None:
+            job.paused = not scheduler_enabled
+            job.auto_paused_reason = None if scheduler_enabled else _D80_PAUSE_REASON
+            store.upsert(job)
+            return
+        if existing.status == JobStatus.RUNNING:
+            return
+        # Same cadence and still pending: keep the due time (an overdue job stays due); else the caller's first-run time.
+        keep_due = existing.status == JobStatus.PENDING and str(existing.schedule) == str(job.schedule)
+        next_run_at = existing.next_run_at if keep_due else job.next_run_at
+        paused, reason = existing.paused, existing.auto_paused_reason
+        if not scheduler_enabled:
+            paused, reason = True, reason or _D80_PAUSE_REASON
+        elif reason == _D80_PAUSE_REASON:
+            paused, reason = False, None
+        store.upsert(
+            dataclasses.replace(
+                existing,
+                prompt=job.prompt,
+                schedule=job.schedule,
+                config=job.config,
+                status=JobStatus.PENDING,
+                next_run_at=next_run_at,
+                paused=paused,
+                auto_paused_reason=reason,
+            )
+        )
 
 
 def nudge_watch_job_after_plan_approval(agent_id: str) -> None:
@@ -156,7 +201,8 @@ def register_infra_heal_job(agent_id: str) -> None:
     store = ScheduledResearchJobStore()
     now_ms = int(time.time() * 1000)
     job_id = _infra_heal_job_id(agent_id)
-    store.upsert(
+    _register_job(
+        store,
         ScheduledResearchJob(
             id=job_id,
             prompt=f"Infra heal for autonomous agent {agent_id}",
@@ -165,9 +211,8 @@ def register_infra_heal_job(agent_id: str) -> None:
             status=JobStatus.PENDING,
             created_at=now_ms,
             config={"job_type": JOB_TYPE_INFRA_HEAL, "autonomous_agent_id": agent_id},
-            paused=not enabled,
-            auto_paused_reason=None if enabled else "autonomous scheduler disabled (D80)",
-        )
+        ),
+        scheduler_enabled=enabled,
     )
     logger.info("registered infra heal job for %s (paused=%s)", agent_id, not enabled)
 
@@ -187,7 +232,6 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
     # each job wholesale on every call — see `store.upsert` — so applying the
     # switch unconditionally here doesn't change that existing behavior.)
     scheduler_enabled = is_autonomous_scheduler_enabled()
-    auto_paused_reason = None if scheduler_enabled else "autonomous scheduler disabled (D80)"
 
     agent_id = str(agent.get("id") or "")
     if not agent_id:
@@ -235,7 +279,8 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
     )
 
     if not (existing_watch and existing_watch.status == JobStatus.RUNNING):
-        store.upsert(
+        _register_job(
+            store,
             ScheduledResearchJob(
                 id=watch_id,
                 prompt=f"Autonomous watch tick for {agent.get('name') or agent_id}",
@@ -245,11 +290,11 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
                 created_at=watch_created_at,
                 last_run_at=watch_last_run,
                 config={"job_type": JOB_TYPE_WATCH, "autonomous_agent_id": agent_id},
-                paused=not scheduler_enabled,
-                auto_paused_reason=auto_paused_reason,
-            )
+            ),
+            scheduler_enabled=scheduler_enabled,
         )
-    store.upsert(
+    _register_job(
+        store,
         ScheduledResearchJob(
             id=research_id,
             prompt=f"Autonomous research turn for {agent.get('name') or agent_id}",
@@ -258,13 +303,13 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
             status=JobStatus.PENDING,
             created_at=now_ms,
             config={"job_type": JOB_TYPE_RESEARCH, "autonomous_agent_id": agent_id},
-            paused=not scheduler_enabled,
-            auto_paused_reason=auto_paused_reason,
-        )
+        ),
+        scheduler_enabled=scheduler_enabled,
     )
     if _is_index_agent(agent):
         quant_ms = str(int(schedules.get("quant_ms") or watch_ms))
-        store.upsert(
+        _register_job(
+            store,
             ScheduledResearchJob(
                 id=quant_id,
                 prompt=f"Quant monitor tick for {agent.get('name') or agent_id}",
@@ -273,14 +318,14 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
                 status=JobStatus.PENDING,
                 created_at=now_ms,
                 config={"job_type": JOB_TYPE_QUANT, "autonomous_agent_id": agent_id},
-                paused=not scheduler_enabled,
-                auto_paused_reason=auto_paused_reason,
-            )
+            ),
+            scheduler_enabled=scheduler_enabled,
         )
 
     if agent.get("symbols"):
         news_ms = str(int(schedules.get("news_ms") or _NEWS_MS_DEFAULT))
-        store.upsert(
+        _register_job(
+            store,
             ScheduledResearchJob(
                 id=_news_job_id(agent_id),
                 prompt=f"News materiality tick for {agent.get('name') or agent_id}",
@@ -289,12 +334,12 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
                 status=JobStatus.PENDING,
                 created_at=now_ms,
                 config={"job_type": JOB_TYPE_NEWS, "autonomous_agent_id": agent_id},
-                paused=not scheduler_enabled,
-                auto_paused_reason=auto_paused_reason,
-            )
+            ),
+            scheduler_enabled=scheduler_enabled,
         )
         strategy_review_ms = str(int(schedules.get("strategy_review_ms") or _STRATEGY_REVIEW_MS_DEFAULT))
-        store.upsert(
+        _register_job(
+            store,
             ScheduledResearchJob(
                 id=_strategy_review_job_id(agent_id),
                 prompt=f"Strategy review tick for {agent.get('name') or agent_id}",
@@ -303,9 +348,8 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
                 status=JobStatus.PENDING,
                 created_at=now_ms,
                 config={"job_type": JOB_TYPE_STRATEGY_REVIEW, "autonomous_agent_id": agent_id},
-                paused=not scheduler_enabled,
-                auto_paused_reason=auto_paused_reason,
-            )
+            ),
+            scheduler_enabled=scheduler_enabled,
         )
         # Own (tighter) cadence than strategy_review_ms — see
         # [[2026-08-31-strategy-snapshot-cadence-tied-to-review-tick]]: the rolling
@@ -313,7 +357,8 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
         # strategy_review_ms's slower cadence (which also drives pnl-snapshot/shadow-pnl-sync/
         # lifecycle-sync, none of which want to run more often).
         strategy_snapshot_ms = str(int(schedules.get("strategy_snapshot_ms") or watch_ms))
-        store.upsert(
+        _register_job(
+            store,
             ScheduledResearchJob(
                 id=_strategy_snapshot_job_id(agent_id),
                 prompt=f"Strategy snapshot tick for {agent.get('name') or agent_id}",
@@ -322,9 +367,8 @@ def register_agent_jobs(agent: dict[str, Any]) -> None:
                 status=JobStatus.PENDING,
                 created_at=now_ms,
                 config={"job_type": JOB_TYPE_STRATEGY_SNAPSHOT, "autonomous_agent_id": agent_id},
-                paused=not scheduler_enabled,
-                auto_paused_reason=auto_paused_reason,
-            )
+            ),
+            scheduler_enabled=scheduler_enabled,
         )
     logger.info("registered autonomous jobs for %s", agent_id)
 

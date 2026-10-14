@@ -75,8 +75,9 @@ def test_a_gated_job_is_blocked_even_with_no_registered_pipeline(monkeypatch) ->
 
     monkeypatch.delenv("STACK_PROFILE", raising=False)
     job = _job("ext", job_type="external_predictions_refresh")
-    # No pipeline claims it — it would fall through to the agent-prompt path...
-    assert asyncio.run(try_dispatch_pipeline_job(job)) is False
+    # No pipeline claims it: dispatch refuses it (it no longer falls through to the agent-prompt path)...
+    with pytest.raises(ValueError, match="no pipeline claims"):
+        asyncio.run(try_dispatch_pipeline_job(job))
     # ...and the tier gate still blocks it.
     assert _collection_dispatch_blocked(job) is True
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from src.agent.memory import WorkspaceMemory
@@ -227,6 +228,15 @@ _MEMORY_SECTION = """
 """
 
 
+_IST = timezone(timedelta(hours=5, minutes=30))  # IST has no DST
+
+
+def _now_label(now: datetime) -> str:
+    """UTC time plus the IST date/time: Indian sessions run on the IST calendar, which
+    is a day ahead of UTC from 18:30 UTC (a UTC-only date mislabels the next trading day)."""
+    return f"{now.strftime('%A, %B %d, %Y %H:%M UTC')} ({now.astimezone(_IST).strftime('%A, %B %d, %Y %H:%M')} IST)"
+
+
 class ContextBuilder:
     """Builds message context for AgentLoop.
 
@@ -301,7 +311,7 @@ class ContextBuilder:
                 tool_descriptions=self._format_tool_descriptions(),
                 skill_descriptions=self.skills_loader.get_descriptions(),
                 memory_section=memory_section,
-                current_datetime=now.strftime("%A, %B %d, %Y %H:%M UTC"),
+                current_datetime=_now_label(now),
             )
             skill_block = orchestrator_skill_block(self.skills_loader)
             if skill_block:
@@ -319,7 +329,7 @@ class ContextBuilder:
                 tool_descriptions=self._format_tool_descriptions(),
                 skill_descriptions=self.skills_loader.get_descriptions(),
                 memory_section=memory_section,
-                current_datetime=now.strftime("%A, %B %d, %Y %H:%M UTC"),
+                current_datetime=_now_label(now),
             )
             skill_block = news_scenario_skill_block(self.skills_loader)
             if skill_block:
@@ -331,14 +341,14 @@ class ContextBuilder:
                 turn_kind=turn_kind,
                 skill_descriptions=turn_kind_skill_descriptions(self.skills_loader, turn_kind),
                 memory_section=memory_section,
-                current_datetime=now.strftime("%A, %B %d, %Y %H:%M UTC"),
+                current_datetime=_now_label(now),
             )
         elif str(self._session_config.get("agent_mode") or "") == "observe":
             base = _OBSERVE_AUTONOMOUS_SYSTEM_PROMPT.format(
                 tool_descriptions=tool_descriptions,
                 skill_descriptions=self.skills_loader.get_descriptions(),
                 memory_section=memory_section,
-                current_datetime=now.strftime("%A, %B %d, %Y %H:%M UTC"),
+                current_datetime=_now_label(now),
             )
         else:
             # Strategy-discovery routing text is injected only when all three
@@ -360,7 +370,7 @@ class ContextBuilder:
                 memory_summary=self.memory.to_summary(),
                 memory_section=memory_section,
                 strategy_discovery_routing=routing,
-                current_datetime=now.strftime("%A, %B %d, %Y %H:%M UTC"),
+                current_datetime=_now_label(now),
             )
 
         system_note = str(self._session_config.get("system_note") or "").strip()

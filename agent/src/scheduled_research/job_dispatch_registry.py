@@ -133,9 +133,10 @@ _DISPATCH_LOADERS: tuple[Callable[[], tuple[frozenset, Callable[..., Awaitable[N
 async def try_dispatch_pipeline_job(job) -> bool:
     """Dispatch ``job`` to its pipeline handler if its job_type is registered.
 
-    Returns True when a pipeline handled the job (caller should not fall
-    through to the legacy agent-session enqueue path), False when no
-    registered pipeline claims this job_type.
+    Returns True when a pipeline handled the job, False for a job with no ``job_type``
+    (a user's prompt job: the legacy agent-session enqueue path). A ``job_type`` no pipeline
+    claims (a retired or mistyped one) raises: falling through would hand the job's stored
+    prompt to an LLM agent session with tools, and report the run as completed.
     """
     job_type = str(job.config.get("job_type") or "")
     for loader in _DISPATCH_LOADERS:
@@ -143,4 +144,6 @@ async def try_dispatch_pipeline_job(job) -> bool:
         if job_type in job_types:
             await dispatch_fn(job)
             return True
+    if job_type:
+        raise ValueError(f"no pipeline claims job_type {job_type!r} (job {job.id}); retired or mistyped?")
     return False

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import sys
+import sysconfig
 import threading
 import time
 from datetime import datetime, timezone
@@ -77,6 +78,19 @@ def trade_repo_root() -> Path | None:
     return None
 
 
+def _first_installed_path_index() -> int:
+    """Where a Trade source root goes on ``sys.path``: ahead of the stdlib and site-packages (so a
+    worktree's checkout beats the ``.pth``/editable copy of the main checkout) but BEHIND every
+    project entry already there. Inserted at 0, ``<trade>/tradingagents`` (which holds top-level
+    ``tests/``, ``cli/``, ``scripts/``, ``main.py``) shadowed this agent's own ``tests``/``cli`` for any
+    module not yet imported (2026-10-14-trade-stack-path-shadows-top-level-names)."""
+    stdlib = {sysconfig.get_paths()["stdlib"], sysconfig.get_paths()["platstdlib"]}
+    for index, entry in enumerate(sys.path):
+        if entry in stdlib or entry.endswith(".zip") or "site-packages" in entry:
+            return index
+    return len(sys.path)
+
+
 def ensure_trade_stack_path() -> Path:
     root = trade_repo_root()
     if root is None:
@@ -87,7 +101,7 @@ def ensure_trade_stack_path() -> Path:
     tradingagents = root / "tradingagents"
     for path in (integrations, tradingagents):
         if path.is_dir() and str(path) not in sys.path:
-            sys.path.insert(0, str(path))
+            sys.path.insert(_first_installed_path_index(), str(path))
     if get_env_config().trade.trade_integrations_skip_apply != "1":
         import trade_integrations  # noqa: F401
     return root

@@ -836,6 +836,25 @@ Rules:
 {focus_section}"""
 
 
+def _redacted_for_transcript(msg: dict) -> dict:
+    """Copy of ``msg`` with tool results and tool-call arguments redacted, as in ``trace.jsonl``.
+
+    The transcript is a second on-disk copy of the conversation; writing the raw text there
+    undid the redaction the trace applies to the same tool results.
+    """
+    out = dict(msg)
+    if out.get("role") == "tool" and isinstance(out.get("content"), str):
+        out["content"] = redact_tool_result(out["content"])
+    if out.get("tool_calls"):
+        out["tool_calls"] = [
+            {**tc, "function": {**tc["function"], "arguments": redact_tool_result(tc["function"]["arguments"])}}
+            if isinstance(tc.get("function"), dict) and isinstance(tc["function"].get("arguments"), str)
+            else tc
+            for tc in out["tool_calls"]
+        ]
+    return out
+
+
 def _is_tool_success(result: str) -> bool:
     """Return True if the tool result does not look like an error response."""
     try:
@@ -1045,11 +1064,18 @@ def _archive_backtest_result(result: str, active_run_dir: str | None) -> bool:
     for directory in ("artifacts", "code", "logs"):
         source_dir = source / directory
         if source_dir.is_dir():
-            shutil.copytree(source_dir, target / directory, dirs_exist_ok=True)
+            # Generated strategy code writes into this tree; a symlink it leaves behind would be
+            # copied as the (dereferenced) content of whatever it points at.
+            shutil.copytree(
+                source_dir,
+                target / directory,
+                dirs_exist_ok=True,
+                ignore=lambda d, names: [n for n in names if (Path(d) / n).is_symlink()],
+            )
             archived += [
                 str(path.relative_to(source))
                 for path in source_dir.rglob("*")
-                if path.is_file()
+                if path.is_file() and not path.is_symlink()
             ]
     for stale in previously_archived - set(archived):
         (target / stale).unlink(missing_ok=True)
@@ -3086,6 +3112,17 @@ class AgentLoop:
                 "call_id": tc.id,
             },
         )
+        # Both hooks were dropped by the upstream merge (b65b6f7c) and nothing else calls them:
+        # service_hooks skips ``tool_result`` provenance on purpose (this is its one writer), and
+        # ``active_draft_id``/``active_scenario_id`` are only set here or by the API route.
+        from src.session.news_scenario_session import sync_news_scenario_session_from_tool_result
+
+        sync_news_scenario_session_from_tool_result(self._session_id, tc.name, result)
+        source = self._emit_tool_provenance(tc, trace_result, status)
+        if source and success:
+            cite = f"\n\n[Source: [[{source.ref_id}|{source.display_name}]]]"
+            if cite not in truncated:
+                messages[-1] = context.format_tool_result(tc.id, tc.name, truncated.rstrip() + cite)
 
     # -- Context compression ---------------------------------------------------
 
@@ -3169,7 +3206,7 @@ class AgentLoop:
         transcript_path = trace.dir_path / f"transcript_{int(_time.time())}.jsonl"
         with open(transcript_path, "w", encoding="utf-8") as f:
             for msg in messages:
-                f.write(json.dumps(msg, default=str, ensure_ascii=False) + "\n")
+                f.write(json.dumps(_redacted_for_transcript(msg), default=str, ensure_ascii=False) + "\n")
 
         system_msg = messages[0]
         body = messages[1:]
