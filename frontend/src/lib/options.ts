@@ -106,7 +106,8 @@ export interface OptionsContractRow {
   volume: number | null;
   open_interest: number | null;
   implied_volatility: number | null;
-  in_the_money: boolean;
+  /** null when the underlying price is unknown (no ITM mark is drawn). */
+  in_the_money: boolean | null;
   expiration: number;
 }
 
