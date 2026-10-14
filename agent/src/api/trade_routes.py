@@ -255,34 +255,82 @@ def trade_charges(
     return TradeChargesResponse(status="success", charges=charges)
 
 
+def _assert_basket_passes_risk_gate(
+    host: str, api_key: str, orders: list[dict], widget: dict, widget_id: str, agent_id: str
+) -> str:
+    """Refuse (HTTP 403/503) unless the one risk gate permits ``orders`` (D450); returns the principal
+    id the ledger books them under. Fail closed: margin or lot size that cannot be read is a refusal."""
+    from nautilus_openalgo_bridge.openalgo_client import BridgeOpenAlgoClient
+    from nautilus_openalgo_bridge.preflight import _margin_positions_from_orders
+    from trade_integrations.autonomous_agents.mandate_enforcer import MandateViolation
+    from trade_integrations.autonomous_agents.store import get_agent
+    from trade_integrations.risk.manual_operator import assert_manual_order_permitted
+
+    for order in orders:
+        try:
+            quantity = int(float(order.get("quantity")))
+        except (TypeError, ValueError, OverflowError):
+            quantity = 0
+        if quantity <= 0 or not str(order.get("symbol") or "").strip():
+            # The gate's lot count skips a leg it cannot read; a leg that is not a positive-size order on a named symbol is no order to place.
+            raise HTTPException(status_code=400, detail=f"Order has no symbol or no positive quantity: {order!r}"[:300])
+    agent = None
+    if agent_id:
+        agent = get_agent(agent_id)
+        if agent is None:
+            raise HTTPException(status_code=403, detail=f"Widget's agent {agent_id} has no record: no mandate to check")
+    client = BridgeOpenAlgoClient(host=host, api_key=api_key)
+    try:
+        margin = client.calculate_margin(_margin_positions_from_orders(orders))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=f"Margin check failed: {redacted_error_detail(exc)}") from exc
+    if margin is None:
+        raise HTTPException(status_code=503, detail="Margin unavailable: the order cannot be sized against the risk limits")
+    try:
+        return assert_manual_order_permitted(
+            orders, margin_inr=float(margin), widget_id=widget_id, lot_size_lookup=client.lot_size, agent=agent
+        )
+    except MandateViolation as exc:
+        raise HTTPException(status_code=403, detail=f"Order refused by the risk gate ({exc.code}): {exc}") from exc
+    except Exception as exc:
+        logger.warning("risk gate check failed for widget %s: %s", widget_id, exc)
+        raise HTTPException(status_code=503, detail=f"Risk gate unavailable: {redacted_error_detail(exc)}") from exc
+
+
 @trade_router.post("/execute-basket", response_model=ExecuteBasketResponse)
 def execute_basket(
     body: ExecuteBasketRequest,
     _auth: None = Depends(require_local_or_auth),
 ) -> ExecuteBasketResponse:
-    """Place a multi-leg basket order via OpenAlgo REST (after user confirms in widget)."""
-    orders = list(body.orders or [])
-    widget: dict | None = load_trade_widget(body.widget_id) if body.widget_id else None
-    if widget is None and body.widget_id and not orders:
-        raise HTTPException(status_code=404, detail="Widget not found")
-    if widget is not None:
-        # Checked whether the orders come from the widget or from the request body: a
-        # bridge agent's plan only executes through its approval flow, so naming its widget
-        # must not unlock a free-form order list.
-        agent_id = str(widget.get("autonomous_agent_id") or widget.get("agent_id") or "").strip()
-        if agent_id:
-            from trade_integrations.execution.enforce import is_bridge_autonomous_agent
+    """Place a multi-leg basket order via OpenAlgo REST (after the human confirms in the widget).
 
-            if is_bridge_autonomous_agent(agent_id):
-                raise HTTPException(
-                    status_code=403,
-                    detail="Direct execute-basket blocked for autonomous agents — use plan approval flow",
-                )
-        if not orders:
-            for step in widget.get("implementation_steps") or []:
-                if step.get("action") == "execute_basket" and step.get("payload"):
-                    orders = (step["payload"] or {}).get("orders") or []
-                    break
+    The human's one manual order path (D432). It names a widget and passes the SAME risk gate every
+    agent order passes (D450): the manual operator's own conservative limits, or a non-bridge
+    agent widget's agent's mandate. No widget, no order.
+    """
+    orders = list(body.orders or [])
+    if not body.widget_id:
+        raise HTTPException(status_code=400, detail="widget_id required: a basket is placed from a trade-plan widget")
+    widget = load_trade_widget(body.widget_id)
+    if widget is None:
+        raise HTTPException(status_code=404, detail="Widget not found")
+    # Checked whether the orders come from the widget or from the request body: a bridge agent's
+    # plan only executes through its approval flow, so naming its widget must not unlock a
+    # free-form order list.
+    agent_id = str(widget.get("autonomous_agent_id") or widget.get("agent_id") or "").strip()
+    if agent_id:
+        from trade_integrations.execution.enforce import is_bridge_autonomous_agent
+
+        if is_bridge_autonomous_agent(agent_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Direct execute-basket blocked for autonomous agents — use plan approval flow",
+            )
+    if not orders:
+        for step in widget.get("implementation_steps") or []:
+            if step.get("action") == "execute_basket" and step.get("payload"):
+                orders = (step["payload"] or {}).get("orders") or []
+                break
     if not orders:
         raise HTTPException(status_code=400, detail="No orders to execute")
 
@@ -306,6 +354,7 @@ def execute_basket(
             analyze = _openalgo_analyzer_status(host, api_key)
     _assert_execution_allowed(analyze)
     execution_mode = "paper" if analyze else "live"
+    manual_principal_id = _assert_basket_passes_risk_gate(host, api_key, orders, widget, body.widget_id, agent_id)
 
     payload = {"apikey": api_key, "strategy": body.strategy, "orders": orders}
     try:
@@ -346,6 +395,7 @@ def execute_basket(
                     widget,
                     results,
                     execution_mode=execution_mode,
+                    agent_id=manual_principal_id,
                 )
                 just_recorded_execution_id = str(recorded_entry.get("execution_id") or "") or None
             except Exception:

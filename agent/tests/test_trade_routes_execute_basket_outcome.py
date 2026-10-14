@@ -54,6 +54,8 @@ def _run_execute_basket(widget: dict, *, orders: list[dict] | None = None):
 
     with (
         patch("src.api.trade_routes.load_trade_widget", return_value=widget),
+        # The risk gate has its own file (test_trade_routes_execute_basket_risk_gate.py); this one is bookkeeping.
+        patch("src.api.trade_routes._assert_basket_passes_risk_gate", return_value="manual_operator"),
         patch(
             "trade_integrations.execution.context_verify.ensure_paper_execution_ready",
             return_value=SimpleNamespace(analyze_mode=True),
