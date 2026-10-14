@@ -257,3 +257,21 @@ def test_tick_dispatches_operational_job_regardless_of_profile(tmp_path, monkeyp
     asyncio.run(scenario())
 
     assert calls == ["export-fills"]
+
+
+def test_current_stack_profile_is_the_one_reader_and_is_read_per_call(monkeypatch) -> None:
+    from src.scheduled_research.job_tier_policy import current_stack_profile
+
+    monkeypatch.delenv("STACK_PROFILE", raising=False)
+    assert current_stack_profile() == "dev"
+    monkeypatch.setenv("STACK_PROFILE", "release")
+    assert current_stack_profile() == "release" and collection_job_dispatch_enabled(current_stack_profile())
+    monkeypatch.setenv("STACK_PROFILE", "dev")  # no restart: the next call sees it
+    assert not collection_job_dispatch_enabled(current_stack_profile())
+
+
+def test_dispatch_gate_callers_do_not_read_stack_profile_themselves() -> None:
+    root = Path(__file__).resolve().parents[1] / "src"
+    for rel in ("scheduled_research/executor.py", "scheduled_research/pause_control.py", "api/scheduled_routes.py"):
+        text = (root / rel).read_text()
+        assert 'environ.get("STACK_PROFILE"' not in text and 'getenv("STACK_PROFILE"' not in text, rel

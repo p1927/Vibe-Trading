@@ -30,6 +30,8 @@ same boundary as OpenAlgo.
 
 from __future__ import annotations
 
+import os
+
 from src.scheduled_research.factor_health_jobs import (
     JOB_TYPE_FACTOR_HEALTH,
     JOB_TYPE_FACTOR_GAP_FILL,
@@ -132,6 +134,13 @@ COLLECTION_JOB_TYPES: frozenset[str] = frozenset(
         "external_predictions_refresh",
     }
 )
+
+
+def current_stack_profile() -> str:
+    """This process's tier (``STACK_PROFILE``, default ``dev``): the one reader of that variable for the
+    scheduled-research dispatch gate (the executor, the pause control and the trigger route each used to
+    read it themselves). Read per call, never cached, so a change applies without a restart."""
+    return os.environ.get("STACK_PROFILE", "dev")
 
 
 def collection_job_dispatch_enabled(stack_profile: str) -> bool:
