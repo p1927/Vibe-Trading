@@ -300,7 +300,9 @@ export function Portfolio() {
   }, [snapshot, t]);
 
   const dailyChange = useMemo(() => {
-    if (!snapshot || !history.length) return null;
+    // An incomplete snapshot leaves unreadable accounts out of its total; against a complete same-day point
+    // that gap would read as a day's loss. No figure beats a wrong one.
+    if (!snapshot || !snapshot.complete || !history.length) return null;
     const sameDay = history.filter((row) => dayKey(row.created_at) === dayKey(snapshot.created_at));
     if (!sameDay.length) return null;
     return snapshot.totals.usd - Number(sameDay[0].total_usd);

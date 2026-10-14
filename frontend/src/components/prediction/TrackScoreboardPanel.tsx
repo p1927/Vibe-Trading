@@ -147,6 +147,7 @@ export function TrackScoreboardPanel({
             {report.hybrid_eval_count != null
               ? ` · ${report.hybrid_eval_count} hybrid constituent days`
               : ""}
+            {report.as_of ? ` · computed ${String(report.as_of).slice(0, 16).replace("T", " ")} UTC` : ""}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

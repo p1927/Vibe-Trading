@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
 import { api, type IndexQuantReviewReport } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -12,18 +12,20 @@ export function QuantReviewPanel({ ticker = "NIFTY", horizonDays = 14 }: Props) 
   const [review, setReview] = useState<IndexQuantReviewReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const seq = useRef(0); // a slow answer for a previous ticker/horizon must not replace the current one
 
   const load = useCallback(
     async (refresh = false) => {
+      const mine = ++seq.current;
       setLoading(true);
       setError(null);
       try {
         const res = await api.getIndexQuantReview(ticker, refresh, horizonDays);
-        setReview(res.review ?? null);
+        if (mine === seq.current) setReview(res.review ?? null);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Quant review load failed");
+        if (mine === seq.current) setError(e instanceof Error ? e.message : "Quant review load failed");
       } finally {
-        setLoading(false);
+        if (mine === seq.current) setLoading(false);
       }
     },
     [ticker, horizonDays]
@@ -47,6 +49,7 @@ export function QuantReviewPanel({ ticker = "NIFTY", horizonDays = 14 }: Props) 
           <h2 className="text-sm font-semibold">Quant review</h2>
           <p className="text-[11px] text-muted-foreground">
             Second opinion — separate from Ridge headline forecast
+            {review?.as_of ? ` · as of ${String(review.as_of).slice(0, 16).replace("T", " ")}` : ""}
           </p>
         </div>
         <button
@@ -86,7 +89,7 @@ export function QuantReviewPanel({ ticker = "NIFTY", horizonDays = 14 }: Props) 
             <div>
               <span className="text-muted-foreground">TA consensus: </span>
               <span className={cn("font-medium uppercase", directionTone(review.ta_consensus?.direction))}>
-                {review.ta_consensus?.direction ?? "neutral"}
+                {review.ta_consensus?.direction ?? "—"}
               </span>
             </div>
             {review.active_strategy_profile ? (

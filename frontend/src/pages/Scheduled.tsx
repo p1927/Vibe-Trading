@@ -926,7 +926,11 @@ export function Scheduled() {
                     <p className={hintClass}>
                       {run.status === "expired"
                         ? t("scheduled.noFurtherRuns", { defaultValue: "No further runs" })
-                        : t("scheduled.nextRun", {
+                        : run.paused
+                          ? t("scheduled.pausedNoNextRun", {
+                              defaultValue: "Paused: will not run until resumed",
+                            })
+                          : t("scheduled.nextRun", {
                             when: formatInZone(run.next_run_at, zone, locale),
                           })}
                     </p>

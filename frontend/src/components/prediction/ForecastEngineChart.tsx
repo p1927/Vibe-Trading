@@ -25,7 +25,6 @@ const COVARIATE_COLORS = ["#f97316", "#a855f7", "#14b8a6", "#ec4899", "#84cc16",
 interface Props {
   ticker?: string;
   recipe?: string;
-  onLoadState?: (available: boolean, error: string | null) => void;
 }
 
 /** p10/p50/p90 pct-return -> absolute Nifty price levels, using the artifact's own anchor spot
@@ -45,7 +44,7 @@ function fmtDatasetValue(v: unknown): string {
   return v.toFixed(2);
 }
 
-export function ForecastEngineChart({ ticker = "NIFTY", recipe, onLoadState }: Props) {
+export function ForecastEngineChart({ ticker = "NIFTY", recipe }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const { dark } = useDarkMode();
   const [artifact, setArtifact] = useState<ForecastEngineArtifactResponse | null>(null);
@@ -68,7 +67,6 @@ export function ForecastEngineChart({ ticker = "NIFTY", recipe, onLoadState }: P
         if (!cancelled) {
           setArtifact(res);
           setError(null);
-          onLoadState?.(res.available, null);
         }
       })
       .catch((e) => {
@@ -76,7 +74,6 @@ export function ForecastEngineChart({ ticker = "NIFTY", recipe, onLoadState }: P
           setArtifact(null);
           const msg = e instanceof Error ? e.message : "Forecast engine fetch failed";
           setError(msg);
-          onLoadState?.(false, msg);
         }
       })
       .finally(() => {
@@ -85,7 +82,7 @@ export function ForecastEngineChart({ ticker = "NIFTY", recipe, onLoadState }: P
     return () => {
       cancelled = true;
     };
-  }, [ticker, recipe, onLoadState]);
+  }, [ticker, recipe]);
 
   const covariateKeys = artifact?.covariate_keys ?? [];
   const dataset = artifact?.dataset ?? [];

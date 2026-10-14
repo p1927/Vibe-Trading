@@ -78,6 +78,7 @@ export function BacktestEvaluationPanel({
             {report.history_start} → {report.history_end} · {report.history_rows} trading rows ·{" "}
             {report.eval_count} out-of-sample predictions ({report.horizon_days}d horizon, {evalProtocol}). Scope:{" "}
             <span className="font-medium">{isHybrid ? "hybrid (macro + bottom-up)" : "macro-only Ridge"}</span>.
+            {report.as_of ? ` Computed ${String(report.as_of).slice(0, 16).replace("T", " ")}.` : ""}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -362,12 +363,12 @@ export function BacktestEvaluationPanel({
                       </td>
                       <td className="py-1.5 pr-3 tabular-nums">{fmtPct(row.actual_forward_return_pct)}</td>
                       <td className="py-1.5 pr-3 tabular-nums">{fmtPct(row.error_pct)}</td>
-                      <td className="py-1.5">{row.direction_correct ? "✓" : "✗"}</td>
+                      <td className="py-1.5">{row.direction_correct == null ? "—" : row.direction_correct ? "✓" : "✗"}</td>
                     </tr>
                     {open ? (
                       <tr className="border-b border-border/40 bg-muted/20">
                         <td colSpan={6} className="px-2 py-2">
-                          {!row.direction_correct && row.miss_category ? (
+                          {row.direction_correct === false && row.miss_category ? (
                             <div className="mb-2 rounded border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-[11px]">
                               <span className="font-medium">Miss: {row.miss_category.replace(/_/g, " ")}</span>
                               {row.learning_note ? (
