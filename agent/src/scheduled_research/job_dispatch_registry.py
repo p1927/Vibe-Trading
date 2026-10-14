@@ -67,18 +67,6 @@ def _load_autonomous():
     return AUTONOMOUS_JOB_TYPES, dispatch_autonomous_job
 
 
-def _load_recording_wake():
-    # Phase C: recording-wake jobs (cron-driven respawn of
-    # ``wait_for_open=True`` recordings). See
-    # ``src.scheduled_research.recording_wake_jobs``.
-    from src.scheduled_research.recording_wake_jobs import (
-        RECORDING_WAKE_JOB_TYPES,
-        dispatch_recording_wake_job,
-    )
-
-    return RECORDING_WAKE_JOB_TYPES, dispatch_recording_wake_job
-
-
 def _load_factor_health():
     from src.scheduled_research.factor_health_jobs import (
         FACTOR_HEALTH_JOB_TYPES,
@@ -122,7 +110,6 @@ _DISPATCH_LOADERS: tuple[Callable[[], tuple[frozenset, Callable[..., Awaitable[N
     _load_financial_knowledge,
     _load_hub_capture,
     _load_autonomous,
-    _load_recording_wake,
     _load_dst_eval,
     _load_factor_health,
     _load_execution_advisor,

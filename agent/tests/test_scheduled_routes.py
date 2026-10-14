@@ -201,7 +201,7 @@ def test_delete_rejects_unsafe_job_id(
 def test_job_id_routes_accept_a_colon_namespaced_id(
     client: TestClient, store: ScheduledResearchJobStore
 ):
-    """recording_wake_jobs namespaces its ids as ``recording_wake:<uuid>`` —
+    """recording_wait_scheduler namespaces its ids as ``recording_wake:<uuid>`` —
     every job-id route must accept the colon, not just create/list/stream."""
     job_id = "recording_wake:3d53a1871aa743769672e32f8abb91e3"
     _seed(store, id=job_id, status=JobStatus.RUNNING)
