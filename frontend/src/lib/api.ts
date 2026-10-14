@@ -5109,8 +5109,10 @@ export interface IndexPredictionHistoryRow {
   spot_at_prediction: number;
   expected_return_pct: number;
   implied_level: number;
-  range_low: number;
-  range_high: number;
+  /** `null` for a day that has only an index-research snapshot with no stored band (`refresh: "snapshot"`):
+   * the chart draws no band for it, never an invented one. */
+  range_low: number | null;
+  range_high: number | null;
   actual_return_pct?: number | null;
   direction_correct?: boolean | null;
   bottom_up_return_pct?: number | null;
