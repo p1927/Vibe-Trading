@@ -1,3 +1,4 @@
+import { ResumeHaltButton } from "@/components/common/ResumeHaltButton";
 import { useState } from "react";
 import { ChevronDown, ChevronUp, Loader2, Radio } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -324,9 +325,18 @@ export function AutonomousAgentCard({ agent, onOpen, onPause, onResume, onDelete
               </button>
             )}
             {(agent.status === "paused" || agent.trading_halted) && onResume && (
-              <button type="button" onClick={onResume} className="rounded border px-2 py-0.5 hover:bg-muted">
-                Resume
-              </button>
+              agent.trading_halted ? (
+                // Lifting a trading halt is the same human-confirmed act as the global kill switch (D306).
+                <ResumeHaltButton
+                  label="Resume"
+                  prompt="Lift this agent's trading halt and let it trade again?"
+                  onConfirm={onResume}
+                />
+              ) : (
+                <button type="button" onClick={onResume} className="rounded border px-2 py-0.5 hover:bg-muted">
+                  Resume
+                </button>
+              )
             )}
             {onDelete && (
               <button

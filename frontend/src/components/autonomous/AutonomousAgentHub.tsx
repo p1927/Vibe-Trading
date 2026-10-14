@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { Loader2, OctagonX, Plus, Radio, RotateCcw, Trash2 } from "lucide-react";
+import { OctagonX, Plus, Radio, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   ApiError,
@@ -13,13 +13,17 @@ import {
   type LiveStatus,
   type UnownedPosition,
 } from "@/lib/api";
+import { useLiveStatus } from "@/hooks/useLiveStatus";
 import { AutonomousAgentCard } from "@/components/autonomous/AutonomousAgentCard";
+import { haltDetail, ResumeHaltButton } from "@/components/common/ResumeHaltButton";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 
 const POLL_MS = 15_000;
 const REFRESH_DEBOUNCE_MS = 300;
 
-function GlobalHaltBanner({ onResumed }: { onResumed: () => void }) {
+function GlobalHaltBanner({ halt, onResumed }: { halt: LiveStatus["halt"]; onResumed: () => void }) {
+  const { t } = useTranslation();
   const [resuming, setResuming] = useState(false);
 
   const handleResume = async () => {
@@ -43,15 +47,12 @@ function GlobalHaltBanner({ onResumed }: { onResumed: () => void }) {
       <span className="text-destructive/80">
         Agent controls below won't have any broker-side effect until the global kill switch is cleared.
       </span>
-      <button
-        type="button"
-        onClick={() => void handleResume()}
-        disabled={resuming}
-        className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 px-2.5 py-1 font-medium transition-colors hover:bg-destructive/10 disabled:opacity-40"
-      >
-        {resuming ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
-        Resume live trading
-      </button>
+      <span className="text-[11px] text-destructive/80" data-testid="halt-detail">
+        {haltDetail(halt ?? null, t as never)}
+      </span>
+      <span className="ml-auto flex flex-wrap items-center gap-2">
+        <ResumeHaltButton resuming={resuming} label="Resume live trading" onConfirm={handleResume} />
+      </span>
     </div>
   );
 }
@@ -232,8 +233,8 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
   const [stackHealth, setStackHealth] = useState<AutonomousStackHealth | undefined>();
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
-  const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
-  const [liveStatusError, setLiveStatusError] = useState<string | null>(null);
+  // The one poller of GET /live/status (D306), with its latest-wins and stale-error handling.
+  const { liveStatus, error: liveStatusError, refresh: refreshLiveStatus } = useLiveStatus();
   const [clearReport, setClearReport] = useState<ClearAllReport | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -257,21 +258,6 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
     }
   }, []);
 
-  const loadLiveStatus = useCallback(async () => {
-    try {
-      setLiveStatus(await api.getLiveStatus());
-      setLiveStatusError(null);
-    } catch (err) {
-      if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
-        setLiveStatus(null);
-        setLiveStatusError(null);
-      } else {
-        // A failed read is "halt state unknown", never "not halted": the banner must not go quiet.
-        setLiveStatusError(errorText(err, "request failed"));
-      }
-    }
-  }, []);
-
   useEffect(() => {
     load();
     const timer = window.setInterval(load, POLL_MS);
@@ -287,12 +273,6 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
       window.removeEventListener("autonomous-agents-refresh", onRefresh);
     };
   }, [load]);
-
-  useEffect(() => {
-    void loadLiveStatus();
-    const timer = window.setInterval(() => void loadLiveStatus(), POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [loadLiveStatus]);
 
   const openAgent = (agent: AutonomousAgentInstance) => {
     const session = agent.vibe_session_id;
@@ -440,7 +420,7 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
       </div>
 
       {liveStatus?.global_halted && (
-        <GlobalHaltBanner onResumed={() => void loadLiveStatus()} />
+        <GlobalHaltBanner halt={liveStatus.halt} onResumed={() => void refreshLiveStatus()} />
       )}
 
       {liveStatusError && (

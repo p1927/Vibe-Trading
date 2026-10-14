@@ -4,14 +4,13 @@ import {
   memo,
   useCallback,
   useContext,
-  useEffect,
   useImperativeHandle,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { Activity, Ban, CheckCircle2, Loader2, OctagonX, RotateCcw } from "lucide-react";
+import { Activity, Ban, CheckCircle2, Loader2, OctagonX } from "lucide-react";
 import { toast } from "sonner";
 import {
   api,
@@ -23,6 +22,7 @@ import {
 } from "@/lib/api";
 import { haltScopeStillActive, isGlobalLiveHalt, useLiveStatus } from "@/hooks/useLiveStatus";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
+import { haltDetail, ResumeHaltButton } from "@/components/common/ResumeHaltButton";
 import { RunnerStatus, type ConnectorCheckSnapshot } from "@/components/chat/RunnerStatus";
 
 function liveActionStyle(kind: string): { icon: typeof Activity; tone: string } {
@@ -279,19 +279,6 @@ export function LiveRuntimeStatus() {
   );
 }
 
-function haltDetail(record: LiveHaltRecord | null, t: (key: never, options?: Record<string, unknown>) => string): string {
-  const parts: string[] = [];
-  if (record?.by) parts.push(t("agent.haltTrippedBy" as never, { by: record.by }));
-  if (record?.reason) parts.push(t("agent.haltTrippedReason" as never, { reason: record.reason }));
-  if (record?.tripped_at) {
-    const when = new Date(record.tripped_at);
-    parts.push(t("agent.haltTrippedAt" as never, {
-      at: Number.isNaN(when.getTime()) ? record.tripped_at : when.toLocaleString(),
-    }));
-  }
-  return parts.length > 0 ? parts.join(" · ") : t("agent.haltAttributionUnknown" as never);
-}
-
 /**
  * Halt / Resume. A halt (kill switch, risk engine, daily loss, manual) is only ever lifted by a human:
  * Resume asks for a second, explicit confirmation that shows who/why/when it was tripped. Nothing in the
@@ -300,11 +287,6 @@ function haltDetail(record: LiveHaltRecord | null, t: (key: never, options?: Rec
 export function LiveRuntimeControl() {
   const { t } = useTranslation();
   const runtime = useContext(RuntimeContext);
-  const [confirming, setConfirming] = useState(false);
-  const halted = runtime?.liveIsHalted ?? false;
-  useEffect(() => {
-    if (!halted) setConfirming(false);
-  }, [halted]);
   if (!runtime || !(runtime.liveIsHalted || (runtime.liveActive && runtime.showOAuthRuntime))) return null;
   return (
     <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-2">
@@ -320,38 +302,7 @@ export function LiveRuntimeControl() {
           <span className="text-[11px] text-muted-foreground" data-testid="halt-detail">
             {haltDetail(runtime.haltRecord, t as never)}
           </span>
-          {confirming ? (
-            <>
-              <span className="text-xs text-foreground">{t("agent.resumeConfirmPrompt" as never)}</span>
-              <button
-                type="button"
-                onClick={() => { setConfirming(false); void runtime.resumeLive(); }}
-                disabled={runtime.resuming}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 bg-destructive/5 px-2.5 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-40"
-              >
-                {runtime.resuming ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
-                {t("agent.resumeConfirm" as never)}
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirming(false)}
-                className="inline-flex items-center rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                {t("agent.resumeKeepHalted" as never)}
-              </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setConfirming(true)}
-              disabled={runtime.resuming}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
-              title={t("agent.resumeConnectorTitle")}
-            >
-              <RotateCcw className="h-3 w-3" />
-              {t("agent.resumeConnector")}
-            </button>
-          )}
+          <ResumeHaltButton resuming={runtime.resuming} onConfirm={() => runtime.resumeLive()} />
         </>
       ) : (
         <button
