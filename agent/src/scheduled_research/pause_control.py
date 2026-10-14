@@ -11,11 +11,10 @@ site must go through :func:`set_job_enabled` so that can't happen again.
 
 from __future__ import annotations
 
-import os
 import time
 from typing import Optional
 
-from .job_tier_policy import collection_job_dispatch_enabled, is_collection_job
+from .job_tier_policy import collection_job_dispatch_enabled, current_stack_profile, is_collection_job
 from .models import JobStatus, ScheduledResearchJob
 from .store import ScheduledResearchJobStore
 
@@ -212,7 +211,7 @@ def trigger_job_now(
     if job.status == JobStatus.RUNNING:
         raise JobAlreadyRunningError(f"job {job_id} is already running")
     job_type = str((job.config or {}).get("job_type") or "")
-    stack_profile = os.environ.get("STACK_PROFILE", "dev")
+    stack_profile = current_stack_profile()
     if is_collection_job(job_type) and not collection_job_dispatch_enabled(stack_profile):
         raise JobCollectionDispatchBlockedError(
             f"job {job_id} is a data-collection job type ({job_type!r}) and cannot dispatch "

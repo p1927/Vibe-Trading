@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
 import sys as _sys
 import time
@@ -445,6 +444,7 @@ def _dispatch_blocked_reason(job: ScheduledResearchJob) -> Optional[str]:
     from src.scheduled_research.executor import is_due
     from src.scheduled_research.job_tier_policy import (
         collection_job_dispatch_enabled,
+        current_stack_profile,
         host_pressure_defer_reason,
         is_collection_job,
     )
@@ -455,7 +455,7 @@ def _dispatch_blocked_reason(job: ScheduledResearchJob) -> Optional[str]:
     job_type = str((job.config or {}).get("job_type") or "")
     if not is_collection_job(job_type):
         return None
-    stack_profile = os.environ.get("STACK_PROFILE", "dev")
+    stack_profile = current_stack_profile()
     if collection_job_dispatch_enabled(stack_profile):
         # Dispatchable here, but a heavy job is held while the host is starved (HEAVY_JOB_TYPES).
         return host_pressure_defer_reason(job_type)

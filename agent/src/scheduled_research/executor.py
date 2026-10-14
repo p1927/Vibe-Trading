@@ -34,6 +34,7 @@ from src.scheduled_research.models import (
 from src.scheduled_research.index_jobs import HubNewsIngestCollectedNothingError
 from src.scheduled_research.job_tier_policy import (
     collection_job_dispatch_enabled,
+    current_stack_profile,
     host_pressure_defer_reason,
     is_collection_job,
     is_operational_tier_job,
@@ -253,7 +254,7 @@ def _collection_dispatch_blocked(job: ScheduledResearchJob) -> bool:
     job_type = str((job.config or {}).get("job_type") or "")
     if not is_collection_job(job_type):
         return False
-    return not collection_job_dispatch_enabled(os.environ.get("STACK_PROFILE", "dev"))
+    return not collection_job_dispatch_enabled(current_stack_profile())
 
 
 def _is_no_live_spot(exc: BaseException) -> bool:
