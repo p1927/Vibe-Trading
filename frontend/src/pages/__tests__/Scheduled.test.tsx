@@ -781,6 +781,18 @@ function openalgoEntry(overrides: Partial<SchedulerRegistryEntry> = {}): Schedul
 }
 
 describe("cross-service registry entries (Mechanism C)", () => {
+  it("shows a registry entry's next run in IST with the zone label, not unlabelled UTC", async () => {
+    // 1_790_000_300_000 ms = 2026-09-21 14:18:20 UTC = 19:48 IST
+    mocked.listSchedulerRegistry.mockResolvedValue({
+      status: "ok",
+      entries: [openalgoEntry({ next_run_at: 1_790_000_300_000 })],
+      sources: { openalgo: { status: "ok" } },
+    });
+    renderScheduled();
+    await screen.findByText("wf_1");
+    expect(screen.getByText(/Next run:.*19:48 IST/)).toBeInTheDocument();
+  });
+
   it("shows an active openalgo job under its own dynamic section with a Pause button", async () => {
     mocked.listSchedulerRegistry.mockResolvedValue({
       status: "ok",
@@ -985,18 +997,22 @@ describe("Scheduled page loud states", () => {
       .mockResolvedValueOnce({ enabled: true, running: false })
       .mockResolvedValue({ enabled: true, running: true });
     mocked.resumeScheduler.mockResolvedValue({ status: "ok", running: true });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const nativeConfirm = vi.spyOn(window, "confirm");
     renderScheduled();
     fireEvent.click(await screen.findByTestId("executor-resume"));
+    expect(mocked.resumeScheduler).not.toHaveBeenCalled();
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: /^Resume/ }));
+    expect(nativeConfirm).not.toHaveBeenCalled();
     await waitFor(() => expect(mocked.resumeScheduler).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.queryByTestId("executor-banner")).toBeNull());
   });
 
   it("does not resume the executor when the confirmation is declined", async () => {
     mocked.getSchedulerStatus.mockResolvedValue({ enabled: true, running: false });
-    vi.spyOn(window, "confirm").mockReturnValue(false);
     renderScheduled();
     fireEvent.click(await screen.findByTestId("executor-resume"));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(mocked.resumeScheduler).not.toHaveBeenCalled();
   });
 
@@ -1018,18 +1034,19 @@ describe("Scheduled page loud states", () => {
       .mockResolvedValueOnce({ enabled: true, running: true })
       .mockResolvedValue({ enabled: true, running: false });
     mocked.pauseScheduler.mockResolvedValue({ status: "ok", running: false });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     renderScheduled();
     fireEvent.click(await screen.findByTestId("executor-pause"));
+    expect(mocked.pauseScheduler).not.toHaveBeenCalled();
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: /^Stop/ }));
     await waitFor(() => expect(mocked.pauseScheduler).toHaveBeenCalledTimes(1));
     expect(await screen.findByTestId("executor-banner")).toHaveTextContent(/paused/i);
   });
 
   it("does not pause the executor when the confirmation is declined", async () => {
     mocked.getSchedulerStatus.mockResolvedValue({ enabled: true, running: true });
-    vi.spyOn(window, "confirm").mockReturnValue(false);
     renderScheduled();
     fireEvent.click(await screen.findByTestId("executor-pause"));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
     expect(mocked.pauseScheduler).not.toHaveBeenCalled();
   });
 

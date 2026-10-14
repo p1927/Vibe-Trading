@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router";
 import { CalendarClock, ChevronDown, ChevronRight, Loader2, Pause, Play, Plus, Square, Trash2, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { formatIst } from "@/lib/istTime";
 import { api, ApiError, type ScheduledRun, type SchedulerRegistryEntry } from "@/lib/api";
 import { LiveLogTail } from "@/components/scheduler/LiveLogTail";
 import { ScheduledJobDetailPanel } from "@/components/scheduler/ScheduledJobDetailPanel";
@@ -214,32 +216,13 @@ export function Scheduled() {
   }, [refresh]);
 
   // The executor always boots paused (D98): a human resumes it, and resuming starts every overdue job.
-  const resumeExecutor = async () => {
-    const overdue = t("scheduled.executorResumeConfirm", {
-      defaultValue: "Resume the scheduler? Every overdue job becomes due and starts running.",
-    });
-    if (!window.confirm(overdue)) return;
+  // Resume and Pause both ask through the one ConfirmDialog (no window.confirm).
+  const [executorConfirm, setExecutorConfirm] = useState<"resume" | "pause" | null>(null);
+  const changeExecutor = async (action: "resume" | "pause") => {
+    setExecutorConfirm(null);
     setResumingExecutor(true);
     try {
-      await api.resumeScheduler();
-      setExecutorError(null);
-      await refresh();
-    } catch (error) {
-      setExecutorError(error instanceof ApiError ? error.message : String(error));
-    } finally {
-      setResumingExecutor(false);
-    }
-  };
-
-  // Master pause: the operator's stop button for every global job (due jobs wait, in-flight ones finish).
-  const pauseExecutor = async () => {
-    const ok = t("scheduled.executorPauseConfirm", {
-      defaultValue: "Pause the scheduler? No global job is dispatched until it is resumed.",
-    });
-    if (!window.confirm(ok)) return;
-    setResumingExecutor(true);
-    try {
-      await api.pauseScheduler();
+      await (action === "resume" ? api.resumeScheduler() : api.pauseScheduler());
       setExecutorError(null);
       await refresh();
     } catch (error) {
@@ -567,6 +550,32 @@ export function Scheduled() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
+      <ConfirmDialog
+        open={executorConfirm !== null}
+        title={
+          executorConfirm === "resume"
+            ? t("scheduled.executorResume", { defaultValue: "Resume executor" })
+            : t("scheduled.executorPause", { defaultValue: "Stop executor" })
+        }
+        description={
+          executorConfirm === "resume"
+            ? t("scheduled.executorResumeConfirm", {
+                defaultValue: "Resume the scheduler? Every overdue job becomes due and starts running.",
+              })
+            : t("scheduled.executorPauseConfirm", {
+                defaultValue: "Pause the scheduler? No global job is dispatched until it is resumed.",
+              })
+        }
+        confirmLabel={
+          executorConfirm === "resume"
+            ? t("scheduled.executorResume", { defaultValue: "Resume executor" })
+            : t("scheduled.executorPause", { defaultValue: "Stop executor" })
+        }
+        cancelLabel={t("common.cancel", { defaultValue: "Cancel" })}
+        tone={executorConfirm === "resume" ? "primary" : "destructive"}
+        onConfirm={() => (executorConfirm ? changeExecutor(executorConfirm) : undefined)}
+        onCancel={() => setExecutorConfirm(null)}
+      />
       <header className="flex items-center gap-3">
         <CalendarClock className="h-6 w-6 text-primary" aria-hidden />
         <div>
@@ -602,7 +611,7 @@ export function Scheduled() {
               type="button"
               data-testid="executor-resume"
               disabled={resumingExecutor}
-              onClick={() => void resumeExecutor()}
+              onClick={() => setExecutorConfirm("resume")}
               className="ml-2 rounded border border-warning/40 px-2 py-0.5 font-medium hover:bg-warning/10 disabled:opacity-50"
             >
               {t("scheduled.executorResume", { defaultValue: "Resume executor" })}
@@ -615,7 +624,7 @@ export function Scheduled() {
             type="button"
             data-testid="executor-pause"
             disabled={resumingExecutor}
-            onClick={() => void pauseExecutor()}
+            onClick={() => setExecutorConfirm("pause")}
             className="rounded border px-2 py-0.5 hover:bg-muted/50 disabled:opacity-50"
           >
             {t("scheduled.executorPause", { defaultValue: "Stop executor" })}
@@ -1089,7 +1098,7 @@ export function Scheduled() {
                     {entry.next_run_at != null && (
                       <p className={hintClass}>
                         {t("scheduled.nextRun", {
-                          when: formatInZone(entry.next_run_at, "UTC", locale),
+                          when: formatIst(entry.next_run_at),
                         })}
                       </p>
                     )}
