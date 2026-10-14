@@ -188,6 +188,7 @@ export function ExecutionAdvisor() {
     try {
       const res = await api.getKnowledgeTrackRecord({ window: 14, ticker: "NIFTY" });
       if (!res.ok) {
+        setTrackRecord(null);
         setTrackRecordError(res.error || "Track record unavailable");
         return;
       }

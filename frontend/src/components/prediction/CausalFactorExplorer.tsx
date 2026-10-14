@@ -49,8 +49,8 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
   }>;
 
   const contributors = artifact.factor_explanation?.contributors ?? [];
-  const baselineReturn = artifact.prediction?.expected_return_pct ?? 0;
-  const spot = artifact.spot ?? 0;
+  const baselineReturn = artifact.prediction?.expected_return_pct;
+  const spot = artifact.spot;
 
   const factorOptions = useMemo(() => {
     const seen = new Set<string>();

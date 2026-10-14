@@ -148,8 +148,18 @@ export function SimulatorReplayDetailPanel({
       .then((res) => {
         if (!cancelled) setOverview(res);
       })
-      .catch(() => {
-        if (!cancelled) setOverview(null);
+      .catch((err) => {
+        if (!cancelled) {
+          setOverview({
+            status: "error",
+            date: day.date,
+            equities: [],
+            options: {},
+            macro_factor_keys: [],
+            constituents_available: false,
+            error: err instanceof Error ? err.message : "Failed to load overview",
+          });
+        }
       })
       .finally(() => {
         if (!cancelled) setOverviewLoading(false);
