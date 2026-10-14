@@ -124,6 +124,7 @@ export function NewsImpactPanel({
   const [newsPipeline, setNewsPipeline] = useState<IndexPredictionNewsPipelineHealth | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
   const [showRejected, setShowRejected] = useState(false);
   const [expandedFactor, setExpandedFactor] = useState<string | null>(null);
   const [factorTimelines, setFactorTimelines] = useState<
@@ -198,9 +199,15 @@ export function NewsImpactPanel({
     void (async () => {
       try {
         const res = await api.getIndexPredictionJobs();
-        if (!cancelled) setNewsPipeline(res.news_pipeline ?? null);
-      } catch {
-        if (!cancelled) setNewsPipeline(null);
+        if (!cancelled) {
+          setNewsPipeline(res.news_pipeline ?? null);
+          setPipelineError(null);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setNewsPipeline(null);
+          setPipelineError(e instanceof Error ? e.message : "request failed");
+        }
       }
     })();
     return () => {
@@ -267,6 +274,12 @@ export function NewsImpactPanel({
           <p className="font-medium text-foreground">News ingest paused</p>
           <p className="mt-0.5">{ingestBlockedMessage}</p>
         </div>
+      ) : null}
+
+      {pipelineError && !ingestPaused ? (
+        <p className="text-[11px] text-amber-700 dark:text-amber-400">
+          News pipeline status unknown ({pipelineError}) — ingest may be paused.
+        </p>
       ) : null}
 
       {debate?.view ? (

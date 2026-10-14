@@ -429,7 +429,9 @@ export function Simulator() {
             attachStream(res.job.job_id);
           }
         })
-        .catch(() => {});
+        .catch((err) =>
+          setError(`Auto-record job discovery failed: ${err instanceof Error ? err.message : "request failed"}`),
+        );
     };
     discover();
     const interval = window.setInterval(discover, 20000);

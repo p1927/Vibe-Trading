@@ -130,7 +130,8 @@ export function ForecastEngineChart({ ticker = "NIFTY", recipe, onLoadState }: P
         .map((r) => [String(r.date), r.nifty_close as number]),
     );
 
-    const priceLevels = quantilePriceLevels(artifact.spot ?? 0, artifact.quantiles_pct ?? {});
+    const priceLevels =
+      artifact.spot != null ? quantilePriceLevels(artifact.spot, artifact.quantiles_pct ?? {}) : {};
     const band = priceLevels.p10 != null && priceLevels.p90 != null ? [priceLevels.p10, priceLevels.p90] : null;
     const niftyVisible = !hiddenKeys.has(NIFTY_KEY);
 
@@ -311,11 +312,11 @@ export function ForecastEngineChart({ ticker = "NIFTY", recipe, onLoadState }: P
             </div>
             <div>
               <p className="text-muted-foreground">Spot</p>
-              <p className="font-medium">{fmtNiftyLevel(artifact.spot ?? 0)}</p>
+              <p className="font-medium">{artifact.spot != null ? fmtNiftyLevel(artifact.spot) : "—"}</p>
             </div>
             <div>
               <p className="text-muted-foreground">Expected return ({artifact.horizon_days}d)</p>
-              <p className="font-medium">{(artifact.expected_return_pct ?? 0).toFixed(2)}%</p>
+              <p className="font-medium">{artifact.expected_return_pct != null ? `${artifact.expected_return_pct.toFixed(2)}%` : "—"}</p>
             </div>
             <div>
               <p className="text-muted-foreground">Recipe</p>
