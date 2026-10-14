@@ -8,7 +8,12 @@ type PlaygroundCacheEntry = {
   events: PlaygroundTrigger[];
   factorNews: Record<string, PlaygroundTrigger[]>;
   cascadeDownstream: CascadeRules | null;
+  /** epoch ms the server read finished: the cache expires on it and the UI can say how old the news is. */
+  fetchedAt: number;
 };
+
+// Headlines age: with no as-of the key never changes, so without a TTL a page open all day showed yesterday's news.
+const CACHE_TTL_MS = 5 * 60_000;
 
 const cache = new Map<string, PlaygroundCacheEntry>();
 const inflight = new Map<string, Promise<PlaygroundCacheEntry>>();
@@ -30,6 +35,7 @@ async function fetchPlaygroundContext(ticker: string, key: string): Promise<Play
         events: res.context?.events ?? [],
         factorNews: res.context?.factor_news ?? {},
         cascadeDownstream: res.context?.cascade_downstream ?? null,
+        fetchedAt: Date.now(),
       };
       cache.set(key, entry);
       return entry;
@@ -57,7 +63,7 @@ export function usePlaygroundContext(ticker: string, asOf: string | undefined) {
     let cancelled = false;
 
     const cached = cache.get(key);
-    if (cached) {
+    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
       setEntry(cached);
       setError(null);
       setLoading(false);
@@ -91,6 +97,7 @@ export function usePlaygroundContext(ticker: string, asOf: string | undefined) {
     events: entry?.events ?? [],
     factorNews: entry?.factorNews ?? {},
     cascadeDownstream: entry?.cascadeDownstream ?? null,
+    fetchedAt: entry?.fetchedAt ?? null,
     loading,
     error,
   };

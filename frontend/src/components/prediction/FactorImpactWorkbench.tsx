@@ -12,6 +12,7 @@ import {
 import { factorLabel, triggerToWorkbenchState } from "@/lib/factorEventMapping";
 import { useIndexSimulation } from "@/hooks/useIndexSimulation";
 import { usePlaygroundContext } from "@/hooks/usePlaygroundContext";
+import { formatIst } from "@/lib/istTime";
 import { CASCADE_DOWNSTREAM, PINNED_CAUSAL_FACTORS } from "@/lib/factorCascadeMap";
 import { researchNoteForFactor } from "@/lib/factorResearchNotes";
 import { CausalFactorHistoryChart } from "@/components/charts/CausalFactorHistoryChart";
@@ -137,9 +138,10 @@ export function FactorImpactWorkbench({
     events,
     factorNews,
     cascadeDownstream,
+    fetchedAt,
     loading: contextLoading,
     error: contextError,
-  } = usePlaygroundContext(artifact.ticker || "NIFTY", artifact.as_of);
+  } =usePlaygroundContext(artifact.ticker || "NIFTY", artifact.as_of);
   const [whyText, setWhyText] = useState<string | null>(null);
 
   useEffect(() => {
@@ -506,6 +508,8 @@ export function FactorImpactWorkbench({
           <p className="text-[11px] text-red-600 dark:text-red-400">
             Headlines/events failed to load ({contextError}) - the lists below are unavailable, not empty.
           </p>
+        ) : fetchedAt != null ? (
+          <p className="text-[10px] text-muted-foreground">Headlines and events fetched {formatIst(fetchedAt)}</p>
         ) : null}
         <div className="space-y-3">
         {linkedNews.length > 0 ? (
