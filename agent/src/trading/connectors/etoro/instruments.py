@@ -292,6 +292,10 @@ def list_instruments_by_type(
     }
 
 
+# A trade resolves only an exact symbol/display match (>= 90); substring tiers are for discovery only.
+_EXACT_MATCH_PRIORITY = 90
+
+
 def resolve_instrument_id(symbol: str, cfg: EtoroConfig) -> int:
     """Resolve a user symbol to an eToro ``instrumentId`` for trading APIs."""
     token = str(symbol or "").strip()
@@ -312,7 +316,7 @@ def resolve_instrument_id(symbol: str, cfg: EtoroConfig) -> int:
             if instrument_id is None:
                 continue
             priority = _match_priority(item, lookup, canonical, token)
-            if priority > 0:
+            if priority >= _EXACT_MATCH_PRIORITY:
                 candidates.append((priority, instrument_id))
 
     if not candidates:
@@ -321,7 +325,7 @@ def resolve_instrument_id(symbol: str, cfg: EtoroConfig) -> int:
             if instrument_id is None:
                 continue
             priority = _match_priority(item, canonical, canonical, token)
-            if priority > 0:
+            if priority >= _EXACT_MATCH_PRIORITY:
                 candidates.append((priority, instrument_id))
 
     if not candidates:

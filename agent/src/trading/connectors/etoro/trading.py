@@ -57,6 +57,16 @@ def place_order(
     if clean_type not in ("market", "limit"):
         return _order_error(cfg, "order_type must be 'market' or 'limit'", symbol=symbol, side=clean_side)
 
+    px: float | None = None
+    if clean_type == "limit":
+        # Without a trigger rate a ``mit`` order would fire at once at market: a limit needs its price.
+        try:
+            px = float(limit_price)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return _order_error(cfg, "limit order requires a numeric limit_price", symbol=symbol, side=clean_side)
+        if not px > 0 or px == float("inf"):
+            return _order_error(cfg, "limit_price must be positive and finite", symbol=symbol, side=clean_side)
+
     try:
         instrument_ref = _order_instrument_ref(symbol, cfg)
     except EtoroAPIError as exc:
@@ -75,8 +85,8 @@ def place_order(
         body["amount"] = float(notional)
     else:
         body["units"] = float(quantity)
-    if clean_type == "limit" and limit_price is not None:
-        body["TriggerRate"] = float(limit_price)
+    if px is not None:
+        body["TriggerRate"] = px
 
     req_id = (request_id or str(uuid.uuid4())).strip()
     path = f"{execution_root(cfg)}/orders"

@@ -169,6 +169,20 @@ def audit_chain_ledger_path() -> Path:
     return live_root() / _CHAIN_LEDGER_FILENAME
 
 
+def assert_audit_writable() -> None:
+    """Raise ``OSError`` unless the live-action ledger can be opened for append right now.
+
+    A live order must not be sent when its audit record cannot be written afterwards: the order
+    path calls this BEFORE the broker send (a failure after the send cannot be undone, and raising
+    there would make the caller retry a placed order). Opens the ledger in append mode and writes
+    nothing, so it adds no record.
+    """
+    path = audit_ledger_path()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with path.open("a", encoding="utf-8"):
+        pass
+
+
 @dataclass(frozen=True)
 class LiveActionEvent:
     """One immutable live-action audit record (SPEC.md Consent §5).

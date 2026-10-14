@@ -799,7 +799,37 @@ def _exchange(cfg: BinanceConfig):
             assert_exchange_endpoints(ex)
         except UsdMObservationError as exc:
             raise BinanceConfigError(str(exc)) from None
+    # Every request path builds its client here, so the host check lives here (not per caller).
+    _assert_host(cfg)
+    _assert_exchange_hosts(cfg, ex)
     return ex
+
+
+def _iter_urls(node: Any):
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, Mapping):
+        for value in node.values():
+            yield from _iter_urls(value)
+
+
+def _assert_exchange_hosts(cfg: BinanceConfig, ex: Any) -> None:
+    """Check the hosts the ccxt client will REALLY call, not the config that was meant to pick them.
+
+    ``_assert_host`` compares the config with itself (``cfg.host`` is derived from ``is_testnet``).
+    A live profile requires every ccxt endpoint under ``binance.com``; a paper profile requires
+    that none is (testnet keys must never reach the live host, nor live keys a testnet one).
+    """
+    urls = list(_iter_urls((getattr(ex, "urls", None) or {}).get("api")))
+    if not urls:
+        raise BinanceConfigError("Binance client exposes no API endpoints to verify; refusing to use it.")
+    for url in urls:
+        host = (urlparse(url).hostname or "").lower()
+        on_live = host == "binance.com" or host.endswith(".binance.com")
+        if cfg.is_testnet and on_live:
+            raise BinanceConfigError(f"Profile is paper but the client endpoint '{host}' is the live host.")
+        if not cfg.is_testnet and not on_live:
+            raise BinanceConfigError(f"Profile is live but the client endpoint '{host}' is not a binance.com host.")
 
 
 def _assert_host(cfg: BinanceConfig) -> None:

@@ -105,6 +105,10 @@ _OCR_TEMPERATURE = 0.0
 # text readability. Higher values (90+) increase upload cost with marginal gain.
 _OCR_JPEG_QUALITY = 85
 
+# Upload bounds: longest side downscaled to 4096 px (ample for A4 at ~350 dpi), encoded size capped.
+_OCR_MAX_SIDE_PX = 4096
+_OCR_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
 
 def _resolve_provider_config() -> dict[str, str]:
     """Resolve base_url, api_key, model from the configured LLM provider.
@@ -305,9 +309,17 @@ class LlmVisionOcrEngine:
         from PIL import Image
 
         pil_img = Image.fromarray(image)
+        if max(pil_img.size) > _OCR_MAX_SIDE_PX:
+            # Bound the upload: a huge scan is downscaled (thumbnail keeps aspect), never sent whole.
+            pil_img.thumbnail((_OCR_MAX_SIDE_PX, _OCR_MAX_SIDE_PX))
         buffer = io.BytesIO()
         pil_img.save(buffer, format="JPEG", quality=_OCR_JPEG_QUALITY)
-        return base64.b64encode(buffer.getvalue()).decode("utf-8")
+        encoded = buffer.getvalue()
+        if len(encoded) > _OCR_MAX_UPLOAD_BYTES:
+            raise ValueError(
+                f"OCR image is {len(encoded)} bytes after JPEG encoding, over the {_OCR_MAX_UPLOAD_BYTES} byte cap"
+            )
+        return base64.b64encode(encoded).decode("utf-8")
 
 
 # Self-register to built-in engine table

@@ -230,7 +230,7 @@ def check_status(config: OKXConfig | None = None) -> dict[str, Any]:
             resp = _safe_call(account, "get_account_config")
             rows = _extract_data(resp)
             uid = _first(rows[0], ("uid",)) if rows else None
-            if uid is not None and str(uid) != cfg.expected_uid:
+            if str(uid) != cfg.expected_uid:
                 report["status"] = "error"
                 report["error"] = f"UID mismatch: expected {cfg.expected_uid}, broker returned {uid}."
                 return report
@@ -460,6 +460,10 @@ def place_order(
     if clean_type == "limit":
         params["px"] = str(limit_price)
 
+    pin_error = _uid_pin_error(cfg)
+    if pin_error:
+        return _order_error(cfg, pin_error, symbol=clean_symbol, side=clean_side)
+
     try:
         trade = _trade_client(cfg)
         # Call the SDK directly (NOT via _safe_call): a write must fail closed on
@@ -515,6 +519,10 @@ def cancel_order(
             cfg, f"OKX connector not configured: missing {', '.join(missing)}.", symbol=clean_symbol, order_id=clean_id
         )
 
+    pin_error = _uid_pin_error(cfg)
+    if pin_error:
+        return _order_error(cfg, pin_error, symbol=clean_symbol, order_id=clean_id)
+
     try:
         trade = _trade_client(cfg)
         # Direct SDK call (not _safe_call): writes must fail closed, not retry stripped.
@@ -525,6 +533,23 @@ def cancel_order(
         return _order_error(cfg, str(exc), symbol=clean_symbol, order_id=clean_id)
 
     return _order_result(cfg, resp, symbol=clean_symbol, action="cancel", requested_order_id=clean_id)
+
+
+def _uid_pin_error(cfg: OKXConfig) -> str | None:
+    """Verify the pinned account UID right before a write; ``None`` = ok (or no pin configured).
+
+    Fails closed: an unreadable config, a missing UID or a different UID all refuse the write.
+    """
+    if not cfg.expected_uid:
+        return None
+    try:
+        rows = _extract_data(_safe_call(_account_client(cfg), "get_account_config"))
+    except Exception as exc:  # noqa: BLE001 - an unverifiable account must not receive an order
+        return f"OKX account UID could not be verified ({exc}); refusing to write"
+    uid = _first(rows[0], ("uid",)) if rows else None
+    if uid is None or str(uid) != cfg.expected_uid:
+        return f"UID mismatch: expected {cfg.expected_uid}, broker returned {uid}; refusing to write"
+    return None
 
 
 def _order_error(cfg: OKXConfig, message: str, **extra: Any) -> dict[str, Any]:
