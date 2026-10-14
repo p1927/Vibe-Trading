@@ -2,7 +2,8 @@ import { Newspaper, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Props {
-  materialNewsCount?: number;
+  /** null = unknown (the read failed or has not landed): shown as n/a, never as 0. */
+  materialNewsCount?: number | null;
   lastReason?: string | null;
   countdownSec?: number;
   pollMs?: number;
@@ -11,7 +12,7 @@ interface Props {
 }
 
 export function NewsTriggerPanel({
-  materialNewsCount = 0,
+  materialNewsCount = null,
   lastReason,
   countdownSec = 0,
   pollMs = 0,
@@ -34,8 +35,8 @@ export function NewsTriggerPanel({
         <Newspaper className="h-4 w-4 text-muted-foreground" />
         <span>
           Material headlines since last run:{" "}
-          <span className={cn("font-semibold", materialNewsCount > 0 && "text-amber-600 dark:text-amber-400")}>
-            {materialNewsCount}
+          <span className={cn("font-semibold", materialNewsCount != null && materialNewsCount > 0 && "text-amber-600 dark:text-amber-400")}>
+            {materialNewsCount ?? "n/a"}
           </span>
         </span>
       </div>

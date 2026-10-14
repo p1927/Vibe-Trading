@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type IndexPredictionArtifact } from "@/lib/api";
+import { finiteOrNull } from "@/lib/finite";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 
 interface Props {
   ticker?: string;
@@ -21,7 +23,9 @@ export function useIndexPredictionLive({
   const [lastReason, setLastReason] = useState<string | null>(null);
   const [countdownSec, setCountdownSec] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
-  const [materialNewsCount, setMaterialNewsCount] = useState(0);
+  // null = unknown (not read yet, the read failed, or it carried no count): never shown as "0 material headlines".
+  const [materialNewsCount, setMaterialNewsCount] = useState<number | null>(null);
+  const beginContext = useLatestRequest();
   const onUpdateRef = useRef(onUpdate);
   onUpdateRef.current = onUpdate;
   const refreshInFlightRef = useRef(false);
@@ -59,13 +63,14 @@ export function useIndexPredictionLive({
   }, [ticker, horizonDays]);
 
   const loadContext = useCallback(async () => {
+    const isCurrent = beginContext(); // a slow answer for the previous ticker / poll tick must not land
     try {
       const ctx = await api.getPlanContext(ticker);
-      setMaterialNewsCount(ctx.material_news_count ?? 0);
+      if (isCurrent()) setMaterialNewsCount(finiteOrNull(ctx.material_news_count));
     } catch {
-      /* ignore */
+      if (isCurrent()) setMaterialNewsCount(null); // the old count is no longer current
     }
-  }, [ticker]);
+  }, [beginContext, ticker]);
 
   useEffect(() => {
     if (!enabled || pollMs <= 0 || pauseWhileRunning) {
