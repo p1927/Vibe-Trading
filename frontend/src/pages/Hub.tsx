@@ -1549,12 +1549,12 @@ export function Hub() {
             <div className="space-y-1 text-sm">
               <p>
                 <span className="text-muted-foreground">Gate min:</span>{" "}
-                <span className="font-semibold tabular-nums">{factorCoverage.min_pct ?? 0}%</span>
+                <span className="font-semibold tabular-nums">{factorCoverage.min_pct == null ? "—" : `${factorCoverage.min_pct}%`}</span>
                 {" · "}
                 {factorCoverage.passes_gate ? "pass" : "fail"}
               </p>
               <p className="text-[11px] text-muted-foreground">
-                Trading days {factorCoverage.trading_days ?? 0}
+                Trading days {factorCoverage.trading_days ?? "—"}
                 {factorCoverage.start && factorCoverage.end
                   ? ` · ${factorCoverage.start} → ${factorCoverage.end}`
                   : ""}

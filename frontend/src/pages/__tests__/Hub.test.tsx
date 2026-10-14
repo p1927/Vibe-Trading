@@ -89,6 +89,18 @@ describe("Hub page", () => {
     expect(await screen.findByText(/0 pending in queue/)).toBeInTheDocument();
   });
 
+  it("factor coverage: an unreported gate minimum is an em-dash, a reported 0 stays 0%", async () => {
+    mocked.getHubStatus.mockResolvedValue(status({ factor_coverage: { passes_gate: false } }));
+    const { unmount } = render(<Hub />);
+    const gate = (await screen.findByText("Gate min:")).parentElement!;
+    expect(gate).toHaveTextContent("Gate min: — · fail");
+    expect(gate).not.toHaveTextContent("0%");
+    unmount();
+    mocked.getHubStatus.mockResolvedValue(status({ factor_coverage: { passes_gate: false, min_pct: 0 } }));
+    render(<Hub />);
+    expect(await screen.findByText("0%")).toBeInTheDocument();
+  });
+
   it("lets min relevance confidence be set to 0 instead of snapping back to the default", async () => {
     render(<Hub />);
     fireEvent.click(await screen.findByText("Show schedule settings"));
