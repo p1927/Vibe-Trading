@@ -683,6 +683,47 @@ def test_openai_compat_agenerate_temperature_self_heals() -> None:
         llm_mod._ANTHROPIC_TEMPERATURE_UNSUPPORTED.discard(model)
 
 
+@pytest.mark.skipif(
+    ChatOpenAIWithReasoning is None,
+    reason="langchain-openai is not installed",
+)
+@pytest.mark.parametrize("use_stream", [True, False])
+def test_openai_compat_persistent_temperature_error_is_not_retried_forever(use_stream: bool) -> None:
+    """An endpoint that keeps answering "`temperature` is deprecated" after the field was dropped
+    gets exactly one retry. ``_stream`` re-entered itself unconditionally, so such an endpoint cost
+    one paid request per recursion level until RecursionError."""
+    import src.providers.llm as llm_mod
+
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(400, json=_ANTHROPIC_OPENAI_COMPAT_TEMPERATURE_ERROR)
+
+    model = "claude-opus-4-8-persistent"
+    llm_mod._ANTHROPIC_TEMPERATURE_UNSUPPORTED.discard(model)
+    try:
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            llm = ChatOpenAIWithReasoning(
+                model=model,
+                api_key="sk-test",
+                base_url="https://api.anthropic.invalid/v1/",
+                temperature=0.0,
+                http_client=client,
+                vibe_provider="openai",
+                vibe_api_key="sk-test",
+                max_retries=0,
+            )
+            with pytest.raises(Exception):
+                if use_stream:
+                    list(llm.stream("hello"))
+                else:
+                    llm.invoke("hello")
+        assert len(calls) == 2
+    finally:
+        llm_mod._ANTHROPIC_TEMPERATURE_UNSUPPORTED.discard(model)
+
+
 # ---------------------------------------------------------------------------
 # MiniMax temperature clamping
 # ---------------------------------------------------------------------------

@@ -961,25 +961,10 @@ def alpha_bench(
         params["zoo"] = zoo
 
     if output_dir:
-        from src.config.paths import get_runtime_root
-        from src.tools.path_utils import allowed_write_roots, resolve_safe_path
+        from src.tools.alpha_bench_tool import resolve_report_dir
 
         try:
-            # Only this tier's runtime root: a literal ~/.vibe-trading/reports here granted
-            # the release tier write access into dev's tree (Trade backlog
-            # 2026-09-06-vibe-home-bypassed).
-            report_roots = [
-                get_runtime_root() / "reports",
-                *allowed_write_roots(),
-            ]
-            params["output_dir"] = str(
-                resolve_safe_path(
-                    output_dir,
-                    None,
-                    report_roots,
-                    purpose="alpha bench report",
-                )
-            )
+            params["output_dir"] = str(resolve_report_dir(output_dir))
         except ValueError as exc:
             return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False)
 

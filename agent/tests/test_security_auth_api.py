@@ -732,3 +732,52 @@ def test_swarm_run_endpoints_reject_traversal_run_id() -> None:
         response = getattr(client, method)(path)
         assert response.status_code == 400, f"{method.upper()} {path} should be rejected"
         assert response.json()["detail"] == "invalid run_id"
+
+
+def _bare_app_with_local_or_auth_routes():
+    """Side-effect-free app carrying only the two keyless-loopback-trust dependencies."""
+    from fastapi import Depends, FastAPI
+
+    from src.api.security import require_local_or_auth, require_settings_write_auth
+
+    app = FastAPI()
+    app.post("/local-or-auth", dependencies=[Depends(require_local_or_auth)])(lambda: {"ok": True})
+    app.get("/local-or-auth", dependencies=[Depends(require_local_or_auth)])(lambda: {"ok": True})
+    app.post("/settings-write", dependencies=[Depends(require_settings_write_auth)])(lambda: {"ok": True})
+    return app
+
+
+@pytest.mark.parametrize("path", ["/local-or-auth", "/settings-write"])
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Origin": "https://attacker.example"},
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Origin": "https://attacker.example", "Sec-Fetch-Site": "cross-site"},
+    ],
+)
+def test_keyless_loopback_trust_rejects_cross_site_browser_post(path: str, headers: dict) -> None:
+    """A web page in the operator's browser reaches the loopback API as a loopback peer; a bodiless
+    cross-site POST is a CORS "simple" request. Keyless loopback trust must refuse it, as
+    ``require_auth`` already does (it guards pause/resume/approve-plan/weight-apply/settings writes)."""
+    client = TestClient(_bare_app_with_local_or_auth_routes(), client=("127.0.0.1", 50000))
+
+    assert client.post(path, headers=headers).status_code == 403
+
+
+@pytest.mark.parametrize("path", ["/local-or-auth", "/settings-write"])
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"Origin": "http://localhost:5899"}, {"Origin": "http://127.0.0.1:8080", "Sec-Fetch-Site": "same-site"}],
+)
+def test_keyless_loopback_trust_still_serves_the_local_ui(path: str, headers: dict) -> None:
+    client = TestClient(_bare_app_with_local_or_auth_routes(), client=("127.0.0.1", 50000))
+
+    assert client.post(path, headers=headers).status_code == 200
+
+
+def test_keyless_loopback_trust_does_not_block_safe_cross_site_reads() -> None:
+    """GET stays readable (CORS, not this gate, stops a page reading the response)."""
+    client = TestClient(_bare_app_with_local_or_auth_routes(), client=("127.0.0.1", 50000))
+
+    assert client.get("/local-or-auth", headers={"Origin": "https://attacker.example"}).status_code == 200
