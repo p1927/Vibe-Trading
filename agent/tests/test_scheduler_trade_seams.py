@@ -162,3 +162,70 @@ def test_first_fire_rule_is_one_function_for_every_create_surface() -> None:
     # the playbook surface agrees (it used to carry its own copy of the rule)
     job = get_playbook("premarket-brief").to_job(schedule=CRON, timezone=IST, now_ms=NOW_MS)
     assert job.next_run_at == next_due(CRON, NOW_MS, IST)
+
+
+def test_cancelling_a_recording_wake_loads_inside_the_store_transaction(store, monkeypatch) -> None:
+    from src.scheduled_research import store as store_module
+    from src.trade.recording_wait_scheduler import cancel_recording_wake, schedule_recording_wake
+
+    schedule_recording_wake(
+        recording_job_id="rec-1", next_open_at=datetime(2099, 1, 1, tzinfo=timezone.utc), store=store
+    )
+    store.upsert(_job("other", status=JobStatus.PENDING))
+    load_depths: list[int] = []
+    real_load = store.load
+
+    def _load():
+        load_depths.append(store_module._HELD.__dict__.get("depths", {}).get(str(store.path), 0))
+        return real_load()
+
+    monkeypatch.setattr(store, "load", _load)
+    # a bare load..save overwrote whatever the executor wrote between the two (the lost-write class the
+    # store's transaction() exists to stop): the snapshot must be read while the store is held
+    assert cancel_recording_wake(recording_job_id="rec-1", store=store) is True
+    assert load_depths and all(depth > 0 for depth in load_depths), load_depths
+    assert cancel_recording_wake(recording_job_id="rec-1", store=store) is False
+    assert set(real_load()) == {"other"}
+
+
+def test_supplement_worker_starts_the_simulator_backfill_run(rec, monkeypatch) -> None:
+    """The end-of-session gap-fill called `StockSimulatorClient.supplement_today`, which does not exist, so it
+    never ran (the failure was only a log line in a job that is pruned an hour later). An autospec of the real
+    client makes that a bind error; the run is the one the daily coverage sweep starts (D195)."""
+    from unittest.mock import create_autospec
+
+    from src.trade import recording_supplement_worker as worker
+    from src.trade import stock_simulator_facade
+    from trade_integrations.stock_simulator.client import StockSimulatorClient
+
+    client = create_autospec(StockSimulatorClient, instance=True)
+    client.start_backfill_run.return_value = {"run": {"run_id": "run-1"}}
+    client.get_backfill_run.return_value = {
+        "logs": [{"seq": 1, "message": "bucket macro_factors done"}],
+        "run": {"status": "done", "summary": {
+            "had_errors": False, "ok_count": 3, "failed_count": 0, "skipped_count": 1, "results": [],
+        }},
+    }
+    monkeypatch.setattr(stock_simulator_facade, "sim_client", lambda: client)
+    job_id, _ = rec.start_job(underlyings=["NIFTY"])
+
+    worker.run_supplement(job_id, "2026-10-14")
+
+    kwargs = client.start_backfill_run.call_args.kwargs
+    assert (kwargs["week_start"], kwargs["weeks"], kwargs["include_optional"]) == ("2026-10-14", 1, True)
+    messages = [entry["message"] for entry in rec.get_job(job_id)["logs"]]
+    assert "bucket macro_factors done" in messages, "run progress reaches the job log"
+    assert any(m.startswith("complete: had_errors=False ok=3 failed=0 skipped=1") for m in messages), messages
+    assert not any(m.startswith("failed:") for m in messages)
+
+
+def test_a_waiting_recording_is_found_by_another_process_however_old_its_file(rec) -> None:
+    """The cross-process scan skips job files not written for 12 h (no live worker writes that rarely), but a
+    `waiting_for_open` recording has no worker at all and its file sits untouched from Friday evening to Monday."""
+    job_id, _ = rec.start_job(underlyings=["NIFTY"], wait_for_open=True)
+    assert rec.set_waiting_for_open_at(job_id, next_open_at=datetime(2099, 1, 1, tzinfo=timezone.utc))
+    three_days_ago = time.time() - 3 * 86400
+    os.utime(rec._job_file(job_id), (three_days_ago, three_days_ago))
+    rec.RECORDING_JOBS.clear()
+    rec._ACTIVE_BY_SCOPE.clear()  # a script process that never saw the job
+    assert rec.start_job(underlyings=["BANKNIFTY"]) == (job_id, True)

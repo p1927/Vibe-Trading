@@ -116,21 +116,13 @@ def _schedule_id_for(recording_job_id: str) -> str:
 
 
 def _cancel_existing(store: "ScheduledResearchJobStore", schedule_id: str) -> bool:
-    """Remove any prior schedule with the same id from the store."""
-    try:
-        jobs = store.load()
-    except Exception:
-        logger.exception("recording_wake: failed to load store")
-        return False
-    if schedule_id in jobs:
-        del jobs[schedule_id]
-        try:
-            store.save(jobs)
-        except Exception:
-            logger.exception("recording_wake: failed to save store after cancel")
-            return False
-        return True
-    return False
+    """Remove any prior schedule with the same id from the store.
+
+    ``store.delete`` is the store's own transactional read-modify-write. The load, ``del``, whole-store
+    ``save`` this used to do overwrote whatever the executor or a route wrote between the load and the save
+    (a completed run's state reverted), and swallowed a failed load or save into a log line and ``False``.
+    """
+    return store.delete(schedule_id)
 
 
 def _get_store() -> "ScheduledResearchJobStore":

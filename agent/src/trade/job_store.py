@@ -103,6 +103,7 @@ class JobStore:
         run_age_seconds: Callable[[dict[str, Any]], float] = job_age_seconds,
         on_running: Callable[[dict[str, Any]], None] | None = None,
         creation_lock: Callable[[], Any] | None = None,
+        adopt_window_seconds: float | None = _ADOPT_WINDOW_SECONDS,
     ) -> None:
         self._jobs_root = jobs_root
         self._serialize = serialize
@@ -122,6 +123,9 @@ class JobStore:
         # A cross-process lock around claim(); when set, claim() also scans the jobs dir for a live
         # job of the same scope that another process created (recording's one-session rule).
         self._creation_lock = creation_lock
+        # None = no window: a store whose active job can legitimately have no worker for days (recording's
+        # ``waiting_for_open``) must not lose it to the file-age skip.
+        self._adopt_window = adopt_window_seconds
         self._jobs_ref = jobs_ref
         self._active_ref = active_ref
         self.jobs_lock = threading.RLock()
@@ -293,7 +297,12 @@ class JobStore:
                 self.jobs[found["job_id"]] = found
                 self.active.setdefault(scope, found["job_id"])
 
-    def get_active(self, scope: str) -> dict[str, Any] | None:
+    def get_active(self, scope: str, *, report_failure: bool = False) -> dict[str, Any] | None:
+        """The live job of ``scope``, reconciled first (dead worker, never spawned, over budget).
+
+        ``report_failure`` returns a job this very call failed, once, so the caller shows the error instead
+        of "no active job" (the index-prediction and recording panels); the next call finds nothing active.
+        """
         self.adopt_disk_active(scope)
         with self.jobs_lock:
             job_id = self.active.get(scope)
@@ -305,10 +314,11 @@ class JobStore:
                 if self.active.get(scope) == job_id:
                     self.active.pop(scope, None)
             return None
-        if not self.alive(job):
-            self.reconcile_zombie(job_id)
-            return None
-        return job
+        self.reconcile(job_id)
+        job = self.get_record(job_id)
+        if self._is_active(job):
+            return job
+        return job if report_failure and job is not None and job.get("status") == "error" else None
 
     # -- state machine --------------------------------------------------------------------------
     def mark_running(self, job_id: str) -> None:
@@ -403,17 +413,17 @@ class JobStore:
     def _find_live_on_disk(self, scope: str) -> dict[str, Any] | None:
         """The live active job of ``scope`` found by scanning the jobs dir, failing any active row whose
         worker died on the way (a crashed process's stale row must not wedge claim forever). A job file not
-        written for ``_ADOPT_WINDOW_SECONDS`` cannot belong to a live worker and is not read."""
+        written for the adopt window cannot belong to a live worker and is not read."""
         root = self._jobs_root()
         if not root.is_dir():
             return None
         live: dict[str, Any] | None = None
-        cutoff = time.time() - _ADOPT_WINDOW_SECONDS
+        cutoff = None if self._adopt_window is None else time.time() - self._adopt_window
         for path in sorted(root.iterdir()):
             if not path.is_dir() or not job_runner.job_id_valid(path.name):
                 continue
             try:
-                if (path / "job.json").stat().st_mtime < cutoff:
+                if cutoff is not None and (path / "job.json").stat().st_mtime < cutoff:
                     continue
             except OSError:
                 continue

@@ -3,11 +3,8 @@ import {
   api,
   type AutonomousAgentInstance,
   type WatchLiveSnapshot,
-  type WatchRecord,
   type WatchRuleTelemetry,
 } from "@/lib/api";
-
-const REGISTRY_POLL_MS = 30_000;
 
 interface Props {
   sessionId?: string | null;
@@ -63,7 +60,6 @@ export function useWatchersLive({
   enabled = true,
 }: Props) {
   const [liveWatches, setLiveWatches] = useState<WatchLiveSnapshot[]>([]);
-  const [registryWatches, setRegistryWatches] = useState<WatchRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<string | undefined>();
@@ -72,7 +68,6 @@ export function useWatchersLive({
   const [pendingSnapshot, setPendingSnapshot] = useState<WatchLiveSnapshot | null>(null);
 
   const liveInFlightRef = useRef(false);
-  const registryInFlightRef = useRef(false);
   const fetchGenRef = useRef(0);
 
   useEffect(() => {
@@ -82,26 +77,6 @@ export function useWatchersLive({
     setError(null);
     setFetchedAt(undefined);
     setMarketOpen(undefined);
-  }, [sessionId, agentId]);
-
-  const loadRegistry = useCallback(async () => {
-    if (!sessionId && !agentId) {
-      setRegistryWatches([]);
-      return;
-    }
-    if (registryInFlightRef.current) return;
-    registryInFlightRef.current = true;
-    try {
-      const res = await api.listWatches({
-        sessionId: agentId ? undefined : (sessionId ?? undefined),
-        agentId: agentId ?? undefined,
-      });
-      setRegistryWatches(res.watches ?? []);
-    } catch {
-      /* registry list is best-effort */
-    } finally {
-      registryInFlightRef.current = false;
-    }
   }, [sessionId, agentId]);
 
   const loadLive = useCallback(async () => {
@@ -149,16 +124,7 @@ export function useWatchersLive({
     }
   }, [sessionId, agentId]);
 
-  const refresh = useCallback(async () => {
-    await Promise.all([loadRegistry(), loadLive()]);
-  }, [loadRegistry, loadLive]);
-
-  useEffect(() => {
-    if (!enabled || (!sessionId && !agentId)) return;
-    void loadRegistry();
-    const id = window.setInterval(() => void loadRegistry(), REGISTRY_POLL_MS);
-    return () => window.clearInterval(id);
-  }, [enabled, sessionId, agentId, loadRegistry]);
+  const refresh = loadLive;
 
   useEffect(() => {
     if (!enabled || (!sessionId && !agentId)) {
@@ -193,7 +159,6 @@ export function useWatchersLive({
 
   return {
     watches,
-    registryWatches,
     loading,
     error,
     fetchedAt,

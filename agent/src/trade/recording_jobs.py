@@ -166,6 +166,7 @@ _STORE = JobStore(
     run_age_seconds=lambda job: _run_age_seconds(job),
     on_running=lambda job: job.__setitem__("run_started_at", _now_iso()),
     creation_lock=lambda: _active_job_creation_lock(),
+    adopt_window_seconds=None,  # a waiting_for_open job has no worker and an untouched file for days
 )
 
 _JOBS_LOCK = _STORE.jobs_lock
@@ -289,17 +290,8 @@ def get_job(job_id: str) -> dict[str, Any] | None:
 
 
 def get_active_job() -> dict[str, Any] | None:
-    """The live recording job's snapshot, reconciled first (a dead worker, a never-spawned queued job or
-    an over-budget run is failed here). A job this very call failed is returned once, as ``error``."""
-    with _JOBS_LOCK:
-        job_id = _ACTIVE_BY_SCOPE.get(_ACTIVE_KEY)
-    if not job_id:
-        return None
-    reconcile_job(job_id)
-    job = _get_job_record(job_id)
-    if job is None or job.get("status") not in _ACTIVE_STATUSES:
-        return _job_snapshot(job) if job is not None and job.get("status") == "error" else None
-    return _job_snapshot(job)
+    job = _STORE.get_active(_ACTIVE_KEY, report_failure=True)
+    return None if job is None else _job_snapshot(job)
 
 
 def start_job(

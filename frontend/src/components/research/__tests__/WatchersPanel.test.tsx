@@ -5,7 +5,6 @@ import { WatchersLiveProvider, WatchersPanel } from "../WatchersPanel";
 
 const apiMock = vi.hoisted(() => ({
   getWatchesLive: vi.fn(),
-  listWatches: vi.fn(),
   getAutonomousAgent: vi.fn(),
   deleteWatch: vi.fn(),
 }));
@@ -19,7 +18,6 @@ afterEach(() => {
 
 describe("WatchersPanel", () => {
   it("shares one polling state when two views show the same agent", async () => {
-    apiMock.listWatches.mockResolvedValue({ watches: [] });
     apiMock.getWatchesLive.mockResolvedValue({
       watches: [],
       fetched_at: "2026-08-27T00:00:00Z",
@@ -37,7 +35,6 @@ describe("WatchersPanel", () => {
     );
 
     await waitFor(() => {
-      expect(apiMock.listWatches).toHaveBeenCalledTimes(1);
       expect(apiMock.getWatchesLive).toHaveBeenCalledTimes(1);
       expect(apiMock.getAutonomousAgent).toHaveBeenCalledTimes(1);
     });
