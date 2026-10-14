@@ -36,20 +36,28 @@ export function ForecastEngineRunPanel({ ticker = "NIFTY", recipe, horizon = 5, 
 
   const running = status === "queued" || status === "running";
 
+  // Latest-request-wins: switching recipe/ticker must not let the previous recipe's slow list overwrite this one's.
+  const runsGen = useRef(0);
+
   async function loadRuns() {
+    const gen = ++runsGen.current;
     setLoadingRuns(true);
     try {
       const res = await api.getForecastEngineRuns(ticker, recipe);
+      if (gen !== runsGen.current) return;
       setRuns(res.runs ?? []);
     } catch (e) {
+      if (gen !== runsGen.current) return;
       setRuns([]);
       setError(e instanceof Error ? `Past runs failed to load: ${e.message}` : "Past runs failed to load");
     } finally {
-      setLoadingRuns(false);
+      if (gen === runsGen.current) setLoadingRuns(false);
     }
   }
 
   useEffect(() => {
+    // A run still streaming for the previous recipe/ticker must not write its log, status or selected run here.
+    abortRef.current?.abort();
     void loadRuns();
     setJobId(null);
     setStatus("idle");
@@ -80,13 +88,17 @@ export function ForecastEngineRunPanel({ ticker = "NIFTY", recipe, horizon = 5, 
       await api.streamForecastEngineRunJob(
         res.job_id,
         {
-          onLog: (entry) => setLogs((prev) => [...prev, entry]),
+          onLog: (entry) => {
+            if (!controller.signal.aborted) setLogs((prev) => [...prev, entry]);
+          },
           onDone: (result: ForecastEngineRunResult) => {
+            if (controller.signal.aborted) return;
             setStatus("done");
             void loadRuns();
             onSelectRun?.(result.run_id);
           },
           onError: (message) => {
+            if (controller.signal.aborted) return;
             setStatus("error");
             setError(message);
           },
@@ -94,6 +106,7 @@ export function ForecastEngineRunPanel({ ticker = "NIFTY", recipe, horizon = 5, 
         controller.signal,
       );
     } catch (e) {
+      if (abortRef.current?.signal.aborted) return; // the panel moved to another recipe/ticker
       setStatus("error");
       setError(e instanceof Error ? e.message : "Failed to start run");
     }

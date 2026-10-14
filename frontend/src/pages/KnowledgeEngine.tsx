@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, ApiError } from "@/lib/api";
@@ -17,6 +17,16 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "news", label: "News-Derived Concepts" },
   { key: "corpus", label: "Corpus Health" },
 ];
+
+/** Latest-request-wins for the debounced searches: `begin()` returns a check that turns false once a newer
+ * request has begun, so a slow older answer never overwrites the newer query's results. */
+function useLatestRequest() {
+  const generation = useRef(0);
+  return useCallback(() => {
+    const mine = ++generation.current;
+    return () => mine === generation.current;
+  }, []);
+}
 
 function ScoreBadge({ score }: { score?: number | null }) {
   return (
@@ -64,18 +74,21 @@ function WikiTab() {
   const [pageNote, setPageNote] = useState<Record<string, string>>({});
   const [pageLoading, setPageLoading] = useState<string | null>(null);
 
+  const begin = useLatestRequest();
   const load = useCallback(async (q: string) => {
+    const isCurrent = begin();
     setLoading(true);
     try {
       const res = await api.queryKnowledgeWiki({ text: q || undefined, limit: 20 });
+      if (!isCurrent()) return;
       setError(null);
       setResults(res.results);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Request failed");
+      if (isCurrent()) setError(e instanceof ApiError ? e.message : "Request failed");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, []);
+  }, [begin]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(text), 300);
@@ -206,7 +219,9 @@ function StrategiesTab() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const begin = useLatestRequest();
   const load = useCallback(async () => {
+    const isCurrent = begin();
     setLoading(true);
     try {
       const res = await api.queryKnowledgeStrategies({
@@ -214,14 +229,15 @@ function StrategiesTab() {
         riskProfile: riskProfile || undefined,
         limit: 20,
       });
+      if (!isCurrent()) return;
       setError(null);
       setResults(res.results);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Request failed");
+      if (isCurrent()) setError(e instanceof ApiError ? e.message : "Request failed");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [marketView, riskProfile]);
+  }, [marketView, riskProfile, begin]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), 300);
@@ -294,18 +310,21 @@ function NewsDerivedTab() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const begin = useLatestRequest();
   const load = useCallback(async (q: string) => {
+    const isCurrent = begin();
     setLoading(true);
     try {
       const res = await api.queryKnowledgeNewsDerivedStrategies({ text: q || undefined, limit: 20 });
+      if (!isCurrent()) return;
       setError(null);
       setResults(res.results);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Request failed");
+      if (isCurrent()) setError(e instanceof ApiError ? e.message : "Request failed");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, []);
+  }, [begin]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(text), 300);

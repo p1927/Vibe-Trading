@@ -889,6 +889,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
           <div>
             <p className="text-[11px] font-medium text-muted-foreground mb-1">
               Interactive payoff{isScenarioOverride ? ` — ${displayRec.name}` : " (recommended)"}
+              {payoffInputs.atmIvAssumed ? ` · ATM IV not reported, ${payoffInputs.atmIv}% assumed for T+0 and σ bands` : ""}
             </p>
             <Suspense fallback={<div className="h-[280px] animate-pulse rounded-lg bg-muted/40" />}>
               <PayoffChart

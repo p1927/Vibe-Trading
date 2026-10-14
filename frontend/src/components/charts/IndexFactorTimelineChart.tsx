@@ -75,7 +75,9 @@ export function IndexFactorTimelineChart({
       normalized[key] = wide.map((row) => {
         const v = row[key];
         if (typeof v !== "number" || !Number.isFinite(v) || !base) return null;
-        return ((v / base) - 1) * 100;
+        // Relative to |base|: a signed series (net flows) with a negative start would otherwise read an
+        // improvement as a fall ((v / base) - 1 flips sign when base < 0).
+        return ((v - base) / Math.abs(base)) * 100;
       });
     }
     return { dates, normalized };

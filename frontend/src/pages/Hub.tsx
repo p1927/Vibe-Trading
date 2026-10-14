@@ -979,7 +979,7 @@ export function Hub() {
               "Configure MINIMAX_API_KEY and MINIMAX_BASE_URL in .env, then use Drain staging to process queued headlines."}
           </p>
           <p className="mt-2 text-[12px] tabular-nums opacity-80">
-            {newsInventory?.pending_count ?? staging.queued ?? 0} headline(s) waiting in staging queue.
+            {newsInventory?.pending_count ?? staging.queued ?? "—"} headline(s) waiting in staging queue.
           </p>
         </div>
       ) : null}
@@ -1437,7 +1437,7 @@ export function Hub() {
             </p>
             {staging?.worker_last ? (
               <p className="text-[11px] text-muted-foreground">
-                Last worker: {staging.worker_last.processed ?? 0} processed
+                Last worker: {staging.worker_last.processed ?? "—"} processed
                 {(staging.worker_last.errors ?? 0) > 0 ? ` · ${staging.worker_last.errors} errors` : ""}
               </p>
             ) : null}
@@ -1536,8 +1536,8 @@ export function Hub() {
               </p>
               {capture?.stats?.channel ? (
                 <p className="text-[11px] text-muted-foreground">
-                  Hub hits {capture.stats.channel.hub_hits ?? 0} · vendor fetches{" "}
-                  {capture.stats.channel.vendor_fetches ?? 0}
+                  Hub hits {capture.stats.channel.hub_hits ?? "—"} · vendor fetches{" "}
+                  {capture.stats.channel.vendor_fetches ?? "—"}
                 </p>
               ) : null}
             </div>

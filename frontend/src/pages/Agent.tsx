@@ -546,6 +546,7 @@ export function Agent({
   /* The status endpoint is not wired on every backend; a 404/501 hides the panel
    * and removes status from the kill-switch visibility condition. */
   const [liveStatusUnavailable, setLiveStatusUnavailable] = useState(false);
+  const [liveStatusError, setLiveStatusError] = useState<string | null>(null);
   const [tradingConnectors, setTradingConnectors] = useState<TradingConnectorsResponse | null>(null);
   const [connectorCheck, setConnectorCheck] = useState<{
     status: string;
@@ -905,9 +906,13 @@ export function Agent({
 
   useEffect(() => {
     if (!debateRunning || !researchTicker) return;
+    let cancelled = false; // a response for the previous ticker must not overwrite the current one
+    let failures = 0;
     const poll = async () => {
       try {
         const res = await api.getAgentDebate(researchTicker);
+        if (cancelled) return;
+        failures = 0;
         if (res.debate) {
           setDebateArtifact(res.debate);
           setDebateRunning(false);
@@ -915,13 +920,22 @@ export function Agent({
         } else if (!res.running && res.status !== "running") {
           setDebateRunning(Boolean(res.running));
         }
-      } catch {
-        /* ignore transient poll errors */
+      } catch (error) {
+        if (cancelled) return;
+        // Transient errors are retried, but not forever and not silently.
+        failures += 1;
+        if (failures >= 5) {
+          setDebateRunning(false);
+          setDebateError(`Debate status unavailable: ${error instanceof Error ? error.message : "request failed"}`);
+        }
       }
     };
     const id = window.setInterval(poll, 8000);
     void poll();
-    return () => window.clearInterval(id);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, [debateRunning, researchTicker]);
 
   const doDisconnect = useCallback(() => {
@@ -1992,10 +2006,14 @@ export function Agent({
         current && !haltScopeStillActive(current, next) ? null : current
       ));
       setLiveStatusUnavailable(false);
+      setLiveStatusError(null);
     } catch (error) {
       if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
         setLiveStatus(null);
         setLiveStatusUnavailable(true);
+      } else {
+        // Keep the last snapshot, but say it is no longer being refreshed (see LiveRuntimePanel's copy).
+        setLiveStatusError(error instanceof Error ? error.message : "request failed");
       }
     }
   }, []);
@@ -3054,6 +3072,7 @@ export function Agent({
             connectors={tradingConnectors}
             connectorCheck={connectorCheck}
             unavailable={liveStatusUnavailable}
+            staleError={liveStatusError}
             halted={liveIsHalted}
             onRefresh={refreshConnectorRuntime}
           />

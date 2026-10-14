@@ -717,6 +717,7 @@ function BenchView() {
   // Track terminal `done` so the synthetic EventSource `error` fired on
   // close doesn't surface as a spurious toast (race between done + error).
   const doneRef = useRef(false);
+  const resultUnreadableRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -733,6 +734,7 @@ function BenchView() {
     setResult(null);
     setFormError(null);
     doneRef.current = false;
+    resultUnreadableRef.current = false;
     sourceRef.current?.close();
     const safeTop = Number.isFinite(top) && top > 0 ? top : 20;
     try {
@@ -780,13 +782,15 @@ function BenchView() {
         const data = JSON.parse((e as MessageEvent).data) as AlphaBenchResult;
         setResult(data);
       } catch {
-        /* ignore */
+        // The final result is the whole point of the run: a payload we cannot read is a failed run, not a quiet one.
+        resultUnreadableRef.current = true;
+        toast.error("The benchmark finished but its result could not be read.");
       }
     });
 
     source.addEventListener("done", () => {
       doneRef.current = true;
-      setStatus("done");
+      setStatus(resultUnreadableRef.current ? "error" : "done");
       source.close();
       sourceRef.current = null;
     });
@@ -1202,6 +1206,7 @@ function CompareView() {
   const [formError, setFormError] = useState<string | null>(null);
   const sourceRef = useRef<EventSource | null>(null);
   const doneRef = useRef(false);
+  const resultUnreadableRef = useRef(false);
 
   const ids = useMemo(() => parseAlphaIds(idsText), [idsText]);
 
@@ -1230,12 +1235,13 @@ function CompareView() {
       try {
         setResult(JSON.parse((e as MessageEvent).data) as AlphaCompareResult);
       } catch {
-        /* ignore */
+        resultUnreadableRef.current = true;
+        toast.error("The comparison finished but its result could not be read.");
       }
     });
     source.addEventListener("done", () => {
       doneRef.current = true;
-      setStatus("done");
+      setStatus(resultUnreadableRef.current ? "error" : "done");
       source.close();
       sourceRef.current = null;
     });
@@ -1273,6 +1279,7 @@ function CompareView() {
     setResult(null);
     setFormError(null);
     doneRef.current = false;
+    resultUnreadableRef.current = false;
     sourceRef.current?.close();
     try {
       const res = await api.createAlphaCompare({

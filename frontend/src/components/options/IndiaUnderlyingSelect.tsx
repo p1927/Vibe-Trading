@@ -21,18 +21,25 @@ export function IndiaUnderlyingSelect({ source, value, onChange }: Props) {
   const { t } = useTranslation();
   const [indexes, setIndexes] = useState<string[]>(["NIFTY", "BANKNIFTY", "SENSEX"]);
   const [equities, setEquities] = useState<string[] | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    setListError(null);
     api
       .getIndiaUnderlyings(source)
       .then((res) => {
-        if (cancelled || !res.ok || !res.data) return;
+        if (cancelled) return;
+        if (!res.ok || !res.data) {
+          setListError("the server returned no list");
+          return;
+        }
         setIndexes(res.data.indexes);
         setEquities(res.data.equities);
       })
-      .catch(() => {
-        // Best-effort — keep the fallback index list on failure.
+      .catch((err: unknown) => {
+        // Keep the fallback index list, and say so (tooltip) instead of showing it as the full list.
+        if (!cancelled) setListError(err instanceof Error ? err.message : "request failed");
       });
     return () => {
       cancelled = true;
@@ -49,6 +56,7 @@ export function IndiaUnderlyingSelect({ source, value, onChange }: Props) {
         if (e.target.value !== "__other__") onChange(e.target.value);
       }}
       aria-label={t("options.india.underlyingLabel", { defaultValue: "Underlying" })}
+      title={listError ? `Underlying list unavailable (${listError}); showing the built-in indexes only` : undefined}
       className="rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary/40"
     >
       <optgroup label="Indexes">

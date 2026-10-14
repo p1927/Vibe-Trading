@@ -149,11 +149,11 @@ export function DataCapturePanel() {
           <div className="mt-1 flex flex-wrap gap-4 text-sm">
             <span>
               <span className="text-muted-foreground">Hub hits:</span>{" "}
-              <span className="font-semibold tabular-nums">{data.stats.channel.hub_hits ?? 0}</span>
+              <span className="font-semibold tabular-nums">{data.stats.channel.hub_hits ?? "—"}</span>
             </span>
             <span>
               <span className="text-muted-foreground">Vendor fetches:</span>{" "}
-              <span className="font-semibold tabular-nums">{data.stats.channel.vendor_fetches ?? 0}</span>
+              <span className="font-semibold tabular-nums">{data.stats.channel.vendor_fetches ?? "—"}</span>
             </span>
           </div>
         </div>
@@ -164,9 +164,9 @@ export function DataCapturePanel() {
           {Object.entries(data.stats.series).map(([name, row]) => (
             <div key={name} className="rounded-lg border bg-muted/20 px-3 py-2">
               <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{name}</p>
-              <p className="text-sm font-semibold tabular-nums">{row.rows ?? 0} rows</p>
+              <p className="text-sm font-semibold tabular-nums">{row.rows ?? "—"} rows</p>
               <p className="text-[10px] text-muted-foreground">
-                {row.days ?? 0} days
+                {row.days ?? "—"} days
                 {row.last_capture_at ? ` · last ${new Date(row.last_capture_at).toLocaleString("en-IN")}` : ""}
               </p>
             </div>

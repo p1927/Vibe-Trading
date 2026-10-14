@@ -14,6 +14,8 @@ const GREEN = "#3b9b8f";
 const SLATE = "#8f98a6";
 
 function num(value: unknown): number | null {
+  // Number(null) and Number("") are 0: an empty CSV cell (no drawdown, no benchmark, no pnl) must stay a gap.
+  if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }

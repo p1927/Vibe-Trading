@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { KnowledgeEngine } from "@/pages/KnowledgeEngine";
 import { ApiError, api } from "@/lib/api";
@@ -45,5 +45,25 @@ describe("KnowledgeEngine wiki tab", () => {
     render(<KnowledgeEngine />);
     expect(await screen.findByText("Kelly")).toBeInTheDocument();
     expect(screen.getByText("—")).toBeInTheDocument();
+  });
+
+  it("a slow answer to an earlier query never overwrites the newer query's results", async () => {
+    const slowOld = { ...entry, slug: "concepts/old", title: "OldResult" };
+    const fresh = { ...entry, slug: "concepts/new", title: "NewResult" };
+    let releaseOld: (v: unknown) => void = () => {};
+    mocked.queryKnowledgeWiki.mockImplementation(({ text }: { text?: string }) =>
+      text === "old" ? new Promise((resolve) => { releaseOld = resolve; }) : Promise.resolve({ ok: true, count: 1, results: [text === "new" ? fresh : entry] }),
+    );
+    render(<KnowledgeEngine />);
+    await screen.findByText("Kelly");
+    const box = screen.getByPlaceholderText(/Search the wiki/);
+    fireEvent.change(box, { target: { value: "old" } });
+    await waitFor(() => expect(mocked.queryKnowledgeWiki).toHaveBeenCalledWith(expect.objectContaining({ text: "old" })));
+    fireEvent.change(box, { target: { value: "new" } });
+    expect(await screen.findByText("NewResult")).toBeInTheDocument();
+    releaseOld({ ok: true, count: 1, results: [slowOld] }); // the older request answers last
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText("OldResult")).toBeNull();
+    expect(screen.getByText("NewResult")).toBeInTheDocument();
   });
 });

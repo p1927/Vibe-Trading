@@ -306,7 +306,13 @@ export function StockHistoryCoveragePanel({
 
   const weekStartIso = isoDate(weekStart);
 
+  // Latest-request-wins: paging weeks quickly must not let a slow older response overwrite the
+  // newer week's table (the heading would name one week and the grid show another).
+  const coverageGen = useRef(0);
+  const yearGen = useRef(0);
+
   const fetchCoverage = useCallback(async () => {
+    const gen = ++coverageGen.current;
     setLoading(true);
     setError(null);
     try {
@@ -315,6 +321,7 @@ export function StockHistoryCoveragePanel({
         symbol,
         include_optional: includeOptional,
       });
+      if (gen !== coverageGen.current) return;
       if (resp.status !== "ok") {
         setError(resp.error ?? "coverage request failed");
         setReport(null);
@@ -322,10 +329,11 @@ export function StockHistoryCoveragePanel({
         setReport(filterCoverageByCountry(resp, countryFilter));
       }
     } catch (e) {
+      if (gen !== coverageGen.current) return;
       setError(e instanceof Error ? e.message : String(e));
       setReport(null);
     } finally {
-      setLoading(false);
+      if (gen === coverageGen.current) setLoading(false);
     }
   }, [weekStartIso, symbol, includeOptional, countryFilter]);
 
@@ -337,6 +345,7 @@ export function StockHistoryCoveragePanel({
   // Failures on individual weeks degrade gracefully — we still show
   // the rest of the grid, the failed week renders as "no data".
   const fetchYear = useCallback(async () => {
+    const gen = ++yearGen.current;
     setYearLoading(true);
     setYearError(null);
     const end = parseIsoDate(yearEnd);
@@ -356,6 +365,7 @@ export function StockHistoryCoveragePanel({
         }),
       ),
     );
+    if (gen !== yearGen.current) return; // a newer year window was requested while these weeks loaded
     let firstError: string | null = null;
     const allDays: HubStockHistoryCoverageDay[] = [];
     const allBucketLabels = new Set<string>();

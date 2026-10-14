@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CommandCenter } from "@/pages/CommandCenter";
@@ -113,5 +113,27 @@ describe("CommandCenter page", () => {
       }),
     );
     expect(screen.getByText(/a group has no observed P&L/)).toBeInTheDocument();
+  });
+
+  it("switching agent drops the previous agent's positions until the new agent's frame arrives", async () => {
+    mocked.listAutonomousAgents.mockResolvedValue({ agents: [{ id: "a1", name: "Alpha" }, { id: "a2", name: "Beta" }] });
+    renderPage();
+    await screen.findByText("Alpha");
+    act(() =>
+      sse.handlers.positions({
+        groups: [{ underlying: "NIFTYOLD", expiry_days: 3, trajectory: [{ pnl_inr: 10 }], pnl_forecast_band: [] }],
+        skipped: [],
+      }),
+    );
+    expect(screen.getAllByText("NIFTYOLD").length).toBeGreaterThan(0);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "a2" } });
+    await waitFor(() => expect(screen.queryByText("NIFTYOLD")).toBeNull());
+  });
+
+  it("shows when the forecast on screen was made", async () => {
+    renderPage();
+    await screen.findByText("Alpha");
+    act(() => sse.handlers.prediction({ artifact: { as_of: "2026-10-13T04:30:00Z", prediction: {}, upcoming_events: [] } }));
+    expect(screen.getByTestId("command-center-forecast-as-of")).toHaveTextContent(/Forecast as of/);
   });
 });

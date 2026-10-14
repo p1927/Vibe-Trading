@@ -99,6 +99,7 @@ export interface LiveRuntimePanelHandle {
 interface RuntimeContextValue {
   liveStatus: LiveStatus | null;
   liveStatusUnavailable: boolean;
+  liveStatusError: string | null;
   liveActive: boolean;
   liveIsHalted: boolean;
   halting: boolean;
@@ -126,6 +127,7 @@ export const LiveRuntimePanel = memo(forwardRef<LiveRuntimePanelHandle, Props>(
     const [liveStatusRefresh, setLiveStatusRefresh] = useState(0);
     const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
     const [liveStatusUnavailable, setLiveStatusUnavailable] = useState(false);
+    const [liveStatusError, setLiveStatusError] = useState<string | null>(null);
 
     const refreshLiveStatus = useCallback(async () => {
       try {
@@ -135,10 +137,15 @@ export const LiveRuntimePanel = memo(forwardRef<LiveRuntimePanelHandle, Props>(
           current && !haltScopeStillActive(current, next) ? null : current
         ));
         setLiveStatusUnavailable(false);
+        setLiveStatusError(null);
       } catch (error) {
         if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
           setLiveStatus(null);
           setLiveStatusUnavailable(true);
+        } else {
+          // Keep the last snapshot, but say it is no longer being refreshed: a halted/running state read
+          // minutes ago must not look current.
+          setLiveStatusError(error instanceof Error ? error.message : "request failed");
         }
       }
     }, []);
@@ -234,6 +241,7 @@ export const LiveRuntimePanel = memo(forwardRef<LiveRuntimePanelHandle, Props>(
     const value = useMemo<RuntimeContextValue>(() => ({
       liveStatus,
       liveStatusUnavailable,
+      liveStatusError,
       liveActive,
       liveIsHalted,
       halting,
@@ -248,6 +256,7 @@ export const LiveRuntimePanel = memo(forwardRef<LiveRuntimePanelHandle, Props>(
       liveIsHalted,
       liveStatus,
       liveStatusUnavailable,
+      liveStatusError,
       refreshLiveStatus,
       resumeLive,
       resuming,
@@ -268,6 +277,7 @@ export function LiveRuntimeStatus() {
     <RunnerStatus
       status={runtime.liveStatus}
       unavailable={runtime.liveStatusUnavailable}
+      staleError={runtime.liveStatusError}
       halted={runtime.liveIsHalted}
       onRefresh={runtime.refreshLiveStatus}
     />
