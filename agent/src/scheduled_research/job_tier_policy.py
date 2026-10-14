@@ -139,8 +139,10 @@ COLLECTION_JOB_TYPES: frozenset[str] = frozenset(
 def current_stack_profile() -> str:
     """This process's tier (``STACK_PROFILE``, default ``dev``): the one reader of that variable for the
     scheduled-research dispatch gate (the executor, the pause control and the trigger route each used to
-    read it themselves). Read per call, never cached, so a change applies without a restart."""
-    return os.environ.get("STACK_PROFILE", "dev")
+    read it themselves). Read per call, never cached, so a change applies without a restart. Stripped and
+    lower-cased exactly like ``trade_integrations.env.stack_tier()`` (this package cannot import it; a Trade
+    test pins the two answers together)."""
+    return os.environ.get("STACK_PROFILE", "dev").strip().lower()
 
 
 def collection_job_dispatch_enabled(stack_profile: str) -> bool:
