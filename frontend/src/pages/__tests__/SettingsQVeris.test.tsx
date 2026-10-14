@@ -17,7 +17,8 @@ vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
   return {
     ...actual,
-    api: apiMock,
+    // QVerisSettings calls the real api wrappers (served by the fetch stub below); only Settings' own calls are mocked.
+    api: { ...actual.api, ...apiMock },
     isAuthRequiredError: vi.fn(() => false),
   };
 });

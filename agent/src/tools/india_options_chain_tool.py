@@ -264,15 +264,19 @@ def _normalize_iv(iv: Any) -> Optional[float]:
     return iv / 100 if isinstance(iv, (int, float)) else None
 
 
+def _in_the_money(strike: float, option_type: str, underlying_ltp: Optional[float]) -> Optional[bool]:
+    """ITM flag, or None when there is no underlying LTP to compare against (unknown is not "out of the money")."""
+    if underlying_ltp is None:
+        return None
+    return strike < underlying_ltp if option_type == "call" else strike > underlying_ltp
+
+
 def _leg_row_live(
     strike: float, leg: Dict[str, Any], option_type: str,
     underlying_ltp: Optional[float], expiration: Optional[int],
 ) -> Dict[str, Any]:
     """Leg row from a live source (``stock_simulator``/``indmoney``/``openalgo``) —
     these carry real top-of-book bid/ask (``top_bid_price``/``top_ask_price``)."""
-    itm = None
-    if underlying_ltp is not None:
-        itm = strike < underlying_ltp if option_type == "call" else strike > underlying_ltp
     return {
         "contract_symbol": f"{option_type[0].upper()}{strike:g}",
         "strike": strike,
@@ -282,7 +286,7 @@ def _leg_row_live(
         "volume": leg.get("volume"),
         "open_interest": leg.get("oi"),
         "implied_volatility": _normalize_iv(leg.get("iv")),
-        "in_the_money": bool(itm),
+        "in_the_money": _in_the_money(strike, option_type, underlying_ltp),
         "expiration": expiration,
     }
 
@@ -294,9 +298,6 @@ def _leg_row_history(
     """Leg row from ``stock_simulator`` (via ``stock_history`` API, recorded
     archive) — no bid/ask field in the source data, left ``null`` rather
     than approximated from LTP."""
-    itm = None
-    if underlying_ltp is not None:
-        itm = strike < underlying_ltp if option_type == "call" else strike > underlying_ltp
     return {
         "contract_symbol": f"{option_type[0].upper()}{strike:g}",
         "strike": strike,
@@ -306,7 +307,7 @@ def _leg_row_history(
         "volume": leg.get("volume"),
         "open_interest": leg.get("oi"),
         "implied_volatility": _normalize_iv(leg.get("iv")),
-        "in_the_money": bool(itm),
+        "in_the_money": _in_the_money(strike, option_type, underlying_ltp),
         "expiration": expiration,
     }
 

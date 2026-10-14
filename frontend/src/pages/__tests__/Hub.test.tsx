@@ -121,4 +121,30 @@ describe("Hub page", () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(field).toHaveValue(0.9);
   });
+
+  it("labels the last maintainer run with its own finish time, and says when none was recorded", async () => {
+    mocked.getHubStatus.mockResolvedValue(
+      status({ news_maintainer: { present: true, mode: "maintenance", stages: [], finished_at: "2026-10-01T08:00:00Z" } }),
+    );
+    const { unmount } = render(<Hub />);
+    expect(await screen.findByText(/^Finished /)).toBeInTheDocument();
+    unmount();
+    mocked.getHubStatus.mockResolvedValue(status({ news_maintainer: { present: true, mode: "maintenance", stages: [] } }));
+    render(<Hub />);
+    expect(await screen.findByText("Finish time not recorded")).toBeInTheDocument();
+  });
+
+  it("a slow response for the previous page does not overwrite the current one", async () => {
+    let releaseSlow!: (v: unknown) => void;
+    mocked.getHubStatus
+      .mockReturnValueOnce(new Promise((resolve) => { releaseSlow = resolve; })) // mount load: slow
+      .mockResolvedValue(status({ news_staging: { queued: 7 } })); // later load: fast
+    render(<Hub />);
+    fireEvent.click(await screen.findByText("Refresh"));
+    expect(await screen.findByText(/7 pending in queue/)).toBeInTheDocument();
+    releaseSlow(status({ news_staging: { queued: 99 } }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText(/99 pending in queue/)).toBeNull();
+    expect(screen.getByText(/7 pending in queue/)).toBeInTheDocument();
+  });
 });

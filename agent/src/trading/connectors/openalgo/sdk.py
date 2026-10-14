@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Mapping
@@ -40,7 +40,7 @@ class OpenAlgoConfigError(RuntimeError):
 class OpenAlgoConfig:
     """OpenAlgo connector settings."""
 
-    host: str = "http://127.0.0.1:5001"
+    host: str = field(default_factory=lambda: get_env_config().trade.openalgo_host)
     api_key: str = ""
     profile: str = "paper"
     timeout: float = 20.0
@@ -53,7 +53,7 @@ class OpenAlgoConfig:
         if profile not in PROFILE_ENVIRONMENTS:
             raise OpenAlgoConfigError("profile must be 'paper', 'live-readonly' or 'live'")
         host = str(
-            payload.get("host") or get_env_config().trade.openalgo_host or "http://127.0.0.1:5001"
+            payload.get("host") or get_env_config().trade.openalgo_host
         ).rstrip("/")
         api_key = str(payload.get("api_key") or get_env_config().trade.openalgo_api_key or "").strip()
         return cls(
@@ -122,11 +122,9 @@ def load_config() -> OpenAlgoConfig:
 def save_config(config: OpenAlgoConfig) -> Path:
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(config), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    from src.api.helpers import _atomic_write_secret  # the one 0600-from-creation atomic secret write (holds api_key)
+
+    _atomic_write_secret(path, json.dumps(asdict(config), indent=2, ensure_ascii=False) + "\n")
     return path
 
 

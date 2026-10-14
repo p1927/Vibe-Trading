@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { CausalFactorHistoryChart } from "@/components/charts/CausalFactorHistoryChart";
 import {
@@ -11,9 +11,10 @@ import {
   api,
   type IndexFactorHistoryPoint,
   type IndexPredictionArtifact,
-  type IndexSimulationResult,
   type PlaygroundTrigger,
 } from "@/lib/api";
+import { useIndexSimulation } from "@/hooks/useIndexSimulation";
+import { finiteOrNull } from "@/lib/finite";
 import { factorLabel } from "@/lib/factorEventMapping";
 import { CASCADE_DOWNSTREAM, PINNED_CAUSAL_FACTORS } from "@/lib/factorCascadeMap";
 import { researchNoteForFactor } from "@/lib/factorResearchNotes";
@@ -78,14 +79,10 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
   const [activeFactor, setActiveFactor] = useState(factorOptions[0]?.factor ?? "fii_net_5d");
   const [chartMode, setChartMode] = useState<"history" | "shock">("history");
   const [shockPct, setShockPct] = useState(0);
-  const [simulation, setSimulation] = useState<IndexSimulationResult | null>(null);
-  const [simulating, setSimulating] = useState(false);
-  const [simError, setSimError] = useState<string | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
   const [factorNews, setFactorNews] = useState<Record<string, PlaygroundTrigger[]>>({});
   const [cascadeRules, setCascadeRules] = useState<Record<string, CascadeDownstreamRule[]>>(CASCADE_DOWNSTREAM);
   const [contextLoading, setContextLoading] = useState(true);
-  const debounceRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (factorOptions.length && !factorOptions.some((f) => f.factor === activeFactor)) {
@@ -134,49 +131,24 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
     CASCADE_DOWNSTREAM[activeFactor] ??
     [];
 
-  const baseVal = Number(
+  // Number(null) is 0: a factor with no reading must stay unknown, not read "0".
+  const baseVal = finiteOrNull(
     artifact.global_factors?.find((g) => g.factor === activeFactor)?.value ??
       contributors.find((c) => c.factor === activeFactor)?.value,
   );
 
-  const runSimulate = useCallback(async () => {
-    if (shockPct === 0) {
-      setSimulation(null);
-      setSimError(null);
-      return;
-    }
-    setSimulating(true);
-    setSimError(null);
-    try {
-      const res = await api.simulateIndexPrediction({
-        ticker: artifact.ticker || "NIFTY",
-        horizon_days: horizonDays,
-        primary_factor: activeFactor,
-        primary_shock_pct: shockPct,
-        cascade: true,
-      });
-      if (res.simulation) setSimulation(res.simulation);
-      else {
-        setSimulation(null);
-        setSimError(res.message || "Simulation returned no result");
-      }
-    } catch (e) {
-      setSimulation(null);
-      setSimError(e instanceof Error ? e.message : "Simulation request failed");
-    } finally {
-      setSimulating(false);
-    }
-  }, [activeFactor, shockPct, artifact.ticker, horizonDays]);
-
-  useEffect(() => {
-    if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    debounceRef.current = window.setTimeout(() => {
-      void runSimulate();
-    }, 350);
-    return () => {
-      if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    };
-  }, [runSimulate]);
+  const { simulation, simulating, error: simError } = useIndexSimulation(
+    shockPct === 0
+      ? null
+      : {
+          ticker: artifact.ticker || "NIFTY",
+          horizon_days: horizonDays,
+          primary_factor: activeFactor,
+          primary_shock_pct: shockPct,
+          cascade: true,
+        },
+    { delayMs: 350 },
+  );
 
   const newsItems = factorNews[activeFactor] ?? [];
 
@@ -201,7 +173,6 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
             onClick={() => {
               setActiveFactor(f.factor);
               setShockPct(0);
-              setSimulation(null);
             }}
             className={cn(
               "rounded-full border px-2.5 py-1 text-[10px] transition-colors",
@@ -264,7 +235,7 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
             ) : null}
           </div>
 
-          {Number.isFinite(baseVal) ? (
+          {baseVal != null ? (
             <p className="text-[10px] text-muted-foreground">
               {activeMeta?.label}: {formatFactorValue(activeFactor, baseVal)}
             </p>
@@ -316,7 +287,8 @@ export function CausalFactorExplorer({ artifact, horizonDays, factorHistory = []
 
           {chartMode === "shock" && simulation?.expected_return_pct != null && shockPct !== 0 ? (
             <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[10px]">
-              <span className="font-medium">Nifty spot today:</span> {fmtLevel(spot)}
+              <span className="font-medium">Nifty spot{artifact.as_of ? ` (as of ${String(artifact.as_of).slice(0, 10)})` : ""}:</span>{" "}
+              {fmtLevel(spot)}
               {" · "}
               <span className="font-medium">Cascade target:</span>{" "}
               {fmtLevel(simulation.index_level)} ({fmtPct(simulation.expected_return_pct)} over {horizonDays}d)

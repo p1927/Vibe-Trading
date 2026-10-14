@@ -84,6 +84,14 @@ describe("CommandCenter page", () => {
     expect(screen.queryByText("Connecting…")).toBeNull();
   });
 
+  it("a failed prior-day history fetch says so instead of leaving the strip unexplained", async () => {
+    mocked.getHubIndexHistoryDays.mockRejectedValueOnce(new Error("history 503"));
+    renderPage();
+    await screen.findByText("Alpha");
+    act(() => sse.handlers.prediction({ artifact: { as_of: "2026-10-13", spot: 25000, prediction: { expected_return_pct: 1 }, upcoming_events: [] } }));
+    expect(await screen.findByTestId("prior-day-error")).toHaveTextContent("history 503");
+  });
+
   it("does not draw a 0-level 0% forecast when the artifact has no spot or expected return", async () => {
     renderPage();
     await screen.findByText("Alpha");

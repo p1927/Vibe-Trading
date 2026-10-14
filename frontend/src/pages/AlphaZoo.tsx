@@ -41,6 +41,7 @@ import {
 import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useThemeDark } from "@/lib/theme-store";
+import { useAlphaJobStream, type AlphaJobProgress } from "@/hooks/useAlphaJobStream";
 
 /* ---------- Constants ---------- */
 
@@ -682,13 +683,6 @@ function MetaRow({ label, value, last }: { label: string; value: string; last?: 
 
 /* ---------- Bench view ---------- */
 
-type BenchStatus = "idle" | "submitting" | "streaming" | "done" | "error";
-
-interface BenchProgress {
-  n_done: number;
-  n_total: number;
-  current_alpha_id?: string;
-}
 
 function BenchView() {
   // Read prefill from query string (set by Detail "Run bench" button).
@@ -708,44 +702,22 @@ function BenchView() {
   const [period, setPeriod] = useState(initial.period);
   const [top, setTop] = useState<number>(initial.top);
 
-  const [status, setStatus] = useState<BenchStatus>("idle");
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [progress, setProgress] = useState<BenchProgress | null>(null);
-  const [result, setResult] = useState<AlphaBenchResult | null>(null);
+  const { jobId, progress, result, busy, start } = useAlphaJobStream<AlphaBenchResult>({
+    unreadable: "The benchmark finished but its result could not be read.",
+    streamError: i18n.t("alphaZoo.benchStreamError" as any),
+  });
   const [formError, setFormError] = useState<string | null>(null);
-  const sourceRef = useRef<EventSource | null>(null);
-  // Track terminal `done` so the synthetic EventSource `error` fired on
-  // close doesn't surface as a spurious toast (race between done + error).
-  const doneRef = useRef(false);
-  const resultUnreadableRef = useRef(false);
-
-  useEffect(() => {
-    return () => {
-      sourceRef.current?.close();
-      sourceRef.current = null;
-    };
-  }, []);
 
   const startBench = async (e: FormEvent) => {
     e.preventDefault();
-    if (status === "submitting" || status === "streaming") return;
-    setStatus("submitting");
-    setProgress(null);
-    setResult(null);
+    if (busy) return;
     setFormError(null);
-    doneRef.current = false;
-    resultUnreadableRef.current = false;
-    sourceRef.current?.close();
     const safeTop = Number.isFinite(top) && top > 0 ? top : 20;
     try {
-      const res = await api.createAlphaBench({
-        zoo,
-        universe,
-        period,
-        top: safeTop,
-      });
-      setJobId(res.job_id);
-      await attachStream(res.job_id);
+      await start(
+        () => api.createAlphaBench({ zoo, universe, period, top: safeTop }),
+        (id) => api.alphaBenchStreamUrl(id),
+      );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : i18n.t("alphaZoo.failedToStartBench" as any);
       // BTC-USDT is single-asset — surface inline rather than as a toast,
@@ -756,70 +728,8 @@ function BenchView() {
       } else {
         toast.error(msg);
       }
-      setStatus("error");
     }
   };
-
-  const attachStream = async (newJobId: string) => {
-    setStatus("streaming");
-    // Mint a single-use SSE ticket, then open the stream with ?ticket= (the
-    // long-lived API key never goes in the URL).
-    const url = await api.alphaBenchStreamUrl(newJobId);
-    const source = new EventSource(url);
-    sourceRef.current = source;
-
-    source.addEventListener("progress", (e) => {
-      try {
-        const data = JSON.parse((e as MessageEvent).data) as BenchProgress;
-        setProgress(data);
-      } catch {
-        /* ignore */
-      }
-    });
-
-    source.addEventListener("result", (e) => {
-      try {
-        const data = JSON.parse((e as MessageEvent).data) as AlphaBenchResult;
-        setResult(data);
-      } catch {
-        // The final result is the whole point of the run: a payload we cannot read is a failed run, not a quiet one.
-        resultUnreadableRef.current = true;
-        toast.error("The benchmark finished but its result could not be read.");
-      }
-    });
-
-    source.addEventListener("done", () => {
-      doneRef.current = true;
-      setStatus(resultUnreadableRef.current ? "error" : "done");
-      source.close();
-      sourceRef.current = null;
-    });
-
-    source.addEventListener("error", (e) => {
-      // EventSource raises a synthetic error on every disconnect, including
-      // the normal close that follows our `done` event. The ref check is
-      // synchronous (state updates from `done` would be batched and not
-      // visible here yet), so it's the only reliable race guard.
-      if (doneRef.current) {
-        source.close();
-        sourceRef.current = null;
-        return;
-      }
-      let msg = i18n.t("alphaZoo.benchStreamError" as any);
-      try {
-        const data = JSON.parse((e as MessageEvent).data || "{}");
-        if (typeof data.message === "string") msg = data.message;
-      } catch {
-        /* network-level error, no payload */
-      }
-      toast.error(msg);
-      setStatus("error");
-      source.close();
-      sourceRef.current = null;
-    });
-  };
-
-  const busy = status === "submitting" || status === "streaming";
 
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-6">
@@ -935,9 +845,7 @@ function BenchView() {
       </form>
 
       {/* Progress */}
-      {(status === "submitting" || status === "streaming") && (
-        <ProgressPanel jobId={jobId} progress={progress} />
-      )}
+      {busy && <ProgressPanel jobId={jobId} progress={progress} />}
 
       {/* Result */}
       {result && <ResultPanel result={result} />}
@@ -950,7 +858,7 @@ function ProgressPanel({
   progress,
 }: {
   jobId: string | null;
-  progress: BenchProgress | null;
+  progress: AlphaJobProgress | null;
 }) {
   const pct = progress && progress.n_total > 0
     ? Math.min(100, Math.round((progress.n_done / progress.n_total) * 100))
@@ -1199,106 +1107,31 @@ function CompareView() {
   const [period, setPeriod] = useState("2020-2025");
   const [sort, setSort] = useState("ir");
 
-  const [status, setStatus] = useState<BenchStatus>("idle");
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [progress, setProgress] = useState<BenchProgress | null>(null);
-  const [result, setResult] = useState<AlphaCompareResult | null>(null);
+  const { jobId, progress, result, busy, start } = useAlphaJobStream<AlphaCompareResult>({
+    unreadable: "The comparison finished but its result could not be read.",
+    streamError: i18n.t("alphaZoo.compareStreamError" as any),
+  });
   const [formError, setFormError] = useState<string | null>(null);
-  const sourceRef = useRef<EventSource | null>(null);
-  const doneRef = useRef(false);
-  const resultUnreadableRef = useRef(false);
 
   const ids = useMemo(() => parseAlphaIds(idsText), [idsText]);
 
-  useEffect(() => {
-    return () => {
-      sourceRef.current?.close();
-      sourceRef.current = null;
-    };
-  }, []);
-
-  const attachStream = async (newJobId: string) => {
-    setStatus("streaming");
-    // Mint a single-use SSE ticket, then open the stream with ?ticket= (the
-    // long-lived API key never goes in the URL).
-    const source = new EventSource(await api.alphaCompareStreamUrl(newJobId));
-    sourceRef.current = source;
-
-    source.addEventListener("progress", (e) => {
-      try {
-        setProgress(JSON.parse((e as MessageEvent).data) as BenchProgress);
-      } catch {
-        /* ignore */
-      }
-    });
-    source.addEventListener("result", (e) => {
-      try {
-        setResult(JSON.parse((e as MessageEvent).data) as AlphaCompareResult);
-      } catch {
-        resultUnreadableRef.current = true;
-        toast.error("The comparison finished but its result could not be read.");
-      }
-    });
-    source.addEventListener("done", () => {
-      doneRef.current = true;
-      setStatus(resultUnreadableRef.current ? "error" : "done");
-      source.close();
-      sourceRef.current = null;
-    });
-    source.addEventListener("error", (e) => {
-      // EventSource raises a synthetic error on the close that follows `done`;
-      // the ref check (synchronous) is the only reliable race guard.
-      if (doneRef.current) {
-        source.close();
-        sourceRef.current = null;
-        return;
-      }
-      let msg = i18n.t("alphaZoo.compareStreamError" as any);
-      try {
-        const data = JSON.parse((e as MessageEvent).data || "{}");
-        if (typeof data.message === "string") msg = data.message;
-      } catch {
-        /* network-level error, no payload */
-      }
-      toast.error(msg);
-      setStatus("error");
-      source.close();
-      sourceRef.current = null;
-    });
-  };
-
   const startCompare = async (e: FormEvent) => {
     e.preventDefault();
-    if (status === "submitting" || status === "streaming") return;
+    if (busy) return;
     if (ids.length < 2) {
       setFormError(i18n.t("alphaZoo.enterAtLeast2"));
       return;
     }
-    setStatus("submitting");
-    setProgress(null);
-    setResult(null);
     setFormError(null);
-    doneRef.current = false;
-    resultUnreadableRef.current = false;
-    sourceRef.current?.close();
     try {
-      const res = await api.createAlphaCompare({
-        alpha_ids: ids,
-        universe,
-        period,
-        sort,
-      });
-      setJobId(res.job_id);
-      await attachStream(res.job_id);
+      await start(
+        () => api.createAlphaCompare({ alpha_ids: ids, universe, period, sort }),
+        (id) => api.alphaCompareStreamUrl(id),
+      );
     } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : i18n.t("alphaZoo.failedToStartComparison" as any);
-      toast.error(msg);
-      setStatus("error");
+      toast.error(err instanceof Error ? err.message : i18n.t("alphaZoo.failedToStartComparison" as any));
     }
   };
-
-  const busy = status === "submitting" || status === "streaming";
 
   return (
     <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-6">
@@ -1414,9 +1247,7 @@ function CompareView() {
         )}
       </form>
 
-      {(status === "submitting" || status === "streaming") && (
-        <ProgressPanel jobId={jobId} progress={progress} />
-      )}
+      {busy && <ProgressPanel jobId={jobId} progress={progress} />}
 
       {result && <CompareResultPanel result={result} />}
     </div>

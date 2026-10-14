@@ -110,7 +110,8 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
     momentumCov != null &&
     momentumCov.total != null &&
     momentumCov.total > 0 &&
-    (momentumCov.coverage_pct ?? 0) < 50;
+    momentumCov.coverage_pct != null && // an unreported coverage is unknown, not 0%
+    momentumCov.coverage_pct < 50;
 
   const constituentsAgeDays = artifact.constituents_as_of
     ? (Date.now() - new Date(artifact.constituents_as_of).getTime()) / (24 * 60 * 60 * 1000)

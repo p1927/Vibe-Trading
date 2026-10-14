@@ -59,14 +59,10 @@ def _ensure_trade_integrations_on_path() -> None:
 
 def run_research_history_archive_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     _ensure_trade_integrations_on_path()
-    from datetime import datetime, timezone
-
     from trade_integrations.context.hub import archive_options_stock_snapshots
 
     cfg = config or {}
-    as_of_date = cfg.get("as_of_date")
-    if not as_of_date:
-        as_of_date = datetime.now(timezone.utc).date().isoformat()
+    as_of_date = cfg.get("as_of_date") or None  # unset: the archive keys by the market day itself (D445)
     summary = archive_options_stock_snapshots(as_of_date=as_of_date)
     logger.info("research history archive: %s", summary)
     return summary

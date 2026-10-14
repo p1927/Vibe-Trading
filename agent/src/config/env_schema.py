@@ -78,6 +78,27 @@ ResponsesApiBool = Annotated[bool, BeforeValidator(_parse_responses_api_bool)]
 # ---------------------------------------------------------------------------
 
 
+
+def _tier_openalgo_host() -> str:
+    """The OpenAlgo base URL of the tier this process runs in, from the Trade stack's port registry.
+
+    Runs while the env config is being built, so it must not call `get_env_config` (a re-entrant lock wait):
+    the co-located repo root is found from this file's own path, and an unset OPENALGO_HOST outside the Trade
+    repo fails loud instead of guessing a dev port."""
+    import sys
+    from pathlib import Path
+
+    root = next((p for p in Path(__file__).resolve().parents if (p / "integrations" / "trade_integrations").is_dir()), None)
+    if root is None:
+        raise RuntimeError("OPENALGO_HOST is unset and the Trade stack is not co-located: set OPENALGO_HOST")
+    integrations = str(root / "integrations")
+    if integrations not in sys.path:
+        sys.path.append(integrations)
+    from trade_integrations.stack_ports import openalgo_host
+
+    return openalgo_host()
+
+
 class _EnvBase(BaseModel):
     """Base for environment-variable-backed config sub-models.
 
@@ -656,7 +677,9 @@ class TradeConfig(_EnvBase):
     stack_dev: str = Field(alias="STACK_DEV", default="")
 
     # --- api/trade_routes.py, trading/connectors/openalgo/sdk.py -----------
-    openalgo_host: str = Field(alias="OPENALGO_HOST", default="http://127.0.0.1:5001")
+    # Unset: the running tier's own host from stack/ports.yaml (`stack_ports.openalgo_host`), never a literal that
+    # would point a release process at dev's OpenAlgo (D306, tests/test_no_hardcoded_tier_ports).
+    openalgo_host: str = Field(alias="OPENALGO_HOST", default_factory=lambda: _tier_openalgo_host())
     openalgo_api_key: str = Field(alias="OPENALGO_API_KEY", default="")
     openalgo_paper_mode: str = Field(alias="OPENALGO_PAPER_MODE", default="true")
 

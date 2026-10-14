@@ -135,6 +135,14 @@ describe("Scheduled page", () => {
     expect(within(row).getByText("pre-open scan of NZX names")).toBeInTheDocument();
   });
 
+  it("a paused job does not advertise a next run it will not make", async () => {
+    mocked.listScheduledRuns.mockResolvedValue([run({ paused: true })]);
+    renderScheduled();
+    const row = (await screen.findByText("Mon–Fri at 23:30")).closest("li")!;
+    expect(within(row).getByText(/Paused: will not run until resumed/)).toBeInTheDocument();
+    expect(within(row).queryByText(/Next run:/)).toBeNull();
+  });
+
   it("shows legacy timezone-less jobs as UTC", async () => {
     mocked.listScheduledRuns.mockResolvedValue([run({ timezone: null, schedule: "0 9 * * *" })]);
     renderScheduled();

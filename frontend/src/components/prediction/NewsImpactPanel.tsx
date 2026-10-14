@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronUp, Loader2, Newspaper, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NewsScenarioPathChart } from "@/components/charts/NewsScenarioPathChart";
@@ -162,8 +162,11 @@ export function NewsImpactPanel({
     [expandedFactor, factorTimelines, horizonDays],
   );
 
+  // A slow answer for an earlier horizon/filter must not replace the current one.
+  const loadSeq = useRef(0);
   const load = useCallback(
     async (refresh = false) => {
+      const mine = ++loadSeq.current;
       setLoading(true);
       setError(null);
       try {
@@ -173,11 +176,11 @@ export function NewsImpactPanel({
           horizonDays,
           showRejected,
         );
-        setReport(res.report ?? null);
+        if (mine === loadSeq.current) setReport(res.report ?? null);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load news impact");
+        if (mine === loadSeq.current) setError(e instanceof Error ? e.message : "Failed to load news impact");
       } finally {
-        setLoading(false);
+        if (mine === loadSeq.current) setLoading(false);
       }
     },
     [horizonDays, showRejected],
@@ -215,11 +218,18 @@ export function NewsImpactPanel({
     };
   }, []);
 
+  // Per-factor timelines are computed for one horizon: a cached one is wrong for the next.
   useEffect(() => {
-    if (!monitorEnabled || !pollMs || pollMs < 30_000) return;
+    setFactorTimelines({});
+    setExpandedFactor(null);
+  }, [horizonDays]);
+
+  useEffect(() => {
+    // Push-driven mode renders the SSE stream's report; a poll of our own would overwrite it (two writers).
+    if (pushDriven || !monitorEnabled || !pollMs || pollMs < 30_000) return;
     const id = window.setInterval(() => void load(false), pollMs);
     return () => window.clearInterval(id);
-  }, [load, monitorEnabled, pollMs]);
+  }, [load, monitorEnabled, pollMs, pushDriven]);
 
   const items = report?.items ?? [];
   const summary = report?.summary;
@@ -241,7 +251,7 @@ export function NewsImpactPanel({
         <div className="flex items-center gap-2">
           <Newspaper className="h-4 w-4" />
           <span>
-            {summary?.approved_count ?? 0} verified · {summary?.partial_count ?? 0} partial
+            {summary?.approved_count ?? "—"} verified · {summary?.partial_count ?? "—"} partial
             {rejectedCount > 0 && !showRejected ? ` · ${rejectedCount} rejected (hidden)` : ""}
             {summary?.source === "hub_events" ? " · hub events" : ""}
           </span>

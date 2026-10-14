@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import type { IndexCounterfactualRow, IndexMissAnalysisReport } from "@/lib/api";
 import { DayMoveCauses } from "@/components/prediction/DayMoveCauses";
@@ -28,19 +28,25 @@ function ContribBars({
   valueKey: string;
 }) {
   if (!rows.length) return null;
-  const max = Math.max(...rows.map((r) => Math.abs(Number(r[valueKey]) || 0)), 0.01);
+  const valueOf = (r: Record<string, unknown>): number | null => {
+    const raw = r[valueKey];
+    if (raw === null || raw === undefined || raw === "") return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+  const max = Math.max(...rows.map((r) => Math.abs(valueOf(r) ?? 0)), 0.01);
   return (
     <div>
       <p className="mb-1 font-medium text-muted-foreground">{title}</p>
       <ul className="space-y-1">
         {rows.slice(0, 6).map((r) => {
-          const val = Number(r[valueKey]) || 0;
-          const width = Math.min(100, (Math.abs(val) / max) * 100);
+          const val = valueOf(r);
+          const width = val == null ? 0 : Math.min(100, (Math.abs(val) / max) * 100);
           return (
             <li key={String(r.term)} className="flex items-center gap-2 text-[10px]">
               <span className="w-28 truncate text-muted-foreground">{String(r.term)}</span>
               <span
-                className={`h-2 rounded-sm ${val >= 0 ? "bg-emerald-500/70" : "bg-red-500/70"}`}
+                className={`h-2 rounded-sm ${val != null && val < 0 ? "bg-red-500/70" : "bg-emerald-500/70"}`}
                 style={{ width: `${width}%` }}
               />
               <span className="tabular-nums">{fmtPct(val)}</span>
@@ -61,6 +67,10 @@ export function PredictionMissAnalysisPanel({
   highlightDate,
 }: Props) {
   const [expandedDate, setExpandedDate] = useState<string | null>(highlightDate ?? null);
+  // "Open in miss analysis panel" changes highlightDate on a panel that is already mounted.
+  useEffect(() => {
+    if (highlightDate) setExpandedDate(highlightDate);
+  }, [highlightDate]);
 
   if (loading && !report) {
     return (
@@ -98,8 +108,9 @@ export function PredictionMissAnalysisPanel({
             Prediction miss root-cause
           </p>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Compares macro factors at prediction date (T0) vs maturity (T0+{report.horizon_days ?? 14}d) for
+            Compares macro factors at prediction date (T0) vs maturity (T0+{report.horizon_days ?? "?"}d) for
             every direction miss — learn what changed while the forecast was live.
+            {report.as_of ? ` Computed ${String(report.as_of).slice(0, 16).replace("T", " ")}.` : ""}
           </p>
         </div>
         {onRefresh ? (

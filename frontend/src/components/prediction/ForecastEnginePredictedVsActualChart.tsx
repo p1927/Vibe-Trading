@@ -171,15 +171,15 @@ export function ForecastEnginePredictedVsActualChart({ ticker = "NIFTY", recipe,
             </div>
             <div>
               <p className="text-muted-foreground">Mean pinball loss</p>
-              <p className="font-medium">{(evaluation.mean_pinball_loss ?? 0).toFixed(1)}</p>
+              <p className="font-medium">{evaluation.mean_pinball_loss != null ? evaluation.mean_pinball_loss.toFixed(1) : "—"}</p>
             </div>
             <div>
               <p className="text-muted-foreground">vs naive baseline</p>
-              <p className="font-medium">{(evaluation.mean_naive_pinball_loss ?? 0).toFixed(1)}</p>
+              <p className="font-medium">{evaluation.mean_naive_pinball_loss != null ? evaluation.mean_naive_pinball_loss.toFixed(1) : "—"}</p>
             </div>
             <div>
               <p className="text-muted-foreground">Beats naive?</p>
-              <p className="font-medium">{evaluation.passes_gate ? "Yes" : "No"}</p>
+              <p className="font-medium">{evaluation.passes_gate == null ? "—" : evaluation.passes_gate ? "Yes" : "No"}</p>
             </div>
           </div>
           <p className="mt-2 text-[10px] text-muted-foreground">

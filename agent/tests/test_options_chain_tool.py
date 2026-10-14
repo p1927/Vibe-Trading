@@ -226,3 +226,22 @@ class TestExplicitExpirationValidation:
         payload = json.loads(out)
         assert payload["ok"] is True
         assert payload["data"]["calls_count"] == 0
+
+
+class TestIndiaLegInTheMoney:
+    """An unknown underlying price makes ITM unknown (None), not "False" (out of the money)."""
+
+    def test_unknown_underlying_is_none_in_both_leg_builders(self):
+        from src.tools import india_options_chain_tool as ic
+
+        for builder, leg in ((ic._leg_row_live, {"last_price": 1}), (ic._leg_row_history, {"ltp": 1})):
+            assert builder(100.0, leg, "call", None, None)["in_the_money"] is None
+            assert builder(100.0, leg, "put", None, None)["in_the_money"] is None
+
+    def test_known_underlying_is_a_bool(self):
+        from src.tools import india_options_chain_tool as ic
+
+        assert ic._leg_row_live(100.0, {}, "call", 110.0, None)["in_the_money"] is True
+        assert ic._leg_row_live(100.0, {}, "call", 90.0, None)["in_the_money"] is False
+        assert ic._leg_row_history(100.0, {}, "put", 90.0, None)["in_the_money"] is True
+        assert ic._leg_row_history(100.0, {}, "put", 100.0, None)["in_the_money"] is False
