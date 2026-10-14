@@ -36,7 +36,7 @@ function StrategyCard({ strategy }: { strategy: RankedOptionStrategy }) {
         <div>
           {t("options.india.pop", { defaultValue: "PoP" })}{" "}
           <span className="font-medium text-foreground">
-            {strategy.pop !== undefined ? `${fmtNum((strategy.pop ?? 0) * 100, 0)}%` : "–"}
+            {strategy.pop != null && Number.isFinite(strategy.pop) ? `${fmtNum(strategy.pop * 100, 0)}%` : "–"}
           </span>
         </div>
         <div>
@@ -191,6 +191,12 @@ export function IndiaStrategyPanel({ underlying }: Props) {
               {t("options.chain.expiration")}{" "}
               <span className="font-medium text-foreground">{data.expiry || "–"}</span>
             </span>
+            {data.as_of ? (
+              <span data-testid="india-strategy-as-of">
+                {t("options.india.asOf", { defaultValue: "As of" })}{" "}
+                <span className="font-medium text-foreground">{String(data.as_of).slice(0, 16).replace("T", " ")}</span>
+              </span>
+            ) : null}
           </div>
           {data.ranked_strategies.length === 0 ? (
             <p className="text-sm text-muted-foreground">

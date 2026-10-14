@@ -60,9 +60,11 @@ export function ExternalPredictionsComparisonChart({ snapshot, horizonDays, repl
       };
     });
     const internalReturn = snapshot?.internal_forecast?.expected_return_pct;
+    // our return is relative to OUR forecast's spot; a source's `spot_at_fetch` can be days old
+    const internalSpot = snapshot?.internal_forecast?.spot;
     const internalMid =
-      typeof spotVal === "number" && typeof internalReturn === "number"
-        ? spotVal * (1 + internalReturn / 100)
+      typeof internalSpot === "number" && typeof internalReturn === "number"
+        ? internalSpot * (1 + internalReturn / 100)
         : null;
     if (internalMid != null) {
       rows.push({
@@ -73,7 +75,8 @@ export function ExternalPredictionsComparisonChart({ snapshot, horizonDays, repl
         isInternal: true,
       });
     }
-    return { items: rows, spot: typeof spotVal === "number" ? spotVal : null };
+    const lineSpot = typeof internalSpot === "number" ? internalSpot : spotVal;
+    return { items: rows, spot: typeof lineSpot === "number" ? lineSpot : null };
   }, [horizonDays, replay, snapshot]);
 
   const labels = items.map((item) => item.name);

@@ -120,7 +120,9 @@ export function TrackScoreboardProgressPanel({
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
-        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Pipeline</p>
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Pipeline{active ? " (estimated from elapsed time, not server status)" : ""}
+        </p>
         <ul className="space-y-2">
           {PIPELINE_STEPS.map((step, idx) => {
             const done = !active || idx < activeStepIndex;

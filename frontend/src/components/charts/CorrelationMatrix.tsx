@@ -37,7 +37,9 @@ export function CorrelationMatrix({ labels, matrix, height = 500 }: Props) {
     const data: { value: [number, number, number]; label: { color: string } }[] = [];
     for (let i = 0; i < labels.length; i++) {
       for (let j = 0; j < labels.length; j++) {
-        const val = parseFloat((matrix[i]?.[j] ?? 0).toFixed(4));
+        const raw = matrix[i]?.[j];
+        if (typeof raw !== "number" || !Number.isFinite(raw)) continue; // an unknown correlation is a gap, not r = 0
+        const val = parseFloat(raw.toFixed(4));
         data.push({ value: [j, i, val], label: { color: cellTextColor(val) } });
       }
     }
