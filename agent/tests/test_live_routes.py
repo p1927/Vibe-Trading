@@ -295,3 +295,26 @@ def test_endpoints_require_auth_when_api_key_configured(runtime_root: Path, monk
     response = client.get("/live/status")
 
     assert response.status_code in (401, 403)
+
+
+def test_unparseable_mandate_expiry_reads_as_expired(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An ``expires_at`` nobody can parse must not read as "not expired": /live/runner/start gates
+    on ``expired`` and would otherwise start a runner on a mandate whose validity is unknown."""
+    from types import SimpleNamespace
+
+    import src.live.mandate.store as store
+    from src.api import live_routes
+
+    caps = SimpleNamespace(
+        max_order_notional_usd=1.0, max_total_exposure_usd=1.0, max_leverage=1.0,
+        max_trades_per_day=1, allowed_instruments=[], account_funding_usd=1.0,
+    )
+    for bad in ("not-a-date", "", "2026-13-45T00:00:00Z"):
+        consent = SimpleNamespace(account_ref="a", created_at="x", expires_at=bad)
+        monkeypatch.setattr(store, "load_mandate", lambda broker, c=consent: SimpleNamespace(consent=c, hard_caps=caps))
+        state = live_routes._active_mandate_state("robinhood")
+        assert state is not None and state.expired is True and state.expires_in_seconds is None, bad
+
+    future = SimpleNamespace(account_ref="a", created_at="x", expires_at="2999-01-01T00:00:00Z")
+    monkeypatch.setattr(store, "load_mandate", lambda broker: SimpleNamespace(consent=future, hard_caps=caps))
+    assert live_routes._active_mandate_state("robinhood").expired is False

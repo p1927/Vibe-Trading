@@ -556,13 +556,16 @@ if ChatOpenAI is not None:
             if not _is_anthropic_temperature_unsupported_error(exc):
                 return False
             model = str(self.model_name)
-            if model not in _ANTHROPIC_TEMPERATURE_UNSUPPORTED:
-                logger.info(
-                    "Model %s rejects `temperature`; retrying without it "
-                    "and omitting it for subsequent calls.",
-                    model,
-                )
-                _ANTHROPIC_TEMPERATURE_UNSUPPORTED.add(model)
+            if model in _ANTHROPIC_TEMPERATURE_UNSUPPORTED:
+                # Already retried without `temperature` and the endpoint still says so: retrying
+                # again can only loop (``_stream`` recurses), one paid request per level.
+                return False
+            logger.info(
+                "Model %s rejects `temperature`; retrying without it "
+                "and omitting it for subsequent calls.",
+                model,
+            )
+            _ANTHROPIC_TEMPERATURE_UNSUPPORTED.add(model)
             return True
 
         def _stream(self, *args: Any, **kwargs: Any) -> Iterator[Any]:
