@@ -26,7 +26,7 @@ import {
   type PortfolioSnapshot,
   type PortfolioSourceCatalogItem,
 } from "@/lib/api";
-import { echarts } from "@/lib/echarts";
+import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useThemeDark } from "@/lib/theme-store";
 import i18n from "@/i18n";
@@ -574,7 +574,7 @@ function AllocationPie({ title, data, centerLabel, onSelect }: { title: string; 
   useEffect(() => {
     if (!ref.current || ref.current.clientWidth === 0) return;
     const theme = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
     const brokerPalette = data.map((item) => BROKER_COLORS[(item.connector ?? item.name).toUpperCase()]).filter(Boolean);
     const palette = brokerPalette.length === data.length ? brokerPalette : HOLDING_COLORS;
     chart.setOption({
@@ -607,7 +607,7 @@ function HistoryChart({ history }: { history: PortfolioHistoryPoint[] }) {
   useEffect(() => {
     if (!ref.current || ref.current.clientWidth === 0) return;
     const theme = getChartTheme();
-    const chart = echarts.init(ref.current);
+    const chart = initEChart(ref.current);
     const rows = history.slice(-180);
     chart.setOption({
       backgroundColor: "transparent",
