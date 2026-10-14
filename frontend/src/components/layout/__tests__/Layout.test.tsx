@@ -152,3 +152,14 @@ describe("Layout accessibility", () => {
     expect(sidebar).toHaveClass("w-12");
   });
 });
+
+describe("Layout session failures are shown, not swallowed", () => {
+  it("a failed session list is an error, not 'No sessions yet'", async () => {
+    const { api } = await import("@/lib/api");
+    window.localStorage.clear();
+    vi.mocked(api.listSessions).mockRejectedValue(new Error("backend down"));
+    renderLayout();
+    expect(await screen.findByRole("alert")).toHaveTextContent("backend down");
+    expect(screen.queryByText("No sessions yet")).not.toBeInTheDocument();
+  });
+});

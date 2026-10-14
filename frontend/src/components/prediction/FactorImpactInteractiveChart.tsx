@@ -7,6 +7,7 @@ import type {
   IndexUpcomingEvent,
 } from "@/lib/api";
 import { factorLabel } from "@/lib/factorEventMapping";
+import { finiteOrNull } from "@/lib/finite";
 
 interface SensitivityPoint {
   factor_delta_pct?: number;
@@ -69,16 +70,18 @@ export function FactorImpactInteractiveChart({
       .slice(0, 6);
   }, [simulation]);
 
+  const haveSpot = Number.isFinite(spot) && spot > 0; // spot 0 / NaN = unknown: no synthetic level lines
+
   const option = useMemo(() => {
     const t = getChartTheme();
 
     if (chartMode === "shock_sweep" && activeCurve?.points?.length) {
       const pts = activeCurve.points;
       const xs = pts.map((p) => `${p.factor_delta_pct ?? 0}%`);
-      const ys = pts.map((p) => Number(p.index_level ?? 0));
+      const ys = pts.map((p) => finiteOrNull(p.index_level)); // a missing level is a gap, never 0
       const baselineLevel =
         pts.find((p) => p.factor_delta_pct === 0)?.index_level ??
-        spot * (1 + baselineReturnPct / 100);
+        (haveSpot ? spot * (1 + baselineReturnPct / 100) : null);
       return {
         backgroundColor: "transparent",
         title: {
@@ -110,7 +113,7 @@ export function FactorImpactInteractiveChart({
               silent: true,
               symbol: "none",
               lineStyle: { type: "dashed", color: t.textColor },
-              data: [{ yAxis: baselineLevel, name: "Baseline" }],
+              data: baselineLevel != null ? [{ yAxis: baselineLevel, name: "Baseline" }] : [],
             },
           },
         ],
@@ -127,7 +130,7 @@ export function FactorImpactInteractiveChart({
         ? forecastPath.map((p) => p.baseline_level ?? null)
         : days.map((_, i) => {
             const tFrac = Number(days[i]) / Math.max(horizonDays, 1);
-            return spot * (1 + (baselineReturnPct / 100) * tFrac);
+            return haveSpot ? spot * (1 + (baselineReturnPct / 100) * tFrac) : null;
           });
 
     const scenarioLevels =
@@ -137,7 +140,7 @@ export function FactorImpactInteractiveChart({
           ? days.map((_, i) => {
               const tFrac = Number(days[i]) / Math.max(horizonDays, 1);
               const ret = simulation.expected_return_pct ?? baselineReturnPct;
-              return spot * (1 + (ret / 100) * tFrac);
+              return haveSpot ? spot * (1 + (ret / 100) * tFrac) : null;
             })
           : null;
 
@@ -169,7 +172,7 @@ export function FactorImpactInteractiveChart({
         : [];
 
     const eventMarks = (upcomingEvents ?? [])
-      .filter((e) => e.days_from_now != null && e.days_from_now >= 0 && e.days_from_now <= horizonDays)
+      .filter((e) => e.days_from_now != null && e.days_from_now >= 0 && e.days_from_now <= horizonDays && baselineLevels[e.days_from_now] != null)
       .map((e) => ({
         name: e.label || e.event_type,
         coord: [String(e.days_from_now), baselineLevels[e.days_from_now ?? 0]],

@@ -48,6 +48,7 @@ export function Layout() {
   const { dark, toggle } = useDarkMode();
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
   const sseStatus = useAgentStore(s => s.sseStatus);
   const sseRetryAttempt = useAgentStore(s => s.sseRetryAttempt);
   const [collapsed, setCollapsed] = useState(() => safeGet("qa-sidebar") === "collapsed");
@@ -72,8 +73,8 @@ export function Layout() {
 
   const loadSessions = () => {
     api.listSessions()
-      .then((list) => setSessions(Array.isArray(list) ? list : []))
-      .catch(() => {})
+      .then((list) => { setSessions(Array.isArray(list) ? list : []); setSessionsError(null); })
+      .catch((err) => setSessionsError(err instanceof Error ? err.message : String(err)))
       .finally(() => setSessionsLoading(false));
   };
 
@@ -98,7 +99,7 @@ export function Layout() {
     try {
       await api.deleteSession(sid);
       setSessions((prev) => prev.filter((s) => s.session_id !== sid));
-    } catch { /* ignore */ }
+    } catch (err) { setSessionsError(`Delete failed: ${err instanceof Error ? err.message : String(err)}`); }
     setDeleteTarget(null);
   };
 
@@ -107,7 +108,7 @@ export function Layout() {
     try {
       await api.renameSession(sid, renameValue.trim());
       setSessions((prev) => prev.map((s) => s.session_id === sid ? { ...s, title: renameValue.trim() } : s));
-    } catch { /* ignore */ }
+    } catch (err) { setSessionsError(`Rename failed: ${err instanceof Error ? err.message : String(err)}`); }
     setRenameTarget(null);
   };
 
@@ -194,6 +195,8 @@ export function Layout() {
                     <div key={i} className="h-7 rounded-md bg-muted/50 animate-pulse" />
                   ))}
                 </div>
+              ) : sessionsError ? (
+                <p role="alert" className="px-3 py-2 text-xs text-destructive">Could not load sessions: {sessionsError}</p>
               ) : sessions.length === 0 ? (
                 <p className="px-3 py-2 text-xs text-muted-foreground/60">{t('layout.noSessions')}</p>
               ) : null}
