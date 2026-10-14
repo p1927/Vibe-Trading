@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Loader2, X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { AdvisoryCandidate, AdvisoryCandidateDetailResponse } from "@/lib/api";
-import { fmtInr, fmtPct, fmtPctScale, fmtRatio } from "@/lib/advisoryFormat";
+import { fmtExitPlan, fmtInr, fmtPct, fmtPctScale, fmtRatio } from "@/lib/advisoryFormat";
 import { OptionsPayoffChart } from "@/components/charts/OptionsPayoffChart";
 import { PnlForecastBandChart } from "@/components/board/PnlForecastBandChart";
 
@@ -143,11 +143,7 @@ export function AdvisoryCandidateDetailModal({ ticker, candidate, approving, onC
                 <p>
                   <span className="font-medium text-foreground">
                     Exit plan:{" "}
-                    {candidate.exit_plan.kind === "target_day"
-                      ? `~D+${candidate.exit_plan.target_day} (${Math.round(
-                          (candidate.exit_plan.target_fraction_of_max_profit ?? 0) * 100,
-                        )}% of max profit)`
-                      : "hold to expiry"}
+                    {fmtExitPlan(candidate.exit_plan, "of max profit")}
                   </span>{" "}
                   — {candidate.exit_plan.rationale}
                 </p>

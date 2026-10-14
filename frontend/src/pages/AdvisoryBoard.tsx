@@ -6,7 +6,7 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { MiniPayoffChart } from "@/components/charts/MiniPayoffChart";
 import { PnlForecastBandChart } from "@/components/board/PnlForecastBandChart";
 import { AdvisoryCandidateDetailModal } from "@/components/board/AdvisoryCandidateDetailModal";
-import { fmtInr, fmtPct, fmtRatio, toneFor } from "@/lib/advisoryFormat";
+import { fmtExitPlan, fmtInr, fmtPct, fmtRatio, toneFor } from "@/lib/advisoryFormat";
 import { useLatestRequest } from "@/hooks/useLatestRequest";
 import { cn } from "@/lib/utils";
 
@@ -100,11 +100,7 @@ function CandidateCard({
         >
           Exit:{" "}
           <span className="font-medium text-foreground">
-            {candidate.exit_plan.kind === "target_day"
-              ? `~D+${candidate.exit_plan.target_day} (${Math.round(
-                  (candidate.exit_plan.target_fraction_of_max_profit ?? 0) * 100,
-                )}% profit)`
-              : "hold to expiry"}
+            {fmtExitPlan(candidate.exit_plan, "profit")}
           </span>
         </div>
       )}

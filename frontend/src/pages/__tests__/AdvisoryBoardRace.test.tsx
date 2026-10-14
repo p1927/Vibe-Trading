@@ -54,4 +54,21 @@ describe("AdvisoryBoard live candidates", () => {
     expect(exec).toHaveBeenCalledTimes(1);
     finish({ message: "ok", execution_mode: "paper" });
   });
+  it("an exit plan without a profit fraction shows the target day, not a measured 0% profit (D410)", async () => {
+    const withPlan = (exit_plan: Record<string, unknown>) =>
+      ({ NIFTY: { confidence: { direction: "up", confidence: 0.6, is_stale: false }, candidates: [{ ...candidate("Plan Spread"), exit_plan }] } }) as never;
+    vi.spyOn(api, "getAdvisoryCandidates").mockResolvedValue(withPlan({ kind: "target_day", target_day: 5, rationale: "r" }));
+    renderBoard();
+    const exit = (await screen.findByText(/Exit:/)).textContent ?? "";
+    expect(exit).toContain("~D+5");
+    expect(exit).not.toMatch(/0% profit/);
+  });
+
+  it("a real profit fraction is still shown", async () => {
+    vi.spyOn(api, "getAdvisoryCandidates").mockResolvedValue(
+      ({ NIFTY: { confidence: { direction: "up", confidence: 0.6, is_stale: false }, candidates: [{ ...candidate("Plan Spread"), exit_plan: { kind: "target_day", target_day: 5, target_fraction_of_max_profit: 0.5, rationale: "r" } }] } }) as never,
+    );
+    renderBoard();
+    expect((await screen.findByText(/Exit:/)).textContent).toContain("~D+5 (50% profit)");
+  });
 });
