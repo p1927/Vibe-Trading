@@ -38,7 +38,8 @@ function fmtPct(v: number | null | undefined): string {
 /** What a queue entry changes: a number for a weight, the guidance line for an agent_guidance entry. */
 function proposalChange(p: PendingWeightProposal): string {
   if (p.kind === "agent_guidance") return `Add guidance: "${p.guidance ?? ""}"`;
-  return `${(p.current_value ?? 0).toFixed(3)} → ${(p.proposed_value ?? 0).toFixed(3)}`;
+  const f = (v: number | null | undefined) => (v == null ? "—" : v.toFixed(3));
+  return `${f(p.current_value)} → ${f(p.proposed_value)}`;
 }
 
 function StatCard({ label, value, tone }: { label: string; value: string; tone?: "up" | "down" | "neutral" }) {
@@ -133,6 +134,14 @@ export function AgentBoard() {
 
   useEffect(() => {
     if (!agentId) return;
+    // Never keep the previous agent's numbers on screen while (or if) this agent's load fails.
+    setSummary(null);
+    setWealthPoints([]);
+    setHindsight(null);
+    setHindsightCurves([]);
+    setTimeline([]);
+    setDecisionQuality(null);
+    setGradedDecisions([]);
     loadBoard(agentId);
     const timer = window.setInterval(() => loadBoard(agentId), BOARD_POLL_MS);
     return () => window.clearInterval(timer);

@@ -129,6 +129,7 @@ export function FactorImpactWorkbench({
   const [headlinesLocal, setHeadlinesLocal] = useState<PlaygroundTrigger[]>([]);
   const [eventsLocal, setEventsLocal] = useState<PlaygroundTrigger[]>([]);
   const [contextLoadingLocal, setContextLoadingLocal] = useState(true);
+  const [contextError, setContextError] = useState<string | null>(null);
   const useExternalContext = headlinesProp !== undefined || eventsProp !== undefined;
   const headlines = useExternalContext ? (headlinesProp ?? []) : headlinesLocal;
   const events = useExternalContext ? (eventsProp ?? []) : eventsLocal;
@@ -152,11 +153,13 @@ export function FactorImpactWorkbench({
         if (cancelled) return;
         setHeadlinesLocal(res.context?.headlines ?? []);
         setEventsLocal(res.context?.events ?? []);
+        setContextError(null);
       })
-      .catch(() => {
+      .catch((e) => {
         if (!cancelled) {
           setHeadlinesLocal([]);
           setEventsLocal([]);
+          setContextError(e instanceof Error ? e.message : "request failed");
         }
       })
       .finally(() => {
@@ -526,6 +529,11 @@ export function FactorImpactWorkbench({
           ) : null}
         </div>
 
+        {contextError ? (
+          <p className="text-[11px] text-red-600 dark:text-red-400">
+            Headlines/events failed to load ({contextError}) - the lists below are unavailable, not empty.
+          </p>
+        ) : null}
         <FactorNewsEventPanel
           headlines={headlines}
           events={events}

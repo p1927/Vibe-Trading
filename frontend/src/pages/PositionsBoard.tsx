@@ -61,7 +61,8 @@ function PositionCard({ group }: { group: LivePositionGroup }) {
             {group.underlying} · {group.expiry_days}d to expiry
           </div>
           <div className="text-xs text-muted-foreground">
-            Live spot {fmtInr(group.live_spot)} · IV {group.live_iv_pct.toFixed(1)}% · POP{" "}
+            Live spot {fmtInr(group.live_spot)} · IV{" "}
+            {group.live_iv_pct != null && Number.isFinite(group.live_iv_pct) ? `${group.live_iv_pct.toFixed(1)}%` : "—"} · POP{" "}
             {fmtPct(group.probability_of_profit)}
           </div>
         </div>
@@ -79,6 +80,11 @@ function PositionCard({ group }: { group: LivePositionGroup }) {
           Current P&amp;L {fmtInr(currentPnl)}
         </div>
       </div>
+      {group.forecast_stale_days != null && group.forecast_stale_days > 0 ? (
+        <div className="mb-2 text-xs text-amber-700 dark:text-amber-400">
+          Forecast band is {group.forecast_stale_days}d stale (as of {group.forecast_as_of ?? "unknown"}).
+        </div>
+      ) : null}
       <PnlForecastBandChart band={group.pnl_forecast_band} />
       <LegsTable legs={group.legs} />
     </div>
@@ -92,6 +98,7 @@ export function PositionsBoard() {
   const [groups, setGroups] = useState<LivePositionGroup[]>([]);
   const [skipped, setSkipped] = useState<LivePositionSkipped[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [lastOkAt, setLastOkAt] = useState<Date | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -118,6 +125,7 @@ export function PositionsBoard() {
       .then((res) => {
         setGroups(res.groups);
         setSkipped(res.skipped);
+        setLastOkAt(new Date());
       })
       .catch((err) =>
         setError(`Failed to load live positions for this agent: ${errorText(err, "request failed")}`),
@@ -127,6 +135,10 @@ export function PositionsBoard() {
 
   useEffect(() => {
     if (!agentId) return;
+    // Never show the previous agent's positions under this agent while (or if) its load fails.
+    setGroups([]);
+    setSkipped([]);
+    setLastOkAt(null);
     load(agentId);
     const timer = window.setInterval(() => load(agentId), BOARD_POLL_MS);
     return () => window.clearInterval(timer);
@@ -171,6 +183,7 @@ export function PositionsBoard() {
       {error ? (
         <div className="rounded-xl border border-red-500/40 bg-red-500/5 p-4 text-sm text-red-600 dark:text-red-400">
           {error}
+          {lastOkAt ? ` Showing data from ${lastOkAt.toLocaleTimeString()} — it is stale.` : null}
         </div>
       ) : null}
 
