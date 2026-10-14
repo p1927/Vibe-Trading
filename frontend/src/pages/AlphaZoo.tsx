@@ -41,6 +41,7 @@ import {
 import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useThemeDark } from "@/lib/theme-store";
+import { fmtFinite } from "@/lib/finite";
 import { useAlphaJobStream, type AlphaJobProgress } from "@/hooks/useAlphaJobStream";
 
 /* ---------- Constants ---------- */
@@ -146,12 +147,6 @@ const FILTER_UNIVERSE_OPTIONS = [
 const PAGE_SIZE = 50;
 
 /* ---------- Helpers ---------- */
-
-function fmtNum(v: unknown, digits = 3): string {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "—";
-  return n.toFixed(digits);
-}
 
 function metaString(meta: Record<string, unknown>, key: string): string {
   const v = meta[key];
@@ -1023,8 +1018,8 @@ function TopTable({ title, rows }: { title: string; rows: AlphaBenchTopRow[] }) 
                     {r.id}
                   </Link>
                 </td>
-                <td className="px-4 py-2 text-right font-mono tabular-nums text-xs">{fmtNum(r.ic_mean)}</td>
-                <td className="px-4 py-2 text-right font-mono tabular-nums text-xs">{fmtNum(r.ir)}</td>
+                <td className="px-4 py-2 text-right font-mono tabular-nums text-xs">{fmtFinite(r.ic_mean)}</td>
+                <td className="px-4 py-2 text-right font-mono tabular-nums text-xs">{fmtFinite(r.ir)}</td>
                 <td className="px-4 py-2 text-xs text-muted-foreground">
                   {(r.theme || []).map((t) => i18n.t("alphaZoo.themes." + t, { defaultValue: t })).join(", ") || "—"}
                 </td>
@@ -1313,13 +1308,13 @@ function CompareResultPanel({ result }: { result: AlphaCompareResult }) {
                     </Link>
                   </td>
                   <td className="px-3 py-2 text-xs text-muted-foreground hidden sm:table-cell">{r.zoo}</td>
-                  <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtNum(r.ic_mean, 4)}</td>
-                  <td className="px-3 py-2 text-right font-mono tabular-nums hidden md:table-cell">{fmtNum(r.ic_std, 4)}</td>
-                  <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtNum(r.ir, 3)}</td>
-                  <td className="px-3 py-2 text-right font-mono tabular-nums hidden md:table-cell">{fmtNum(r.ic_positive_ratio, 3)}</td>
+                  <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtFinite(r.ic_mean, 4)}</td>
+                  <td className="px-3 py-2 text-right font-mono tabular-nums hidden md:table-cell">{fmtFinite(r.ic_std, 4)}</td>
+                  <td className="px-3 py-2 text-right font-mono tabular-nums">{fmtFinite(r.ir, 3)}</td>
+                  <td className="px-3 py-2 text-right font-mono tabular-nums hidden md:table-cell">{fmtFinite(r.ic_positive_ratio, 3)}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums hidden lg:table-cell">{r.ic_count}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">
-                    {r.rank === 1 ? "—" : fmtNum(Number(r[deltaKey]), 4)}
+                    {r.rank === 1 ? "—" : fmtFinite(r[deltaKey], 4)}
                   </td>
                 </tr>
               ))}

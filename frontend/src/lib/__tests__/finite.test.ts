@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { finiteOrNull, lastFinite } from "../finite";
+import { finiteOrNull, fmtFinite, lastFinite } from "../finite";
 
 describe("finiteOrNull", () => {
   it("keeps real numbers, including zero and negatives", () => {
@@ -24,5 +24,19 @@ describe("lastFinite", () => {
   it("is null when every reading is a gap or the series is empty", () => {
     expect(lastFinite([null, null])).toBeNull();
     expect(lastFinite([])).toBeNull();
+  });
+});
+
+describe("fmtFinite", () => {
+  it("formats real numbers, zero included", () => {
+    expect(fmtFinite(0.12345, 3)).toBe("0.123");
+    expect(fmtFinite(0, 2)).toBe("0.00");
+    expect(fmtFinite("1.5", 1)).toBe("1.5");
+  });
+
+  it("renders a missing reading as an em dash, never as 0.000 (Number(null) is 0)", () => {
+    for (const bad of [null, undefined, "", "abc", NaN, Infinity]) {
+      expect(fmtFinite(bad)).toBe("\u2014");
+    }
   });
 });

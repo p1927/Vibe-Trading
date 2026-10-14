@@ -16,3 +16,9 @@ export function lastFinite(values: Array<number | null>): number | null {
   }
   return null;
 }
+
+/** `toFixed(digits)` of a finite reading, or an em dash for a missing one (never "0.000": Number(null) is 0). */
+export function fmtFinite(value: unknown, digits = 3): string {
+  const n = finiteOrNull(value);
+  return n === null ? "\u2014" : n.toFixed(digits);
+}
