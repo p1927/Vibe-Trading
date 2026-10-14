@@ -5853,6 +5853,8 @@ export interface HubStatusPayload {
     present?: boolean;
     had_errors?: boolean;
     mode?: string;
+    /** When that maintenance run finished (absent on a manifest written before the field existed). */
+    finished_at?: string;
     stages?: Array<Record<string, unknown>>;
   };
   /** `hub_news_pipeline_status()` output (summary mode on the 30s poll). */

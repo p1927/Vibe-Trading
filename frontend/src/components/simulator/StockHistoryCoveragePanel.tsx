@@ -1904,6 +1904,8 @@ function DayDrawer({
     .filter((st): st is HubStockHistoryCoverageBucketStatus => !!st && !st.present);
   const fillable = missing.filter((st) => !isKnownUnfillable(day.day, st));
   const unfillable = missing.filter((st) => isKnownUnfillable(day.day, st));
+  // A bucket the report carries no status for on this day is unknown, not present.
+  const unknown = buckets.filter((b) => !day.buckets[b]);
   const runActive = run?.status === "running";
   return (
     <div
@@ -1928,10 +1930,18 @@ function DayDrawer({
           ×
         </button>
       </div>
-      {missing.length === 0 ? (
-        <div className="mt-3 text-emerald-700 dark:text-emerald-300">
-          Every selected bucket is present on {day.day}.
+      {unknown.length > 0 && (
+        <div className="mt-3 text-amber-800 dark:text-amber-300" data-testid="day-unknown-buckets">
+          No coverage status for {unknown.length} selected bucket(s) on {day.day}:{" "}
+          <span className="font-mono">{unknown.map(bucketLabel).join(", ")}</span>
         </div>
+      )}
+      {missing.length === 0 ? (
+        unknown.length === 0 && (
+          <div className="mt-3 text-emerald-700 dark:text-emerald-300">
+            Every selected bucket is present on {day.day}.
+          </div>
+        )
       ) : (
         <>
           {fillable.length > 0 && (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Database, ExternalLink, Loader2, Newspaper, RefreshCw, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type HubDiscardedNewsItem, type HubNewsItem, type HubNewsPipelineConfig, type HubStatusQuery, type HubStatusResponse, type ObservabilitySummaryResponse } from "@/lib/api";
@@ -651,7 +651,10 @@ export function Hub() {
     return query;
   }, [newsFilter, newsPage, newsSection, searchQuery]);
 
+  // A slower response for a previous page/search must not overwrite the current one.
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     setError(null);
     try {
       // The config and the issue count are secondary reads: their failure must not blank the page,
@@ -667,6 +670,7 @@ export function Hub() {
         secondary("News pipeline schedule", api.getHubNewsPipelineConfig()),
         secondary("Open issue count", api.getObservabilitySummary()),
       ]);
+      if (seq !== loadSeq.current) return;
       setData(res);
       setObsSummary(obsRes);
       setSecondaryError(secondaryErrors.length ? `Could not load ${secondaryErrors.join("; ")}` : null);
@@ -677,9 +681,10 @@ export function Hub() {
         setPipelineDraft((draft) => draft ?? cfg);
       }
     } catch (err) {
+      if (seq !== loadSeq.current) return;
       setError(err instanceof Error ? err.message : "Failed to load hub status");
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }, [newsQuery]);
 
@@ -1607,6 +1612,11 @@ export function Hub() {
               </p>
               <p className="text-[11px] text-muted-foreground">
                 Mode {newsMaintainer.mode ?? "maintenance"} · {newsMaintainer.stages?.length ?? 0} stages
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {newsMaintainer.finished_at
+                  ? `Finished ${new Date(newsMaintainer.finished_at).toLocaleString()}`
+                  : "Finish time not recorded"}
               </p>
             </div>
           ) : (
