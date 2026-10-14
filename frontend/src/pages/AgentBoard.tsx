@@ -19,6 +19,7 @@ import { carriedForwardActualCount } from "@/lib/agentBoardWealth";
 import { useLatestRequest } from "@/hooks/useLatestRequest";
 import { AgentPnlCurveChart, type PnlSeries } from "@/components/board/AgentPnlCurveChart";
 import { cn } from "@/lib/utils";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { formatIst } from "@/lib/istTime";
 
 const CANDIDATE_COLORS = ["#3b82f6", "#8b5cf6", "#f59e0b", "#14b8a6", "#ec4899", "#6366f1"];
@@ -80,6 +81,8 @@ export function AgentBoard() {
   const [timeline, setTimeline] = useState<ModelVersionTimelineEntry[]>([]);
   const [proposals, setProposals] = useState<PendingWeightProposal[]>([]);
   const [appliedProposals, setAppliedProposals] = useState<PendingWeightProposal[]>([]);
+  // Apply / Revert / retrain-Apply change a live agent: every one asks through ConfirmDialog first (one confirm path).
+  const [confirming, setConfirming] = useState<{ kind: "apply" | "revert" | "retrain"; id: string } | null>(null);
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [revertingId, setRevertingId] = useState<string | null>(null);
@@ -329,8 +332,31 @@ export function AgentBoard() {
     points: c.points.map((p) => ({ at: p.exit_at, value: p.cumulative_shadow_pnl_inr })),
   }));
 
+  const confirmCopy = {
+    apply: { title: "Apply this weight change?", description: "It changes the live agent's weights from the next decision on.", label: "Confirm apply" },
+    revert: { title: "Revert this applied change?", description: "It restores the previous weight on the live agent; you will be asked for a reason next.", label: "Confirm revert" },
+    retrain: { title: "Apply this retrain proposal?", description: "It swaps the index calibrator the live agent reads.", label: "Confirm apply" },
+  };
+  const runConfirmed = () => {
+    if (!confirming) return;
+    const { kind, id } = confirming;
+    setConfirming(null);
+    if (kind === "apply") applyProposal(id);
+    else if (kind === "revert") revertProposal(id);
+    else applyRetrainProposal(id);
+  };
+
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
+      <ConfirmDialog
+        open={confirming !== null}
+        title={confirming ? confirmCopy[confirming.kind].title : ""}
+        description={confirming ? confirmCopy[confirming.kind].description : undefined}
+        confirmLabel={confirming ? confirmCopy[confirming.kind].label : ""}
+        cancelLabel="Cancel"
+        onConfirm={runConfirmed}
+        onCancel={() => setConfirming(null)}
+      />
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Agent Board</h1>
@@ -413,7 +439,7 @@ export function AgentBoard() {
                       <div className="flex gap-2">
                         <button
                           type="button"
-                          onClick={() => applyProposal(p.id)}
+                          onClick={() => setConfirming({ kind: "apply", id: p.id })}
                           disabled={applyingId === p.id || rejectingId === p.id}
                           className="rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50"
                         >
@@ -475,7 +501,7 @@ export function AgentBoard() {
                       <td className="px-3 py-2">
                         <button
                           type="button"
-                          onClick={() => revertProposal(p.id)}
+                          onClick={() => setConfirming({ kind: "revert", id: p.id })}
                           disabled={revertingId === p.id}
                           className="rounded-md border border-amber-500/40 bg-background px-3 py-1.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-400"
                         >
@@ -552,7 +578,7 @@ export function AgentBoard() {
                       <div className="flex gap-2">
                         <button
                           type="button"
-                          onClick={() => applyRetrainProposal(p.id)}
+                          onClick={() => setConfirming({ kind: "retrain", id: p.id })}
                           disabled={retrainApplyingId === p.id || retrainRejectingId === p.id}
                           className="rounded-md border bg-background px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted disabled:opacity-50"
                         >
