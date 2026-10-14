@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import type { TrackRecordResponse } from "@/lib/knowledgeEngine";
 import type { ExecutionAdvisorAdvisory } from "@/lib/options";
+import { formatIstTime } from "@/lib/istTime";
 
 const POLL_INTERVAL_MS = 15_000;
 const UNGROUPED_KEY = "ungrouped";
@@ -227,7 +228,7 @@ export function ExecutionAdvisor() {
             <div className="text-xs text-muted-foreground">
               Advisory only — surfaces recommended hold/tighten-stop/exit actions for every open
               position. Never places, closes, or edits an order.
-              {lastUpdated && ` Fetched ${lastUpdated.toLocaleTimeString()}; each card shows when its advice was written.`}
+              {lastUpdated && ` Fetched ${formatIstTime(lastUpdated)}; each card shows when its advice was written.`}
             </div>
           </div>
           <button

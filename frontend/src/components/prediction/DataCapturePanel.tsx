@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Database, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type CaptureRegistryResponse } from "@/lib/api";
+import { formatIst } from "@/lib/istTime";
 
 const TIER_LABEL: Record<string, string> = {
   capture: "Capturing",
@@ -167,7 +168,7 @@ export function DataCapturePanel() {
               <p className="text-sm font-semibold tabular-nums">{row.rows ?? "—"} rows</p>
               <p className="text-[10px] text-muted-foreground">
                 {row.days ?? "—"} days
-                {row.last_capture_at ? ` · last ${new Date(row.last_capture_at).toLocaleString("en-IN")}` : ""}
+                {row.last_capture_at ? ` · last ${formatIst(row.last_capture_at)}` : ""}
               </p>
             </div>
           ))}

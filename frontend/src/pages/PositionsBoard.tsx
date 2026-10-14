@@ -10,6 +10,7 @@ import {
 import { useLatestRequest } from "@/hooks/useLatestRequest";
 import { PnlForecastBandChart } from "@/components/board/PnlForecastBandChart";
 import { cn } from "@/lib/utils";
+import { formatIstTime } from "@/lib/istTime";
 
 // Live spot/IV re-price, not per-closed-trade data like AgentBoard.tsx's 60s wealth-curve
 // poll — a shorter interval keeps this genuinely "live" without hammering the OpenAlgo
@@ -190,7 +191,7 @@ export function PositionsBoard() {
       {error ? (
         <div className="rounded-xl border border-red-500/40 bg-red-500/5 p-4 text-sm text-red-600 dark:text-red-400">
           {error}
-          {lastOkAt ? ` Showing data from ${lastOkAt.toLocaleTimeString()} — it is stale.` : null}
+          {lastOkAt ? ` Showing data from ${formatIstTime(lastOkAt)} — it is stale.` : null}
         </div>
       ) : null}
 

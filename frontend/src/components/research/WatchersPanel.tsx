@@ -11,6 +11,7 @@ import {
   WATCHERS_POLL_STORAGE_KEY,
 } from "@/lib/pollIntervalOptions";
 import { cn } from "@/lib/utils";
+import { formatIst } from "@/lib/istTime";
 
 interface Props {
   sessionId?: string | null;
@@ -178,7 +179,7 @@ function WatchersPanelContent({
                 )}
                 {watch.last_fired_at && (
                   <div className="text-[10px] text-amber-600 dark:text-amber-400">
-                    Last fired {new Date(watch.last_fired_at).toLocaleString()}
+                    Last fired {formatIst(watch.last_fired_at)}
                   </div>
                 )}
                 {watch.rules.map((rule, idx) => (

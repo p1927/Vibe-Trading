@@ -1,6 +1,7 @@
 import { Loader2, PanelRight, Play } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { tradeUiDeepLink } from "@/lib/trade-ui";
+import { formatIst } from "@/lib/istTime";
 
 export const HORIZON_OPTIONS = [
   { label: "Tactical (2d)", days: 2, name: "A" },
@@ -78,7 +79,7 @@ export function PredictionControls({
         </div>
         {lastUpdated ? (
           <p className="mt-0.5 text-[11px] text-muted-foreground">
-            Updated {new Date(lastUpdated).toLocaleString()}
+            Updated {formatIst(lastUpdated)}
           </p>
         ) : null}
         {spotError ? (

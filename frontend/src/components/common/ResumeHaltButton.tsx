@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2, RotateCcw } from "lucide-react";
 import type { LiveHaltRecord } from "@/lib/api";
+import { formatIst } from "@/lib/istTime";
 
 /** Who / why / when a halt was tripped, or an explicit "attribution unknown" (never a blank). */
 export function haltDetail(
@@ -14,7 +15,7 @@ export function haltDetail(
   if (record?.tripped_at) {
     const when = new Date(record.tripped_at);
     parts.push(t("agent.haltTrippedAt" as never, {
-      at: Number.isNaN(when.getTime()) ? record.tripped_at : when.toLocaleString(),
+      at: Number.isNaN(when.getTime()) ? record.tripped_at : formatIst(when),
     }));
   }
   return parts.length > 0 ? parts.join(" · ") : t("agent.haltAttributionUnknown" as never);

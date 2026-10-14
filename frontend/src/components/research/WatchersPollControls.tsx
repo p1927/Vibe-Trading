@@ -1,5 +1,6 @@
 import { WATCHERS_POLL_OPTIONS } from "@/lib/pollIntervalOptions";
 import { cn } from "@/lib/utils";
+import { formatIstTime } from "@/lib/istTime";
 
 interface Props {
   pollMs: number;
@@ -42,7 +43,7 @@ export function WatchersPollControls({
         )}
         {fetchedAt && (
           <span className="ml-2 tabular-nums">
-            · {new Date(fetchedAt).toLocaleTimeString()}
+            · {formatIstTime(fetchedAt)}
           </span>
         )}
       </div>

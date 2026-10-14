@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Portfolio } from "@/pages/Portfolio";
 import { api } from "@/lib/api";
 import i18n from "@/i18n";
+import { formatIst } from "@/lib/istTime";
 
 vi.mock("@/lib/api", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
@@ -355,9 +356,11 @@ describe("Portfolio page", () => {
     expect(screen.getByText("Read timed out after 30s")).toBeInTheDocument();
     expect(screen.getByText(
       i18n.t("portfolio.accounts.lastSuccess", {
-        time: new Date(FAILED_LAST_SUCCESS).toLocaleString(i18n.language),
+        time: formatIst(FAILED_LAST_SUCCESS),
       }),
     )).toBeInTheDocument();
+    // IST with an explicit zone label, not the browser's zone.
+    expect(screen.getByText(/08 Aug 2026, 15:00 IST/)).toBeInTheDocument();
 
     // The headline total stays at the readable value and says so out loud.
     expect(screen.getByText("$1,000.00")).toBeInTheDocument();

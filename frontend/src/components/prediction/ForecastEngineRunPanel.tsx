@@ -7,6 +7,7 @@ import {
   type ForecastEngineRunSummary,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { formatIst } from "@/lib/istTime";
 
 interface Props {
   ticker?: string;
@@ -191,7 +192,7 @@ export function ForecastEngineRunPanel({ ticker = "NIFTY", recipe, horizon = 5, 
               </span>
               <span className="text-muted-foreground">
                 {run.n_observations ?? "?"} obs · {run.passes_gate ? "beats naive" : "no edge"} ·{" "}
-                {run.generated_at ? new Date(run.generated_at).toLocaleString() : ""}
+                {run.generated_at ? formatIst(run.generated_at) : ""}
               </span>
             </button>
           ))}

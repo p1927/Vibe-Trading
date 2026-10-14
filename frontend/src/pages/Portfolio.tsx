@@ -30,6 +30,7 @@ import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useThemeDark } from "@/lib/theme-store";
 import i18n from "@/i18n";
+import { formatIst, formatIstTime } from "@/lib/istTime";
 
 const BROKER_COLORS: Record<string, string> = {
   IBKR: "#f05a47",
@@ -104,7 +105,7 @@ function compactUsd(value: number) {
 }
 
 function dateTime(value: string | undefined) {
-  return value ? new Date(value).toLocaleString(uiLocale()) : "—";
+  return value ? formatIst(value) : "—";
 }
 
 function dayKey(value: string) {
@@ -385,7 +386,7 @@ export function Portfolio() {
               />
               <Metric
                 label={t("portfolio.metrics.lastComplete")}
-                value={latestCompleteAt ? new Date(latestCompleteAt).toLocaleTimeString(uiLocale(), { hour: "2-digit", minute: "2-digit" }) : "—"}
+                value={latestCompleteAt ? formatIstTime(latestCompleteAt) : "—"}
                 note={dateTime(latestCompleteAt)}
                 tone={snapshot.complete ? "positive" : "warning"}
                 icon={snapshot.complete ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}

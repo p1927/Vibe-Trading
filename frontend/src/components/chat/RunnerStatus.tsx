@@ -14,6 +14,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { formatIst } from "@/lib/istTime";
 import {
   api,
   type LiveStatus,
@@ -375,7 +376,7 @@ function BrokerRow({
                           ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
                           : "bg-muted text-muted-foreground",
                     ].join(" ")}
-                    title={i18n.t("runnerStatus.expiresAt", { time: new Date(mandate.expires_at).toLocaleString() })}
+                    title={i18n.t("runnerStatus.expiresAt", { time: formatIst(mandate.expires_at) })}
                   >
                     <Clock className="h-2.5 w-2.5" />
                     {countdown.expired ? i18n.t("runnerStatus.expired") : i18n.t("runnerStatus.expiresIn", { time: countdown.label })}

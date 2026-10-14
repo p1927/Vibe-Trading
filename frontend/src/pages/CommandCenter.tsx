@@ -19,6 +19,7 @@ import { EventsCalendar } from "@/components/news/EventsCalendar";
 import { useSSE, type SSEStatus } from "@/hooks/useSSE";
 import { safeGet, safeSet } from "@/lib/storage";
 import { cn } from "@/lib/utils";
+import { formatIst } from "@/lib/istTime";
 
 const EVENTS_HORIZON_DAYS = 7;
 
@@ -521,7 +522,7 @@ function EventsRangePanel({ artifact, newsReport, status, revision, newEventKeys
         {artifact?.as_of ? (
           // The stream only pushes a frame when something changed, so a quiet feed is not a fresh forecast.
           <span className="text-[10px] text-muted-foreground" data-testid="command-center-forecast-as-of">
-            Forecast as of {new Date(artifact.as_of).toLocaleString()}
+            Forecast as of {formatIst(artifact.as_of)}
           </span>
         ) : null}
       </div>
@@ -547,9 +548,9 @@ function EventsRangePanel({ artifact, newsReport, status, revision, newEventKeys
           {uncertainty ? (
             <div
               className="flex items-center gap-1.5 rounded-lg border border-border/50 bg-muted/10 px-2 py-1 text-xs text-muted-foreground"
-              title={`Forecast fan p10–p90 spread at +${uncertainty.daysAhead}d, as of ${new Date(uncertainty.predictedAt).toLocaleString()}${
+              title={`Forecast fan p10–p90 spread at +${uncertainty.daysAhead}d, as of ${formatIst(uncertainty.predictedAt)}${
                 uncertainty.previous
-                  ? ` — previous run ${new Date(uncertainty.previous.predictedAt ?? "").toLocaleString()} at +${uncertainty.previous.daysAhead}d`
+                  ? ` — previous run ${formatIst(uncertainty.previous.predictedAt ?? "")} at +${uncertainty.previous.daysAhead}d`
                   : ""
               }`}
             >

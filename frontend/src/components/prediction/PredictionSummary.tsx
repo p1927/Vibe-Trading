@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import type { IndexPredictionArtifact } from "@/lib/api";
 import { tradeUiDeepLink } from "@/lib/trade-ui";
+import { formatIst } from "@/lib/istTime";
 
 function fmtPct(v: number | null | undefined, digits = 2): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -146,12 +147,12 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
       ) : null}
       {artifact.as_of ? (
         <p className="text-[10px] text-muted-foreground">
-          Pipeline snapshot {new Date(artifact.as_of).toLocaleString()}
+          Pipeline snapshot {formatIst(artifact.as_of)}
           {artifact.spot_source ? ` · spot source: ${artifact.spot_source}` : ""}
           {artifact.constituents_as_of ? (
             <span className={constituentsStale ? "text-amber-700 dark:text-amber-400" : undefined}>
               {" · constituents as of "}
-              {new Date(artifact.constituents_as_of).toLocaleString()}
+              {formatIst(artifact.constituents_as_of)}
               {constituentsStale
                 ? ` (${Math.floor(constituentsAgeDays!)}d old — refresh for current signals)`
                 : ""}

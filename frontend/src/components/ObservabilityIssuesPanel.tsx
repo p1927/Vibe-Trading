@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type ObservabilityIssue } from "@/lib/api";
+import { formatIst } from "@/lib/istTime";
 
 /** Open observability issues (D365): what the alert paths emit (INDmoney token expiry, capture-loop
  * stops, ...) listed with a Resolve button, from the one `/trade/observability/issues` API. */
@@ -41,7 +42,7 @@ export function ObservabilityIssuesPanel({ refreshKey }: { refreshKey?: number }
             </p>
             {issue.suggested_action ? <p className="text-xs text-muted-foreground">{issue.suggested_action}</p> : null}
             <p className="text-[11px] text-muted-foreground">
-              {issue.count}x, last {new Date(issue.last_seen).toLocaleString()}
+              {issue.count}x, last {formatIst(issue.last_seen)}
             </p>
           </div>
           <button

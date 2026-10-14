@@ -9,6 +9,7 @@ import { NewsPipelineGraph } from "@/components/NewsPipelineGraph";
 import { EventsCalendar } from "@/components/news/EventsCalendar";
 import { FactorRegistryGaps } from "@/components/news/FactorRegistryGaps";
 import { NewsPipelineStatusStrip } from "@/components/news/NewsPipelineStatusStrip";
+import { formatIst } from "@/lib/istTime";
 
 type NewsFilter = "all" | "staging" | "distilled" | "discarded";
 
@@ -946,7 +947,7 @@ export function Hub() {
           </p>
           {hub?.generated_at ? (
             <p className="mt-1 text-[11px] text-muted-foreground">
-              Updated {new Date(hub.generated_at).toLocaleString()} · auto-refresh 30s
+              Updated {formatIst(hub.generated_at)} · auto-refresh 30s
             </p>
           ) : null}
         </div>
@@ -1486,7 +1487,7 @@ export function Hub() {
             <div className="space-y-1 text-sm">
               <p>
                 <span className="text-muted-foreground">As of:</span>{" "}
-                {indexResearch.as_of ? new Date(indexResearch.as_of).toLocaleString() : "—"}
+                {indexResearch.as_of ? formatIst(indexResearch.as_of) : "—"}
               </p>
               <p>
                 <span className="text-muted-foreground">Horizon:</span>{" "}
@@ -1615,7 +1616,7 @@ export function Hub() {
               </p>
               <p className="text-[11px] text-muted-foreground">
                 {newsMaintainer.finished_at
-                  ? `Finished ${new Date(newsMaintainer.finished_at).toLocaleString()}`
+                  ? `Finished ${formatIst(newsMaintainer.finished_at)}`
                   : "Finish time not recorded"}
               </p>
             </div>

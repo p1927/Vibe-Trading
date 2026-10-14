@@ -19,6 +19,7 @@ import { carriedForwardActualCount } from "@/lib/agentBoardWealth";
 import { useLatestRequest } from "@/hooks/useLatestRequest";
 import { AgentPnlCurveChart, type PnlSeries } from "@/components/board/AgentPnlCurveChart";
 import { cn } from "@/lib/utils";
+import { formatIst } from "@/lib/istTime";
 
 const CANDIDATE_COLORS = ["#3b82f6", "#8b5cf6", "#f59e0b", "#14b8a6", "#ec4899", "#6366f1"];
 
@@ -401,7 +402,7 @@ export function AgentBoard() {
                 {proposals.map((p) => (
                   <tr key={p.id} className="border-b last:border-0 align-top">
                     <td className="px-3 py-2 text-xs text-muted-foreground">
-                      {new Date(p.created_at).toLocaleString("en-IN")}
+                      {formatIst(p.created_at)}
                     </td>
                     <td className="px-3 py-2 font-medium">{p.weight_id}</td>
                     <td className="px-3 py-2">
@@ -464,7 +465,7 @@ export function AgentBoard() {
                   .map((p) => (
                     <tr key={p.id} className="border-b last:border-0 align-top">
                       <td className="px-3 py-2 text-xs text-muted-foreground">
-                        {p.applied_at ? new Date(p.applied_at).toLocaleString("en-IN") : "—"}
+                        {p.applied_at ? formatIst(p.applied_at) : "—"}
                       </td>
                       <td className="px-3 py-2 font-medium">{p.weight_id}</td>
                       <td className="px-3 py-2">
@@ -521,7 +522,7 @@ export function AgentBoard() {
                 {retrainProposals.map((p) => (
                   <tr key={p.id} className="border-b last:border-0 align-top">
                     <td className="px-3 py-2 text-xs text-muted-foreground">
-                      {new Date(p.created_at).toLocaleString("en-IN")}
+                      {formatIst(p.created_at)}
                     </td>
                     <td className="px-3 py-2">
                       {p.diff.previous_mae != null ? p.diff.previous_mae.toFixed(4) : "—"} →{" "}
@@ -623,7 +624,7 @@ export function AgentBoard() {
                 {filteredActivity.map((e) => (
                   <tr key={`${e.track}-${e.id}`} className="border-b last:border-0 align-top">
                     <td className="px-3 py-2 text-xs text-muted-foreground">
-                      {new Date(e.created_at).toLocaleString("en-IN")}
+                      {formatIst(e.created_at)}
                     </td>
                     <td className="px-3 py-2 text-xs">
                       {e.track === "weight_model" ? "Weight model" : "Index calibrator"}
@@ -886,7 +887,7 @@ export function AgentBoard() {
                     {timeline.map((entry) => (
                       <tr key={entry.proposal_id} className="border-b last:border-0 align-top">
                         <td className="px-3 py-2 text-xs text-muted-foreground">
-                          {new Date(entry.applied_at).toLocaleString("en-IN")}
+                          {formatIst(entry.applied_at)}
                         </td>
                         <td className="px-3 py-2 font-medium">{entry.weight_id}</td>
                         <td className="px-3 py-2">
