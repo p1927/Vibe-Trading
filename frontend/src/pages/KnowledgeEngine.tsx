@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Loader2, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, ApiError } from "@/lib/api";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 import type {
   FinancialKnowledgeCuratorReport,
   NewsDerivedConcept,
@@ -17,16 +18,6 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "news", label: "News-Derived Concepts" },
   { key: "corpus", label: "Corpus Health" },
 ];
-
-/** Latest-request-wins for the debounced searches: `begin()` returns a check that turns false once a newer
- * request has begun, so a slow older answer never overwrites the newer query's results. */
-function useLatestRequest() {
-  const generation = useRef(0);
-  return useCallback(() => {
-    const mine = ++generation.current;
-    return () => mine === generation.current;
-  }, []);
-}
 
 function ScoreBadge({ score }: { score?: number | null }) {
   return (

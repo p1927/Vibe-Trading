@@ -16,6 +16,7 @@ import {
   type LearningActivityEntry,
 } from "@/lib/api";
 import { carriedForwardActualCount } from "@/lib/agentBoardWealth";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 import { AgentPnlCurveChart, type PnlSeries } from "@/components/board/AgentPnlCurveChart";
 import { cn } from "@/lib/utils";
 
@@ -108,7 +109,9 @@ export function AgentBoard() {
     };
   }, []);
 
+  const begin = useLatestRequest();
   const loadBoard = useCallback((id: string) => {
+    const isCurrent = begin(); // a slow answer for the previous agent / an earlier poll tick must not land
     setLoading(true);
     setError(null);
     Promise.all([
@@ -121,6 +124,7 @@ export function AgentBoard() {
       api.getAgentGradedDecisions(id),
     ])
       .then(([s, w, h, hc, t, dq, gd]) => {
+        if (!isCurrent()) return;
         setSummary(s);
         setWealthPoints(w.points);
         setHindsight(h);
@@ -129,9 +133,14 @@ export function AgentBoard() {
         setDecisionQuality(dq.metrics);
         setGradedDecisions(gd.decisions);
       })
-      .catch((err) => setError(`Failed to load board data for this agent: ${errorText(err, "request failed")}`))
-      .finally(() => setLoading(false));
-  }, []);
+      .catch((err) => {
+        if (!isCurrent()) return;
+        setError(`Failed to load board data for this agent: ${errorText(err, "request failed")}`);
+      })
+      .finally(() => {
+        if (isCurrent()) setLoading(false);
+      });
+  }, [begin]);
 
   useEffect(() => {
     if (!agentId) return;

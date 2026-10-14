@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   api,
   type AutonomousAgentInstance,
   type WatchLiveSnapshot,
   type WatchRuleTelemetry,
 } from "@/lib/api";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 
 interface Props {
   sessionId?: string | null;
@@ -67,17 +68,17 @@ export function useWatchersLive({
   const [countdownSec, setCountdownSec] = useState(0);
   const [pendingSnapshot, setPendingSnapshot] = useState<WatchLiveSnapshot | null>(null);
 
-  const liveInFlightRef = useRef(false);
-  const fetchGenRef = useRef(0);
+  const begin = useLatestRequest();
 
   useEffect(() => {
-    fetchGenRef.current += 1;
+    begin(); // a poll still in flight for the previous session/agent must not land
+    setLoading(false);
     setLiveWatches([]);
     setPendingSnapshot(null);
     setError(null);
     setFetchedAt(undefined);
     setMarketOpen(undefined);
-  }, [sessionId, agentId]);
+  }, [begin, sessionId, agentId]);
 
   const loadLive = useCallback(async () => {
     if (!sessionId && !agentId) {
@@ -85,23 +86,22 @@ export function useWatchersLive({
       setPendingSnapshot(null);
       return;
     }
-    const gen = fetchGenRef.current;
-    liveInFlightRef.current = true;
+    const isCurrent = begin(); // also drops an older poll tick that is slower than this one
     setLoading(true);
     try {
       const res = await api.getWatchesLive({
         sessionId: agentId ? undefined : (sessionId ?? undefined),
         agentId: agentId ?? undefined,
       });
-      if (gen !== fetchGenRef.current) return;
+      if (!isCurrent()) return;
       const rows = res.watches ?? [];
       if (rows.length === 0 && agentId) {
         try {
           const agent = await api.getAutonomousAgent(agentId);
-          if (gen !== fetchGenRef.current) return;
+          if (!isCurrent()) return;
           setPendingSnapshot(resolveAgentPendingRules(agent));
         } catch {
-          if (gen !== fetchGenRef.current) return;
+          if (!isCurrent()) return;
           setPendingSnapshot(null);
         }
       } else {
@@ -116,13 +116,12 @@ export function useWatchersLive({
         setError(null);
       }
     } catch (err) {
-      if (gen !== fetchGenRef.current) return;
+      if (!isCurrent()) return;
       setError(err instanceof Error ? err.message : "Failed to load live watches");
     } finally {
-      setLoading(false);
-      liveInFlightRef.current = false;
+      if (isCurrent()) setLoading(false);
     }
-  }, [sessionId, agentId]);
+  }, [begin, sessionId, agentId]);
 
   const refresh = loadLive;
 

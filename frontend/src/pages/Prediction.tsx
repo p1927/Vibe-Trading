@@ -37,6 +37,7 @@ import { ExternalPredictionsPanel } from "@/components/prediction/ExternalPredic
 import { NewsScenarioCanvas } from "@/components/prediction/NewsScenarioCanvas";
 import { useExternalPredictions } from "@/hooks/useExternalPredictions";
 import { useIndexPrediction } from "@/hooks/useIndexPrediction";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 import { useIndexPredictionLive } from "@/hooks/useIndexPredictionLive";
 import { cancelPredictionRunClient } from "@/hooks/usePredictionRunCoordinator";
 import { usePredictionRunStore } from "@/stores/predictionRun";
@@ -376,17 +377,22 @@ export function Prediction() {
     void bootstrap();
   }, [predictionMode, artifact?.as_of, horizonDays, urlNewsSessionId, setSearchParams, pipelineStale]);
 
+  // Every loader below is keyed on the horizon: a slow answer for the previous horizon must not
+  // overwrite the current one (a 14d backtest shown under a 30d header).
+  const beginHistory = useLatestRequest();
   const loadHistory = useCallback(async () => {
+    const isCurrent = beginHistory();
     setHistoryError(null);
     try {
       const res = await api.getIndexPredictionHistory("NIFTY", 90, horizonDays);
+      if (!isCurrent()) return;
       setDailyHistory(res.daily ?? []);
       setIntradayHistory(res.intraday ?? []);
       setHistoryMeta(res.meta);
     } catch (e) {
-      setHistoryError(e instanceof Error ? e.message : "History load failed");
+      if (isCurrent()) setHistoryError(e instanceof Error ? e.message : "History load failed");
     }
-  }, [horizonDays]);
+  }, [beginHistory, horizonDays]);
 
   const loadFactorHistory = useCallback(async () => {
     setFactorHistoryError(null);
@@ -404,8 +410,10 @@ export function Prediction() {
     }
   }, []);
 
+  const beginBacktest = useLatestRequest();
   const loadBacktest = useCallback(
     async (refresh = false, includeBottomUp = includeBottomUpBacktest) => {
+      const isCurrent = beginBacktest();
       setBacktestLoading(true);
       setBacktestError(null);
       try {
@@ -416,6 +424,7 @@ export function Prediction() {
           horizonDays,
           includeBottomUp,
         );
+        if (!isCurrent()) return;
         if (res.report) setBacktest(res.report);
         else if (res.status === "ok") {
           setBacktestError("Backtest refresh returned no report — try again or check API logs.");
@@ -423,28 +432,31 @@ export function Prediction() {
           setBacktestError(res.message || "Backtest unavailable");
         }
       } catch (e) {
-        setBacktestError(e instanceof Error ? e.message : "Backtest request failed");
+        if (isCurrent()) setBacktestError(e instanceof Error ? e.message : "Backtest request failed");
       } finally {
-        setBacktestLoading(false);
+        if (isCurrent()) setBacktestLoading(false);
       }
     },
-    [horizonDays, includeBottomUpBacktest],
+    [beginBacktest, horizonDays, includeBottomUpBacktest],
   );
 
   useEffect(() => {
     void loadBacktest(false);
   }, [loadBacktest]);
 
+  const beginScoreboard = useLatestRequest();
   const loadTrackScoreboardCached = useCallback(async () => {
+    const isCurrent = beginScoreboard();
     setTrackScoreboardError(null);
     try {
       const cachedRes = await api.getIndexTrackScoreboard("NIFTY", 730, horizonDays);
+      if (!isCurrent()) return;
       if (cachedRes.report) setTrackScoreboard(cachedRes.report);
       else if (cachedRes.status !== "ok") setTrackScoreboardError(cachedRes.message || "Track scoreboard unavailable");
     } catch (e) {
-      setTrackScoreboardError(e instanceof Error ? e.message : "Track scoreboard request failed");
+      if (isCurrent()) setTrackScoreboardError(e instanceof Error ? e.message : "Track scoreboard request failed");
     }
-  }, [horizonDays]);
+  }, [beginScoreboard, horizonDays]);
 
   const loadTrackScoreboard = useCallback(
     async (forceRefresh = false) => {
@@ -497,8 +509,10 @@ export function Prediction() {
     void loadTrackScoreboardCached();
   }, [predictionMode, horizonDays, loadTrackScoreboardCached]);
 
+  const beginMiss = useLatestRequest();
   const loadMissAnalysis = useCallback(
     async (refresh = false) => {
+      const isCurrent = beginMiss();
       setMissAnalysisLoading(true);
       setMissAnalysisError(null);
       try {
@@ -506,6 +520,7 @@ export function Prediction() {
           api.getIndexPredictionMissAnalysis("NIFTY", refresh, 365, horizonDays),
           api.getIndexPredictionCounterfactual("NIFTY", refresh, 365, horizonDays),
         ]);
+        if (!isCurrent()) return;
         if (res.report) setMissAnalysis(res.report);
         else if (res.status === "ok") {
           setMissAnalysisError("Miss analysis refresh returned no report — try again or check API logs.");
@@ -514,12 +529,12 @@ export function Prediction() {
         }
         setCounterfactual(cfRes.report?.misses ?? cfRes.report?.rows ?? null);
       } catch (e) {
-        setMissAnalysisError(e instanceof Error ? e.message : "Miss analysis request failed");
+        if (isCurrent()) setMissAnalysisError(e instanceof Error ? e.message : "Miss analysis request failed");
       } finally {
-        setMissAnalysisLoading(false);
+        if (isCurrent()) setMissAnalysisLoading(false);
       }
     },
-    [horizonDays],
+    [beginMiss, horizonDays],
   );
 
   useEffect(() => {

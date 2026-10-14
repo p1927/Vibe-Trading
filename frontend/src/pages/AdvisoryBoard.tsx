@@ -7,6 +7,7 @@ import { MiniPayoffChart } from "@/components/charts/MiniPayoffChart";
 import { PnlForecastBandChart } from "@/components/board/PnlForecastBandChart";
 import { AdvisoryCandidateDetailModal } from "@/components/board/AdvisoryCandidateDetailModal";
 import { fmtInr, fmtPct, fmtRatio, toneFor } from "@/lib/advisoryFormat";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 import { cn } from "@/lib/utils";
 
 // Mirrors AgentBoard.tsx's poll cadence — candidate scoring reads local cached research +
@@ -139,15 +140,27 @@ export function AdvisoryBoard() {
     null,
   );
 
+  const begin = useLatestRequest();
   const load = useCallback(() => {
+    const isCurrent = begin(); // a slow earlier poll must not overwrite the newer candidates
     setLoading(true);
     setError(null);
     api
       .getAdvisoryCandidates()
-      .then(setData)
-      .catch(() => setError("Failed to load live candidates."))
-      .finally(() => setLoading(false));
-  }, []);
+      .then((next) => {
+        if (isCurrent()) setData(next);
+      })
+      .catch(() => {
+        if (!isCurrent()) return;
+        // Candidates from before the failure are not live any more: never leave an Approve button
+        // (a real order) on numbers that could not be re-read.
+        setData({});
+        setError("Failed to load live candidates.");
+      })
+      .finally(() => {
+        if (isCurrent()) setLoading(false);
+      });
+  }, [begin]);
 
   useEffect(() => {
     load();

@@ -7,6 +7,7 @@ import {
   type LivePositionGroup,
   type LivePositionSkipped,
 } from "@/lib/api";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 import { PnlForecastBandChart } from "@/components/board/PnlForecastBandChart";
 import { cn } from "@/lib/utils";
 
@@ -117,21 +118,27 @@ export function PositionsBoard() {
     };
   }, []);
 
+  const begin = useLatestRequest();
   const load = useCallback((id: string) => {
+    const isCurrent = begin(); // a slow answer for the previous agent / an earlier poll tick must not land
     setLoading(true);
     setError(null);
     api
       .getAgentLivePositions(id)
       .then((res) => {
+        if (!isCurrent()) return;
         setGroups(res.groups);
         setSkipped(res.skipped);
         setLastOkAt(new Date());
       })
-      .catch((err) =>
-        setError(`Failed to load live positions for this agent: ${errorText(err, "request failed")}`),
-      )
-      .finally(() => setLoading(false));
-  }, []);
+      .catch((err) => {
+        if (!isCurrent()) return;
+        setError(`Failed to load live positions for this agent: ${errorText(err, "request failed")}`);
+      })
+      .finally(() => {
+        if (isCurrent()) setLoading(false);
+      });
+  }, [begin]);
 
   useEffect(() => {
     if (!agentId) return;

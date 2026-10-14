@@ -6,6 +6,7 @@ import {
   type ExternalPredictionsRefreshJobSnapshot,
   type PipelineLogEntry,
 } from "@/lib/api";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 
 const REFRESH_TIMEOUT_MS = 12 * 60 * 1000;
 const API_START_TIMEOUT_MS = 15 * 1000;
@@ -78,19 +79,21 @@ export function useExternalPredictions(horizonDays: number, enabled = true) {
   const attachGenRef = useRef(0);
   const reattachCheckedRef = useRef(false);
 
+  const begin = useLatestRequest();
   const load = useCallback(async () => {
     if (!enabled) return;
+    const isCurrent = begin(); // a slow answer for the previous horizon must not overwrite the current one
     setLoading(true);
     setError(null);
     try {
       const res = await api.getExternalPredictions("NIFTY", horizonDays);
-      setSnapshot(res.snapshot ?? null);
+      if (isCurrent()) setSnapshot(res.snapshot ?? null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load external predictions");
+      if (isCurrent()) setError(e instanceof Error ? e.message : "Failed to load external predictions");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [enabled, horizonDays]);
+  }, [begin, enabled, horizonDays]);
 
   const finishRefresh = useCallback((tickerKey: string, hz: number) => {
     clearStoredRunJobId(tickerKey, hz);

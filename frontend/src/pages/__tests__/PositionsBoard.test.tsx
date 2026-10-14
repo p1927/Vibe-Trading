@@ -49,4 +49,21 @@ describe("PositionsBoard loud states", () => {
     expect(await screen.findByText(/Failed to load live positions/)).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText(/NIFTY · 5d to expiry/)).not.toBeInTheDocument());
   });
+  it("a slow answer for the previous agent never overwrites the newly selected agent's positions", async () => {
+    vi.spyOn(api, "listAutonomousAgents").mockResolvedValue({ agents: [agent("a"), agent("b")] } as never);
+    let releaseA: (v: unknown) => void = () => {};
+    vi.spyOn(api, "getAgentLivePositions").mockImplementation((id: string) =>
+      id === "a"
+        ? new Promise((resolve) => { releaseA = resolve; })
+        : Promise.resolve({ groups: [group({ underlying: "BANKNIFTY" })], skipped: [] } as never),
+    );
+    render(<PositionsBoard />);
+    await waitFor(() => expect(api.getAgentLivePositions).toHaveBeenCalledWith("a"));
+    await userEvent.selectOptions(screen.getByRole("combobox"), "b");
+    expect(await screen.findByText(/BANKNIFTY · 5d to expiry/)).toBeInTheDocument();
+    releaseA({ groups: [group({ underlying: "NIFTY" })], skipped: [] });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(/^NIFTY · 5d to expiry/)).not.toBeInTheDocument();
+    expect(screen.getByText(/BANKNIFTY · 5d to expiry/)).toBeInTheDocument();
+  });
 });
