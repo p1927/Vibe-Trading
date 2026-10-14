@@ -141,8 +141,13 @@ def current_stack_profile() -> str:
     scheduled-research dispatch gate (the executor, the pause control and the trigger route each used to
     read it themselves). Read per call, never cached, so a change applies without a restart. Stripped and
     lower-cased exactly like ``trade_integrations.env.stack_tier()`` (this package cannot import it; a Trade
-    test pins the two answers together)."""
-    return os.environ.get("STACK_PROFILE", "dev").strip().lower()
+    test pins the two answers together). A value that is neither ``dev`` nor ``release`` raises, as
+    ``stack_tier()`` does: a typo (``releasee``) used to read as "not release" here, so a release tier
+    quietly stopped dispatching its collection jobs."""
+    raw = os.environ.get("STACK_PROFILE", "").strip().lower()
+    if raw in ("", "dev", "release"):
+        return raw or "dev"
+    raise ValueError(f"STACK_PROFILE={os.environ['STACK_PROFILE']!r} is not a stack tier; use 'dev' or 'release'")
 
 
 def collection_job_dispatch_enabled(stack_profile: str) -> bool:

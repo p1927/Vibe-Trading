@@ -355,6 +355,16 @@ export interface PortfolioSettingsResponse {
   catalog: PortfolioSourceCatalogItem[];
 }
 
+/**
+ * A 200 whose body lacks the list a page reads is an unknown, not an empty answer: `request()` hands back `{}` for
+ * an empty body and `null` for `null`, and a page that reads `.agents.length` off that crashed (R7). Pages that
+ * show money or a forecast get their list through this, so the failure reads as a load error, not a calm "none".
+ */
+function requireList<T>(value: unknown, what: string, path: string): T[] {
+  if (!Array.isArray(value)) throw new ApiError(`${path} returned no ${what} list (unexpected response)`, 200);
+  return value as T[];
+}
+
 async function errorFromResponse(res: Response): Promise<ApiError> {
   let detail: unknown = `HTTP ${res.status}`;
   try {
@@ -1072,7 +1082,14 @@ export const api = {
     request<{ status: string; reconnect: PortfolioReconnectState }>(`/api/portfolio/sources/${encodeURIComponent(sourceId)}/reconnect`, { method: "POST" }),
   getPortfolioReconnectStatus: () =>
     request<{ status: string; reconnect: PortfolioReconnectState }>("/api/portfolio/reconnect-status"),
-  getPortfolioSettings: () => request<PortfolioSettingsResponse>("/api/portfolio/settings"),
+  getPortfolioSettings: async () => {
+    const res = await request<PortfolioSettingsResponse>("/api/portfolio/settings");
+    requireList(res?.catalog, "source catalog", "/api/portfolio/settings");
+    if (!res.settings || typeof res.settings !== "object") {
+      throw new ApiError("/api/portfolio/settings returned no settings (unexpected response)", 200);
+    }
+    return res;
+  },
   updatePortfolioSettings: (settings: PortfolioSettings) =>
     request<PortfolioSettingsResponse>("/api/portfolio/settings", {
       method: "PUT",
@@ -1136,7 +1153,8 @@ export const api = {
   autoTitleSession: (sid: string) => request<{ status: string; title: string }>(`/sessions/${sid}/title/auto`, { method: "POST" }),
   // Scheduled research: cadence + timezone are stored as authored (local
   // wall-clock cron + IANA key), so list rows render without any UTC math.
-  listScheduledRuns: (signal?: AbortSignal) => request<ScheduledRun[]>("/scheduled-runs", { signal }),
+  listScheduledRuns: async (signal?: AbortSignal) =>
+    requireList<ScheduledRun>(await request<unknown>("/scheduled-runs", { signal }), "runs", "/scheduled-runs"),
   createScheduledRun: (body: CreateScheduledRunRequest) =>
     request<ScheduledRun>("/scheduled-runs", { method: "POST", body: JSON.stringify(body) }),
   deleteScheduledRun: (id: string) =>
@@ -1478,8 +1496,11 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  listAutonomousAgents: () =>
-    request<AutonomousAgentsListResponse>("/autonomous-agents"),
+  listAutonomousAgents: async () => {
+    const res = await request<AutonomousAgentsListResponse>("/autonomous-agents");
+    requireList(res?.agents, "agents", "/autonomous-agents");
+    return res;
+  },
   getAutonomousAgent: (agentId: string) =>
     request<AutonomousAgentInstance>(`/autonomous-agents/${encodeURIComponent(agentId)}`),
   commitAutonomousAgent: (body: CommitAutonomousAgentRequest) =>
@@ -1873,10 +1894,13 @@ export const api = {
     ),
   getMarketFactorCoverage: () =>
     request<MarketFactorCoverageResponse>("/trade/markets/factor_coverage"),
-  getMarketBundle: (country: string, period = "3mo") =>
-    request<MarketBundleResponse>(
-      `/trade/markets/${encodeURIComponent(country)}/bundle${api._hubStockHistoryQS({ period })}`,
-    ),
+  getMarketBundle: async (country: string, period = "3mo") => {
+    const path = `/trade/markets/${encodeURIComponent(country)}/bundle`;
+    const res = await request<MarketBundleResponse>(`${path}${api._hubStockHistoryQS({ period })}`);
+    requireList(res?.data?.headline, "headline entries", path);
+    requireList(res.data.sectors, "sector entries", path);
+    return res;
+  },
   getMarketTopConstituents: (country: string, topN = 10) =>
     request<MarketTopConstituentsResponse>(
       `/trade/markets/${encodeURIComponent(country)}/top_constituents${api._hubStockHistoryQS({ top_n: topN })}`,
@@ -1915,8 +1939,12 @@ export const api = {
     ),
   // Registry-driven card metadata for `GlobalMarketsPanel.tsx`'s GLOBAL/CURRENCY tabs — see
   // `StockHistory.global_market_ui_cards()`'s docstring for the shape and how it's assembled.
-  getGlobalMacroUiCards: () =>
-    request<GlobalMacroUiCardsResponse>("/trade/markets/global_macro/ui_cards"),
+  getGlobalMacroUiCards: async () => {
+    const res = await request<GlobalMacroUiCardsResponse>("/trade/markets/global_macro/ui_cards");
+    requireList(res?.data?.global, "global cards", "/trade/markets/global_macro/ui_cards");
+    requireList(res.data.currency, "currency cards", "/trade/markets/global_macro/ui_cards");
+    return res;
+  },
   // Tick recording for non-India markets (`kind: "index"` for a country's headline indices,
   // `kind: "fx"` for USD-anchored currency pairs) — fronts `stock_simulator`'s
   // `/tick_recording/*` routes via `StockSimulatorClient`. In-memory job state on the simulator
@@ -2397,11 +2425,17 @@ export const api = {
   },
   getPendingWeightProposals: (weightId?: string) => {
     const q = weightId ? `?weight_id=${encodeURIComponent(weightId)}` : "";
-    return request<PendingWeightProposalsResponse>(`/board/weight-proposals${q}`);
+    return request<PendingWeightProposalsResponse>(`/board/weight-proposals${q}`).then((res) => {
+      requireList(res?.proposals, "proposals", "/board/weight-proposals");
+      return res;
+    });
   },
   getAppliedWeightProposals: (weightId?: string) => {
     const q = weightId ? `?weight_id=${encodeURIComponent(weightId)}` : "";
-    return request<PendingWeightProposalsResponse>(`/board/weight-proposals/applied${q}`);
+    return request<PendingWeightProposalsResponse>(`/board/weight-proposals/applied${q}`).then((res) => {
+      requireList(res?.proposals, "proposals", "/board/weight-proposals/applied");
+      return res;
+    });
   },
   applyWeightProposal: (proposalId: string) =>
     request<ApplyWeightProposalResponse>(
@@ -2418,7 +2452,11 @@ export const api = {
       `/board/weight-proposals/${encodeURIComponent(proposalId)}/revert`,
       { method: "POST", body: JSON.stringify({ reason }) },
     ),
-  getPendingRetrainProposals: () => request<RetrainProposalsResponse>("/board/retrain-proposals"),
+  getPendingRetrainProposals: async () => {
+    const res = await request<RetrainProposalsResponse>("/board/retrain-proposals");
+    requireList(res?.proposals, "proposals", "/board/retrain-proposals");
+    return res;
+  },
   applyRetrainProposal: (proposalId: string) =>
     request<ApplyRetrainProposalResponse>(
       `/board/retrain-proposals/${encodeURIComponent(proposalId)}/apply`,
@@ -2429,7 +2467,11 @@ export const api = {
       `/board/retrain-proposals/${encodeURIComponent(proposalId)}/reject`,
       { method: "POST", body: JSON.stringify({ reason }) },
     ),
-  getLearningActivity: () => request<LearningActivityResponse>("/board/learning-activity"),
+  getLearningActivity: async () => {
+    const res = await request<LearningActivityResponse>("/board/learning-activity");
+    requireList(res?.entries, "entries", "/board/learning-activity");
+    return res;
+  },
 
   // --- Board 1 (Advisory) — 2026-08-25-advisory-board-live-prediction-approve-reject-ui ---
   getAdvisoryCandidates: () => request<AdvisoryCandidatesResponse>("/board/advisory/candidates"),
