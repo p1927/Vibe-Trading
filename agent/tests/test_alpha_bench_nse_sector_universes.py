@@ -120,3 +120,57 @@ def test_sector_panel_drops_vendor_failed_symbol_but_propagates_bug(monkeypatch:
     monkeypatch.setattr(india_ohlcv_mod, "load_symbol_ohlcv", bug)
     with pytest.raises(AttributeError):
         tool._load_nse_sector_panel("niftybank", "niftybank_equity_list", "2024-01-01", "2024-01-31")
+
+
+def _stub_nifty50(monkeypatch: pytest.MonkeyPatch, loader) -> None:
+    from src.tools import nifty50_universe as n50
+
+    monkeypatch.setattr(
+        constituents_mod,
+        "load_nifty50_constituents",
+        lambda: [ConstituentRow(symbol=s, name=s, weight=0.5, sector="", market="IN") for s in ("AAA", "BBB", "CCC")],
+    )
+    monkeypatch.setattr(n50, "_load_nifty50_stock_simulator", lambda code, start, end: None)
+    monkeypatch.setattr(india_ohlcv_mod, "load_symbol_ohlcv", loader)
+
+
+def test_nifty50_panel_shares_the_sector_builder_and_drops_a_failed_vendor_symbol(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def loader(symbol, **_kw):
+        if symbol == "BBB":
+            raise RuntimeError("yfinance 429")
+        return _ohlcv_frame()
+
+    _stub_nifty50(monkeypatch, loader)
+    with caplog.at_level("WARNING"):
+        panel = tool.UNIVERSE_REGISTRY["nifty50"].panel_loader("2024-01-01", "2024-01-31")
+    assert set(panel["close"].columns) == {"AAA", "CCC"}
+    assert panel["_meta"] == {
+        "universe": "nifty50",
+        "survivorship_bias": True,
+        "constituent_source": "nifty50_constituents",
+        "constituent_count": 2,
+        "stock_simulator_hits": 0,
+    }
+    assert any("BBB" in r.getMessage() and "dropped" in r.getMessage() for r in caplog.records)  # was debug-only
+
+
+def test_nifty50_panel_raises_on_a_programming_error_not_a_thinner_universe(monkeypatch: pytest.MonkeyPatch) -> None:
+    def loader(symbol, **_kw):
+        raise TypeError("bug in the loader")
+
+    _stub_nifty50(monkeypatch, loader)
+    with pytest.raises(TypeError, match="bug in the loader"):
+        tool.UNIVERSE_REGISTRY["nifty50"].panel_loader("2024-01-01", "2024-01-31")
+
+
+def test_nifty50_constituent_programming_error_is_not_masked_by_the_fallback_roster(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken():
+        raise AttributeError("renamed field")
+
+    monkeypatch.setattr(constituents_mod, "load_nifty50_constituents", broken)
+    with pytest.raises(AttributeError, match="renamed field"):
+        tool.UNIVERSE_REGISTRY["nifty50"].panel_loader("2024-01-01", "2024-01-31")

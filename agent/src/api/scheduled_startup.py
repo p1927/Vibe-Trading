@@ -90,42 +90,9 @@ def boot_scheduled_research_stack(get_store) -> None:
             )
     except Exception:
         logger.exception("failed to auto-resume shutdown-paused scheduler jobs on API startup")
-    from src.scheduled_research.index_jobs import register_default_index_jobs
-    from src.scheduled_research.options_jobs import register_default_options_jobs
-    from src.scheduled_research.trade_data_jobs import register_default_trade_data_jobs
-    from src.scheduled_research.hub_calibration_jobs import register_default_hub_calibration_jobs
-    from src.scheduled_research.capture_jobs import register_default_hub_capture_jobs
-    from src.scheduled_research.financial_knowledge_jobs import (
-        register_default_financial_knowledge_jobs,
-    )
-    from src.scheduled_research.dst_eval_jobs import register_default_dst_eval_jobs
-    from src.scheduled_research.factor_health_jobs import register_default_factor_health_jobs
+    from src.scheduled_research.default_jobs import register_all_default_jobs
 
-    # D80: every family is always registered now — each register_default_*_jobs
-    # function reads its own `*_ENABLE_SCHEDULER` env var itself and uses it only
-    # to decide whether a newly-created job starts paused, not whether the family
-    # registers at all. A family switched off is therefore visible and resumable
-    # from the Scheduled UI instead of silently absent. See docs/DECISIONS.md D80
-    # and .claude/backlog/items/2026-09-16-per-family-scheduler-env-switches.md.
-    register_default_index_jobs(get_store())
-    register_default_options_jobs(get_store())
-    register_default_hub_calibration_jobs(get_store())
-    # Not an ``elif``: the NSE browser jobs are never subsumed by the unified hub
-    # calibration jobs; register_default_trade_data_jobs itself skips only the
-    # fills/archive jobs those do subsume.
-    register_default_trade_data_jobs(get_store())
-    register_default_hub_capture_jobs(get_store())
-    register_default_financial_knowledge_jobs(get_store())
-    register_default_dst_eval_jobs(get_store())
-    register_default_factor_health_jobs(get_store())
-    # No enable flag: the advisory ledger's only writer (2026-09-07-advisory-ledger-write-only).
-    from src.scheduled_research.execution_advisor_jobs import register_default_execution_advisor_jobs
-
-    register_default_execution_advisor_jobs(get_store())
-    # No enable flag either: the one grader for every agent on this tier (Trade DECISIONS D55).
-    from src.scheduled_research.decision_grading_jobs import register_default_decision_grading_jobs
-
-    register_default_decision_grading_jobs(get_store())
+    register_all_default_jobs(get_store())
     register_persisted_autonomous_agent_jobs()
     # Recording-wake poller: unlike the general executor below, this starts
     # unconditionally (not gated by the scheduler enable/resume flag) — see

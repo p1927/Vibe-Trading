@@ -38,7 +38,7 @@ _SCHEDULED_RESEARCH_TRUE_VALUES = {"1", "true", "yes", "on"}
 
 # Deliberately broader than ``_SAFE_PATH_PARAM_RE`` in src/api/helpers.py (which
 # every *other* route module's path params are validated against): internally
-# generated job ids can contain a colon (e.g. recording_wake_jobs' namespaced
+# generated job ids can contain a colon (e.g. recording_wait_scheduler's namespaced
 # ``recording_wake:<uuid>``), so job-id path params in this module validate
 # against this pattern instead of the generic cross-module helper. Every
 # ``{job_id}`` route below (delete/pause/resume/cancel/trigger/stream) must use

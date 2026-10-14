@@ -1,8 +1,7 @@
 """Bounded per-job in-process log buffer feeding the Scheduler tab's live-log-tail.
 
-Each of the 7 dispatch modules (index_jobs.py, options_jobs.py, trade_data_jobs.py,
-hub_calibration_jobs.py, capture_jobs.py, autonomous_agent_jobs.py,
-recording_wake_jobs.py) calls :func:`append_log` around its dispatch, and
+Each of the 6 dispatch modules (index_jobs.py, options_jobs.py, trade_data_jobs.py,
+hub_calibration_jobs.py, capture_jobs.py, autonomous_agent_jobs.py) calls :func:`append_log` around its dispatch, and
 ``GET /scheduled-runs/{job_id}/stream`` (scheduled_routes.py) polls
 :func:`get_logs_since` to emit SSE ``log`` events — the same replay-then-poll
 shape as ``_index_prediction_run_event_stream`` (trade_routes.py), just backed

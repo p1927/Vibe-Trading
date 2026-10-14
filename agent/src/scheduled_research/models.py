@@ -139,6 +139,11 @@ def validate_schedule(schedule: str) -> None:
         _validate_cron_field(part, low, high)
 
 
+#: The timezone every default (code-registered) job's cron is authored in: IST wall-clock ("evening
+#: maintenance" is 18:35 IST, not 00:05 IST). A job with ``timezone=None`` means UTC; no default job is.
+DEFAULT_JOB_TIMEZONE = "Asia/Kolkata"
+
+
 def validate_timezone_shape(tz: Optional[str]) -> None:
     """Raise ``ValueError`` when *tz* is not ``None`` or a non-empty string.
 

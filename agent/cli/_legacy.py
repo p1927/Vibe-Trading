@@ -2009,7 +2009,9 @@ def _show_settings() -> None:
             console.print(panel)
     else:
         console.print(Columns(panels, expand=True, equal=True))
-    console.print("[dim]Edit configuration in ~/.vibe-trading/.env, or run vibe-trading init.[/dim]")
+    from src.config.paths import get_runtime_root
+
+    console.print(f"[dim]Edit configuration in {get_runtime_root() / '.env'}, or run vibe-trading init.[/dim]")
 
 
 def _handle_slash_command(input_str: str, *, max_iter: int) -> None:

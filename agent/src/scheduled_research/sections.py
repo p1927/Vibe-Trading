@@ -18,7 +18,7 @@ from .financial_knowledge_jobs import FINANCIAL_KNOWLEDGE_JOB_TYPES
 from .hub_calibration_jobs import HUB_CALIBRATION_JOB_TYPES
 from .index_jobs import INDEX_JOB_TYPES
 from .options_jobs import OPTIONS_JOB_TYPES
-from .recording_wake_jobs import RECORDING_WAKE_JOB_TYPES
+from src.trade.recording_wait_scheduler import JOB_TYPE_RECORDING_WAKE
 from .trade_data_jobs import TRADE_DATA_JOB_TYPES
 
 GENERAL_SECTION = "general"
@@ -34,7 +34,7 @@ _SECTION_JOB_TYPES: Dict[str, frozenset] = {
     "hub": HUB_CALIBRATION_JOB_TYPES | HUB_CAPTURE_JOB_TYPES,
     "knowledge": FINANCIAL_KNOWLEDGE_JOB_TYPES,
     "autonomous_agent": AUTONOMOUS_JOB_TYPES | DECISION_GRADING_JOB_TYPES,
-    "recording": RECORDING_WAKE_JOB_TYPES,
+    "recording": frozenset({JOB_TYPE_RECORDING_WAKE}),
 }
 
 _JOB_TYPE_TO_SECTION: Dict[str, str] = {

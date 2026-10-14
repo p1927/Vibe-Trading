@@ -74,7 +74,7 @@ from .index_jobs import (
     JOB_TYPE_STOCK_HISTORY_COVERAGE_SWEEP,
 )
 from .options_jobs import JOB_TYPE_OPTIONS_PLAN_REFRESH, JOB_TYPE_OPTIONS_POSITION_MONITOR
-from .recording_wake_jobs import JOB_TYPE_RECORDING_WAKE
+from src.trade.recording_wait_scheduler import JOB_TYPE_RECORDING_WAKE
 from .trade_data_jobs import (
     JOB_TYPE_NSE_MACRO_REFRESH,
     JOB_TYPE_NSE_REPO_CONSISTENCY,
@@ -256,7 +256,8 @@ _JOB_DETAILS: Dict[str, JobTypeDetail] = {
         "Autonomous agent: records a rolling thesis-evolution snapshot."
     ),
     JOB_TYPE_RECORDING_WAKE: JobTypeDetail(
-        "Wakes a paused 'wait for market open' recording job and resumes its worker."
+        "Wakes a paused 'wait for market open' recording job and resumes its worker (fired by the "
+        "recording-wake poller, not this scheduler; the executor never dispatches it)."
     ),
     JOB_TYPE_DECISION_GRADING_SWEEP: JobTypeDetail(
         "Grades every autonomous agent's matured decisions on this tier (live, stopped or deleted) "

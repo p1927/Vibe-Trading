@@ -26,9 +26,15 @@ from __future__ import annotations
 import re
 import time
 
+# "down" is an outage word only as the state of a system ("backend is down", "openalgo down", "still
+# down"): a bare `down` refused ordinary market notes ("NIFTY closed down 1%", "NIFTY is down").
+_SYSTEM_DOWN = (
+    r"(?:(?:service|backend|api|server|node|openalgo|broker|mcp|vibe|tool|stack|redis|database|db)s?"
+    r"(?:\s+(?:is|was|went|are|still|currently))*\s+down|still\s+down)"
+)
 OUTAGE_MEMORY_RE = re.compile(
     r"\b(nameerror|not defined|traceback|exception|crash(?:ed)?|broken|outage|"
-    r"unavailable|fail(?:ed|ure)?|still active|down)\b",
+    rf"unavailable|fail(?:ed|ure)?|still active|{_SYSTEM_DOWN})\b",
     re.IGNORECASE,
 )
 

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { finiteOrNull, lastFinite } from "@/lib/finite";
 
 export interface PayoffPoint {
   spot: number;
@@ -24,8 +25,8 @@ export function MiniPayoffChart({ samples, spot, height = 120 }: Props) {
     const t = getChartTheme();
     const chart = initEChart(ref.current);
     const spots = samples.map((s) => Number(s.spot));
-    const pnls = samples.map((s) => Number(s.net_pnl ?? s.pnl ?? 0));
-    const lastPnl = pnls[pnls.length - 1] ?? 0;
+    const pnls = samples.map((s) => finiteOrNull(s.net_pnl ?? s.pnl));
+    const lastPnl = lastFinite(pnls) ?? 0;
     const color = lastPnl >= 0 ? t.upColor : t.downColor;
 
     const markLine = spot != null && Number.isFinite(Number(spot))

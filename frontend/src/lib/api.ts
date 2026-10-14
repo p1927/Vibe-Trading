@@ -5109,8 +5109,10 @@ export interface IndexPredictionHistoryRow {
   spot_at_prediction: number;
   expected_return_pct: number;
   implied_level: number;
-  range_low: number;
-  range_high: number;
+  /** `null` for a day that has only an index-research snapshot with no stored band (`refresh: "snapshot"`):
+   * the chart draws no band for it, never an invented one. */
+  range_low: number | null;
+  range_high: number | null;
   actual_return_pct?: number | null;
   direction_correct?: boolean | null;
   bottom_up_return_pct?: number | null;
@@ -7539,6 +7541,8 @@ export interface AgentBoardWealthCurvePoint {
   symbol?: string;
   cumulative_shadow_pnl_inr: number;
   cumulative_agent_actual_pnl_inr: number;
+  /** false: the actual value is the previous cumulative carried forward (this trade's agent P&L is not reconciled yet). */
+  agent_actual_reconciled?: boolean;
 }
 
 export interface AgentBoardWealthCurveResponse {
@@ -7727,7 +7731,6 @@ export interface AdvisoryCandidate {
    * user-supplied target profit; the advisory pipeline has no such target). `null`
    * when max_loss is 0/undefined. */
   risk_reward_ratio: number | null;
-  confidence_adjusted_score: number;
   /** Full payoff curve at the current spot, shaped for `MiniPayoffChart` directly
    * (`{spot, pnl}` — already renamed server-side from `compute_payoff`'s own
    * `underlying` key). Empty when the candidate has no legs to price. */

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
-import { withLevel } from "@/components/charts/FactorShockImpactChart";
+import { finiteOrNull } from "@/lib/finite";
 
 export interface FactorSensitivityPoint {
   factor_delta_pct?: number;
@@ -63,13 +63,13 @@ export function IndexFactorChart({
 
   const factorOption = useMemo(() => {
     const t = getChartTheme();
-    const points = withLevel(activeFactor?.points ?? []);
+    const points = activeFactor?.points ?? [];
     if (points.length < 2) return null;
-    const xs = points.map((p) => Number(p.factor_delta_pct));
-    const ys = points.map((p) => Number(p.index_level));
+    const xs = points.map((p) => Number(p.factor_delta_pct ?? 0));
+    const ys = points.map((p) => finiteOrNull(p.index_level)); // a missing level is a gap (lib/finite), never 0
     // only the sweep's own zero-shock point is the current forecast: the line used to fall back to
     // `spot * 1.01`, a number nothing computed, labelled "Current forecast"
-    const baseline = points.find((p) => Number(p.factor_delta_pct) === 0)?.index_level;
+    const baseline = points.find((p) => Number(p.factor_delta_pct ?? 0) === 0)?.index_level;
     const baselineLine = baseline != null && Number(baseline) > 0 ? Number(baseline) : null;
     return {
       backgroundColor: "transparent",
@@ -117,12 +117,10 @@ export function IndexFactorChart({
 
   const eventOption = useMemo(() => {
     const t = getChartTheme();
-    const points = (activeEvent?.curve ?? []).filter(
-      (p) => Number.isFinite(p.shock_progress) && Number.isFinite(p.index_level),
-    );
+    const points = activeEvent?.curve ?? [];
     if (points.length < 2) return null;
-    const xs = points.map((p) => Math.round(Number(p.shock_progress) * 100));
-    const ys = points.map((p) => Number(p.index_level));
+    const xs = points.map((p) => Math.round(Number(p.shock_progress ?? 0) * 100));
+    const ys = points.map((p) => finiteOrNull(p.index_level));
     const title = `${activeEvent?.event ?? "Event"} — ${activeEvent?.outcome ?? ""}`.trim();
     return {
       backgroundColor: "transparent",

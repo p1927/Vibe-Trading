@@ -39,6 +39,7 @@ from src.scheduled_research.job_tier_policy import (
     is_operational_tier_job,
 )
 from src.scheduled_research.store import ScheduledResearchJobStore
+from src.trade.recording_wait_scheduler import JOB_TYPE_RECORDING_WAKE
 # Fork-only sidecar (docs/FORK_CONVENTIONS.md): the jobs `is_due()` cannot express.
 from src.scheduled_research import stuck_jobs
 # Fork-only sidecar: D11 shortest-expected-runtime-first slot admission (docs/DECISIONS.md).
@@ -224,6 +225,10 @@ def is_due(job: ScheduledResearchJob, now_ms: int) -> bool:
     row and overwrite it, orphaning the briefing a sweep still owes.
     """
     if job.paused:
+        return False
+    # A recording wake has ONE dispatcher, the 30 s poller (`recording_wait_scheduler`), which runs
+    # unconditionally; this executor boots stopped until Resume, so it must never fire or advance one.
+    if (job.config or {}).get("job_type") == JOB_TYPE_RECORDING_WAKE:
         return False
     if job.status in {
         JobStatus.CANCELLED,
@@ -647,8 +652,7 @@ class ScheduledResearchExecutor:
             "max_overdue_seconds": round(max_overdue_ms / 1000.0, 1),
             "max_overdue_job_id": overdue_job_id,
             **stuck_jobs.summarize(stuck),
-            # The operational tier (autonomous_agent_* + recording_wake +
-            # options_position_monitor) runs its own loop/tick, split from the main one
+            # The operational tier (autonomous_agent_* + options_position_monitor) runs its own loop/tick, split from the main one
             # above so it can never be starved by a long collection-job dispatch — see
             # `_run_operational`/`_operational_tick` and
             # .claude/backlog/items/2026-09-07-scheduler-tick-head-of-line-stall.md.
@@ -925,8 +929,7 @@ class ScheduledResearchExecutor:
                 for job in self._store.load().values()
                 if is_due(job, now)
                 and not _collection_dispatch_blocked(job)
-                # The operational tier (autonomous_agent_* + recording_wake +
-                # options_position_monitor) dispatches on its own loop/tick
+                # The operational tier (autonomous_agent_* + options_position_monitor) dispatches on its own loop/tick
                 # (`_operational_tick`) so a long collection-job dispatch on this main
                 # loop can never hold its cadence hostage — see
                 # `_run_operational` and
