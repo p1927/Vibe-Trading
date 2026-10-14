@@ -145,8 +145,8 @@ class TestSentimentTool:
         mock_data = json.dumps({"data": [{"value_classification": "Neutral"}]}).encode()
         with patch("urllib.request.urlopen", return_value=type("m", (), {"read": lambda s: mock_data, "__enter__": lambda s: s, "__exit__": lambda s,*a: None})()):
             result = json.loads(tool.execute(mode="fear_greed_index"))
-        assert result["ok"] is True
-        assert result["value"] == 0  # default int
+        # a vendor payload with no value must not read as 0 == "Extreme Fear"
+        assert result["ok"] is False
 
     def test_sentiment_unicode(self):
         """Non-ASCII text should not crash."""

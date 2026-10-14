@@ -74,7 +74,44 @@ def _allowed_override_keys(module: Any) -> frozenset[str]:
     return frozenset()
 
 
+#: Override keys that choose WHICH account/endpoint a config talks to. The
+#: connector profile id already fixes that (paper vs live, host), so a caller
+#: (an LLM tool argument, a REST body) may never move it. Futu's ``host`` is the
+#: operator's local OpenD gateway, the only one a caller may legitimately name.
+_ENDPOINT_OVERRIDE_KEYS = frozenset({"profile", "host", "base_url", "testnet_host"})
+
+
 def _sdk_config(
+    profile: TradingProfile,
+    module: Any,
+    overrides: dict[str, Any],
+) -> Any:
+    """Build an SDK config bound to ``profile``'s environment.
+
+    Every write path (``place_order``, ``cancel_order``, ``_route_sdk_write``)
+    decides paper-vs-live from ``profile.environment`` and sends paper straight
+    to the broker, so the config must never be able to disagree with it. A
+    caller-supplied ``profile`` / ``host`` / ``base_url`` override could turn a
+    paper profile into a live endpoint (skipping the mandate gate) or ship the
+    API key to an arbitrary host; those keys are dropped, and the finished
+    config's own ``environment`` must equal the profile's (fail loud).
+    """
+    allowed = {
+        key: value
+        for key, value in dict(overrides or {}).items()
+        if key not in _ENDPOINT_OVERRIDE_KEYS or (key == "host" and profile.connector == "futu")
+    }
+    config = _build_sdk_config(profile, module, allowed)
+    actual = getattr(config, "environment", None)
+    if actual is not None and actual != profile.environment:
+        raise ValueError(
+            f"connector config environment {actual!r} does not match profile "
+            f"{profile.id!r} ({profile.environment}); refusing"
+        )
+    return config
+
+
+def _build_sdk_config(
     profile: TradingProfile,
     module: Any,
     overrides: dict[str, Any],

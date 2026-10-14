@@ -1695,7 +1695,8 @@ class AgentLoop:
                                     {"goal": snapshot["goal"], "snapshot": snapshot},
                                 )
                         except Exception as exc:  # noqa: BLE001
-                            logger.debug("Goal usage accounting skipped: %s", exc)
+                            self._goal_bookkeeping_failed("usage accounting", active_goal_id, exc)
+                            active_goal_id = None  # only reached when the goal went stale
 
                 thinking_text = "".join(thinking_chunks)
                 if thinking_text:
@@ -2012,7 +2013,8 @@ class AgentLoop:
                                 and goal_needs_continuation(continuation_snapshot)
                             )
                         except Exception as exc:  # noqa: BLE001
-                            logger.debug("Goal continuation check skipped: %s", exc)
+                            self._goal_bookkeeping_failed("continuation check", active_goal_id, exc)
+                            active_goal_id = None  # only reached when the goal went stale
 
                     if should_continue_goal and continuation_snapshot is not None:
                         current_progress = goal_progress_tuple(continuation_snapshot)
@@ -3362,6 +3364,23 @@ class AgentLoop:
 
         if not manual:
             self._auto_compact_count += 1
+
+    def _goal_bookkeeping_failed(self, what: str, goal_id: str, exc: Exception) -> None:
+        """Handle a failed goal-store call: return only when the goal merely went stale.
+
+        A goal the user replaced mid-run is normal (``StaleGoalError``): warn and stop tracking it.
+        Anything else means the budget is no longer being charged or an unfinished goal is no
+        longer continued while the turn would report success, so it is logged at error, emitted
+        as ``goal.accounting_failed`` and re-raised to fail the run.
+        """
+        from src.goal import StaleGoalError
+
+        if isinstance(exc, StaleGoalError):
+            logger.warning("Goal %s is no longer current (%s); not tracking it for the rest of this run", goal_id, exc)
+            return
+        logger.error("Goal %s failed for %s: %s", what, goal_id, exc, exc_info=True)
+        self._emit("goal.accounting_failed", {"goal_id": goal_id, "stage": what, "error": str(exc)})
+        raise exc
 
     def _emit(self, event_type: str, data: Dict[str, Any]) -> None:
         """Fire an event via the callback."""

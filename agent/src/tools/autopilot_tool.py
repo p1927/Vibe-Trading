@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -115,8 +116,9 @@ class RunResearchAutopilotTool(BaseTool):
                     ensure_ascii=False,
                 )
 
+            # Host-injected id wins: a model-supplied one would replace another session's goal.
             session_id = str(
-                kwargs.get("session_id") or self._default_session_id or ""
+                self._default_session_id or kwargs.get("session_id") or ""
             ).strip()
             if not session_id:
                 return json.dumps(
@@ -197,12 +199,34 @@ _UNIVERSE_CODES: dict[str, list[str]] = {
     "dow jones": ["DIA.US"],
     "hang seng": ["^HSI.HK"],
     "nikkei": ["^N225.HK"],
+    # India (stock_simulator_loader / yahoo_client accept these tokens).
+    "nifty": ["NIFTY"],
+    "nifty 50": ["NIFTY"],
+    "nifty50": ["NIFTY"],
+    "bank nifty": ["BANKNIFTY"],
+    "banknifty": ["BANKNIFTY"],
 }
+
+_CODE_TOKEN_RE = re.compile(r"^[\^A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def _lookup_codes(universe: str) -> list[str]:
+    """Map a hypothesis universe to loader codes.
+
+    A known index name maps to its code; otherwise the universe must be a comma-separated
+    list of symbols. Free text ("India large caps") used to be written into config.json as
+    one bogus code and only failed deep inside the backtest runner.
+    """
     key = universe.strip().lower().replace("-", " ").replace("_", " ")
-    return _UNIVERSE_CODES.get(key, [universe])
+    if key in _UNIVERSE_CODES:
+        return list(_UNIVERSE_CODES[key])
+    tokens = [t.strip() for t in universe.split(",") if t.strip()]
+    if not tokens or not all(_CODE_TOKEN_RE.match(t) for t in tokens):
+        raise ValueError(
+            f"universe {universe!r} is neither a known index ({', '.join(sorted(_UNIVERSE_CODES))}) "
+            "nor a comma-separated list of symbols such as 'RELIANCE.NS, TCS.NS'"
+        )
+    return tokens
 
 
 def _resolve_source(data_sources: list[str] | None) -> tuple[str, str | None]:
@@ -417,6 +441,15 @@ class SignalEngine:
 '''
 
 
+def _docstring_safe(text: str) -> str:
+    """Make free text safe inside a non-raw triple-quoted docstring.
+
+    A signal definition holding triple quotes ends the docstring early (the rest becomes code the
+    backtest would run), and a stray backslash such as ``\\N`` or ``\\U`` is a SyntaxError.
+    """
+    return text.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
+
+
 class ScaffoldSignalEngineTool(BaseTool):
     """Write a contract-correct ``signal_engine.py`` stub for a hypothesis.
 
@@ -512,9 +545,9 @@ class ScaffoldSignalEngineTool(BaseTool):
                 or "(no signal_definition set on the hypothesis)"
             )
             source = _SIGNAL_ENGINE_TEMPLATE.format(
-                hypothesis_id=hypothesis.hypothesis_id,
-                title=hypothesis.title,
-                signal_definition=signal_definition,
+                hypothesis_id=_docstring_safe(hypothesis.hypothesis_id),
+                title=_docstring_safe(hypothesis.title),
+                signal_definition=_docstring_safe(signal_definition),
             )
             signal_path.write_text(source, encoding="utf-8")
 

@@ -202,7 +202,7 @@ class RunShadowBacktestTool(BaseTool):
             return _err("shadow_id is required")
         try:
             profile = load_profile(shadow_id)
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, ValueError) as exc:
             return _err(str(exc))
 
         today = date.today()
@@ -272,7 +272,7 @@ class RenderShadowReportTool(BaseTool):
             return _err("shadow_id is required")
         try:
             profile = load_profile(shadow_id)
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, ValueError) as exc:
             return _err(str(exc))
 
         try:
@@ -294,20 +294,10 @@ class RenderShadowReportTool(BaseTool):
                     window_end=window_end,
                     journal_path=journal_path,
                 )
-            except Exception as exc:  # pragma: no cover — defensive
-                logger.warning("backtest failed during report render: %s", exc)
-                from src.shadow_account.models import AttributionBreakdown, ShadowBacktestResult
-                result = ShadowBacktestResult(
-                    shadow_id=profile.shadow_id,
-                    per_market={}, combined={"error": str(exc)}, equity_curves={},
-                    attribution=AttributionBreakdown(
-                        missed_signals_pnl=0.0, noise_trades_pnl=0.0, early_exit_pnl=0.0,
-                        late_exit_pnl=0.0, overtrading_pnl=0.0, counterfactual_trades=(),
-                    ),
-                    shadow_total_pnl=None,
-                    real_total_pnl=0.0,
-                    delta_pnl=None,
-                )
+            except Exception as exc:  # noqa: BLE001
+                # A failed backtest must not become an "ok" report of empty metrics.
+                logger.exception("backtest failed during report render")
+                return _err(f"backtest failed, report not rendered: {exc}")
 
         signals_unavailable: list[dict[str, str]] = []
         today_signals = (
@@ -367,7 +357,7 @@ class ScanShadowSignalsTool(BaseTool):
             return _err(str(exc))
         try:
             profile = load_profile(shadow_id)
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, ValueError) as exc:
             return _err(str(exc))
 
         target = kwargs.get("date") or None

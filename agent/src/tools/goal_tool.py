@@ -10,7 +10,7 @@ from typing import Any, Callable
 from src.agent.tools import BaseTool
 from src.goal import AuditRow, EvidenceInput, GoalStatus, GoalStore, RiskTier, StaleGoalError
 from src.goal.context import default_goal_criteria
-from src.tools.path_utils import safe_run_dir
+from src.tools.path_utils import safe_document_path, safe_run_dir
 
 
 def _json_error(error: str, *, error_type: str = "validation") -> str:
@@ -94,7 +94,9 @@ def _trace_fields_from_runtime(kwargs: dict[str, Any]) -> tuple[str | None, str 
             artifact_candidate = resolved
             artifact_path = str(resolved)
         elif raw_path.is_absolute():
-            artifact_candidate = raw_path.resolve()
+            # Same import-root boundary the store verifies against; otherwise any readable
+            # file's sha256 could be probed through this tool.
+            artifact_candidate = safe_document_path(str(raw_path))
 
     if artifact_candidate is not None and artifact_candidate.is_file() and not artifact_hash:
         artifact_hash = _sha256_file(artifact_candidate)
@@ -126,7 +128,8 @@ class _GoalToolBase(BaseTool):
         self._event_callback = event_callback
 
     def _session_id(self, kwargs: dict[str, Any]) -> str | None:
-        value = str(kwargs.get("session_id") or self._default_session_id or "").strip()
+        # Host session id wins: a model-supplied one would write another session's goal.
+        value = str(self._default_session_id or kwargs.get("session_id") or "").strip()
         return value or None
 
     def _emit(self, event_type: str, data: dict[str, Any]) -> None:

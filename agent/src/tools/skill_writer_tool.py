@@ -92,6 +92,8 @@ class SaveSkillTool(BaseTool):
             return json.dumps({"status": "error", "error": "name and content required"})
 
         slug = _sanitize_skill_name(name)
+        if not slug:  # whitespace-only name: would write SKILL.md into the skills root itself
+            return json.dumps({"status": "error", "error": "name must contain visible characters"})
         skill_dir = USER_SKILLS_DIR / slug
         skill_dir.mkdir(parents=True, exist_ok=True)
         skill_path = skill_dir / "SKILL.md"
@@ -160,6 +162,8 @@ class PatchSkillTool(BaseTool):
             return json.dumps({"status": "error", "error": "name and find required"})
 
         slug = _sanitize_skill_name(name)
+        if not slug:
+            return json.dumps({"status": "error", "error": "name must contain visible characters"})
         user_path = USER_SKILLS_DIR / slug / "SKILL.md"
         bundled_dir = Path(__file__).resolve().parents[1] / "skills"
         bundled_path = bundled_dir / slug / "SKILL.md"

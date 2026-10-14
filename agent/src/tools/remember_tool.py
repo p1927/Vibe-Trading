@@ -171,9 +171,9 @@ class RememberTool(BaseTool):
         event = kwargs.get("event", "")
         if not title or not event:
             return json.dumps({"status": "error", "error": "title and event required"})
-        source = kwargs.get("source", "system")
-        if source not in ("user", "system"):
-            source = "system"
+        # Only the host may attest a user-sourced reinforcement; a model-chosen "user" would
+        # let it promote its own memory at full confidence.
+        source = "system"
         success = self._lifecycle.reinforce(title, event, source)
         if success:
             return json.dumps(

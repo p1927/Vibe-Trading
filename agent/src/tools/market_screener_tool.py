@@ -140,6 +140,8 @@ def _screen_market(market: str, *, sort_by: str, top_n: int) -> list[dict[str, A
             "pn": "1",
             "pz": str(top_n),
             "po": "1",  # descending
+            "fltt": "2",  # decimal prices/percents (as etf_holdings_tool); without it Eastmoney scales by 10^f1
+            "invt": "2",
             "fid": _SORT_FID[sort_by],
             "fs": _MARKET_FS[market],
             "fields": _FIELDS,

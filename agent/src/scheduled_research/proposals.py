@@ -85,9 +85,26 @@ def public_proposal(payload: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+_PRUNE_AFTER_S = 24 * 3600
+
+
+def _prune_old_proposals() -> None:
+    """Delete proposal files untouched for a day: nothing reads a settled/expired one again, and
+    ``latest_pending_for_session`` scans every file on each call."""
+    directory = get_runtime_root() / "scheduled_research" / "proposals"
+    if not directory.exists():
+        return
+    cutoff = time.time() - _PRUNE_AFTER_S
+    for path in directory.glob("srp_*.json"):
+        with suppress(OSError):
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+
+
 def propose_create(
     draft: Mapping[str, Any], *, session_id: str | None = None
 ) -> dict[str, Any]:
+    _prune_old_proposals()
     job = build_job_from_draft(draft, session_id=session_id)
     now = int(time.time() * 1000)
     payload = {
@@ -105,6 +122,7 @@ def propose_create(
 
 
 def propose_cancel(job_id: str, *, session_id: str | None = None) -> dict[str, Any]:
+    _prune_old_proposals()
     job = default_store().get(job_id)
     if job is None:
         raise ProposalError(f"scheduled research job {job_id!r} was not found")

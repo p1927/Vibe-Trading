@@ -16,16 +16,41 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+import time
 
 logger = logging.getLogger(__name__)
 
 _INTERVAL_S = 60.0
 _task: "asyncio.Task | None" = None
 
+# Last outcome per step, served in /scheduled-runs/scheduler/status ("autonomous_hygiene") so a
+# pass that keeps failing is visible (this loop is not a scheduler job, so D32's failed-jobs
+# check never saw it).
+_step_state: dict[str, dict[str, object]] = {}
+_step_lock = threading.Lock()
+
+
+def _record_step(name: str, error: str | None) -> None:
+    with _step_lock:
+        prev = _step_state.get(name, {})
+        _step_state[name] = {
+            "ok": error is None,
+            "last_run_at": time.time(),
+            "last_error": error,
+            "consecutive_failures": 0 if error is None else int(prev.get("consecutive_failures") or 0) + 1,
+        }
+
+
+def hygiene_status() -> dict[str, dict[str, object]]:
+    """Snapshot of each hygiene step's last outcome (empty until the first pass ran)."""
+    with _step_lock:
+        return {name: dict(state) for name, state in _step_state.items()}
+
 
 def run_autonomous_hygiene_pass() -> None:
     """One synchronous pass. Each step is isolated so one failing step does not skip the rest;
-    failures are logged at WARNING with the traceback (they were DEBUG in the GET)."""
+    failures are logged at ERROR with the traceback and recorded in :func:`hygiene_status`."""
     from src.trade.hub_bridge import ensure_trade_stack_path
 
     ensure_trade_stack_path()
@@ -47,9 +72,11 @@ def run_autonomous_hygiene_pass() -> None:
     ):
         try:
             results[name] = step()
-        except Exception:
-            logger.warning("autonomous hygiene: %s failed", name, exc_info=True)
+            _record_step(name, None)
+        except Exception as exc:
+            logger.error("autonomous hygiene: %s failed", name, exc_info=True)
             results[name] = "failed"
+            _record_step(name, f"{type(exc).__name__}: {exc}")
     # One line per pass (~1/min) so a live check can see the loop is alive and what it did.
     logger.info("autonomous hygiene pass: agents=%d %s", len(list_agents()), results)
 

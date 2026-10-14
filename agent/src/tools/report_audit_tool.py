@@ -369,7 +369,8 @@ def render_verdict(results: list[dict[str, Any]], report_name: str = "") -> dict
                 })
 
     fail_count = len(fail_items)
-    verdict = "PASS" if fail_count == 0 else "FAIL"
+    # Nothing verified is not a pass: omitted fetched_value rows are skipped above.
+    verdict = "INCONCLUSIVE" if total == 0 else ("PASS" if fail_count == 0 else "FAIL")
     return {
         "verdict": verdict,
         "report_name": report_name,

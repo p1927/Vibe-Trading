@@ -606,6 +606,32 @@ def _extract_sector(prompt: str) -> str:
     return ""
 
 
+_COMMODITY_PATTERNS: list[tuple[str, str]] = [
+    ("crude oil", r"crude|\boil\b|原油"),
+    ("natural gas", r"natural\s+gas"),
+    ("copper", r"copper"),
+    ("iron ore", r"iron\s+ore"),
+    ("aluminum", r"alumin"),
+    ("soybeans", r"soy"),
+    ("rebar", r"rebar"),
+    ("gold", r"gold|黄金"),
+]
+
+
+def _extract_commodity(prompt: str) -> str:
+    """Commodity the prompt names; the preset used to be hard-wired to gold whatever was asked."""
+    for commodity, pattern in _COMMODITY_PATTERNS:
+        if re.search(pattern, prompt, re.IGNORECASE):
+            return commodity
+    return "gold"
+
+
+def _extract_crypto_target(prompt: str) -> str:
+    """Ticker(s) the prompt names, else the preset's documented default basket."""
+    named = [t for t in ("BTC", "ETH", "SOL") if re.search(rf"\b{t}\b", prompt, re.IGNORECASE)]
+    return ", ".join(named) if named else "BTC, ETH, SOL"
+
+
 def _snippet(prompt: str, max_len: int = 240) -> str:
     """Trim prompt for auxiliary fields."""
     s = prompt.strip()
@@ -637,7 +663,7 @@ def _build_variables(preset_name: str, prompt: str) -> dict[str, str]:
         "event_driven_task_force": {"market": market, "event_type": "all types"},
         "etf_allocation_desk": {"risk_profile": _risk_to_etf_profile(risk), "market": market},
         "derivatives_strategy_desk": {"target": g, "view": "neutral"},
-        "crypto_research_lab": {"target": "BTC, ETH, SOL", "timeframe": "medium-term 1-3 months"},
+        "crypto_research_lab": {"target": _extract_crypto_target(prompt), "timeframe": "medium-term 1-3 months"},
         "credit_research_team": {"target": g, "market": "China credit bonds"},
         "convertible_bond_team": {
             "market": "A-share convertible bonds",
@@ -645,7 +671,7 @@ def _build_variables(preset_name: str, prompt: str) -> dict[str, str]:
             "strategy_type": _extract_strategy_type(prompt),
         },
         "fundamental_research_team": {"target": g, "market": market},
-        "commodity_research_team": {"commodity": "gold", "horizon": "3 months"},
+        "commodity_research_team": {"commodity": _extract_commodity(prompt), "horizon": "3 months"},
         "fund_selection_panel": {"fund_type": "equity", "goal": g},
         "social_alpha_team": {"target": g, "timeframe": "daily"},
         "geopolitical_war_room": {"crisis": g, "market": market},

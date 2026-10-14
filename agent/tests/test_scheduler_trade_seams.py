@@ -515,3 +515,106 @@ def test_tool_result_provenance_and_news_scenario_sync_are_wired(tmp_path, monke
     agent._finalize_tool_result(tc, '{"status": "ok"}', 1, ContextBuilder, messages, TraceWriter(tmp_path), [], 1)
     assert synced and synced[0][:2] == ("sess-1", "get_quote")
     assert "[Source: [[src_1|Quote]]]" in messages[-1]["content"]
+
+
+# --- R2 completion crew: tool boundaries (host-injected ids, path ids, loud failures) ---------
+
+
+def test_host_session_id_wins_over_a_model_supplied_one() -> None:
+    from src.tools.goal_tool import GetResearchGoalTool
+
+    assert GetResearchGoalTool(default_session_id="host")._session_id({"session_id": "other"}) == "host"
+    assert GetResearchGoalTool()._session_id({"session_id": "cli"}) == "cli"  # fallback only without a host id
+    tools = Path(__file__).resolve().parents[1] / "src" / "tools"
+    for name in ("scheduled_research_tool.py", "autopilot_tool.py"):
+        assert 'self._default_session_id or kwargs.get("session_id")' in (tools / name).read_text(), name
+
+
+def test_goal_bookkeeping_failure_fails_the_run_but_a_stale_goal_does_not() -> None:
+    from src.agent.loop import AgentLoop
+    from src.goal import StaleGoalError
+
+    loop = AgentLoop.__new__(AgentLoop)
+    events: list = []
+    loop._event_callback = lambda kind, data: events.append(kind)
+    loop._goal_bookkeeping_failed("usage accounting", "g1", StaleGoalError("replaced"))  # returns
+    assert events == []
+    with pytest.raises(RuntimeError, match="db locked"):
+        loop._goal_bookkeeping_failed("usage accounting", "g1", RuntimeError("db locked"))
+    assert events == ["goal.accounting_failed"]
+
+
+def test_hygiene_step_failures_are_recorded_and_counted() -> None:
+    from src.scheduled_research import autonomous_hygiene as h
+
+    h._step_state.clear()
+    h._record_step("infra heal", "ValueError: boom")
+    h._record_step("infra heal", "ValueError: boom")
+    assert h.hygiene_status()["infra heal"]["consecutive_failures"] == 2
+    h._record_step("infra heal", None)
+    assert h.hygiene_status()["infra heal"]["consecutive_failures"] == 0
+
+
+def test_shadow_ids_cannot_leave_their_directory() -> None:
+    from src.shadow_account.storage import load_profile
+
+    with pytest.raises(ValueError, match="invalid shadow_id"):
+        load_profile("../../etc/passwd")
+
+
+def test_whitespace_skill_name_is_refused() -> None:
+    import json
+
+    from src.tools.skill_writer_tool import SaveSkillTool
+
+    assert json.loads(SaveSkillTool().execute(name="   ", content="x"))["status"] == "error"
+
+
+def test_signal_engine_docstring_cannot_be_broken_out_of() -> None:
+    import ast
+
+    from src.tools.autopilot_tool import _SIGNAL_ENGINE_TEMPLATE, _docstring_safe
+
+    nasty = 'x"""\nimport os\nos.system("id")\n"""  C:\\Users\\N'
+    code = _SIGNAL_ENGINE_TEMPLATE.format(
+        hypothesis_id="h", title=_docstring_safe(nasty), signal_definition=_docstring_safe(nasty)
+    )
+    tree = ast.parse(code)
+    assert not any(isinstance(n, ast.Import) for n in tree.body if getattr(n, "names", [None])[0] and n.names[0].name == "os")
+
+
+def test_universe_free_text_is_refused_and_nifty_resolves() -> None:
+    from src.tools.autopilot_tool import _lookup_codes
+
+    assert _lookup_codes("Nifty 50") == ["NIFTY"]
+    assert _lookup_codes("RELIANCE.NS, TCS.NS") == ["RELIANCE.NS", "TCS.NS"]
+    with pytest.raises(ValueError):
+        _lookup_codes("India large caps")
+
+
+def test_swarm_commodity_and_crypto_targets_follow_the_prompt() -> None:
+    from src.tools.swarm_tool import _build_variables
+
+    assert _build_variables("commodity_research_team", "crude oil outlook")["commodity"] == "crude oil"
+    assert _build_variables("crypto_research_lab", "how is ETH doing")["target"] == "ETH"
+
+
+def test_report_audit_with_nothing_verified_is_not_a_pass() -> None:
+    src = (Path(__file__).resolve().parents[1] / "src" / "tools" / "report_audit_tool.py").read_text()
+    assert '"INCONCLUSIVE" if total == 0' in src
+
+
+def test_broad_kill_by_name_is_blocked_for_any_process() -> None:
+    from src.tools._shell_safety import broad_python_kill_error
+
+    for cmd in ("pkill -f vibe", "killall node", "ps aux | xargs kill -9", "echo hi; pkill uvicorn"):
+        assert broad_python_kill_error(cmd), cmd
+    assert broad_python_kill_error("kill 12345") is None
+
+
+def test_mcp_cache_key_never_holds_a_raw_env_secret() -> None:
+    from src.config.schema import MCPServerConfig
+    from src.tools.mcp import _make_cache_key
+
+    cfg = MCPServerConfig(command="x", args=[], env={"API_KEY": "sk-secret-value"})
+    assert "sk-secret-value" not in " ".join(_make_cache_key("s", cfg))

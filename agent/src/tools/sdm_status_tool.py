@@ -203,6 +203,11 @@ class SdmStatusTool(BaseTool):
         if not artifact_id:
             return _error(ValueError("artifact_id is required for enable"))
 
+        current = store.get_artifact(artifact_id)
+        if current is not None and current.status != ArtifactStatus.DISABLED:
+            return _error(ValueError(
+                f"enable only re-enables a DISABLED artifact; {artifact_id} is {current.status}"
+            ))
         updated = store.update_status(artifact_id, ArtifactStatus.ACTIVE)
         if updated is None:
             return _error(ValueError(f"Artifact not found: {artifact_id}"))

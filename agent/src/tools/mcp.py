@@ -236,7 +236,8 @@ def _make_cache_key(server_name: str, server_config: "MCPServerConfig") -> tuple
         str(server_config.type),
         server_config.command,
         str(server_config.args or []),
-        str(sorted((server_config.env or {}).items())),
+        # env routinely carries API keys (OpenAlgo's agent.json): fingerprint, never raw.
+        _fingerprint(str(sorted((server_config.env or {}).items()))),
         str(sorted(server_config.enabled_tools or [])),
         _fingerprint(server_config.url or ""),
         _fingerprint(str(sorted((server_config.headers or {}).items()))),

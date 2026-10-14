@@ -141,6 +141,10 @@ def _read_pdf(path: Path, pages: str, min_text_per_page: int = _MIN_TEXT_PER_PAG
     try:
         total_pages = len(doc)
         targets = _parse_pages(pages, total_pages) if pages.strip() else list(range(total_pages))
+        targets = [i for i in targets if 0 <= i < total_pages]
+        if not targets:
+            # An out-of-range request must not come back "ok" with empty text and a pages_read count.
+            return _err(f"no valid pages selected (requested {pages!r}; the document has {total_pages} page(s))")
         total_targets = len(targets)
         chunks: list[str] = []
         ocr_pages = 0

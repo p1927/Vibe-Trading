@@ -595,9 +595,12 @@ def register_scheduled_routes(
         executor = _get_scheduled_research_executor()
         # liveness() reads the whole job store; off the loop (check_dev_ports + UI poll this).
         liveness = await asyncio.to_thread(executor.liveness)
+        from src.scheduled_research.autonomous_hygiene import hygiene_status
+
         return {
             "enabled": _scheduled_research_scheduler_enabled(),
             **liveness,
+            "autonomous_hygiene": hygiene_status(),
         }
 
     @app.post(

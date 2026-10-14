@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,16 @@ from typing import Any
 
 from src.config.paths import get_runtime_root
 from src.shadow_account.models import ShadowProfile, ShadowRule
+
+
+_SHADOW_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _checked_id(shadow_id: str) -> str:
+    """Reject an id that could leave its directory (the id is a path component and tool-supplied)."""
+    if not isinstance(shadow_id, str) or not _SHADOW_ID_RE.fullmatch(shadow_id):
+        raise ValueError(f"invalid shadow_id: {shadow_id!r}")
+    return shadow_id
 
 
 def _root() -> Path:
@@ -33,7 +44,7 @@ def profiles_dir() -> Path:
 
 
 def runs_dir(shadow_id: str) -> Path:
-    d = _root() / "shadow_runs" / shadow_id
+    d = _root() / "shadow_runs" / _checked_id(shadow_id)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -66,7 +77,7 @@ def now_iso() -> str:
 
 def save_profile(profile: ShadowProfile) -> Path:
     """Persist a ShadowProfile to disk as JSON."""
-    path = profiles_dir() / f"{profile.shadow_id}.json"
+    path = profiles_dir() / f"{_checked_id(profile.shadow_id)}.json"
     path.write_text(
         json.dumps(profile.to_dict(), ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
@@ -80,7 +91,7 @@ def load_profile(shadow_id: str) -> ShadowProfile:
     Raises:
         FileNotFoundError: No profile with that id.
     """
-    path = profiles_dir() / f"{shadow_id}.json"
+    path = profiles_dir() / f"{_checked_id(shadow_id)}.json"
     if not path.exists():
         raise FileNotFoundError(f"Shadow profile not found: {shadow_id}")
     data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))

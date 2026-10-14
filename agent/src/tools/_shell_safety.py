@@ -12,7 +12,9 @@ _TASKKILL_PYTHON = re.compile(
     re.IGNORECASE,
 )
 _UNIX_PYTHON_KILL = re.compile(
-    rf"^(?:sudo\s+)?(?:pkill|killall)\b[^;&\r\n]*{_PYTHON_PROCESS}",
+    # Any name-based kill, not just python: on the shared dev box `pkill -f vibe` / `killall node`
+    # takes down other sessions' services. cancel_background stops a tracked task.
+    r"(?:^|[|;&]\s*)(?:sudo\s+)?(?:pkill|killall)\b|\bxargs\s+(?:-\S+\s+)*kill\b|\bkill\s+(?:-\S+\s+)*-1\b",
     re.IGNORECASE,
 )
 _POWERSHELL_PREFIX = re.compile(

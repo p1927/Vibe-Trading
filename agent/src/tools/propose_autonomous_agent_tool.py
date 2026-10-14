@@ -77,7 +77,8 @@ class ProposeAutonomousAgentTool(BaseTool):
         if not isinstance(symbols, list) or not symbols:
             return json.dumps({"status": "error", "error": "symbols (array) is required"})
 
-        session_id = kwargs.get("session_id") or self._default_session_id
+        # host-injected id wins over a model-supplied one
+        session_id = self._default_session_id or kwargs.get("session_id")
 
         result = propose_autonomous_agent(
             symbols=symbols,

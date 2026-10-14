@@ -85,8 +85,13 @@ def _fetch_fear_greed() -> dict[str, Any] | None:
     if not data:
         return None
     item = data[0]
+    raw_value = str(item.get("value", "")).strip()
+    if not raw_value.isdigit():
+        # a missing value must not read as 0 == "Extreme Fear"
+        logger.warning("Fear & Greed payload has no numeric value: %r", item)
+        return None
     return {
-        "value": int(item.get("value", 0)),
+        "value": int(raw_value),
         "classification": item.get("value_classification", "unknown"),
     }
 

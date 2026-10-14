@@ -89,8 +89,11 @@ class ScheduledResearchTool(BaseTool):
 
     def execute(self, **kwargs: Any) -> str:
         action = str(kwargs.get("action") or "").strip()
+        # The host session id is the truth: a model-supplied one would let a proposal be
+        # filed against (and confirmed in) another session. It is only a fallback when the
+        # tool was built without a session (CLI/tests).
         session_id = (
-            str(kwargs.get("session_id") or self._default_session_id or "").strip()
+            str(self._default_session_id or kwargs.get("session_id") or "").strip()
             or None
         )
         if action == "status":

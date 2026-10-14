@@ -76,6 +76,12 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _scaled_or_none(value: Any, factor: float) -> float | None:
+    """A missing vendor figure stays None; it must not become a 0.0 "no net flow"."""
+    number = _to_float(value)
+    return None if number is None else number * factor
+
+
 def _net_amount(row: dict[str, Any], buy_key: str, sell_key: str) -> float | None:
     buy = _to_float(row.get(buy_key))
     sell = _to_float(row.get(sell_key))
@@ -121,7 +127,7 @@ def fetch_fund_flow(symbol: str, *, days: int) -> dict[str, Any]:
         parsed.append(
             {
                 "timestamp": _dashed_date(row.get("trade_date")),
-                "main": (_to_float(row.get("net_mf_amount")) or 0.0) * 10_000,
+                "main": _scaled_or_none(row.get("net_mf_amount"), 10_000),
                 "small": _net_amount(row, "buy_sm_amount", "sell_sm_amount"),
                 "medium": _net_amount(row, "buy_md_amount", "sell_md_amount"),
                 "large": _net_amount(row, "buy_lg_amount", "sell_lg_amount"),
