@@ -29,7 +29,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from src.live import pending_action
-from src.live.audit import LiveActionEvent, assert_audit_writable, write_live_action
+from src.live.audit import LiveActionEvent, audit_unwritable_reason, write_live_action
 from src.live.daily_count import (
     DailyCountError,
     DailyOrderLockUnavailable,
@@ -41,6 +41,7 @@ from src.live.enforcement import (
     BREACH_KIND_INSTRUMENT,
     BREACH_KIND_UNIVERSE,
     OrderIntent,
+    buy_worst_case_price,
     check_mandate,
     instrument_asset_class,
     last_price_usd,
@@ -134,9 +135,6 @@ def execute_live_order(
         )
     intent = normalized
 
-    positions = _safe_read(connector_module, "get_positions", config)
-    balance = _safe_read(connector_module, "get_account_snapshot", config)
-
     try:
         with daily_order_lock(broker):
             if broker == "alpaca":
@@ -145,8 +143,12 @@ def execute_live_order(
                 )
                 if recovery is not None:
                     return recovery
+            # Positions/balance are read HERE, under the lock (as execute_live_action does): a snapshot taken
+            # before it would miss a fill from an order that held the lock in between, undercounting exposure.
+            positions = _safe_read(connector_module, "get_positions", config)
+            balance = _safe_read(connector_module, "get_account_snapshot", config)
             # Re-checked HERE, under the same lock the order is placed under (as execute_live_action
-            # does): pricing and reading positions above take seconds, and a halt tripped or a mandate
+            # does): pricing and the reads above take seconds, and a halt tripped or a mandate
             # expiring in that window must still stop this order.
             if _is_expired(mandate):
                 return _deny(
@@ -390,7 +392,7 @@ def _execute_and_audit_live_action(
     if consume_daily_count:
         # Risk-increasing only: a risk-reducing action (closing a position) must stay possible
         # even when the ledger is down, so it is not blocked here.
-        unwritable = _audit_unwritable_reason()
+        unwritable = audit_unwritable_reason()
         if unwritable is not None:
             return _deny(
                 broker, session_id, unwritable, ["mandate", "audit_ledger"], mandate,
@@ -464,7 +466,7 @@ def _execute_and_audit_live_action(
 
 def _allow(broker, session_id, connector_module, config, intent, place_kwargs, mandate, positions) -> dict[str, Any]:
     """Execute the order; consume a count + audit only on a non-error result."""
-    unwritable = _audit_unwritable_reason()
+    unwritable = audit_unwritable_reason()
     if unwritable is not None:
         return _deny(
             broker, session_id, unwritable, ["mandate", "audit_ledger"], mandate,
@@ -955,6 +957,7 @@ def _normalize_notional(intent: OrderIntent, connector_module: Any, config: Any)
         quantity=intent.quantity,
         instrument_type=intent.instrument_type,
         asset_class=intent.asset_class,
+        limit_price=intent.limit_price,
     )
 
 
@@ -980,19 +983,9 @@ def _implied_notional(intent: OrderIntent, connector_module: Any, config: Any) -
             return None
         return float(value)
     price = _quote_price(intent, connector_module, config)
-    # A buy limit is fillable anywhere up to its limit, so the cap must be
-    # sized for the worse of the two (#18): pricing it at the quote alone
-    # would let a limit at 2x the market fill at twice the authorized amount.
-    # Sell limits do not create exposure, so the quote stands there.
-    if (
-        intent.side == "buy"
-        and intent.limit_price is not None
-        and price is not None
-    ):
-        price = max(price, intent.limit_price)
     if price is None:
         return None
-    return intent.quantity * price
+    return intent.quantity * buy_worst_case_price(intent, price)
 
 
 def _quote_price(intent: OrderIntent, connector_module: Any, config: Any) -> float | None:
@@ -1059,16 +1052,6 @@ def _pre_position_qty(positions: object, symbol: str) -> str | None:
 # --------------------------------------------------------------------------- #
 # Audit + misc
 # --------------------------------------------------------------------------- #
-
-
-def _audit_unwritable_reason() -> str | None:
-    """``None`` when the audit ledger is writable; else why not (an order must then not be sent)."""
-    try:
-        assert_audit_writable()
-    except OSError as exc:
-        logger.error("live-action audit ledger is not writable: %s", exc)
-        return f"live-action audit ledger is not writable ({exc}); refusing to send an order it cannot record"
-    return None
 
 
 def _audit(

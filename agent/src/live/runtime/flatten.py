@@ -40,6 +40,7 @@ import logging
 from typing import Any, Callable
 
 from src.live.audit import LiveActionEvent, write_live_action
+from src.live.enforcement import position_signed_quantity, position_symbol
 from src.live.mandate.store import load_mandate
 
 logger = logging.getLogger(__name__)
@@ -335,8 +336,26 @@ def _flatten_open_positions(
                 }
             )
             continue
-        symbol = position.get("symbol")
-        qty = float(position.get("qty", 0) or 0)
+        # The same row keys the gate's exposure math reads (symbol/ticker/..., quantity/qty/shares). A row
+        # this sweep cannot size is recorded and skipped, never raised: one malformed row must not abort the
+        # sweep half-way (a raise latches it, leaving every later position open) and a row read as quantity
+        # zero would leave a held position silently open.
+        symbol = position_symbol(position)
+        qty = position_signed_quantity(position)
+        if symbol is None or qty is None:
+            message = "position symbol or quantity missing or unparseable; not flattened"
+            label = symbol or position.get("symbol")
+            report["errors"].append({"phase": "flatten", "symbol": label, "error": message})
+            _audit(
+                broker,
+                _sweep_tool(broker, "submit_order", _FLATTEN_TOOL),
+                f"flatten {label}: unparseable position row",
+                {"position": position},
+                None,
+                "error",
+                message,
+            )
+            continue
         if qty == 0:
             continue
         side = "sell" if qty > 0 else "buy"

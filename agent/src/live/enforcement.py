@@ -354,6 +354,11 @@ def _coerce_position_rows(positions: object) -> list[dict] | None:
         rows = positions.get("positions")
         if rows is None:
             rows = positions.get("data")
+            # MCPServerAdapter.call_tool wraps a structured result as {"status": "ok", "data": {...}}: the
+            # records sit one level down. Without this unwrap every real MCP positions read was
+            # "unparseable" and every order was denied.
+            if isinstance(rows, dict) and positions.get("status") == "ok":
+                rows = rows.get("positions")
         if rows is None:
             # A bare mapping of symbol -> position dict is also accepted.
             rows = list(positions.values()) if positions else []
@@ -427,6 +432,34 @@ def _position_signed_market_value(row: dict) -> float | None:
     if value < 0:
         return value
     return value
+
+
+def _position_signed_quantity(row: dict) -> float | None:
+    """Return one position's signed, finite share quantity, or ``None`` when absent/unparseable.
+
+    Reads the same ``quantity``/``qty``/``shares`` keys as the exposure math; an explicit short/sell side flips
+    a positive magnitude negative. The kill-switch flatten uses it so it and the gate agree on a position row.
+    """
+    for key in ("quantity", "qty", "shares"):
+        if key in row:
+            quantity = _as_float(row[key])
+            if quantity is None or quantity in (float("inf"), float("-inf")):
+                return None
+            if quantity > 0 and str(row.get("side", "")).strip().lower() in {"short", "sell"}:
+                return -quantity
+            return quantity
+    return None
+
+
+def buy_worst_case_price(intent: OrderIntent, price: float) -> float:
+    """Price a quantity-sized order is capped at: a buy limit fills anywhere up to its limit (#18).
+
+    The ONE rule both live gates (MCP guard and direct-SDK gate) size a quantity order with; sells and market
+    orders keep the quote.
+    """
+    if intent.side == "buy" and intent.limit_price is not None:
+        return max(price, intent.limit_price)
+    return price
 
 
 def _account_balance_market_value(balance: object) -> float | None:
@@ -798,3 +831,5 @@ def market_cap_usd(symbol: str, asset_class: AssetClass) -> float | None:
 account_balance_market_value = _account_balance_market_value
 coerce_position_rows = _coerce_position_rows
 positions_market_value = _positions_market_value
+position_symbol = _position_symbol
+position_signed_quantity = _position_signed_quantity

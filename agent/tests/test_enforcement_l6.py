@@ -320,3 +320,121 @@ def test_normalization_preserves_a_none_asset_class(live_runtime: Path) -> None:
     normalized = guard._normalize_intent_notional(intent)
     assert normalized is not None
     assert normalized.asset_class is None
+
+
+# --------------------------------------------------------------------------- #
+# R9 — real adapter envelope, limit-price sizing, pre-send audit, lock scope   #
+# --------------------------------------------------------------------------- #
+
+
+class _EnvelopeAdapter(_BrokerQuoteAdapter):
+    """Reads come back the way ``MCPServerAdapter.call_tool`` really returns them: nested under ``data``."""
+
+    def __init__(self, *, price: float, positions_data: Any = None) -> None:
+        super().__init__(price=price)
+        self._positions_data = {"positions": []} if positions_data is None else positions_data
+        self.events: list[str] = []
+
+    def call_tool(self, remote_name: str, arguments: dict, *, local_name: str | None = None) -> dict:
+        self.events.append(remote_name)
+        if remote_name == "get_equity_positions":
+            return {"status": "ok", "data": self._positions_data, "server": "robinhood", "tool": remote_name}
+        if remote_name == "get_equity_quotes":
+            return {"status": "ok", "data": {"quotes": [{"symbol": arguments.get("symbol"), "last_price": self._price}]}}
+        return super().call_tool(remote_name, arguments, local_name=local_name)
+
+
+def test_real_adapter_envelope_positions_are_parsed(live_runtime: Path) -> None:
+    _write_mandate(live_runtime, max_order_notional_usd=2000.0)
+    adapter = _EnvelopeAdapter(price=100.0)
+    out = json.loads(_guard(adapter).execute(symbol="AAPL", side="buy", instrument_type="equity", quantity=10.0))
+    assert out.get("status") == "ok", out
+    assert len(adapter.order_calls) == 1
+
+
+def test_enveloped_positions_without_records_still_fail_closed(live_runtime: Path) -> None:
+    _write_mandate(live_runtime, max_order_notional_usd=2000.0)
+    adapter = _EnvelopeAdapter(price=100.0, positions_data={"message": "ok but no records"})
+    out = json.loads(_guard(adapter).execute(symbol="AAPL", side="buy", instrument_type="equity", quantity=10.0))
+    assert out["status"] == "blocked"
+    assert adapter.order_calls == []
+
+
+def test_extractor_reads_limit_price_and_denies_a_malformed_one() -> None:
+    base = {"symbol": "AAPL", "side": "buy", "instrument_type": "equity", "quantity": 10}
+    assert extract_order_intent("place_equity_order", {**base, "limit_price": 200}).limit_price == 200.0
+    assert extract_order_intent("place_equity_order", {**base, "limit_price": 150, "price": 400}).limit_price == 400.0
+    assert extract_order_intent("place_equity_order", {**base, "limit_price": None}).limit_price is None
+    assert extract_order_intent("place_equity_order", base).limit_price is None
+    for bad in ("abc", -1, 0, float("nan")):
+        assert extract_order_intent("place_equity_order", {**base, "limit_price": bad}) is None
+
+
+def test_buy_limit_quantity_order_is_sized_at_the_limit(live_runtime: Path) -> None:
+    _write_mandate(live_runtime, max_order_notional_usd=1500.0)
+    adapter = _BrokerQuoteAdapter(price=100.0)
+    out = json.loads(
+        _guard(adapter).execute(symbol="AAPL", side="buy", instrument_type="equity", quantity=10.0, limit_price=200.0)
+    )
+    assert out["status"] == "blocked" and out["breach"]["limit"] == "max_order_notional_usd"
+    assert out["breach"]["attempted_value"] == 2000.0
+    assert adapter.order_calls == []
+    # a sell limit does not create exposure: the quote stands (1000 <= 1500) and it forwards
+    sell = json.loads(
+        _guard(adapter).execute(symbol="AAPL", side="sell", instrument_type="equity", quantity=10.0, limit_price=200.0)
+    )
+    assert sell.get("status") == "ok"
+
+
+def test_order_not_sent_when_audit_ledger_unwritable(live_runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import src.live.audit as audit_mod
+
+    _write_mandate(live_runtime, max_order_notional_usd=2000.0)
+
+    def unwritable() -> None:
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(audit_mod, "assert_audit_writable", unwritable)
+    adapter = _BrokerQuoteAdapter(price=100.0)
+    out = json.loads(_guard(adapter).execute(symbol="AAPL", side="buy", instrument_type="equity", quantity=10.0))
+    assert out["status"] == "blocked" and "audit ledger" in out["reason"]
+    assert adapter.order_calls == []
+
+
+def test_count_persist_failure_after_an_accepted_order_does_not_raise(
+    live_runtime: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.live.daily_count import DailyCountError
+
+    _write_mandate(live_runtime, max_order_notional_usd=2000.0)
+
+    def boom(broker: str, action_id: str | None = None) -> int:
+        raise DailyCountError("daily order count could not be persisted")
+
+    monkeypatch.setattr(order_guard, "increment_daily_count", boom)
+    adapter = _BrokerQuoteAdapter(price=100.0)
+    out = json.loads(_guard(adapter).execute(symbol="AAPL", side="buy", instrument_type="equity", quantity=10.0))
+    assert out.get("status") == "ok"  # the broker accepted it; raising would have the caller re-send
+    assert len(adapter.order_calls) == 1
+    assert out["live_action"]["gate_decision"]["reason_code"] == "daily_action_accounting_failed"
+
+
+def test_positions_are_read_while_the_order_lock_is_held(live_runtime: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from contextlib import contextmanager
+
+    _write_mandate(live_runtime, max_order_notional_usd=2000.0)
+    adapter = _EnvelopeAdapter(price=100.0)
+    real_lock = order_guard.daily_order_lock
+
+    @contextmanager
+    def recording_lock(broker: str):
+        adapter.events.append("lock+")
+        with real_lock(broker):
+            yield
+        adapter.events.append("lock-")
+
+    monkeypatch.setattr(order_guard, "daily_order_lock", recording_lock)
+    out = json.loads(_guard(adapter).execute(symbol="AAPL", side="buy", instrument_type="equity", quantity=10.0))
+    assert out.get("status") == "ok"
+    events = adapter.events
+    assert events.index("lock+") < events.index("get_equity_positions") < events.index("lock-")

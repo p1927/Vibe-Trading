@@ -492,3 +492,26 @@ def test_nested_broker_error_flatten_is_not_a_success(live_runtime: Path) -> Non
         "error": "insufficient buying power",
     } in report["errors"]
     assert report["side_effects_attempted"] is True
+
+
+def test_position_rows_use_the_gates_keys_and_a_malformed_row_does_not_abort_the_sweep(live_runtime: Path) -> None:
+    # "quantity" (not "qty") is a held position, not zero; a row that cannot be sized is recorded and skipped
+    # while every other position is still flattened (a raise here would latch the sweep half-done).
+    broker = _Broker(
+        open_orders=[],
+        positions=[
+            {"symbol": "nvda", "quantity": "3"},
+            {"symbol": "JUNK", "qty": "N/A"},
+            {"ticker": "AAPL", "shares": 2, "side": "short"},
+            {"qty": 5},
+        ],
+    )
+    report = flatten.flatten_and_cancel(
+        "robinhood", broker.submit, broker.read_positions, broker.read_open_orders, allow_flatten=True
+    )
+    by_symbol = {s["symbol"]: s for s in report["flatten_orders_submitted"]}
+    assert by_symbol["NVDA"]["side"] == "sell" and by_symbol["NVDA"]["qty"] == 3
+    assert by_symbol["AAPL"]["side"] == "buy" and by_symbol["AAPL"]["qty"] == 2
+    assert len(report["errors"]) == 2 and all(e["phase"] == "flatten" for e in report["errors"])
+    assert [action for action, _ in broker.calls] == ["close", "close"]
+    assert sum(1 for row in _read_ledger() if row["outcome"] == "error") == 2

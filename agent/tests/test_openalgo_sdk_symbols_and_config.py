@@ -77,3 +77,26 @@ def test_us_history_uses_the_config_it_was_given(monkeypatch: pytest.MonkeyPatch
 
     assert out["status"] == "ok" and out["market"] == "US" and len(out["bars"]) == 1
     assert seen == [cfg]
+
+
+@pytest.mark.parametrize("data", [None, {}, "oops", {"message": "x"}])
+def test_unrecognised_book_reply_is_an_error_not_an_empty_book(monkeypatch: pytest.MonkeyPatch, data) -> None:
+    """A positionbook/orderbook reply with no records list used to read as a flat, order-free account."""
+    from src.trading.types import ConnectorVendorError
+
+    cfg = oa.OpenAlgoConfig(api_key="k", host="http://127.0.0.1:5001")
+    client = oa._RestClient(cfg)
+    monkeypatch.setattr(client, "post", lambda path, payload: {"status": "success", "data": data})
+    with pytest.raises(ConnectorVendorError):
+        client.positions()
+    with pytest.raises(ConnectorVendorError):
+        client.orders()
+
+
+def test_recognised_book_replies_still_parse(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = oa.OpenAlgoConfig(api_key="k", host="http://127.0.0.1:5001")
+    client = oa._RestClient(cfg)
+    monkeypatch.setattr(client, "post", lambda path, payload: {"status": "success", "data": [{"symbol": "X"}]})
+    assert client.positions() == [{"symbol": "X"}]
+    monkeypatch.setattr(client, "post", lambda path, payload: {"status": "success", "data": {"orders": []}})
+    assert client.orders() == []
