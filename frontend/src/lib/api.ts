@@ -7727,7 +7727,6 @@ export interface AdvisoryCandidate {
    * user-supplied target profit; the advisory pipeline has no such target). `null`
    * when max_loss is 0/undefined. */
   risk_reward_ratio: number | null;
-  confidence_adjusted_score: number;
   /** Full payoff curve at the current spot, shaped for `MiniPayoffChart` directly
    * (`{spot, pnl}` — already renamed server-side from `compute_payoff`'s own
    * `underlying` key). Empty when the candidate has no legs to price. */
