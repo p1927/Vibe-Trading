@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import dataclasses
 import time
 from typing import Any
 
 from src.config.accessor import get_env_config
-from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule, DEFAULT_JOB_TIMEZONE
 from src.scheduled_research.run_outcome import finish_run
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
@@ -128,7 +127,7 @@ def register_default_hub_capture_jobs(store: ScheduledResearchJobStore) -> int:
                 next_run_at=now_ms,
                 status=JobStatus.PENDING,
                 created_at=now_ms,
-                timezone="Asia/Kolkata",
+                timezone=DEFAULT_JOB_TIMEZONE,
                 config={"job_type": JOB_TYPE_HUB_CAPTURE_INTRADAY, "entity_id": "NIFTY"},
                 paused=not enabled,
                 auto_paused_reason=None if enabled else "HUB_CAPTURE_ENABLE_SCHEDULER disabled (D80)",
@@ -152,7 +151,7 @@ def register_default_hub_capture_jobs(store: ScheduledResearchJobStore) -> int:
                 next_run_at=now_ms,
                 status=JobStatus.PENDING,
                 created_at=now_ms,
-                timezone="Asia/Kolkata",
+                timezone=DEFAULT_JOB_TIMEZONE,
                 config={"job_type": JOB_TYPE_HUB_CAPTURE_FACTOR_SNAPSHOT, "entity_id": "NIFTY"},
                 paused=not enabled,
                 auto_paused_reason=None if enabled else "HUB_CAPTURE_ENABLE_SCHEDULER disabled (D80)",
@@ -161,10 +160,4 @@ def register_default_hub_capture_jobs(store: ScheduledResearchJobStore) -> int:
         logger.info("registered hub capture job %s (%s, paused=%s)", factor_job_id, factor_cron, not enabled)
         registered += 1
 
-    # Both crons are IST market-hours; a record registered before `timezone` was set
-    # would otherwise keep running in UTC forever (2026-09-20-reinference-tick-cron-no-timezone).
-    for jid in (job_id, factor_job_id):
-        existing = store.get(jid)
-        if existing is not None and existing.timezone != "Asia/Kolkata":
-            store.upsert(dataclasses.replace(existing, timezone="Asia/Kolkata"))
     return registered

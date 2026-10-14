@@ -180,3 +180,67 @@ def test_fast_failure_false_when_real_cycles_were_recorded() -> None:
     rather than ``error``."""
     job = {"status": "done", "result": {"cycles": 12}}
     assert _job_is_fast_failure(job) is False
+
+
+# --- one dispatcher: the poller (the executor boots stopped until Resume, so it never fires a wake) ---
+
+
+def test_the_executor_never_treats_a_recording_wake_as_due(tmp_path: Path) -> None:
+    import asyncio
+
+    from src.scheduled_research.executor import ScheduledResearchExecutor, is_due
+
+    store = _store(tmp_path)
+    schedule_recording_wake(recording_job_id="rec-x", next_open_at=datetime(2000, 1, 1, tzinfo=timezone.utc), store=store)
+    job = store.get("recording_wake:rec-x")
+    assert job.next_run_at < _ms(2001, 1, 1, 0, 0)
+    assert is_due(job, _ms(2030, 1, 1, 0, 0)) is False
+
+    dispatched: list[str] = []
+
+    async def dispatch(j) -> None:
+        dispatched.append(j.id)
+
+    async def scenario() -> None:
+        executor = ScheduledResearchExecutor(store, dispatch)
+        await executor.tick(_ms(2030, 1, 1, 0, 0))
+        await executor._operational_tick(_ms(2030, 1, 1, 0, 0))
+
+    asyncio.run(scenario())
+    assert dispatched == [] and store.get("recording_wake:rec-x") is not None
+
+
+def test_the_poller_wakes_a_due_entry_once_and_deletes_it(tmp_path: Path, monkeypatch) -> None:
+    import asyncio
+
+    from src.trade import recording_jobs
+    from src.trade.recording_wait_scheduler import _recording_wake_poll_tick
+
+    store = _store(tmp_path)
+    schedule_recording_wake(recording_job_id="rec-due", next_open_at=datetime(2000, 1, 1, tzinfo=timezone.utc), store=store)
+    schedule_recording_wake(recording_job_id="rec-later", next_open_at=datetime(2099, 1, 1, tzinfo=timezone.utc), store=store)
+    woken: list[str] = []
+    monkeypatch.setattr(recording_jobs, "wake_recording_job", lambda rid: woken.append(rid) or True)
+
+    asyncio.run(_recording_wake_poll_tick(store))
+    asyncio.run(_recording_wake_poll_tick(store))
+    assert woken == ["rec-due"]
+    assert store.get("recording_wake:rec-due") is None
+    assert store.get("recording_wake:rec-later") is not None
+
+
+def test_the_poller_drops_a_wake_entry_with_no_recording_id(tmp_path: Path, monkeypatch) -> None:
+    import asyncio
+
+    from src.scheduled_research.models import ScheduledResearchJob
+    from src.trade import recording_jobs
+    from src.trade.recording_wait_scheduler import _recording_wake_poll_tick
+
+    store = _store(tmp_path)
+    store.upsert(ScheduledResearchJob(
+        id="recording_wake:bad", prompt="", schedule="60000", next_run_at=1, status=JobStatus.PENDING,
+        created_at=0, config={"job_type": JOB_TYPE_RECORDING_WAKE},
+    ))
+    monkeypatch.setattr(recording_jobs, "wake_recording_job", lambda rid: (_ for _ in ()).throw(AssertionError(rid)))
+    asyncio.run(_recording_wake_poll_tick(store))
+    assert store.get("recording_wake:bad") is None
