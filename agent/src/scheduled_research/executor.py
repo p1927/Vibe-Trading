@@ -1086,6 +1086,22 @@ class ScheduledResearchExecutor:
         jobs = self._store.load()
         recovered = 0
         for job in jobs.values():
+            if startup and job.status == JobStatus.CANCELLED:
+                # A user-cancelled run whose own completion write never came (the process died first).
+                # Nothing of this process can still be dispatching it, and the cancel only ever meant
+                # that one run (`cancel_running_job`), so the job goes back on its schedule. No failure:
+                # the cancel was the user's decision, and `last_error` keeps saying so.
+                job.status = JobStatus.PENDING
+                try:
+                    job.next_run_at = next_due(job.schedule, now, job.timezone)
+                except Exception:
+                    logger.warning("could not advance schedule for cancelled job %s; deferring one tick",
+                                   job.id, exc_info=True)
+                    job.next_run_at = now + self._tick_interval_ms
+                recovered += 1
+                logger.warning("reviving cancelled scheduled research job %s on executor start (next_run_at=%s)",
+                               job.id, job.next_run_at)
+                continue
             if job.status != JobStatus.RUNNING:
                 continue
             if not startup and not is_job_stale_running(job, now):
@@ -1906,13 +1922,23 @@ class ScheduledResearchExecutor:
         if not self._same_record(current, job):
             logger.info("scheduled research job %s replaced during dispatch; skipping completion write", job.id)
             return
-        if current.status != JobStatus.RUNNING:
+        if current.status == JobStatus.CANCELLED:
+            # `pause_control.cancel_running_job` marks the in-flight run CANCELLED, but nothing preempts a
+            # dispatch: it ended on its own, and this is its completion. Refusing it left CANCELLED, which
+            # is never due, so cancelling one run ended a recurring job for good. A CANCELLED record cannot
+            # belong to an earlier run: it is not due, so no later dispatch can be in flight for it.
+            job.last_error = job.last_error or current.last_error
+        elif current.status != JobStatus.RUNNING:
             logger.info(
                 "scheduled research job %s no longer running (status=%s); skipping completion write",
                 job.id,
                 current.status.value,
             )
             return
+        # Definition keys come from the record on disk (a Hub settings save may have edited them while this
+        # run was in flight); only the `_`-prefixed scratch keys this run cycle owns come from `job`.
+        config = {k: v for k, v in current.config.items() if not k.startswith("_")}
+        config.update({k: v for k, v in job.config.items() if k.startswith("_")})
         # update_run_state (not upsert): `job` is the snapshot dispatch started
         # from, so writing it back whole would silently revert `current`'s
         # `paused`/`auto_paused_reason` if a pause/resume click landed while
@@ -1930,6 +1956,6 @@ class ScheduledResearchExecutor:
             last_verdict=job.last_verdict,
             last_result_summary=job.last_result_summary,
             last_stage_log=job.last_stage_log,
-            config=job.config,
+            config=config,
             **(extra_fields or {}),
         )

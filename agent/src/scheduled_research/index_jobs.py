@@ -13,7 +13,12 @@ from zoneinfo import ZoneInfo
 
 from src.config.accessor import get_env_config, get_env_or
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule, DEFAULT_JOB_TIMEZONE
-from src.scheduled_research.run_outcome import LAST_RESULT_CONFIG_KEY, attach_summary, finish_run
+from src.scheduled_research.run_outcome import (
+    LAST_RESULT_CONFIG_KEY,
+    attach_summary,
+    finish_run,
+    raise_if_run_had_errors,
+)
 from src.scheduled_research.staleness import EVAL_JOB_DISPATCH_TIMEOUT_MS, dispatch_timeout_ms_for
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
@@ -1382,6 +1387,10 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         # zero rows reads the same as a quiet cycle unless someone counts the repetition.
         record_source_zero_streaks(job, summary, summary_config_key=LAST_RESULT_CONFIG_KEY)
         logger.info("hub news ingest completed for job %s: %s", job.id, summary)
+        # `run_hub_news_ingest_job` returns a raised ingest as `{status: error, had_errors: True}`: a crash is a
+        # failed run (D86), not `completed` with consecutive_failures 0. Only that shape carries the markers; a
+        # partial vendor error inside a normal summary does not, so routine source noise never trips this.
+        raise_if_run_had_errors(job, summary, "hub news ingest")
         if _hub_news_ingest_collected_nothing(summary):
             # A run that was gated shut (``blocked`` / ``pipeline_paused``) and
             # collected literally nothing is not a success, but it returns a

@@ -561,7 +561,6 @@ def test_impossible_cron_marks_failed_and_tick_continues(tmp_path: Path) -> None
 
 def test_cancelled_and_running_jobs_are_skipped(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    store.upsert(_job("cancelled", next_run_at=0, status=JobStatus.CANCELLED))
     store.upsert(_job("pending", next_run_at=0, status=JobStatus.PENDING))
     calls: list[str] = []
 
@@ -571,6 +570,9 @@ def test_cancelled_and_running_jobs_are_skipped(tmp_path: Path) -> None:
     async def scenario() -> None:
         executor = ScheduledResearchExecutor(store, dispatch)
         assert executor.recover_stale_running(startup=True) == 0
+        # Cancelled while this executor runs: its in-flight run is still ending, so tick must not dispatch it
+        # (a CANCELLED record left by a dead process is revived at start, see test_scheduled_research_failure_recording).
+        store.upsert(_job("cancelled", next_run_at=0, status=JobStatus.CANCELLED))
         store.upsert(_job("running", next_run_at=0, status=JobStatus.RUNNING))
         await executor.tick(100)
 

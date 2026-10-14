@@ -22,7 +22,8 @@ from src.scheduled_research import dst_eval_jobs, index_jobs
 from src.scheduled_research.executor import ScheduledResearchExecutor
 from src.scheduled_research.lifecycle import recover_persisted_scheduler_jobs
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob
-from src.scheduled_research.pause_control import set_job_enabled
+from src.scheduled_research.executor import is_due
+from src.scheduled_research.pause_control import cancel_running_job, set_job_enabled
 from src.scheduled_research.run_outcome import JobRunHadErrorsError
 from src.scheduled_research.staleness import dispatch_timeout_ms_for, stale_running_ms_for
 from src.scheduled_research.store import ScheduledResearchJobStore
@@ -389,3 +390,84 @@ def test_nested_part_errors_reach_last_error() -> None:
     assert "results.part: boom" in detail and "gold" not in detail
     many = {"factors": {f"k{i}": {"status": "error", "reason": "r"} for i in range(20)}}
     assert run_error_detail(many).endswith("(+12 more)")
+
+
+# --- R9: hub-news ingest crash, a cancelled run's schedule, a mid-run config edit ----------------
+
+
+def test_hub_news_ingest_crash_is_a_failed_run_not_completed(monkeypatch) -> None:
+    """`run_hub_news_ingest_job` turns a raised ingest into `{status: error, had_errors: True}`; the ingest branch
+    read only `blocked`/`pipeline_paused`, so a crashed ingest was recorded `completed` with no failure state."""
+    monkeypatch.setattr(
+        index_jobs, "run_hub_news_ingest_job",
+        lambda config, **kw: {"status": "error", "error": "boom", "mode": "full", "had_errors": True},
+    )
+    job = _job("ingest-crash", config={"job_type": "hub_news_ingest"})
+
+    with pytest.raises(JobRunHadErrorsError, match="boom"):
+        index_jobs.dispatch_index_job_sync(job)
+    assert job.config["_last_result_summary"]["had_errors"] is True
+
+
+def test_hub_news_ingest_clean_run_still_completes(monkeypatch) -> None:
+    summary = {"totals": {"queued": 3}, "sources": {"rss": {"queued": 3}}, "sources_empty": []}
+    monkeypatch.setattr(index_jobs, "run_hub_news_ingest_job", lambda config, **kw: dict(summary))
+    job = _job("ingest-ok", config={"job_type": "hub_news_ingest"})
+
+    index_jobs.dispatch_index_job_sync(job)
+
+    assert job.config["_last_result_summary"]["totals"] == {"queued": 3}
+
+
+def test_a_run_cancelled_mid_flight_does_not_end_the_jobs_schedule(tmp_path: Path) -> None:
+    """`cancel_running_job` sets status CANCELLED while the dispatch still runs to its end. The completion write
+    was then refused (record no longer RUNNING) and CANCELLED is never due, so cancelling one run killed a
+    recurring job for good, with nothing reporting it (stuck_jobs excludes CANCELLED)."""
+    store = _store(tmp_path)
+    store.upsert(_job(schedule="1000"))
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        cancel_running_job(job.id, store=store)  # the route's write lands while the run is in flight
+
+    asyncio.run(ScheduledResearchExecutor(store, dispatch).tick(1500))
+
+    saved = store.get("job-1")
+    assert saved.status == JobStatus.COMPLETED
+    assert saved.next_run_at == 2500
+    assert saved.last_error == "cancelled by user"  # the cancel stays visible as the run's note
+    assert "_cancel_requested" not in saved.config
+    assert is_due(saved, 3000)
+
+
+def test_executor_start_revives_a_cancelled_job_left_by_a_dead_process(tmp_path: Path) -> None:
+    """A process that died between the cancel and the run's own completion leaves CANCELLED behind: no dispatch
+    of the new process can be in flight, so start() puts the job back on its schedule."""
+    store = _store(tmp_path)
+    store.upsert(_job(status=JobStatus.CANCELLED, next_run_at=10, last_error="cancelled by user"))
+
+    ScheduledResearchExecutor(store, _ok).recover_stale_running(5000, startup=True)
+
+    saved = store.get("job-1")
+    assert saved.status == JobStatus.PENDING and saved.next_run_at == 6000
+    assert saved.last_error == "cancelled by user" and saved.failure_kind is None
+
+
+def test_a_config_edit_made_during_a_run_survives_its_completion_write(tmp_path: Path) -> None:
+    """The completion write put back the whole config snapshot taken at dispatch start, reverting a Hub settings
+    save (`sync_scheduled_jobs_from_config` edits `sources`/`lookback_days`) made while a 90-minute ingest ran."""
+    store = _store(tmp_path)
+    store.upsert(_job(schedule="1000", config={"job_type": "x", "sources": "rss", "lookback_days": 1}))
+
+    async def dispatch(job: ScheduledResearchJob) -> None:
+        edited = store.get(job.id)
+        edited.config = {**edited.config, "sources": "rss,web_search", "lookback_days": 3}
+        store.update_run_state(job.id, config=edited.config)
+        job.config["_last_result_summary"] = {"status": "ok"}  # executor scratch rides the same write
+
+    asyncio.run(ScheduledResearchExecutor(store, dispatch).tick(1500))
+
+    saved = store.get("job-1")
+    assert saved.config["sources"] == "rss,web_search" and saved.config["lookback_days"] == 3
+    assert saved.last_result_summary == {"status": "ok"}
+    assert "_last_result_summary" not in saved.config
+    assert "_recent_durations_ms" in saved.config  # scratch the run itself wrote still lands

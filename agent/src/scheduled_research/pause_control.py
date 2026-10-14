@@ -129,7 +129,10 @@ def cancel_running_job(
     job's future schedule is unaffected. Best-effort/cooperative — it sets a
     ``_cancel_requested`` scratch flag in ``config`` that a dispatch
     coroutine may poll between stages; it does not preemptively interrupt a
-    dispatch already in flight.
+    dispatch already in flight. That dispatch still ends on its own, and the
+    executor's completion write accepts a CANCELLED record (``_persist_completion``),
+    so the job returns to its schedule; a CANCELLED record left by a process that
+    died first is put back on schedule at the next executor start.
 
     Args:
         job_id: The job to cancel.
