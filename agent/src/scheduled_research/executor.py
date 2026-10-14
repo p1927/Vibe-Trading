@@ -35,7 +35,7 @@ from src.scheduled_research.index_jobs import HubNewsIngestCollectedNothingError
 from src.scheduled_research.job_tier_policy import (
     collection_job_dispatch_enabled,
     current_stack_profile,
-    host_pressure_defer_reason,
+    defer_reason,
     is_collection_job,
     is_operational_tier_job,
 )
@@ -511,7 +511,7 @@ class ScheduledResearchExecutor:
         # tick offers its due jobs and returns instead of awaiting their dispatches.
         self._dispatch_pool = DispatchPool(
             global_cap=lambda: self._dispatch_concurrency, stopping=lambda: self._stopping, next_due_fn=next_due,
-            defer_reason=host_pressure_defer_reason,
+            defer_reason=defer_reason,
         )
         self._operational_dispatch_pool = DispatchPool(
             global_cap=lambda: self._dispatch_concurrency, stopping=lambda: self._stopping, next_due_fn=next_due

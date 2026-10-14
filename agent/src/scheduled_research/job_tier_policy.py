@@ -282,6 +282,51 @@ def host_pressure_defer_reason(job_type: str, *, probe=None) -> str | None:
     return verdict.reason if verdict.deferred else None
 
 
+#: Jobs whose first stages read the stock_simulator service. With it down they would fail (and a weekly job
+#: then loses a week): they stay pending and are re-offered every tick until it answers.
+SIMULATOR_DEPENDENT_JOB_TYPES: frozenset[str] = frozenset({JOB_TYPE_INDEX_PREDICTION_POST_CLOSE})
+_SIMULATOR_PROBE_TTL_S = 15.0
+_simulator_probe_cache: tuple[float, bool] | None = None
+
+
+def _simulator_reachable() -> bool:
+    """Cheap, cached (~15 s) `GET /health` of the stock_simulator service."""
+    import time
+
+    global _simulator_probe_cache
+    now = time.monotonic()
+    if _simulator_probe_cache is not None and now - _simulator_probe_cache[0] < _SIMULATOR_PROBE_TTL_S:
+        return _simulator_probe_cache[1]
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.stock_simulator.client import StockSimulatorClient, StockSimulatorClientError
+
+        try:
+            StockSimulatorClient().health_check()
+            ok = True
+        except StockSimulatorClientError:
+            ok = False
+    except ImportError:
+        _warn_gate_off_once()
+        ok = True  # no Trade checkout to probe with: the gate is off, loudly (same as the host-pressure gate)
+    _simulator_probe_cache = (now, ok)
+    return ok
+
+
+def dependency_defer_reason(job_type: str, *, probe=None) -> str | None:
+    """`dependency:stock_simulator_unreachable` while the simulator does not answer and *job_type* needs it."""
+    if job_type not in SIMULATOR_DEPENDENT_JOB_TYPES:
+        return None
+    return None if (probe or _simulator_reachable)() else "dependency:stock_simulator_unreachable"
+
+
+def defer_reason(job_type: str) -> str | None:
+    """THE dispatch deferral question (host starved, or a dependency down): a deferral is never a failure."""
+    return host_pressure_defer_reason(job_type) or dependency_defer_reason(job_type)
+
+
 _gate_off_warned = False
 
 
