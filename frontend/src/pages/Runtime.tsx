@@ -130,6 +130,7 @@ export function Runtime() {
   const handleSelectProfile = useCallback(async (profileId: string) => {
     if (selectingProfile) return;
     setSelectingProfile(profileId);
+    setConnectorsError(null);
     try {
       const result = await api.selectTradingConnector(profileId);
       setConnectors((prev) => {
@@ -141,6 +142,12 @@ export function Runtime() {
       });
     } catch (err) {
       console.warn("Failed to select connector profile", err);
+      // A failed switch leaves the old profile selected: say so, or the click looks like it did nothing.
+      setConnectorsError(
+        `${tRef.current("runtime.connectorSwitchFailed", { defaultValue: "Could not switch the connector profile" })}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     } finally {
       setSelectingProfile(null);
     }
@@ -211,6 +218,13 @@ export function Runtime() {
           </div>
         ) : null}
 
+        {!loading && connectorsError ? (
+          <section role="alert" className="rounded-md border border-dashed border-amber-500/40 p-4 text-sm text-amber-700 dark:text-amber-300">
+            {connectorsError}
+            {connectors ? ` ${t("runtime.connectorsLastKnown", { defaultValue: "The profiles below are the last ones read." })}` : null}
+          </section>
+        ) : null}
+
         {!loading && connectors ? (
           <section className="grid gap-4">
             <div>
@@ -230,10 +244,6 @@ export function Runtime() {
                 t={t}
               />
             ))}
-          </section>
-        ) : !loading && connectorsError ? (
-          <section className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-            {connectorsError}
           </section>
         ) : null}
 

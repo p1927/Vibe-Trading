@@ -208,6 +208,28 @@ describe("Runtime page", () => {
     expect(apiMock.getLiveStatus).toHaveBeenCalledTimes(2);
   });
 
+  it("a failed connector-profile switch is shown, not only logged to the console", async () => {
+    apiMock.getLiveStatus.mockResolvedValue(makeStatus({ brokers: [] }));
+    const connectors = makeConnectors();
+    connectors.profiles.push({ ...connectors.profiles[0], id: "openalgo-live", label: "OpenAlgo Live", selected: false });
+    apiMock.getTradingConnectors.mockResolvedValue(connectors);
+    apiMock.selectTradingConnector.mockRejectedValue(new Error("switch denied"));
+    render(<Runtime />);
+    fireEvent.click(await screen.findByRole("button", { name: "Use profile" }));
+    expect(await screen.findByText(/switch denied/)).toBeInTheDocument();
+  });
+
+  it("a connector list that cannot be refreshed says so instead of silently showing the old one", async () => {
+    apiMock.getLiveStatus.mockResolvedValue(makeStatus({ brokers: [] }));
+    apiMock.getTradingConnectors
+      .mockResolvedValueOnce(makeConnectors())
+      .mockRejectedValue(new Error("connectors down"));
+    render(<Runtime />);
+    await screen.findByText("OpenAlgo");
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByText(/connectors down/)).toBeInTheDocument();
+  });
+
   it("keeps the newest live status when an older request resolves later", async () => {
     const first = deferred<LiveStatus>();
     const second = deferred<LiveStatus>();
