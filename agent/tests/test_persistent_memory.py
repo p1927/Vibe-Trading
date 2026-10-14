@@ -650,3 +650,27 @@ class TestAddSanitizesAndTruncates:
         body_on_disk = path.read_text(encoding="utf-8").split("---\n\n", 1)[1]
         assert len(body_on_disk) <= MAX_ENTRY_CHARS + len("\n\n[truncated at  chars]\n") + 20
         assert "[truncated at" in body_on_disk
+
+
+class TestNaiveTimestampsAreUtc:
+    """Writers stamp naive UTC (gmtime); the reader must not read it as host-local time."""
+
+    def test_just_written_entry_is_not_aged_by_the_host_utc_offset(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        import time
+
+        monkeypatch.setenv("TZ", "Asia/Kolkata")
+        time.tzset()
+        try:
+            pm = PersistentMemory(memory_dir=tmp_path)
+            before = time.time()
+            pm.add("tz-skew-probe", "durable fact about tz handling", "reference")
+            entry = pm.find("tz-skew-probe")
+            assert entry is not None
+            # Written within the last minute; a local-time read would put it 19800s in the past.
+            assert abs(entry.created_at - before) < 60
+            assert abs(entry.last_accessed - before) < 60
+        finally:
+            monkeypatch.undo()
+            time.tzset()

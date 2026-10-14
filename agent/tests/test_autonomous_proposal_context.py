@@ -22,14 +22,16 @@ def test_fills_the_session_id_when_the_model_omits_it():
     assert out["symbols"] == ["NIFTY"], "existing args must be preserved"
 
 
-def test_does_not_overwrite_a_value_the_model_supplied():
-    """Only fills a gap — the same contract _normalize_tool_run_dir uses."""
+def test_overrides_a_value_the_model_supplied():
+    """The model cannot know the id, so its value is a guess: the loop's session wins, as in the
+    native ProposeAutonomousAgentTool (default_session_id before the model's session_id)."""
     out = inject(
-        {"symbols": ["NIFTY"], "vibe_session_id": "explicit"},
-        session_id="injected",
+        {"symbols": ["NIFTY"], "vibe_session_id": "current_session"},
+        session_id="a89ca2c6592a",
         tool_name=MCP_PROPOSE,
     )
-    assert out["vibe_session_id"] == "explicit"
+    assert out["vibe_session_id"] == "a89ca2c6592a"
+    assert out["symbols"] == ["NIFTY"]
 
 
 def test_treats_a_blank_supplied_value_as_absent():

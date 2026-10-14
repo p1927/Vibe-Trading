@@ -345,3 +345,21 @@ class TestMemoryLock:
         """Lock file .lock should be created in memory dir."""
         with memory_lock(tmp_path):
             assert (tmp_path / ".lock").exists()
+
+    def test_body_oserror_propagates_unchanged_and_releases_lock(self, tmp_path: Path) -> None:
+        """An OSError raised by the body must reach the caller as itself (it was replaced by
+        RuntimeError "generator didn't stop after throw()"), and the lock must be free after."""
+        with pytest.raises(OSError, match="disk full"):
+            with memory_lock(tmp_path):
+                raise OSError("disk full")
+        with memory_lock(tmp_path) as acquired:
+            assert acquired is True
+
+    def test_busy_lock_times_out_with_false(self, tmp_path: Path, monkeypatch) -> None:
+        import src.memory.persistent as persistent
+
+        monkeypatch.setattr(persistent, "_LOCK_TIMEOUT_S", 0.3)
+        with memory_lock(tmp_path) as outer:
+            assert outer is True
+            with memory_lock(tmp_path) as inner:
+                assert inner is False
