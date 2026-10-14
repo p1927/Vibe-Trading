@@ -277,7 +277,7 @@ def run_worker(job_id: str) -> None:
                 playground_ctx = build_playground_context(doc, ticker=key, live_fetch=False)
                 save_playground_context(playground_ctx, ticker=key)
         except Exception:
-            logger.debug("playground context cache write skipped (job=%s)", job_id, exc_info=True)
+            logger.warning("playground context cache write failed (job=%s); the playground serves a stale or empty cache", job_id, exc_info=True)
         artifact = _index_doc_to_panel(doc)
         artifact["asset_type"] = "index"
         complete_job(job_id, ticker=key, artifact=artifact, warnings=artifact.get("data_warnings") or [])
