@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { api, type MandateProfile, type MandateProposal } from "@/lib/api";
 import { AgentAvatar } from "./AgentAvatar";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { formatIstDate } from "@/lib/istTime";
 
 interface Props {
   proposal: MandateProposal;
@@ -260,7 +261,7 @@ export const MandateProposalCard = memo(function MandateProposalCard({ proposal,
             {expires && (
               <span className="shrink-0 text-[10px] text-muted-foreground">
                 · {translateManifestKey("mandate.expiresOn", {
-                  date: expires.toLocaleDateString(i18n.resolvedLanguage || i18n.language),
+                  date: formatIstDate(expires),
                 })}
               </span>
             )}

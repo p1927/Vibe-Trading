@@ -1,3 +1,4 @@
+import { formatIstTime } from "@/lib/istTime";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useMemo } from "react";
 import { SourceContentView } from "@/components/research/SourceContentView";
@@ -32,7 +33,7 @@ function formatMeta(provider?: string, retrievedAt?: string, freshness?: string)
     try {
       const d = new Date(retrievedAt);
       if (!Number.isNaN(d.getTime())) {
-        parts.push(d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+        parts.push(formatIstTime(d, false));
       }
     } catch {
       /* ignore */

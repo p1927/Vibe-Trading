@@ -332,7 +332,8 @@ export function SimulatorReplayDetailPanel({
               <div>
                 <div className="text-sm font-semibold">{day.date}</div>
                 <div className="text-[11px] text-muted-foreground">
-                  {new Date(day.date + "T00:00:00").toLocaleDateString(undefined, {
+                  {new Date(day.date + "T00:00:00Z").toLocaleDateString(undefined, {
+                    timeZone: "UTC",
                     weekday: "long",
                     year: "numeric",
                     month: "long",

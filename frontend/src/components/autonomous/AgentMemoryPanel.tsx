@@ -8,6 +8,7 @@ import {
   type MemoryEntrySummary,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { formatIst } from "@/lib/istTime";
 
 // Per-agent memory viewing/curation panel — 2026-08-29-memory-management-frontend-ui.
 // Backed by /memory/entries (2026-08-29-memory-management-http-api). Deliberately no
@@ -16,7 +17,7 @@ import { cn } from "@/lib/utils";
 
 function fmtDate(epochSeconds: number): string {
   if (!epochSeconds) return "—";
-  return new Date(epochSeconds * 1000).toLocaleString();
+  return formatIst(epochSeconds * 1000);
 }
 
 function fmtAge(epochSeconds: number): string {

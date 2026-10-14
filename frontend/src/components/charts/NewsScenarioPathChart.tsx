@@ -1,3 +1,4 @@
+import { formatIstDate } from "@/lib/istTime";
 import { useMemo } from "react";
 import {
   CartesianGrid,
@@ -35,8 +36,7 @@ function pathKey(row: NewsScenarioPathPoint, index: number): string {
 function xLabel(key: string): string {
   if (key.startsWith("day:")) return `D${key.slice(4)}`;
   if (/^\d{4}-\d{2}-\d{2}$/.test(key)) {
-    const d = new Date(`${key}T00:00:00`);
-    return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+    return formatIstDate(key, false);
   }
   return key;
 }

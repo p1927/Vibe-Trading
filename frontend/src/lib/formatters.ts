@@ -82,11 +82,6 @@ export const DISPLAY_ORDER = [
   "benchmark_return", "excess_return", "information_ratio", "final_value", "avg_holding_days",
 ];
 
-export function formatTimestamp(ts: number): string {
-  const d = new Date(ts);
-  return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
-}
-
 export function abbreviateNum(v: number): string {
   const abs = Math.abs(v);
   if (abs >= 1e9) return (v / 1e9).toFixed(1) + "B";

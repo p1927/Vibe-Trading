@@ -1,3 +1,4 @@
+import { formatIstDate } from "@/lib/istTime";
 import {
   CartesianGrid,
   Legend,
@@ -20,7 +21,7 @@ function fmtInr(v: number | null | undefined): string {
 function fmtDate(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+  return formatIstDate(d, false);
 }
 
 export interface PnlSeries {

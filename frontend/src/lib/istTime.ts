@@ -36,8 +36,25 @@ export function formatIst(value: string | number | Date | null | undefined): str
   return `${DATE_TIME.format(date).replace(/,/g, "").replace(/^(\d{1,2} \w{3} \d{4}) /, "$1, ")} IST`;
 }
 
-/** "09:30:05 IST", or "—" when the value is missing or unreadable. */
-export function formatIstTime(value: string | number | Date | null | undefined): string {
+const TIME_HM = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Kolkata",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+/** "09:30:05 IST" ("09:30 IST" with `withSeconds` false), or "—" when the value is missing or unreadable. */
+export function formatIstTime(value: string | number | Date | null | undefined, withSeconds = true): string {
   const date = toDate(value);
-  return date ? `${TIME.format(date)} IST` : "—";
+  if (!date) return "—";
+  return `${(withSeconds ? TIME : TIME_HM).format(date)} IST`;
+}
+
+const DATE_Y = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" });
+const DATE_NO_Y = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", day: "numeric", month: "short" });
+
+/** The IST calendar day: "15 Oct 2026" ("15 Oct" with `withYear` false), or "—". A bare YYYY-MM-DD stays that day. */
+export function formatIstDate(value: string | number | Date | null | undefined, withYear = true): string {
+  const date = toDate(value);
+  return date ? (withYear ? DATE_Y : DATE_NO_Y).format(date) : "—";
 }

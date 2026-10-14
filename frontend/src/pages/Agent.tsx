@@ -1,3 +1,4 @@
+import { formatIst } from "@/lib/istTime";
 import { useTranslation } from 'react-i18next';
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router";
@@ -2213,9 +2214,9 @@ export function Agent({
 
   const handleExport = useCallback(() => {
     if (messages.length === 0) return;
-    const lines: string[] = [`# Chat Export`, ``, `Export time: ${new Date().toLocaleString()}`, ``];
+    const lines: string[] = [`# Chat Export`, ``, `Export time: ${formatIst(new Date())}`, ``];
     for (const msg of messages) {
-      const time = new Date(msg.timestamp).toLocaleString();
+      const time = formatIst(msg.timestamp);
       if (msg.type === "user") {
         lines.push(`## User (${time})`, ``, msg.content, ``);
       } else if (msg.type === "answer") {

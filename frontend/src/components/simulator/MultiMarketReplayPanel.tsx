@@ -1,3 +1,4 @@
+import { formatIst } from "@/lib/istTime";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Pause, Play, Square, Timer } from "lucide-react";
 import {
@@ -445,7 +446,7 @@ export function MultiMarketReplayPanel() {
               <thead className="bg-muted/40 text-muted-foreground">
                 <tr>
                   <th className="px-2.5 py-1.5 font-medium">Market</th>
-                  <th className="px-2.5 py-1.5 font-medium">Local time</th>
+                  <th className="px-2.5 py-1.5 font-medium">Time (IST)</th>
                   <th className="px-2.5 py-1.5 font-medium">Timezone</th>
                   <th className="px-2.5 py-1.5 font-medium">Session</th>
                 </tr>
@@ -457,7 +458,7 @@ export function MultiMarketReplayPanel() {
                     <tr key={code} className="border-t">
                       <td className="px-2.5 py-1.5 font-medium">{COUNTRY_LABELS[code] ?? code}</td>
                       <td className="px-2.5 py-1.5 font-mono">
-                        {m ? new Date(m.local_time).toLocaleString() : "—"}
+                        {m ? formatIst(m.local_time) : "—"}
                       </td>
                       <td className="px-2.5 py-1.5 text-muted-foreground">{m?.timezone ?? "—"}</td>
                       <td className="px-2.5 py-1.5">
@@ -520,7 +521,7 @@ export function MultiMarketReplayPanel() {
               <p className="mt-2 text-xs">
                 <span className="font-mono font-medium">{quote.price}</span>{" "}
                 <span className="text-muted-foreground">
-                  @ {new Date(quote.ts).toLocaleString()}
+                  @ {formatIst(quote.ts)}
                   {quote.synthetic
                     ? " (simulated — no live tick data, interpolated open→close)"
                     : quote.stale

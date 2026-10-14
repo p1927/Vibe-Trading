@@ -1,3 +1,4 @@
+import { formatIst } from "@/lib/istTime";
 import { cn } from "@/lib/utils";
 import type { IndexFactorCatalogEntry, IndexPredictionArtifact, PipelineLogEntry } from "@/lib/api";
 import {
@@ -209,7 +210,7 @@ export function PredictionPipelinePanel({
             {running
               ? "Running analysis now — live steps below"
               : artifact?.as_of
-                ? `Last run ${new Date(artifact.as_of).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}`
+                ? `Last run ${formatIst(artifact.as_of)}`
                 : "Live steps when you run analysis"}
           </p>
         </div>

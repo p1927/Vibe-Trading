@@ -1,4 +1,5 @@
 import type { PipelineLogEntry } from "@/lib/api";
+import { formatIstDate, formatIstTime } from "@/lib/istTime";
 
 export function parseLogTimestamp(entry: PipelineLogEntry | undefined): number {
   if (!entry?.at) return 0;
@@ -51,13 +52,7 @@ export function mergePipelineLogs(
 
 export function formatPipelineLogTime(at: string | undefined): string {
   if (!at) return "";
-  return new Date(at).toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  return `${formatIstDate(at, false)} ${formatIstTime(at)}`;
 }
 
 export function pipelineLogRowKey(entry: PipelineLogEntry, idx: number): string {

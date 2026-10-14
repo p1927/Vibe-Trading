@@ -620,7 +620,7 @@ function HistoryChart({ history }: { history: PortfolioHistoryPoint[] }) {
         textStyle: { color: theme.tooltipText },
         formatter: (items: Array<{ dataIndex: number; value: number }>) => { const item = items[0]; const row = rows[item.dataIndex]; return `${dateTime(row?.created_at)}<br/>${money(Number(item?.value))}`; },
       },
-      xAxis: { type: "category", boundaryGap: false, data: rows.map((row) => new Date(row.created_at).toLocaleString(uiLocale(), { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })), axisLabel: { color: theme.textColor, hideOverlap: true }, axisLine: { lineStyle: { color: theme.gridColor } } },
+      xAxis: { type: "category", boundaryGap: false, data: rows.map((row) => formatIst(row.created_at)), axisLabel: { color: theme.textColor, hideOverlap: true }, axisLine: { lineStyle: { color: theme.gridColor } } },
       yAxis: { type: "value", scale: true, axisLabel: { color: theme.textColor, formatter: compactUsd }, splitLine: { lineStyle: { color: theme.gridColor, opacity: 0.45 } } },
       series: [{ type: "line", data: rows.map((row) => Number(row.total_usd)), smooth: true, symbol: rows.length < 30 ? "circle" : "none", lineStyle: { width: 2, color: "#4f6edb" }, itemStyle: { color: "#4f6edb" }, areaStyle: { color: "rgba(79,110,219,0.10)" } }],
     });

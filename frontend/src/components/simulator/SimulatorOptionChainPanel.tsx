@@ -9,6 +9,7 @@
  * option-chain layout (OI outermost, LTP innermost next to the strike).
  * Pause when closed.
  */
+import { formatIstTime } from "@/lib/istTime";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, RefreshCw } from "lucide-react";
@@ -361,7 +362,7 @@ export function SimulatorOptionChainPanel({
               </span>
               {lastUpdated && (
                 <span className="text-muted-foreground/70">
-                  updated {lastUpdated.toLocaleTimeString([], { hour12: false })}
+                  updated {formatIstTime(lastUpdated)}
                 </span>
               )}
             </div>

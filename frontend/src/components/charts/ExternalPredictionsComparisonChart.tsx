@@ -1,3 +1,4 @@
+import { formatIstDate } from "@/lib/istTime";
 import { useEffect, useMemo, useRef } from "react";
 import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
@@ -18,7 +19,7 @@ function fmtDate(iso: string | undefined): string {
   if (!iso) return "—";
   const d = new Date(`${iso.slice(0, 10)}T00:00:00`);
   if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
-  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  return formatIstDate(d);
 }
 
 interface ChartItem {

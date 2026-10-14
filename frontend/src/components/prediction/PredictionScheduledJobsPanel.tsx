@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router";
 import { Play, RefreshCw, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatIst } from "@/lib/istTime";
 import {
   api,
   type IndexPredictionIndexQuoteHealth,
@@ -11,17 +12,7 @@ import {
 } from "@/lib/api";
 
 function fmtNextRun(ms: number | undefined): string {
-  if (ms == null || !Number.isFinite(ms)) return "—";
-  try {
-    return new Date(ms).toLocaleString("en-IN", {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return "—";
-  }
+  return formatIst(ms);
 }
 
 function fmtAge(seconds: number | undefined): string {

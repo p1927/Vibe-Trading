@@ -1,3 +1,4 @@
+import { formatIstDate } from "@/lib/istTime";
 /**
  * Options Lab — API contract types, preset strategy catalog, and pure
  * display-only helpers.
@@ -638,11 +639,7 @@ export function nearestStrikeIndex(rows: OptionsContractRow[], spot: number): nu
 
 /** Locale date label for an epoch-seconds expiration (e.g. "Aug 15, 2026"). */
 export function expirationLabel(epochSeconds: number): string {
-  return new Date(epochSeconds * 1000).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+  return formatIstDate(epochSeconds * 1000);
 }
 
 /** Format an IV fraction (0.30) as a percent label ("30%"). */

@@ -2,7 +2,6 @@ import {
   getMetricLabel,
   formatMetricVal,
   metricSentiment,
-  formatTimestamp,
   abbreviateNum,
   DISPLAY_ORDER,
   METRIC_LABELS,
@@ -116,18 +115,6 @@ describe("metricSentiment", () => {
     expect(metricSentiment("total_return", 0.1)).toBe("positive");
     expect(metricSentiment("total_return", 0)).toBe("neutral");
     expect(metricSentiment("total_return", -0.1)).toBe("negative");
-  });
-});
-
-describe("formatTimestamp", () => {
-  it("formats timestamp as HH:MM with zero-padding", () => {
-    const d = new Date(2024, 0, 1, 9, 5);
-    expect(formatTimestamp(d.getTime())).toBe("09:05");
-  });
-
-  it("handles midnight", () => {
-    const d = new Date(2024, 0, 1, 0, 0);
-    expect(formatTimestamp(d.getTime())).toBe("00:00");
   });
 });
 

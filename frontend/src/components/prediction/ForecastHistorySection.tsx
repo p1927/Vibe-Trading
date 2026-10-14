@@ -4,14 +4,12 @@ import { IndexForecastLevelChart } from "@/components/charts/IndexForecastLevelC
 import { IndexForecastReturnChart } from "@/components/charts/IndexForecastReturnChart";
 import { useReplayView } from "@/components/prediction/forecast-replay/useReplayView";
 import { issueTimeline } from "@/lib/forecastReplay/timeline";
+import { formatIstTime } from "@/lib/istTime";
 
 const HEADLINE = ["headline"];
 const LIVE: ["live"] = ["live"];
 
-function fmtTime(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
-}
+const fmtTime = (iso: string): string => formatIstTime(iso, false);
 
 function fmtLevel(v: number | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
