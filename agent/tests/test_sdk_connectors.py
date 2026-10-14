@@ -650,6 +650,8 @@ def test_binance_exchange_adjusts_for_server_time(monkeypatch) -> None:
         def __init__(self, config):
             captured.update(config)
 
+        urls = {"api": {"public": "https://api.binance.com/api/v3", "private": "https://api.binance.com/api/v3"}}
+
         def set_sandbox_mode(self, enabled):
             captured["sandbox"] = enabled
 

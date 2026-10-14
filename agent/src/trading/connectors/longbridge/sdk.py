@@ -722,7 +722,7 @@ def _quote_context(cfg: LongbridgeConfig):
 
 
 #: Canonical period token → Longbridge ``Period`` attribute name.
-#: ``1H``/``4H``/``1D``/``1W`` alias lowercase; ``1m`` vs ``1M`` stays case-sensitive.
+#: ``1H``/``1D``/``1W`` alias lowercase (no 4h: Longbridge has no 4-hour candle); ``1m`` vs ``1M`` stays case-sensitive.
 _PERIOD_MAP = {
     "1m": "Min_1",
     "5m": "Min_5",
@@ -730,8 +730,6 @@ _PERIOD_MAP = {
     "30m": "Min_30",
     "1h": "Min_60",
     "1H": "Min_60",
-    "4h": "Min_60",
-    "4H": "Min_60",
     "1d": "Day",
     "1D": "Day",
     "1w": "Week",
@@ -745,8 +743,10 @@ def _candlestick_enums(period: str):
     openapi = _require_openapi()
     period_cls = getattr(openapi, "Period")
     adjust_cls = getattr(openapi, "AdjustType")
-    attr = _PERIOD_MAP.get(period.strip(), "Day")
-    period_enum = getattr(period_cls, attr, getattr(period_cls, "Day"))
+    attr = _PERIOD_MAP.get(period.strip())
+    if attr is None:
+        raise ValueError(f"unsupported Longbridge period {period!r}; supported: {sorted(_PERIOD_MAP)}")
+    period_enum = getattr(period_cls, attr)
     adjust_enum = getattr(adjust_cls, "NoAdjust", getattr(adjust_cls, "ForwardAdjust", None))
     return period_enum, adjust_enum
 

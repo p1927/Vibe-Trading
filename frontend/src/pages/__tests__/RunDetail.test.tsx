@@ -388,6 +388,8 @@ describe("RunDetail page", () => {
 
     // old artifacts carry only rebalance_count; the fallback keeps them readable
     expect(screen.getByText("7")).toBeInTheDocument();
+    // an artifact that never measured realized turnover must not show it as 0.0%
+    expect(screen.queryByText("0.0%")).not.toBeInTheDocument();
   });
 
   it("hides the Portfolio Studio tab when the payloads are absent", async () => {
