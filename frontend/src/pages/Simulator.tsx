@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Disc, ListOrdered, PlayCircle, Square, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
+import { formatIstTime } from "@/lib/istTime";
 import {
   api,
   type ConstituentInfo,
@@ -328,10 +330,15 @@ export function Simulator() {
   // setting, never clearing, as the old mount-only version did). A failed read
   // keeps the last known state but is recorded (`replayStatusError`) and shown
   // next to the Armed badge, so a stale ARMED is never presented as confirmed.
+  // Latest-wins (useLatestRequest, D306): a status read sent before an Arm / Stop that answers after it is stale
+  // and must neither re-arm nor clear the badge; Arm and Stop below start a new generation themselves.
+  const beginReplayStatus = useLatestRequest();
   const reconcileReplayStatus = useCallback(() => {
+    const isCurrent = beginReplayStatus();
     api
       .getReplayStatus()
       .then((res) => {
+        if (!isCurrent()) return;
         setReplayStatusError(null);
         const replay = (res.replay ?? null) as Record<string, unknown> | null;
         if (!replay || replay.mode !== "replay") {
@@ -356,8 +363,10 @@ export function Simulator() {
             : { start: replayDate, end: replayDate },
         );
       })
-      .catch((err) => setReplayStatusError(errorText(err, "request failed")));
-  }, []);
+      .catch((err) => {
+        if (isCurrent()) setReplayStatusError(errorText(err, "request failed"));
+      });
+  }, [beginReplayStatus]);
 
   useEffect(() => {
     loadCalendar();
@@ -545,6 +554,7 @@ export function Simulator() {
       const armedStart =
         typeof clock.replay_date === "string" ? clock.replay_date : range.start;
       const armed: ReplayRange = { start: armedStart, end: range.end };
+      beginReplayStatus(); // any status read still in flight predates this arm
       setReplayRange(armed);
       setArmedRange(armed);
     } catch (err) {
@@ -555,8 +565,9 @@ export function Simulator() {
   };
 
   const handleSimulatorStopped = useCallback(() => {
+    beginReplayStatus(); // any status read still in flight predates this stop
     setArmedRange(null);
-  }, []);
+  }, [beginReplayStatus]);
 
   const handleSpeedChange = async (value: number) => {
     setReplaySpeed(value);
@@ -840,7 +851,7 @@ export function Simulator() {
                     logs.map((entry, i) => (
                       <div key={i} className={cn("flex gap-2", logLevelColor(entry.level))}>
                         <span className="shrink-0 text-muted-foreground/60">
-                          {entry.at ? new Date(entry.at).toLocaleTimeString() : ""}
+                          {entry.at ? formatIstTime(entry.at) : ""}
                         </span>
                         <span>{entry.message}</span>
                       </div>
