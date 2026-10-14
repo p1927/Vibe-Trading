@@ -33,11 +33,16 @@ export function useIndexPredictionLive({
     refreshInFlightRef.current = true;
     setRefreshing(true);
     try {
-      // The server runs a poll only in market hours, never during an armed replay, one at a time;
-      // otherwise it answers "skipped" with the reason and writes nothing.
+      // The server runs a poll only in market hours, never during an armed replay, one at a time.
+      // Ask its gate first so a closed market / armed or unknown replay never sends the POST at all.
+      const gate = await api.getIndexPredictionRefreshGate(ticker);
+      if (gate.skip_reason) {
+        setLastReason(`skipped: ${gate.skip_reason}`);
+        return;
+      }
       const res = await api.refreshIndexPrediction({ ticker, horizon_days: horizonDays });
       if (res.status === "skipped") {
-        setLastReason(res.reason || "skipped");
+        setLastReason(`skipped: ${res.reason || "unknown"}`);
       } else if (res.status === "ok") {
         setLastReason(res.reason || "scheduled_poll");
         onUpdateRef.current?.(res.artifact ?? null);

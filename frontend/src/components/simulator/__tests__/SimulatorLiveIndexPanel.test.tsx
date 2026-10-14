@@ -55,6 +55,21 @@ describe("SimulatorLiveIndexPanel", () => {
     resolveSpot({ status: "ok", symbol: "NIFTY", exchange: "NSE_INDEX", spot: null });
   });
 
+  it("names the cause when the spot call answers an error instead of staying on loading", async () => {
+    apiMock.getHubMarketDataTicks.mockResolvedValue({
+      status: "ok", symbol: "NIFTY", exchange: "NSE_INDEX", source: "empty", ticks: [],
+    });
+    apiMock.getHubMarketDataSpot.mockResolvedValue({
+      status: "error", symbol: "NIFTY", exchange: "NSE_INDEX", session_open: true,
+      error: "no spot quote available; IN capture is waiting for credentials (paste a fresh INDmoney token)",
+    });
+    render(<SimulatorLiveIndexPanel symbol="NIFTY" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("live-spot-unavailable").textContent).toMatch(/waiting for credentials/);
+    });
+    expect(screen.queryByText(/loading live data/i)).toBeNull();
+  });
+
   it("renders the latest LTP when ticks arrive", async () => {
     apiMock.getHubMarketDataTicks.mockResolvedValue({
       status: "ok", symbol: "NIFTY", exchange: "NSE_INDEX", source: "timescale",

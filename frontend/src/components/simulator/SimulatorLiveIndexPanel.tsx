@@ -157,6 +157,9 @@ export function SimulatorLiveIndexPanel({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sessionOpen, setSessionOpen] = useState<boolean | null>(null);
+  // Why the spot call came back empty (the server names the cause, e.g. a capture loop waiting for
+  // credentials); without it a dead feed looked like an endless "Loading".
+  const [spotError, setSpotError] = useState<string | null>(null);
   // The backend's real reason for empty replay ticks/spot (not armed, no
   // bars in the window, an exception) — preferred over the guessed
   // messages below so the empty state tells the truth instead of a plausible
@@ -195,6 +198,7 @@ export function SimulatorLiveIndexPanel({
     setError(null);
     setLoading(true);
     setSessionOpen(null);
+    setSpotError(null);
     setEmptyReason(null);
     setLastSessionDay(null);
     prevCloseRef.current = null;
@@ -238,6 +242,7 @@ export function SimulatorLiveIndexPanel({
           setSessionOpen(nextSessionOpen);
           onSessionOpenChange?.(nextSessionOpen);
         }
+        setSpotError(spotRes.status === "ok" ? null : spotRes.error ?? "spot unavailable");
         let lastTickPrice: number | null = null;
         if (ticksRes.status === "ok") {
           const next: Tick[] = ticksRes.ticks.map((t) => ({
@@ -482,6 +487,11 @@ export function SimulatorLiveIndexPanel({
           </span>
         )}
       </div>
+      {!loading && !spot && spotError && !isReplayArmed && (
+        <p className="mt-1 text-xs text-destructive" data-testid="live-spot-unavailable">
+          {spotError}
+        </p>
+      )}
       {loading && !spot && (
         <p className="mt-1 text-xs text-muted-foreground">Loading live data…</p>
       )}

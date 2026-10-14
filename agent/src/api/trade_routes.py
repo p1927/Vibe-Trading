@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 from src.api.helpers import is_unsafe_path_component, redacted_error_detail, safe_path_component
 from src.api.security import require_event_stream_auth, require_local_or_auth
 from src.config.accessor import get_env_config
+from src.trade import scoreboard_refresh
 from trade_integrations.market_registry import market_for_ticker
 from trade_integrations.trade_widgets.store import load_trade_widget
 from trade_integrations.ui_links import trade_ui_deep_link
@@ -2649,42 +2650,6 @@ def index_prediction_forecast_lab(
         raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
-_SCOREBOARD_JOB_LOCK = threading.Lock()
-_SCOREBOARD_JOB: dict[str, Any] = {}  # latest recompute: {job_id, state, started_at, finished_at, error}
-
-
-def _scoreboard_history_days(key: str, days: int) -> int:
-    """A refresh must never silently shrink an already-cached wider window back to the 730-day floor
-    ([[2026-08-29-strategy-promotion-default-history-window-too-short-for-low-frequency-candidates]]):
-    a wide window (an explicit `days=5000` run for a low-frequency strategy) is sticky."""
-    from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.scoreboard import load_scoreboard
-
-    cached_history_days = int((load_scoreboard(key) or {}).get("history_days") or 0)
-    return max(days, 730, cached_history_days)
-
-
-def _run_scoreboard_job(job: dict[str, Any], key: str, history_days: int, horizon_days: int | None, eval_step: int) -> None:
-    try:
-        from src.trade.hub_bridge import ensure_trade_stack_path
-
-        ensure_trade_stack_path()
-        from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.walk_forward import (
-            run_strategy_walk_forward,
-            run_track_walk_forward,
-        )
-
-        run_track_walk_forward(ticker=key, days=history_days, horizon_days=horizon_days, eval_step=eval_step)
-        run_strategy_walk_forward(ticker=key, days=history_days, horizon_days=horizon_days)
-        job["state"] = "done"
-    except Exception as exc:  # the job's state is the only place a background failure can surface
-        logger.exception("track-scoreboard recompute failed for %s", key)
-        job["state"] = "failed"
-        job["error"] = redacted_error_detail(exc)
-    finally:
-        job["finished_at"] = datetime.now(timezone.utc).isoformat()
-        _SCOREBOARD_JOB_LOCK.release()
-
-
 @trade_router.get("/index-prediction/track-scoreboard", response_model=IndexTrackScoreboardResponse)
 def get_index_track_scoreboard(
     ticker: str = "NIFTY",
@@ -2709,12 +2674,12 @@ def get_index_track_scoreboard(
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
-        history_days = _scoreboard_history_days(key, days)
+        history_days = scoreboard_refresh.history_days(key, days)
         report = normalize_scoreboard_report(load_scoreboard(key) or {"status": "empty", "ticker": key})
         report["needs_refresh"] = scoreboard_needs_refresh(report, horizon_days=horizon_days, history_days=history_days)
         report["stale"] = report["needs_refresh"]
         report = enrich_scoreboard_with_live(report, ticker=key)
-        report["refresh_job"] = dict(_SCOREBOARD_JOB) or None
+        report["refresh_job"] = scoreboard_refresh.current_job()
         return IndexTrackScoreboardResponse(status=str(report.get("status") or "ok"), ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction track-scoreboard failed for %s", key)
@@ -2733,31 +2698,8 @@ def refresh_index_track_scoreboard(
 
     A run already in flight is returned as-is (`started: false`); poll GET track-scoreboard's
     `report.refresh_job` until `state` is `done`/`failed`, then read the new report."""
-    key = _ticker_key(ticker)
-    if not _SCOREBOARD_JOB_LOCK.acquire(blocking=False):
-        return {"status": "ok", "started": False, "job": dict(_SCOREBOARD_JOB)}
-    try:
-        job = {
-            "job_id": f"scoreboard-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}",
-            "state": "running",
-            "ticker": key,
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "finished_at": None,
-            "error": None,
-        }
-        _SCOREBOARD_JOB.clear()
-        _SCOREBOARD_JOB.update(job)
-        history_days = _scoreboard_history_days(key, days)
-        threading.Thread(
-            target=_run_scoreboard_job,
-            args=(_SCOREBOARD_JOB, key, history_days, horizon_days, eval_step),
-            name="track-scoreboard-refresh",
-            daemon=True,
-        ).start()
-    except Exception:
-        _SCOREBOARD_JOB_LOCK.release()
-        raise
-    return {"status": "ok", "started": True, "job": dict(_SCOREBOARD_JOB)}
+    started, job = scoreboard_refresh.start_refresh(_ticker_key(ticker), days, horizon_days, eval_step)
+    return {"status": "ok", "started": started, "job": job}
 
 
 @trade_router.get("/index-prediction/execution-backtest", response_model=IndexExecutionBacktestResponse)
@@ -5032,6 +4974,16 @@ def _light_refresh_skip_reason(key: str) -> str | None:
     return None if is_market_open_for_market(market) else "market_closed"
 
 
+@trade_router.get("/index-prediction/refresh-gate")
+def get_index_prediction_refresh_gate(
+    ticker: str = "NIFTY",
+    _auth: None = Depends(require_local_or_auth),
+) -> Dict[str, Any]:
+    """The same gate the refresh POST applies, read-only: lets the page skip the POST when it would no-op."""
+    key = _ticker_key(ticker)
+    return {"ticker": key, "skip_reason": _light_refresh_skip_reason(key)}
+
+
 @trade_router.post("/index-prediction/refresh", response_model=IndexPredictionRefreshResponse)
 def refresh_index_prediction(
     body: RefreshIndexPredictionRequest,
@@ -6036,6 +5988,21 @@ def hub_market_data_ticks(
         )
 
 
+def _spot_unavailable_message() -> str:
+    """Why there is no live spot, naming the cause the simulator's /health knows: a capture loop waiting for
+    a fresh INDmoney token, or the simulator being down (the tile otherwise says nothing useful)."""
+    from trade_integrations.stock_simulator.client import StockSimulatorClient, StockSimulatorClientError
+
+    base = "no spot quote available (Timescale empty and OpenAlgo unreachable)"
+    try:
+        waiting = StockSimulatorClient().health_check().get("capture_waiting_for_credentials") or []
+    except StockSimulatorClientError as exc:
+        return f"{base}; stock_simulator unreachable: {exc}"
+    if waiting:
+        return f"{base}; {', '.join(waiting)} capture is waiting for credentials (paste a fresh INDmoney token)"
+    return base
+
+
 @trade_router.get("/hub/market-data/spot", response_model=HubMarketDataSpotResponse)
 def hub_market_data_spot(
     symbol: str = "NIFTY",
@@ -6074,8 +6041,7 @@ def hub_market_data_spot(
         return HubMarketDataSpotResponse(
             status="error", symbol=symbol.upper(), exchange=exchange.upper(),
             session_open=session_open,
-            error=replay_reason if replay
-            else "no spot quote available (Timescale empty and OpenAlgo unreachable)",
+            error=replay_reason if replay else _spot_unavailable_message(),
         )
     return HubMarketDataSpotResponse(
         status="ok", symbol=symbol.upper(), exchange=exchange.upper(),

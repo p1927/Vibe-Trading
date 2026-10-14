@@ -128,6 +128,7 @@ class JobStore:
         self._adopt_window = adopt_window_seconds
         self._jobs_ref = jobs_ref
         self._active_ref = active_ref
+        self._finished_mtime: dict[str, float] = {}  # job_id -> job.json mtime it was last read finished at
         self.jobs_lock = threading.RLock()
         self._start_lock = threading.RLock()
 
@@ -435,11 +436,19 @@ class JobStore:
             if not path.is_dir() or not job_runner.job_id_valid(path.name):
                 continue
             try:
-                if cutoff is not None and (path / "job.json").stat().st_mtime < cutoff:
-                    continue
+                mtime = (path / "job.json").stat().st_mtime
             except OSError:
                 continue
+            if cutoff is not None and mtime < cutoff:
+                continue
+            # A finished job's file never turns active again without being rewritten (new mtime), so a store
+            # with no adopt window must not re-parse every old recording's log on each poll
+            # (`/recording/active` took 14 s on release).
+            if self._finished_mtime.get(path.name) == mtime:
+                continue
             job = self.read(path.name)
+            if job is not None and not self._is_active(job):
+                self._finished_mtime[path.name] = mtime
             if not self._is_active(job) or self._scope_for(job) != scope:
                 continue
             if self.alive(job):

@@ -92,6 +92,7 @@ JOB_TYPE_CONSTITUENT_VOLUME_SNAPSHOT = "constituent_volume_snapshot"
 JOB_TYPE_FORECAST_PLATFORM_RETRAIN = "forecast_platform_retrain"
 JOB_TYPE_QUANTILE_FORECAST_LEDGER_PUSH = "quantile_forecast_ledger_push"
 JOB_TYPE_FORECAST_ENGINE_REFRESH = "forecast_engine_refresh"
+JOB_TYPE_INDEX_TRACK_SCOREBOARD = "index_track_scoreboard"
 
 INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_INDEX_FACTOR_SNAPSHOT,
@@ -115,6 +116,7 @@ INDEX_JOB_TYPES = frozenset({
     JOB_TYPE_FORECAST_PLATFORM_RETRAIN,
     JOB_TYPE_QUANTILE_FORECAST_LEDGER_PUSH,
     JOB_TYPE_FORECAST_ENGINE_REFRESH,
+    JOB_TYPE_INDEX_TRACK_SCOREBOARD,
 })
 
 NEWS_QUALITY_EVAL_CRON_ENV = "NEWS_QUALITY_EVAL_CRON"
@@ -597,6 +599,20 @@ def run_index_calibration_job(config: dict[str, Any] | None = None) -> dict[str,
     return run_calibration(
         horizon_days=cfg.get("horizon_days"),
         force_retrain=bool(cfg.get("force_retrain")),
+    )
+
+
+def run_index_track_scoreboard_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Post-close recompute of the per-track scoreboard: the same single-flight path as
+    `POST /index-prediction/track-scoreboard/refresh` (a GET only ever serves the cache, D198)."""
+    from src.trade import scoreboard_refresh
+
+    cfg = config or {}
+    return scoreboard_refresh.refresh_and_wait(
+        str(cfg.get("ticker") or "NIFTY"),
+        days=int(cfg.get("days") or 365),
+        horizon_days=cfg.get("horizon_days"),
+        eval_step=int(cfg.get("eval_step") or 5),
     )
 
 
@@ -1325,6 +1341,11 @@ def _dispatch_index_job_body(job: ScheduledResearchJob) -> None:
         logger.info("index calibration completed for job %s: %s", job.id, summary)
         finish_run(job, summary, "index calibration")
         return
+    if job_type == JOB_TYPE_INDEX_TRACK_SCOREBOARD:
+        summary = run_index_track_scoreboard_job(job.config)
+        logger.info("index track scoreboard completed for job %s: %s", job.id, summary)
+        finish_run(job, summary, "index track scoreboard")
+        return
     if job_type == JOB_TYPE_FORECAST_PLATFORM_RETRAIN:
         summary = run_forecast_platform_retrain_job(job.config)
         logger.info("forecast platform retrain completed for job %s: %s", job.id, summary)
@@ -1565,6 +1586,16 @@ def register_default_index_jobs(store: ScheduledResearchJobStore) -> int:
             status=JobStatus.PENDING,
             created_at=now_ms,
             config={"job_type": JOB_TYPE_INDEX_CALIBRATION, "ticker": "NIFTY"},
+        ),
+        ScheduledResearchJob(
+            id="nifty-track-scoreboard-refresh",
+            prompt="Recompute the per-track prediction scoreboard after the close (walk-forward, single-flight)",
+            schedule="45 20 * * 1-5",  # 20:45 IST: after the 20:30 forecast-engine refresh, markets closed
+            timezone=DEFAULT_JOB_TIMEZONE,
+            next_run_at=now_ms,
+            status=JobStatus.PENDING,
+            created_at=now_ms,
+            config={"job_type": JOB_TYPE_INDEX_TRACK_SCOREBOARD, "ticker": "NIFTY", "days": 365},
         ),
         ScheduledResearchJob(
             id="nifty-forecast-platform-retrain",

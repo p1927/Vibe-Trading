@@ -1981,6 +1981,10 @@ export const api = {
       `/trade/index-prediction/playground-context?${params}`,
     );
   },
+  getIndexPredictionRefreshGate: (ticker = "NIFTY") =>
+    request<{ ticker: string; skip_reason: string | null }>(
+      `/trade/index-prediction/refresh-gate?${new URLSearchParams({ ticker })}`,
+    ),
   refreshIndexPrediction: (body: RefreshIndexPredictionRequest) =>
     // Light refresh usually returns quickly (cached spot touch), but on macro
     // drift/material news it runs the full momentum + prediction pipeline
