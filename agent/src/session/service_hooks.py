@@ -161,10 +161,12 @@ def run_as_pace_caller(turn_kind: Optional[str], fn: Callable[[], Any]) -> Any:
     (swarm, sub-agents) or the pre-turn research prefetch claims as ``batch``. Label those
     entry points too if the measurement shows they matter.
     """
-    try:
-        from trade_integrations.rate_limit import pace_caller
-    except ImportError:
+    from src.providers.trade_minimax_pace import in_trade_stack
+
+    if not in_trade_stack():
         return fn()
+    from trade_integrations.rate_limit import pace_caller
+
     with pace_caller("agent_turn" if turn_kind else "interactive"):
         return fn()
 

@@ -206,3 +206,33 @@ class TestLifecycle:
         result = json.loads(tool.execute(action="recall", query="evolving"))
         assert result["count"] >= 1
         assert "version 2" in result["memories"][0]["content"]
+
+
+class TestOutageGuardKeepsMarketNotes:
+    """`down` is an outage word only as the state of a system; a market note may say it freely."""
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "NIFTY closed down 1% on a gap down open; held the 24,000 support",
+            "BANKNIFTY is down 0.8% and breadth is weak",
+            "Sold the call spread after the index went down through VWAP",
+        ],
+    )
+    def test_market_note_with_down_saves(self, tool: RememberTool, content: str) -> None:
+        result = json.loads(tool.execute(action="save", title="NIFTY session note", content=content))
+        assert result["status"] == "ok", result
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "OpenAlgo is down, every quote call times out",
+            "the backend went down at 09:20 and stayed that way",
+            "vibe API still down after the restart",
+            "redis down since morning",
+        ],
+    )
+    def test_system_down_report_still_refused(self, tool: RememberTool, content: str) -> None:
+        result = json.loads(tool.execute(action="save", title="status note", content=content))
+        assert result["status"] == "error"
+        assert "refused" in result["error"]

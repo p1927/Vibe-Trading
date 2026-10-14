@@ -59,7 +59,7 @@ def _load_nifty50_panel(start: str, end: str) -> dict[str, pd.DataFrame]:
     """Nifty 50 panel: recorded stock_simulator data first (per constituent,
     full-range-or-omit), OpenAlgo/yfinance history for whatever it can't
     fully cover yet."""
-    from src.tools.alpha_bench_tool import _wide_from_fetched
+    from trade_integrations.autonomous_agents.agent_issues import PROGRAMMING_ERRORS
 
     symbols: list[str] = []
     constituent_source = "nifty50_constituents"
@@ -70,7 +70,9 @@ def _load_nifty50_panel(start: str, end: str) -> dict[str, pd.DataFrame]:
 
         rows = load_nifty50_constituents()
         symbols = [row.symbol.upper().strip() for row in rows if row.symbol]
-    except Exception as exc:  # noqa: BLE001
+    except PROGRAMMING_ERRORS:
+        raise
+    except Exception as exc:  # noqa: BLE001 — a vendor tier failed: the hand-picked roster below, disclosed in _meta
         logger.warning("nifty50 constituent load failed (%s); using fallback", exc)
 
     if not symbols:
@@ -78,50 +80,26 @@ def _load_nifty50_panel(start: str, end: str) -> dict[str, pd.DataFrame]:
         constituent_source = "hand-picked fallback"
         logger.warning("nifty50: using %d-name fallback (degraded run)", len(symbols))
 
+    from src.tools.nse_sector_universes import build_ohlcv_panel
     from trade_integrations.dataflows.index_research.alpha_bridge.india_ohlcv import (
         load_symbol_ohlcv,
     )
 
-    fetched: dict[str, pd.DataFrame] = {}
     stock_simulator_hits = 0
-    for code in symbols:
+
+    def load_frame(code: str) -> "pd.DataFrame | None":
+        nonlocal stock_simulator_hits
         frame = _load_nifty50_stock_simulator(code, start, end)
         if frame is not None:
             stock_simulator_hits += 1
-        else:
-            try:
-                frame = load_symbol_ohlcv(code, start_date=start, end_date=end)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("nifty50 fetch failed for %s: %s", code, exc)
-                continue
-        if frame is None or frame.empty or "close" not in frame.columns:
-            continue
-        df = frame.copy()
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.set_index("date").sort_index()
-        mask = (df.index >= pd.Timestamp(start)) & (df.index <= pd.Timestamp(end))
-        df = df.loc[mask]
-        if df.empty:
-            continue
-        for col in ("open", "high", "low", "close", "volume"):
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-        keep = [c for c in ("open", "high", "low", "close", "volume") if c in df.columns]
-        trimmed = df[keep].dropna(subset=["close"])
-        if not trimmed.empty:
-            fetched[code] = trimmed
+            return frame
+        return load_symbol_ohlcv(code, start_date=start, end_date=end)
 
-    panel = _wide_from_fetched(fetched, include_amount=False)
-    if all(k in panel for k in ("open", "high", "low", "close")):
-        panel["vwap"] = (panel["open"] + panel["high"] + panel["low"] + panel["close"]) / 4.0
-
-    panel["_meta"] = {
-        "universe": "nifty50",
-        "survivorship_bias": True,
-        "constituent_source": constituent_source,
-        "constituent_count": len(fetched),
-        "stock_simulator_hits": stock_simulator_hits,
-    }
+    panel = build_ohlcv_panel(
+        symbols, start, end, label="nifty50", load_frame=load_frame,
+        meta={"constituent_source": constituent_source},
+    )
+    panel["_meta"]["stock_simulator_hits"] = stock_simulator_hits
     return panel
 
 

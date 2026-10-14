@@ -561,7 +561,7 @@ def _dhan_client(cfg: DhanConfig):
     if not cfg.client_id or not cfg.access_token:
         raise DhanConfigError(
             "Dhan connector not configured: set client_id and access_token "
-            "in ~/.vibe-trading/dhan.json or via environment."
+            f"in {config_path()} or via environment."
         )
     return DhanHQ(cfg.client_id, cfg.access_token)
 
