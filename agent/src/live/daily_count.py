@@ -2,8 +2,10 @@
 
 Shared by every live order path (the MCP ``LiveOrderGuardTool`` keeps its own
 in-class copy for now; the direct-SDK gate uses these helpers). The counter is
-advisory defense-in-depth — the broker enforces the real ceiling — so any
-read failure reads as ``0`` (fail-open on the count only, never on the order).
+defense-in-depth — the broker enforces the real ceiling — but an unreadable or
+schema-invalid counter is *unknown* state, so admission fails closed
+(``DailyCountUnreadable``, handled like a held order lock); only a missing file
+or a previous UTC day reads as ``0``.
 """
 
 from __future__ import annotations
@@ -38,6 +40,10 @@ class DailyOrderLockUnavailable(RuntimeError):
 
 class DailyCountError(RuntimeError):
     """Raised when action-ID accounting cannot be trusted or persisted."""
+
+
+class DailyCountUnreadable(DailyOrderLockUnavailable, DailyCountError):
+    """Admission read hit an unreadable/invalid/future-dated counter: deny, do not assume 0."""
 
 
 def _counter_path(broker: str):
@@ -109,20 +115,18 @@ def daily_order_lock(broker: str) -> Iterator[None]:
 
 
 def read_daily_count(broker: str) -> int:
-    """Return today's order count for ``broker`` (UTC rollover; 0 on any miss)."""
-    path = _counter_path(broker)
-    if not path.is_file():
-        return 0
+    """Return today's order count for ``broker`` (UTC rollover; 0 only if no file or an older day).
+
+    Raises:
+        DailyCountUnreadable: counter exists but is unreadable, malformed or future-dated.
+    """
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return 0
-    if not isinstance(raw, dict) or raw.get("date") != _utc_today():
-        return 0
-    try:
-        return int(raw.get("count", 0))
-    except (TypeError, ValueError):
-        return 0
+        date, count, _ = _read_counter(broker)
+    except DailyCountError as exc:
+        raise DailyCountUnreadable(f"{exc} — {broker} order admission denied") from exc
+    if date is not None and date > _utc_today():
+        raise DailyCountUnreadable(f"daily order count date is in the future — {broker} order admission denied")
+    return count if date == _utc_today() else 0
 
 
 def increment_daily_count(broker: str, action_id: str | None = None) -> int:
@@ -131,15 +135,15 @@ def increment_daily_count(broker: str, action_id: str | None = None) -> int:
     if action_id is not None and not (1 <= len(action_id) <= 128):
         raise DailyCountError("action_id must contain 1-128 characters")
     try:
-        counter_date, action_ids = _read_action_ids(broker)
+        counter_date, count, action_ids = _read_counter(broker)
     except DailyCountError:
         if action_id is not None:
             raise
-        counter_date = None
-        action_ids = []
+        counter_date, count, action_ids = None, 0, []
     if action_id is not None and counter_date is not None and counter_date > today:
         raise DailyCountError("daily order count date is in the future")
-    count = read_daily_count(broker)
+    if counter_date != today:
+        count = 0
     if action_id is not None and action_id in action_ids:
         return count
     if counter_date != today:
@@ -174,10 +178,10 @@ def increment_daily_count(broker: str, action_id: str | None = None) -> int:
     return count
 
 
-def _read_action_ids(broker: str) -> tuple[str | None, list[str]]:
+def _read_counter(broker: str) -> tuple[str | None, int, list[str]]:
     path = _counter_path(broker)
     if not path.is_file():
-        return None, []
+        return None, 0, []
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -204,4 +208,4 @@ def _read_action_ids(broker: str) -> tuple[str | None, list[str]]:
         or len(values) > count
     ):
         raise DailyCountError("daily order count has an invalid schema")
-    return date, values
+    return date, count, values

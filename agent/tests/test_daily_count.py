@@ -125,3 +125,22 @@ def test_action_id_accounting_wraps_directory_failure(tmp_path, monkeypatch) -> 
 
     with pytest.raises(DailyCountError):
         increment_daily_count("alpaca", action_id="act_recovered")
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["{not json", "[]", '{"date": "garbage", "count": 1}', '{"date": "9999-12-31", "count": 1}', '{"date": "2026-08-25", "count": "x"}'],
+)
+def test_admission_read_fails_closed_on_untrusted_counter(tmp_path, monkeypatch, content) -> None:
+    from src.live.daily_count import DailyCountUnreadable, DailyOrderLockUnavailable
+
+    runtime_root = tmp_path / ".vibe-trading"
+    monkeypatch.setattr(live_paths, "get_runtime_root", lambda: runtime_root)
+    monkeypatch.setattr(daily_count, "_utc_today", lambda: "2026-08-25")
+    path = runtime_root / "live" / "alpaca" / "trade_counter.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(content)
+
+    with pytest.raises(DailyCountUnreadable) as exc:
+        read_daily_count("alpaca")
+    assert isinstance(exc.value, DailyOrderLockUnavailable)  # the gates already deny on this
