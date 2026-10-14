@@ -108,3 +108,37 @@ export function computeTrackEvalStats(
     maePct: maeValues.length ? maeValues.reduce((a, b) => a + b, 0) / maeValues.length : null,
   };
 }
+
+/** The recompute is a server background job; the page polls the cached GET for it. 5 s x 120 = 10 minutes. */
+export const SCOREBOARD_POLL_INTERVAL_MS = 5_000;
+export const SCOREBOARD_POLL_MAX = 120;
+
+/**
+ * Polls the cached scoreboard until its `refresh_job` leaves "running" (the one poll loop, bounded: a stuck job
+ * ends in a visible "still running" error instead of polling forever). "superseded" = `isCurrent()` turned false
+ * (horizon change / unmount): stop quietly and publish nothing for the stale request.
+ */
+export async function pollTrackScoreboardJob(
+  fetchReport: () => Promise<{ report?: IndexTrackScoreboardReport | null }>,
+  opts: {
+    isCurrent: () => boolean;
+    onReport?: (report: IndexTrackScoreboardReport) => void;
+    intervalMs?: number;
+    maxPolls?: number;
+    wait?: (ms: number) => Promise<void>;
+  },
+): Promise<"done" | "superseded"> {
+  const { isCurrent, onReport, intervalMs = SCOREBOARD_POLL_INTERVAL_MS, maxPolls = SCOREBOARD_POLL_MAX } = opts;
+  const wait = opts.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  for (let n = 0; n < maxPolls; n += 1) {
+    await wait(intervalMs);
+    if (!isCurrent()) return "superseded";
+    const res = await fetchReport();
+    if (!isCurrent()) return "superseded";
+    if (res.report) onReport?.(res.report);
+    const job = res.report?.refresh_job;
+    if (job?.state === "failed") throw new Error(job.error || "Track scoreboard recompute failed");
+    if (job?.state !== "running") return "done";
+  }
+  throw new Error(`Track scoreboard recompute is still running after ${maxPolls} checks; showing the last report. Try Refresh again later.`);
+}

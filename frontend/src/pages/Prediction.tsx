@@ -9,6 +9,7 @@ import { FactorCompositionTable } from "@/components/prediction/FactorCompositio
 import { EquationCard } from "@/components/prediction/EquationCard";
 import { TrackScoreboardPanel } from "@/components/prediction/TrackScoreboardPanel";
 import { TrackScoreboardProgressPanel } from "@/components/prediction/TrackScoreboardProgressPanel";
+import { pollTrackScoreboardJob } from "@/lib/trackScoreboardUtils";
 import { BacktestEvaluationPanel } from "@/components/prediction/BacktestEvaluationPanel";
 import { PredictionMissAnalysisPanel } from "@/components/prediction/PredictionMissAnalysisPanel";
 import { IndexFactorLedgerPanel } from "@/components/prediction/IndexFactorLedgerPanel";
@@ -447,6 +448,9 @@ export function Prediction() {
   const beginScoreboard = useLatestRequest();
   const loadTrackScoreboardCached = useCallback(async () => {
     const isCurrent = beginScoreboard();
+    // This supersedes a recompute poll of the previous horizon, which would no longer clear its own flags.
+    setTrackScoreboardLoading(false);
+    setTrackScoreboardRecomputing(false);
     setTrackScoreboardError(null);
     try {
       const cachedRes = await api.getIndexTrackScoreboard("NIFTY", 730, horizonDays);
@@ -460,6 +464,8 @@ export function Prediction() {
 
   const loadTrackScoreboard = useCallback(
     async (forceRefresh = false) => {
+      // One generation for both scoreboard loaders: a horizon change / cached reload / unmount supersedes a running poll.
+      const isCurrent = beginScoreboard();
       setTrackScoreboardLoading(true);
       setTrackScoreboardStartedAt(Date.now());
       setTrackScoreboardPanelOpen(true);
@@ -470,6 +476,7 @@ export function Prediction() {
 
         if (!forceRefresh) {
           const cachedRes = await api.getIndexTrackScoreboard("NIFTY", 730, horizonDays);
+          if (!isCurrent()) return;
           const cached = cachedRes.report;
           if (cached && (cached.eval_count ?? 0) > 0) {
             setTrackScoreboard(cached);
@@ -481,27 +488,29 @@ export function Prediction() {
         }
 
         if (needsFullRun) {
-          // The recompute is a background job (single-flight on the server): start it, then poll the cached GET.
+          // The recompute is a background job (single-flight on the server): start it, then poll the cached GET
+          // (bounded: a stuck job ends in a visible error, see pollTrackScoreboardJob).
           setTrackScoreboardRecomputing(true);
           await api.refreshIndexTrackScoreboard("NIFTY", 730, horizonDays);
-          for (;;) {
-            await new Promise((resolve) => setTimeout(resolve, 5000));
-            const res = await api.getIndexTrackScoreboard("NIFTY", 730, horizonDays);
-            if (res.report) setTrackScoreboard(res.report);
-            const job = res.report?.refresh_job;
-            if (job?.state === "failed") throw new Error(job.error || "Track scoreboard recompute failed");
-            if (job?.state !== "running") break;
-          }
+          await pollTrackScoreboardJob(() => api.getIndexTrackScoreboard("NIFTY", 730, horizonDays), {
+            isCurrent,
+            onReport: setTrackScoreboard,
+          });
         }
       } catch (e) {
-        setTrackScoreboardError(e instanceof Error ? e.message : "Track scoreboard request failed");
+        if (isCurrent()) setTrackScoreboardError(e instanceof Error ? e.message : "Track scoreboard request failed");
       } finally {
-        setTrackScoreboardLoading(false);
-        setTrackScoreboardRecomputing(false);
+        if (isCurrent()) {
+          setTrackScoreboardLoading(false);
+          setTrackScoreboardRecomputing(false);
+        }
       }
     },
-    [horizonDays],
+    [beginScoreboard, horizonDays],
   );
+
+  // Leaving the page ends any running scoreboard poll.
+  useEffect(() => () => void beginScoreboard(), [beginScoreboard]);
 
   useEffect(() => {
     if (predictionMode !== SCOREBOARD_MODE) return;
