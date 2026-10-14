@@ -971,6 +971,9 @@ def _unlock_if_live(cfg: FutuConfig, trade_ctx: Any, futu: ModuleType) -> str | 
     """
     if cfg.environment != "live":
         return None
+    if cfg.profile != "live":
+        # live-readonly shares the REAL environment but must never unlock or trade.
+        return f"profile {cfg.profile!r} is read-only: refusing to unlock the live trade context"
     from src.config.accessor import get_env_config
 
     pwd_md5 = get_env_config().api.futu_trade_pwd_md5.strip()

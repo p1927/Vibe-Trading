@@ -16,7 +16,7 @@ class _FakeTigerQuote:
 
 def test_tiger_period_map_accepts_project_hour_tokens() -> None:
     assert tg._PERIOD_MAP["1H"] == "60min"
-    assert tg._PERIOD_MAP["4H"] == "60min"
+    assert "4H" not in tg._PERIOD_MAP and "4h" not in tg._PERIOD_MAP  # no 4-hour bar: fail loud, not 60min
     assert tg._PERIOD_MAP["1h"] == "60min"
     assert tg._PERIOD_MAP["1m"] == "1min"
     assert tg._PERIOD_MAP["1M"] == "month"

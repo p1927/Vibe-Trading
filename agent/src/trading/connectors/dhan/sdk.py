@@ -346,7 +346,9 @@ def get_quote(
 
 
 #: Periods Dhan can serve without silently remapping to a different bar size.
-_SUPPORTED_PERIODS = frozenset({"1m", "5m", "15m", "30m", "1d", "1D"})
+#: ``intraday_daily_candle_data`` returns ONE-minute candles only, so 5m/15m/30m are not served
+#: (aggregating them here would be a second bar builder, D306; request 1m and aggregate upstream).
+_SUPPORTED_PERIODS = frozenset({"1m", "1d", "1D"})
 
 
 def get_historical_bars(
@@ -361,7 +363,7 @@ def get_historical_bars(
 ) -> dict[str, Any]:
     """Fetch historical OHLCV bars.
 
-    ``period`` tokens: ``1m``, ``5m``, ``15m``, ``30m`` → intraday candles.
+    ``period`` tokens: ``1m`` → intraday (one-minute) candles.
     ``1d`` / ``1D`` → daily candles. Dhan's intraday data is limited to last 5
     trading days; daily goes back much further. Unsupported periods (including
     ``1H`` / ``4H``) fail closed instead of silently substituting daily bars.
@@ -381,7 +383,7 @@ def get_historical_bars(
             ),
             "symbol": symbol,
         }
-    intraday = token in ("1m", "5m", "15m", "30m")
+    intraday = token == "1m"
 
     from datetime import datetime, timedelta, timezone
 

@@ -37,6 +37,17 @@ def test_dhan_keeps_supported_daily_and_intraday(monkeypatch) -> None:
     daily = dhan_sdk.get_historical_bars("RELIANCE", config=cfg, period="1D", limit=10)
     assert daily["status"] == "ok"
     assert fake.daily_calls == 1
-    minute = dhan_sdk.get_historical_bars("RELIANCE", config=cfg, period="5m", limit=10)
+    minute = dhan_sdk.get_historical_bars("RELIANCE", config=cfg, period="1m", limit=10)
     assert minute["status"] == "ok"
     assert fake.intraday_calls == 1
+
+
+def test_dhan_rejects_aggregated_intraday_periods(monkeypatch) -> None:
+    """5m/15m/30m used to return one-minute bars labelled with the requested period."""
+    fake = _FakeDhanClient()
+    monkeypatch.setattr(dhan_sdk, "_dhan_client", lambda cfg: fake)
+    cfg = dhan_sdk.DhanConfig(client_id="x", access_token="y", profile="paper")
+    for period in ("5m", "15m", "30m"):
+        out = dhan_sdk.get_historical_bars("RELIANCE", config=cfg, period=period, limit=10)
+        assert out["status"] == "error" and "unsupported period" in out["error"]
+    assert fake.intraday_calls == 0

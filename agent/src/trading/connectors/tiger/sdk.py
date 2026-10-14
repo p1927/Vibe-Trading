@@ -19,6 +19,7 @@ profile by mistake.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from dataclasses import asdict, dataclass
@@ -235,7 +236,7 @@ def get_account_snapshot(config: TigerConfig | None = None) -> dict[str, Any]:
     cfg = config or load_config()
     _assert_profile(cfg)
     trade = _trade_client(cfg)
-    assets = _safe_call(trade, "get_assets", account=cfg.account) or _safe_call(trade, "get_assets")
+    assets = _safe_call(trade, "get_assets", account=cfg.account)
     rows = [_asset_to_dict(item) for item in _as_iter(assets)]
     return {
         "status": "ok",
@@ -251,7 +252,7 @@ def get_positions(config: TigerConfig | None = None) -> dict[str, Any]:
     cfg = config or load_config()
     _assert_profile(cfg)
     trade = _trade_client(cfg)
-    positions = _safe_call(trade, "get_positions", account=cfg.account) or _safe_call(trade, "get_positions")
+    positions = _safe_call(trade, "get_positions", account=cfg.account)
     rows = [_position_to_dict(item) for item in _as_iter(positions)]
     return {"status": "ok", "profile": cfg.profile, "account": cfg.account, "positions": rows}
 
@@ -261,7 +262,7 @@ def get_open_orders(config: TigerConfig | None = None, *, include_executions: bo
     cfg = config or load_config()
     _assert_profile(cfg)
     trade = _trade_client(cfg)
-    open_orders = _safe_call(trade, "get_open_orders", account=cfg.account) or _safe_call(trade, "get_open_orders")
+    open_orders = _safe_call(trade, "get_open_orders", account=cfg.account)
     result: dict[str, Any] = {
         "status": "ok",
         "profile": cfg.profile,
@@ -269,7 +270,7 @@ def get_open_orders(config: TigerConfig | None = None, *, include_executions: bo
         "open_orders": [_order_to_dict(item) for item in _as_iter(open_orders)],
     }
     if include_executions:
-        filled = _safe_call(trade, "get_filled_orders", account=cfg.account) or _safe_call(trade, "get_filled_orders")
+        filled = _safe_call(trade, "get_filled_orders", account=cfg.account)
         result["executions"] = [_order_to_dict(item) for item in _as_iter(filled)]
     return result
 
@@ -290,7 +291,7 @@ def get_quote(symbol: str, *, config: TigerConfig | None = None, **_: Any) -> di
 # ``1H``/``1D``/``1W`` alias the lowercase tokens; ``1m`` vs ``1M`` stays case-sensitive.
 _PERIOD_MAP = {
     "1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min",
-    "1h": "60min", "1H": "60min", "4h": "60min", "4H": "60min",
+    "1h": "60min", "1H": "60min",
     "1d": "day", "1D": "day", "1w": "week", "1W": "week", "1M": "month",
 }
 
@@ -309,7 +310,9 @@ def get_historical_bars(
     quote = _quote_client(cfg)
     clean = symbol.strip().upper()
     # Case-sensitive: ``1m`` (minute) must not collide with ``1M`` (month).
-    tiger_period = _PERIOD_MAP.get(period.strip(), "day")
+    tiger_period = _PERIOD_MAP.get(period.strip())
+    if tiger_period is None:
+        raise ValueError(f"unsupported Tiger period {period!r}; supported: {sorted(_PERIOD_MAP)}")
     bars = _safe_call(quote, "get_bars", [clean], period=tiger_period, limit=int(limit))
     return {
         "status": "ok",
@@ -451,25 +454,44 @@ def place_order(
             )
         # ``place_order`` mutates ``order.id`` with the global id and returns it;
         # read both defensively in case the SDK only does one.
-        returned = trade.place_order(order)
+        try:
+            returned = trade.place_order(order)
+        except Exception as exc:  # noqa: BLE001 - the order may have been accepted: never a plain retryable error
+            return {
+                "status": "error",
+                "code": "order_outcome_unknown",
+                "error": f"Tiger place_order failed after submit ({exc}); check open orders before sending it again",
+            }
         order_id = _obj_get(order, "id", None)
         if order_id is None:
             order_id = returned
-    except Exception as exc:  # noqa: BLE001 - fail closed, never raise to caller
+    except Exception as exc:  # noqa: BLE001 - fail closed, never raise to caller (nothing was submitted yet)
         return {"status": "error", "error": str(exc)}
 
     if order_id is None:
-        return {"status": "error", "error": "Tiger did not return an order id"}
+        return {
+            "status": "error",
+            "code": "order_outcome_unknown",
+            "error": "Tiger did not return an order id; check open orders before sending it again",
+        }
 
-    # Best-effort rejection check: tigeropen mutates the order object with a
-    # status/reason. A rejected order can still come back with an id, so don't
-    # report success when the broker flagged it rejected.
+    # tigeropen mutates the order object with a status/reason. A definitive rejection is a plain
+    # error; any other reason on an order that HAS an id may be a warning on an accepted order,
+    # so it is outcome-unknown (a caller retry would place a second order).
     order_status = str(_obj_get(order, "status", "") or "")
     reason = _obj_get(order, "reason", None)
-    if order_status.strip().lower() in ("rejected", "inactive") or (reason and str(reason).strip()):
+    if order_status.strip().lower() in ("rejected", "inactive"):
         return {
             "status": "error",
             "error": f"Tiger rejected order: {reason or order_status}",
+            "order_id": str(order_id),
+            "symbol": clean_symbol,
+        }
+    if reason and str(reason).strip():
+        return {
+            "status": "error",
+            "code": "order_outcome_unknown",
+            "error": f"Tiger returned order {order_id} with reason {reason!s}; check the order before sending it again",
             "order_id": str(order_id),
             "symbol": clean_symbol,
         }
@@ -722,20 +744,20 @@ def _bar_to_dict(item: Any) -> dict[str, Any]:
 
 
 def _safe_call(obj: Any, name: str, *args: Any, **kwargs: Any) -> Any:
-    """Call ``obj.name(*args, **kwargs)`` if it exists, retrying without kwargs.
+    """Call ``obj.name(*args, **kwargs)`` once; a kwarg the SDK signature does not take is dropped.
 
-    Tiger SDK signatures vary across versions (some read methods take an
-    ``account`` kwarg, some bind it from the client config). We try the richer
-    call first and fall back to the no-arg form so a signature drift degrades to
-    a usable call instead of an error.
+    Tiger SDK signatures vary across versions (some read methods take an ``account`` kwarg, some
+    bind it from the client config, which is built from ``cfg.account``). The signature is
+    inspected up front, so the call is made exactly once and a ``TypeError`` raised inside the SDK
+    propagates instead of triggering a second call without the account.
     """
     fn = getattr(obj, name, None)
     if fn is None:
         return None
     try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
         return fn(*args, **kwargs)
-    except TypeError:
-        try:
-            return fn(*args)
-        except TypeError:
-            return fn()
+    if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        kwargs = {k: v for k, v in kwargs.items() if k in params}
+    return fn(*args, **kwargs)
