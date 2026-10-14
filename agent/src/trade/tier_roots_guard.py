@@ -9,13 +9,13 @@ because a guard that silently disappears is the failure it exists to prevent.
 
 from __future__ import annotations
 
-import os
-
 from src.trade.hub_bridge import ensure_trade_stack_path
 
 
 def assert_release_tier_roots() -> None:
-    if os.environ.get("STACK_PROFILE", "dev").strip().lower() != "release":
+    from src.scheduled_research.job_tier_policy import current_stack_profile
+
+    if current_stack_profile() != "release":  # raises on an unknown value instead of reading it as dev
         return
     ensure_trade_stack_path()
     from trade_integrations.stack_env_sync import assert_tier_roots
