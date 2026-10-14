@@ -10,7 +10,8 @@ export function PredictionLearningPanel({ artifact, history }: Props) {
   const eq = artifact.prediction?.equation;
   const newsCal = artifact.news_shock_calibration;
   const overlay = artifact.event_overlay;
-  const sampleCount = accuracy.sample_count ?? 0;
+  // Unreported is not zero: a missing accuracy block renders a dash, never "0 settled forecasts".
+  const sampleCount = accuracy.sample_count ?? null;
   // Live settled headline forecasts, one per issue day and horizon (the forecast-replay table's rows), for the direction
   // rate and the MAE alike; never the walk-forward backtest.
   const hitRate = accuracy.direction_hit_rate_14d ?? accuracy.direction_hit_rate;
@@ -20,7 +21,7 @@ export function PredictionLearningPanel({ artifact, history }: Props) {
   const matured = history.filter((r) => r.actual_return_pct != null).length;
   const newsFeatureStatus = newsCal?.news_event_features_status ?? "pending";
   const overlayStatus = newsCal?.news_event_overlay_status ?? "pending";
-  const reconciledStories = newsCal?.reconciled_total ?? 0;
+  const reconciledStories = newsCal?.reconciled_total ?? null;
   const activeTopics = overlay?.active_topics ?? [];
 
   return (
@@ -31,7 +32,7 @@ export function PredictionLearningPanel({ artifact, history }: Props) {
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="text-[11px]">
           <span className="text-muted-foreground">Settled headline forecasts</span>
-          <p className="text-lg font-semibold tabular-nums">{sampleCount}</p>
+          <p className="text-lg font-semibold tabular-nums">{sampleCount ?? "—"}</p>
           <p className="text-[10px] text-muted-foreground">
             {matured} of {totalForecasts} in ledger matured
           </p>
@@ -51,7 +52,7 @@ export function PredictionLearningPanel({ artifact, history }: Props) {
         <div className="text-[11px]">
           <span className="text-muted-foreground">Macro model</span>
           <p className="text-lg font-semibold tabular-nums">
-            {eq?.coefficients ? Object.keys(eq.coefficients).length : 0} terms
+            {eq?.coefficients ? `${Object.keys(eq.coefficients).length} terms` : "—"}
           </p>
           <p className="text-[10px] text-muted-foreground">
             R² {eq?.r2_walk_forward != null ? eq.r2_walk_forward.toFixed(3) : "—"}
@@ -77,7 +78,7 @@ export function PredictionLearningPanel({ artifact, history }: Props) {
         </div>
         <div className="text-[11px]">
           <span className="text-muted-foreground">Reconciled news stories</span>
-          <p className="font-medium tabular-nums">{reconciledStories}</p>
+          <p className="font-medium tabular-nums">{reconciledStories ?? "—"}</p>
           {activeTopics.length ? (
             <p className="text-[10px] text-muted-foreground">
               Topics: {activeTopics.map((t) => t.topic).filter(Boolean).join(", ")}

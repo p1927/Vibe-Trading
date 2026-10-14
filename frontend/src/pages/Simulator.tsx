@@ -183,6 +183,9 @@ export function Simulator() {
   // Background reads (recording status, Auto Record state, constituents) that failed: the badge and
   // toggle below would otherwise keep showing their last/default value as if it were current.
   const [syncError, setSyncError] = useState<string | null>(null);
+  // Last failed replay-status read; shown only while the page believes a replay is armed, because then
+  // the Armed badge is a cached claim the server can no longer confirm.
+  const [replayStatusError, setReplayStatusError] = useState<string | null>(null);
   const [calendarDays, setCalendarDays] = useState<ReplayCalendarDay[]>([]);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   // Distinct from calendarError: the token simply isn't set up yet, not a
@@ -322,13 +325,14 @@ export function Simulator() {
   // would otherwise keep showing the stale pre-restart state indefinitely.
   // Bidirectional: syncs to armed when the server says replay, and clears
   // local state when the server says it isn't (rather than only ever
-  // setting, never clearing, as the old mount-only version did). Best-effort
-  // — swallow errors (e.g. SIMULATOR_CONTROL_TOKEN not configured) since
-  // this is a background reconciliation, not a user-initiated action.
+  // setting, never clearing, as the old mount-only version did). A failed read
+  // keeps the last known state but is recorded (`replayStatusError`) and shown
+  // next to the Armed badge, so a stale ARMED is never presented as confirmed.
   const reconcileReplayStatus = useCallback(() => {
     api
       .getReplayStatus()
       .then((res) => {
+        setReplayStatusError(null);
         const replay = (res.replay ?? null) as Record<string, unknown> | null;
         if (!replay || replay.mode !== "replay") {
           setArmedRange((prev) => (prev ? null : prev));
@@ -352,7 +356,7 @@ export function Simulator() {
             : { start: replayDate, end: replayDate },
         );
       })
-      .catch(() => {});
+      .catch((err) => setReplayStatusError(errorText(err, "request failed")));
   }, []);
 
   useEffect(() => {
@@ -947,6 +951,11 @@ export function Simulator() {
             </div>
 
             {replayError ? <p className="text-[11px] text-destructive">{replayError}</p> : null}
+            {armedRange && replayStatusError ? (
+              <p className="text-[11px] text-destructive" data-testid="simulator-replay-status-stale">
+                Armed state not confirmed by the server ({replayStatusError}); the badge above may be stale.
+              </p>
+            ) : null}
             <p className="text-[11px] text-muted-foreground">
               Configures the simulator's replay clock on the running OpenAlgo instance
               directly — no restart needed. OpenAlgo then serves quotes from this clock

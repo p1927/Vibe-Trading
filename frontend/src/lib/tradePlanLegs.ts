@@ -130,14 +130,18 @@ export function resolveWidgetSpot(widget: TradePlanWidget): number | null {
 export function widgetPayoffInputs(widget: TradePlanWidget, legs: StrategyLeg[]) {
   const spot = resolveWidgetSpot(widget) ?? 0;
   const expiry = widget.expiry || "";
-  const atmIv =
-    Number((widget.prediction as { atm_iv?: number } | undefined)?.atm_iv) ||
-    (widget.prediction?.iv_regime === "high" ? 22 : widget.prediction?.iv_regime === "low" ? 12 : 18);
+  const reportedIv = Number((widget.prediction as { atm_iv?: number } | undefined)?.atm_iv);
+  // No reported ATM IV: the T+0 curve and the sigma bands run on a regime-based GUESS; atmIvAssumed lets the card say so.
+  const atmIvAssumed = !(reportedIv > 0);
+  const atmIv = atmIvAssumed
+    ? (widget.prediction?.iv_regime === "high" ? 22 : widget.prediction?.iv_regime === "low" ? 12 : 18)
+    : reportedIv;
   const nearestDays = nearestLegDays(legs) || daysToExpiry(expiry) || 5;
   return {
     spot,
     expiry,
     atmIv,
+    atmIvAssumed,
     tYears: daysToYears(nearestDays),
     payoff: computeWidgetPayoff(legs, spot, expiry, atmIv),
   };

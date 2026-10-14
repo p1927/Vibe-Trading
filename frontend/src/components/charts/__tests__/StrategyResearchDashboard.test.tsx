@@ -94,4 +94,25 @@ describe("StrategyResearchDashboard empty state", () => {
     expect(screen.queryByText("This run has no backtest data to chart")).not.toBeInTheDocument();
     expect(screen.getByText("exit signal")).toBeInTheDocument();
   });
+
+  it("an empty CSV cell stays a gap in the charts instead of reading as 0", () => {
+    const options: Array<{ series: Array<{ data: unknown[] }> }> = [];
+    vi.mocked(echarts.init).mockImplementation((() => ({
+      setOption: (o: { series: Array<{ data: unknown[] }> }) => options.push(o),
+      resize: vi.fn(),
+      dispose: vi.fn(),
+      group: "",
+    })) as unknown as typeof echarts.init);
+    render(<StrategyResearchDashboard run={makeRun({
+      artifacts_equity_csv: [
+        { timestamp: "2026-01-01", equity: "100", drawdown: "", benchmark_equity: "" },
+        { timestamp: "2026-01-02", equity: "", drawdown: "-0.02", benchmark_equity: "" },
+        { timestamp: "2026-01-03", equity: "104", drawdown: "-0.01", benchmark_equity: "" },
+      ],
+    })} />);
+    const [nav, risk] = options;
+    expect(nav.series).toHaveLength(1); // no benchmark series: every benchmark cell is empty
+    expect(nav.series[0].data).toEqual([1, null, 1.04]);
+    expect(risk.series[0].data).toEqual([null, -0.02, -0.01]);
+  });
 });

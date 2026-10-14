@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Database, ExternalLink, Loader2, Newspaper, RefreshCw, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type HubDiscardedNewsItem, type HubNewsItem, type HubNewsPipelineConfig, type HubStatusQuery, type HubStatusResponse, type ObservabilitySummaryResponse } from "@/lib/api";
@@ -651,7 +651,10 @@ export function Hub() {
     return query;
   }, [newsFilter, newsPage, newsSection, searchQuery]);
 
+  // A slower response for a previous page/search must not overwrite the current one.
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
     setError(null);
     try {
       // The config and the issue count are secondary reads: their failure must not blank the page,
@@ -667,6 +670,7 @@ export function Hub() {
         secondary("News pipeline schedule", api.getHubNewsPipelineConfig()),
         secondary("Open issue count", api.getObservabilitySummary()),
       ]);
+      if (seq !== loadSeq.current) return;
       setData(res);
       setObsSummary(obsRes);
       setSecondaryError(secondaryErrors.length ? `Could not load ${secondaryErrors.join("; ")}` : null);
@@ -677,9 +681,10 @@ export function Hub() {
         setPipelineDraft((draft) => draft ?? cfg);
       }
     } catch (err) {
+      if (seq !== loadSeq.current) return;
       setError(err instanceof Error ? err.message : "Failed to load hub status");
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }, [newsQuery]);
 
@@ -979,7 +984,7 @@ export function Hub() {
               "Configure MINIMAX_API_KEY and MINIMAX_BASE_URL in .env, then use Drain staging to process queued headlines."}
           </p>
           <p className="mt-2 text-[12px] tabular-nums opacity-80">
-            {newsInventory?.pending_count ?? staging.queued ?? 0} headline(s) waiting in staging queue.
+            {newsInventory?.pending_count ?? staging.queued ?? "—"} headline(s) waiting in staging queue.
           </p>
         </div>
       ) : null}
@@ -1437,7 +1442,7 @@ export function Hub() {
             </p>
             {staging?.worker_last ? (
               <p className="text-[11px] text-muted-foreground">
-                Last worker: {staging.worker_last.processed ?? 0} processed
+                Last worker: {staging.worker_last.processed ?? "—"} processed
                 {(staging.worker_last.errors ?? 0) > 0 ? ` · ${staging.worker_last.errors} errors` : ""}
               </p>
             ) : null}
@@ -1536,8 +1541,8 @@ export function Hub() {
               </p>
               {capture?.stats?.channel ? (
                 <p className="text-[11px] text-muted-foreground">
-                  Hub hits {capture.stats.channel.hub_hits ?? 0} · vendor fetches{" "}
-                  {capture.stats.channel.vendor_fetches ?? 0}
+                  Hub hits {capture.stats.channel.hub_hits ?? "—"} · vendor fetches{" "}
+                  {capture.stats.channel.vendor_fetches ?? "—"}
                 </p>
               ) : null}
             </div>
@@ -1549,12 +1554,12 @@ export function Hub() {
             <div className="space-y-1 text-sm">
               <p>
                 <span className="text-muted-foreground">Gate min:</span>{" "}
-                <span className="font-semibold tabular-nums">{factorCoverage.min_pct ?? 0}%</span>
+                <span className="font-semibold tabular-nums">{factorCoverage.min_pct == null ? "—" : `${factorCoverage.min_pct}%`}</span>
                 {" · "}
                 {factorCoverage.passes_gate ? "pass" : "fail"}
               </p>
               <p className="text-[11px] text-muted-foreground">
-                Trading days {factorCoverage.trading_days ?? 0}
+                Trading days {factorCoverage.trading_days ?? "—"}
                 {factorCoverage.start && factorCoverage.end
                   ? ` · ${factorCoverage.start} → ${factorCoverage.end}`
                   : ""}
@@ -1607,6 +1612,11 @@ export function Hub() {
               </p>
               <p className="text-[11px] text-muted-foreground">
                 Mode {newsMaintainer.mode ?? "maintenance"} · {newsMaintainer.stages?.length ?? 0} stages
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                {newsMaintainer.finished_at
+                  ? `Finished ${new Date(newsMaintainer.finished_at).toLocaleString()}`
+                  : "Finish time not recorded"}
               </p>
             </div>
           ) : (

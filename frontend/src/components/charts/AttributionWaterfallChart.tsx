@@ -33,6 +33,25 @@ function fmtSignedPct(v: number): string {
   return `${v > 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
 }
 
+export interface WaterfallStack {
+  /** Invisible spacer from zero to the bar's near edge (signed), */
+  placeholder: number;
+  /** then the part of the bar above zero (>= 0) and the part below zero (<= 0). */
+  pos: number;
+  neg: number;
+}
+
+// ECharts stacks positive and negative values on separate sides of zero, so a floating bar needs its
+// spacer on the same side as the bar, and a bar that crosses zero needs one part on each side. A single
+// `min(base, base + value)` spacer with an `|value|` bar draws every bar below zero upward.
+export function waterfallStack(bar: WaterfallBar): WaterfallStack {
+  const lo = Math.min(bar.base, bar.base + bar.value);
+  const hi = Math.max(bar.base, bar.base + bar.value);
+  if (lo >= 0) return { placeholder: lo, pos: hi - lo, neg: 0 };
+  if (hi <= 0) return { placeholder: hi, pos: 0, neg: lo - hi };
+  return { placeholder: 0, pos: hi, neg: lo };
+}
+
 interface Props {
   brinson: AttributionBrinson;
   height?: number;
@@ -55,21 +74,25 @@ export function AttributionWaterfallChart({ brinson, height = 300 }: Props) {
     ];
     const valueLabel = i18n.t("runDetail.returnPct");
 
-    const placeholders = bars.map((bar) => +(Math.min(bar.base, bar.base + bar.value) * 100).toFixed(4));
-    const values = bars.map((bar) => ({
-      value: +(Math.abs(bar.value) * 100).toFixed(4),
-      itemStyle: {
-        color: bar.kind === "level" ? t.infoColor : bar.value >= 0 ? pnl.profit : pnl.loss,
-        borderRadius: 2,
-      },
-      label: {
-        show: true,
-        position: bar.value >= 0 ? "top" : "bottom",
-        formatter: fmtSignedPct(bar.value),
-        fontSize: 10,
-        color: bar.kind === "level" ? t.textColor : bar.value >= 0 ? pnl.profit : pnl.loss,
-      },
-    }));
+    const stacks = bars.map(waterfallStack);
+    const pct4 = (v: number) => +(v * 100).toFixed(4);
+    const placeholders = stacks.map((st) => pct4(st.placeholder));
+    const part = (pick: "pos" | "neg") =>
+      bars.map((bar, i) => ({
+        value: pct4(stacks[i][pick]),
+        itemStyle: {
+          color: bar.kind === "level" ? t.infoColor : bar.value >= 0 ? pnl.profit : pnl.loss,
+          borderRadius: 2,
+        },
+        // one label per bar, on the part that carries it (the above-zero part unless the bar is all below)
+        label: {
+          show: pick === (stacks[i].pos !== 0 || stacks[i].neg === 0 ? "pos" : "neg"),
+          position: bar.value >= 0 ? "top" : "bottom",
+          formatter: fmtSignedPct(bar.value),
+          fontSize: 10,
+          color: bar.kind === "level" ? t.textColor : bar.value >= 0 ? pnl.profit : pnl.loss,
+        },
+      }));
 
     return {
       backgroundColor: "transparent",
@@ -111,13 +134,8 @@ export function AttributionWaterfallChart({ brinson, height = 300 }: Props) {
           emphasis: { itemStyle: { color: "transparent" } },
           tooltip: { show: false },
         },
-        {
-          name: valueLabel,
-          type: "bar",
-          stack: "waterfall",
-          data: values,
-          barWidth: "45%",
-        },
+        { name: valueLabel, type: "bar", stack: "waterfall", data: part("pos"), barWidth: "45%" },
+        { name: `${valueLabel} (below 0)`, type: "bar", stack: "waterfall", data: part("neg"), barWidth: "45%", tooltip: { show: false } },
       ],
     };
   }, [brinson]);

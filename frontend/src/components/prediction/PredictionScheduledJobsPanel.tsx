@@ -94,6 +94,8 @@ export function PredictionScheduledJobsPanel() {
   const [masterEnvOn, setMasterEnvOn] = useState(false);
   const [executorRunning, setExecutorRunning] = useState(false);
   const [statusLoaded, setStatusLoaded] = useState(false);
+  // The response reported neither master-scheduler flag: unknown, which is not "DISABLED".
+  const [statusUnknown, setStatusUnknown] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -107,9 +109,11 @@ export function PredictionScheduledJobsPanel() {
       setEnv(res.env ?? {});
       setNewsPipeline(res.news_pipeline);
       setIndexQuote(res.index_quote);
-      setMasterEnvOn(Boolean(res.master_scheduler_env_enabled ?? res.env?.vibe_trading_enable_scheduler));
+      const envOn = res.master_scheduler_env_enabled ?? res.env?.vibe_trading_enable_scheduler;
+      setMasterEnvOn(Boolean(envOn));
       setExecutorRunning(Boolean(res.executor_is_running ?? res.master_scheduler_running));
-      setStatusLoaded(true);
+      setStatusUnknown(envOn == null);
+      setStatusLoaded(envOn != null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load scheduled jobs");
     } finally {
@@ -189,7 +193,7 @@ export function PredictionScheduledJobsPanel() {
           )}
         >
           Master scheduler:{" "}
-          {!statusLoaded ? "checking…" : masterEnvOn ? "ENABLED" : "DISABLED"} (VIBE_TRADING_ENABLE_SCHEDULER)
+          {!statusLoaded ? (statusUnknown ? "unknown" : "checking…") : masterEnvOn ? "ENABLED" : "DISABLED"} (VIBE_TRADING_ENABLE_SCHEDULER)
         </span>
         <span
           className={cn(
@@ -202,7 +206,7 @@ export function PredictionScheduledJobsPanel() {
           )}
         >
           Executor:{" "}
-          {!statusLoaded ? "checking…" : executorRunning ? "RUNNING" : masterEnvOn ? "NOT STARTED" : "OFF"}
+          {!statusLoaded ? (statusUnknown ? "unknown" : "checking…") : executorRunning ? "RUNNING" : masterEnvOn ? "NOT STARTED" : "OFF"}
         </span>
         <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">
           Index jobs: {env?.index_research_enable_scheduler ? "registered" : "not registered"}

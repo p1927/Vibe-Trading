@@ -4,9 +4,7 @@ import { useSearchParams } from "react-router";
 import {
   Activity,
   ArrowDown,
-  Ban,
   Check,
-  CheckCircle2,
   ChevronDown,
   Download,
   Landmark,
@@ -26,7 +24,7 @@ import { toast } from "sonner";
 import { useAgentStore, type AgentActivity, type AgentMessageMeta, type StoredAgentMessage } from "@/stores/agent";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useSSE } from "@/hooks/useSSE";
-import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type ScheduledResearchProposal, type LiveAction, type AgentAudit, type LiveHalted, type LiveStatus, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource, type AutonomousAgentProposal, type AutonomousAgentInstance, type TradingConnectorsResponse, type LLMSettings } from "@/lib/api";
+import { ApiError, AUTH_REQUIRED_MESSAGE, api, isAuthRequiredError, type GoalSnapshot, type MandateProposal, type MandateCommitted, type ScheduledResearchProposal, type LiveAction, type AgentAudit, type LiveHalted, type TradePlanWidget, type HubPlanArtifact, type AgentDebateArtifact, type ProvenanceSource, type AutonomousAgentProposal, type AutonomousAgentInstance, type TradingConnectorsResponse, type LLMSettings } from "@/lib/api";
 import {
   extractUploadedAttachments,
   prependUploadedAttachments,
@@ -54,6 +52,8 @@ import {
   isTradeWidgetModified,
 } from "@/lib/tradeWidgetContext";
 import { RunnerStatus } from "@/components/chat/RunnerStatus";
+import { LiveActionChip } from "@/components/chat/LiveRuntimePanel";
+import { haltScopeStillActive, isGlobalLiveHalt, useLiveStatus } from "@/hooks/useLiveStatus";
 import { ScheduledResearchProposalCard } from "@/components/chat/ScheduledResearchProposalCard";
 import { SwarmStatusCard } from "@/components/chat/SwarmStatusCard";
 import {
@@ -119,8 +119,6 @@ const act = () => useAgentStore.getState();
 // i18n hook for Agent component — used inside the component below
 // (declared at module scope for helper usage is fine since t() reads from i18n singleton)
 
-/** Poll cadence for the shared `GET /live/status` snapshot. */
-const LIVE_STATUS_POLL_INTERVAL_MS = 15_000;
 const STREAM_FLUSH_INTERVAL_MS = 80;
 const TIMELINE_WINDOW_SIZE = 160;
 const CONNECTOR_CHECK_PROMPT =
@@ -263,69 +261,6 @@ function upsertAutonomousProposalItems(
   }
 
   return [...marked, { kind: "autonomous_proposal", timestamp: Date.now(), proposal }];
-}
-
-function normalizeBrokerScope(broker: string | null | undefined): string | null {
-  const normalized = broker?.trim().toLowerCase();
-  return normalized || null;
-}
-
-function isGlobalLiveHalt(halt: LiveHalted | null): boolean {
-  return halt != null && normalizeBrokerScope(halt.broker) == null;
-}
-
-function haltScopeStillActive(halt: LiveHalted, status: LiveStatus): boolean {
-  const broker = normalizeBrokerScope(halt.broker);
-  if (!broker) return status.global_halted;
-  return status.global_halted || status.brokers.some((item) => (
-    normalizeBrokerScope(item.auth.broker) === broker && item.halted
-  ));
-}
-
-function liveActionStyle(kind: string): { icon: typeof Activity; tone: string } {
-  switch (kind) {
-    case "order_rejected":
-    case "breach":
-      return { icon: Ban, tone: "border-amber-500/40 bg-amber-500/5 text-amber-600 dark:text-amber-400" };
-    case "halt_tripped":
-      return { icon: OctagonX, tone: "border-destructive/40 bg-destructive/5 text-destructive" };
-    case "mandate_committed":
-    case "halt_cleared":
-      return { icon: CheckCircle2, tone: "border-emerald-500/40 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400" };
-    default:
-      return { icon: Activity, tone: "border-sky-500/40 bg-sky-500/5 text-sky-600 dark:text-sky-400" };
-  }
-}
-
-function liveActionLabel(action: LiveAction): string {
-  return action.kind.replace(/_/g, " ");
-}
-
-function LiveActionChip({ action }: { action: LiveAction }) {
-  const { t } = useTranslation();
-  const { icon: Icon, tone } = liveActionStyle(action.kind);
-  return (
-    <div className="flex gap-3">
-      <AgentAvatar />
-      <div className="flex-1 min-w-0">
-        <div className={["inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs", tone].join(" ")}>
-          <Icon className="h-3 w-3 shrink-0" />
-          <span className="shrink-0 font-medium uppercase tracking-wide text-[10px]">{t("agent.runtimeBadge")}</span>
-          <span className="shrink-0 font-medium">{liveActionLabel(action)}</span>
-          {action.intent_normalized && (
-            <span className="truncate text-foreground/80">· {action.intent_normalized}</span>
-          )}
-          {action.outcome && (
-            <span className="shrink-0 font-mono text-[10px] text-muted-foreground">· {action.outcome}</span>
-          )}
-          {action.remote_tool && (
-            <span className="shrink-0 font-mono text-[10px] text-muted-foreground">· {action.remote_tool}</span>
-          )}
-          {action.error && <span className="truncate text-destructive">· {action.error}</span>}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function AgentAuditChip({ audit }: { audit: AgentAudit }) {
@@ -541,11 +476,7 @@ export function Agent({
    * to RunnerStatus, so the global kill switch can be shown whenever connector runtime
    * could be active out-of-band (CLI/another session), not only off in-session SSE
    * items (audit M2: always-available global halt — SPEC Consent §4). */
-  const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
   const [reasoningActive, setReasoningActive] = useState(false);
-  /* The status endpoint is not wired on every backend; a 404/501 hides the panel
-   * and removes status from the kill-switch visibility condition. */
-  const [liveStatusUnavailable, setLiveStatusUnavailable] = useState(false);
   const [tradingConnectors, setTradingConnectors] = useState<TradingConnectorsResponse | null>(null);
   const [connectorCheck, setConnectorCheck] = useState<{
     status: string;
@@ -905,9 +836,13 @@ export function Agent({
 
   useEffect(() => {
     if (!debateRunning || !researchTicker) return;
+    let cancelled = false; // a response for the previous ticker must not overwrite the current one
+    let failures = 0;
     const poll = async () => {
       try {
         const res = await api.getAgentDebate(researchTicker);
+        if (cancelled) return;
+        failures = 0;
         if (res.debate) {
           setDebateArtifact(res.debate);
           setDebateRunning(false);
@@ -915,13 +850,22 @@ export function Agent({
         } else if (!res.running && res.status !== "running") {
           setDebateRunning(Boolean(res.running));
         }
-      } catch {
-        /* ignore transient poll errors */
+      } catch (error) {
+        if (cancelled) return;
+        // Transient errors are retried, but not forever and not silently.
+        failures += 1;
+        if (failures >= 5) {
+          setDebateRunning(false);
+          setDebateError(`Debate status unavailable: ${error instanceof Error ? error.message : "request failed"}`);
+        }
       }
     };
     const id = window.setInterval(poll, 8000);
     void poll();
-    return () => window.clearInterval(id);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, [debateRunning, researchTicker]);
 
   const doDisconnect = useCallback(() => {
@@ -1056,37 +1000,6 @@ export function Agent({
                 metrics: fetchedMetrics,
                 equityCurve: fetchedCurve,
                 timestamp: assistantTs + 1,
-              });
-            }
-          }
-          if (metrics && Object.keys(metrics).length > 0) {
-            agentMsgs.push({ id: m.message_id, type: "run_complete", content: "", runId, metrics, timestamp: ts + 1 });
-          } else {
-            // Fetch run data to check report-worthiness; show fallback card if fetch fails
-            let fetchedMetrics: Record<string, number> | undefined;
-            let fetchedCurve: Array<{ time: string; equity: number }> | undefined;
-            let showCard = false;
-            try {
-              const runData = await api.getRun(runId);
-              if (isReportWorthyRun(runData)) {
-                fetchedMetrics = runData.metrics;
-                fetchedCurve = runData.equity_curve?.map((e) => ({ time: e.time, equity: Number(e.equity) }));
-                showCard = true;
-              }
-              // succeeded but not report-worthy (plain chat turn) → skip card
-            } catch {
-              // fetch failed (auth/404/network) → can't tell, show link as fallback
-              showCard = true;
-            }
-            if (showCard) {
-              agentMsgs.push({
-                id: m.message_id,
-                type: "run_complete",
-                content: "",
-                runId,
-                metrics: fetchedMetrics,
-                equityCurve: fetchedCurve,
-                timestamp: ts + 1,
               });
             }
           }
@@ -1981,25 +1894,6 @@ export function Agent({
     }
   }, [urlSessionId, urlAgentId, doDisconnect, loadSessionMessages, setupSSE, forceScrollToBottom]);
 
-  /* Single shared poller for `GET /live/status`. RunnerStatus consumes this snapshot
-   * as a prop rather than polling independently, and the global kill switch reads it
-   * to stay available whenever connector runtime activity could be active out-of-band. */
-  const refreshLiveStatus = useCallback(async () => {
-    try {
-      const next = await api.getLiveStatus();
-      setLiveStatus(next);
-      setLiveHalted((current) => (
-        current && !haltScopeStillActive(current, next) ? null : current
-      ));
-      setLiveStatusUnavailable(false);
-    } catch (error) {
-      if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
-        setLiveStatus(null);
-        setLiveStatusUnavailable(true);
-      }
-    }
-  }, []);
-
   const refreshTradingConnectors = useCallback(async () => {
     try {
       const payload = await api.getTradingConnectors();
@@ -2028,15 +1922,21 @@ export function Agent({
     }
   }, []);
 
-  const refreshConnectorRuntime = useCallback(async () => {
-    await Promise.all([refreshLiveStatus(), refreshTradingConnectors()]);
-  }, [refreshLiveStatus, refreshTradingConnectors]);
-
-  useEffect(() => {
-    refreshConnectorRuntime();
-    const timer = setInterval(refreshConnectorRuntime, LIVE_STATUS_POLL_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [refreshConnectorRuntime]);
+  /* The one `GET /live/status` poller (hooks/useLiveStatus, shared with LiveRuntimePanel). A 404/501 hides
+   * the panel and removes status from the kill-switch visibility condition; the connector list refreshes on
+   * the same tick. */
+  const {
+    liveStatus,
+    unavailable: liveStatusUnavailable,
+    error: liveStatusError,
+    refresh: refreshConnectorRuntime,
+  } = useLiveStatus({
+    refreshKey: liveStatusRefresh,
+    alongside: refreshTradingConnectors,
+    onSnapshot: (next) => setLiveHalted((current) => (
+      current && !haltScopeStillActive(current, next) ? null : current
+    )),
+  });
 
   /* Clear a stale global OAuth halt when the user runs an SDK connector (e.g. OpenAlgo paper). */
   useEffect(() => {
@@ -2045,20 +1945,18 @@ export function Agent({
     if (!selected || selected.transport !== "broker_sdk") return;
     if (connectorCheck?.status !== "ok") return;
     if (!liveStatus?.global_halted) return;
+    // A halt tripped from this page (or surfaced as a live event) is a deliberate kill switch, never "stale".
+    if (liveHalted != null) return;
     const oauthEngaged = liveStatus.brokers.some((b) => (
       b.auth.oauth_token_present || b.runner?.alive || b.mandate != null
     ));
     if (oauthEngaged) return;
     clearedStaleOAuthHaltRef.current = true;
-    api.resumeLive().then(() => refreshConnectorRuntime()).catch(() => {
-      clearedStaleOAuthHaltRef.current = false;
+    // One attempt per mount: a failed resume is reported once, not retried silently on every poll.
+    api.resumeLive().then(() => refreshConnectorRuntime()).catch((error) => {
+      toast.error(error instanceof Error ? error.message : t('agent.failedToResumeConnector'));
     });
-  }, [tradingConnectors, connectorCheck, liveStatus, refreshConnectorRuntime]);
-
-  // Force an immediate re-poll when a live event bumps refreshKey (commit/halt/resume).
-  useEffect(() => {
-    if (liveStatusRefresh > 0) refreshConnectorRuntime();
-  }, [liveStatusRefresh, refreshConnectorRuntime]);
+  }, [tradingConnectors, connectorCheck, liveStatus, liveHalted, refreshConnectorRuntime, t]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -2608,10 +2506,18 @@ export function Agent({
     showOAuthRuntime &&
     (isGlobalLiveHalt(liveHalted) || (liveStatus?.global_halted ?? false));
 
+  /* The one submit path (button and Enter): the uploaded file travels with the prompt, then clears. */
+  const submitInput = useCallback(() => {
+    const files = attachment ? [attachment] : [];
+    if (status === "streaming" || (!input.trim() && files.length === 0)) return;
+    setAttachment(null);
+    void runPrompt(input.trim(), files);
+  }, [attachment, input, runPrompt, status]);
+
   const handleSubmit = useCallback((event: FormEvent) => {
     event.preventDefault();
-    runPrompt(input);
-  }, [input, runPrompt]);
+    submitInput();
+  }, [submitInput]);
 
   return (
     <>
@@ -3054,6 +2960,7 @@ export function Agent({
             connectors={tradingConnectors}
             connectorCheck={connectorCheck}
             unavailable={liveStatusUnavailable}
+            staleError={liveStatusError}
             halted={liveIsHalted}
             onRefresh={refreshConnectorRuntime}
           />
@@ -3211,7 +3118,7 @@ export function Agent({
                     return;
                   }
                   e.preventDefault();
-                  runPrompt(input.trim());
+                  submitInput();
                 }
               }}
               placeholder={

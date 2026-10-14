@@ -24,7 +24,8 @@ interface SensitivityCurve {
 interface Props {
   spot: number;
   horizonDays: number;
-  baselineReturnPct: number;
+  /** The headline's expected return; null when the artifact carries none (no baseline line is drawn). */
+  baselineReturnPct: number | null;
   simulation: IndexSimulationResult | null;
   activeFactor: string;
   sensitivity?: SensitivityCurve[];
@@ -81,7 +82,7 @@ export function FactorImpactInteractiveChart({
       const ys = pts.map((p) => finiteOrNull(p.index_level)); // a missing level is a gap, never 0
       const baselineLevel =
         pts.find((p) => p.factor_delta_pct === 0)?.index_level ??
-        (haveSpot ? spot * (1 + baselineReturnPct / 100) : null);
+        (haveSpot && baselineReturnPct != null ? spot * (1 + baselineReturnPct / 100) : null);
       return {
         backgroundColor: "transparent",
         title: {
@@ -130,7 +131,7 @@ export function FactorImpactInteractiveChart({
         ? forecastPath.map((p) => p.baseline_level ?? null)
         : days.map((_, i) => {
             const tFrac = Number(days[i]) / Math.max(horizonDays, 1);
-            return haveSpot ? spot * (1 + (baselineReturnPct / 100) * tFrac) : null;
+            return haveSpot && baselineReturnPct != null ? spot * (1 + (baselineReturnPct / 100) * tFrac) : null;
           });
 
     const scenarioLevels =
@@ -140,7 +141,7 @@ export function FactorImpactInteractiveChart({
           ? days.map((_, i) => {
               const tFrac = Number(days[i]) / Math.max(horizonDays, 1);
               const ret = simulation.expected_return_pct ?? baselineReturnPct;
-              return haveSpot ? spot * (1 + (ret / 100) * tFrac) : null;
+              return haveSpot && ret != null ? spot * (1 + (ret / 100) * tFrac) : null;
             })
           : null;
 

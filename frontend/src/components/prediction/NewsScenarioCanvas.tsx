@@ -55,7 +55,7 @@ export function NewsScenarioCanvas({
 
   const emitDateRange = useCallback(
     (start: string, end: string) => {
-      if (!start || !end || !onDateRangeChange || disabled) return;
+      if (!start || !end || start > end || !onDateRangeChange || disabled) return; // ISO dates compare as text
       onDateRangeChange({ start, end });
     },
     [disabled, onDateRangeChange],

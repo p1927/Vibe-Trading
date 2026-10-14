@@ -151,4 +151,12 @@ describe("RunnerStatus compact connector panel", () => {
 
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("flags a snapshot whose last poll failed, instead of showing it as current", () => {
+    const live = status([broker("longbridge", { configured: true, connection_state: "connected", transport: "broker_sdk" })]);
+    const { rerender } = render(<RunnerStatus status={live} onRefresh={vi.fn()} />);
+    expect(screen.queryByTestId("runner-status-stale")).toBeNull();
+    rerender(<RunnerStatus status={live} staleError="503 upstream" onRefresh={vi.fn()} />);
+    expect(screen.getByTestId("runner-status-stale")).toHaveAttribute("title", "503 upstream");
+  });
 });

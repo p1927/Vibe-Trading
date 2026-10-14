@@ -171,6 +171,14 @@ function useCommandCenterStream(agentId: string) {
   }, []);
   const baselineRef = useRef<LastSeenPrediction | null | undefined>(undefined);
 
+  // Positions belong to one agent: dropping the previous agent's groups (and its stream error) when the agent
+  // changes keeps them from showing under the newly selected agent until its first frame arrives. Keyed on the
+  // agent alone, so a re-created `connect` callback never wipes live frames.
+  useEffect(() => {
+    setPositions(null);
+    setLeg("positions", null);
+  }, [agentId, setLeg]);
+
   useEffect(() => {
     onStatusChange(setStatus);
     connect(api.commandCenterStreamUrl(agentId, "NIFTY"), {
@@ -411,6 +419,7 @@ interface EventsRangePanelProps {
 
 function EventsRangePanel({ artifact, newsReport, status, revision, newEventKeys }: EventsRangePanelProps) {
   const [priorDay, setPriorDay] = useState<{ day: string; bars: HubIndexHistoryBar[] } | null>(null);
+  const [priorDayError, setPriorDayError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -438,8 +447,9 @@ function EventsRangePanel({ artifact, newsReport, status, revision, newEventKeys
             setPriorDay({ day, bars: barsRes.bars });
           });
       })
-      .catch(() => {
-        /* prior-day strip is a supplementary panel — leave it in its honest empty state */
+      .catch((e: unknown) => {
+        // A supplementary strip, but its empty state must say WHY it is empty.
+        if (!cancelled) setPriorDayError(e instanceof Error ? e.message : "request failed");
       });
     return () => {
       cancelled = true;
@@ -508,6 +518,12 @@ function EventsRangePanel({ artifact, newsReport, status, revision, newEventKeys
     <div className="rounded-xl border border-border/60 bg-card p-2 shadow-sm">
       <div className="mb-2 flex items-center gap-2">
         <LiveDot status={status} />
+        {artifact?.as_of ? (
+          // The stream only pushes a frame when something changed, so a quiet feed is not a fresh forecast.
+          <span className="text-[10px] text-muted-foreground" data-testid="command-center-forecast-as-of">
+            Forecast as of {new Date(artifact.as_of).toLocaleString()}
+          </span>
+        ) : null}
       </div>
 
       {!artifact ? (
@@ -572,6 +588,11 @@ function EventsRangePanel({ artifact, newsReport, status, revision, newEventKeys
             refreshKey={newsReport}
           />
 
+          {priorDayError ? (
+            <p role="alert" className="text-[11px] text-amber-700 dark:text-amber-400" data-testid="prior-day-error">
+              Prior-day price strip unavailable: {priorDayError}
+            </p>
+          ) : null}
           <PriorDayPriceStrip day={priorDay?.day ?? null} bars={priorDay?.bars ?? []} currentSpot={artifact.spot} height={64} />
           {artifact.spot != null && artifact.prediction?.expected_return_pct != null ? (
             <IndexEventsForecastChart

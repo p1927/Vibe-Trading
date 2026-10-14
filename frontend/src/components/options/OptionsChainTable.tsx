@@ -155,6 +155,8 @@ export function OptionsChainTable({
   const [data, setData] = useState<OptionsChainData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Which source answered (a recorded/replayed chain and a live one look identical otherwise).
+  const [answeredBy, setAnsweredBy] = useState<string | null>(null);
   const generation = useRef(0);
 
   const load = useCallback(
@@ -174,6 +176,7 @@ export function OptionsChainTable({
           return;
         }
         setData(res.data);
+        setAnsweredBy(res.source || null);
         const ltp = res.data.underlying_ltp;
         const lotSize = res.data.lot_size;
         const meta: { spot?: number; lotSize?: number } = {};
@@ -263,6 +266,13 @@ export function OptionsChainTable({
           </button>
         </form>
       </div>
+
+      {data && answeredBy && !loading ? (
+        <p className="mb-2 text-[10px] text-muted-foreground" data-testid="options-chain-source">
+          Source: {answeredBy}
+          {data.underlying_ltp != null ? ` · underlying ${data.underlying_ltp}` : ""}
+        </p>
+      ) : null}
 
       {error && (
         <div className="mb-3 flex items-center justify-between gap-3 rounded border border-danger/30 bg-danger/5 p-3 text-sm text-danger">

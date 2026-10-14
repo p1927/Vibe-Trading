@@ -4,7 +4,6 @@ import {
   memo,
   useCallback,
   useContext,
-  useEffect,
   useImperativeHandle,
   useMemo,
   useState,
@@ -14,33 +13,14 @@ import { useTranslation } from "react-i18next";
 import { Activity, Ban, CheckCircle2, Loader2, OctagonX, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import {
-  ApiError,
   api,
   type LiveAction,
   type LiveHalted,
   type LiveStatus,
 } from "@/lib/api";
+import { haltScopeStillActive, isGlobalLiveHalt, useLiveStatus } from "@/hooks/useLiveStatus";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
 import { RunnerStatus } from "@/components/chat/RunnerStatus";
-
-const LIVE_STATUS_POLL_INTERVAL_MS = 15_000;
-
-function normalizeBrokerScope(broker: string | null | undefined): string | null {
-  const normalized = broker?.trim().toLowerCase();
-  return normalized || null;
-}
-
-function isGlobalLiveHalt(halt: LiveHalted | null): boolean {
-  return halt != null && normalizeBrokerScope(halt.broker) == null;
-}
-
-function haltScopeStillActive(halt: LiveHalted, status: LiveStatus): boolean {
-  const broker = normalizeBrokerScope(halt.broker);
-  if (!broker) return status.global_halted;
-  return status.global_halted || status.brokers.some((item) => (
-    normalizeBrokerScope(item.auth.broker) === broker && item.halted
-  ));
-}
 
 function liveActionStyle(kind: string): { icon: typeof Activity; tone: string } {
   switch (kind) {
@@ -99,6 +79,7 @@ export interface LiveRuntimePanelHandle {
 interface RuntimeContextValue {
   liveStatus: LiveStatus | null;
   liveStatusUnavailable: boolean;
+  liveStatusError: string | null;
   liveActive: boolean;
   liveIsHalted: boolean;
   halting: boolean;
@@ -124,34 +105,17 @@ export const LiveRuntimePanel = memo(forwardRef<LiveRuntimePanelHandle, Props>(
     const [halting, setHalting] = useState(false);
     const [resuming, setResuming] = useState(false);
     const [liveStatusRefresh, setLiveStatusRefresh] = useState(0);
-    const [liveStatus, setLiveStatus] = useState<LiveStatus | null>(null);
-    const [liveStatusUnavailable, setLiveStatusUnavailable] = useState(false);
-
-    const refreshLiveStatus = useCallback(async () => {
-      try {
-        const next = await api.getLiveStatus();
-        setLiveStatus(next);
-        setLiveHalted((current) => (
-          current && !haltScopeStillActive(current, next) ? null : current
-        ));
-        setLiveStatusUnavailable(false);
-      } catch (error) {
-        if (error instanceof ApiError && (error.status === 404 || error.status === 501)) {
-          setLiveStatus(null);
-          setLiveStatusUnavailable(true);
-        }
-      }
-    }, []);
-
-    useEffect(() => {
-      refreshLiveStatus();
-      const timer = setInterval(refreshLiveStatus, LIVE_STATUS_POLL_INTERVAL_MS);
-      return () => clearInterval(timer);
-    }, [refreshLiveStatus]);
-
-    useEffect(() => {
-      if (liveStatusRefresh > 0) refreshLiveStatus();
-    }, [liveStatusRefresh, refreshLiveStatus]);
+    const {
+      liveStatus,
+      unavailable: liveStatusUnavailable,
+      error: liveStatusError,
+      refresh: refreshLiveStatus,
+    } = useLiveStatus({
+      refreshKey: liveStatusRefresh,
+      onSnapshot: (next) => setLiveHalted((current) => (
+        current && !haltScopeStillActive(current, next) ? null : current
+      )),
+    });
 
     useImperativeHandle(ref, () => ({
       resetSession() {
@@ -234,6 +198,7 @@ export const LiveRuntimePanel = memo(forwardRef<LiveRuntimePanelHandle, Props>(
     const value = useMemo<RuntimeContextValue>(() => ({
       liveStatus,
       liveStatusUnavailable,
+      liveStatusError,
       liveActive,
       liveIsHalted,
       halting,
@@ -248,6 +213,7 @@ export const LiveRuntimePanel = memo(forwardRef<LiveRuntimePanelHandle, Props>(
       liveIsHalted,
       liveStatus,
       liveStatusUnavailable,
+      liveStatusError,
       refreshLiveStatus,
       resumeLive,
       resuming,
@@ -268,6 +234,7 @@ export function LiveRuntimeStatus() {
     <RunnerStatus
       status={runtime.liveStatus}
       unavailable={runtime.liveStatusUnavailable}
+      staleError={runtime.liveStatusError}
       halted={runtime.liveIsHalted}
       onRefresh={runtime.refreshLiveStatus}
     />

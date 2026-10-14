@@ -186,7 +186,7 @@ export function CandlestickChart({ data, markers, indicators, height = 500 }: Pr
       subSeries = [
         { name: "DIF", type: "line", data: m.dif, xAxisIndex: 1, yAxisIndex: 1, symbol: "none", lineStyle: { width: 1, color: t.infoColor } },
         { name: "DEA", type: "line", data: m.signal, xAxisIndex: 1, yAxisIndex: 1, symbol: "none", lineStyle: { width: 1, color: t.warningColor } },
-        { name: "MACD", type: "bar", data: m.histogram.map(v => ({ value: v ?? 0, itemStyle: { color: (v ?? 0) >= 0 ? t.upColor : t.downColor } })), xAxisIndex: 1, yAxisIndex: 1 },
+        { name: "MACD", type: "bar", data: m.histogram.map(v => ({ value: v, itemStyle: { color: (v ?? 0) >= 0 ? t.upColor : t.downColor } })), xAxisIndex: 1, yAxisIndex: 1 },
       ];
       legendNames.push("DIF", "DEA", "MACD");
     } else if (sub === "rsi") {
@@ -233,7 +233,7 @@ export function CandlestickChart({ data, markers, indicators, height = 500 }: Pr
             } else if (p.seriesName === "Vol") {
               html += `<br/>Vol: ${abbreviateNum(Number(p.value))}`;
             } else if (p.value != null) {
-              html += `<br/>${p.marker} ${p.seriesName}: ${Number(p.value).toFixed(2)}`;
+              html += `<br/>${p.marker} ${escapeHtml(String(p.seriesName))}: ${Number(p.value).toFixed(2)}`;  // backend indicator names are untrusted
             }
           }
           return html;

@@ -10,6 +10,8 @@ const apiMock = vi.hoisted(() => ({
   stopChannels: vi.fn(),
   updateLLMSettings: vi.fn(),
   updateDataSourceSettings: vi.fn(),
+  getQverisConfig: vi.fn(),
+  getQverisStatus: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async () => {
@@ -104,6 +106,8 @@ describe("Settings IM channels panel", () => {
     apiMock.getLLMSettings.mockResolvedValue(llmSettings());
     apiMock.getDataSourceSettings.mockResolvedValue(dataSourceSettings());
     apiMock.getChannelStatus.mockResolvedValue(channelStatus());
+    apiMock.getQverisConfig.mockResolvedValue({ enabled: false, base_url: "https://qveris.ai/api/v1", api_key_masked: "", mode: "free", budget_credits_per_session: 50, configured: false });
+    apiMock.getQverisStatus.mockResolvedValue({ enabled: false, ok: true, error: null, remaining_credits: null, recent: [] });
     apiMock.listLLMModels.mockResolvedValue({
       provider: "openrouter",
       models: ["deepseek/deepseek-v3.2"],

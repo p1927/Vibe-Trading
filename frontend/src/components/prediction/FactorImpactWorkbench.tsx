@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatFactorValue } from "@/lib/displayText";
 import {
   api,
-  ApiError,
   type IndexPredictionArtifact,
   type IndexSimulationResult,
   type IndexUpcomingEvent,
   type PlaygroundTrigger,
 } from "@/lib/api";
 import { factorLabel, triggerToWorkbenchState } from "@/lib/factorEventMapping";
+import { useIndexSimulation } from "@/hooks/useIndexSimulation";
+import { finiteOrNull } from "@/lib/finite";
 import { FactorImpactInteractiveChart } from "@/components/prediction/FactorImpactInteractiveChart";
 import { FactorNewsEventPanel } from "@/components/prediction/FactorNewsEventPanel";
 import { FactorPedagogyLink } from "@/components/prediction/FactorPedagogyLink";
@@ -68,9 +69,10 @@ export function FactorImpactWorkbench({
     points?: Array<{ factor_delta_pct?: number; index_level?: number; return_pct?: number }>;
   }>;
 
-  const baselineReturn = artifact.prediction?.expected_return_pct ?? 0;
+  // Unknown stays unknown: a missing headline return is not a 0% baseline.
+  const baselineReturn = finiteOrNull(artifact.prediction?.expected_return_pct);
   const spot = artifact.spot ?? 0;
-  const baselineLevel = spot > 0 ? spot * (1 + baselineReturn / 100) : null;
+  const baselineLevel = spot > 0 && baselineReturn != null ? spot * (1 + baselineReturn / 100) : null;
 
   const rankedFactors = useMemo(() => {
     const keys = new Set<string>();
@@ -121,9 +123,6 @@ export function FactorImpactWorkbench({
   const [shockPct, setShockPct] = useState(0);
   const [cascadeOn, setCascadeOn] = useState(true);
   const [chartMode, setChartMode] = useState<"horizon" | "shock_sweep">("horizon");
-  const [simulation, setSimulation] = useState<IndexSimulationResult | null>(null);
-  const [simulating, setSimulating] = useState(false);
-  const [simError, setSimError] = useState<string | null>(null);
   const [eventPresetId, setEventPresetId] = useState<string | undefined>();
   const [selectedTriggerId, setSelectedTriggerId] = useState<string | null>(null);
   const [headlinesLocal, setHeadlinesLocal] = useState<PlaygroundTrigger[]>([]);
@@ -135,7 +134,6 @@ export function FactorImpactWorkbench({
   const events = useExternalContext ? (eventsProp ?? []) : eventsLocal;
   const contextLoading = useExternalContext ? Boolean(contextLoadingProp) : contextLoadingLocal;
   const [whyText, setWhyText] = useState<string | null>(null);
-  const debounceRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (rankedFactors.length && !rankedFactors.some((r) => r.factor === activeFactor)) {
@@ -170,75 +168,25 @@ export function FactorImpactWorkbench({
     };
   }, [artifact.ticker, artifact.as_of, useExternalContext]);
 
-  const runSimulate = useCallback(async () => {
-    if (shockPct === 0 && !eventPresetId) {
-      setSimulation(null);
-      setSimError(null);
-      onSimulationChange?.(null);
-      return;
-    }
-
-    setSimulating(true);
-    setSimError(null);
-    try {
-      const res = await api.simulateIndexPrediction({
-        ticker: artifact.ticker || "NIFTY",
-        horizon_days: horizonDays,
-        primary_factor: eventPresetId ? undefined : activeFactor,
-        primary_shock_pct: eventPresetId ? undefined : shockPct,
-        cascade: cascadeOn,
-        event_preset_id: eventPresetId,
-      });
-      if (res.status === "error" || res.status === "not_found") {
-        setSimError(res.message || "Simulation failed");
-        setSimulation(null); // the previous what-if no longer matches the controls: not drawn on the replay either
-        onSimulationChange?.(null);
-        return;
-      }
-      if (res.simulation) {
-        setSimulation(res.simulation);
-        onSimulationChange?.(res.simulation);
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Simulation request failed";
-      setSimulation(null);
-      onSimulationChange?.(null);
-      if (err instanceof ApiError && (err.status === 405 || err.status === 404)) {
-        setSimError(`${msg} — restart trade API on port 8899.`);
-      } else {
-        setSimError(msg);
-      }
-    } finally {
-      setSimulating(false);
-    }
-  }, [
-    activeFactor,
-    shockPct,
-    cascadeOn,
-    eventPresetId,
-    artifact.ticker,
-    horizonDays,
-    onSimulationChange,
-  ]);
-
-  useEffect(() => {
-    if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    debounceRef.current = window.setTimeout(() => {
-      void runSimulate();
-    }, 300);
-    return () => {
-      if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    };
-  }, [runSimulate]);
+  const { simulation, simulating, error: simError } = useIndexSimulation(
+    shockPct === 0 && !eventPresetId
+      ? null
+      : {
+          ticker: artifact.ticker || "NIFTY",
+          horizon_days: horizonDays,
+          primary_factor: eventPresetId ? undefined : activeFactor,
+          primary_shock_pct: eventPresetId ? undefined : shockPct,
+          cascade: cascadeOn,
+          event_preset_id: eventPresetId,
+        },
+    { onResult: onSimulationChange },
+  );
 
   const reset = () => {
     setShockPct(0);
     setEventPresetId(undefined);
     setSelectedTriggerId(null);
     setWhyText(null);
-    setSimulation(null);
-    setSimError(null);
-    onSimulationChange?.(null);
   };
 
   const onTriggerSelect = (trigger: PlaygroundTrigger) => {
@@ -253,7 +201,7 @@ export function FactorImpactWorkbench({
   const displayReturn = simulation?.expected_return_pct ?? baselineReturn;
   const displayLevel = simulation?.index_level ?? baselineLevel;
   const deltaReturn =
-    simulation?.expected_return_pct != null
+    simulation?.expected_return_pct != null && baselineReturn != null
       ? simulation.expected_return_pct - baselineReturn
       : 0;
 
@@ -271,7 +219,7 @@ export function FactorImpactWorkbench({
     simulation?.cascade_regime ?? cascadeMeta?.regime ?? "calm";
 
   const activeMeta = rankedFactors.find((r) => r.factor === activeFactor);
-  const baseVal = Number(
+  const baseVal = finiteOrNull(
     artifact.global_factors?.find((g) => g.factor === activeFactor)?.value ??
       contributors.find((c) => c.factor === activeFactor)?.value,
   );
@@ -472,7 +420,7 @@ export function FactorImpactWorkbench({
             </span>
           </div>
 
-          {Number.isFinite(baseVal) ? (
+          {baseVal != null ? (
             <p className="text-[10px] text-muted-foreground">
               {activeMeta?.label}: {formatFactorValue(activeFactor, baseVal)}
               {simulation?.factor_overrides?.[activeFactor] != null ? (

@@ -89,6 +89,18 @@ describe("Hub page", () => {
     expect(await screen.findByText(/0 pending in queue/)).toBeInTheDocument();
   });
 
+  it("factor coverage: an unreported gate minimum is an em-dash, a reported 0 stays 0%", async () => {
+    mocked.getHubStatus.mockResolvedValue(status({ factor_coverage: { passes_gate: false } }));
+    const { unmount } = render(<Hub />);
+    const gate = (await screen.findByText("Gate min:")).parentElement!;
+    expect(gate).toHaveTextContent("Gate min: — · fail");
+    expect(gate).not.toHaveTextContent("0%");
+    unmount();
+    mocked.getHubStatus.mockResolvedValue(status({ factor_coverage: { passes_gate: false, min_pct: 0 } }));
+    render(<Hub />);
+    expect(await screen.findByText("0%")).toBeInTheDocument();
+  });
+
   it("lets min relevance confidence be set to 0 instead of snapping back to the default", async () => {
     render(<Hub />);
     fireEvent.click(await screen.findByText("Show schedule settings"));
@@ -108,5 +120,31 @@ describe("Hub page", () => {
     await waitFor(() => expect(mocked.getHubNewsPipelineConfig.mock.calls.length).toBeGreaterThan(before));
     await new Promise((r) => setTimeout(r, 50));
     expect(field).toHaveValue(0.9);
+  });
+
+  it("labels the last maintainer run with its own finish time, and says when none was recorded", async () => {
+    mocked.getHubStatus.mockResolvedValue(
+      status({ news_maintainer: { present: true, mode: "maintenance", stages: [], finished_at: "2026-10-01T08:00:00Z" } }),
+    );
+    const { unmount } = render(<Hub />);
+    expect(await screen.findByText(/^Finished /)).toBeInTheDocument();
+    unmount();
+    mocked.getHubStatus.mockResolvedValue(status({ news_maintainer: { present: true, mode: "maintenance", stages: [] } }));
+    render(<Hub />);
+    expect(await screen.findByText("Finish time not recorded")).toBeInTheDocument();
+  });
+
+  it("a slow response for the previous page does not overwrite the current one", async () => {
+    let releaseSlow!: (v: unknown) => void;
+    mocked.getHubStatus
+      .mockReturnValueOnce(new Promise((resolve) => { releaseSlow = resolve; })) // mount load: slow
+      .mockResolvedValue(status({ news_staging: { queued: 7 } })); // later load: fast
+    render(<Hub />);
+    fireEvent.click(await screen.findByText("Refresh"));
+    expect(await screen.findByText(/7 pending in queue/)).toBeInTheDocument();
+    releaseSlow(status({ news_staging: { queued: 99 } }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText(/99 pending in queue/)).toBeNull();
+    expect(screen.getByText(/7 pending in queue/)).toBeInTheDocument();
   });
 });

@@ -183,6 +183,24 @@ describe("Portfolio page", () => {
     mocked.checkConnection.mockResolvedValue({ status: "ok", connection_id: "ibkr", report: { status: "ok" } });
   });
 
+  it("shows no day change while the snapshot is incomplete (a failed account would read as a loss)", async () => {
+    mocked.getPortfolioHistory.mockResolvedValue({
+      status: "ok",
+      history: [{ id: "h1", created_at: "2026-08-09T00:00:00Z", total_usd: 1500 }],
+    });
+    mocked.getPortfolio.mockResolvedValue({ status: "ok", snapshot: snapshotWithFailedSource });
+    const { unmount } = render(<Portfolio />);
+    const tile = (await screen.findByText(i18n.t("portfolio.metrics.change"))).closest("div.rounded-xl")!;
+    expect(tile).toHaveTextContent("—");
+    expect(tile).not.toHaveTextContent("-$500.00");
+    unmount();
+
+    mocked.getPortfolio.mockResolvedValue({ status: "ok", snapshot });
+    render(<Portfolio />);
+    const okTile = (await screen.findByText(i18n.t("portfolio.metrics.change"))).closest("div.rounded-xl")!;
+    expect(okTile).toHaveTextContent("-$500.00");
+  });
+
   it("renders the combined portfolio and refreshes all connectors", async () => {
     render(<Portfolio />);
     expect(await screen.findByText("AAPL")).toBeInTheDocument();

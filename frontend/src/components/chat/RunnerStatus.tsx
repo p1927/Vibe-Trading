@@ -46,6 +46,8 @@ interface Props {
   connectorCheck?: ConnectorCheckSnapshot | null;
   /** True when the live status endpoint is not wired on this backend (404/501) — hide OAuth section only. */
   unavailable?: boolean;
+  /** Set when the last `/live/status` poll failed (not 404/501): `status` is then the last good snapshot, not current. */
+  staleError?: string | null;
   /** When true, OAuth live runners reflect the global kill switch. */
   halted?: boolean;
   /** Forces the parent to re-poll immediately (e.g. after a runner start/stop). */
@@ -441,6 +443,7 @@ export const RunnerStatus = memo(function RunnerStatus({
   connectors,
   connectorCheck,
   unavailable,
+  staleError,
   halted,
   onRefresh,
 }: Props) {
@@ -501,6 +504,15 @@ export const RunnerStatus = memo(function RunnerStatus({
           <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="h-2.5 w-2.5" />
             {i18n.t("runnerStatus.sdkReady")}
+          </span>
+        )}
+        {staleError && (
+          <span
+            className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400"
+            title={staleError}
+            data-testid="runner-status-stale"
+          >
+            {i18n.t("runnerStatus.stale", { defaultValue: "status not refreshing" })}
           </span>
         )}
         {isOAuthHalted && (
