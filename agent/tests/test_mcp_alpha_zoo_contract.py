@@ -7,6 +7,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 import mcp_server
 from src.tools.alpha_bench_tool import AlphaBenchTool
 from src.tools.alpha_zoo_tool import AlphaZooTool
@@ -203,6 +205,21 @@ def test_alpha_bench_rejects_output_outside_allowed_roots(monkeypatch) -> None:
     assert registry.calls == []
 
 
+@pytest.mark.parametrize("bad", ["/tmp/alpha-bench-reports", "~/alpha-bench-escape", "../../escape"])
+def test_alpha_bench_tool_rejects_output_dir_outside_allowed_roots(monkeypatch, tmp_path: Path, bad: str) -> None:
+    """The in-process agent tool (not just the MCP wrapper) refuses a model-chosen output_dir outside
+    the allowed roots, before anything is created there."""
+    monkeypatch.setattr(alpha_bench_module, "_default_output_dir", lambda: tmp_path / "reports")
+    monkeypatch.chdir(tmp_path)
+    result = alpha_bench_module.run_alpha_bench(
+        alpha_id="alpha101_001", universe="sp500", period="2020-2021", output_dir=bad
+    )
+    assert result["status"] == "error"
+    assert "alpha bench report" in result["error"]
+    assert not Path(bad).expanduser().exists()
+    assert not (tmp_path / "reports").exists()
+
+
 def test_alpha_bench_does_not_follow_preexisting_report_symlink(monkeypatch, tmp_path: Path) -> None:
     class _BenchRegistry:
         def get(self, alpha_id: str) -> object:
@@ -222,6 +239,7 @@ def test_alpha_bench_does_not_follow_preexisting_report_symlink(monkeypatch, tmp
     report_link.symlink_to(external_target)
 
     monkeypatch.setattr("src.factors.registry.get_default_registry", lambda: _BenchRegistry())
+    monkeypatch.setattr(alpha_bench_module, "_default_output_dir", lambda: tmp_path)
     monkeypatch.setattr(alpha_bench_module, "datetime", _FixedDateTime)
     monkeypatch.setattr(alpha_bench_module.secrets, "token_hex", lambda length: "fixed")
     monkeypatch.setattr(alpha_bench_module, "_load_universe_panel", lambda *args, **kwargs: {})
@@ -254,3 +272,21 @@ def test_alpha_bench_does_not_follow_preexisting_report_symlink(monkeypatch, tmp
     assert report_link.is_symlink()
     assert predictable_report_link.is_symlink()
     assert not external_target.exists()
+
+
+def test_resolve_report_dir_variants(monkeypatch, tmp_path: Path) -> None:
+    reports = tmp_path / "reports"
+    monkeypatch.setattr(alpha_bench_module, "_default_output_dir", lambda: reports)
+    monkeypatch.chdir(tmp_path)
+    resolve = alpha_bench_module.resolve_report_dir
+    assert resolve(None) == reports.resolve()
+    assert resolve("") == reports.resolve()
+    assert resolve(str(reports / "sub")) == (reports / "sub").resolve()
+    assert resolve("uploads/report-out") == (tmp_path / "uploads" / "report-out").resolve()  # cwd/uploads is a write root
+    link = tmp_path / "reports" / "escape"
+    reports.mkdir()
+    link.symlink_to(tmp_path.parent)  # a symlink inside an allowed root must not launder an outside path
+    with pytest.raises(ValueError):
+        resolve(str(link / "x"))
+    with pytest.raises(ValueError):
+        resolve(str(reports / ".." / "outside"))

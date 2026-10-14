@@ -265,3 +265,36 @@ def test_execute_three_scenario_validates_growth_shape() -> None:
         growth=[0.1, 0.2], pe=[25, 20, 15],  # growth has only 2 entries
     )
     assert env["status"] == "error"
+
+
+# ── zero / negative reference and falsy-0 arguments (R9) ──────────────────
+
+
+def test_market_cap_zero_reported_is_a_miss_not_a_pass() -> None:
+    out = verify_market_cap(price=510, shares=9.11e9, reported_cap=0)
+    assert out["verdict"] == "fail"
+    assert out["deviation_pct"] is None  # non-finite stays valid JSON
+    json.dumps(out, allow_nan=False)
+    assert verify_market_cap(price=0, shares=5, reported_cap=0)["verdict"] == "pass"
+
+
+def test_cross_validate_negative_or_zero_median_does_not_pass_everything() -> None:
+    neg = cross_validate("fcf", {"a": -100, "b": -101, "c": -500}, tolerance_pct=2.0)
+    by_src = {s["source"]: s for s in neg["per_source"]}
+    assert by_src["c"]["consistent"] is False and neg["all_consistent"] is False
+    zero = cross_validate("x", {"a": 0, "b": 0, "c": 5})
+    assert zero["all_consistent"] is False
+    assert {s["source"]: s["consistent"] for s in zero["per_source"]}["c"] is False
+    json.dumps(zero, allow_nan=False)
+    assert cross_validate("x", {"a": 0, "b": 0})["all_consistent"] is True
+
+
+def test_execute_explicit_zero_years_and_tolerance_are_honoured() -> None:
+    env = _run(
+        command="three_scenario", price=100, eps=10, shares=1,
+        growth=[0.5, 0.5, 0.5], pe=[10, 10, 10], years=0,
+    )
+    assert env["years"] == 0
+    assert env["scenarios"][0]["future_eps"] == 10  # zero years of growth
+    env = _run(command="cross_validate", field="r", source_values={"a": 100, "b": 101}, tolerance_pct=0)
+    assert env["tolerance_pct"] == 0.0 and env["all_consistent"] is False
