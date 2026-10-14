@@ -518,7 +518,10 @@ def _active_mandate_state(broker: str) -> Optional[ActiveMandateState]:
         expires_in = int(delta.total_seconds())
         expired = expires_in <= 0
     except (ValueError, AttributeError):
-        logger.debug("could not parse expires_at for %s mandate", broker, exc_info=True)
+        # An expiry that cannot be read is an expired mandate (fail closed), as the order gate treats it:
+        # leaving ``expired`` False let /live/runner/start accept a mandate whose expiry nobody can verify.
+        expired = True
+        logger.warning("could not parse expires_at for %s mandate; treating it as expired", broker, exc_info=True)
 
     return ActiveMandateState(
         broker=broker,
