@@ -7541,6 +7541,8 @@ export interface AgentBoardWealthCurvePoint {
   symbol?: string;
   cumulative_shadow_pnl_inr: number;
   cumulative_agent_actual_pnl_inr: number;
+  /** false: the actual value is the previous cumulative carried forward (this trade's agent P&L is not reconciled yet). */
+  agent_actual_reconciled?: boolean;
 }
 
 export interface AgentBoardWealthCurveResponse {

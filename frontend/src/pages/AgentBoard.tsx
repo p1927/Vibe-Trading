@@ -15,6 +15,7 @@ import {
   type RetrainProposal,
   type LearningActivityEntry,
 } from "@/lib/api";
+import { carriedForwardActualCount } from "@/lib/agentBoardWealth";
 import { AgentPnlCurveChart, type PnlSeries } from "@/components/board/AgentPnlCurveChart";
 import { cn } from "@/lib/utils";
 
@@ -293,6 +294,8 @@ export function AgentBoard() {
 
   const filteredActivity =
     activityFilter === "all" ? activity : activity.filter((e) => e.status === activityFilter);
+
+  const carriedForwardActual = carriedForwardActualCount(wealthPoints);
 
   const wealthSeries: PnlSeries[] = [
     {
@@ -675,6 +678,12 @@ export function AgentBoard() {
 
           <section className="space-y-2">
             <h2 className="text-sm font-medium text-muted-foreground">Wealth curve</h2>
+            {carriedForwardActual > 0 ? (
+              <p className="text-xs text-muted-foreground">
+                {carriedForwardActual} of {wealthPoints.length} points show the previous &quot;Agent actual&quot; value
+                because that trade&apos;s agent P&amp;L is not reconciled yet; a flat stretch is not a no-change trade.
+              </p>
+            ) : null}
             <AgentPnlCurveChart series={wealthSeries} emptyLabel="No closed trades yet for this agent." />
           </section>
 

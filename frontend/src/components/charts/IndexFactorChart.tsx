@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { finiteOrNull } from "@/lib/finite";
 
 export interface FactorSensitivityPoint {
   factor_delta_pct?: number;
@@ -66,7 +67,7 @@ export function IndexFactorChart({
     const points = activeFactor?.points ?? [];
     if (points.length < 2) return null;
     const xs = points.map((p) => Number(p.factor_delta_pct ?? 0));
-    const ys = points.map((p) => Number(p.index_level ?? 0));
+    const ys = points.map((p) => finiteOrNull(p.index_level));
     const baseline =
       points.find((p) => Number(p.factor_delta_pct ?? 0) === 0)?.index_level ??
       (spot && spot > 0 ? spot * 1.01 : null);
@@ -120,7 +121,7 @@ export function IndexFactorChart({
     const points = activeEvent?.curve ?? [];
     if (points.length < 2) return null;
     const xs = points.map((p) => Math.round(Number(p.shock_progress ?? 0) * 100));
-    const ys = points.map((p) => Number(p.index_level ?? 0));
+    const ys = points.map((p) => finiteOrNull(p.index_level));
     const title = `${activeEvent?.event ?? "Event"} — ${activeEvent?.outcome ?? ""}`.trim();
     return {
       backgroundColor: "transparent",
