@@ -23,7 +23,7 @@ archival work is gated. QA/eval job types (`recorder_dst`, `prediction_eval`,
 `news_dedup_quality_eval`) are NOT gated — they evaluate already-collected data or exercise dev's
 own code changes, which is exactly the kind of thing a developer needs to run in dev, not
 something release should monopolize. Genuinely operational/session-scoped types (the
-`autonomous_agent_*` family, `recording_wake`, `options_position_monitor`,
+`autonomous_agent_*` family, `options_position_monitor`,
 `trade_fills_export`) are also not gated — they were never collection work in the first place,
 same boundary as OpenAlgo.
 """
@@ -72,7 +72,6 @@ from src.scheduled_research.options_jobs import (
     JOB_TYPE_OPTIONS_PLAN_REFRESH,
     JOB_TYPE_OPTIONS_POSITION_MONITOR,
 )
-from src.scheduled_research.recording_wake_jobs import JOB_TYPE_RECORDING_WAKE
 from src.scheduled_research.execution_advisor_jobs import JOB_TYPE_EXECUTION_ADVISOR_SWEEP
 from src.scheduled_research.autonomous_agent_jobs import AUTONOMOUS_JOB_TYPES
 from src.scheduled_research.trade_data_jobs import (
@@ -215,7 +214,6 @@ def is_monitor_job(job_type: str) -> bool:
 # strategy-review cadence for the same duration because `tick()` is a barrier over ALL due jobs.
 OPERATIONAL_TIER_JOB_TYPES: frozenset[str] = frozenset(AUTONOMOUS_JOB_TYPES) | frozenset(
     {
-        JOB_TYPE_RECORDING_WAKE,
         JOB_TYPE_OPTIONS_POSITION_MONITOR,
         # Advises on this tier's own OpenAlgo positions every 5 minutes; per-tier like
         # options_position_monitor, and must not queue behind a long collection dispatch.

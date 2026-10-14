@@ -24,7 +24,10 @@ export function OptionsPayoffChart({ curve, entrySpot, breakevens, height = 340 
     const spotLabel = i18n.t("options.payoff.entrySpot");
     const beLabel = i18n.t("options.payoff.breakeven");
 
-    const pairs: [number, number][] = curve.spot.map((s, idx) => [s, curve.pnl[idx] ?? 0]);
+    // a spot without a P&L (short `pnl` array) used to plot as 0, a fake break-even
+    const pairs: [number, number][] = curve.spot.flatMap((s, idx) =>
+      Number.isFinite(curve.pnl[idx]) ? [[s, curve.pnl[idx]] as [number, number]] : [],
+    );
     const profitData = pairs.map(([s, v]) => [s, v >= 0 ? v : null]);
     const lossData = pairs.map(([s, v]) => [s, v <= 0 ? v : null]);
 

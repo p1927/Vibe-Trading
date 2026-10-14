@@ -117,7 +117,7 @@ export function DataCapturePanel() {
           <input
             type="checkbox"
             checked={Boolean(entity?.capture_enabled)}
-            disabled={busy !== null || loading}
+            disabled={busy !== null || loading || !entity}
             onChange={() => void toggleCapture()}
             className="h-4 w-4 rounded border"
           />

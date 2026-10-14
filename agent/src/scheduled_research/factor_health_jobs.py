@@ -53,7 +53,7 @@ import os
 import time
 from typing import Any
 
-from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule, DEFAULT_JOB_TIMEZONE
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
 
@@ -211,6 +211,7 @@ def register_default_factor_health_jobs(store: ScheduledResearchJobStore) -> int
                     "on-disk staleness for every RECORDED factor"
                 ),
                 schedule=daily_cron,
+                timezone=DEFAULT_JOB_TIMEZONE,
                 next_run_at=now_ms,
                 status=JobStatus.PENDING,
                 created_at=now_ms,
@@ -235,6 +236,7 @@ def register_default_factor_health_jobs(store: ScheduledResearchJobStore) -> int
                     "vendor fetch; queue the reference's missing days as gap jobs"
                 ),
                 schedule=reference_cron,
+                timezone=DEFAULT_JOB_TIMEZONE,
                 next_run_at=now_ms,
                 status=JobStatus.PENDING,
                 created_at=now_ms,
@@ -260,6 +262,7 @@ def register_default_factor_health_jobs(store: ScheduledResearchJobStore) -> int
                     "then drain a bounded number of factors through the one dispatch path"
                 ),
                 schedule=gap_fill_cron,
+                timezone=DEFAULT_JOB_TIMEZONE,
                 next_run_at=now_ms,
                 status=JobStatus.PENDING,
                 created_at=now_ms,
@@ -281,6 +284,7 @@ def register_default_factor_health_jobs(store: ScheduledResearchJobStore) -> int
                 id="factor-health-live",
                 prompt="Factor registry health + live-vendor freshness pass over every RECORDED factor",
                 schedule=live_cron,
+                timezone=DEFAULT_JOB_TIMEZONE,
                 next_run_at=now_ms,
                 status=JobStatus.PENDING,
                 created_at=now_ms,

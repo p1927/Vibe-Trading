@@ -98,24 +98,10 @@ def test_every_dispatched_job_type_is_in_index_job_types():
     )
 
 
-@pytest.mark.unit
-def test_try_dispatch_pipeline_job_routes_news_dedup_quality_eval(monkeypatch):
-    """End-to-end proof (at the actual registry entry point the scheduler executor calls) that a
-    dispatched news_dedup_quality_eval job now reaches the real handler instead of falling
-    through to the generic agent-session path. Before this fix, `try_dispatch_pipeline_job`
-    returned False for this job_type and the caller enqueued an LLM agent session instead.
-    """
-    import asyncio
-
-    from src.scheduled_research import job_dispatch_registry
+def _dedup_eval_job():
     from src.scheduled_research.models import JobStatus, ScheduledResearchJob
 
-    fake_summary = {"status": "ok", "pair_count": 12}
-    monkeypatch.setattr(
-        index_jobs, "run_news_dedup_quality_eval_job", lambda config: fake_summary
-    )
-
-    job = ScheduledResearchJob(
+    return ScheduledResearchJob(
         id="nifty-news-dedup-quality-eval",
         prompt="test",
         schedule="30 2 * * *",
@@ -125,7 +111,50 @@ def test_try_dispatch_pipeline_job_routes_news_dedup_quality_eval(monkeypatch):
         config={"job_type": index_jobs.JOB_TYPE_NEWS_DEDUP_QUALITY_EVAL},
     )
 
-    handled = asyncio.run(job_dispatch_registry.try_dispatch_pipeline_job(job))
 
-    assert handled is True
+@pytest.mark.unit
+def test_try_dispatch_pipeline_job_routes_news_dedup_quality_eval(monkeypatch):
+    """The registry entry point the scheduler executor calls claims this job_type (True) and hands it
+    to the index dispatcher instead of falling through to the generic agent-session path. Before the
+    job was wired, `try_dispatch_pipeline_job` returned False and an LLM agent session was enqueued.
+
+    The dispatcher is stubbed at the registry seam: `news_dedup_quality_eval` is a
+    CHILD_PROCESS_JOB_TYPES job (D244), so the real dispatch runs the handler in a child process that
+    a monkeypatch here cannot reach (it ran the real golden eval until pytest-timeout)."""
+    import asyncio
+
+    from src.scheduled_research import job_dispatch_registry
+
+    routed = []
+
+    async def spy(job):
+        routed.append(job.id)
+
+    monkeypatch.setattr(index_jobs, "dispatch_index_job", spy)
+    job = _dedup_eval_job()
+
+    assert asyncio.run(job_dispatch_registry.try_dispatch_pipeline_job(job)) is True
+    assert routed == [job.id]
+
+
+@pytest.mark.unit
+def test_dispatch_index_job_sync_runs_the_handler_and_records_its_summary(monkeypatch):
+    """The child process's own entry point: the handler result lands on the job config."""
+    monkeypatch.setattr(
+        index_jobs, "run_news_dedup_quality_eval_job", lambda config: {"status": "ok", "pair_count": 12}
+    )
+    job = _dedup_eval_job()
+
+    index_jobs.dispatch_index_job_sync(job)
+
     assert job.config[index_jobs.LAST_RESULT_CONFIG_KEY]["status"] == "ok"
+
+
+@pytest.mark.unit
+def test_dispatch_index_job_sync_fails_the_run_when_the_eval_reports_errors(monkeypatch):
+    """The handler returns had_errors instead of raising; the dispatcher must still fail the run."""
+    monkeypatch.setattr(
+        index_jobs, "run_news_dedup_quality_eval_job", lambda config: {"status": "error", "had_errors": True}
+    )
+    with pytest.raises(Exception):
+        index_jobs.dispatch_index_job_sync(_dedup_eval_job())

@@ -45,44 +45,31 @@ _NSE_SECTOR_INDICES: dict[str, str] = {
 }
 
 
-def _load_nse_sector_panel(
-    index_id: str, method_name: str, start: str, end: str
-) -> dict[str, pd.DataFrame]:
-    """Generic NSE sectoral-index panel: niftyindices.com constituents + per-symbol OHLCV.
+def build_ohlcv_panel(
+    symbols: list[str],
+    start: str,
+    end: str,
+    *,
+    label: str,
+    load_frame: Any,
+    meta: dict[str, Any],
+) -> dict[str, Any]:
+    """Per-symbol OHLCV frames -> the wide Alpha Bench panel (the one builder; nifty50 uses it too).
 
-    Mirrors ``_load_nifty50_panel``'s shape, parameterized by index. There is
-    no hand-picked fallback roster here (unlike nifty50) — these indices don't
-    have a hardcoded survivor list, so an empty roster raises here, naming the
-    constituent sources, rather than silently benching a fabricated basket.
+    ``load_frame(code)`` returns a frame with ``date`` + ``close`` (or None). A vendor failure drops that
+    symbol with a WARNING; a programming error propagates (Trade D36), so a bug never reads as a
+    thinner universe.
     """
-    from trade_integrations.dataflows.index_research.constituents import (
-        load_nse_sector_index_constituents,
-    )
-
     from trade_integrations.autonomous_agents.agent_issues import PROGRAMMING_ERRORS
-
-    # The constituent chain absorbs its own vendor failures (each logged as a WARNING) and
-    # answers [] when every source failed; anything it raises is a bug and propagates (Trade D36).
-    rows = load_nse_sector_index_constituents(method_name)
-    symbols = [row.symbol.upper().strip() for row in rows if row.symbol]
-    if not symbols:
-        raise RuntimeError(
-            f"{index_id}: no constituents for {method_name} — niftyindices.com and "
-            "archives.nseindia.com both failed (see the warnings above)"
-        )
-
-    from trade_integrations.dataflows.index_research.alpha_bridge.india_ohlcv import (
-        load_symbol_ohlcv,
-    )
 
     fetched: dict[str, pd.DataFrame] = {}
     for code in symbols:
         try:
-            frame = load_symbol_ohlcv(code, start_date=start, end_date=end)
+            frame = load_frame(code)
         except PROGRAMMING_ERRORS:
             raise
         except Exception as exc:  # noqa: BLE001 — a vendor tier (yfinance, OpenAlgo) failed
-            logger.warning("%s: OHLCV fetch failed for %s, dropped from the panel: %s", index_id, code, exc)
+            logger.warning("%s: OHLCV fetch failed for %s, dropped from the panel: %s", label, code, exc)
             continue
         if frame is None or frame.empty or "close" not in frame.columns:
             continue
@@ -108,14 +95,51 @@ def _load_nse_sector_panel(
     panel = _wide_from_fetched(fetched, include_amount=False)
     if all(k in panel for k in ("open", "high", "low", "close")):
         panel["vwap"] = (panel["open"] + panel["high"] + panel["low"] + panel["close"]) / 4.0
-
     panel["_meta"] = {
-        "universe": index_id,
+        "universe": label,
         "survivorship_bias": True,
-        "constituent_source": "niftyindices_constituents",
+        **meta,
         "constituent_count": len(fetched),
     }
     return panel
+
+
+def _load_nse_sector_panel(
+    index_id: str, method_name: str, start: str, end: str
+) -> dict[str, pd.DataFrame]:
+    """Generic NSE sectoral-index panel: niftyindices.com constituents + per-symbol OHLCV.
+
+    Mirrors ``_load_nifty50_panel``'s shape, parameterized by index. There is
+    no hand-picked fallback roster here (unlike nifty50) — these indices don't
+    have a hardcoded survivor list, so an empty roster raises here, naming the
+    constituent sources, rather than silently benching a fabricated basket.
+    """
+    from trade_integrations.dataflows.index_research.constituents import (
+        load_nse_sector_index_constituents,
+    )
+
+    # The constituent chain absorbs its own vendor failures (each logged as a WARNING) and
+    # answers [] when every source failed; anything it raises is a bug and propagates (Trade D36).
+    rows = load_nse_sector_index_constituents(method_name)
+    symbols = [row.symbol.upper().strip() for row in rows if row.symbol]
+    if not symbols:
+        raise RuntimeError(
+            f"{index_id}: no constituents for {method_name} — niftyindices.com and "
+            "archives.nseindia.com both failed (see the warnings above)"
+        )
+
+    from trade_integrations.dataflows.index_research.alpha_bridge.india_ohlcv import (
+        load_symbol_ohlcv,
+    )
+
+    return build_ohlcv_panel(
+        symbols,
+        start,
+        end,
+        label=index_id,
+        load_frame=lambda code: load_symbol_ohlcv(code, start_date=start, end_date=end),
+        meta={"constituent_source": "niftyindices_constituents"},
+    )
 
 
 def register_nse_sector_universes(universe_registry: dict[str, Any], universe_spec_cls: Any) -> None:

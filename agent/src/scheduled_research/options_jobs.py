@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from src.config.accessor import get_env_config
-from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule, DEFAULT_JOB_TIMEZONE
 from src.scheduled_research.index_jobs import _reraise_pipeline_cancel
 from src.scheduled_research.run_outcome import finish_run
 from src.trade.hub_bridge import ensure_trade_stack_path
@@ -522,6 +522,7 @@ def register_default_options_jobs(store) -> int:
             id="options-plan-refresh",
             prompt="Refresh stale options research plans for monitor watchlist",
             schedule=poll_cron,
+            timezone=DEFAULT_JOB_TIMEZONE,
             next_run_at=now_ms,
             status=JobStatus.PENDING,
             created_at=now_ms,
@@ -537,6 +538,7 @@ def register_default_options_jobs(store) -> int:
             id="options-position-monitor",
             prompt="Monitor open options plan positions for thesis breaks",
             schedule=poll_cron,
+            timezone=DEFAULT_JOB_TIMEZONE,
             next_run_at=now_ms,
             status=JobStatus.PENDING,
             created_at=now_ms,

@@ -92,17 +92,19 @@ export function computeTrackEvalStats(
   trackId: string,
 ): TrackEvalStats {
   const rows = (daily ?? []).filter((r) => r.track_id === trackId);
-  const hitCount = rows.filter((r) => r.direction_hit).length;
-  const evalCount = rows.length;
-  const missCount = evalCount - hitCount;
+  // A row with no direction verdict (no realised move yet) is neither a hit nor a miss, and a row with
+  // no `error_pct` has no error: `Number(null)` is 0, which read as a perfect forecast and dragged MAE down.
+  const scored = rows.filter((r) => typeof r.direction_hit === "boolean");
+  const hitCount = scored.filter((r) => r.direction_hit).length;
   const maeValues = rows
+    .filter((r) => r.error_pct != null)
     .map((r) => Math.abs(Number(r.error_pct)))
     .filter((v) => Number.isFinite(v));
   return {
-    evalCount,
+    evalCount: rows.length,
     hitCount,
-    missCount,
-    hitRate: evalCount > 0 ? hitCount / evalCount : null,
+    missCount: scored.length - hitCount,
+    hitRate: scored.length > 0 ? hitCount / scored.length : null,
     maePct: maeValues.length ? maeValues.reduce((a, b) => a + b, 0) / maeValues.length : null,
   };
 }

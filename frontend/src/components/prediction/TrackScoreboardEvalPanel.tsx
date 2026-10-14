@@ -161,12 +161,14 @@ export function TrackScoreboardEvalPanel({ report, horizonDays }: Props) {
                       <span
                         className={cn(
                           "font-medium",
-                          row.direction_hit
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : "text-red-600 dark:text-red-400",
+                          row.direction_hit == null
+                            ? "text-muted-foreground"
+                            : row.direction_hit
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-red-600 dark:text-red-400",
                         )}
                       >
-                        {row.direction_hit ? "✓" : "✗"}
+                        {row.direction_hit == null ? "—" : row.direction_hit ? "✓" : "✗"}
                       </span>
                     </td>
                   </tr>

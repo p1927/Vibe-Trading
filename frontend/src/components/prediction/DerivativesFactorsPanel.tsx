@@ -66,6 +66,10 @@ export function DerivativesFactorsPanel({ days = 365, onLoadState }: Props) {
   }, [days, onLoadState]);
 
   const wide = useMemo(() => pivotFactorHistoryWide(series), [series]);
+  const latestDate = useMemo(
+    () => series.map((p) => String(p.date ?? "")).filter(Boolean).sort().pop() ?? null,
+    [series],
+  );
 
   const chartOption = useMemo(() => {
     const theme = getChartTheme();
@@ -222,6 +226,11 @@ export function DerivativesFactorsPanel({ days = 365, onLoadState }: Props) {
       ) : (
         <div ref={ref} className="mt-3 h-[240px] w-full" />
       )}
+      {latestDate && !error ? (
+        <p className="mt-2 text-[10px] text-muted-foreground" data-testid="derivatives-as-of">
+          Latest data point: {latestDate}
+        </p>
+      ) : null}
       {coverageNotes.length ? (
         <ul className="mt-2 space-y-0.5 text-[10px] text-amber-700 dark:text-amber-400">
           {coverageNotes.map((n, i) => (

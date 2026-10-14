@@ -1,32 +1,55 @@
-"""Every default job whose cron is Mon-Fri (`1-5`) (market-day intent) must carry a timezone.
+"""Every default job carries an explicit timezone: `timezone=None` means UTC, and the default crons are IST.
 
-A null timezone means UTC: `*/15 9-16 * * 1-5` then runs 14:30-22:30 IST, market closed.
+`HUB_EVENING_MAINTENANCE_CRON 35 18 * * *` is 18:35 IST (after the 17:30 bhavcopy), not 00:05 IST; a Mon-Fri
+`*/15 9-16` is the NSE session, not 14:30-22:30 IST. A default job whose intent really is UTC must say so with
+an explicit `timezone="UTC"` and a comment (`UTC_BY_INTENT` below; none today).
 Run: python -m pytest tests/test_default_job_market_crons_have_timezone.py
 """
+import dataclasses
 import tempfile
+import time
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
-from src.scheduled_research import (
-    capture_jobs, decision_grading_jobs, dst_eval_jobs, execution_advisor_jobs,
-    factor_health_jobs, financial_knowledge_jobs, hub_calibration_jobs, index_jobs,
-    options_jobs, trade_data_jobs,
-)
+from src.scheduled_research.default_jobs import register_all_default_jobs
+from src.scheduled_research.models import DEFAULT_JOB_TIMEZONE
 from src.scheduled_research.store import ScheduledResearchJobStore
 
-MODULES = (
-    capture_jobs, decision_grading_jobs, dst_eval_jobs, execution_advisor_jobs,
-    factor_health_jobs, financial_knowledge_jobs, hub_calibration_jobs, index_jobs,
-    options_jobs, trade_data_jobs,
-)
+UTC_BY_INTENT: frozenset[str] = frozenset()
 
 
-def test_weekday_restricted_default_crons_have_timezone():
-    store = ScheduledResearchJobStore(Path(tempfile.mkdtemp()) / "jobs.json")
-    for mod in MODULES:
-        for name in dir(mod):
-            if name.startswith("register_default_"):
-                getattr(mod, name)(store)
-    jobs = store.list_jobs()
-    assert jobs, "no default jobs registered; the check would be vacuous"
-    bad = [j.id for j in jobs if j.schedule.split()[4] == "1-5" and not j.timezone]
-    assert not bad, f"market-day crons with null timezone (run in UTC): {bad}"
+def _store() -> ScheduledResearchJobStore:
+    return ScheduledResearchJobStore(Path(tempfile.mkdtemp()) / "jobs.json")
+
+
+def test_every_default_job_has_an_explicit_timezone():
+    store = _store()
+    register_all_default_jobs(store)
+    jobs = list(store.load().values())  # not list_jobs(): it returns at most 50 and there are ~67 defaults
+    assert len(jobs) > 50, "defaults went missing; the check would be vacuous"
+    bad = [j.id for j in jobs if not j.timezone]
+    assert not bad, f"default jobs with null timezone (run in UTC): {bad}"
+    wrong = [j.id for j in jobs if j.id not in UTC_BY_INTENT and j.timezone != DEFAULT_JOB_TIMEZONE]
+    assert not wrong, f"default jobs authored in IST but carrying another timezone: {wrong}"
+
+
+def test_a_stored_default_without_a_timezone_is_carried_to_ist_and_retimed():
+    store = _store()
+    register_all_default_jobs(store)
+    legacy = store.get("hub-evening-maintenance")
+    in_a_year = legacy.next_run_at + 365 * 86_400_000
+    store.upsert(dataclasses.replace(legacy, timezone=None, next_run_at=in_a_year))
+
+    register_all_default_jobs(store)
+
+    fixed = store.get("hub-evening-maintenance")
+    assert fixed.timezone == DEFAULT_JOB_TIMEZONE
+    when = datetime.fromtimestamp(fixed.next_run_at / 1000, ZoneInfo("Asia/Kolkata"))
+    assert (when.hour, when.minute) == (18, 35), when  # fires at 18:35 IST, within a day, not a year out
+    assert fixed.next_run_at - time.time() * 1000 <= 86_400_000
+    # an unrelated stored job with no timezone (user-authored, UTC on purpose) is left alone
+    mine = dataclasses.replace(fixed, id="my-own-job", timezone=None)
+    store.upsert(mine)
+    register_all_default_jobs(store)
+    assert store.get("my-own-job").timezone is None

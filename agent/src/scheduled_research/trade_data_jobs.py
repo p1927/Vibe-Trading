@@ -8,7 +8,7 @@ import time
 from typing import Any
 
 from src.config.accessor import get_env_config
-from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule, DEFAULT_JOB_TIMEZONE
 from src.scheduled_research.run_outcome import finish_run
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
@@ -193,6 +193,7 @@ def _register_fills_and_archive_jobs(store: ScheduledResearchJobStore, now_ms: i
                 id=fills_job_id,
                 prompt="Export OpenAlgo sandbox fills and sync execution parquet",
                 schedule=fills_cron,
+                timezone=DEFAULT_JOB_TIMEZONE,
                 next_run_at=now_ms,
                 status=JobStatus.PENDING,
                 created_at=now_ms,
@@ -213,6 +214,7 @@ def _register_fills_and_archive_jobs(store: ScheduledResearchJobStore, now_ms: i
                 id=archive_job_id,
                 prompt="Archive options and stock research snapshots to history/",
                 schedule=archive_cron,
+                timezone=DEFAULT_JOB_TIMEZONE,
                 next_run_at=now_ms,
                 status=JobStatus.PENDING,
                 created_at=now_ms,
@@ -238,6 +240,7 @@ def _register_nse_browser_jobs(store: ScheduledResearchJobStore, now_ms: int, en
                 id=nse_job_id,
                 prompt="Refresh NSE browser repo seed layers and hub macro datasets",
                 schedule=nse_cron,
+                timezone=DEFAULT_JOB_TIMEZONE,
                 next_run_at=now_ms,
                 status=JobStatus.PENDING,
                 created_at=now_ms,
@@ -258,6 +261,7 @@ def _register_nse_browser_jobs(store: ScheduledResearchJobStore, now_ms: int, en
                 id=consistency_job_id,
                 prompt="Daily NSE repo vs hub consistency check with light repair on drift",
                 schedule=consistency_cron,
+                timezone=DEFAULT_JOB_TIMEZONE,
                 next_run_at=now_ms,
                 status=JobStatus.PENDING,
                 created_at=now_ms,

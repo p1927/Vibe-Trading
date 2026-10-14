@@ -27,7 +27,13 @@ function fmtPct(v: number): string {
   return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
 }
 
-function pointAtShock(points: ShockPoint[], shockPct: number): ShockPoint | null {
+/** The points that name both a shock and a Nifty level: a missing level plotted as 0 drew a crash to zero. */
+export function withLevel(points: ShockPoint[]): ShockPoint[] {
+  return points.filter((p) => Number.isFinite(p.factor_delta_pct) && Number.isFinite(p.index_level));
+}
+
+function pointAtShock(raw: ShockPoint[], shockPct: number): ShockPoint | null {
+  const points = withLevel(raw);
   if (!points.length) return null;
   const exact = points.find((p) => p.factor_delta_pct === shockPct);
   if (exact) return exact;
@@ -50,18 +56,20 @@ function pointAtShock(points: ShockPoint[], shockPct: number): ShockPoint | null
       };
     }
   }
-  return sorted[0] ?? null;
+  // outside the swept range: no answer (the lowest point was returned, labelled as this shock)
+  return null;
 }
 
 export function FactorShockImpactChart({
   label,
-  points,
+  points: rawPoints,
   activeShockPct,
   simulation,
   height = 260,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const { dark } = useDarkMode();
+  const points = useMemo(() => withLevel(rawPoints), [rawPoints]);
 
   const baseline = useMemo(
     () => points.find((p) => p.factor_delta_pct === 0) ?? pointAtShock(points, 0),
@@ -261,7 +269,13 @@ export function ShockSummaryCards({
           {shockPct}%
         </p>
         <p className="text-sm font-semibold tabular-nums">
-          {simulation?.index_level != null ? fmtLevel(simulation.index_level) : shockPct === 0 ? fmtLevel(baseLevel ?? 0) : "…"}
+          {simulation?.index_level != null
+            ? fmtLevel(simulation.index_level)
+            : shockPct === 0 && baseLevel != null
+              ? fmtLevel(baseLevel)
+              : shockPct === 0
+                ? "—"
+                : "…"}
         </p>
         <p className="text-[10px] text-muted-foreground">
           {simulation?.expected_return_pct != null
@@ -295,10 +309,13 @@ export function CascadeFactorBars({
       </p>
       <ul className="mt-2 space-y-2">
         {linked.map((row) => {
-          const before = Number(row.before ?? 0);
-          const after = Number(row.after ?? 0);
-          const pct = before !== 0 ? ((after - before) / Math.abs(before)) * 100 : 0;
-          const width = Math.min(100, Math.abs(pct) * 4);
+          const before = row.before;
+          const after = row.after;
+          const pct =
+            typeof before === "number" && typeof after === "number" && before !== 0
+              ? ((after - before) / Math.abs(before)) * 100
+              : NaN; // unknown, not "+0.0%"
+          const width = Number.isFinite(pct) ? Math.min(100, Math.abs(pct) * 4) : 0;
           return (
             <li key={row.factor} className="space-y-0.5">
               <div className="flex items-center justify-between text-[10px]">

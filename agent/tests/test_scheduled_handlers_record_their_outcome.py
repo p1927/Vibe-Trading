@@ -17,7 +17,6 @@ from src.scheduled_research import (
     execution_advisor_jobs,
     financial_knowledge_jobs,
     hub_calibration_jobs,
-    recording_wake_jobs,
     trade_data_jobs,
 )
 from src.scheduled_research.models import ScheduledResearchJob
@@ -122,12 +121,6 @@ def test_a_rolled_up_calibration_error_fails_the_run(monkeypatch) -> None:
     with pytest.raises(JobRunHadErrorsError, match="disk full"):
         hub_calibration_jobs.dispatch_hub_calibration_job_sync(job)
     assert job.config[LAST_RESULT_CONFIG_KEY] == bad
-
-
-def test_a_wake_job_without_a_recording_id_fails() -> None:
-    job = _job(recording_wake_jobs.JOB_TYPE_RECORDING_WAKE)
-    with pytest.raises(ValueError, match="recording_job_id"):
-        asyncio.run(recording_wake_jobs._dispatch_recording_wake_job_inner(job))
 
 
 def test_an_autonomous_job_without_an_agent_or_with_an_unknown_type_fails() -> None:

@@ -54,3 +54,48 @@ def test_agent_loop_runs_labelled_for_the_pace_wait_measurement() -> None:
     assert run_as_pace_caller(None, _PACE_CALLER_KIND.get) == "interactive"
     assert run_as_pace_caller("strategy_revision", _PACE_CALLER_KIND.get) == "agent_turn"
     assert _PACE_CALLER_KIND.get() == "batch"
+
+
+def test_standalone_vibe_trading_is_left_unpaced_and_unlabelled() -> None:
+    """No Trade stack (trade_repo_root is None): everything runs exactly as upstream does."""
+    import contextlib
+
+    from src.providers import trade_minimax_pace as pace
+
+    sentinel = (object(), object())
+    with patch("src.trade.hub_bridge.trade_repo_root", return_value=None):
+        assert pace.in_trade_stack() is False
+        assert pace.with_trade_minimax_pace(sentinel, "https://api.minimax.io/v1") is sentinel
+        assert isinstance(pace.trade_llm_span("minimax", "m"), type(contextlib.nullcontext({})))
+        from src.session.service_hooks import run_as_pace_caller
+
+        assert run_as_pace_caller(None, lambda: 7) == 7
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "trade_integrations.dataflows.model_adapters.minimax_queue",
+        "trade_integrations.observability.hooks",
+        "trade_integrations.rate_limit",
+    ],
+)
+def test_broken_trade_integrations_inside_the_monorepo_raises_instead_of_dropping_the_pace(module: str) -> None:
+    """Inside the monorepo an ImportError is a broken install, not 'standalone': the old fallback
+    silently bypassed MiniMax's account pace (and lost the call log)."""
+    import sys
+
+    from src.providers import trade_minimax_pace as pace
+    from src.session.service_hooks import run_as_pace_caller
+
+    assert pace.in_trade_stack() is True
+    with patch.dict(sys.modules, {module: None}):  # a None entry makes `import module` raise ImportError
+        if module.endswith("minimax_queue"):
+            with pytest.raises(ImportError):
+                pace.with_trade_minimax_pace(None, "https://api.minimax.io/v1")
+        elif module.endswith("hooks"):
+            with pytest.raises(ImportError):
+                pace.trade_llm_span("minimax", "m")
+        else:
+            with pytest.raises(ImportError):
+                run_as_pace_caller(None, lambda: 1)

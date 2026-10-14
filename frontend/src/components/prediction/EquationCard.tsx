@@ -53,7 +53,7 @@ export function EquationCard({ prediction, spot, horizonDays = 14 }: Props) {
   }, [spot, prediction?.expected_return_pct]);
 
   const expandedPoly = useMemo(() => {
-    const intercept = eq?.intercept ?? 0;
+    const intercept = eq?.intercept;
     const parts = sorted
       .filter(([name]) => name !== "1")
       .slice(0, 6)
@@ -61,7 +61,8 @@ export function EquationCard({ prediction, spot, horizonDays = 14 }: Props) {
         const sign = val >= 0 ? "+" : "−";
         return `${sign} ${Math.abs(val).toFixed(4)}·${labelTerm(name)}`;
       });
-    return `ΔNifty_${horizonDays}d ≈ ${intercept.toFixed(4)} ${parts.join(" ")}`.trim();
+    const head = intercept != null && Number.isFinite(intercept) ? intercept.toFixed(4) : "—";
+    return `ΔNifty_${horizonDays}d ≈ ${head} ${parts.join(" ")}`.trim();
   }, [eq?.intercept, sorted, horizonDays]);
 
   if (!eq?.form && !eq?.coefficients) {

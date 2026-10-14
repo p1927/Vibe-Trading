@@ -398,7 +398,7 @@ def _intro_header(console: Console) -> None:
     console.print()
     console.print(Text("  Vibe-Trading setup", style=Theme.primary))
     console.print(Text(
-        "  We didn't find a config at ~/.vibe-trading/.env.\n"
+        f"  We didn't find a config at {_env_path()}.\n"
         "  Let's set up in under a minute.",
         style=Theme.muted,
     ))
@@ -477,7 +477,7 @@ def run_onboarding(*, console: Console | None = None) -> Path | None:
         while True:
             key = _prompt_secret(
                 f"Paste your {provider.label} API key "
-                "(saved to ~/.vibe-trading/.env, never logged)",
+                f"(saved to {_env_path()}, never logged)",
                 console=cons,
             )
             if key is BACK or key is CANCEL:

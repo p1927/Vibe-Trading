@@ -1,11 +1,11 @@
 """Schedule a recording job's deferred wake via the scheduled-research infra.
 
 A recording that's waiting for market open (``status="waiting_for_open"``)
-gets a one-shot ``ScheduledResearchJob`` whose dispatch callable runs
-:func:`recording_jobs.wake_recording_job` at ``next_open_at``.
-
-Dispatch is handled by a dedicated poll loop (:func:`start_recording_wake_poller`)
-rather than the general scheduled-research executor. The general executor's
+gets a ``recording_wake:<id>`` entry in the scheduled-research store; the poll loop
+(:func:`start_recording_wake_poller`) is its ONE dispatcher: it runs
+:func:`recording_jobs.wake_recording_job` once the entry is due and deletes it. The general
+scheduled-research executor never dispatches it (``executor.is_due`` skips the job type), so the
+entry is never fired twice or re-fired as the interval job it is stored as. The general executor's
 dispatch loop is *intentionally* left stopped on every process boot — it
 gates LLM-cost-bearing jobs (agent sessions, index/options research) behind
 an explicit "Resume scheduler" click so nothing fires automatically after a
@@ -53,8 +53,8 @@ def schedule_recording_wake(
     next_open_at: datetime,
     store: "ScheduledResearchJobStore | None" = None,
 ) -> str:
-    """Register a one-shot schedule that fires
-    :func:`recording_jobs.wake_recording_job` at ``next_open_at``.
+    """Register the wake entry that the poller fires
+    (:func:`recording_jobs.wake_recording_job`) at ``next_open_at``.
 
     Returns the schedule job id (``recording_wake:<recording_job_id>``).
     Cancels any prior schedule for the same recording first so re-pressing
@@ -65,9 +65,8 @@ def schedule_recording_wake(
     _cancel_existing(store, schedule_id)
 
     # Schedule is the interval-ms string form (the only non-cron form).
-    # We use a 60s interval so the executor re-checks after each tick,
-    # and set ``next_run_at`` to the actual deadline so the executor
-    # doesn't dispatch early.
+    # The store needs a valid schedule string; the interval is never used to re-fire (the poller
+    # deletes the entry), ``next_run_at`` is the deadline the poller compares against.
     interval_ms = "60000"
     validate_schedule(interval_ms)
     now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
