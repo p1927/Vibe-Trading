@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { GitCompare, ArrowLeftRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type RunListItem, type RunData, type EquityPoint } from "@/lib/api";
+import { finiteOrNull } from "@/lib/finite";
 import { initEChart, CHART_GROUP, connectCharts } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useThemeDark } from "@/lib/theme-store";
@@ -18,8 +19,8 @@ interface MetricDef {
 }
 
 function fmt(v: unknown, type: "pct" | "num" | "int" | "days" = "num"): string {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "\u2014";
+  const n = finiteOrNull(v); // null / "" / NaN is a missing reading: Number(null) would be a measured 0
+  if (n === null) return "\u2014";
   if (type === "pct") return (n * 100).toFixed(2) + "%";
   if (type === "int") return n.toFixed(0);
   if (type === "days") return n.toFixed(1);
@@ -33,8 +34,8 @@ type DiffPresentation = {
 };
 
 function diffClass(a: unknown, b: unknown, higherIsBetter: boolean): DiffPresentation {
-  const na = Number(a), nb = Number(b);
-  if (!Number.isFinite(na) || !Number.isFinite(nb)) {
+  const na = finiteOrNull(a), nb = finiteOrNull(b);
+  if (na === null || nb === null) {
     return { className: "", verdict: null, glyph: null };
   }
   const better = higherIsBetter ? nb > na : nb < na;
@@ -49,8 +50,8 @@ function diffClass(a: unknown, b: unknown, higherIsBetter: boolean): DiffPresent
 }
 
 function diffStr(a: unknown, b: unknown, type: "pct" | "num" | "int" | "days"): string {
-  const na = Number(a), nb = Number(b);
-  if (!Number.isFinite(na) || !Number.isFinite(nb)) return "\u2014";
+  const na = finiteOrNull(a), nb = finiteOrNull(b);
+  if (na === null || nb === null) return "\u2014";
   const d = nb - na;
   return (d > 0 ? "+" : "") + fmt(d, type);
 }
@@ -139,10 +140,11 @@ function EquityChartOverlay({ leftCurve, rightCurve, leftLabel, rightLabel, reba
     // Build lookup maps, optionally rebased to an index of 100
     const leftBase = Number(leftCurve[0]?.equity) || 0;
     const rightBase = Number(rightCurve[0]?.equity) || 0;
-    const scale = (raw: number, base: number) =>
-      rebase && base > 0 ? Number(((raw / base) * 100).toFixed(2)) : raw;
-    const leftMap = new Map(leftCurve.map((p) => [p.time, scale(Number(p.equity), leftBase)]));
-    const rightMap = new Map(rightCurve.map((p) => [p.time, scale(Number(p.equity), rightBase)]));
+    // A bar with no equity is a gap on the line, never a drop to 0.
+    const scale = (raw: number | null, base: number) =>
+      raw === null ? null : rebase && base > 0 ? Number(((raw / base) * 100).toFixed(2)) : raw;
+    const leftMap = new Map(leftCurve.map((p) => [p.time, scale(finiteOrNull(p.equity), leftBase)]));
+    const rightMap = new Map(rightCurve.map((p) => [p.time, scale(finiteOrNull(p.equity), rightBase)]));
 
     const leftData = dates.map((d) => leftMap.get(d) ?? null);
     const rightData = dates.map((d) => rightMap.get(d) ?? null);
@@ -471,8 +473,9 @@ export function Compare() {
                 const diff = diffClass(lv, rv, higherIsBetter);
                 // Proportional in-cell bars (colored to match the chart legend)
                 // make the winner readable at a glance without parsing numbers.
-                const la = Number.isFinite(Number(lv)) ? Math.abs(Number(lv)) : null;
-                const ra = Number.isFinite(Number(rv)) ? Math.abs(Number(rv)) : null;
+                const lf = finiteOrNull(lv), rf = finiteOrNull(rv);
+                const la = lf === null ? null : Math.abs(lf);
+                const ra = rf === null ? null : Math.abs(rf);
                 const maxAbs = Math.max(la ?? 0, ra ?? 0);
                 const shareL = la != null && maxAbs > 0 ? la / maxAbs : 0;
                 const shareR = ra != null && maxAbs > 0 ? ra / maxAbs : 0;

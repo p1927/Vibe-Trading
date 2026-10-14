@@ -93,4 +93,37 @@ describe("Compare page", () => {
     });
     expect(await screen.findByText("20.00%")).toBeInTheDocument();
   });
+  it("a metric the backend sent as null is a gap (em dash, no verdict), never a measured zero", async () => {
+    apiMock.getRun.mockImplementation((runId: string) =>
+      Promise.resolve({
+        status: "success",
+        run_id: runId,
+        // the baseline run could not compute a Sharpe (null on the wire); the other run has a real one
+        metrics: runId === "old" ? { sharpe: null, total_return: 0.1 } : { sharpe: 1.2, total_return: 0.2 },
+      }),
+    );
+    render(<Compare />);
+    const row = (await screen.findByText("Sharpe Ratio")).closest("tr") as HTMLElement;
+    await waitFor(() => expect(row).toHaveTextContent("1.200"));
+    expect(row).not.toHaveTextContent("0.000");
+    expect(row).not.toHaveTextContent("+1.200");
+    expect(row.textContent).not.toMatch(/[↑↓]/);
+  });
+  it("null on the compared side, a pct metric and the delta column are gaps too", async () => {
+    apiMock.getRun.mockImplementation((runId: string) =>
+      Promise.resolve({
+        status: "success",
+        run_id: runId,
+        metrics: runId === "right" ? { total_return: null, max_drawdown: -0.1 } : { total_return: 0.3, max_drawdown: null },
+      }),
+    );
+    render(<Compare />);
+    const ret = (await screen.findByText("Total Return")).closest("tr") as HTMLElement;
+    await waitFor(() => expect(ret).toHaveTextContent("30.00%"));
+    expect(ret.textContent).not.toMatch(/(^|[^\d.])0\.00%/);
+    expect(ret.textContent).not.toMatch(/[↑↓]/);
+    const dd = screen.getByText("Max Drawdown").closest("tr") as HTMLElement;
+    expect(dd.textContent).not.toMatch(/(^|[^\d.])0\.00%/);
+    expect(dd.textContent).not.toMatch(/[↑↓]/);
+  });
 });
