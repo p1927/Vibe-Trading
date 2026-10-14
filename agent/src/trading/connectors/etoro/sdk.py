@@ -325,9 +325,11 @@ def _extract_positions(payload: Any) -> list[dict[str, Any]]:
                 nested = value.get("positions")
                 if isinstance(nested, list):
                     return [_position_row(item) for item in nested if isinstance(item, dict)]
+                if key == "clientPortfolio":
+                    return []  # a recognised portfolio container with no positions list: flat account
     if isinstance(payload, list):
         return [_position_row(item) for item in payload if isinstance(item, dict)]
-    return []
+    raise EtoroAPIError("unrecognised eToro portfolio reply (no positions container); not reading it as an empty account")
 
 
 def _position_row(item: dict[str, Any]) -> dict[str, Any]:
@@ -382,7 +384,7 @@ def _client_portfolio(payload: Any) -> dict[str, Any] | None:
 def _extract_portfolio_orders(payload: Any) -> list[dict[str, Any]]:
     client_portfolio = _client_portfolio(payload)
     if client_portfolio is None:
-        return []
+        raise EtoroAPIError("unrecognised eToro portfolio reply (no portfolio container); not reading it as no orders")
     order_keys = (
         "orders",
         "ordersForOpen",

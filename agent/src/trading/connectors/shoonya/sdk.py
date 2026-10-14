@@ -25,6 +25,7 @@ from types import ModuleType
 from typing import Any, Mapping
 
 from src.config.paths import get_runtime_root
+from src.trading.types import ConnectorVendorError
 
 CONFIG_FILENAME = "shoonya.json"
 
@@ -225,6 +226,7 @@ def get_account_snapshot(config: ShoonyaConfig | None = None) -> dict[str, Any]:
 
     if limits is None:
         return {"status": "error", "error": "Failed to fetch fund limits"}
+    _raise_if_noren_error(limits)
 
     return {
         "status": "ok",
@@ -322,6 +324,10 @@ def get_quote(
 
     if quote is None:
         return {"status": "error", "error": "quote not found", "symbol": clean}
+    try:
+        _raise_if_noren_error(quote)
+    except ConnectorVendorError as exc:
+        return {"status": "error", "error": str(exc), "symbol": clean}
 
     return {
         "status": "ok",
@@ -637,9 +643,20 @@ def _to_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _raise_if_noren_error(value: Any) -> None:
+    """Noren replies ``{"stat": "Not_Ok", "emsg": ...}`` on failure; "no data" is how it says empty."""
+    if isinstance(value, Mapping) and str(value.get("stat", "")).lower() == "not_ok":
+        message = str(value.get("emsg") or "Not_Ok")
+        if "no data" not in message.lower():
+            raise ConnectorVendorError(f"Shoonya error: {message}")
+
+
 def _as_list(value: Any) -> list[Any]:
     if value is None:
         return []
+    _raise_if_noren_error(value)
+    if isinstance(value, Mapping) and str(value.get("stat", "")).lower() == "not_ok":
+        return []  # "no data": an empty book
     if isinstance(value, (list, tuple)):
         return list(value)
     return [value]

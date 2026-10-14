@@ -35,6 +35,7 @@ from types import ModuleType
 from typing import Any, Mapping
 
 from src.config.paths import get_runtime_root
+from src.trading.types import ConnectorVendorError
 
 CONFIG_FILENAME = "futu.json"
 
@@ -1113,22 +1114,25 @@ def _unwrap(result: Any) -> Any:
     """Return the data payload from a Futu ``(ret_code, data[, page_key])`` tuple.
 
     Futu read calls return ``(ret_code, data)``; ``request_history_kline``
-    returns a 3-tuple ``(ret, df, page_key)``. On a non-``RET_OK`` return code we
-    yield ``None`` so the caller degrades to an empty record set rather than
-    surfacing a raw SDK error string.
+    returns a 3-tuple ``(ret, df, page_key)``. A non-``RET_OK`` return code raises
+    :class:`ConnectorVendorError` (the error text is the vendor's message, no
+    credentials): an empty record set would read as "no positions/orders".
 
     Args:
         result: The raw value returned by an SDK read call.
 
     Returns:
-        The data payload (typically a pandas DataFrame), or ``None`` on error.
+        The data payload (typically a pandas DataFrame).
+
+    Raises:
+        ConnectorVendorError: On a non-``RET_OK`` return code.
     """
     if not isinstance(result, (list, tuple)) or len(result) < 2:
         return result
     ret_code, data = result[0], result[1]
     futu = _require_futu()
     if ret_code != getattr(futu, "RET_OK", 0):
-        return None
+        raise ConnectorVendorError(f"Futu call failed: ret={ret_code} {str(data)[:200]}")
     return data
 
 

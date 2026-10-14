@@ -5,6 +5,14 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
+class ConnectorVendorError(RuntimeError):
+    """A broker/vendor reply was an error body (or not the shape a success has).
+
+    Raised instead of reading the reply as ``ok`` with empty data: an error that looks like
+    "no positions" or "no orders" tells a caller (and a mandate gate) the account is flat.
+    """
+
+
 Environment = Literal["paper", "live"]
 Transport = Literal["local_tws", "remote_mcp", "broker_sdk", "local_plugin"]
 

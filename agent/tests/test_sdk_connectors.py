@@ -191,6 +191,7 @@ def test_longbridge_with_overrides_preserves_atomic_credentials() -> None:
         app_key="atomic-key",
         app_secret="atomic-secret",
         access_token="atomic-token",
+        profile="live-readonly",
         _credential_source="environment",
     )
 
@@ -268,7 +269,7 @@ def test_loader_and_connector_resolve_same_source(monkeypatch, tmp_path) -> None
     monkeypatch.setattr(lb, "get_runtime_root", lambda: tmp_path)
     monkeypatch.setattr(lb_credentials, "get_runtime_root", lambda: tmp_path)
 
-    connector = lb.build_config()
+    connector = lb.build_config({"profile": "live-readonly"})
     loader = longbridge_loader.LongbridgeLoader()
 
     assert (connector.app_key, connector.app_secret, connector.access_token) == (
@@ -302,7 +303,7 @@ def test_connector_reports_conflict_without_sdk_call(monkeypatch, tmp_path) -> N
         lambda cfg: (_ for _ in ()).throw(AssertionError("SDK must not initialize")),
     )
 
-    report = lb.check_status(lb.build_config())
+    report = lb.check_status(lb.build_config({"profile": "live-readonly"}))
 
     assert report["configured"] is False
     assert report["connection_state"] == "error"
@@ -313,7 +314,7 @@ def test_connector_reports_conflict_without_sdk_call(monkeypatch, tmp_path) -> N
         for field in ("app_key", "app_secret", "access_token")
     )
     with pytest.raises(lb.LongbridgeConfigError, match="sources conflict"):
-        lb._require_resolved_config(lb.build_config())
+        lb._require_resolved_config(lb.build_config({"profile": "live-readonly"}))
 
 
 def test_connector_status_redacts_credentials(monkeypatch, tmp_path) -> None:
@@ -337,7 +338,7 @@ def test_connector_status_redacts_credentials(monkeypatch, tmp_path) -> None:
         ),
     )
 
-    report = lb.check_status(lb.build_config())
+    report = lb.check_status(lb.build_config({"profile": "live-readonly"}))
     serialized = str(report)
 
     assert report["configured"] is True
@@ -416,7 +417,7 @@ def test_service_check_connection_unconfigured_longbridge(monkeypatch, tmp_path)
     monkeypatch.setattr(lb_credentials, "get_runtime_root", lambda: tmp_path)
     result = service.check_connection("longbridge-paper-sdk")
     assert result["status"] == "error"
-    assert "not configured" in result["error"]
+    assert "LONGBRIDGE_PAPER_ACCESS_TOKEN" in result["error"]
     assert result["connector"] == "longbridge"
     assert result["transport"] == "broker_sdk"
 

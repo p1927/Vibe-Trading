@@ -145,6 +145,19 @@ def execute_live_order(
                 )
                 if recovery is not None:
                     return recovery
+            # Re-checked HERE, under the same lock the order is placed under (as execute_live_action
+            # does): pricing and reading positions above take seconds, and a halt tripped or a mandate
+            # expiring in that window must still stop this order.
+            if _is_expired(mandate):
+                return _deny(
+                    broker, session_id, "mandate expired — re-authorize",
+                    ["mandate", "expiry"], mandate, intent=intent, reauth=True,
+                )
+            if halt_flag_set(broker):
+                return _deny(
+                    broker, session_id, "live trading halted",
+                    ["mandate", "expiry", "halt_flag"], mandate, intent=intent,
+                )
             daily_count = read_daily_count(broker)
             breach = check_mandate(
                 mandate,
@@ -400,8 +413,14 @@ def _execute_and_audit_live_action(
             error=_error_message(result),
         )
     else:
+        accounting_failed = False
         if consume_daily_count:
-            increment_daily_count(broker)
+            try:
+                increment_daily_count(broker)
+            except DailyCountError:
+                # The broker already accepted the action: raising here would have the caller retry
+                # it (a double order). Say so in the audit record and the result instead, as _allow does.
+                accounting_failed = True
         record = _audit_action(
             broker,
             session_id,
@@ -416,8 +435,11 @@ def _execute_and_audit_live_action(
                 "allowed": True,
                 "decision": _DECISION_ALLOW,
                 "checked_limits": checked,
+                **({"reason_code": "daily_action_accounting_failed"} if accounting_failed else {}),
             },
         )
+        if accounting_failed and isinstance(result, dict):
+            result = {**result, "reason_code": "daily_action_accounting_failed"}
 
     if isinstance(result, dict) and record is not None:
         result = {**result, LIVE_ACTION_RESULT_KEY: record}

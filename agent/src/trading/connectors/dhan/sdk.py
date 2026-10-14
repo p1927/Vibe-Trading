@@ -17,6 +17,7 @@ from types import ModuleType
 from typing import Any, Mapping
 
 from src.config.paths import get_runtime_root
+from src.trading.types import ConnectorVendorError
 
 CONFIG_FILENAME = "dhan.json"
 
@@ -227,7 +228,7 @@ def get_account_snapshot(config: DhanConfig | None = None) -> dict[str, Any]:
     """Fetch fund limits (account summary) for the configured account."""
     cfg = config or load_config()
     client = _dhan_client(cfg)
-    funds = client.get_fund_limits()
+    funds = _checked(client.get_fund_limits(), "get_fund_limits")
 
     return {
         "status": "ok",
@@ -247,7 +248,7 @@ def get_positions(config: DhanConfig | None = None) -> dict[str, Any]:
     """Fetch current positions."""
     cfg = config or load_config()
     client = _dhan_client(cfg)
-    positions = client.get_positions()
+    positions = _checked(client.get_positions(), "get_positions")
 
     rows = []
     for item in _as_list(positions.get("data")):
@@ -259,7 +260,8 @@ def get_positions(config: DhanConfig | None = None) -> dict[str, Any]:
             "quantity": item.get("netQty", 0),
             "average_cost": item.get("costPrice", 0),
             "current_price": item.get("currentPrice", 0),
-            "unrealized_pnl": item.get("realizedProfit", 0),
+            "unrealized_pnl": item.get("unrealizedProfit", 0),
+            "realized_pnl": item.get("realizedProfit", 0),
             "day_buy_qty": item.get("dayBuyQty", 0),
             "day_sell_qty": item.get("daySellQty", 0),
         })
@@ -280,7 +282,7 @@ def get_open_orders(
     """Fetch open orders and optionally executed trades."""
     cfg = config or load_config()
     client = _dhan_client(cfg)
-    orders = client.get_order_list()
+    orders = _checked(client.get_order_list(), "get_order_list")
 
     open_orders = []
     executions = []
@@ -322,8 +324,8 @@ def get_quote(
     segment = exchange_segment.strip().upper()
 
     try:
-        ltp_data = client.ltp(security_id=sec_id, exchange_segment=segment)
-        ohlc_data = client.ohlc(security_id=sec_id, exchange_segment=segment)
+        ltp_data = _checked(client.ltp(security_id=sec_id, exchange_segment=segment), "ltp")
+        ohlc_data = _checked(client.ohlc(security_id=sec_id, exchange_segment=segment), "ohlc")
     except Exception as exc:
         return {"status": "error", "error": str(exc), "symbol": symbol}
 
@@ -409,7 +411,7 @@ def get_historical_bars(
         return {"status": "error", "error": str(exc), "symbol": symbol}
 
     bars = []
-    for candle in _as_list(data.get("data", {}).get("candles")):
+    for candle in _as_list(_checked(data, "historical").get("data", {}).get("candles")):
         if len(candle) >= 6:
             bars.append({
                 "time": candle[0],
@@ -588,6 +590,15 @@ def _as_list(value: Any) -> list[Any]:
     if isinstance(value, (list, tuple)):
         return list(value)
     return [value]
+
+
+def _checked(body: Any, what: str) -> Mapping[str, Any]:
+    """The dhanhq reply, or a typed error when it is a ``failure`` body (never an "ok" with empty data)."""
+    if not isinstance(body, Mapping):
+        raise ConnectorVendorError(f"Dhan {what}: reply is not an object ({type(body).__name__})")
+    if str(body.get("status", "")).lower() == "failure":
+        raise ConnectorVendorError(f"Dhan {what} failed: {body.get('remarks') or body.get('data') or 'failure'}")
+    return body
 
 
 def _safe_get(data: Any, *keys: str) -> Any:

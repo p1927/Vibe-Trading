@@ -48,12 +48,22 @@ class LongbridgeCredentialError(RuntimeError):
 
 def resolve_longbridge_credentials(
     runtime_root: Path | None = None,
+    *,
+    paper: bool = False,
 ) -> CredentialResolution:
-    """Resolve credentials atomically from environment or the legacy runtime file."""
+    """Resolve credentials atomically from environment or the legacy runtime file.
+
+    ``paper=True`` fails closed (CEO decision, 2026-10-14): Longbridge's access token
+    selects the account and nothing in the API tells paper from live, so the paper
+    profile needs its own ``LONGBRIDGE_PAPER_ACCESS_TOKEN`` (env only) and refuses to
+    resolve if that is missing or equals a live token.
+    """
     environment = _environment_values()
     runtime_file, runtime_file_state = _runtime_file_values(
         runtime_root if runtime_root is not None else get_runtime_root()
     )
+    if paper:
+        return _resolve_paper(environment, runtime_file)
 
     environment_missing = _missing_fields(environment)
     file_missing = _missing_fields(runtime_file)
@@ -111,11 +121,33 @@ def resolve_longbridge_credentials(
     )
 
 
+def _resolve_paper(
+    environment: Mapping[str, str], runtime_file: Mapping[str, str]
+) -> CredentialResolution:
+    """App key/secret are the developer app (shared); only the paper token may open the paper account."""
+    paper_token = _normalize(get_env_config().data.longbridge_paper_access_token)
+    values = {
+        "app_key": environment["app_key"] or runtime_file["app_key"],
+        "app_secret": environment["app_secret"] or runtime_file["app_secret"],
+        "access_token": paper_token,
+    }
+    missing = _missing_fields(values)
+    if missing:
+        fields = tuple("paper_access_token" if f == "access_token" else f for f in missing)
+        return CredentialResolution(None, "environment", fields, ())
+    live_tokens = (environment["access_token"], runtime_file["access_token"])
+    if any(t and hmac.compare_digest(t, paper_token) for t in live_tokens):
+        return CredentialResolution(None, None, (), ("paper_access_token",))
+    return CredentialResolution(LongbridgeCredentials(**values), "environment", (), ())
+
+
 def require_longbridge_credentials(
     runtime_root: Path | None = None,
+    *,
+    paper: bool = False,
 ) -> LongbridgeCredentials:
     """Return resolved credentials or raise a field-only diagnostic error."""
-    resolution = resolve_longbridge_credentials(runtime_root)
+    resolution = resolve_longbridge_credentials(runtime_root, paper=paper)
     if resolution.credentials is not None:
         return resolution.credentials
     if resolution.conflict_fields:

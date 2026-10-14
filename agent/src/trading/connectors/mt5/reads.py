@@ -138,7 +138,7 @@ def get_positions(config: MT5Config | None = None) -> dict[str, Any]:
         with _client._session(cfg) as mt5:
             sell_type = getattr(mt5, "POSITION_TYPE_SELL", 1)
             rows = []
-            for pos in mt5.positions_get() or ():
+            for pos in _client._rows(mt5, mt5.positions_get(), "positions_get"):
                 symbol = getattr(pos, "symbol", "")
                 rows.append(
                     {
@@ -169,7 +169,7 @@ def get_open_orders(config: MT5Config | None = None, *, include_executions: bool
     try:
         with _client._session(cfg) as mt5:
             rows = []
-            for order in mt5.orders_get() or ():
+            for order in _client._rows(mt5, mt5.orders_get(), "orders_get"):
                 rows.append(
                     {
                         "order_id": str(getattr(order, "ticket", "")),
@@ -187,7 +187,7 @@ def get_open_orders(config: MT5Config | None = None, *, include_executions: bool
             executions = None
             if include_executions:
                 now = datetime.now(timezone.utc)
-                deals = mt5.history_deals_get(now - timedelta(days=7), now) or ()
+                deals = _client._rows(mt5, mt5.history_deals_get(now - timedelta(days=7), now), "history_deals_get")
                 executions = [
                     {
                         "deal_id": str(getattr(deal, "ticket", "")),
@@ -255,7 +255,7 @@ def get_historical_bars(
             name = _resolve_symbol(mt5, cfg, symbol)
             timeframe = getattr(mt5, timeframe_name)
             rates = mt5.copy_rates_from_pos(name, timeframe, 0, int(limit))
-            bars = [_rate_to_dict(rate) for rate in (rates if rates is not None else ())]
+            bars = [_rate_to_dict(rate) for rate in _client._rows(mt5, rates, "copy_rates_from_pos")]
     except _MT5_ERRORS as exc:
         return _error(cfg, str(exc), symbol=clean)
     return _envelope(

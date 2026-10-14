@@ -234,6 +234,24 @@ def _last_error(mt5: Any) -> str:
         return "unknown"
 
 
+def _rows(mt5: Any, value: Any, what: str) -> tuple:
+    """Rows from a ``positions_get``/``orders_get``/``history_*_get`` call.
+
+    The module returns ``None`` on an error and an empty tuple for "nothing"; ``or ()`` read both as
+    "no rows", so a lost terminal looked like a flat account. ``None`` is empty only when
+    ``last_error()`` says success (code 1, which some builds return for an empty result).
+    """
+    if value is not None:
+        return tuple(value)
+    try:
+        code = mt5.last_error()[0]
+    except Exception:  # noqa: BLE001 - an unreadable error state is itself a failure
+        code = None
+    if code == 1:
+        return ()
+    raise MT5ConnectionError(f"MT5 {what} failed ({_last_error(mt5)})")
+
+
 @contextmanager
 def _session(cfg: MT5Config) -> Iterator[Any]:
     """Attach to the terminal, verify identity, yield the module, detach.
@@ -344,13 +362,37 @@ def _tick_mid(mt5: Any, name: str) -> float | None:
     return last if last > 0 else None
 
 
+#: MT5 ``SYMBOL_CALC_MODE`` values that are real currency pairs (FOREX, FOREX_NO_LEVERAGE). Every other
+#: mode (CFD, CFD index/leverage, futures, exchange stocks...) prices ``lots * size`` in units of the
+#: INSTRUMENT, so its notional needs the price (CEO 2026-10-14: index/stock CFDs were understated).
+_FOREX_CALC_MODES = frozenset({0, 5})
+
+
+def _ccy_to_usd(mt5: Any, cfg: MT5Config, ccy: str, amount: float) -> float | None:
+    """Convert ``amount`` of ``ccy`` to USD through the broker's ``<CCY>USD``/``USD<CCY>`` pair; ``None`` if none."""
+    if ccy == "USD":
+        return amount
+    direct_candidates = [ccy + "USD" + cfg.symbol_suffix, ccy + "USD"] if cfg.symbol_suffix else [ccy + "USD"]
+    for conv in direct_candidates:
+        if mt5.symbol_info(conv) is not None:
+            mid = _tick_mid(mt5, conv)
+            return amount * mid if mid is not None else None
+    inverse_candidates = ["USD" + ccy + cfg.symbol_suffix, "USD" + ccy] if cfg.symbol_suffix else ["USD" + ccy]
+    for conv in inverse_candidates:
+        if mt5.symbol_info(conv) is not None:
+            mid = _tick_mid(mt5, conv)
+            return amount / mid if mid else None
+    return None
+
+
 def _usd_contract_value(mt5: Any, cfg: MT5Config, name: str, lots: float) -> float | None:
     """USD value of ``lots`` of broker symbol ``name``, ``None`` on any failure.
 
-    1 lot == ``trade_contract_size`` units of the base currency. Quote-USD
-    pairs price via the tick mid; base-USD pairs are exact; crosses convert
-    the base through its ``<BASE>USD``/``USD<BASE>`` pair when the broker
-    offers one (suffix-aware). Unresolvable → ``None`` (fail-closed).
+    Forex: 1 lot == ``trade_contract_size`` units of the base currency (exact when the base is USD,
+    else converted). Any other calc mode (index/stock CFDs, futures, ...): 1 lot == ``size`` units of the
+    INSTRUMENT, so the value is ``lots * size * price`` in the profit currency, converted to USD.
+    A pair whose base and profit currencies are equal is not a forex pair (an index CFD reports base USD
+    / profit USD) and takes the priced path when the calc mode is not reported. Unresolvable → ``None``.
     """
     info = mt5.symbol_info(name)
     if info is None:
@@ -360,20 +402,14 @@ def _usd_contract_value(mt5: Any, cfg: MT5Config, name: str, lots: float) -> flo
         return None
     base = str(getattr(info, "currency_base", "") or "").upper()
     profit = str(getattr(info, "currency_profit", "") or "").upper()
+    mode = getattr(info, "trade_calc_mode", None)
+    forex = mode in _FOREX_CALC_MODES if isinstance(mode, int) and not isinstance(mode, bool) else base != profit
+    if not forex:
+        mid = _tick_mid(mt5, name)
+        return _ccy_to_usd(mt5, cfg, profit, lots * size * mid) if mid is not None else None
     if base == "USD":
         return lots * size
     if profit == "USD":
         mid = _tick_mid(mt5, name)
         return lots * size * mid if mid is not None else None
-    # Cross: convert the base currency through a USD pair.
-    direct_candidates = [base + "USD" + cfg.symbol_suffix, base + "USD"] if cfg.symbol_suffix else [base + "USD"]
-    for conv in direct_candidates:
-        if mt5.symbol_info(conv) is not None:
-            mid = _tick_mid(mt5, conv)
-            return lots * size * mid if mid is not None else None
-    inverse_candidates = ["USD" + base + cfg.symbol_suffix, "USD" + base] if cfg.symbol_suffix else ["USD" + base]
-    for conv in inverse_candidates:
-        if mt5.symbol_info(conv) is not None:
-            mid = _tick_mid(mt5, conv)
-            return lots * size / mid if mid else None
-    return None
+    return _ccy_to_usd(mt5, cfg, base, lots * size)

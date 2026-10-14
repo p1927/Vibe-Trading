@@ -24,6 +24,7 @@ from types import ModuleType
 from typing import Any, Mapping
 
 from src.config.paths import get_runtime_root
+from src.trading.types import ConnectorVendorError
 
 CONFIG_FILENAME = "okx.json"
 
@@ -682,18 +683,19 @@ def _business_error(resp: Any) -> str | None:
 
 
 def _extract_data(resp: Any) -> list[Any]:
-    """Return the ``data`` list from an OKX response, or ``[]`` defensively.
+    """Return the ``data`` list from an OKX response.
 
-    python-okx returns a dict shaped ``{"code": "0", "data": [...]}`` on success.
-    Anything else (a non-zero code, a non-dict, a missing/non-list ``data``) is
-    treated as empty rather than raising, matching the reference connectors'
-    defensive extraction posture.
+    python-okx returns ``{"code": "0", "data": [...]}`` on success. A non-zero code or a
+    reply without a ``data`` list is an error body and raises :class:`ConnectorVendorError`:
+    read as ``[]`` it would look like an empty account.
     """
     if isinstance(resp, Mapping):
         if str(resp.get("code")) != "0":
-            return []
+            raise ConnectorVendorError(f"OKX error code={resp.get('code')}: {str(resp.get('msg') or '')[:200]}")
         data = resp.get("data")
-        return list(data) if isinstance(data, (list, tuple)) else []
+        if not isinstance(data, (list, tuple)):
+            raise ConnectorVendorError("OKX reply has no data list")
+        return list(data)
     return _as_iter(resp)
 
 

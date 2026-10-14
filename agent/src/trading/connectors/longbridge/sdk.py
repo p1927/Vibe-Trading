@@ -118,6 +118,9 @@ class LongbridgeConfig:
         but are ignored so callers cannot bypass atomic source resolution.
         """
         del app_key, app_secret, access_token
+        if profile is not None and PROFILE_ENVIRONMENTS.get(str(profile).strip().lower()) != self.environment:
+            # the token was resolved for this environment (paper has its own); never re-label it
+            raise LongbridgeConfigError("cannot switch a Longbridge config between paper and live; rebuild it")
         payload = {
             "app_key": self.app_key,
             "app_secret": self.app_secret,
@@ -149,20 +152,24 @@ def build_config(profile_config: Mapping[str, Any] | None = None, overrides: Map
     or bypass the shared resolver. Safety-critical profile identity comes only
     from the selected built-in profile/per-call overlay, never a credential file.
     """
+    overlay = {
+        key: value
+        for payload in (profile_config, overrides)
+        for key, value in dict(payload or {}).items()
+        if key in _OVERLAY_KEYS and value not in (None, "")
+    }
+    profile = str(overlay.get("profile") or "paper").strip().lower()
+    paper = PROFILE_ENVIRONMENTS.get(profile, "paper") == "paper"
     resolution_error: LongbridgeCredentialError | None = None
     try:
-        resolution = resolve_longbridge_credentials()
+        resolution = resolve_longbridge_credentials(paper=paper)
     except LongbridgeCredentialError as exc:
         resolution = None
         resolution_error = exc
-
     base: dict[str, Any] = {}
     if resolution is not None and resolution.credentials is not None:
         base.update(asdict(resolution.credentials))
-    for payload in (profile_config, overrides):
-        for key, value in dict(payload or {}).items():
-            if key in _OVERLAY_KEYS and value not in (None, ""):
-                base[key] = value
+    base.update(overlay)
 
     base["_credential_source"] = resolution.source if resolution is not None else None
     base["_credential_error"] = (
@@ -282,6 +289,12 @@ def _credential_error(resolution: Any) -> LongbridgeCredentialError | None:
 
 def _credential_error_message(error: LongbridgeCredentialError) -> str:
     fields = ", ".join(error.fields)
+    if "paper_access_token" in error.fields:
+        # paper shares no credential with live: name the one variable that opens the paper profile
+        return (
+            "Longbridge paper profile refuses to run without its own paper credential "
+            f"LONGBRIDGE_PAPER_ACCESS_TOKEN (distinct from the live token); problem fields: {fields}."
+        )
     if error.code == "credentials_conflict":
         return f"Longbridge credential sources conflict for fields: {fields}."
     if error.code == "credentials_partial":

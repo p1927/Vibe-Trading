@@ -217,6 +217,8 @@ class DataConfig(_EnvBase):
     longbridge_app_key: str = Field(alias="LONGBRIDGE_APP_KEY", default="")
     longbridge_app_secret: str = Field(alias="LONGBRIDGE_APP_SECRET", default="")
     longbridge_access_token: str = Field(alias="LONGBRIDGE_ACCESS_TOKEN", default="")
+    # The access token selects the paper vs live account; the paper profile needs its own.
+    longbridge_paper_access_token: str = Field(alias="LONGBRIDGE_PAPER_ACCESS_TOKEN", default="")
     etoro_api_key: str = Field(alias="ETORO_API_KEY", default="")
     etoro_user_key: str = Field(alias="ETORO_USER_KEY", default="")
     # Per-market source-order overrides (Settings page "source priority").

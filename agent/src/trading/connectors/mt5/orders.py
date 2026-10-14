@@ -179,7 +179,7 @@ def cancel_order(
 
     try:
         with _client._session(cfg) as mt5:
-            pending = mt5.orders_get(ticket=ticket) or ()
+            pending = _client._rows(mt5, mt5.orders_get(ticket=ticket), "orders_get")
             if pending:
                 request = {
                     "action": getattr(mt5, "TRADE_ACTION_REMOVE", 8),
@@ -189,7 +189,7 @@ def cancel_order(
                 result = mt5.order_send(request)
                 return _order_result(cfg, mt5, result, action="order_cancelled", order_ticket=ticket)
 
-            positions = mt5.positions_get(ticket=ticket) or ()
+            positions = _client._rows(mt5, mt5.positions_get(ticket=ticket), "positions_get")
             if positions:
                 return _close(mt5, cfg, positions[0], requested_volume=None)
 
@@ -212,7 +212,7 @@ def close_position(
         return _order_error(cfg, f"close_position requires a numeric ticket, got {position_id!r}")
     try:
         with _client._session(cfg) as mt5:
-            positions = mt5.positions_get(ticket=ticket) or ()
+            positions = _client._rows(mt5, mt5.positions_get(ticket=ticket), "positions_get")
             if not positions:
                 return _order_error(cfg, f"no open position with ticket {ticket}")
             return _close(mt5, cfg, positions[0], requested_volume=volume)

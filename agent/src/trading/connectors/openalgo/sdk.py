@@ -10,6 +10,7 @@ uses the Alpaca broker plugin inside OpenAlgo.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -261,6 +262,8 @@ def _order_error(exc: Exception) -> dict[str, Any]:
     retried, so check the order book before sending it again. Matched by class name so a
     standalone install without Trade's ``trade_integrations`` still imports this module.
     """
+    if isinstance(exc, _ModeRefused):
+        return exc.envelope
     out: dict[str, Any] = {"status": "error", "error": str(exc)}
     code = {
         "DuplicateOrderBlocked": "duplicate_order_blocked",
@@ -269,6 +272,14 @@ def _order_error(exc: Exception) -> dict[str, Any]:
     if code:
         out["code"] = code
     return out
+
+
+class _ModeRefused(RuntimeError):
+    """The analyzer mode did not match the profile at send time; carries the error envelope."""
+
+    def __init__(self, envelope: dict[str, Any]) -> None:
+        super().__init__(str(envelope.get("error")))
+        self.envelope = envelope
 
 
 class _RestClient:
@@ -287,10 +298,26 @@ class _RestClient:
         """
         from trade_integrations.openalgo.rest_client import get_rest_client
 
+        # The mode is checked HERE, at the one place an order is sent, not earlier in the caller:
+        # analyze can be toggled between a caller's check and its send (CEO 2026-10-14, TOCTOU).
+        # An unreadable mode raises out of analyzer_status(), so an unknown mode never sends.
+        mode_error = _assert_mode(self.cfg, self.analyzer_status())
+        if mode_error:
+            raise _ModeRefused(mode_error)
         body = {**payload, "apikey": self.cfg.api_key}
         parsed = get_rest_client(host=self.cfg.host, api_key=self.cfg.api_key).post(
             path, body, timeout=self.cfg.timeout
         )
+        reply_mode = parsed.get("mode")
+        if self.cfg.is_paper and reply_mode not in (None, "analyze"):
+            # the reply says the order did not go to the sandbox: it may be live, never read it as ok
+            raise _ModeRefused(
+                {
+                    "status": "error",
+                    "error": f"OpenAlgo replied mode={reply_mode!r} to a paper order; it may have reached the live broker.",
+                    "code": "order_outcome_unknown",
+                }
+            )
         if parsed.get("status") not in (None, "success", "ok"):
             message = parsed.get("message") or parsed.get("error") or "OpenAlgo error"
             raise RuntimeError(str(message))
@@ -734,11 +761,14 @@ def place_order(
         return {"status": "error", "error": f"cannot resolve {clean!r} for OpenAlgo: {exc}"}
     if exchange.endswith("_INDEX"):
         return {"status": "error", "error": "index symbols cannot be ordered; use an equity or F&O symbol."}
+    if exchange not in ("NSE", "BSE"):
+        # CNC equity orders only: never re-label an NFO/MCX/CDS symbol as an NSE equity order.
+        return {"status": "error", "error": f"exchange {exchange!r} is not supported for OpenAlgo connector orders (NSE/BSE only)"}
 
     payload: dict[str, Any] = {
         "strategy": "vibe_connector",
         "symbol": oa_symbol,
-        "exchange": exchange if exchange in ("NSE", "BSE") else "NSE",
+        "exchange": exchange,
         "action": side_token,
         "product": "CNC",
         "pricetype": "MARKET" if type_token == "market" else "LIMIT",
@@ -747,15 +777,16 @@ def place_order(
     if type_token == "limit":
         if limit_price is None:
             return {"status": "error", "error": "limit order requires limit_price"}
-        payload["price"] = str(limit_price)
+        try:
+            price = float(limit_price)
+        except (TypeError, ValueError):
+            return {"status": "error", "error": "limit_price must be a number"}
+        if not math.isfinite(price) or price <= 0:
+            return {"status": "error", "error": "limit_price must be a finite positive number"}
+        payload["price"] = str(price)
 
     try:
-        client = _client(cfg)
-        analyze = client.analyzer_status()
-        mode_error = _assert_mode(cfg, analyze)
-        if mode_error:
-            return mode_error
-        body = client.post_order("placeorder", payload)
+        body = _client(cfg).post_order("placeorder", payload)
         order_id = body.get("orderid") or body.get("order_id")
         if not order_id and isinstance(body.get("data"), dict):
             order_id = body["data"].get("orderid")
@@ -794,11 +825,7 @@ def cancel_order(
 
     try:
         oa_symbol, exchange = _resolve_india(symbol or "")
-        client = _client(cfg)
-        mode_error = _assert_mode(cfg, client.analyzer_status())
-        if mode_error:
-            return mode_error
-        client.post_order(
+        _client(cfg).post_order(
             "cancelorder",
             {
                 "strategy": "vibe_connector",
