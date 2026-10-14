@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from src.config.accessor import get_env_config
-from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule, DEFAULT_JOB_TIMEZONE
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path, trade_repo_root
 
@@ -336,6 +336,7 @@ def register_default_dst_eval_jobs(store: ScheduledResearchJobStore) -> int:
                     id=job_id,
                     prompt=prompt,
                     schedule=cron,
+                    timezone=DEFAULT_JOB_TIMEZONE,
                     next_run_at=now_ms,
                     status=JobStatus.PENDING,
                     created_at=now_ms,

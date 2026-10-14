@@ -13,7 +13,7 @@ import time
 from typing import Any
 
 from src.config.accessor import get_env_config
-from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule, DEFAULT_JOB_TIMEZONE
 from src.scheduled_research.run_outcome import finish_run
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
@@ -112,6 +112,7 @@ def register_default_financial_knowledge_jobs(store: ScheduledResearchJobStore) 
             id=job_id,
             prompt="Curate financial-knowledge corpus: source quality, distillation flags, ingest trigger, size/growth",
             schedule=cron,
+            timezone=DEFAULT_JOB_TIMEZONE,
             next_run_at=now_ms,
             status=JobStatus.PENDING,
             created_at=now_ms,

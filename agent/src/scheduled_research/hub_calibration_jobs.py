@@ -8,7 +8,7 @@ import time
 from typing import Any
 
 from src.config.accessor import get_env_config
-from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule, DEFAULT_JOB_TIMEZONE
 from src.scheduled_research.run_outcome import LAST_RESULT_CONFIG_KEY, finish_run  # noqa: F401 (re-export)
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
@@ -137,6 +137,7 @@ def register_default_hub_calibration_jobs(store: ScheduledResearchJobStore) -> i
                 id=morning_id,
                 prompt="Unified hub calibration: reconcile ledgers, export fills, retrain, manifest",
                 schedule=morning_cron,
+                timezone=DEFAULT_JOB_TIMEZONE,
                 next_run_at=now_ms,
                 status=JobStatus.PENDING,
                 created_at=now_ms,
@@ -157,6 +158,7 @@ def register_default_hub_calibration_jobs(store: ScheduledResearchJobStore) -> i
                 id=evening_id,
                 prompt="Unified hub maintenance: archive research history and refresh manifest",
                 schedule=evening_cron,
+                timezone=DEFAULT_JOB_TIMEZONE,
                 next_run_at=now_ms,
                 status=JobStatus.PENDING,
                 created_at=now_ms,

@@ -25,7 +25,7 @@ import logging
 import time
 from typing import Any
 
-from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.models import DEFAULT_JOB_TIMEZONE, JobStatus, ScheduledResearchJob, validate_schedule
 from src.scheduled_research.run_outcome import finish_run
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
@@ -41,7 +41,7 @@ EXECUTION_ADVISOR_SWEEP_JOB_ID = "execution-advisor-sweep"
 #: in ``EXECUTION_ADVISOR_SWEEP_TIMEZONE`` — a job's ``timezone=None`` means UTC, which would put
 #: this at 14:30-21:25 IST, mostly after the close.
 DEFAULT_EXECUTION_ADVISOR_SWEEP_CRON = "*/5 9-15 * * 1-5"
-EXECUTION_ADVISOR_SWEEP_TIMEZONE = "Asia/Kolkata"
+EXECUTION_ADVISOR_SWEEP_TIMEZONE = DEFAULT_JOB_TIMEZONE
 
 
 def run_execution_advisor_sweep() -> dict[str, Any]:

@@ -32,7 +32,7 @@ import logging
 import time
 from typing import Any
 
-from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.models import DEFAULT_JOB_TIMEZONE, JobStatus, ScheduledResearchJob, validate_schedule
 from src.scheduled_research.run_outcome import finish_run
 from src.scheduled_research.store import ScheduledResearchJobStore
 from src.trade.hub_bridge import ensure_trade_stack_path
@@ -48,7 +48,7 @@ DECISION_GRADING_SWEEP_JOB_ID = "decision-grading-sweep"
 #: Grading looks at horizons measured in days (T+1d, T+3d, expiry); a tighter cadence would re-walk
 #: the same not-yet-matured decisions without producing a new verdict.
 DEFAULT_DECISION_GRADING_SWEEP_CRON = "0 17 * * *"
-DECISION_GRADING_SWEEP_TIMEZONE = "Asia/Kolkata"
+DECISION_GRADING_SWEEP_TIMEZONE = DEFAULT_JOB_TIMEZONE
 
 #: The retired per-agent job type. Jobs of this type still sitting in a store from before D55 are
 #: removed at registration: no pipeline claims the type any more, so a surviving one would fall
