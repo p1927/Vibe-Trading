@@ -26,8 +26,9 @@ export function MiniPayoffChart({ samples, spot, height = 120 }: Props) {
     const chart = initEChart(ref.current);
     const spots = samples.map((s) => Number(s.spot));
     const pnls = samples.map((s) => finiteOrNull(s.net_pnl ?? s.pnl));
-    const lastPnl = lastFinite(pnls) ?? 0;
-    const color = lastPnl >= 0 ? t.upColor : t.downColor;
+    const lastPnl = lastFinite(pnls);
+    // Nothing readable is "unknown" (neutral), never an up-trend.
+    const color = lastPnl === null ? t.axisColor : lastPnl >= 0 ? t.upColor : t.downColor;
 
     const markLine = spot != null && Number.isFinite(Number(spot))
       ? { silent: true, symbol: "none", lineStyle: { color: "#888", type: "dashed", width: 1 }, data: [{ xAxis: Number(spot) }] }

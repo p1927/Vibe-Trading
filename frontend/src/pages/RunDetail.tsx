@@ -964,9 +964,13 @@ function TradesTab({ run }: { run: RunData }) {
   ));
   const buys = filtered.filter((tr) => normalizeSide(tr.side) === "BUY").length;
   const sells = filtered.filter((tr) => normalizeSide(tr.side) === "SELL").length;
-  const totalPnl = hasPnl
-    ? filtered.reduce((sum, tr) => sum + (parseTradeNumber(tr.pnl) ?? 0), 0)
-    : null;
+  // D410: a trade whose P&L cannot be read is left out of the total (and counted), never added as 0.
+  const readablePnls = filtered.flatMap((tr) => {
+    const n = parseTradeNumber(tr.pnl);
+    return n == null ? [] : [n];
+  });
+  const unreadablePnlCount = filtered.length - readablePnls.length;
+  const totalPnl = hasPnl && readablePnls.length > 0 ? readablePnls.reduce((sum, n) => sum + n, 0) : null;
   const visible = filtered.slice(0, visibleCount);
   const remaining = filtered.length - visible.length;
 
@@ -987,6 +991,14 @@ function TradesTab({ run }: { run: RunData }) {
             <span className={cn("font-mono font-medium tabular-nums", signedNumberClass(totalPnl))}>
               {formatSigned(totalPnl)}
             </span>
+            {unreadablePnlCount > 0 && (
+              <span className="text-amber-700 dark:text-amber-400">
+                {i18n.t("runDetail.totalPnlPartial", {
+                  count: unreadablePnlCount,
+                  defaultValue: "({{count}} trade(s) without P&L not included)",
+                })}
+              </span>
+            )}
           </span>
         )}
         <div className="ms-auto flex flex-wrap items-center gap-1.5">

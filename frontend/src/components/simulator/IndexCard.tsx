@@ -36,8 +36,10 @@ function fmtPct(v: number | null): string {
 /** Compact ticker card: name, price, change, and a chromeless sparkline —
  * the "quick glance" style used by the market-overview strip this mirrors. */
 export function IndexCard({ name, price, change, changePct, sparkline, badge, loading, error }: IndexCardProps) {
-  const up = (change ?? 0) >= 0;
-  const color = up ? "#16a34a" : "#dc2626";
+  // No previous close means an unknown change: neutral, never a green "up".
+  const known = change != null && Number.isFinite(change);
+  const up = known && change >= 0;
+  const color = !known ? "#6b7280" : up ? "#16a34a" : "#dc2626";
   const points = sparkline.map((v, i) => ({ i, v }));
   const baseline = sparkline.length > 0 ? sparkline[0] : undefined;
 
@@ -58,7 +60,7 @@ export function IndexCard({ name, price, change, changePct, sparkline, badge, lo
       ) : (
         <>
           <p className="mt-1 text-lg font-semibold tabular-nums">{fmtPrice(price)}</p>
-          <p className={cn("text-xs tabular-nums", up ? "text-emerald-600" : "text-red-600")}>
+          <p className={cn("text-xs tabular-nums", !known ? "text-muted-foreground" : up ? "text-emerald-600" : "text-red-600")}>
             {fmtChange(change)} {fmtPct(changePct)}
           </p>
           {points.length > 1 && (

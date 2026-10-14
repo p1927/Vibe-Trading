@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { RunDetail } from "../RunDetail";
 import type { RunData } from "@/lib/api";
@@ -325,6 +325,43 @@ describe("RunDetail page", () => {
     await screen.findByText("No factor run");
     expect(screen.queryByRole("tab", { name: "Factor Research" })).not.toBeInTheDocument();
     expect(apiMock.getRunFactor).not.toHaveBeenCalled();
+  });
+
+  it("a trade whose P&L cannot be read is not counted as 0 in the headline total; the total says it is partial", async () => {
+    apiMock.getRun.mockResolvedValue({
+      status: "success",
+      run_id: "partial",
+      prompt: "Partial run",
+      trade_log: [
+        { time: "2026-07-29", code: "AAPL", side: "SELL", price: "200", qty: "2", pnl: "100" },
+        { time: "2026-07-30", code: "AAPL", side: "SELL", price: "210", qty: "2", pnl: "n/a" },
+      ],
+    });
+    apiMock.getRunCode.mockResolvedValue({});
+    renderRunDetail("/runs/partial");
+    await screen.findByText("Partial run");
+    fireEvent.click(screen.getByRole("tab", { name: "Trades" }));
+    const total = screen.getByText("Total P&L").closest("span") as HTMLElement;
+    expect(total).toHaveTextContent("+100");
+    expect(total).toHaveTextContent(/1 trade.* without P&L.*not included/i);
+  });
+
+  it("a filter that leaves only unreadable P&L shows no total at all, not +0", async () => {
+    apiMock.getRun.mockResolvedValue({
+      status: "success",
+      run_id: "none",
+      prompt: "No pnl run",
+      trade_log: [
+        { time: "2026-07-29", code: "AAPL", side: "SELL", price: "200", qty: "2", pnl: "100" },
+        { time: "2026-07-30", code: "MSFT", side: "SELL", price: "210", qty: "2", pnl: "" },
+      ],
+    });
+    apiMock.getRunCode.mockResolvedValue({});
+    renderRunDetail("/runs/none");
+    await screen.findByText("No pnl run");
+    fireEvent.click(screen.getByRole("tab", { name: "Trades" }));
+    fireEvent.change(screen.getAllByRole("combobox").find((el) => within(el).queryByText("MSFT")) as HTMLElement, { target: { value: "MSFT" } });
+    expect(screen.queryByText("Total P&L")).not.toBeInTheDocument();
   });
 });
 

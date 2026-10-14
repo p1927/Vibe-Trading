@@ -23,10 +23,11 @@ export function MiniPnlOverTimeChart({ samples, height = 100 }: Props) {
     if (!ref.current || samples.length < 2) return;
     const t = getChartTheme();
     const chart = initEChart(ref.current);
-    const days = samples.map((s) => Number(s.days_to_expiry ?? 0));
+    const days = samples.map((s) => finiteOrNull(s.days_to_expiry) ?? "n/a"); // a missing expiry is not day 0
     const pnls = samples.map((s) => finiteOrNull(s.net_pnl ?? s.pnl));
-    const lastPnl = lastFinite(pnls) ?? 0;
-    const color = lastPnl >= 0 ? t.upColor : t.downColor;
+    const lastPnl = lastFinite(pnls);
+    // Nothing readable is "unknown" (neutral), never an up-trend.
+    const color = lastPnl === null ? t.axisColor : lastPnl >= 0 ? t.upColor : t.downColor;
 
     chart.setOption({
       backgroundColor: "transparent",
