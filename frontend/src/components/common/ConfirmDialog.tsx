@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 interface ConfirmDialogProps {
@@ -9,7 +9,8 @@ interface ConfirmDialogProps {
   cancelLabel: string;
   /** "destructive" for irreversible/high-risk actions (red confirm button); "primary" otherwise. */
   tone?: "primary" | "destructive";
-  onConfirm: () => void;
+  /** An async handler keeps the confirm button disabled until it settles, so a double click cannot fire the action twice. */
+  onConfirm: () => void | Promise<unknown>;
   onCancel: () => void;
   /** Extra summary content rendered between the description and the action buttons. */
   children?: ReactNode;
@@ -35,6 +36,26 @@ export function ConfirmDialog({
   const dialogRef = useRef<HTMLDivElement>(null);
   const onCancelRef = useRef(onCancel);
   onCancelRef.current = onCancel;
+  const inFlight = useRef(false);
+  const [busy, setBusy] = useState(false);
+
+  // One confirm = one action. Orders, mandates and agent commits all confirm through here; the second click of a
+  // double click lands before the caller's own "executing" state has re-rendered, so the guard lives in the dialog.
+  const confirm = () => {
+    if (inFlight.current) return;
+    const result = onConfirm();
+    if (!result || typeof (result as Promise<unknown>).then !== "function") return;
+    inFlight.current = true;
+    setBusy(true);
+    const settle = () => {
+      inFlight.current = false;
+      setBusy(false);
+    };
+    void (result as Promise<unknown>).then(settle, (error: unknown) => {
+      settle();
+      throw error;
+    });
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -109,9 +130,11 @@ export function ConfirmDialog({
           <button
             ref={confirmRef}
             type="button"
-            onClick={onConfirm}
+            onClick={confirm}
+            disabled={busy}
+            aria-busy={busy || undefined}
             className={[
-              "rounded-lg px-3 py-1.5 text-xs font-medium transition-opacity hover:opacity-90",
+              "rounded-lg px-3 py-1.5 text-xs font-medium transition-opacity hover:opacity-90 disabled:opacity-50",
               tone === "destructive"
                 ? "bg-destructive text-destructive-foreground"
                 : "bg-primary text-primary-foreground",

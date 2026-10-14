@@ -43,4 +43,15 @@ describe("AdvisoryBoard live candidates", () => {
     expect(screen.queryByText("Old Spread")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
   });
+  it("a double click on Approve & execute places the basket once", async () => {
+    vi.spyOn(api, "getAdvisoryCandidates").mockResolvedValue(board("Iron Condor"));
+    vi.spyOn(api, "prepareAdvisoryWidget").mockResolvedValue({ widget_id: "w1", orders: [{ symbol: "NIFTY" }] } as never);
+    let finish: (v: unknown) => void = () => {};
+    const exec = vi.spyOn(api, "executeTradeBasket").mockImplementation((() => new Promise((resolve) => { finish = resolve; })) as never);
+    renderBoard();
+    await userEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    await userEvent.dblClick(await screen.findByRole("button", { name: "Approve & execute" }));
+    expect(exec).toHaveBeenCalledTimes(1);
+    finish({ message: "ok", execution_mode: "paper" });
+  });
 });

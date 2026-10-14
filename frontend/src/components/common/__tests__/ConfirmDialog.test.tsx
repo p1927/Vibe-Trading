@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import { vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { ConfirmDialog } from "../ConfirmDialog";
 
@@ -43,5 +44,46 @@ describe("ConfirmDialog keyboard focus", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+});
+
+describe("ConfirmDialog one confirm = one action", () => {
+  const renderWith = (onConfirm: () => void | Promise<unknown>) =>
+    render(
+      <ConfirmDialog open title="Place order" confirmLabel="Execute" cancelLabel="Cancel" onConfirm={onConfirm} onCancel={() => {}} />,
+    );
+
+  it("a double click on an async confirm fires the action once", async () => {
+    let settle: () => void = () => {};
+    const onConfirm = vi.fn(() => new Promise<void>((resolve) => { settle = resolve; }));
+    renderWith(onConfirm);
+    const button = screen.getByRole("button", { name: "Execute" });
+    await userEvent.dblClick(button);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+    settle();
+    await waitFor(() => expect(button).toBeEnabled());
+  });
+
+  it("a rejected async confirm re-enables the button so the user can retry", async () => {
+    const onConfirm = vi.fn().mockRejectedValueOnce(new Error("boom")).mockResolvedValue(undefined);
+    const swallow = (event: PromiseRejectionEvent) => event.preventDefault();
+    window.addEventListener("unhandledrejection", swallow);
+    renderWith(onConfirm);
+    const button = screen.getByRole("button", { name: "Execute" });
+    await userEvent.click(button);
+    await waitFor(() => expect(button).toBeEnabled());
+    await userEvent.click(button);
+    expect(onConfirm).toHaveBeenCalledTimes(2);
+    window.removeEventListener("unhandledrejection", swallow);
+  });
+
+  it("a synchronous confirm is never blocked", async () => {
+    const onConfirm = vi.fn();
+    renderWith(onConfirm);
+    const button = screen.getByRole("button", { name: "Execute" });
+    await userEvent.click(button);
+    await userEvent.click(button);
+    expect(onConfirm).toHaveBeenCalledTimes(2);
   });
 });
