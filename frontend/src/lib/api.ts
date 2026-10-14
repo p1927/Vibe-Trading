@@ -2072,23 +2072,20 @@ export const api = {
     if (horizonDays != null) params.set("horizon_days", String(horizonDays));
     return request<IndexBacktestResponse>(`/trade/index-prediction/backtest?${params}`);
   },
-  getIndexTrackScoreboard: (
-    ticker = "NIFTY",
-    refresh = false,
-    days = 365,
-    horizonDays?: number,
-    evalStep = 5,
-    cacheOnly = false,
-  ) => {
-    const params = new URLSearchParams({
-      ticker,
-      refresh: String(refresh),
-      days: String(days),
-      eval_step: String(evalStep),
-    });
+  /** The cached scoreboard (a GET never recomputes): read `report.stale`/`as_of`/`refresh_job`. */
+  getIndexTrackScoreboard: (ticker = "NIFTY", days = 365, horizonDays?: number) => {
+    const params = new URLSearchParams({ ticker, days: String(days) });
     if (horizonDays != null) params.set("horizon_days", String(horizonDays));
-    if (cacheOnly) params.set("cache_only", "true");
     return request<IndexTrackScoreboardResponse>(`/trade/index-prediction/track-scoreboard?${params}`);
+  },
+  /** Start the (single-flight, background) recompute; poll getIndexTrackScoreboard's `report.refresh_job`. */
+  refreshIndexTrackScoreboard: (ticker = "NIFTY", days = 365, horizonDays?: number, evalStep = 5) => {
+    const params = new URLSearchParams({ ticker, days: String(days), eval_step: String(evalStep) });
+    if (horizonDays != null) params.set("horizon_days", String(horizonDays));
+    return request<{ status: string; started: boolean; job: { job_id: string; state: string } }>(
+      `/trade/index-prediction/track-scoreboard/refresh?${params}`,
+      { method: "POST" },
+    );
   },
   getIndexPredictionMissAnalysis: (ticker = "NIFTY", refresh = false, days = 365, horizonDays?: number) => {
     const params = new URLSearchParams({
@@ -6349,6 +6346,8 @@ export interface IndexTrackScoreboardReport {
   >;
   schema_version?: number;
   needs_refresh?: boolean;
+  stale?: boolean;
+  refresh_job?: { job_id: string; state: string; error?: string | null } | null;
   as_of?: string;
 }
 

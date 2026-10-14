@@ -2649,17 +2649,53 @@ def index_prediction_forecast_lab(
         raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
 
 
+_SCOREBOARD_JOB_LOCK = threading.Lock()
+_SCOREBOARD_JOB: dict[str, Any] = {}  # latest recompute: {job_id, state, started_at, finished_at, error}
+
+
+def _scoreboard_history_days(key: str, days: int) -> int:
+    """A refresh must never silently shrink an already-cached wider window back to the 730-day floor
+    ([[2026-08-29-strategy-promotion-default-history-window-too-short-for-low-frequency-candidates]]):
+    a wide window (an explicit `days=5000` run for a low-frequency strategy) is sticky."""
+    from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.scoreboard import load_scoreboard
+
+    cached_history_days = int((load_scoreboard(key) or {}).get("history_days") or 0)
+    return max(days, 730, cached_history_days)
+
+
+def _run_scoreboard_job(job: dict[str, Any], key: str, history_days: int, horizon_days: int | None, eval_step: int) -> None:
+    try:
+        from src.trade.hub_bridge import ensure_trade_stack_path
+
+        ensure_trade_stack_path()
+        from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.walk_forward import (
+            run_strategy_walk_forward,
+            run_track_walk_forward,
+        )
+
+        run_track_walk_forward(ticker=key, days=history_days, horizon_days=horizon_days, eval_step=eval_step)
+        run_strategy_walk_forward(ticker=key, days=history_days, horizon_days=horizon_days)
+        job["state"] = "done"
+    except Exception as exc:  # the job's state is the only place a background failure can surface
+        logger.exception("track-scoreboard recompute failed for %s", key)
+        job["state"] = "failed"
+        job["error"] = redacted_error_detail(exc)
+    finally:
+        job["finished_at"] = datetime.now(timezone.utc).isoformat()
+        _SCOREBOARD_JOB_LOCK.release()
+
+
 @trade_router.get("/index-prediction/track-scoreboard", response_model=IndexTrackScoreboardResponse)
 def get_index_track_scoreboard(
     ticker: str = "NIFTY",
-    refresh: bool = False,
-    cache_only: bool = False,
     days: int = 365,
     horizon_days: int | None = None,
-    eval_step: int = 5,
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexTrackScoreboardResponse:
-    """Load cached per-track scoreboard or recompute walk-forward."""
+    """The cached per-track scoreboard, with `as_of`, `stale`/`needs_refresh` and the latest recompute job.
+
+    A GET never recomputes (the walk-forward takes minutes; an inline recompute never returned in 170 s,
+    D198): refresh is `POST /index-prediction/track-scoreboard/refresh`."""
     key = _ticker_key(ticker)
     try:
         from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.scoreboard import (
@@ -2667,71 +2703,61 @@ def get_index_track_scoreboard(
             normalize_scoreboard_report,
             scoreboard_needs_refresh,
         )
-        from trade_integrations.dataflows.index_research.prediction_algorithms.evaluator.walk_forward import (
-            run_strategy_walk_forward,
-            run_track_walk_forward,
-        )
         from trade_integrations.dataflows.index_research.prediction_algorithms.promotion import (
             enrich_scoreboard_with_live,
         )
         from src.trade.hub_bridge import ensure_trade_stack_path
 
         ensure_trade_stack_path()
-        # [[2026-08-29-strategy-promotion-default-history-window-too-short-for-low-frequency-candidates]]:
-        # a refresh must never silently shrink an already-cached wider window back down to the
-        # 730-day floor. `scoreboard_needs_refresh`'s own `history_days` check already treats a
-        # cached report with a WIDER history_days than requested as fresh (no unnecessary
-        # re-run) — but nothing previously stopped a plain `refresh=True` call (e.g. the
-        # frontend's "Refresh" button, which always sends `days=730`) from unconditionally
-        # re-running at the narrow default and overwriting a deliberately wide (e.g.
-        # `days=5000`, run once to give a low-frequency strategy like mean_reversion enough
-        # day-paired bootstrap samples — see the item for the real n_pairs-vs-window numbers)
-        # cached scoreboard with a narrower one. Folding in the cached report's own
-        # `history_days` here makes a wide window "sticky": once achieved (by any explicit wide
-        # request), every ordinary refresh preserves it instead of regressing it, with zero
-        # change to the cheap default path when no wide run has ever happened.
-        cached_history_days = int((load_scoreboard(key) or {}).get("history_days") or 0)
-        history_days = max(days, 730, cached_history_days)
-        if cache_only:
-            report = load_scoreboard(key)
-            report = normalize_scoreboard_report(report or {"status": "empty", "ticker": key})
-            report["needs_refresh"] = scoreboard_needs_refresh(
-                report,
-                horizon_days=horizon_days,
-                history_days=history_days,
-            )
-        elif refresh:
-            report = run_track_walk_forward(
-                ticker=key,
-                days=history_days,
-                horizon_days=horizon_days,
-                eval_step=eval_step,
-            )
-            report = run_strategy_walk_forward(ticker=key, days=history_days, horizon_days=horizon_days)
-            report["needs_refresh"] = False
-        else:
-            report = load_scoreboard(key)
-            if scoreboard_needs_refresh(
-                report,
-                horizon_days=horizon_days,
-                history_days=history_days,
-            ):
-                report = run_track_walk_forward(
-                    ticker=key,
-                    days=history_days,
-                    horizon_days=horizon_days,
-                    eval_step=eval_step,
-                )
-                report = run_strategy_walk_forward(ticker=key, days=history_days, horizon_days=horizon_days)
-            report = normalize_scoreboard_report(report or {})
-            report["needs_refresh"] = False
-        report = normalize_scoreboard_report(report or {})
+        history_days = _scoreboard_history_days(key, days)
+        report = normalize_scoreboard_report(load_scoreboard(key) or {"status": "empty", "ticker": key})
+        report["needs_refresh"] = scoreboard_needs_refresh(report, horizon_days=horizon_days, history_days=history_days)
+        report["stale"] = report["needs_refresh"]
         report = enrich_scoreboard_with_live(report, ticker=key)
-        status = str(report.get("status") or "ok")
-        return IndexTrackScoreboardResponse(status=status, ticker=key, report=report)
+        report["refresh_job"] = dict(_SCOREBOARD_JOB) or None
+        return IndexTrackScoreboardResponse(status=str(report.get("status") or "ok"), ticker=key, report=report)
     except Exception as exc:
         logger.exception("index-prediction track-scoreboard failed for %s", key)
         raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
+
+
+@trade_router.post("/index-prediction/track-scoreboard/refresh")
+def refresh_index_track_scoreboard(
+    ticker: str = "NIFTY",
+    days: int = 365,
+    horizon_days: int | None = None,
+    eval_step: int = 5,
+    _auth: None = Depends(require_local_or_auth),
+) -> Dict[str, Any]:
+    """Start the walk-forward recompute in the background (single-flight) and return its job id.
+
+    A run already in flight is returned as-is (`started: false`); poll GET track-scoreboard's
+    `report.refresh_job` until `state` is `done`/`failed`, then read the new report."""
+    key = _ticker_key(ticker)
+    if not _SCOREBOARD_JOB_LOCK.acquire(blocking=False):
+        return {"status": "ok", "started": False, "job": dict(_SCOREBOARD_JOB)}
+    try:
+        job = {
+            "job_id": f"scoreboard-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}",
+            "state": "running",
+            "ticker": key,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "finished_at": None,
+            "error": None,
+        }
+        _SCOREBOARD_JOB.clear()
+        _SCOREBOARD_JOB.update(job)
+        history_days = _scoreboard_history_days(key, days)
+        threading.Thread(
+            target=_run_scoreboard_job,
+            args=(_SCOREBOARD_JOB, key, history_days, horizon_days, eval_step),
+            name="track-scoreboard-refresh",
+            daemon=True,
+        ).start()
+    except Exception:
+        _SCOREBOARD_JOB_LOCK.release()
+        raise
+    return {"status": "ok", "started": True, "job": dict(_SCOREBOARD_JOB)}
 
 
 @trade_router.get("/index-prediction/execution-backtest", response_model=IndexExecutionBacktestResponse)
@@ -4984,13 +5010,45 @@ async def stream_recording_job(
     return _recording_stream_response(job_id, request)
 
 
+_LIGHT_REFRESH_LOCK = threading.Lock()
+
+
+def _light_refresh_skip_reason(key: str) -> str | None:
+    """Why a non-forced poll must not run now: `replay_armed`, `market_closed` or `simulator_unavailable`."""
+    from src.trade.hub_bridge import ensure_trade_stack_path
+
+    ensure_trade_stack_path()
+    from nautilus_openalgo_bridge.market_hours import is_market_open_for_market
+    from trade_integrations.dataflows.news_hub_bridge.replay_gate import is_replaying
+    from trade_integrations.market_registry import market_for_ticker
+
+    market = market_for_ticker(key)
+    try:
+        if is_replaying(market):
+            return "replay_armed"
+    except Exception:  # simulator cannot answer: polling blind during a possible replay is worse than skipping
+        logger.warning("light refresh skipped: replay state unknown", exc_info=True)
+        return "simulator_unavailable"
+    return None if is_market_open_for_market(market) else "market_closed"
+
+
 @trade_router.post("/index-prediction/refresh", response_model=IndexPredictionRefreshResponse)
 def refresh_index_prediction(
     body: RefreshIndexPredictionRequest,
     _auth: None = Depends(require_local_or_auth),
 ) -> IndexPredictionRefreshResponse:
-    """Lightweight macro + cached-constituent refresh for live polling."""
+    """Lightweight macro + cached-constituent refresh for live polling.
+
+    A non-forced poll runs only during the market's session, never while a replay is armed, and one at a
+    time; otherwise it answers `status: skipped` with the reason and writes nothing (merely opening the
+    prediction page must not mutate the artifact)."""
     key = _ticker_key(body.ticker)
+    if not body.force:
+        skip = _light_refresh_skip_reason(key)
+        if skip:
+            return IndexPredictionRefreshResponse(status="skipped", ticker=key, reason=skip)
+    if not _LIGHT_REFRESH_LOCK.acquire(blocking=False):
+        return IndexPredictionRefreshResponse(status="skipped", ticker=key, reason="refresh_in_flight")
     try:
         from trade_integrations.dataflows.index_research.light_refresh import run_index_light_refresh
         from src.trade.hub_bridge import _index_doc_to_panel, ensure_trade_stack_path
@@ -5009,6 +5067,8 @@ def refresh_index_prediction(
     except Exception as exc:
         logger.exception("index-prediction refresh failed for %s", key)
         raise HTTPException(status_code=502, detail=redacted_error_detail(exc)) from exc
+    finally:
+        _LIGHT_REFRESH_LOCK.release()
 
     return IndexPredictionRefreshResponse(
         status="ok",

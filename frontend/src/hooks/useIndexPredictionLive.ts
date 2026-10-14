@@ -20,6 +20,7 @@ export function useIndexPredictionLive({
 }: Props) {
   const [lastReason, setLastReason] = useState<string | null>(null);
   const [countdownSec, setCountdownSec] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const [materialNewsCount, setMaterialNewsCount] = useState(0);
   const onUpdateRef = useRef(onUpdate);
   onUpdateRef.current = onUpdate;
@@ -30,9 +31,14 @@ export function useIndexPredictionLive({
       return;
     }
     refreshInFlightRef.current = true;
+    setRefreshing(true);
     try {
+      // The server runs a poll only in market hours, never during an armed replay, one at a time;
+      // otherwise it answers "skipped" with the reason and writes nothing.
       const res = await api.refreshIndexPrediction({ ticker, horizon_days: horizonDays });
-      if (res.status === "ok") {
+      if (res.status === "skipped") {
+        setLastReason(res.reason || "skipped");
+      } else if (res.status === "ok") {
         setLastReason(res.reason || "scheduled_poll");
         onUpdateRef.current?.(res.artifact ?? null);
       } else {
@@ -43,6 +49,7 @@ export function useIndexPredictionLive({
       setLastReason(msg.length > 80 ? "refresh_failed" : msg);
     } finally {
       refreshInFlightRef.current = false;
+      setRefreshing(false);
     }
   }, [ticker, horizonDays]);
 
@@ -83,5 +90,5 @@ export function useIndexPredictionLive({
     };
   }, [enabled, pollMs, pauseWhileRunning, refreshLight, loadContext]);
 
-  return { lastReason, countdownSec, materialNewsCount, pausedForAnalysis: pauseWhileRunning };
+  return { lastReason, countdownSec, materialNewsCount, refreshing, pausedForAnalysis: pauseWhileRunning };
 }

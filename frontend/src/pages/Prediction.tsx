@@ -438,7 +438,7 @@ export function Prediction() {
   const loadTrackScoreboardCached = useCallback(async () => {
     setTrackScoreboardError(null);
     try {
-      const cachedRes = await api.getIndexTrackScoreboard("NIFTY", false, 730, horizonDays, 5, true);
+      const cachedRes = await api.getIndexTrackScoreboard("NIFTY", 730, horizonDays);
       if (cachedRes.report) setTrackScoreboard(cachedRes.report);
       else if (cachedRes.status !== "ok") setTrackScoreboardError(cachedRes.message || "Track scoreboard unavailable");
     } catch (e) {
@@ -454,17 +454,10 @@ export function Prediction() {
       setTrackScoreboardError(null);
 
       try {
-        const fetchScoreboard = api.getIndexTrackScoreboard;
-        if (typeof fetchScoreboard !== "function") {
-          throw new Error(
-            "Track scoreboard API client is missing — hard-refresh the page (frontend update required).",
-          );
-        }
-
         let needsFullRun = forceRefresh;
 
         if (!forceRefresh) {
-          const cachedRes = await fetchScoreboard("NIFTY", false, 730, horizonDays, 5, true);
+          const cachedRes = await api.getIndexTrackScoreboard("NIFTY", 730, horizonDays);
           const cached = cachedRes.report;
           if (cached && (cached.eval_count ?? 0) > 0) {
             setTrackScoreboard(cached);
@@ -476,11 +469,16 @@ export function Prediction() {
         }
 
         if (needsFullRun) {
+          // The recompute is a background job (single-flight on the server): start it, then poll the cached GET.
           setTrackScoreboardRecomputing(true);
-          const res = await fetchScoreboard("NIFTY", true, 730, horizonDays);
-          if (res.report) setTrackScoreboard(res.report);
-          else if (res.status !== "ok") {
-            setTrackScoreboardError(res.message || "Track scoreboard unavailable");
+          await api.refreshIndexTrackScoreboard("NIFTY", 730, horizonDays);
+          for (;;) {
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+            const res = await api.getIndexTrackScoreboard("NIFTY", 730, horizonDays);
+            if (res.report) setTrackScoreboard(res.report);
+            const job = res.report?.refresh_job;
+            if (job?.state === "failed") throw new Error(job.error || "Track scoreboard recompute failed");
+            if (job?.state !== "running") break;
           }
         }
       } catch (e) {
@@ -551,7 +549,7 @@ export function Prediction() {
     [applyArtifact, loadHistory],
   );
 
-  const { lastReason, countdownSec, materialNewsCount, pausedForAnalysis } = useIndexPredictionLive({
+  const { lastReason, countdownSec, materialNewsCount, refreshing, pausedForAnalysis } = useIndexPredictionLive({
     ticker: "NIFTY",
     horizonDays,
     pollMs,
@@ -837,7 +835,7 @@ export function Prediction() {
 
         <NewsTriggerPanel
           materialNewsCount={materialNewsCount}
-          lastReason={lastReason}
+          lastReason={refreshing ? "refreshing" : lastReason}
           countdownSec={countdownSec}
           pollMs={pollMs}
           monitorEnabled={pollMs > 0}
