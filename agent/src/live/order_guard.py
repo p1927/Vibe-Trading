@@ -49,12 +49,13 @@ from src.live.advisory import (
     Verdict,
     get_advisory_providers,
 )
-from src.live.audit import LiveActionEvent, write_live_action
+from src.live.audit import LiveActionEvent, audit_unwritable_reason, write_live_action
 from src.live.enforcement import (
     BREACH_KIND_INSTRUMENT,
     BREACH_KIND_UNIVERSE,
     BreachEvent,
     OrderIntent,
+    buy_worst_case_price,
     check_mandate,
     instrument_asset_class,
     last_price_usd,
@@ -64,6 +65,7 @@ from src.live.halt import halt_flag_set
 from src.live.mandate.model import MANDATE_SCHEMA_VERSION, Mandate
 from src.live.mandate.store import load_mandate
 from src.live.daily_count import (
+    DailyCountError,
     DailyOrderLockUnavailable,
     daily_order_lock,
     increment_daily_count,
@@ -181,11 +183,19 @@ class LiveOrderGuardTool(MCPRemoteTool):
                 mandate=mandate,
             )
 
-        positions = self._read_first(self._read_tools("positions", _POSITIONS_TOOLS))
-        balance = self._read_first(self._read_tools("account", _BALANCE_TOOLS))
-
         try:
             with daily_order_lock(self.broker):
+                # Read HERE, under the lock (as the direct-SDK gate does): a snapshot taken before it would
+                # miss a fill from an order that held the lock in between, undercounting exposure.
+                positions = self._read_first(self._read_tools("positions", _POSITIONS_TOOLS))
+                balance = self._read_first(self._read_tools("account", _BALANCE_TOOLS))
+                # the reads take seconds: a halt tripped meanwhile must still stop this order
+                if halt_flag_set(self.broker):
+                    return self._deny(
+                        reason="live trading halted",
+                        checked=["mandate", "expiry", "halt_flag"],
+                        mandate=mandate,
+                    )
                 daily_count = self._read_daily_count()
                 breach = check_mandate(
                     mandate,
@@ -246,7 +256,7 @@ class LiveOrderGuardTool(MCPRemoteTool):
         price = self._quote_price(intent)
         if price is None:
             return None
-        implied = intent.quantity * price
+        implied = intent.quantity * buy_worst_case_price(intent, price)
         if implied != implied or implied <= 0:  # NaN / non-positive → fail-closed
             return None
 
@@ -349,6 +359,15 @@ class LiveOrderGuardTool(MCPRemoteTool):
         under :data:`LIVE_ACTION_RESULT_KEY` so the api_server SSE relay can emit
         a ``live.action`` event without touching the agent loop (H5).
         """
+        # An order must not be sent when its audit record cannot be written afterwards (the direct-SDK gate
+        # does the same): a failure after the send cannot be undone and would leave a live order unrecorded.
+        unwritable = audit_unwritable_reason()
+        if unwritable is not None:
+            return self._deny(
+                reason=unwritable,
+                checked=["mandate", "expiry", "halt_flag", "audit_ledger"],
+                mandate=mandate,
+            )
         advisory = self._advisory_review(intent, positions, balance, mandate)
         forwarded = super().execute(**kwargs)
         broker_response = self._safe_json(forwarded)
@@ -381,8 +400,14 @@ class LiveOrderGuardTool(MCPRemoteTool):
                 error=self._error_message(broker_response),
             )
         else:
-            # Only a confirmed ALLOW + non-error forward consumes a daily count.
-            self._increment_daily_count()
+            # Only a confirmed ALLOW + non-error forward consumes a daily count. The broker already accepted
+            # the order: raising here would have the caller retry it (a double order), so a failed count is
+            # recorded on the audit record instead (as the direct-SDK gate does).
+            try:
+                self._increment_daily_count()
+            except DailyCountError:
+                logger.error("daily order count could not be persisted for %s after an accepted order", self.broker)
+                gate_decision["reason_code"] = "daily_action_accounting_failed"
             record = self._audit(
                 kind="order_placed",
                 outcome="accepted",
@@ -795,6 +820,10 @@ def _parse_quote_price(result: object, symbol: str) -> float | None:
             price = _price_from_quote_dict(match)
             if price is not None:
                 return price
+    # MCPServerAdapter.call_tool nests a structured result under ``data``: unwrap one level.
+    nested = result.get("data")
+    if isinstance(nested, dict):
+        return _parse_quote_price(nested, symbol)
     return None
 
 

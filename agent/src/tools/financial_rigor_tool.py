@@ -157,7 +157,12 @@ def verify_market_cap(
     """
     p, s, r = _exact(price), _exact(shares), _exact(reported_cap)
     calculated = _CTX.multiply(p, s)
-    deviation = abs(float(calculated - r) / float(r)) * 100 if r != 0 else 0.0
+    # A zero reference has nothing to deviate from: only an equally-zero calculation agrees, anything
+    # else is a total miss (it used to read as 0% deviation, i.e. "pass").
+    if r != 0:
+        deviation = abs(float(calculated - r) / float(r)) * 100
+    else:
+        deviation = 0.0 if calculated == 0 else math.inf
     if deviation > 5:
         verdict = "fail"
     elif deviation > 1:
@@ -171,7 +176,7 @@ def verify_market_cap(
         "calculated_market_cap": float(calculated),
         "calculated_market_cap_display": _fmt(float(calculated)),
         "reported_market_cap": float(r),
-        "deviation_pct": round(deviation, 4),
+        "deviation_pct": round(deviation, 4) if math.isfinite(deviation) else None,
         "verdict": verdict,
     }
 
@@ -263,13 +268,18 @@ def cross_validate(
     per_source: list[dict[str, Any]] = []
     all_consistent = True
     for src, val in values.items():
-        dev = abs(float(val) - median) / median * 100 if median != 0 else 0.0
+        # abs(median): a negative reference made every deviation negative, so every source "passed";
+        # a zero reference is agreed with only by an equally-zero value.
+        if median != 0:
+            dev = abs(float(val) - median) / abs(median) * 100
+        else:
+            dev = 0.0 if float(val) == 0 else math.inf
         consistent = dev <= tolerance_pct
         all_consistent = all_consistent and consistent
         per_source.append({
             "source": src,
             "value": float(val),
-            "deviation_pct": round(dev, 4),
+            "deviation_pct": round(dev, 4) if math.isfinite(dev) else None,
             "consistent": consistent,
         })
     return {
@@ -550,7 +560,7 @@ class FinancialRigorTool(BaseTool):
                 result = cross_validate(
                     str(kwargs["field"]), kwargs["source_values"],
                     unit=str(kwargs.get("unit") or ""),
-                    tolerance_pct=float(kwargs.get("tolerance_pct") or 2.0),
+                    tolerance_pct=2.0 if kwargs.get("tolerance_pct") is None else float(kwargs["tolerance_pct"]),
                 )
             elif command == "benford":
                 vals = kwargs.get("values")
@@ -575,7 +585,7 @@ class FinancialRigorTool(BaseTool):
                     kwargs["price"], kwargs["eps"], kwargs["shares"],
                     growth[0], growth[1], growth[2],
                     pe[0], pe[1], pe[2],
-                    years=int(kwargs.get("years") or 3),
+                    years=3 if kwargs.get("years") is None else int(kwargs["years"]),
                     currency=str(kwargs.get("currency") or ""),
                 )
             else:

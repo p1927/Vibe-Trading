@@ -57,6 +57,10 @@ _NOTIONAL_KEYS = ("notional_usd", "notional", "dollar_amount", "amount")
 #: Order-size keys for the share/contract/coin quantity path.
 _QUANTITY_KEYS = ("quantity", "qty", "shares", "units")
 
+#: Price keys of a limit/stop order. A quantity-sized buy is capped at the LARGEST one present (a limit buy
+#: fills anywhere up to its limit), so the notional cap is not sized at the quote alone.
+_LIMIT_PRICE_KEYS = ("limit_price", "price", "limit", "stop_price")
+
 
 def extract_order_intent(remote_name: str, kwargs: dict) -> OrderIntent | None:
     """Parse Robinhood ``place_equity_order`` kwargs into a normalized :class:`OrderIntent`.
@@ -97,12 +101,17 @@ def extract_order_intent(remote_name: str, kwargs: dict) -> OrderIntent | None:
     if notional is None and quantity is None:
         return None
 
+    limit_price = _limit_price(kwargs)
+    if limit_price is _INVALID:
+        return None
+
     return OrderIntent(
         symbol=symbol,
         side=side,
         notional_usd=notional,
         quantity=quantity,
         instrument_type=instrument,
+        limit_price=limit_price,
     )
 
 
@@ -151,6 +160,22 @@ def _extract_size(kwargs: dict) -> tuple[float | None, float | None]:
     notional = _first_positive_float(kwargs, _NOTIONAL_KEYS)
     quantity = _first_positive_float(kwargs, _QUANTITY_KEYS)
     return notional, quantity
+
+
+_INVALID = object()
+
+
+def _limit_price(kwargs: dict) -> "float | None | object":
+    """Return the largest positive limit/stop price among the present keys, ``None`` if absent, ``_INVALID`` if malformed.
+
+    ``None``/empty values count as absent (models send nulls for optional fields); any other malformed value
+    denies, like the size keys.
+    """
+    present = [key for key in _LIMIT_PRICE_KEYS if kwargs.get(key) not in (None, "")]
+    if not present:
+        return None
+    price = _first_positive_float(kwargs, tuple(present))
+    return _INVALID if price is None else price
 
 
 def _first_positive_float(kwargs: dict, keys: tuple[str, ...]) -> float | None:

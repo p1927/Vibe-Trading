@@ -183,6 +183,19 @@ def assert_audit_writable() -> None:
         pass
 
 
+def audit_unwritable_reason() -> str | None:
+    """``None`` when the audit ledger is writable; else why not (an order must then not be sent).
+
+    The ONE pre-send ledger check shared by the direct-SDK gate and the MCP guard.
+    """
+    try:
+        assert_audit_writable()
+    except OSError as exc:
+        logger.error("live-action audit ledger is not writable: %s", exc)
+        return f"live-action audit ledger is not writable ({exc}); refusing to send an order it cannot record"
+    return None
+
+
 @dataclass(frozen=True)
 class LiveActionEvent:
     """One immutable live-action audit record (SPEC.md Consent §5).
@@ -320,7 +333,9 @@ def write_live_action(
     # compliance record exists on disk before the chained copy is attempted.
     path = audit_ledger_path()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    line = json.dumps(record, ensure_ascii=False)
+    # default=str: a Decimal/datetime/UUID inside a broker response must not drop the compliance record of an
+    # order that has already been sent (callers swallow audit errors by design).
+    line = json.dumps(record, ensure_ascii=False, default=str)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(line + "\n")
         handle.flush()
@@ -340,7 +355,7 @@ def write_live_action(
             # only: the return value and the classic ledger line must stay
             # byte-identical to what callers already depend on, so the augmented
             # record is deliberately NOT rebound onto ``record``.
-            append_record(audit_chain_ledger_path(), record, fsync=True)
+            append_record(audit_chain_ledger_path(), json.loads(line), fsync=True)
         except Exception as exc:  # noqa: BLE001
             # A chain-append failure must not take down an in-flight order. The
             # record is already durable in the classic ledger above, so nothing

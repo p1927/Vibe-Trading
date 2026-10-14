@@ -20,6 +20,7 @@ import requests
 
 from src.config.accessor import get_env_config
 from src.config.paths import get_runtime_root
+from src.trading.types import ConnectorVendorError
 
 CONFIG_FILENAME = "openalgo.json"
 
@@ -354,7 +355,8 @@ class _RestClient:
         rows = body.get("data")
         if isinstance(rows, list):
             return [row for row in rows if isinstance(row, dict)]
-        return []
+        # An unrecognised reply is a failed read, never "no positions": a flat book would be believed.
+        raise ConnectorVendorError("OpenAlgo positionbook reply has no data list; not reading it as flat")
 
     def orders(self) -> list[dict[str, Any]]:
         body = self.post("orderbook", {})
@@ -365,7 +367,7 @@ class _RestClient:
                 return [row for row in orders if isinstance(row, dict)]
         if isinstance(data, list):
             return [row for row in data if isinstance(row, dict)]
-        return []
+        raise ConnectorVendorError("OpenAlgo orderbook reply has no orders list; not reading it as no orders")
 
     def quote(self, symbol: str, exchange: str) -> dict[str, Any]:
         body = self.post("quotes", {"symbol": symbol, "exchange": exchange})

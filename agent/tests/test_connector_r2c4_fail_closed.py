@@ -168,12 +168,13 @@ def test_binance_checks_the_real_client_endpoints() -> None:
 
 # ---- live gate: an order is not sent when its audit ledger cannot be written ------------------
 def test_order_not_sent_when_audit_ledger_unwritable(monkeypatch) -> None:
+    from src.live import audit as audit_mod
     from src.live import sdk_order_gate as gate
 
     def unwritable():
         raise OSError("read-only file system")
 
-    monkeypatch.setattr(gate, "assert_audit_writable", unwritable)
+    monkeypatch.setattr(audit_mod, "assert_audit_writable", unwritable)
     connector = SimpleNamespace(place_order=lambda *a, **k: pytest.fail("order must not be sent"))
     out = gate._allow("okx", "s1", connector, object(), None, {"symbol": "X"}, None, None)
     assert out["status"] == "blocked" and out["reason_code"] == "audit_ledger_unavailable"

@@ -1007,3 +1007,39 @@ def test_okx_order_result_rejects_failed_scode() -> None:
     assert failed["status"] == "error"
     ok = ox._order_result(cfg, {"code": "0", "data": [{"ordId": "O1", "sCode": "0"}]}, symbol="BTC-USDT", side="buy", order_type="market", time_in_force="day")
     assert ok["status"] == "ok" and ok["order_id"] == "O1"
+
+
+def test_positions_are_read_under_the_order_lock(monkeypatch) -> None:
+    """A snapshot read before the lock misses a fill from an order that held it in between."""
+    from contextlib import contextmanager
+
+    _patch_gate(monkeypatch, mandate=_mandate())
+    state = {"held": False}
+
+    @contextmanager
+    def lock(broker):
+        state["held"] = True
+        try:
+            yield
+        finally:
+            state["held"] = False
+
+    monkeypatch.setattr(gate, "daily_order_lock", lock)
+    seen: list[bool] = []
+
+    class _Connector(_FakeConnector):
+        def get_positions(self, config):
+            seen.append(state["held"])
+            return super().get_positions(config)
+
+        def get_account_snapshot(self, config):
+            seen.append(state["held"])
+            return super().get_account_snapshot(config)
+
+    connector = _Connector()
+    out = gate.execute_live_order(
+        broker="okx", connector_module=connector, config=object(), intent=_intent(),
+        place_kwargs={"symbol": "AAPL", "side": "buy", "notional": 500.0},
+    )
+    assert out["status"] == "ok"
+    assert seen == [True, True]

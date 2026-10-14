@@ -11,7 +11,7 @@ import sys
 import time as _time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Generator, List, Optional
 
@@ -50,28 +50,31 @@ def memory_lock(memory_dir: Path) -> Generator[bool, None, None]:
 
     lock_path = memory_dir / ".lock"
     lock_path.touch(exist_ok=True)
-    fd = None
-    try:
-        fd = open(lock_path, "w")  # noqa: SIM115
+    # The yield sits outside the acquire loop's try: an OSError raised by the caller's body
+    # (disk full, rename failure) was thrown into the generator there, caught as a "lock busy"
+    # error, the lock re-acquired and a second yield made, so contextlib replaced the real error
+    # with "generator didn't stop after throw()" and the original cause was lost.
+    with open(lock_path, "w") as fd:
+        acquired = False
         deadline = _time.monotonic() + _LOCK_TIMEOUT_S
         while True:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                yield True
-                return
+                acquired = True
+                break
             except (OSError, BlockingIOError):
                 if _time.monotonic() >= deadline:
                     logger.warning("memory_lock: timeout after %.1fs", _LOCK_TIMEOUT_S)
-                    yield False
-                    return
+                    break
                 _time.sleep(0.1)
-    finally:
-        if fd:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            except OSError:
-                pass
-            fd.close()
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                except OSError:
+                    pass
 
 
 HALF_LIFE_DAYS = 14.0
@@ -194,6 +197,11 @@ def _parse_timestamp(value: object, fallback: float) -> float:
     if isinstance(value, str):
         try:
             dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                # Every writer (add/update_entry/lifecycle) stamps naive UTC via gmtime(); a naive
+                # datetime's .timestamp() would read it as host-local time, skewing every
+                # recalled age by the UTC offset (5.5h on an IST host).
+                dt = dt.replace(tzinfo=timezone.utc)
             return dt.timestamp()
         except (ValueError, TypeError):
             pass

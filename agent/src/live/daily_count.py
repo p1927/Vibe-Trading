@@ -134,13 +134,10 @@ def increment_daily_count(broker: str, action_id: str | None = None) -> int:
     today = _utc_today()
     if action_id is not None and not (1 <= len(action_id) <= 128):
         raise DailyCountError("action_id must contain 1-128 characters")
-    try:
-        counter_date, count, action_ids = _read_counter(broker)
-    except DailyCountError:
-        if action_id is not None:
-            raise
-        counter_date, count, action_ids = None, 0, []
-    if action_id is not None and counter_date is not None and counter_date > today:
+    # An unreadable/invalid counter is unknown state, never 0: restarting it from 1 would silently reset the
+    # per-broker daily cap (the write-side twin of the admission-read rule in read_daily_count).
+    counter_date, count, action_ids = _read_counter(broker)
+    if counter_date is not None and counter_date > today:
         raise DailyCountError("daily order count date is in the future")
     if counter_date != today:
         count = 0

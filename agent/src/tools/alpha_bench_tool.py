@@ -1007,6 +1007,25 @@ def _default_output_dir() -> Path:
     return get_runtime_root() / "reports"
 
 
+def resolve_report_dir(raw: str | None) -> Path:
+    """Report directory for a bench run: the tier's default, or ``raw`` when it is inside an allowed root.
+
+    ``output_dir`` is a model-supplied argument on the agent tool, so an unvalidated one let the
+    model create directories and write report files anywhere the process can (the MCP surface
+    checked it, the in-process tool did not). One check, used by both surfaces.
+
+    Raises:
+        ValueError: ``raw`` resolves outside the tier's reports dir and the allowed write roots.
+    """
+    default = _default_output_dir().resolve()
+    if not raw:
+        return default
+    from src.tools.path_utils import allowed_write_roots, resolve_safe_path
+
+    # Only this tier's runtime root: a literal ~/.vibe-trading/reports would let release write into dev's tree.
+    return resolve_safe_path(str(raw), None, [default, *allowed_write_roots()], purpose="alpha bench report")
+
+
 def run_alpha_bench(**kwargs: Any) -> dict[str, Any]:
     """Run the bench and return a parsed envelope (dict, not JSON string)."""
     universe = kwargs.get("universe")
@@ -1025,8 +1044,10 @@ def run_alpha_bench(**kwargs: Any) -> dict[str, Any]:
     if top_n <= 0:
         return {"status": "error", "error": "top must be > 0"}
 
-    output_dir_raw = kwargs.get("output_dir") or str(_default_output_dir())
-    output_dir = Path(output_dir_raw).expanduser().resolve()
+    try:
+        output_dir = resolve_report_dir(kwargs.get("output_dir"))
+    except ValueError as exc:
+        return {"status": "error", "error": str(exc)}
 
     try:
         from src.factors.registry import (

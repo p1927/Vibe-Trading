@@ -632,6 +632,11 @@ async def require_local_or_auth(
     if _configured_api_key():
         await require_auth(request, cred)
         return
+    # Keyless loopback trust must not be borrowable by a web page open in the operator's browser:
+    # a cross-site POST with no body is a "simple" request (no CORS preflight) and arrives from the
+    # loopback peer. ``require_auth`` already refuses it; the keyless branch has to as well.
+    if request.method.upper() not in _SAFE_BROWSER_METHODS:
+        _reject_cross_site_browser_request(request)
     if not _is_local_client(request):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -651,6 +656,9 @@ async def require_settings_write_auth(
             raise HTTPException(status_code=401, detail="Invalid or missing API key")
         return
 
+    # Same cross-site refusal as ``require_local_or_auth``/``require_auth`` (keyless loopback trust).
+    if request.method.upper() not in _SAFE_BROWSER_METHODS:
+        _reject_cross_site_browser_request(request)
     if not _is_local_client(request):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

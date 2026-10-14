@@ -42,10 +42,13 @@ def inject_autonomous_proposal_session_context(
     session_id: str,
     tool_name: str,
 ) -> dict[str, Any]:
-    """Fill the orchestrator session id into a proposal tool call when absent.
+    """Bind the orchestrator session id into a proposal tool call.
 
-    A value the model did supply is never overwritten — this only fills a gap,
-    the same contract ``_normalize_tool_run_dir`` uses for ``run_dir``.
+    The loop's own session id always wins over a model-supplied value, the same precedence the
+    native ``ProposeAutonomousAgentTool`` applies (``default_session_id`` before ``session_id``).
+    The model cannot know the id, so whatever it wrote there is a guess; honouring it persisted
+    the proposal under an id no UI session owns (or under another session's), and the
+    confirmation card was never found.
     """
     name = str(tool_name or "")
     if not name.startswith("mcp_") or not session_id:
@@ -53,8 +56,6 @@ def inject_autonomous_proposal_session_context(
     for needle, arg_name in _SESSION_BOUND_MCP_TOOLS.items():
         if needle not in name:
             continue
-        if str(args.get(arg_name) or "").strip():
-            return args
         normalized = dict(args)
         normalized[arg_name] = session_id
         return normalized

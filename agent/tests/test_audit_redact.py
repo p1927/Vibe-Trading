@@ -305,3 +305,22 @@ def test_ledger_still_append_only_with_sinks(live_runtime: Path) -> None:
     written = _read_ledger()
     assert [r["intent_normalized"] for r in written] == ["order 0", "order 1", "order 2"]
     assert len(trace.entries) == 3
+
+
+def test_unserializable_value_does_not_drop_the_ledger_record(live_runtime: Path) -> None:
+    from datetime import datetime, timezone
+    from decimal import Decimal
+
+    event = LiveActionEvent(
+        kind="order_placed",
+        session_id="s1",
+        outcome="accepted",
+        server="alpaca",
+        broker_response={"filled": Decimal("1.5"), "at": datetime(2026, 1, 2, tzinfo=timezone.utc)},
+    )
+    write_live_action(event)
+
+    rows = _read_ledger()
+    assert rows[-1]["audit_id"] == event.audit_id
+    assert rows[-1]["broker_response"]["filled"] == "1.5"
+    assert "1.5" in audit.audit_chain_ledger_path().read_text(encoding="utf-8")
