@@ -698,7 +698,14 @@
     "resumeConnector": "Reanudar conector",
     "resumeConnectorTitle": "Desactivar el interruptor de emergencia y reanudar la actividad del conector",
     "connectorResumed": "Conector reanudado",
-    "failedToResumeConnector": "Error al reanudar el conector."
+    "failedToResumeConnector": "Error al reanudar el conector.",
+    "haltTrippedBy": "Tripped by {{by}}",
+    "haltTrippedReason": "Reason: {{reason}}",
+    "haltTrippedAt": "At {{at}}",
+    "haltAttributionUnknown": "Who tripped it, why and when were not recorded",
+    "resumeConfirmPrompt": "Clear the kill switch and allow live trading again?",
+    "resumeConfirm": "Yes, resume",
+    "resumeKeepHalted": "Keep halted"
   },
   "runDetail": {
     "title": "Detalle de ejecución",

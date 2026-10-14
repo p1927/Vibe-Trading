@@ -25,7 +25,7 @@ import {
   type TradingConnectorProfile,
 } from "@/lib/api";
 
-interface ConnectorCheckSnapshot {
+export interface ConnectorCheckSnapshot {
   status: string;
   error?: string;
   broker?: string;

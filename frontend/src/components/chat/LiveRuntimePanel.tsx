@@ -4,6 +4,7 @@ import {
   memo,
   useCallback,
   useContext,
+  useEffect,
   useImperativeHandle,
   useMemo,
   useState,
@@ -15,12 +16,14 @@ import { toast } from "sonner";
 import {
   api,
   type LiveAction,
+  type LiveHaltRecord,
   type LiveHalted,
   type LiveStatus,
+  type TradingConnectorsResponse,
 } from "@/lib/api";
 import { haltScopeStillActive, isGlobalLiveHalt, useLiveStatus } from "@/hooks/useLiveStatus";
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
-import { RunnerStatus } from "@/components/chat/RunnerStatus";
+import { RunnerStatus, type ConnectorCheckSnapshot } from "@/components/chat/RunnerStatus";
 
 function liveActionStyle(kind: string): { icon: typeof Activity; tone: string } {
   switch (kind) {
@@ -80,8 +83,15 @@ interface RuntimeContextValue {
   liveStatus: LiveStatus | null;
   liveStatusUnavailable: boolean;
   liveStatusError: string | null;
+  connectors: TradingConnectorsResponse | null;
+  connectorCheck: ConnectorCheckSnapshot | null;
+  /** The OAuth live runtime is in play (selected remote-MCP profile, or a broker holds a token/runner/mandate). */
+  showOAuthRuntime: boolean;
   liveActive: boolean;
+  /** A global kill switch is in force (from `/live/status` or a live event) regardless of the selected connector. */
   liveIsHalted: boolean;
+  /** Who/why/when, from the sentinel (`/live/status`) or the `live.halted` event. */
+  haltRecord: LiveHaltRecord | null;
   halting: boolean;
   resuming: boolean;
   refreshLiveStatus: () => Promise<void>;
@@ -94,11 +104,22 @@ const RuntimeContext = createContext<RuntimeContextValue | null>(null);
 interface Props {
   sessionId: string | null;
   hasLiveItems: boolean;
+  connectors?: TradingConnectorsResponse | null;
+  connectorCheck?: ConnectorCheckSnapshot | null;
+  /** Refreshed on the same tick as `/live/status` (the Agent page's connector list). */
+  alongside?: () => Promise<unknown>;
   children: ReactNode;
 }
 
 export const LiveRuntimePanel = memo(forwardRef<LiveRuntimePanelHandle, Props>(
-  function LiveRuntimePanel({ sessionId, hasLiveItems, children }, ref) {
+  function LiveRuntimePanel({
+    sessionId,
+    hasLiveItems,
+    connectors = null,
+    connectorCheck = null,
+    alongside,
+    children,
+  }, ref) {
     const { t } = useTranslation();
     const [hasCommittedMandate, setHasCommittedMandate] = useState(false);
     const [liveHalted, setLiveHalted] = useState<LiveHalted | null>(null);
@@ -112,6 +133,7 @@ export const LiveRuntimePanel = memo(forwardRef<LiveRuntimePanelHandle, Props>(
       refresh: refreshLiveStatus,
     } = useLiveStatus({
       refreshKey: liveStatusRefresh,
+      alongside,
       onSnapshot: (next) => setLiveHalted((current) => (
         current && !haltScopeStillActive(current, next) ? null : current
       )),
@@ -181,12 +203,13 @@ export const LiveRuntimePanel = memo(forwardRef<LiveRuntimePanelHandle, Props>(
       }
     }, [resuming, sessionId, t]);
 
+    const oauthRuntimeEngaged = liveStatus != null && liveStatus.brokers.some((broker) => (
+      broker.auth.oauth_token_present || broker.runner?.alive || broker.mandate != null
+    ));
+    const showOAuthRuntime =
+      connectors?.profiles.find((profile) => profile.selected)?.transport === "remote_mcp" || oauthRuntimeEngaged;
     const liveStatusActive =
-      liveStatus != null &&
-      (liveStatus.global_halted ||
-        liveStatus.brokers.some((broker) => (
-          broker.auth.oauth_token_present || broker.runner?.alive || broker.mandate != null
-        )));
+      liveStatus != null && showOAuthRuntime && (liveStatus.global_halted || oauthRuntimeEngaged);
     const liveActive =
       hasLiveItems ||
       hasCommittedMandate ||
@@ -194,23 +217,36 @@ export const LiveRuntimePanel = memo(forwardRef<LiveRuntimePanelHandle, Props>(
       liveStatusActive;
     const liveIsHalted =
       isGlobalLiveHalt(liveHalted) || (liveStatus?.global_halted ?? false);
+    const haltRecord: LiveHaltRecord | null = !liveIsHalted
+      ? null
+      : (liveStatus?.global_halted ? liveStatus.halt ?? null : null) ?? (liveHalted
+        ? { by: liveHalted.by ?? null, reason: liveHalted.reason ?? null, tripped_at: liveHalted.tripped_at ?? null }
+        : null);
 
     const value = useMemo<RuntimeContextValue>(() => ({
       liveStatus,
       liveStatusUnavailable,
       liveStatusError,
+      connectors,
+      connectorCheck,
+      showOAuthRuntime,
       liveActive,
       liveIsHalted,
+      haltRecord,
       halting,
       resuming,
       refreshLiveStatus,
       haltLive,
       resumeLive,
     }), [
+      connectorCheck,
+      connectors,
       haltLive,
       halting,
+      haltRecord,
       liveActive,
       liveIsHalted,
+      showOAuthRuntime,
       liveStatus,
       liveStatusUnavailable,
       liveStatusError,
@@ -233,38 +269,89 @@ export function LiveRuntimeStatus() {
   return (
     <RunnerStatus
       status={runtime.liveStatus}
+      connectors={runtime.connectors}
+      connectorCheck={runtime.connectorCheck}
       unavailable={runtime.liveStatusUnavailable}
       staleError={runtime.liveStatusError}
-      halted={runtime.liveIsHalted}
+      halted={runtime.showOAuthRuntime && runtime.liveIsHalted}
       onRefresh={runtime.refreshLiveStatus}
     />
   );
 }
 
+function haltDetail(record: LiveHaltRecord | null, t: (key: never, options?: Record<string, unknown>) => string): string {
+  const parts: string[] = [];
+  if (record?.by) parts.push(t("agent.haltTrippedBy" as never, { by: record.by }));
+  if (record?.reason) parts.push(t("agent.haltTrippedReason" as never, { reason: record.reason }));
+  if (record?.tripped_at) {
+    const when = new Date(record.tripped_at);
+    parts.push(t("agent.haltTrippedAt" as never, {
+      at: Number.isNaN(when.getTime()) ? record.tripped_at : when.toLocaleString(),
+    }));
+  }
+  return parts.length > 0 ? parts.join(" · ") : t("agent.haltAttributionUnknown" as never);
+}
+
+/**
+ * Halt / Resume. A halt (kill switch, risk engine, daily loss, manual) is only ever lifted by a human:
+ * Resume asks for a second, explicit confirmation that shows who/why/when it was tripped. Nothing in the
+ * UI clears a halt on its own (D306: this is the one path).
+ */
 export function LiveRuntimeControl() {
   const { t } = useTranslation();
   const runtime = useContext(RuntimeContext);
-  if (!runtime?.liveActive) return null;
+  const [confirming, setConfirming] = useState(false);
+  const halted = runtime?.liveIsHalted ?? false;
+  useEffect(() => {
+    if (!halted) setConfirming(false);
+  }, [halted]);
+  if (!runtime || !(runtime.liveIsHalted || (runtime.liveActive && runtime.showOAuthRuntime))) return null;
   return (
-    <div className="flex items-center gap-2 border-t border-border/60 pt-2">
+    <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-2">
       {runtime.liveIsHalted ? (
         <>
-          <span className="inline-flex items-center gap-1.5 rounded-lg bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive">
+          <span
+            role="alert"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive"
+          >
             <OctagonX className="h-3 w-3" />
             {t("agent.connectorHalted")}
           </span>
-          <button
-            type="button"
-            onClick={runtime.resumeLive}
-            disabled={runtime.resuming}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
-            title={t("agent.resumeConnectorTitle")}
-          >
-            {runtime.resuming
-              ? <Loader2 className="h-3 w-3 animate-spin" />
-              : <RotateCcw className="h-3 w-3" />}
-            {t("agent.resumeConnector")}
-          </button>
+          <span className="text-[11px] text-muted-foreground" data-testid="halt-detail">
+            {haltDetail(runtime.haltRecord, t as never)}
+          </span>
+          {confirming ? (
+            <>
+              <span className="text-xs text-foreground">{t("agent.resumeConfirmPrompt" as never)}</span>
+              <button
+                type="button"
+                onClick={() => { setConfirming(false); void runtime.resumeLive(); }}
+                disabled={runtime.resuming}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 bg-destructive/5 px-2.5 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-40"
+              >
+                {runtime.resuming ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                {t("agent.resumeConfirm" as never)}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                className="inline-flex items-center rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                {t("agent.resumeKeepHalted" as never)}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirming(true)}
+              disabled={runtime.resuming}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+              title={t("agent.resumeConnectorTitle")}
+            >
+              <RotateCcw className="h-3 w-3" />
+              {t("agent.resumeConnector")}
+            </button>
+          )}
         </>
       ) : (
         <button

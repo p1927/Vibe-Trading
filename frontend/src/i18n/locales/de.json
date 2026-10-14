@@ -698,7 +698,14 @@
     "resumeConnector": "Connector fortsetzen",
     "resumeConnectorTitle": "Kill-Switch löschen und Connector-Aktivität wieder aktivieren",
     "connectorResumed": "Connector fortgesetzt",
-    "failedToResumeConnector": "Connector konnte nicht fortgesetzt werden."
+    "failedToResumeConnector": "Connector konnte nicht fortgesetzt werden.",
+    "haltTrippedBy": "Tripped by {{by}}",
+    "haltTrippedReason": "Reason: {{reason}}",
+    "haltTrippedAt": "At {{at}}",
+    "haltAttributionUnknown": "Who tripped it, why and when were not recorded",
+    "resumeConfirmPrompt": "Clear the kill switch and allow live trading again?",
+    "resumeConfirm": "Yes, resume",
+    "resumeKeepHalted": "Keep halted"
   },
   "runDetail": {
     "title": "Durchlauf-Details",

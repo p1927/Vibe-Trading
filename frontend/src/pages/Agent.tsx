@@ -1,23 +1,15 @@
 import { useTranslation } from 'react-i18next';
-import { useEffect, useRef, useState, useMemo, useCallback, type FormEvent } from "react";
+import { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router";
 import {
   Activity,
   ArrowDown,
   Check,
   ChevronDown,
-  Download,
-  Landmark,
   Loader2,
-  OctagonX,
-  Paperclip,
   Pencil,
   Play,
-  Plus,
-  Send,
-  Square,
   Target,
-  Users,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -45,15 +37,14 @@ import { TradePlanWidgetCard } from "@/components/chat/TradePlanWidgetCard";
 import { ContextDrawer } from "@/components/research/ContextDrawer";
 import { ActivityLine } from "@/components/chat/ActivityLine";
 import { ModelRuntimeBar } from "@/components/chat/ModelRuntimeBar";
-import type { ComposerHandle, ComposerAttachment } from "@/components/chat/Composer";
+import { Composer, type ComposerHandle, type ComposerAttachment } from "@/components/chat/Composer";
 import {
   formatTradeWidgetContextBlock,
   getTradeWidgetAdjustment,
   isTradeWidgetModified,
 } from "@/lib/tradeWidgetContext";
-import { RunnerStatus } from "@/components/chat/RunnerStatus";
-import { LiveActionChip } from "@/components/chat/LiveRuntimePanel";
-import { haltScopeStillActive, isGlobalLiveHalt, useLiveStatus } from "@/hooks/useLiveStatus";
+import { LiveActionChip, LiveRuntimePanel, type LiveRuntimePanelHandle } from "@/components/chat/LiveRuntimePanel";
+import type { ConnectorCheckSnapshot } from "@/components/chat/RunnerStatus";
 import { ScheduledResearchProposalCard } from "@/components/chat/ScheduledResearchProposalCard";
 import { SwarmStatusCard } from "@/components/chat/SwarmStatusCard";
 import {
@@ -121,10 +112,6 @@ const act = () => useAgentStore.getState();
 
 const STREAM_FLUSH_INTERVAL_MS = 80;
 const TIMELINE_WINDOW_SIZE = 160;
-const CONNECTOR_CHECK_PROMPT =
-  "List my trading connector profiles, show which one is selected, then check that selected connector. If it is not ready, tell me exactly what setup step is missing. Do not place or modify orders.";
-const CONNECTOR_PORTFOLIO_PROMPT =
-  "Use the selected trading connector profile to summarize my account, positions, concentration, cash, and portfolio risk. Do not place or modify orders.";
 const SWARM_PROMPT_PREFIX =
   "[Swarm Team Mode] Use the swarm tool to assemble the best specialist team for this task. Auto-select the most appropriate preset.\n\n";
 const GOAL_KICKOFF_PREFIX = [
@@ -410,10 +397,10 @@ export function Agent({
   pipelineStale = false,
 }: AgentProps = {}) {
   const { t } = useTranslation();
-  const [input, setInput] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
   const listRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<ComposerHandle>(null);
+  const livePanelRef = useRef<LiveRuntimePanelHandle>(null);
   const goalOpenRequestRef = useRef(0);
   const sseSessionRef = useRef<string | null>(null);
   const sseAgentRef = useRef<string | null>(null);
@@ -440,18 +427,6 @@ export function Agent({
   const titleBeforeCompletionRef = useRef<string | null>(null);
   const completedAttemptIdsRef = useRef<Set<string>>(new Set());
 
-  /* Composer-local state — the inline "+"/textarea/send bar in the return JSX
-   * below is a self-contained composer (not the decomposed <Composer> component
-   * in components/chat/Composer.tsx, which isn't wired into this page). */
-  const [attachment, setAttachment] = useState<{ filename: string; filePath: string } | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [showUploadMenu, setShowUploadMenu] = useState(false);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const isComposingRef = useRef(false);
-  const lastCompositionEndRef = useRef(0);
-  const uploadMenuRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   const [swarmPreset, setSwarmPreset] = useState<{ name: string; title: string } | null>(null);
   const [goalComposerActive, setGoalComposerActive] = useState(false);
   const [goalDetailsOpen, setGoalDetailsOpen] = useState(false);
@@ -467,29 +442,9 @@ export function Agent({
   const [committedMandates, setCommittedMandates] = useState<Record<string, MandateCommitted>>({});
   const [committedAutonomous, setCommittedAutonomous] = useState<Record<string, { agent_id?: string; name?: string }>>({});
   const [orchestratorMissingProposal, setOrchestratorMissingProposal] = useState(false);
-  const [liveHalted, setLiveHalted] = useState<LiveHalted | null>(null);
-  const [halting, setHalting] = useState(false);
-  /* Bumped to force an immediate live-status re-poll on a live event
-   * (commit / halt / resume / runner-affecting action) rather than waiting a tick. */
-  const [liveStatusRefresh, setLiveStatusRefresh] = useState(0);
-  /* Shared `GET /live/status` snapshot. Owned here (single poller) and passed down
-   * to RunnerStatus, so the global kill switch can be shown whenever connector runtime
-   * could be active out-of-band (CLI/another session), not only off in-session SSE
-   * items (audit M2: always-available global halt — SPEC Consent §4). */
   const [reasoningActive, setReasoningActive] = useState(false);
   const [tradingConnectors, setTradingConnectors] = useState<TradingConnectorsResponse | null>(null);
-  const [connectorCheck, setConnectorCheck] = useState<{
-    status: string;
-    error?: string;
-    broker?: string;
-    broker_display?: string;
-    analyze_mode?: boolean;
-    host?: string;
-    switch_url?: string;
-    warning?: string;
-    token_sync_warning?: string;
-  } | null>(null);
-  const clearedStaleOAuthHaltRef = useRef(false);
+  const [connectorCheck, setConnectorCheck] = useState<ConnectorCheckSnapshot | null>(null);
 
   /* Trade-stack research side panel (hub plan + TradingAgents debate) */
   const [researchTicker, setResearchTicker] = useState<string | null>(null);
@@ -604,15 +559,8 @@ export function Agent({
         const selection = window.getSelection();
         if (selection && !selection.isCollapsed) return;
         const active = document.activeElement;
-        if (
-          active &&
-          active !== document.body &&
-          active !== inputRef.current &&
-          !active.closest("[data-agent-composer]")
-        ) {
-          return;
-        }
-        inputRef.current?.focus({ preventScroll: true });
+        if (active && active !== document.body && !active.closest("[data-agent-composer]")) return;
+        composerRef.current?.focus();
       });
     }
   }, [status]);
@@ -1655,8 +1603,8 @@ export function Agent({
         const committed = d as unknown as MandateCommitted;
         if (!committed.proposal_id) return;
         setCommittedMandates((prev) => ({ ...prev, [committed.proposal_id as string]: committed }));
-        // A fresh mandate may bring up the runner; refresh the runtime panel now.
-        setLiveStatusRefresh((n) => n + 1);
+        // A fresh mandate may bring up the runner; the runtime panel re-polls now.
+        livePanelRef.current?.handleMandateCommitted();
         scrollToBottom();
       },
 
@@ -1666,8 +1614,7 @@ export function Agent({
         // Preemptive kill switch: the server has cancelled resting orders and may have
         // flattened positions (SPEC §7.5 #6). Reflect the halted state across surfaces;
         // the RunnerStatus panel re-polls so its per-broker rows show "halted".
-        setLiveHalted(halted);
-        setLiveStatusRefresh((n) => n + 1);
+        livePanelRef.current?.handleHalted(halted);
         toast.warning(t('agent.connectorHalted'));
       },
 
@@ -1676,8 +1623,7 @@ export function Agent({
         // Kill switch cleared via a privileged surface action (SPEC Consent §4);
         // clear the halted banner and re-poll runtime status.
         void d;
-        setLiveHalted(null);
-        setLiveStatusRefresh((n) => n + 1);
+        livePanelRef.current?.handleResumed();
         toast.success(t('agent.connectionRestored'));
       },
 
@@ -1686,12 +1632,7 @@ export function Agent({
         const action = d as unknown as LiveAction;
         if (!action.kind) return;
         setLiveItems((items) => [...items, { kind: "live_action", timestamp: Date.now(), action }]);
-        if (action.kind === "halt_tripped") setLiveHalted({ broker: action.broker, reason: action.intent_normalized });
-        if (action.kind === "halt_cleared") setLiveHalted(null);
-        // Mandate-affecting / runner-affecting actions should refresh the runtime panel.
-        if (["mandate_committed", "halt_tripped", "halt_cleared"].includes(action.kind)) {
-          setLiveStatusRefresh((n) => n + 1);
-        }
+        livePanelRef.current?.handleLiveAction(action);
         scrollToBottom();
       },
 
@@ -1839,8 +1780,7 @@ export function Agent({
       // Live-channel timeline items are per-session; clear on switch.
       setLiveItems([]);
       setCommittedMandates({});
-      setLiveHalted(null);
-      setLiveStatusRefresh((n) => n + 1);
+      livePanelRef.current?.resetSession();
       useProvenanceStore.getState().reset();
       if (curSid && curMsgs.length > 0) cacheSession(curSid, curMsgs);
 
@@ -1887,8 +1827,7 @@ export function Agent({
       setRuntimeIdentity({});
       setLiveItems([]);
       setCommittedMandates({});
-      setLiveHalted(null);
-      setLiveStatusRefresh((n) => n + 1);
+      livePanelRef.current?.resetSession();
       if (curSid && curMsgs.length > 0) cacheSession(curSid, curMsgs);
       reset();
     }
@@ -1921,42 +1860,6 @@ export function Agent({
       return null;
     }
   }, []);
-
-  /* The one `GET /live/status` poller (hooks/useLiveStatus, shared with LiveRuntimePanel). A 404/501 hides
-   * the panel and removes status from the kill-switch visibility condition; the connector list refreshes on
-   * the same tick. */
-  const {
-    liveStatus,
-    unavailable: liveStatusUnavailable,
-    error: liveStatusError,
-    refresh: refreshConnectorRuntime,
-  } = useLiveStatus({
-    refreshKey: liveStatusRefresh,
-    alongside: refreshTradingConnectors,
-    onSnapshot: (next) => setLiveHalted((current) => (
-      current && !haltScopeStillActive(current, next) ? null : current
-    )),
-  });
-
-  /* Clear a stale global OAuth halt when the user runs an SDK connector (e.g. OpenAlgo paper). */
-  useEffect(() => {
-    if (clearedStaleOAuthHaltRef.current) return;
-    const selected = tradingConnectors?.profiles.find((p) => p.selected);
-    if (!selected || selected.transport !== "broker_sdk") return;
-    if (connectorCheck?.status !== "ok") return;
-    if (!liveStatus?.global_halted) return;
-    // A halt tripped from this page (or surfaced as a live event) is a deliberate kill switch, never "stale".
-    if (liveHalted != null) return;
-    const oauthEngaged = liveStatus.brokers.some((b) => (
-      b.auth.oauth_token_present || b.runner?.alive || b.mandate != null
-    ));
-    if (oauthEngaged) return;
-    clearedStaleOAuthHaltRef.current = true;
-    // One attempt per mount: a failed resume is reported once, not retried silently on every poll.
-    api.resumeLive().then(() => refreshConnectorRuntime()).catch((error) => {
-      toast.error(error instanceof Error ? error.message : t('agent.failedToResumeConnector'));
-    });
-  }, [tradingConnectors, connectorCheck, liveStatus, liveHalted, refreshConnectorRuntime, t]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -2076,7 +1979,6 @@ export function Agent({
     const displayPrompt = toDisplayPrompt(finalPrompt);
     const apiPrompt = widgetContext ? `${widgetContext}\n\n${finalPrompt}` : finalPrompt;
 
-    setInput("");
     act().addMessage({
       id: "",
       type: "user",
@@ -2203,28 +2105,6 @@ export function Agent({
       act().addMessage({ id: "", type: "error", content: message, timestamp: Date.now() });
     }
   }, [archiveActivity, forceScrollToBottom, goalSnapshot, sessionId, setupSSE, status, syncCompletedAttempt, t]);
-
-  const handleHaltLive = useCallback(async () => {
-    if (halting) return;
-    setHalting(true);
-    try {
-      // The kill switch is global and must fire even with no active chat session
-      // (e.g. a runner started from the CLI / another session). The backend scopes
-      // the SSE broadcast by session_id when present; an empty string is a valid
-      // global trip.
-      await api.haltLive(sessionId ?? undefined);
-      // Preemptive halt: the server trips the kill switch (cancel resting orders +
-      // optional flatten per SPEC §7.5 #6) and broadcasts live.halted. Reflect
-      // optimistically and re-poll the runtime panel so the runner shows stopped.
-      setLiveHalted((cur) => cur ?? { broker: null, by: "frontend", tripped_at: new Date().toISOString() });
-      setLiveStatusRefresh((n) => n + 1);
-      toast.success(t('agent.connectorHalted'));
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('agent.failedToHaltConnector'));
-    } finally {
-      setHalting(false);
-    }
-  }, [sessionId, halting]);
 
   const handleCancelGoal = useCallback(async () => {
     if (!sessionId || !goalSnapshot) return;
@@ -2360,49 +2240,6 @@ export function Agent({
     URL.revokeObjectURL(url);
   }, [messages, swarmRuns]);
 
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = "";
-    const blockedExts = [
-      ".exe", ".msi", ".bat", ".cmd", ".com", ".scr", ".app", ".dmg",
-      ".so", ".dll", ".dylib",
-      ".zip", ".rar", ".7z", ".tar", ".gz", ".tgz", ".bz2", ".xz",
-    ];
-    const lowered = file.name.toLowerCase();
-    if (blockedExts.some((ext) => lowered.endsWith(ext))) {
-      toast.error(t('agent.executablesNotAllowed'));
-      return;
-    }
-    if (file.size > 50 * 1024 * 1024) {
-      toast.error(t('agent.fileSizeExceeds'));
-      return;
-    }
-    setUploading(true);
-    setShowUploadMenu(false);
-    try {
-      const result = await api.uploadFile(file);
-      setAttachment({ filename: result.filename, filePath: result.file_path });
-      toast.success(t('agent.uploaded', { filename: result.filename }));
-    } catch (err) {
-      toast.error(t('agent.uploadFailed', { error: err instanceof Error ? err.message : 'Unknown error' }));
-    } finally {
-      setUploading(false);
-    }
-  }, [t]);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (uploadMenuRef.current && !uploadMenuRef.current.contains(event.target as Node)) {
-        setShowUploadMenu(false);
-      }
-    };
-    if (showUploadMenu) {
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
-    }
-  }, [showUploadMenu]);
-
   const hasCompletedTurn = useMemo(() => {
     let latestUserIndex = -1;
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -2481,45 +2318,17 @@ export function Agent({
     });
   }, [timelineRows.length]);
 
-  /* Whether connector runtime activity could be active *anywhere* — the global kill switch must be
-   * available whenever it could (audit M2 / SPEC Consent §4). Driven off both
-   * in-session SSE artifacts AND the shared `/live/status` snapshot, so a runner
-   * started from the CLI or another browser session still surfaces the halt button
-   * in a freshly-loaded web session. */
-  const selectedConnectorProfile = tradingConnectors?.profiles.find((p) => p.selected) ?? null;
-  const oauthRuntimeEngaged = liveStatus != null && liveStatus.brokers.some((b) => (
-    b.auth.oauth_token_present || b.runner?.alive || b.mandate != null
-  ));
-  const showOAuthRuntime = selectedConnectorProfile?.transport === "remote_mcp" || oauthRuntimeEngaged;
-
-  const liveStatusActive =
-    liveStatus != null &&
-    showOAuthRuntime &&
-    (liveStatus.global_halted ||
-      liveStatus.brokers.some((b) => b.auth.oauth_token_present || b.runner?.alive || b.mandate != null));
-  const liveActive =
-    liveItems.length > 0 ||
-    Object.keys(committedMandates).length > 0 ||
-    liveHalted != null ||
-    liveStatusActive;
-  const liveIsHalted =
-    showOAuthRuntime &&
-    (isGlobalLiveHalt(liveHalted) || (liveStatus?.global_halted ?? false));
-
-  /* The one submit path (button and Enter): the uploaded file travels with the prompt, then clears. */
-  const submitInput = useCallback(() => {
-    const files = attachment ? [attachment] : [];
-    if (status === "streaming" || (!input.trim() && files.length === 0)) return;
-    setAttachment(null);
-    void runPrompt(input.trim(), files);
-  }, [attachment, input, runPrompt, status]);
-
-  const handleSubmit = useCallback((event: FormEvent) => {
-    event.preventDefault();
-    submitInput();
-  }, [submitInput]);
+  const hasLiveItems = liveItems.length > 0 || Object.keys(committedMandates).length > 0;
 
   return (
+    <LiveRuntimePanel
+      ref={livePanelRef}
+      sessionId={sessionId}
+      hasLiveItems={hasLiveItems}
+      connectors={tradingConnectors}
+      connectorCheck={connectorCheck}
+      alongside={refreshTradingConnectors}
+    >
     <>
     <div className="flex flex-col flex-1 min-w-0 overflow-hidden h-full">
       <ModelRuntimeBar
@@ -2764,31 +2573,21 @@ export function Agent({
         <ConversationTimeline messages={messages} containerRef={listRef} />
       </div>
 
-      <form onSubmit={handleSubmit} data-agent-composer className="border-t p-4 bg-background/80 backdrop-blur-sm">
-        <div className="max-w-3xl mx-auto space-y-2">
-          {/* Swarm preset badge */}
-          {swarmPreset && (
-            <div className="flex items-center gap-1">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-violet-500/10 text-violet-600 dark:text-violet-400 text-xs font-medium">
-                <Users className="h-3 w-3" />
-                {swarmPreset.title}
-                <button type="button" onClick={handleCancelSwarm} className="hover:text-destructive transition-colors">
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            </div>
-          )}
-          {goalComposerActive && (
-            <div className="flex items-center gap-1">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary/10 text-primary text-xs font-medium">
-                <Target className="h-3 w-3" />
-                {t("agent.newResearchGoal")}
-                <button type="button" onClick={handleCancelGoalComposer} className="hover:text-destructive transition-colors">
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            </div>
-          )}
+      <div className="border-t p-4 bg-background/80 backdrop-blur-sm">
+        <div className="max-w-3xl mx-auto">
+          <Composer
+            ref={composerRef}
+            streaming={status === "streaming"}
+            activityVerb={activity?.verb}
+            hasCompletedTurn={hasCompletedTurn}
+            showExport={sessionId != null}
+            canExport={messages.length > 0}
+            goalComposerActive={goalComposerActive}
+            swarmPreset={swarmPreset}
+            blockedReason={newsScenarioMode && pipelineStale
+              ? "Restart the advisor session to use the refreshed Analysis snapshot."
+              : null}
+            panels={<>
           {goalSnapshot && !goalComposerActive && (
             <div className="grid gap-2">
               <button
@@ -2953,221 +2752,17 @@ export function Agent({
               )}
             </div>
           )}
-          {/* Persistent live runtime status panel — sits alongside the goal/mandate
-              badges (SPEC §7.5 + audit C2). Self-hides when no broker is configured. */}
-          <RunnerStatus
-            status={liveStatus}
-            connectors={tradingConnectors}
-            connectorCheck={connectorCheck}
-            unavailable={liveStatusUnavailable}
-            staleError={liveStatusError}
-            halted={liveIsHalted}
-            onRefresh={refreshConnectorRuntime}
+            </>}
+            onSubmit={runPrompt}
+            onCancel={handleCancel}
+            onExport={handleExport}
+            onStartGoal={handleStartGoal}
+            onCancelGoal={handleCancelGoalComposer}
+            onStartSwarm={handleStartSwarm}
+            onCancelSwarm={handleCancelSwarm}
           />
-          {/* Attachment badge */}
-          {attachment && (
-            <div className="flex items-center gap-1">
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary/10 text-primary text-xs font-medium">
-                <Paperclip className="h-3 w-3" />
-                {attachment.filename}
-                <button type="button" onClick={() => setAttachment(null)} className="hover:text-destructive transition-colors">
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            </div>
-          )}
-          {/* Uploading indicator */}
-          {uploading && (
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              {t("agent.uploading")}
-            </div>
-          )}
-          {/* Persistent kill switch — distinct from the per-turn Stop button
-              above; disables all live order activity (SPEC Consent §4).
-              Given a top border + extra top padding so this safety-critical
-              control visually separates from the lighter decorative chips
-              (swarm/goal/attachment) stacked above it. */}
-          {liveActive && showOAuthRuntime && (
-            <div className="flex items-center gap-2 border-t border-border/60 pt-2">
-              {liveIsHalted ? (
-                <span className="inline-flex items-center gap-1.5 rounded-lg bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive">
-                  <OctagonX className="h-3 w-3" />
-                  {t("agent.oauthRuntimeHalted")}
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleHaltLive}
-                  disabled={halting}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 bg-destructive/5 px-2.5 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-40"
-                  title={t("agent.haltConnectorTitle")}
-                >
-                  {halting ? <Loader2 className="h-3 w-3 animate-spin" /> : <OctagonX className="h-3 w-3" />}
-                  {t("agent.haltConnector")}
-                </button>
-              )}
-            </div>
-          )}
-          <div className="flex gap-2 items-end">
-            {/* "+" menu: PDF upload + Swarm presets */}
-            <div className="relative" ref={uploadMenuRef}>
-              <button
-                type="button"
-                onClick={() => setShowUploadMenu(prev => !prev)}
-                disabled={status === "streaming" || uploading}
-                className="w-9 h-9 rounded-full border flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 shrink-0"
-                title={t("agent.moreOptions")}
-              >
-                <Plus className="h-4 w-4" />
-              </button>
-              {showUploadMenu && (
-                <div className="absolute bottom-full left-0 mb-2 w-52 rounded-xl border bg-background/95 backdrop-blur-sm shadow-lg py-1 z-50">
-                  <button
-                    type="button"
-                    onClick={() => { fileInputRef.current?.click(); setShowUploadMenu(false); }}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors flex items-center gap-2"
-                  >
-                    <Paperclip className="h-4 w-4" />
-                    {t("agent.uploadPdf")}
-                  </button>
-                  <div className="border-t my-1" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowUploadMenu(false);
-                      handleStartGoal();
-                      inputRef.current?.focus();
-                    }}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors flex items-center gap-2"
-                  >
-                    <Target className="h-4 w-4" />
-                    {t("agent.researchGoal")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowUploadMenu(false);
-                      handleStartSwarm();
-                      inputRef.current?.focus();
-                    }}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors flex items-center gap-2"
-                  >
-                    <Users className="h-4 w-4" />
-                    {t("agent.agentSwarm")}
-                  </button>
-                  <div className="border-t my-1" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowUploadMenu(false);
-                      void runPrompt(CONNECTOR_CHECK_PROMPT);
-                    }}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors flex items-center gap-2"
-                  >
-                    <Landmark className="h-4 w-4" />
-                    {t("agent.checkConnector")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowUploadMenu(false);
-                      void runPrompt(CONNECTOR_PORTFOLIO_PROMPT);
-                    }}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-muted transition-colors flex items-center gap-2"
-                  >
-                    <Landmark className="h-4 w-4" />
-                    {t("agent.analyzePortfolio")}
-                  </button>
-                </div>
-              )}
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.docx,.xlsx,.xls,.pptx,.csv,.tsv,.txt,.md,.log,.json,.yaml,.yml,.toml,.html,.xml,.rst,.png,.jpg,.jpeg,.gif,.bmp,.webp,.tiff"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-            <textarea
-              ref={inputRef}
-              value={input}
-              rows={1}
-              onChange={(e) => setInput(e.target.value)}
-              onCompositionStart={() => {
-                isComposingRef.current = true;
-              }}
-              onCompositionEnd={() => {
-                isComposingRef.current = false;
-                lastCompositionEndRef.current = Date.now();
-              }}
-              onInput={(e) => {
-                const el = e.target as HTMLTextAreaElement;
-                el.style.height = "auto";
-                el.style.height = el.scrollHeight + "px";
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  const nativeEvent = e.nativeEvent as KeyboardEvent & { isComposing?: boolean };
-                  const justFinishedComposing = Date.now() - lastCompositionEndRef.current < 80;
-                  if (isComposingRef.current || nativeEvent.isComposing || nativeEvent.keyCode === 229) {
-                    return;
-                  }
-                  if (justFinishedComposing) {
-                    e.preventDefault();
-                    return;
-                  }
-                  e.preventDefault();
-                  submitInput();
-                }
-              }}
-              placeholder={
-                newsScenarioMode && pipelineStale
-                  ? "Restart the advisor session to use the refreshed Analysis snapshot."
-                  : goalComposerActive
-                    ? t("agent.describeGoal")
-                    : hasCompletedTurn
-                      ? t("agent.followUpPlaceholder" as never)
-                      : t("agent.placeholder")
-              }
-              aria-label={t("agent.messageInputLabel")}
-              className="flex-1 px-4 py-2.5 rounded-xl border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 transition-shadow resize-none max-h-32 overflow-y-auto"
-              disabled={status === "streaming" || (newsScenarioMode && pipelineStale)}
-            />
-            {sessionId != null && (
-              <button
-                type="button"
-                onClick={handleExport}
-                disabled={messages.length === 0}
-                className="h-9 w-9 rounded-full border flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-30 disabled:pointer-events-none shrink-0"
-                title={t("agent.exportChat")}
-              >
-                <Download className="h-4 w-4" />
-              </button>
-            )}
-            {status === "streaming" ? (
-              <button
-                type="button"
-                onClick={handleCancel}
-                className="h-9 px-4 rounded-full bg-destructive text-destructive-foreground text-sm font-medium hover:opacity-90 transition-opacity shrink-0"
-                title={t("agent.stopGeneration")}
-              >
-                <Square className="h-4 w-4" />
-              </button>
-            ) : (
-              <button
-                type="submit"
-                disabled={goalComposerActive ? !input.trim() : (!input.trim() && !attachment)}
-                className="h-9 px-4 rounded-full bg-primary text-primary-foreground text-sm font-medium disabled:opacity-40 hover:opacity-90 transition-opacity shrink-0"
-                title={t("agent.send")}
-                aria-label={t("agent.send")}
-              >
-                <Send className="h-4 w-4" />
-              </button>
-            )}
-          </div>
         </div>
-      </form>
+      </div>
     </div>
     <ContextDrawer
       sessionId={sessionId}
@@ -3185,5 +2780,6 @@ export function Agent({
       onDebateUpdate={handleDebateUpdate}
     />
     </>
+    </LiveRuntimePanel>
   );
 }

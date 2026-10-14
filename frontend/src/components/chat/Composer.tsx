@@ -69,6 +69,8 @@ interface Props {
   goalComposerActive: boolean;
   swarmPreset: { name: string; title: string } | null;
   panels?: ReactNode;
+  /** When set the composer is locked and shows this text instead of the placeholder (e.g. a stale advisor snapshot). */
+  blockedReason?: string | null;
   onSubmit: (prompt: string, attachments: ComposerAttachment[]) => void;
   onCancel: () => void;
   onExport: () => void;
@@ -87,6 +89,7 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>(function Composer
   goalComposerActive,
   swarmPreset,
   panels,
+  blockedReason = null,
   onSubmit,
   onCancel,
   onExport,
@@ -114,14 +117,14 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>(function Composer
   }, []);
 
   const submitPrompt = useCallback((prompt: string) => {
-    if ((!prompt.trim() && attachments.length === 0) || streaming || uploading) return;
+    if ((!prompt.trim() && attachments.length === 0) || streaming || uploading || blockedReason) return;
     setInput("");
     if (inputRef.current) inputRef.current.style.height = "auto";
     const submittedAttachments = [...attachments];
     if (!goalComposerActive) setAttachments([]);
     onSubmit(prompt.trim(), submittedAttachments);
     inputRef.current?.focus();
-  }, [attachments, goalComposerActive, onSubmit, streaming, uploading]);
+  }, [attachments, blockedReason, goalComposerActive, onSubmit, streaming, uploading]);
 
   useImperativeHandle(ref, () => ({
     fill(prompt: string) {
@@ -257,6 +260,7 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>(function Composer
       onDragOver={(event) => event.preventDefault()}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      data-agent-composer
       className="relative space-y-2"
     >
       {draggingFiles && (
@@ -442,7 +446,9 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>(function Composer
             }
           }}
           placeholder={
-            streaming
+            blockedReason
+              ? blockedReason
+              : streaming
               ? t(`agent.activity.verbs.${activityVerb ?? "working"}` as never)
               : goalComposerActive
               ? t("agent.describeGoal")
@@ -457,6 +463,7 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>(function Composer
             streaming ? "cursor-not-allowed text-muted-foreground/70" : "",
           ].join(" ")}
           readOnly={streaming}
+          disabled={blockedReason != null}
         />
         {showExport && (
           <button
@@ -481,7 +488,7 @@ export const Composer = memo(forwardRef<ComposerHandle, Props>(function Composer
         ) : (
           <button
             type="submit"
-            disabled={uploading || (goalComposerActive ? !input.trim() : (!input.trim() && attachments.length === 0))}
+            disabled={uploading || blockedReason != null || (goalComposerActive ? !input.trim() : (!input.trim() && attachments.length === 0))}
             className="h-10 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-medium disabled:opacity-40 hover:opacity-90 transition-opacity"
             title={t("agent.send")}
             aria-label={t("agent.send")}

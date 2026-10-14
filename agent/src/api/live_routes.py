@@ -147,6 +147,33 @@ class RunnerLivenessState(BaseModel):
     last_tick_age_seconds: Optional[float] = None
 
 
+class HaltRecord(BaseModel):
+    """Who/why/when a kill switch was tripped (the sentinel's attribution metadata).
+
+    Every field is optional: a sentinel touched by hand or with malformed JSON is still a halt
+    (existence is authoritative), only its attribution is unknown.
+    """
+
+    by: Optional[str] = None
+    reason: Optional[str] = None
+    tripped_at: Optional[str] = None
+
+
+def _halt_record(broker: Optional[str]) -> Optional[HaltRecord]:
+    """Attribution of the sentinel that halts ``broker`` (the global one wins), or None when not halted."""
+    from src.live.halt import read_halt
+
+    meta = read_halt(broker=None)
+    if meta is None and broker is not None:
+        try:
+            meta = read_halt(broker=broker)
+        except ValueError:
+            meta = None  # unresolvable key is halted fail-closed, with nothing to attribute
+    if meta is None:
+        return None
+    return HaltRecord(**{k: v for k, v in meta.items() if k in HaltRecord.model_fields and isinstance(v, str)})
+
+
 class LiveBrokerStatus(BaseModel):
     """Combined live-channel status for a single broker."""
 
@@ -154,12 +181,18 @@ class LiveBrokerStatus(BaseModel):
     mandate: Optional[ActiveMandateState] = None
     runner: RunnerLivenessState
     halted: bool = Field(..., description="Per-broker OR global kill switch is tripped")
+    halt: Optional[HaltRecord] = Field(
+        None, description="Attribution of the tripped switch that halts this broker (global wins); null when not halted"
+    )
 
 
 class LiveStatusResponse(BaseModel):
     """Top-level live-channel status (C2)."""
 
     global_halted: bool = Field(..., description="Whether the GLOBAL kill switch is tripped")
+    halt: Optional[HaltRecord] = Field(
+        None, description="Who/why/when the GLOBAL kill switch was tripped; null when not halted"
+    )
     brokers: List[LiveBrokerStatus]
 
 
@@ -932,12 +965,13 @@ def register_live_routes(
                 except Exception:  # noqa: BLE001 - status must never raise
                     sdk_metadata = {}
 
-            oauth_present, mandate_state, runner_state, halted = await asyncio.to_thread(
+            oauth_present, mandate_state, runner_state, halted, halt = await asyncio.to_thread(
                 lambda: (
                     _oauth_token_present(key),
                     h._active_mandate_state(key),
                     _runner_liveness_state(key),
                     halt_flag_set(broker=key),
+                    _halt_record(key),
                 )
             )
             statuses.append(
@@ -952,11 +986,13 @@ def register_live_routes(
                     mandate=mandate_state,
                     runner=runner_state,
                     halted=halted,
+                    halt=halt,
                 )
             )
 
         global_halted = await asyncio.to_thread(halt_flag_set, broker=None)
-        return LiveStatusResponse(global_halted=global_halted, brokers=statuses)
+        global_halt = await asyncio.to_thread(_halt_record, None) if global_halted else None
+        return LiveStatusResponse(global_halted=global_halted, halt=global_halt, brokers=statuses)
 
     @app.post("/live/authorize", dependencies=[Depends(require_auth)])
     async def live_authorize_endpoint(payload: LiveAuthorizeRequest):

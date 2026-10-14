@@ -698,7 +698,14 @@
     "resumeConnector": "コネクタを再開",
     "resumeConnectorTitle": "キルスイッチを解除してコネクタ活動を再開",
     "connectorResumed": "コネクタを再開しました",
-    "failedToResumeConnector": "コネクタの再開に失敗しました。"
+    "failedToResumeConnector": "コネクタの再開に失敗しました。",
+    "haltTrippedBy": "Tripped by {{by}}",
+    "haltTrippedReason": "Reason: {{reason}}",
+    "haltTrippedAt": "At {{at}}",
+    "haltAttributionUnknown": "Who tripped it, why and when were not recorded",
+    "resumeConfirmPrompt": "Clear the kill switch and allow live trading again?",
+    "resumeConfirm": "Yes, resume",
+    "resumeKeepHalted": "Keep halted"
   },
   "runDetail": {
     "title": "実行詳細",

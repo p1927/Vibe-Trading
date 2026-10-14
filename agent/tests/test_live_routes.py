@@ -40,6 +40,25 @@ def test_status_with_no_state_is_not_halted(client: TestClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["global_halted"] is False
+    assert body["halt"] is None
+    assert all(b["halt"] is None for b in body["brokers"])
+
+
+def test_status_attributes_a_halt_by_who_why_when(client: TestClient, runtime_root: Path) -> None:
+    from src.live.halt import trip_halt
+
+    trip_halt(by="cli", reason="daily loss limit")
+    body = client.get("/live/status").json()
+    assert body["global_halted"] is True
+    assert body["halt"]["by"] == "cli" and body["halt"]["reason"] == "daily loss limit"
+    assert body["halt"]["tripped_at"]
+    assert all(b["halted"] and b["halt"]["by"] == "cli" for b in body["brokers"])  # global wins per broker
+
+    # A sentinel touched by hand is still a halt; only its attribution is unknown.
+    (runtime_root / "live" / "HALT").write_text("")
+    body = client.get("/live/status").json()
+    assert body["global_halted"] is True
+    assert body["halt"] == {"by": None, "reason": None, "tripped_at": None}
 
 
 def test_halt_then_status_reflects_halted_then_resume_clears_it(client: TestClient) -> None:

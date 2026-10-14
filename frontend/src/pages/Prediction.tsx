@@ -7,7 +7,6 @@ import { CauseAttributionPanel } from "@/components/prediction/CauseAttributionP
 import { FactorImpactWorkbench } from "@/components/prediction/FactorImpactWorkbench";
 import { FactorCompositionTable } from "@/components/prediction/FactorCompositionTable";
 import { EquationCard } from "@/components/prediction/EquationCard";
-import { CausalFactorExplorer } from "@/components/prediction/CausalFactorExplorer";
 import { TrackScoreboardPanel } from "@/components/prediction/TrackScoreboardPanel";
 import { TrackScoreboardProgressPanel } from "@/components/prediction/TrackScoreboardProgressPanel";
 import { BacktestEvaluationPanel } from "@/components/prediction/BacktestEvaluationPanel";
@@ -39,7 +38,6 @@ import { NewsScenarioCanvas } from "@/components/prediction/NewsScenarioCanvas";
 import { useExternalPredictions } from "@/hooks/useExternalPredictions";
 import { useIndexPrediction } from "@/hooks/useIndexPrediction";
 import { useIndexPredictionLive } from "@/hooks/useIndexPredictionLive";
-import { usePlaygroundContext } from "@/hooks/usePlaygroundContext";
 import { cancelPredictionRunClient } from "@/hooks/usePredictionRunCoordinator";
 import { usePredictionRunStore } from "@/stores/predictionRun";
 import {
@@ -148,12 +146,6 @@ export function Prediction() {
     catalogLoading,
     setPipelinePanelOpen,
   } = useIndexPrediction("NIFTY", horizonDays);
-
-  const {
-    headlines: playgroundHeadlines,
-    events: playgroundEvents,
-    loading: playgroundContextLoading,
-  } = usePlaygroundContext("NIFTY", artifact?.as_of);
 
   const externalPredictionsEnabled = predictionMode === EXTERNAL_PREDICTIONS_MODE;
   const {
@@ -952,16 +944,14 @@ export function Prediction() {
             <section className="space-y-3">
               <PredictionSectionHeader
                 title="What moves the forecast"
-                subtitle="Factor workbench: shock one driver (or pick news/event), see Nifty path + cascade; forecast chart above updates when anchor is today."
+                subtitle="Factor workbench: pick a driver, read its history and linked news, shock it (or pick a news/event), see the Nifty path + cascade; forecast chart above updates when anchor is today."
                 modelRole="feeds"
               />
               <FactorImpactWorkbench
                 artifact={artifact}
                 horizonDays={horizonDays}
                 onSimulationChange={setSimulation}
-                headlines={playgroundHeadlines}
-                events={playgroundEvents}
-                contextLoading={playgroundContextLoading}
+                factorHistory={factorHistory}
               />
             </section>
 
@@ -1053,19 +1043,6 @@ export function Prediction() {
             <section className="space-y-3">
               <PredictionSectionHeader title="Forecast equation" subtitle="Bottom-up constituents + macro ridge overlay." modelRole="display" />
               <EquationCard prediction={artifact.prediction} spot={artifact.spot} horizonDays={horizonDays} />
-            </section>
-
-            <section className="space-y-3">
-              <PredictionSectionHeader
-                title="Causal factor sensitivity"
-                subtitle="Per-driver news, shock sweep, and downstream effects on Nifty (reconciled Ridge curves + cascade)."
-                modelRole="display"
-              />
-              <CausalFactorExplorer
-                artifact={artifact}
-                horizonDays={horizonDays}
-                factorHistory={factorHistory}
-              />
             </section>
 
             <section id="news-impact" className="space-y-3">

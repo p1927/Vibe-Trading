@@ -3,7 +3,7 @@ import { RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatFactorValue } from "@/lib/displayText";
 import {
-  api,
+  type IndexFactorHistoryPoint,
   type IndexPredictionArtifact,
   type IndexSimulationResult,
   type IndexUpcomingEvent,
@@ -11,6 +11,10 @@ import {
 } from "@/lib/api";
 import { factorLabel, triggerToWorkbenchState } from "@/lib/factorEventMapping";
 import { useIndexSimulation } from "@/hooks/useIndexSimulation";
+import { usePlaygroundContext } from "@/hooks/usePlaygroundContext";
+import { CASCADE_DOWNSTREAM, PINNED_CAUSAL_FACTORS } from "@/lib/factorCascadeMap";
+import { researchNoteForFactor } from "@/lib/factorResearchNotes";
+import { CausalFactorHistoryChart } from "@/components/charts/CausalFactorHistoryChart";
 import { finiteOrNull } from "@/lib/finite";
 import { FactorImpactInteractiveChart } from "@/components/prediction/FactorImpactInteractiveChart";
 import { FactorNewsEventPanel } from "@/components/prediction/FactorNewsEventPanel";
@@ -20,9 +24,8 @@ interface Props {
   artifact: IndexPredictionArtifact;
   horizonDays: number;
   onSimulationChange?: (result: IndexSimulationResult | null) => void;
-  headlines?: PlaygroundTrigger[];
-  events?: PlaygroundTrigger[];
-  contextLoading?: boolean;
+  /** Past Nifty vs factor series for the History chart mode. */
+  factorHistory?: IndexFactorHistoryPoint[];
 }
 
 function fmtPct(v: number | null | undefined): string {
@@ -51,9 +54,7 @@ export function FactorImpactWorkbench({
   artifact,
   horizonDays,
   onSimulationChange,
-  headlines: headlinesProp,
-  events: eventsProp,
-  contextLoading: contextLoadingProp,
+  factorHistory = [],
 }: Props) {
   const contributors = artifact.factor_explanation?.contributors ?? [];
   const channelAttribution = artifact.factor_explanation?.channel_attribution ?? undefined;
@@ -99,6 +100,12 @@ export function FactorImpactWorkbench({
       keys.add(f);
       list.push({ factor: f, label: row.label || factorLabel(f) });
     }
+    // The key causal drivers stay selectable (their history/news) even when the model ranked none of them.
+    for (const f of PINNED_CAUSAL_FACTORS) {
+      if (keys.has(f)) continue;
+      keys.add(f);
+      list.push({ factor: f, label: factorLabel(f) });
+    }
     return list;
   }, [contributors, artifact.global_factors]);
 
@@ -122,17 +129,17 @@ export function FactorImpactWorkbench({
   const [activeFactor, setActiveFactor] = useState(rankedFactors[0]?.factor ?? "oil_brent");
   const [shockPct, setShockPct] = useState(0);
   const [cascadeOn, setCascadeOn] = useState(true);
-  const [chartMode, setChartMode] = useState<"horizon" | "shock_sweep">("horizon");
+  const [chartMode, setChartMode] = useState<"horizon" | "shock_sweep" | "history">("horizon");
   const [eventPresetId, setEventPresetId] = useState<string | undefined>();
   const [selectedTriggerId, setSelectedTriggerId] = useState<string | null>(null);
-  const [headlinesLocal, setHeadlinesLocal] = useState<PlaygroundTrigger[]>([]);
-  const [eventsLocal, setEventsLocal] = useState<PlaygroundTrigger[]>([]);
-  const [contextLoadingLocal, setContextLoadingLocal] = useState(true);
-  const [contextError, setContextError] = useState<string | null>(null);
-  const useExternalContext = headlinesProp !== undefined || eventsProp !== undefined;
-  const headlines = useExternalContext ? (headlinesProp ?? []) : headlinesLocal;
-  const events = useExternalContext ? (eventsProp ?? []) : eventsLocal;
-  const contextLoading = useExternalContext ? Boolean(contextLoadingProp) : contextLoadingLocal;
+  const {
+    headlines,
+    events,
+    factorNews,
+    cascadeDownstream,
+    loading: contextLoading,
+    error: contextError,
+  } = usePlaygroundContext(artifact.ticker || "NIFTY", artifact.as_of);
   const [whyText, setWhyText] = useState<string | null>(null);
 
   useEffect(() => {
@@ -140,33 +147,6 @@ export function FactorImpactWorkbench({
       setActiveFactor(rankedFactors[0].factor);
     }
   }, [rankedFactors, activeFactor]);
-
-  useEffect(() => {
-    if (useExternalContext) return;
-    let cancelled = false;
-    setContextLoadingLocal(true);
-    void api
-      .getIndexPlaygroundContext(artifact.ticker || "NIFTY")
-      .then((res) => {
-        if (cancelled) return;
-        setHeadlinesLocal(res.context?.headlines ?? []);
-        setEventsLocal(res.context?.events ?? []);
-        setContextError(null);
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setHeadlinesLocal([]);
-          setEventsLocal([]);
-          setContextError(e instanceof Error ? e.message : "request failed");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setContextLoadingLocal(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [artifact.ticker, artifact.as_of, useExternalContext]);
 
   const { simulation, simulating, error: simError } = useIndexSimulation(
     shockPct === 0 && !eventPresetId
@@ -219,6 +199,9 @@ export function FactorImpactWorkbench({
     simulation?.cascade_regime ?? cascadeMeta?.regime ?? "calm";
 
   const activeMeta = rankedFactors.find((r) => r.factor === activeFactor);
+  const researchNote = researchNoteForFactor(activeFactor);
+  const downstream = cascadeDownstream?.[activeFactor] ?? CASCADE_DOWNSTREAM[activeFactor] ?? [];
+  const linkedNews = factorNews[activeFactor] ?? [];
   const baseVal = finiteOrNull(
     artifact.global_factors?.find((g) => g.factor === activeFactor)?.value ??
       contributors.find((c) => c.factor === activeFactor)?.value,
@@ -395,6 +378,16 @@ export function FactorImpactWorkbench({
               >
                 Shock sweep
               </button>
+              <button
+                type="button"
+                onClick={() => setChartMode("history")}
+                className={cn(
+                  "rounded-md border px-2 py-0.5 text-[10px]",
+                  chartMode === "history" && "border-primary/50 bg-primary/10",
+                )}
+              >
+                History
+              </button>
             </div>
           </div>
 
@@ -436,23 +429,55 @@ export function FactorImpactWorkbench({
 
           <FactorPedagogyLink factorKey={activeFactor} label={activeMeta?.label || activeFactor} />
 
+          {researchNote ? (
+            <p className="rounded-md bg-muted/30 px-2 py-1.5 text-[10px] text-muted-foreground">
+              {researchNote.summary}
+            </p>
+          ) : null}
+
           {whyText ? (
             <p className="rounded-md bg-muted/30 px-2 py-1.5 text-[10px] text-muted-foreground">{whyText}</p>
           ) : null}
 
           {simError ? <p className="text-[11px] text-red-600 dark:text-red-400">{simError}</p> : null}
 
-          <FactorImpactInteractiveChart
-            spot={spot}
-            horizonDays={horizonDays}
-            baselineReturnPct={baselineReturn}
-            simulation={simulation}
-            activeFactor={activeFactor}
-            sensitivity={sensitivity}
-            upcomingEvents={artifact.upcoming_events as IndexUpcomingEvent[] | undefined}
-            chartMode={chartMode}
-            height={280}
-          />
+          {chartMode === "history" ? (
+            <CausalFactorHistoryChart
+              activeFactor={activeFactor}
+              factorHistory={factorHistory}
+              height={280}
+            />
+          ) : (
+            <FactorImpactInteractiveChart
+              spot={spot}
+              horizonDays={horizonDays}
+              baselineReturnPct={baselineReturn}
+              simulation={simulation}
+              activeFactor={activeFactor}
+              sensitivity={sensitivity}
+              upcomingEvents={artifact.upcoming_events as IndexUpcomingEvent[] | undefined}
+              chartMode={chartMode}
+              height={280}
+            />
+          )}
+
+          {downstream.length > 0 ? (
+            <div className="rounded-lg border px-3 py-2">
+              <p className="text-[9px] font-semibold uppercase text-muted-foreground">
+                Typical downstream effects (cause →)
+              </p>
+              <ul className="mt-1 space-y-0.5 text-[10px] text-muted-foreground">
+                {downstream.map((row) => (
+                  <li key={row.factor}>
+                    <span className="font-medium text-foreground">{factorLabel(row.factor)}</span>
+                    {row.mode === "absolute"
+                      ? ` · ~${row.multiplier} pts per 1% ${activeMeta?.label || activeFactor} shock`
+                      : ` · ~${(row.multiplier * 100).toFixed(0)}% of 1% primary shock`}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           {cascadeRows.length > 0 ? (
             <div className="rounded-lg border px-3 py-2">
@@ -482,6 +507,26 @@ export function FactorImpactWorkbench({
             Headlines/events failed to load ({contextError}) - the lists below are unavailable, not empty.
           </p>
         ) : null}
+        <div className="space-y-3">
+        {linkedNews.length > 0 ? (
+          <div>
+            <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Linked to {activeMeta?.label || factorLabel(activeFactor)}
+            </p>
+            <div className="mt-1.5 max-h-[200px] space-y-1.5 overflow-y-auto">
+              {linkedNews.map((item, i) => (
+                <div key={item.id || `n-${i}`} className="rounded-lg border border-border/60 px-2.5 py-2 text-[10px]">
+                  <p className="font-medium leading-snug">{item.title || item.label}</p>
+                  {item.why ? <p className="mt-1 line-clamp-3 text-muted-foreground">{item.why}</p> : null}
+                  <p className="mt-0.5 text-[9px] text-muted-foreground">
+                    {item.kind === "headline" || item.kind === "material" ? "News" : item.kind ?? "Event"}
+                    {item.source ? ` · ${item.source}` : ""}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <FactorNewsEventPanel
           headlines={headlines}
           events={events}
@@ -489,6 +534,7 @@ export function FactorImpactWorkbench({
           onSelect={onTriggerSelect}
           loading={contextLoading}
         />
+        </div>
       </div>
     </div>
   );

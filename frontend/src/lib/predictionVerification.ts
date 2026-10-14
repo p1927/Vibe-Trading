@@ -384,7 +384,7 @@ export function runPredictionUiAudit(
 
   rows.push({
     id: "sensitivity",
-    component: "CausalFactorExplorer",
+    component: "FactorImpactWorkbench",
     section: "Sensitivity",
     modelRole: "display",
     status: statusFrom({

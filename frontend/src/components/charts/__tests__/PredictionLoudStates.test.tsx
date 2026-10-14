@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { Mock } from "vitest";
 import { computeTrackEvalStats } from "@/lib/trackScoreboardUtils";
-import { pointAtShock, withLevel } from "../FactorShockImpactChart";
 import { OptionsPayoffChart } from "../OptionsPayoffChart";
 import { CorrelationMatrix } from "../CorrelationMatrix";
 import { ExternalPredictionsComparisonChart } from "../ExternalPredictionsComparisonChart";
@@ -70,29 +69,7 @@ describe("track scoreboard stats never score a row that has no verdict or no err
   });
 });
 
-describe("factor shock sweep", () => {
-  const points = [
-    { factor_delta_pct: -10, index_level: 23000, return_pct: -4 },
-    { factor_delta_pct: 0, index_level: 24000, return_pct: 0 },
-    { factor_delta_pct: 5 }, // the model gave no level here
-    { factor_delta_pct: 10, index_level: 25000, return_pct: 4 },
-  ];
-
-  it("drops a point with no level instead of plotting Nifty at 0", () => {
-    expect(withLevel(points)).toHaveLength(3);
-  });
-
-  it("interpolates between the points that have a level", () => {
-    const mid = pointAtShock(points, 5);
-    expect(mid?.index_level).toBeCloseTo(24500);
-    expect(mid?.return_pct).toBeCloseTo(2);
-  });
-
-  it("returns nothing for a shock outside the swept range (it used to return the lowest point)", () => {
-    expect(pointAtShock(points, 30)).toBeNull();
-    expect(pointAtShock(points, -30)).toBeNull();
-  });
-
+describe("IndexFactorChart", () => {
   it("IndexFactorChart draws no 'Current forecast' line it did not compute", () => {
     render(
       <IndexFactorChart

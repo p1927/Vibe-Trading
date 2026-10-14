@@ -698,7 +698,14 @@
     "resumeConnector": "커넥터 재개",
     "resumeConnectorTitle": "킬 스위치를 해제하고 커넥터 활동을 재개",
     "connectorResumed": "커넥터가 재개되었습니다",
-    "failedToResumeConnector": "커넥터 재개에 실패했습니다."
+    "failedToResumeConnector": "커넥터 재개에 실패했습니다.",
+    "haltTrippedBy": "Tripped by {{by}}",
+    "haltTrippedReason": "Reason: {{reason}}",
+    "haltTrippedAt": "At {{at}}",
+    "haltAttributionUnknown": "Who tripped it, why and when were not recorded",
+    "resumeConfirmPrompt": "Clear the kill switch and allow live trading again?",
+    "resumeConfirm": "Yes, resume",
+    "resumeKeepHalted": "Keep halted"
   },
   "runDetail": {
     "title": "실행 상세",

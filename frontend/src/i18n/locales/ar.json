@@ -698,7 +698,14 @@
     "resumeConnector": "استئناف الموصل",
     "resumeConnectorTitle": "مسح مفتاح الإيقاف واستئناف نشاط الموصل",
     "connectorResumed": "تم استئناف الموصل",
-    "failedToResumeConnector": "فشل استئناف الموصل."
+    "failedToResumeConnector": "فشل استئناف الموصل.",
+    "haltTrippedBy": "Tripped by {{by}}",
+    "haltTrippedReason": "Reason: {{reason}}",
+    "haltTrippedAt": "At {{at}}",
+    "haltAttributionUnknown": "Who tripped it, why and when were not recorded",
+    "resumeConfirmPrompt": "Clear the kill switch and allow live trading again?",
+    "resumeConfirm": "Yes, resume",
+    "resumeKeepHalted": "Keep halted"
   },
   "runDetail": {
     "title": "تفاصيل التشغيل",

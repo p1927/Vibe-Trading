@@ -7387,18 +7387,28 @@ export interface TradingConnectorCheckResponse {
   [key: string]: unknown;
 }
 
+/** Who/why/when a kill switch was tripped; every field null when the sentinel carries no attribution. */
+export interface LiveHaltRecord {
+  by: string | null;
+  reason: string | null;
+  tripped_at: string | null;
+}
+
 /** One broker entry in the `GET /live/status` response. */
 export interface LiveBrokerStatus {
   auth: LiveBrokerAuthStatus;
   mandate?: LiveMandateStatus | null;
   runner: LiveRunnerLiveness;
   halted: boolean;
+  halt?: LiveHaltRecord | null;
 }
 
 /** Response of `GET /live/status` (SPEC §7.5 runner status panel + C2). */
 export interface LiveStatus {
   brokers: LiveBrokerStatus[];
   global_halted: boolean;
+  /** Attribution of the global kill switch (absent on an older backend). */
+  halt?: LiveHaltRecord | null;
 }
 
 /** Response of `POST /live/runner/start|stop`. */

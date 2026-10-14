@@ -698,7 +698,14 @@
     "resumeConnector": "Retomar conector",
     "resumeConnectorTitle": "Limpe o kill switch e reative a atividade do conector",
     "connectorResumed": "Conector retomado",
-    "failedToResumeConnector": "Falha ao retomar o conector."
+    "failedToResumeConnector": "Falha ao retomar o conector.",
+    "haltTrippedBy": "Tripped by {{by}}",
+    "haltTrippedReason": "Reason: {{reason}}",
+    "haltTrippedAt": "At {{at}}",
+    "haltAttributionUnknown": "Who tripped it, why and when were not recorded",
+    "resumeConfirmPrompt": "Clear the kill switch and allow live trading again?",
+    "resumeConfirm": "Yes, resume",
+    "resumeKeepHalted": "Keep halted"
   },
   "runDetail": {
     "title": "Detalhes da execução",
