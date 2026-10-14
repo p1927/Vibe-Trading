@@ -1,4 +1,4 @@
-"""`/trade/execute-basket` is gated (D450): no order reaches the broker unless it passes the one risk gate.
+"""`/trade/execute-basket` is gated (D453): no order reaches the broker unless it passes the one risk gate.
 
 The gate itself is real here; only its inputs (halt state, committed capital, daily loss, margin,
 lot size, market session) and the broker POST are faked. The broker POST is the thing counted:

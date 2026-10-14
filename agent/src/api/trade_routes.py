@@ -258,7 +258,7 @@ def trade_charges(
 def _assert_basket_passes_risk_gate(
     host: str, api_key: str, orders: list[dict], widget: dict, widget_id: str, agent_id: str
 ) -> str:
-    """Refuse (HTTP 403/503) unless the one risk gate permits ``orders`` (D450); returns the principal
+    """Refuse (HTTP 403/503) unless the one risk gate permits ``orders`` (D453); returns the principal
     id the ledger books them under. Fail closed: margin or lot size that cannot be read is a refusal."""
     from nautilus_openalgo_bridge.openalgo_client import BridgeOpenAlgoClient
     from nautilus_openalgo_bridge.preflight import _margin_positions_from_orders
@@ -305,7 +305,7 @@ def execute_basket(
     """Place a multi-leg basket order via OpenAlgo REST (after the human confirms in the widget).
 
     The human's one manual order path (D432). It names a widget and passes the SAME risk gate every
-    agent order passes (D450): the manual operator's own conservative limits, or a non-bridge
+    agent order passes (D453): the manual operator's own conservative limits, or a non-bridge
     agent widget's agent's mandate. No widget, no order.
     """
     orders = list(body.orders or [])
