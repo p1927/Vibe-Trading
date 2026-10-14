@@ -119,12 +119,20 @@ def run_supplement(job_id: str, session_date: str) -> None:
         ensure_trade_stack_path()
         from src.trade.stock_simulator_facade import sim_client
 
-        # Defensive parse so a malformed session_date (e.g. "today"
-        # leaking from a buggy caller) doesn't blow up the subprocess.
+        # A malformed session_date (e.g. "today" leaking from a buggy caller) is logged and the supplement is
+        # not run: a silent fall-back to the host's today would backfill the wrong week (R5 clock class).
         try:
             parsed = date.fromisoformat(session_date)
         except ValueError:
-            parsed = datetime.now().astimezone().date()
+            log(
+                {
+                    "stage": "supplement",
+                    "message": f"invalid session_date {session_date!r}: supplement not run",
+                    "level": "error",
+                    "at": _now_iso(),
+                }
+            )
+            return
 
         if should_abort():
             log(

@@ -522,14 +522,10 @@ def run_index_plan_refresh_job(config: dict[str, Any] | None = None) -> dict[str
 def run_company_research_archive_job(config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Archive latest company research JSON snapshots for prediction history."""
     _ensure_trade_integrations_on_path()
-    from datetime import datetime, timezone
-
     from trade_integrations.context.hub import archive_company_research_snapshots
 
     cfg = config or {}
-    as_of_date = cfg.get("as_of_date")
-    if not as_of_date:
-        as_of_date = datetime.now(timezone.utc).date().isoformat()
+    as_of_date = cfg.get("as_of_date") or None  # unset: the archive keys by the market day itself (D445)
     return archive_company_research_snapshots(as_of_date=as_of_date)
 
 
