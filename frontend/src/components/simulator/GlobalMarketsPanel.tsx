@@ -119,7 +119,8 @@ export function GlobalMarketsPanel({
           const bars = barsRes.bars ?? [];
           const sparkline = bars.map((b) => b.close).filter((v) => typeof v === "number");
           const price = spotRes.spot?.ltp ?? (sparkline.length ? sparkline[sparkline.length - 1] : null);
-          const prevClose = spotRes.spot?.prev_close ?? (sparkline.length ? sparkline[0] : null);
+          // No prev_close = unknown change: the sparkline's first bar is ~5 days old, not the previous close.
+          const prevClose = spotRes.spot?.prev_close ?? null;
           const { change, changePct } = deriveChange(price ?? null, prevClose ?? null);
           setCards((prev) =>
             prev.map((c) => (c.key === idx.symbol ? { ...c, price: price ?? null, change, changePct, sparkline, loading: false } : c)),
