@@ -1,4 +1,4 @@
-import { formatIstTime } from "@/lib/istTime";
+import { formatIst } from "@/lib/istTime";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useMemo } from "react";
 import { SourceContentView } from "@/components/research/SourceContentView";
@@ -29,16 +29,9 @@ function formatMeta(provider?: string, retrievedAt?: string, freshness?: string)
   const parts: string[] = [];
   if (provider) parts.push(provider);
   if (freshness && freshness !== "unknown") parts.push(freshness);
-  if (retrievedAt) {
-    try {
-      const d = new Date(retrievedAt);
-      if (!Number.isNaN(d.getTime())) {
-        parts.push(formatIstTime(d, false));
-      }
-    } catch {
-      /* ignore */
-    }
-  }
+  // The date matters: a source fetched days ago must not read as "09:30" today. An unreadable stamp is left out.
+  const retrieved = retrievedAt ? formatIst(retrievedAt) : "—";
+  if (retrieved !== "—") parts.push(retrieved);
   return parts.join(" · ");
 }
 

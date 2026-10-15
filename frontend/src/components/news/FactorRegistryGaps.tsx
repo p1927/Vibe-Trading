@@ -124,7 +124,7 @@ export function FactorRegistryGaps() {
             )}
           >
             {t.label}
-            <span className="ml-1 opacity-70">{counts[t.key] ?? 0}</span>
+            <span className="ml-1 opacity-70">{counts[t.key] ?? "—"}</span>
           </button>
         ))}
       </div>
@@ -164,7 +164,7 @@ export function FactorRegistryGaps() {
                     {row.candidate}
                   </code>
                   <span className="text-[10px] text-muted-foreground">
-                    {row.distinct_ref_count ?? 0} stories · {row.occurrence_count ?? 0} mentions ·
+                    {row.distinct_ref_count ?? "—"} stories · {row.occurrence_count ?? "—"} mentions ·
                     last {relTime(row.last_seen)}
                   </span>
                 </div>

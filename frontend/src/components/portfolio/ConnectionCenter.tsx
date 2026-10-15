@@ -169,7 +169,7 @@ export function ConnectionCenter({ open, onClose, onChanged }: Props) {
         </section>
 
         <section>
-          <div className="flex items-end justify-between"><div><h3 className="font-medium">{t("portfolio.connections.listTitle")}</h3><p className="mt-1 text-xs text-muted-foreground">{t("portfolio.connections.listCount", { count: data?.connections.length ?? 0 })}</p></div><ShieldCheck className="h-5 w-5 text-positive" /></div>
+          <div className="flex items-end justify-between"><div><h3 className="font-medium">{t("portfolio.connections.listTitle")}</h3>{data ? <p className="mt-1 text-xs text-muted-foreground">{t("portfolio.connections.listCount", { count: data.connections.length })}</p> : null}</div><ShieldCheck className="h-5 w-5 text-positive" /></div>
           <div className="mt-3 space-y-3">{data?.connections.map((connection) => <ConnectionCard key={connection.id} connection={connection} busy={busy} testResult={testResults[connection.id]} onTest={test} onDelete={remove} onSaved={async () => { await load(); await onChanged(); }} setBusy={setBusy} setMessage={setMessage} />)}{data && !data.connections.length ? <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">{t("portfolio.connections.empty")}</div> : null}</div>
         </section>
 

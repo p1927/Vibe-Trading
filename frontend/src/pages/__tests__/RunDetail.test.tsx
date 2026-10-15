@@ -467,3 +467,19 @@ describe("RunDetail page", () => {
     fireEvent.click(screen.getByRole("tab", { name: /Code/ }));
     expect(await screen.findByText(/code endpoint down/)).toBeInTheDocument();
   });
+
+  it("an artifact with no change count at all shows a dash, not 0 target changes", async () => {
+    apiMock.getRun.mockResolvedValue({
+      status: "success",
+      run_id: "nocount-run",
+      prompt: "No count run",
+      rebalance_notes: { rebalances: [], summary: { turnover_total: 0.1 } },
+    });
+    apiMock.getRunCode.mockResolvedValue({});
+    renderRunDetail("/runs/nocount-run");
+    await screen.findByText("No count run");
+    fireEvent.click(screen.getByRole("tab", { name: "Portfolio Studio" }));
+    const stat = (await screen.findByText("Target changes (requested)")).parentElement!;
+    expect(stat).toHaveTextContent("—");
+    expect(stat).not.toHaveTextContent(/\b0\b/);
+  });

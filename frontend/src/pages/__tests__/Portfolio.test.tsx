@@ -184,6 +184,15 @@ describe("Portfolio page", () => {
     mocked.checkConnection.mockResolvedValue({ status: "ok", connection_id: "ibkr", report: { status: "ok" } });
   });
 
+  it("an account that reports no position count shows a dash, not '0 positions'", async () => {
+    const noCount = { ...snapshot, accounts: snapshot.accounts.map((a, i) => (i === 0 ? { ...a, position_count: undefined } : a)) };
+    mocked.getPortfolio.mockResolvedValue({ status: "ok", snapshot: noCount });
+    render(<Portfolio />);
+    await screen.findByText(i18n.t("portfolio.metrics.change"));
+    expect(screen.queryByText(/· 0 positions/)).not.toBeInTheDocument();
+    expect(screen.getAllByText(/· 1 positions?/).length).toBe(2);
+  });
+
   it("shows no day change while the snapshot is incomplete (a failed account would read as a loss)", async () => {
     mocked.getPortfolioHistory.mockResolvedValue({
       status: "ok",

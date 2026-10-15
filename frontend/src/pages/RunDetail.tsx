@@ -626,7 +626,7 @@ function StudioTab({ xray, notes }: { xray?: RiskXRayPayload; notes?: RebalanceN
       {notes && summary && (
         <RunCardPanel title={i18n.t("runDetail.rebalanceNotes")} icon={Gauge}>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <RunCardStat label={i18n.t("runDetail.rebalanceCount")} value={String(summary.target_change_count ?? summary.rebalance_count ?? 0)} />
+            <RunCardStat label={i18n.t("runDetail.rebalanceCount")} value={String(summary.target_change_count ?? summary.rebalance_count ?? "—")} />
             <RunCardStat label={i18n.t("runDetail.rebalanceExecuted")} value={String(summary.rebalance_executed_fills ?? "-")} />
             <RunCardStat label={i18n.t("runDetail.rebalanceRealizedTurnover")} value={fmtPct(summary.rebalance_realized_turnover)} />
             <RunCardStat label={i18n.t("runDetail.turnoverMean")} value={fmtPct(summary.turnover_mean)} />

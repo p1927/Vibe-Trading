@@ -500,7 +500,7 @@ function AccountCard({ account, active, displayCurrency, onClick, onReconnect, o
     ) : (
       <>
         <div className="mt-4 text-2xl font-semibold">{displayCurrency === "CNY" ? money(account.total_cny, "CNY") : money(account.total_usd)}</div>
-        <div className="mt-1 text-xs text-muted-foreground">{displayCurrency === "CNY" ? money(account.total_usd) : money(account.total_cny, "CNY")} · {t("portfolio.accounts.positions", { count: account.position_count ?? 0 })}</div>
+        <div className="mt-1 text-xs text-muted-foreground">{displayCurrency === "CNY" ? money(account.total_usd) : money(account.total_cny, "CNY")} · {account.position_count == null ? "—" : t("portfolio.accounts.positions", { count: account.position_count })}</div>
         <div className="mt-4 flex items-center justify-between border-t pt-3 text-xs"><span className="text-positive">{t("portfolio.accounts.fresh")}</span><span className="text-muted-foreground">{dateTime(account.last_success_at)}</span></div>
       </>
     )}
