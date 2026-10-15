@@ -45,6 +45,8 @@ import {
   type TradeWidgetAdjustment,
 } from "@/lib/tradeWidgetContext";
 import { useLivePlanContext } from "@/hooks/useLivePlanContext";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
+import { useConfirm } from "@/components/common/useConfirm";
 
 const PayoffChart = lazy(() =>
   import("@/components/charts/PayoffChart").then((m) => ({ default: m.PayoffChart })),
@@ -146,20 +148,40 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
   const baselineLegsRef = useRef<TradePlanLeg[]>([]);
   const widgetIdRef = useRef(widget.widget_id);
 
+  const beginModeRead = useLatestRequest();
+  const beginChargesRead = useLatestRequest();
+  const [confirm, confirmDialog] = useConfirm();
+  const approvingRef = useRef(false);
+
   useEffect(() => {
+    // The mode decides whether this card says Paper or Live: only the latest read may set it, and a failed
+    // re-read forgets the old answer (it can no longer be trusted) instead of leaving a stale Paper/Live.
     const loadMode = () => {
+      const isCurrent = beginModeRead();
       api
         .getTradeExecutionMode()
         .then((mode) => {
+          if (!isCurrent()) return;
           setExecMode(mode);
           setExecModeError(null);
         })
-        .catch((err: unknown) => setExecModeError(err instanceof Error ? err.message : "request failed"));
+        .catch((err: unknown) => {
+          if (!isCurrent()) return;
+          setExecMode(null);
+          setExecModeError(err instanceof Error ? err.message : "request failed");
+        });
     };
     loadMode();
     window.addEventListener("focus", loadMode);
     return () => window.removeEventListener("focus", loadMode);
-  }, []);
+  }, [beginModeRead]);
+
+  // A basket submitted for one plan is not "Submitted" for the next plan this card is given.
+  useEffect(() => {
+    setExecuted(false);
+    setExecuting(false);
+    setConfirmOpen(false);
+  }, [widget.widget_id]);
 
   useEffect(() => {
     setSelectedStrategyName(agentPick);
@@ -330,6 +352,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
     }
     const tradeLegs = strategyLegsToTradePlanLegs(legs);
     const timer = window.setTimeout(() => {
+      const isCurrent = beginChargesRead();
       setChargesLoading(true);
       api
         .fetchTradeCharges({
@@ -338,19 +361,27 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
           include_exit: true,
         })
         .then((res) => {
+          if (!isCurrent()) return;
           if (res.charges) {
             setDraggedCharges(res.charges);
             setChargesEstimate(false);
           }
         })
         .catch(() => {
+          if (!isCurrent()) return;
           setDraggedCharges(null);
           setChargesEstimate(true);
         })
-        .finally(() => setChargesLoading(false));
+        .finally(() => {
+          if (isCurrent()) setChargesLoading(false);
+        });
     }, 300);
-    return () => window.clearTimeout(timer);
-  }, [isOptions, legsModified, legs, resolvedSpot]);
+    return () => {
+      window.clearTimeout(timer);
+      // Legs changed again: an in-flight answer for the old legs must not land on the new ones.
+      beginChargesRead();
+    };
+  }, [isOptions, legsModified, legs, resolvedSpot, beginChargesRead]);
 
   const handleStrikeChange = useCallback(
     (legId: string, strike: number) => {
@@ -507,6 +538,45 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
   const executeLabel = isPaper ? "Execute (Paper)" : "Execute (Live)";
   const isNewsScenario = widget.widget_kind === "news_event_scenario";
 
+  const handleApprovePlan = useCallback(async () => {
+    if (!agentId || approvingRef.current) return;
+    approvingRef.current = true;
+    try {
+      const ok = await confirm({
+        title: "Approve this plan and start watching?",
+        description: `Nautilus watchers go live for ${widget.underlying}; the agent may then act on this plan under its mandate.`,
+        confirmLabel: "Approve plan",
+        tone: "destructive",
+      });
+      if (!ok) return;
+      setApprovalLoading(true);
+      await api.approveAutonomousPlan(agentId, widget.widget_id);
+      toast.success("Plan approved — Nautilus watchers are live");
+      onPlanApprovalChange?.();
+      window.dispatchEvent(new Event("autonomous-agents-refresh"));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Approval failed");
+    } finally {
+      approvingRef.current = false;
+      setApprovalLoading(false);
+    }
+  }, [agentId, confirm, onPlanApprovalChange, widget.underlying, widget.widget_id]);
+
+  const handleRejectPlan = useCallback(async () => {
+    if (!agentId) return;
+    setApprovalLoading(true);
+    try {
+      await api.rejectAutonomousPlan(agentId);
+      toast.message("Plan rejected — revise strategy in chat");
+      onPlanApprovalChange?.();
+      window.dispatchEvent(new Event("autonomous-agents-refresh"));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Reject failed");
+    } finally {
+      setApprovalLoading(false);
+    }
+  }, [agentId, onPlanApprovalChange]);
+
   if (isNewsScenario) {
     const eventTitle =
       (widget.event?.title as string | undefined)?.trim() ||
@@ -593,39 +663,10 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
     isHoldCash ||
     executeOrders.length === 0 ||
     (!isPaper && liveBlocked) ||
-    (execMode === null && execModeError !== null);
+    // Until the mode is known the card cannot say paper or live, so it offers no order at all.
+    execMode === null;
   const executeDisabled = executing || executed || hideExecute;
   const openAlgoUrl = execMode?.switch_url || "";
-
-  const handleApprovePlan = useCallback(async () => {
-    if (!agentId) return;
-    setApprovalLoading(true);
-    try {
-      await api.approveAutonomousPlan(agentId, widget.widget_id);
-      toast.success("Plan approved — Nautilus watchers are live");
-      onPlanApprovalChange?.();
-      window.dispatchEvent(new Event("autonomous-agents-refresh"));
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Approval failed");
-    } finally {
-      setApprovalLoading(false);
-    }
-  }, [agentId, onPlanApprovalChange, widget.widget_id]);
-
-  const handleRejectPlan = useCallback(async () => {
-    if (!agentId) return;
-    setApprovalLoading(true);
-    try {
-      await api.rejectAutonomousPlan(agentId);
-      toast.message("Plan rejected — revise strategy in chat");
-      onPlanApprovalChange?.();
-      window.dispatchEvent(new Event("autonomous-agents-refresh"));
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Reject failed");
-    } finally {
-      setApprovalLoading(false);
-    }
-  }, [agentId, onPlanApprovalChange]);
 
   if (
     showPayoff &&
@@ -1025,7 +1066,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
             {ranked
               .filter((_, i) => i !== strategyIndex)
               .slice(0, 3)
-              .map((s) => `${s.name} (${s.tier})`)
+              .map((s) => (s.tier ? `${s.name} (${s.tier})` : String(s.name)))
               .join(" · ")}
           </div>
         )}
@@ -1034,6 +1075,10 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
           <p role="alert" className="text-[10px] text-red-600">
             Execution mode unknown ({execModeError}) - cannot tell paper from live, so Execute is disabled until it loads.
           </p>
+        )}
+
+        {execMode === null && execModeError === null && (
+          <p className="text-[10px] text-muted-foreground">Checking execution mode…</p>
         )}
 
         {execMode && (
@@ -1114,6 +1159,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
           onConfirm={handleExecute}
           onCancel={() => setConfirmOpen(false)}
         />
+        {confirmDialog}
       </div>
     </div>
   );
