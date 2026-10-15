@@ -11,6 +11,7 @@ import { FactorRegistryGaps } from "@/components/news/FactorRegistryGaps";
 import { NewsPipelineStatusStrip } from "@/components/news/NewsPipelineStatusStrip";
 import { formatIst } from "@/lib/istTime";
 import { useConfirm } from "@/components/common/useConfirm";
+import { safeHttpUrl } from "@/lib/safeUrl";
 
 type NewsFilter = "all" | "staging" | "distilled" | "discarded";
 
@@ -281,7 +282,7 @@ function NewsRow({
   discarding?: boolean;
 }) {
   const references = item.references?.length ? item.references : item.sources ?? [];
-  const link = item.url || references[0]?.url;
+  const link = safeHttpUrl(item.url || references[0]?.url);
   const timeline = item.timeline ?? [];
 
   return (
@@ -314,7 +315,7 @@ function NewsRow({
         </div>
         {link ? (
           <a
-            href={link}
+            href={safeHttpUrl(link)}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[10px] hover:bg-muted/50"
@@ -359,7 +360,7 @@ function NewsRow({
           </summary>
           <ul className="mt-1 space-y-1 pl-1">
             {references.map((ref, idx) => {
-              const refUrl = ref.url;
+              const refUrl = safeHttpUrl(ref.url);
               const label = ref.title || ref.publisher || ref.source || ref.vendor || ref.ref_id || `Ref ${idx + 1}`;
               const refCauses = ref.cause_indicators?.length ?? 0;
               const refFuture = ref.future_events?.length ?? 0;
@@ -376,7 +377,7 @@ function NewsRow({
                     ) : null}
                     {refUrl ? (
                       <a
-                        href={refUrl}
+                        href={safeHttpUrl(refUrl)}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="truncate text-blue-600 hover:underline dark:text-blue-400"
@@ -465,7 +466,7 @@ function RankedNewsCard({
 }) {
   const members = item.group_members ?? [];
   const sourceCount = item.source_count ?? members.length ?? 0;
-  const link = item.url || item.references?.[0]?.url || item.sources?.[0]?.url;
+  const link = safeHttpUrl(item.url || item.references?.[0]?.url || item.sources?.[0]?.url);
   const extraSources = Math.max(0, sourceCount - 1);
 
   return (
@@ -507,9 +508,9 @@ function RankedNewsCard({
           {members.map((member, idx) => (
             <li key={member.ref_id || `${member.url}-${idx}`} className="truncate">
               <span className="text-muted-foreground">{member.source || "source"} · </span>
-              {member.url ? (
+              {safeHttpUrl(member.url) ? (
                 <a
-                  href={member.url}
+                  href={safeHttpUrl(member.url)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-blue-600 hover:underline dark:text-blue-400"
@@ -527,7 +528,7 @@ function RankedNewsCard({
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         {link ? (
           <a
-            href={link}
+            href={safeHttpUrl(link)}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] hover:bg-muted/50"
@@ -603,9 +604,9 @@ function DiscardedRow({
           </button>
         ) : null}
       </div>
-      {item.url ? (
+      {safeHttpUrl(item.url) ? (
         <a
-          href={item.url}
+          href={safeHttpUrl(item.url)}
           target="_blank"
           rel="noopener noreferrer"
           className="mt-2 inline-block truncate text-[11px] text-blue-600 hover:underline dark:text-blue-400"

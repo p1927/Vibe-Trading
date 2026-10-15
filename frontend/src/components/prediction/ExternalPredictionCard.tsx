@@ -8,6 +8,7 @@ import type { ExternalPredictionRecord, ExternalPredictionSource } from "@/lib/a
 import { resolveApiBase } from "@/lib/apiBase";
 import { canApproveNavigationPath, fmtLevel, formatFetchMethodLabel, formatForecastProvenance, formatHorizonMatch, formatPageKindLabel, hasHorizonMismatch } from "@/lib/externalPredictionsUtils";
 import { cn } from "@/lib/utils";
+import { safeHttpUrl } from "@/lib/safeUrl";
 
 const DIRECTION_COLORS: Record<string, string> = {
   bullish: "#22c55e",
@@ -67,7 +68,7 @@ export function ExternalPredictionCard({
     }),
     [replayRecord, name, record.direction],
   );
-  const url = record.provenance?.url;
+  const url = safeHttpUrl(record.provenance?.url);
   const thumbPath = record.provenance?.thumbnail_url as string | undefined;
   const thumbnailSrc = thumbPath
     ? `${resolveApiBase()}${thumbPath.startsWith("/") ? thumbPath : `/${thumbPath}`}`
@@ -179,7 +180,7 @@ export function ExternalPredictionCard({
           ) : null}
           {url ? (
             <a
-              href={url}
+              href={safeHttpUrl(url)}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-2 inline-flex max-w-full flex-col gap-0.5 text-[11px] font-medium text-primary hover:underline"
@@ -195,7 +196,7 @@ export function ExternalPredictionCard({
         <div className="flex shrink-0 items-start gap-2">
           {showCompactThumb ? (
             <a
-              href={url || thumbnailSrc}
+              href={safeHttpUrl(url) || thumbnailSrc}
               target="_blank"
               rel="noopener noreferrer"
               className="block overflow-hidden rounded-md border border-border/50 bg-muted/20"

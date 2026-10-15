@@ -10,6 +10,7 @@ import {
   type NewsFactorScenarioTimelineResponse,
 } from "@/lib/api";
 import { formatIst } from "@/lib/istTime";
+import { safeHttpUrl } from "@/lib/safeUrl";
 
 interface Props {
   horizonDays: number;
@@ -360,9 +361,9 @@ export function NewsImpactPanel({
                     <ul className="ml-3 space-y-0.5 border-l pl-2 text-muted-foreground">
                       {factor.articles.map((article, idx) => (
                         <li key={article.canonical_story_id || `${factor.factor_id}-${idx}`} className="truncate">
-                          {article.url ? (
+                          {safeHttpUrl(article.url) ? (
                             <a
-                              href={article.url}
+                              href={safeHttpUrl(article.url)}
                               target="_blank"
                               rel="noreferrer"
                               className="hover:text-foreground hover:underline"

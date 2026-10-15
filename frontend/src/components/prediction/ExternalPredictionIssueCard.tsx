@@ -2,6 +2,7 @@ import { ExternalLink } from "lucide-react";
 import type { ExternalPredictionRecord, ExternalPredictionSource } from "@/lib/api";
 import { formatFetchMethodLabel, formatPageKindLabel } from "@/lib/externalPredictionsUtils";
 import { cn } from "@/lib/utils";
+import { safeHttpUrl } from "@/lib/safeUrl";
 
 interface Props {
   record: ExternalPredictionRecord;
@@ -11,7 +12,7 @@ interface Props {
 
 export function ExternalPredictionIssueCard({ record, source, className }: Props) {
   const name = source?.display_name || record.source_id;
-  const url = record.provenance?.url;
+  const url = safeHttpUrl(record.provenance?.url);
   const pageKindLabel = formatPageKindLabel(record.provenance?.page_kind as string | undefined);
   const fetchMethodLabel = formatFetchMethodLabel(record.provenance?.fetch_method as string | undefined);
   const status = record.fetch_status || "unknown";
@@ -53,7 +54,7 @@ export function ExternalPredictionIssueCard({ record, source, className }: Props
           )}
           {url ? (
             <a
-              href={url}
+              href={safeHttpUrl(url)}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-2 inline-flex max-w-full items-center gap-1 text-[11px] font-medium text-primary hover:underline"

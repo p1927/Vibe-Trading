@@ -6,6 +6,7 @@ import {
   type HubNewsPipelineTraceItem,
   type HubNewsPipelineTraceSummary,
 } from "@/lib/api";
+import { safeHttpUrl } from "@/lib/safeUrl";
 
 // Display names for known source families. The source nodes themselves come from the data
 // (`summary.by_source`, keyed by family by the trace store), so a new ingest source gets a node
@@ -120,9 +121,9 @@ function TraceItemRow({ item }: { item: HubNewsPipelineTraceItem }) {
             <p className="text-[11px] text-muted-foreground">Discard reason: {item.discard_reason}</p>
           ) : null}
         </div>
-        {item.url ? (
+        {safeHttpUrl(item.url) ? (
           <a
-            href={item.url}
+            href={safeHttpUrl(item.url)}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-[10px] hover:bg-muted/50"

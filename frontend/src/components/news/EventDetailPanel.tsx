@@ -1,6 +1,7 @@
 import { ExternalLink, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { HistoricalUpcomingEvent, HubNewsCalendarEvent, HubNewsImpactFigures } from "@/lib/api";
+import { safeHttpUrl } from "@/lib/safeUrl";
 
 export type CalendarEventItem =
   | { kind: "news"; key: string; data: HubNewsCalendarEvent }
@@ -230,9 +231,9 @@ function NewsEventDetail({ event }: { event: HubNewsCalendarEvent }) {
                 key={article.event_id || idx}
                 className="rounded-md border bg-background/80 px-2.5 py-2 text-[12px]"
               >
-                {article.url ? (
+                {safeHttpUrl(article.url) ? (
                   <a
-                    href={article.url}
+                    href={safeHttpUrl(article.url)}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 font-medium text-foreground hover:underline"
