@@ -65,7 +65,7 @@ describe("no browser-zone date rendering in src", () => {
 
   it("every date/time locale format names a timeZone", () => {
     const offenders: string[] = [];
-    const re = /\.toLocale(?:Date|Time)String\(|new Date\([^()]*\)\.toLocaleString\(|\.getHours\(|\.getMinutes\(/g;
+    const re = /\.toLocale(?:Date|Time)String\(|new Date\([^()]*\)\.toLocaleString\(|\.getHours\(|\.getMinutes\(|Intl\.DateTimeFormat\(/g;
     for (const file of files) {
       const text = readFileSync(file, "utf8");
       for (const m of text.matchAll(re)) {

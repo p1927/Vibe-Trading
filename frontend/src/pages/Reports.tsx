@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { api, type RunListItem } from "@/lib/api";
 import { formatMetricVal } from "@/lib/formatters";
+import { formatIst } from "@/lib/istTime";
 import { cn } from "@/lib/utils";
 
 const REPORT_SCAN_LIMIT = 100;
@@ -307,12 +308,6 @@ function dateMs(value: string): number {
 }
 
 function formatRunDate(value: string, unknownLabel: string): string {
-  const parsed = new Date(value);
-  if (!Number.isFinite(parsed.getTime())) return value || unknownLabel;
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(parsed);
+  const formatted = formatIst(value);
+  return formatted === "—" ? value || unknownLabel : formatted;
 }

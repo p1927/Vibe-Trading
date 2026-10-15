@@ -20,8 +20,8 @@ export function MonthlyReturnsHeatmap({ data, annual, height = 300 }: Props) {
   useChartLifecycle(ref, () => {
     const t = getChartTheme();
 
-    const monthFmt = new Intl.DateTimeFormat(i18n.language || "en", { month: "short" });
-    const monthLabels = Array.from({ length: 12 }, (_, i) => monthFmt.format(new Date(2024, i, 15)));
+    const monthFmt = new Intl.DateTimeFormat(i18n.language || "en", { month: "short", timeZone: "UTC" });
+    const monthLabels = Array.from({ length: 12 }, (_, i) => monthFmt.format(new Date(Date.UTC(2024, i, 15))));
     const xLabels = [...monthLabels, i18n.t("runDetail.tearsheetYear")];
 
     const years = [...new Set(data.map((d) => d.year))].sort((a, b) => a - b);
