@@ -190,23 +190,26 @@ describe("Scheduled page", () => {
     );
   });
 
-  it("deletes only after an explicit confirm click, and cancel disarms", async () => {
+  it("deletes only after the ConfirmDialog is confirmed (never window.confirm), and cancel leaves the run", async () => {
     mocked.listScheduledRuns.mockResolvedValue([run()]);
     mocked.deleteScheduledRun.mockResolvedValue(undefined);
+    const nativeConfirm = vi.spyOn(window, "confirm");
     renderScheduled();
 
     fireEvent.click(await screen.findByRole("button", { name: /Delete scheduled run/ }));
     expect(mocked.deleteScheduledRun).not.toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(/Confirm deleting/);
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("button", { name: /Confirm deleting/ })).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(mocked.deleteScheduledRun).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: /Delete scheduled run/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Confirm deleting/ }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirm delete" }));
     await waitFor(() =>
       expect(mocked.deleteScheduledRun).toHaveBeenCalledWith("auckland-scan"),
     );
+    expect(nativeConfirm).not.toHaveBeenCalled();
   });
 
   it("blocks a whitespace-only prompt client-side", async () => {

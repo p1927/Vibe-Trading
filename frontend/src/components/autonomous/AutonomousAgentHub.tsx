@@ -16,6 +16,7 @@ import {
 import { useLiveStatus } from "@/hooks/useLiveStatus";
 import { AutonomousAgentCard } from "@/components/autonomous/AutonomousAgentCard";
 import { haltDetail, ResumeHaltButton } from "@/components/common/ResumeHaltButton";
+import { useConfirm } from "@/components/common/useConfirm";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 
@@ -233,6 +234,7 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
   const [stackHealth, setStackHealth] = useState<AutonomousStackHealth | undefined>();
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
+  const [confirm, confirmDialog] = useConfirm();
   // The one poller of GET /live/status (D306), with its latest-wins and stale-error handling.
   const { liveStatus, error: liveStatusError, refresh: refreshLiveStatus } = useLiveStatus();
   const [clearReport, setClearReport] = useState<ClearAllReport | null>(null);
@@ -302,19 +304,26 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
     }
   };
 
-  const confirmFlattenDelete = (_agent: AutonomousAgentInstance, prompt: string) => {
-    if (!window.confirm(prompt)) return false;
-    return window.confirm(
-      "This will flatten agent-scoped positions before delete. Continue?",
-    );
-  };
+  const confirmFlattenDelete = async (title: string, confirmLabel: string, description: string) =>
+    (await confirm({ title, description, confirmLabel, tone: "destructive" })) &&
+    (await confirm({
+      title: "Flatten positions?",
+      description: "This will flatten agent-scoped positions before delete. Continue?",
+      confirmLabel: "Flatten and delete",
+      tone: "destructive",
+    }));
 
   const handleDelete = async (agent: AutonomousAgentInstance) => {
     const isDraft = agent.status === "draft";
-    const prompt = isDraft
-      ? "Delete this draft? Chat and proposal will be removed."
-      : "Delete this autonomous agent?";
-    if (!window.confirm(prompt)) return;
+    const deleteConfirmed = await confirm({
+      title: isDraft ? "Delete draft" : "Delete agent",
+      description: isDraft
+        ? "Delete this draft? Chat and proposal will be removed."
+        : "Delete this autonomous agent?",
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
+    if (!deleteConfirmed) return;
     try {
       await api.deleteAutonomousAgent(agent.id);
       await load();
@@ -333,7 +342,7 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
               : detail.error === "position_lookup_failed"
                 ? `${err.message}\n\nDelete and flatten anyway?`
                 : `${err.message}\n\nDelete and flatten positions?`;
-          if (confirmFlattenDelete(agent, flattenPrompt)) {
+          if (await confirmFlattenDelete("Delete and flatten", "Delete and flatten", flattenPrompt)) {
             try {
               await api.deleteAutonomousAgent(agent.id, { flattenPositions: true });
               await load();
@@ -363,7 +372,7 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
       count > 0
         ? `Clear all ${count} autonomous agent(s)? This will flatten open positions, stop Nautilus watch, and remove all agents and bridge artifacts.`
         : "Clear autonomous infrastructure (Nautilus watch, paper session, bridge artifacts)?";
-    if (!window.confirm(prompt)) return;
+    if (!(await confirm({ title: "Clear all agents", description: prompt, confirmLabel: "Clear all", tone: "destructive" }))) return;
 
     setClearing(true);
     try {
@@ -395,6 +404,7 @@ export function AutonomousAgentHub({ onCreateAgent }: Props) {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
+      {confirmDialog}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Autonomous</h1>

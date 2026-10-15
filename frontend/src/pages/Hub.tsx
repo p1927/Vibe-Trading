@@ -10,6 +10,7 @@ import { EventsCalendar } from "@/components/news/EventsCalendar";
 import { FactorRegistryGaps } from "@/components/news/FactorRegistryGaps";
 import { NewsPipelineStatusStrip } from "@/components/news/NewsPipelineStatusStrip";
 import { formatIst } from "@/lib/istTime";
+import { useConfirm } from "@/components/common/useConfirm";
 
 type NewsFilter = "all" | "staging" | "distilled" | "discarded";
 
@@ -617,6 +618,7 @@ function DiscardedRow({
 }
 
 export function Hub() {
+  const [confirm, confirmDialog] = useConfirm();
   const [data, setData] = useState<HubStatusResponse | null>(null);
   const [obsSummary, setObsSummary] = useState<ObservabilitySummaryResponse | null>(null);
   const [pipelineConfig, setPipelineConfig] = useState<HubNewsPipelineConfig | null>(null);
@@ -783,7 +785,12 @@ export function Hub() {
     if (!itemId) return;
     if (
       discardSimilar &&
-      !window.confirm(`Discard this headline and similar items (semantic + topic overlap)?`)
+      !(await confirm({
+        title: "Discard similar",
+        description: "Discard this headline and similar items (semantic + topic overlap)?",
+        confirmLabel: "Discard",
+        tone: "destructive",
+      }))
     ) {
       return;
     }
@@ -928,6 +935,7 @@ export function Hub() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 md:p-6">
+      {confirmDialog}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">

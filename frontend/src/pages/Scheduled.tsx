@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router";
 import { CalendarClock, ChevronDown, ChevronRight, Loader2, Pause, Play, Plus, Square, Trash2, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { useConfirm } from "@/components/common/useConfirm";
 import { formatIst } from "@/lib/istTime";
 import { api, ApiError, type ScheduledRun, type SchedulerRegistryEntry } from "@/lib/api";
 import { LiveLogTail } from "@/components/scheduler/LiveLogTail";
@@ -126,7 +127,7 @@ export function Scheduled() {
   const [resumingExecutor, setResumingExecutor] = useState(false);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   // At most one row's live-log-tail is mounted at a time — expanding a
@@ -232,14 +233,6 @@ export function Scheduled() {
     }
   };
 
-  // Auto-disarm an armed delete after a few seconds (blur is unreliable on
-  // Safari/iOS, where buttons do not take focus on click).
-  useEffect(() => {
-    if (pendingDelete === null) return;
-    const timer = setTimeout(() => setPendingDelete(null), 5_000);
-    return () => clearTimeout(timer);
-  }, [pendingDelete]);
-
   function composedSchedule(): string | null {
     if (mode === "advanced") {
       const spec = advanced.trim();
@@ -286,10 +279,17 @@ export function Scheduled() {
     }
   }
 
-  async function handleConfirmedDelete(id: string) {
-    setPendingDelete(null);
+  async function handleDelete(run: ScheduledRun) {
+    const ok = await confirm({
+      title: t("scheduled.delete"),
+      description: t("scheduled.confirmDeleteAria", { prompt: run.prompt }),
+      confirmLabel: t("scheduled.confirmDelete"),
+      cancelLabel: t("common.cancel", { defaultValue: "Cancel" }),
+      tone: "destructive",
+    });
+    if (!ok) return;
     try {
-      await api.deleteScheduledRun(id);
+      await api.deleteScheduledRun(run.id);
       await refresh();
     } catch (error) {
       setListError(error instanceof ApiError ? error.message : String(error));
@@ -550,6 +550,7 @@ export function Scheduled() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
+      {confirmDialog}
       <ConfirmDialog
         open={executorConfirm !== null}
         title={
@@ -973,102 +974,79 @@ export function Scheduled() {
                     )}
                     {verdictCell(run)}
                   </div>
-                  {pendingDelete === run.id ? (
-                    <div className="flex items-center gap-1.5">
-                      {/* Cancel first so it inherits the Delete button's spot —
-                          an accidental double-click disarms instead of destroying. */}
-                      <button
-                        type="button"
-                        onClick={() => setPendingDelete(null)}
-                        className="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
-                      >
-                        {t("layout.cancel")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleConfirmedDelete(run.id)}
-                        aria-label={t("scheduled.confirmDeleteAria", { prompt: run.prompt })}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-danger bg-danger/10 px-2.5 py-1.5 text-xs text-danger transition"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                        {t("scheduled.confirmDelete")}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1.5">
-                      {run.status === "running" && (
-                        <button
-                          type="button"
-                          disabled={busyId === run.id}
-                          onClick={() => void handleCancelRun(run)}
-                          aria-label={t("scheduled.cancelRunAria", { prompt: run.prompt })}
-                          className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <Square className="h-3.5 w-3.5" aria-hidden />
-                          {t("scheduled.cancelRun")}
-                        </button>
-                      )}
+                  <div className="flex items-center gap-1.5">
+                    {run.status === "running" && (
                       <button
                         type="button"
                         disabled={busyId === run.id}
-                        onClick={() => void handleTogglePause(run)}
-                        aria-label={
-                          run.paused
-                            ? t("scheduled.resumeJobAria", { prompt: run.prompt })
-                            : t("scheduled.pauseJobAria", { prompt: run.prompt })
-                        }
+                        onClick={() => void handleCancelRun(run)}
+                        aria-label={t("scheduled.cancelRunAria", { prompt: run.prompt })}
                         className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {run.paused ? (
-                          <Play className="h-3.5 w-3.5" aria-hidden />
-                        ) : (
-                          <Pause className="h-3.5 w-3.5" aria-hidden />
-                        )}
-                        {run.paused ? t("scheduled.resumeJob") : t("scheduled.pauseJob")}
+                        <Square className="h-3.5 w-3.5" aria-hidden />
+                        {t("scheduled.cancelRun")}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => setPendingDelete(run.id)}
-                        aria-label={t("scheduled.deleteAria", { prompt: run.prompt })}
-                        className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                        {t("scheduled.delete")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExpandedLogKey((prev) => (prev === run.id ? null : run.id))
-                        }
-                        aria-expanded={expandedLogKey === run.id}
-                        aria-label={t("scheduled.toggleLiveLog", { prompt: run.prompt })}
-                        className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
-                      >
-                        {expandedLogKey === run.id ? (
-                          <ChevronDown className="h-3.5 w-3.5" aria-hidden />
-                        ) : (
-                          <ChevronRight className="h-3.5 w-3.5" aria-hidden />
-                        )}
-                        {t("scheduled.liveLog")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExpandedDetailKey((prev) => (prev === run.id ? null : run.id))
-                        }
-                        aria-expanded={expandedDetailKey === run.id}
-                        aria-label={t("scheduled.toggleDetailsAria", { prompt: run.prompt })}
-                        className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
-                      >
-                        {expandedDetailKey === run.id ? (
-                          <ChevronDown className="h-3.5 w-3.5" aria-hidden />
-                        ) : (
-                          <ChevronRight className="h-3.5 w-3.5" aria-hidden />
-                        )}
-                        {t("scheduled.viewDetails")}
-                      </button>
-                    </div>
-                  )}
+                    )}
+                    <button
+                      type="button"
+                      disabled={busyId === run.id}
+                      onClick={() => void handleTogglePause(run)}
+                      aria-label={
+                        run.paused
+                          ? t("scheduled.resumeJobAria", { prompt: run.prompt })
+                          : t("scheduled.pauseJobAria", { prompt: run.prompt })
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {run.paused ? (
+                        <Play className="h-3.5 w-3.5" aria-hidden />
+                      ) : (
+                        <Pause className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                      {run.paused ? t("scheduled.resumeJob") : t("scheduled.pauseJob")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDelete(run)}
+                      aria-label={t("scheduled.deleteAria", { prompt: run.prompt })}
+                      className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                      {t("scheduled.delete")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedLogKey((prev) => (prev === run.id ? null : run.id))
+                      }
+                      aria-expanded={expandedLogKey === run.id}
+                      aria-label={t("scheduled.toggleLiveLog", { prompt: run.prompt })}
+                      className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
+                    >
+                      {expandedLogKey === run.id ? (
+                        <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                      {t("scheduled.liveLog")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedDetailKey((prev) => (prev === run.id ? null : run.id))
+                      }
+                      aria-expanded={expandedDetailKey === run.id}
+                      aria-label={t("scheduled.toggleDetailsAria", { prompt: run.prompt })}
+                      className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
+                    >
+                      {expandedDetailKey === run.id ? (
+                        <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                      {t("scheduled.viewDetails")}
+                    </button>
+                  </div>
                   {expandedLogKey === run.id && (
                     <LiveLogTail streamUrl={() => api.scheduledRunStreamUrl(run.id)} />
                   )}

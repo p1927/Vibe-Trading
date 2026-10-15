@@ -8,6 +8,7 @@ import {
   type MemoryEntrySummary,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useConfirm } from "@/components/common/useConfirm";
 import { formatIst } from "@/lib/istTime";
 
 // Per-agent memory viewing/curation panel — 2026-08-29-memory-management-frontend-ui.
@@ -207,6 +208,7 @@ function EntryDetail({
   const [draft, setDraft] = useState(entry.body);
   const [saving, setSaving] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const [confirm, confirmDialog] = useConfirm();
 
   useEffect(() => {
     setDraft(entry.body);
@@ -226,10 +228,14 @@ function EntryDetail({
       .finally(() => setSaving(false));
   }, [entry.id, draft, onChanged]);
 
-  const archive = useCallback(() => {
-    if (!window.confirm(`Clear "${entry.title}" from active memory? It stays recoverable in git history and under archive/.`)) {
-      return;
-    }
+  const archive = useCallback(async () => {
+    const ok = await confirm({
+      title: "Clear from memory",
+      description: `Clear "${entry.title}" from active memory? It stays recoverable in git history and under archive/.`,
+      confirmLabel: "Clear entry",
+      tone: "destructive",
+    });
+    if (!ok) return;
     setArchiving(true);
     api
       .archiveMemoryEntry(entry.id)
@@ -239,10 +245,11 @@ function EntryDetail({
       })
       .catch((err) => toast.error(`Failed to archive entry: ${errorText(err, "request failed")}`))
       .finally(() => setArchiving(false));
-  }, [entry.id, entry.title, onArchived]);
+  }, [confirm, entry.id, entry.title, onArchived]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {confirmDialog}
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-foreground">{entry.title}</div>
@@ -319,7 +326,7 @@ function EntryDetail({
             <button
               type="button"
               disabled={archiving}
-              onClick={archive}
+              onClick={() => void archive()}
               className="ml-auto rounded-lg border border-red-500/40 px-3 py-1.5 text-xs font-medium text-red-600 disabled:opacity-50 dark:text-red-400"
             >
               {archiving ? "Clearing…" : "Clear from memory"}

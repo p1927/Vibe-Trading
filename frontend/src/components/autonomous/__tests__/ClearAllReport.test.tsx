@@ -83,7 +83,7 @@ describe("AutonomousAgentHub clear-all report", () => {
       agents: [{ id: "aa_1", name: "A", status: "running", symbols: ["NIFTY"] }],
     });
     vi.spyOn(api, "getLiveStatus").mockResolvedValue({ global_halted: false } as never);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(window, "confirm").mockReturnValue(false);
     return render(
       <MemoryRouter>
         <AutonomousAgentHub onCreateAgent={() => {}} />
@@ -99,6 +99,8 @@ describe("AutonomousAgentHub clear-all report", () => {
     const button = await screen.findByRole("button", { name: /clear all agents/i });
     await waitFor(() => expect(button).toBeEnabled());
     fireEvent.click(button);
+    fireEvent.click(await screen.findByRole("button", { name: "Clear all" }));
+    expect(window.confirm).not.toHaveBeenCalled();
     const unowned = await screen.findByTestId("clear-all-unowned");
     expect(unowned).toHaveTextContent("RELIANCE (NSE) x 10");
     expect(screen.getByTestId("clear-all-report")).toHaveTextContent(/did not finish cleanly/);
