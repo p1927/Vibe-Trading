@@ -3,6 +3,7 @@ import { ExternalLink, KeyRound, Loader2, Save, SearchCheck } from "lucide-react
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { api, type QVerisConfig, type QVerisStatus } from "@/lib/api";
+import { safeHttpUrl } from "@/lib/safeUrl";
 
 type QVerisMode = QVerisConfig["mode"];
 
@@ -11,7 +12,8 @@ interface QVerisForm {
   base_url: string;
   api_key: string;
   mode: QVerisMode;
-  budget_credits_per_session: number;
+  /** Kept as typed text: an empty field is a missing value, never 0 credits. */
+  budget_credits_per_session: string;
 }
 
 const DEFAULT_BASE_URL = "https://qveris.ai/api/v1";
@@ -26,7 +28,7 @@ function formFromConfig(config: QVerisConfig): QVerisForm {
     base_url: config.base_url || DEFAULT_BASE_URL,
     api_key: "",
     mode: config.mode,
-    budget_credits_per_session: config.budget_credits_per_session,
+    budget_credits_per_session: String(config.budget_credits_per_session),
   };
 }
 
@@ -40,7 +42,7 @@ export function QVerisSettings() {
     base_url: DEFAULT_BASE_URL,
     api_key: "",
     mode: "free",
-    budget_credits_per_session: 50,
+    budget_credits_per_session: "50",
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -94,6 +96,12 @@ export function QVerisSettings() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    const budgetText = form.budget_credits_per_session.trim();
+    const budget = budgetText === "" ? Number.NaN : Number(budgetText);
+    if (!Number.isInteger(budget) || budget < 0) {
+      setError("Enter the session budget as a whole number of credits (0 or more); nothing was saved.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -107,7 +115,7 @@ export function QVerisSettings() {
         enabled: form.mode === "paid" && form.enabled,
         base_url: form.base_url.trim(),
         mode: form.mode,
-        budget_credits_per_session: Number(form.budget_credits_per_session) || 0,
+        budget_credits_per_session: budget,
       };
       const trimmedApiKey = form.api_key.trim();
       if (trimmedApiKey && !window.vibeDesktop) payload.api_key = trimmedApiKey;
@@ -134,7 +142,7 @@ export function QVerisSettings() {
   };
 
   const recent = status?.recent ?? [];
-  const signupUrl = config?.signup_url || "";
+  const signupUrl = safeHttpUrl(config?.signup_url) ?? "";
   const inviteCode = config?.invite_code || status?.invite_code || "";
   const apiKeyPlaceholder = config?.api_key_masked || t("qveris.apiKeyPlaceholder");
 
@@ -165,13 +173,13 @@ export function QVerisSettings() {
       </div>
 
       {error ? (
-        <div className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+        <div role="alert" className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           <span className="font-medium">{t("qveris.testFailed")}: </span>
           <span>{error}</span>
         </div>
       ) : null}
 
-      <form onSubmit={submit} className="grid gap-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(280px,0.9fr)]">
+      <form noValidate onSubmit={submit} className="grid gap-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(280px,0.9fr)]">
         <div className="grid gap-4">
           <label className="flex items-center justify-between gap-3 rounded-md border bg-muted/20 px-3 py-2">
             <span className={labelClass}>{t("qveris.enabled")}</span>
@@ -243,7 +251,7 @@ export function QVerisSettings() {
                 min={0}
                 step={1}
                 value={form.budget_credits_per_session}
-                onChange={(event) => setForm({ ...form, budget_credits_per_session: Number(event.target.value) })}
+                onChange={(event) => setForm({ ...form, budget_credits_per_session: event.target.value })}
                 className={fieldClass}
                 disabled={loading}
               />
