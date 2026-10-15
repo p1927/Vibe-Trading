@@ -123,6 +123,9 @@ export function RunDetail() {
   const { t } = useTranslation();
   const [run, setRun] = useState<RunData | null>(null);
   const [code, setCode] = useState<Record<string, string>>({});
+  // A failed read is not an empty one: a 404 is "not found", any other failure shows its own message.
+  const [runError, setRunError] = useState<string | null>(null);
+  const [codeError, setCodeError] = useState<string | null>(null);
   // The prompt header sits above the scrollable body (flex-1 min-h-0
   // overflow-auto), so an unclamped multi-paragraph prompt eats most of the
   // viewport and leaves almost no room for the tabs/dashboard below it.
@@ -168,6 +171,8 @@ export function RunDetail() {
     cancelBulkChartLoadRef.current = true;
     setRun(null);
     setCode({});
+    setRunError(null);
+    setCodeError(null);
     setPromptExpanded(false);
     setTab(requestedInitialTab);
     setLoading(true);
@@ -187,8 +192,16 @@ export function RunDetail() {
 
     const requestedRunId = runId;
     Promise.all([
-      api.getRun(requestedRunId, { chart_payload: "summary" }).catch(() => null),
-      api.getRunCode(requestedRunId).catch(() => ({})),
+      api.getRun(requestedRunId, { chart_payload: "summary" }).catch((err: unknown) => {
+        if (runGenerationRef.current === generation && (err as { status?: number })?.status !== 404) {
+          setRunError(err instanceof Error ? err.message : String(err));
+        }
+        return null;
+      }),
+      api.getRunCode(requestedRunId).catch((err: unknown) => {
+        if (runGenerationRef.current === generation) setCodeError(err instanceof Error ? err.message : String(err));
+        return {};
+      }),
     ]).then(([r, c]) => {
       if (runGenerationRef.current !== generation) return;
       setRun(r);
@@ -224,10 +237,19 @@ export function RunDetail() {
   }
   if (!run) return (
     <div className="p-8 space-y-2">
-      <p className="text-red-500 font-medium">{i18n.t("runDetail.runNotFound")}</p>
-      <p className="text-sm text-muted-foreground">
-        {i18n.t("runDetail.runNotFoundDesc")}
-      </p>
+      {runError ? (
+        <>
+          <p className="text-red-500 font-medium">Could not load this run</p>
+          <p className="text-sm text-muted-foreground break-words">{runError}</p>
+        </>
+      ) : (
+        <>
+          <p className="text-red-500 font-medium">{i18n.t("runDetail.runNotFound")}</p>
+          <p className="text-sm text-muted-foreground">
+            {i18n.t("runDetail.runNotFoundDesc")}
+          </p>
+        </>
+      )}
       <button
         onClick={() => navigate(-1)}
         className="text-sm text-primary hover:underline inline-flex items-center gap-1.5"
@@ -457,7 +479,7 @@ export function RunDetail() {
             <StudioTab xray={run.risk_xray} notes={run.rebalance_notes} />
           )}
           {tab === "runCard" && run.run_card && <RunCardTab card={run.run_card} />}
-          {tab === "code" && <CodeTab code={code} />}
+          {tab === "code" && <CodeTab code={code} error={codeError} />}
         </ErrorBoundary>
       </div>
     </div>
@@ -1107,9 +1129,10 @@ function TradesTab({ run }: { run: RunData }) {
   );
 }
 
-function CodeTab({ code }: { code: Record<string, string> }) {
+function CodeTab({ code, error }: { code: Record<string, string>; error: string | null }) {
   const files = Object.entries(code);
   const [active, setActive] = useState(files[0]?.[0] || "");
+  if (error) return <div className="p-8 text-sm text-red-500 break-words">Could not load the code files: {error}</div>;
   if (files.length === 0) return <div className="p-8 text-muted-foreground text-sm">{i18n.t("runDetail.noCodeFiles")}</div>;
 
   const activeCode = code[active] || "";
@@ -1117,7 +1140,7 @@ function CodeTab({ code }: { code: Record<string, string> }) {
   const copyActive = () => {
     navigator.clipboard.writeText(activeCode).then(
       () => toast.success(i18n.t("runDetail.codeCopied")),
-      () => {},
+      (err: unknown) => toast.error(`Copy failed: ${err instanceof Error ? err.message : "clipboard unavailable"}`),
     );
   };
 

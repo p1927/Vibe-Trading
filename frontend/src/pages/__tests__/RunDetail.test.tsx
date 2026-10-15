@@ -443,3 +443,27 @@ describe("RunDetail page", () => {
     await screen.findByText("Plain run");
     expect(screen.queryByRole("tab", { name: "Portfolio Studio" })).not.toBeInTheDocument();
   });
+
+  it("a failed run load shows the real error, not 'Run not found'; a 404 still says not found", async () => {
+    apiMock.getRun.mockRejectedValue(Object.assign(new Error("backend exploded (500)"), { status: 500 }));
+    apiMock.getRunCode.mockResolvedValue({});
+    renderRunDetail("/runs/boom");
+    expect(await screen.findByText(/backend exploded \(500\)/)).toBeInTheDocument();
+    expect(screen.queryByText("Run not found")).not.toBeInTheDocument();
+  });
+
+  it("a 404 run is 'Run not found'", async () => {
+    apiMock.getRun.mockRejectedValue(Object.assign(new Error("not found"), { status: 404 }));
+    apiMock.getRunCode.mockResolvedValue({});
+    renderRunDetail("/runs/gone");
+    expect(await screen.findByText("Run not found")).toBeInTheDocument();
+  });
+
+  it("a failed code load says so in the Code tab instead of 'no code files'", async () => {
+    apiMock.getRun.mockResolvedValue({ status: "success", run_id: "r1", prompt: "A run", trade_log: [] });
+    apiMock.getRunCode.mockRejectedValue(new Error("code endpoint down"));
+    renderRunDetail("/runs/r1");
+    await screen.findByText("A run");
+    fireEvent.click(screen.getByRole("tab", { name: /Code/ }));
+    expect(await screen.findByText(/code endpoint down/)).toBeInTheDocument();
+  });
