@@ -47,6 +47,7 @@ import {
 import { useLivePlanContext } from "@/hooks/useLivePlanContext";
 import { useLatestRequest } from "@/hooks/useLatestRequest";
 import { useConfirm } from "@/components/common/useConfirm";
+import { safeHttpUrl } from "@/lib/safeUrl";
 
 const PayoffChart = lazy(() =>
   import("@/components/charts/PayoffChart").then((m) => ({ default: m.PayoffChart })),
@@ -534,7 +535,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
     }
   }, [executeOrders, widget.widget_id]);
 
-  const builderUrl = widget.meta?.strategy_builder_execute_url || widget.meta?.strategy_builder_url;
+  const builderUrl = safeHttpUrl(widget.meta?.strategy_builder_execute_url || widget.meta?.strategy_builder_url);
   const executeLabel = isPaper ? "Execute (Paper)" : "Execute (Live)";
   const isNewsScenario = widget.widget_kind === "news_event_scenario";
 
@@ -666,7 +667,7 @@ export const TradePlanWidgetCard = memo(function TradePlanWidgetCard({
     // Until the mode is known the card cannot say paper or live, so it offers no order at all.
     execMode === null;
   const executeDisabled = executing || executed || hideExecute;
-  const openAlgoUrl = execMode?.switch_url || "";
+  const openAlgoUrl = safeHttpUrl(execMode?.switch_url) ?? "";
 
   if (
     showPayoff &&

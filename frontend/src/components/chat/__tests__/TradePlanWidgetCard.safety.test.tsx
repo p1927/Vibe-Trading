@@ -125,6 +125,26 @@ describe("TradePlanWidgetCard order safety", () => {
     await waitFor(() => expect(screen.getByText("Execute (Paper)")).toBeTruthy());
   });
 
+  it.each(["javascript:alert(1)", "data:text/html,<b>x", "//evil.example/x", "/relative"])(
+    "a widget link that is not an absolute http(s) url (%s) renders no anchor",
+    async (bad) => {
+      vi.spyOn(api, "getTradeExecutionMode").mockResolvedValue({ ...(paper as object), switch_url: bad } as never);
+      const widget = { ...planWidget, meta: { strategy_builder_url: bad } } as unknown as TradePlanWidget;
+      render(<TradePlanWidgetCard widget={widget} />);
+      await screen.findByText("Execute (Paper)");
+      expect(screen.queryByText("Open Strategy Builder")).toBeNull();
+      expect(screen.queryByText("Switch in OpenAlgo")).toBeNull();
+    },
+  );
+
+  it("a normal https builder link and switch link still render", async () => {
+    vi.spyOn(api, "getTradeExecutionMode").mockResolvedValue({ ...(paper as object), switch_url: "http://127.0.0.1:5001/" } as never);
+    const widget = { ...planWidget, meta: { strategy_builder_url: "https://trade.example/?tab=x" } } as unknown as TradePlanWidget;
+    render(<TradePlanWidgetCard widget={widget} />);
+    expect((await screen.findByText("Open Strategy Builder")).closest("a")).toHaveAttribute("href", "https://trade.example/?tab=x");
+    expect(screen.getByText("Switch in OpenAlgo").closest("a")).toHaveAttribute("href", "http://127.0.0.1:5001/");
+  });
+
   it("a ranked strategy without a tier is not printed as '(undefined)'", async () => {
     vi.spyOn(api, "getTradeExecutionMode").mockResolvedValue(paper);
     const widget = {
