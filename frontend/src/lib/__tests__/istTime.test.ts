@@ -75,4 +75,17 @@ describe("no browser-zone date rendering in src", () => {
     }
     expect(offenders).toEqual([]);
   });
+
+  // A raw ISO string cut with slice(0, 16).replace("T", " ") shows whatever offset the server wrote, with no zone label.
+  it("no ISO timestamp is shown by slicing the string", () => {
+    const offenders: string[] = [];
+    const re = /\.replace\(\s*(?:"T"|'T'|\/T\/)\s*,\s*["'] ["']\s*\)/g;
+    for (const file of files) {
+      const text = readFileSync(file, "utf8");
+      for (const m of text.matchAll(re)) {
+        offenders.push(`${file.slice(root.length)}: ${text.slice(Math.max(0, m.index! - 40), m.index! + 40).replace(/\n/g, " ")}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
 });

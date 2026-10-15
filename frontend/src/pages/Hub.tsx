@@ -308,7 +308,7 @@ function NewsRow({
           <h3 className="text-[13px] font-semibold leading-snug">{item.title || "Untitled"}</h3>
           <p className="text-[11px] text-muted-foreground">
             {item.source || "unknown source"}
-            {item.published_at ? ` · ${item.published_at.slice(0, 16).replace("T", " ")}` : ""}
+            {item.published_at ? ` · ${formatIst(item.published_at)}` : ""}
             {item.event_id ? ` · ${item.event_id.slice(0, 8)}` : item.ref_id ? ` · ${item.ref_id}` : ""}
           </p>
         </div>
@@ -402,7 +402,7 @@ function NewsRow({
               <li key={`${entry.at || idx}-${entry.kind || "entry"}`} className="text-foreground/90">
                 <span className="font-medium capitalize">{entry.kind || "update"}</span>
                 {entry.at ? (
-                  <span className="text-muted-foreground"> · {entry.at.slice(0, 16).replace("T", " ")}</span>
+                  <span className="text-muted-foreground"> · {formatIst(entry.at)}</span>
                 ) : null}
                 {entry.summary ? <p className="text-muted-foreground line-clamp-2">{entry.summary}</p> : null}
               </li>
@@ -484,7 +484,7 @@ function RankedNewsCard({
       </h3>
       <p className="mt-1 text-[11px] text-muted-foreground">
         {item.source || "unknown source"}
-        {item.published_at ? ` · ${item.published_at.slice(0, 16).replace("T", " ")}` : ""}
+        {item.published_at ? ` · ${formatIst(item.published_at)}` : ""}
       </p>
       {item.summary ? (
         <p className="mt-1.5 text-[12px] leading-relaxed text-foreground/90 line-clamp-1">
@@ -583,7 +583,7 @@ function DiscardedRow({
           <h3 className="text-[13px] font-semibold leading-snug">{item.title || "Untitled"}</h3>
           <p className="text-[11px] text-muted-foreground">
             {item.reason || "discarded"}
-            {item.discarded_at ? ` · ${item.discarded_at.slice(0, 16).replace("T", " ")}` : ""}
+            {item.discarded_at ? ` · ${formatIst(item.discarded_at)}` : ""}
           </p>
           {item.expires_at ? (
             <p className="text-[10px] text-muted-foreground">

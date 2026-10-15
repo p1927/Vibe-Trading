@@ -114,7 +114,7 @@ describe("unknown is not zero", () => {
     const { container } = render(<BacktestEvaluationPanel report={report} />);
     const hits = [...container.querySelectorAll("tbody tr")].map((tr) => tr.lastElementChild?.textContent);
     expect(hits).toEqual(["✓", "✗", "—"]); // newest first: 10-03 hit, 10-02 miss, 10-01 unresolved
-    expect(container.textContent).toContain("Computed 2026-10-13 08:00");
+    expect(container.textContent).toContain("Computed 13 Oct 2026, 13:30 IST");
   });
 
   it("a forecast-engine evaluation without loss figures shows dashes, not 0.0 / 'No'", async () => {

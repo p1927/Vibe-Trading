@@ -156,7 +156,7 @@ describe("scoreboard states are loud", () => {
   it("a stale cached scoreboard says so in the page itself", () => {
     const r = { ...report, needs_refresh: true, as_of: "2026-08-29T13:29:45+00:00" } as unknown as IndexTrackScoreboardReport;
     const { container } = render(<TrackScoreboardPanel report={r} />);
-    expect(container.querySelector('[data-testid="scoreboard-stale"]')?.textContent).toContain("2026-08-29");
+    expect(container.querySelector('[data-testid="scoreboard-stale"]')?.textContent).toContain("29 Aug 2026");
     expect(render(<TrackScoreboardPanel report={report} />).container.querySelector('[data-testid="scoreboard-stale"]')).toBeNull();
   });
 });

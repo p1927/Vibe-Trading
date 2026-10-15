@@ -7,6 +7,7 @@ import { TrackScoreboardChart } from "@/components/charts/TrackScoreboardChart";
 import { TrackScoreboardEvalPanel } from "@/components/prediction/TrackScoreboardEvalPanel";
 import { TrackScoreboardReplaySection } from "@/components/prediction/TrackScoreboardReplaySection";
 import { cn } from "@/lib/utils";
+import { formatIst } from "@/lib/istTime";
 
 interface Props {
   report: IndexTrackScoreboardReport | null;
@@ -147,7 +148,7 @@ export function TrackScoreboardPanel({
             {report.hybrid_eval_count != null
               ? ` · ${report.hybrid_eval_count} hybrid constituent days`
               : ""}
-            {report.as_of ? ` · computed ${String(report.as_of).slice(0, 16).replace("T", " ")} UTC` : ""}
+            {report.as_of ? ` · computed ${formatIst(report.as_of)}` : ""}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -215,7 +216,7 @@ export function TrackScoreboardPanel({
 
       {report.needs_refresh && !recomputing ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200" data-testid="scoreboard-stale">
-          Cached scoreboard is stale{report.as_of ? ` (computed ${String(report.as_of).slice(0, 16).replace("T", " ")} UTC)` : ""} — the numbers below
+          Cached scoreboard is stale{report.as_of ? ` (computed ${formatIst(report.as_of)})` : ""} — the numbers below
           may predate the current track set and promotion bar. Recompute scoreboard to refresh them.
         </div>
       ) : null}

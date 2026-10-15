@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import type { IndexCounterfactualRow, IndexMissAnalysisReport } from "@/lib/api";
 import { DayMoveCauses } from "@/components/prediction/DayMoveCauses";
+import { formatIst } from "@/lib/istTime";
 
 function fmtPct(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -110,7 +111,7 @@ export function PredictionMissAnalysisPanel({
           <p className="mt-1 text-[11px] text-muted-foreground">
             Compares macro factors at prediction date (T0) vs maturity (T0+{report.horizon_days ?? "?"}d) for
             every direction miss — learn what changed while the forecast was live.
-            {report.as_of ? ` Computed ${String(report.as_of).slice(0, 16).replace("T", " ")}.` : ""}
+            {report.as_of ? ` Computed ${formatIst(report.as_of)}.` : ""}
           </p>
         </div>
         {onRefresh ? (

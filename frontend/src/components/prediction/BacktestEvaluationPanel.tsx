@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import type { IndexBacktestReport } from "@/lib/api";
 import { NiftyHistoricalChart } from "@/components/charts/NiftyHistoricalChart";
 import { DayMoveCauses } from "@/components/prediction/DayMoveCauses";
+import { formatIst } from "@/lib/istTime";
 
 function fmtPct(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -78,7 +79,7 @@ export function BacktestEvaluationPanel({
             {report.history_start} → {report.history_end} · {report.history_rows} trading rows ·{" "}
             {report.eval_count} out-of-sample predictions ({report.horizon_days}d horizon, {evalProtocol}). Scope:{" "}
             <span className="font-medium">{isHybrid ? "hybrid (macro + bottom-up)" : "macro-only Ridge"}</span>.
-            {report.as_of ? ` Computed ${String(report.as_of).slice(0, 16).replace("T", " ")}.` : ""}
+            {report.as_of ? ` Computed ${formatIst(report.as_of)}.` : ""}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

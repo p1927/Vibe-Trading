@@ -4,6 +4,7 @@ import type { IndexTrackScoreboardReport } from "@/lib/api";
 import { scoreboardIds } from "@/lib/trackScoreboardUtils";
 import { trackDisplayLabel } from "@/lib/forecastReplay/sourceStyle";
 import { cn } from "@/lib/utils";
+import { formatIst } from "@/lib/istTime";
 
 const PIPELINE_STEPS = [
   { id: "connect", label: "Connect to scoreboard API", afterMs: 0 },
@@ -191,7 +192,7 @@ export function TrackScoreboardProgressPanel({
           <p>730 trading days · eval every 5 sessions · nested walk-forward</p>
         )}
         {lastAsOf ? (
-          <p className="mt-1">Cached as of {String(lastAsOf).slice(0, 19).replace("T", " ")} UTC</p>
+          <p className="mt-1">Cached as of {formatIst(lastAsOf)}</p>
         ) : null}
         {report?.needs_refresh && !active ? (
           <p className="mt-1 text-amber-700 dark:text-amber-400">Cache stale — recompute recommended.</p>

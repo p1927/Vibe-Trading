@@ -9,6 +9,7 @@ import {
   type IndexPredictionNewsPipelineHealth,
   type NewsFactorScenarioTimelineResponse,
 } from "@/lib/api";
+import { formatIst } from "@/lib/istTime";
 
 interface Props {
   horizonDays: number;
@@ -499,7 +500,7 @@ export function NewsImpactPanel({
                   <p className="text-[11px] text-muted-foreground">
                     {item.source}
                     {sources.length > 1 ? ` · ${sources.length} sources merged` : ""}
-                    {item.published_at ? ` · ${item.published_at.slice(0, 16).replace("T", " ")}` : ""}
+                    {item.published_at ? ` · ${formatIst(item.published_at)}` : ""}
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -547,7 +548,7 @@ export function NewsImpactPanel({
                         <span className="font-medium capitalize text-foreground/80">
                           {entry.kind ?? "update"}
                         </span>
-                        {entry.at ? ` · ${entry.at.slice(0, 16).replace("T", " ")}` : ""}
+                        {entry.at ? ` · ${formatIst(entry.at)}` : ""}
                         {entry.summary ? ` — ${entry.summary.slice(0, 120)}` : ""}
                       </li>
                     ))}

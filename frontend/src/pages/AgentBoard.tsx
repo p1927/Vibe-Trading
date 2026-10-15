@@ -851,7 +851,7 @@ export function AgentBoard() {
                     {gradedDecisions.map((row) => (
                       <tr key={`${row.decision_id}-${row.horizon}`} className="border-b last:border-0">
                         <td className="px-3 py-2 whitespace-nowrap text-[11px] text-muted-foreground">
-                          {row.decision_at ? row.decision_at.slice(0, 16).replace("T", " ") : "—"}
+                          {row.decision_at ? formatIst(row.decision_at) : "—"}
                         </td>
                         <td className="px-3 py-2 font-medium">{row.decision ?? "—"}</td>
                         <td className="px-3 py-2">

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ForecastReplayPanel } from "@/components/prediction/forecast-replay";
 import type { IndexTrackScoreboardReport } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { formatIst } from "@/lib/istTime";
 
 interface Props {
   horizonDays: number;
@@ -20,7 +21,7 @@ export function TrackScoreboardReplaySection({ horizonDays, report }: Props) {
     // The replay's backtest family lists its per-track sources only for a current scoreboard; asking for them anyway
     // is a 422 "unknown source ids". Say why instead.
     const detail = [
-      report.as_of ? `computed ${String(report.as_of).slice(0, 16).replace("T", " ")} UTC` : null,
+      report.as_of ? `computed ${formatIst(report.as_of)}` : null,
       report.schema_version != null ? `schema ${report.schema_version}` : null,
       report.horizon_days != null ? `${report.horizon_days}d horizon` : null,
     ].filter(Boolean).join(", ");

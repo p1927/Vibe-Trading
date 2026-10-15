@@ -13,7 +13,7 @@ describe("TrackScoreboardReplaySection", () => {
     );
     const t = container.querySelector('[data-testid="backtest-replay-stale"]')?.textContent ?? "";
     expect(t).toContain("stale");
-    expect(t).toContain("2026-08-29 13:29");
+    expect(t).toContain("29 Aug 2026, 18:59 IST");
     expect(t).toContain("schema 5");
     expect(panel).not.toHaveBeenCalled();
   });
