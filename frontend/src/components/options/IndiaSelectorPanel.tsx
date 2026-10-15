@@ -12,14 +12,9 @@ import { formatNumber } from "@/lib/formatters";
 
 const DEFAULT_TICKER = "NIFTY";
 
-function fmtNum(v: number | null | undefined, digits = 2): string {
-  if (v === null || v === undefined || !Number.isFinite(v)) return "–";
-  return formatNumber(v, { maximumFractionDigits: digits });
-}
-
 function fmtPct(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return "–";
-  return `${fmtNum(v * 100, 0)}%`;
+  return `${formatNumber(v * 100, { maximumFractionDigits: 0 })}%`;
 }
 
 function LegsTable({ legs }: { legs: SelectorCandidate["legs"] }) {
@@ -40,7 +35,7 @@ function LegsTable({ legs }: { legs: SelectorCandidate["legs"] }) {
           <tr key={i} className="border-b border-border/30 last:border-0">
             <td className="py-0.5 pr-2">{String(leg.side ?? "–")}</td>
             <td className="py-0.5 pr-2">{String(leg.option_type ?? "–")}</td>
-            <td className="py-0.5 pr-2">{fmtNum(leg.strike, 1)}</td>
+            <td className="py-0.5 pr-2">{formatNumber(leg.strike, { maximumFractionDigits: 1 })}</td>
             <td className="py-0.5">{leg.quantity ?? leg.lots ?? "–"}</td>
           </tr>
         ))}
@@ -104,11 +99,11 @@ function CandidateCard({
         </div>
         <div>
           {t("options.india.selector.riskReward", { defaultValue: "Risk/Reward" })}{" "}
-          <span className="font-medium text-foreground">{fmtNum(candidate.risk_reward_ratio)}</span>
+          <span className="font-medium text-foreground">{formatNumber(candidate.risk_reward_ratio, { maximumFractionDigits: 2 })}</span>
         </div>
         <div>
           {t("options.india.selector.popPerRisk", { defaultValue: "PoP/Risk" })}{" "}
-          <span className="font-medium text-foreground">{fmtNum(candidate.pop_per_risk, 4)}</span>
+          <span className="font-medium text-foreground">{formatNumber(candidate.pop_per_risk, { maximumFractionDigits: 4 })}</span>
         </div>
         <div>
           {t("options.india.selector.expectedPnl", { defaultValue: "Expected P&L" })}{" "}

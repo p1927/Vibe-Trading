@@ -19,11 +19,6 @@ export function fmtHitRate(v: number | null | undefined): string {
   return `${Math.round(v * 100)}%`;
 }
 
-export function fmtNum(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
-}
-
 const COMBINER_PREFIX = "combiner:";
 
 export interface ScoreboardIds {

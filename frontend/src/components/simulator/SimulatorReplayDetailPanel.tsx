@@ -51,11 +51,6 @@ const BUCKET_DISPLAY_NAMES: Record<string, string> = {
   constituent_ohlcv: "Constituent OHLCV (equities)",
 };
 
-function fmtNum(n: number | null | undefined): string {
-  if (n === null || n === undefined) return "—";
-  return formatNumber(n, { maximumFractionDigits: 2 });
-}
-
 // A partially-backfilled bucket can return a non-empty `bars` array where
 // individual rows carry null/non-finite OHLC. Those slip past every
 // `bars.length === 0` gate downstream and render as candles ECharts silently
@@ -583,19 +578,19 @@ export function SimulatorReplayDetailPanel({
                       <div className="grid grid-cols-3 gap-2 text-xs">
                         <div className="rounded-lg border bg-background/60 p-2">
                           <div className="text-[10px] text-muted-foreground">Open</div>
-                          <div className="font-medium tabular-nums">{fmtNum(summary.open)}</div>
+                          <div className="font-medium tabular-nums">{formatNumber(summary.open, { maximumFractionDigits: 2 })}</div>
                         </div>
                         <div className="rounded-lg border bg-background/60 p-2">
                           <div className="text-[10px] text-muted-foreground">Close</div>
-                          <div className="font-medium tabular-nums">{fmtNum(summary.close)}</div>
+                          <div className="font-medium tabular-nums">{formatNumber(summary.close, { maximumFractionDigits: 2 })}</div>
                         </div>
                         <div className="rounded-lg border bg-background/60 p-2">
                           <div className="text-[10px] text-muted-foreground">High</div>
-                          <div className="font-medium tabular-nums">{fmtNum(summary.high)}</div>
+                          <div className="font-medium tabular-nums">{formatNumber(summary.high, { maximumFractionDigits: 2 })}</div>
                         </div>
                         <div className="rounded-lg border bg-background/60 p-2">
                           <div className="text-[10px] text-muted-foreground">Low</div>
-                          <div className="font-medium tabular-nums">{fmtNum(summary.low)}</div>
+                          <div className="font-medium tabular-nums">{formatNumber(summary.low, { maximumFractionDigits: 2 })}</div>
                         </div>
                         <div className="rounded-lg border bg-background/60 p-2">
                           <div className="text-[10px] text-muted-foreground">Bars</div>
@@ -603,7 +598,7 @@ export function SimulatorReplayDetailPanel({
                         </div>
                         <div className="rounded-lg border bg-background/60 p-2">
                           <div className="text-[10px] text-muted-foreground">Volume</div>
-                          <div className="font-medium tabular-nums">{fmtNum(summary.volume)}</div>
+                          <div className="font-medium tabular-nums">{formatNumber(summary.volume, { maximumFractionDigits: 2 })}</div>
                         </div>
                       </div>
                     ) : null}
@@ -703,7 +698,7 @@ function BucketList({
             </div>
             <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-muted-foreground">
               {status.rows !== undefined && status.rows !== null ? (
-                <span>rows: {fmtNum(status.rows)}</span>
+                <span>rows: {formatNumber(status.rows, { maximumFractionDigits: 2 })}</span>
               ) : null}
               <span>source: {status.primary_source || "—"}</span>
             </div>

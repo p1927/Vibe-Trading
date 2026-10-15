@@ -11,11 +11,6 @@ import { useLatestRequest } from "@/hooks/useLatestRequest";
 
 const DEFAULT_TICKER = "NIFTY";
 
-function fmtNum(v: number | null | undefined, digits = 2): string {
-  if (v === null || v === undefined || !Number.isFinite(v)) return "–";
-  return formatNumber(v, { maximumFractionDigits: digits });
-}
-
 function StrategyCard({ strategy }: { strategy: RankedOptionStrategy }) {
   const { t } = useTranslation();
   const legs = Array.isArray(strategy.legs) ? strategy.legs : [];
@@ -34,12 +29,12 @@ function StrategyCard({ strategy }: { strategy: RankedOptionStrategy }) {
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground sm:grid-cols-4">
         <div>
           {t("options.india.score", { defaultValue: "Score" })}{" "}
-          <span className="font-medium text-foreground">{fmtNum(strategy.score)}</span>
+          <span className="font-medium text-foreground">{formatNumber(strategy.score, { maximumFractionDigits: 2 })}</span>
         </div>
         <div>
           {t("options.india.pop", { defaultValue: "PoP" })}{" "}
           <span className="font-medium text-foreground">
-            {strategy.pop != null && Number.isFinite(strategy.pop) ? `${fmtNum(strategy.pop * 100, 0)}%` : "–"}
+            {strategy.pop != null && Number.isFinite(strategy.pop) ? `${formatNumber(strategy.pop * 100, { maximumFractionDigits: 0 })}%` : "–"}
           </span>
         </div>
         <div>
@@ -189,7 +184,7 @@ export function IndiaStrategyPanel({ underlying }: Props) {
             </span>
             <span>
               {t("options.india.pcr", { defaultValue: "PCR" })}{" "}
-              <span className="font-medium text-foreground">{fmtNum(data.pcr)}</span>
+              <span className="font-medium text-foreground">{formatNumber(data.pcr, { maximumFractionDigits: 2 })}</span>
             </span>
             <span>
               {t("options.chain.expiration")}{" "}

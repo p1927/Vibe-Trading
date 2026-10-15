@@ -13,21 +13,16 @@ const DEFAULT_TICKER = "NIFTY";
 const MIN_HORIZON = 1;
 const MAX_HORIZON = 60;
 
-function fmtNum(v: number | null | undefined, digits = 2): string {
-  if (v === null || v === undefined || !Number.isFinite(v)) return "–";
-  return formatNumber(v, { maximumFractionDigits: digits });
-}
-
 function fmtPct(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return "–";
-  return `${fmtNum(v * 100, 0)}%`;
+  return `${formatNumber(v * 100, { maximumFractionDigits: 0 })}%`;
 }
 
 function ChainRow({ row }: { row: PopOverlayRow }) {
   const pop = row.pop;
   return (
     <tr className="border-b border-border/30 last:border-0">
-      <td className="py-1 pr-2 tabular-nums">{fmtNum(row.strike, 1)}</td>
+      <td className="py-1 pr-2 tabular-nums">{formatNumber(row.strike, { maximumFractionDigits: 1 })}</td>
       <td className="py-1 pr-2">
         <span
           className={cn(
@@ -40,15 +35,15 @@ function ChainRow({ row }: { row: PopOverlayRow }) {
           {row.option_type}
         </span>
       </td>
-      <td className="py-1 pr-2 tabular-nums">{fmtNum(row.last_price)}</td>
-      <td className="py-1 pr-2 tabular-nums">{fmtNum(row.bid)}</td>
-      <td className="py-1 pr-2 tabular-nums">{fmtNum(row.ask)}</td>
+      <td className="py-1 pr-2 tabular-nums">{formatNumber(row.last_price, { maximumFractionDigits: 2 })}</td>
+      <td className="py-1 pr-2 tabular-nums">{formatNumber(row.bid, { maximumFractionDigits: 2 })}</td>
+      <td className="py-1 pr-2 tabular-nums">{formatNumber(row.ask, { maximumFractionDigits: 2 })}</td>
       <td className="py-1 pr-2 tabular-nums font-medium">
         {pop ? fmtPct(pop.probability_of_profit) : "–"}
       </td>
-      <td className="py-1 pr-2 tabular-nums">{pop ? fmtNum(pop.expected_pnl) : "–"}</td>
+      <td className="py-1 pr-2 tabular-nums">{pop ? formatNumber(pop.expected_pnl, { maximumFractionDigits: 2 }) : "–"}</td>
       <td className="py-1 pr-2 tabular-nums text-muted-foreground">
-        {pop ? `${fmtNum(pop.pnl_p10)} / ${fmtNum(pop.pnl_p50)} / ${fmtNum(pop.pnl_p90)}` : (row.pop_skip_reason ?? "–")}
+        {pop ? `${formatNumber(pop.pnl_p10, { maximumFractionDigits: 2 })} / ${formatNumber(pop.pnl_p50, { maximumFractionDigits: 2 })} / ${formatNumber(pop.pnl_p90, { maximumFractionDigits: 2 })}` : (row.pop_skip_reason ?? "–")}
       </td>
     </tr>
   );
@@ -184,7 +179,7 @@ export function IndiaPopOverlayPanel({ underlying, source }: Props) {
             </span>
             <span>
               {t("options.india.popOverlay.forecastP50", { defaultValue: "Forecast p50 (%)" })}{" "}
-              <span className="font-medium text-foreground">{fmtNum(data.forecast_quantiles?.p50)}</span>
+              <span className="font-medium text-foreground">{formatNumber(data.forecast_quantiles?.p50, { maximumFractionDigits: 2 })}</span>
             </span>
           </div>
 

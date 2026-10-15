@@ -3,12 +3,12 @@ import type { IndexTrackScoreboardReport } from "@/lib/api";
 import {
   computeTrackEvalStats,
   fmtHitRate,
-  fmtNum,
   fmtPct,
   scoreboardIds,
 } from "@/lib/trackScoreboardUtils";
 import { trackDisplayLabel } from "@/lib/forecastReplay/sourceStyle";
 import { cn } from "@/lib/utils";
+import { formatNumber } from "@/lib/formatters";
 
 interface Props {
   report: IndexTrackScoreboardReport;
@@ -148,11 +148,11 @@ export function TrackScoreboardEvalPanel({ report, horizonDays }: Props) {
                 return (
                   <tr key={`${row.date}-${row.track_id}`} className="border-b border-border/40">
                     <td className="py-1.5 pr-3 tabular-nums">{row.date}</td>
-                    <td className="py-1.5 pr-3 tabular-nums">{fmtNum(row.close)}</td>
+                    <td className="py-1.5 pr-3 tabular-nums">{formatNumber(row.close, { maximumFractionDigits: 0 })}</td>
                     <td className="py-1.5 pr-3 tabular-nums">
                       {fmtPct(row.predicted_pct)}
                       {implied != null && Number.isFinite(implied) ? (
-                        <span className="ml-1 text-muted-foreground">→ {fmtNum(implied)}</span>
+                        <span className="ml-1 text-muted-foreground">→ {formatNumber(implied, { maximumFractionDigits: 0 })}</span>
                       ) : null}
                     </td>
                     <td className="py-1.5 pr-3 tabular-nums">{fmtPct(row.actual_pct)}</td>

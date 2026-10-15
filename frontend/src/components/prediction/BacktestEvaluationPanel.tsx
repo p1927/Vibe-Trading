@@ -4,16 +4,12 @@ import type { IndexBacktestReport } from "@/lib/api";
 import { NiftyHistoricalChart } from "@/components/charts/NiftyHistoricalChart";
 import { DayMoveCauses } from "@/components/prediction/DayMoveCauses";
 import { formatIst } from "@/lib/istTime";
+import { formatNumber } from "@/lib/formatters";
 
 function fmtPct(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return "—";
   const sign = v > 0 ? "+" : "";
   return `${sign}${v.toFixed(2)}%`;
-}
-
-function fmtNum(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
 interface Props {
@@ -251,7 +247,7 @@ export function BacktestEvaluationPanel({
                         onClick={() => setExpandedDrop(open ? null : row.date ?? null)}
                       >
                         <td className="py-1.5 pr-3 tabular-nums">{row.date}</td>
-                        <td className="py-1.5 pr-3 tabular-nums">{fmtNum(row.spot)}</td>
+                        <td className="py-1.5 pr-3 tabular-nums">{formatNumber(row.spot, { maximumFractionDigits: 0 })}</td>
                         <td className="py-1.5 pr-3 tabular-nums text-red-600 dark:text-red-400">
                           {fmtPct(row.realized_1d_pct)}
                         </td>
@@ -357,10 +353,10 @@ export function BacktestEvaluationPanel({
                       onClick={() => setExpandedDate(open ? null : row.date ?? null)}
                     >
                       <td className="py-1.5 pr-3 tabular-nums">{row.date}</td>
-                      <td className="py-1.5 pr-3 tabular-nums">{fmtNum(row.spot)}</td>
+                      <td className="py-1.5 pr-3 tabular-nums">{formatNumber(row.spot, { maximumFractionDigits: 0 })}</td>
                       <td className="py-1.5 pr-3 tabular-nums">
                         {fmtPct(row.predicted_return_pct)}
-                        <span className="ml-1 text-muted-foreground">→ {fmtNum(row.implied_level)}</span>
+                        <span className="ml-1 text-muted-foreground">→ {formatNumber(row.implied_level, { maximumFractionDigits: 0 })}</span>
                       </td>
                       <td className="py-1.5 pr-3 tabular-nums">{fmtPct(row.actual_forward_return_pct)}</td>
                       <td className="py-1.5 pr-3 tabular-nums">{fmtPct(row.error_pct)}</td>

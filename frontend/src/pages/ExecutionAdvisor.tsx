@@ -10,14 +10,9 @@ import { formatNumber } from "@/lib/formatters";
 const POLL_INTERVAL_MS = 15_000;
 const UNGROUPED_KEY = "ungrouped";
 
-function fmtNum(v: number | null | undefined, digits = 2): string {
-  if (v === null || v === undefined || !Number.isFinite(v)) return "–";
-  return formatNumber(v, { maximumFractionDigits: digits });
-}
-
 function fmtPct(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return "–";
-  return `${fmtNum(v * 100, 0)}%`;
+  return `${formatNumber(v * 100, { maximumFractionDigits: 0 })}%`;
 }
 
 /** The panel reads the newest row the scheduled sweep wrote, so it can be old. Past this the
@@ -88,22 +83,22 @@ function AdvisoryCard({ advisory, now }: { advisory: ExecutionAdvisorAdvisory; n
       </p>
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground sm:grid-cols-3">
         <div>
-          LTP <span className="font-medium text-foreground">{fmtNum(advisory.ltp)}</span>
+          LTP <span className="font-medium text-foreground">{formatNumber(advisory.ltp, { maximumFractionDigits: 2 })}</span>
         </div>
         <div>
-          Entry <span className="font-medium text-foreground">{fmtNum(advisory.entry_price)}</span>
+          Entry <span className="font-medium text-foreground">{formatNumber(advisory.entry_price, { maximumFractionDigits: 2 })}</span>
         </div>
         <div>
           Direction <span className="font-medium text-foreground">{advisory.entry_direction ?? "–"}</span>
         </div>
         <div>
-          Trail stop <span className="font-medium text-foreground">{fmtNum(advisory.recommended_stop_price)}</span>
+          Trail stop <span className="font-medium text-foreground">{formatNumber(advisory.recommended_stop_price, { maximumFractionDigits: 2 })}</span>
         </div>
         <div>
           Confidence (EMA) <span className="font-medium text-foreground">{fmtPct(advisory.confidence_ema)}</span>
         </div>
         <div>
-          Flip count <span className="font-medium text-foreground">{fmtNum(advisory.consecutive_flip_count, 0)}</span>
+          Flip count <span className="font-medium text-foreground">{formatNumber(advisory.consecutive_flip_count, { maximumFractionDigits: 0 })}</span>
         </div>
       </div>
     </div>
@@ -142,10 +137,10 @@ function TrackRecordPanel({ record }: { record: TrackRecordResponse | null }) {
         <p className="text-xs text-muted-foreground">Forecast accuracy from the realized prediction ledger — {record.scope}</p>
       </div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-4">
-        <div>Samples <span className="font-medium text-foreground">{fmtNum(record.sample_count, 0)}</span></div>
-        <div>Evaluated <span className="font-medium text-foreground">{fmtNum(record.eval_count, 0)}</span></div>
+        <div>Samples <span className="font-medium text-foreground">{formatNumber(record.sample_count, { maximumFractionDigits: 0 })}</span></div>
+        <div>Evaluated <span className="font-medium text-foreground">{formatNumber(record.eval_count, { maximumFractionDigits: 0 })}</span></div>
         <div>Direction, {record.window_days}d <span className="font-medium text-foreground">{fmtPct(record.direction_hit_rate_14d)}</span></div>
-        <div>MAE, {record.window_days}d <span className="font-medium text-foreground">{record.mae_14d_pct == null ? "–" : `${fmtNum(record.mae_14d_pct)}%`}</span></div>
+        <div>MAE, {record.window_days}d <span className="font-medium text-foreground">{record.mae_14d_pct == null ? "–" : `${formatNumber(record.mae_14d_pct, { maximumFractionDigits: 2 })}%`}</span></div>
       </div>
     </section>
   );

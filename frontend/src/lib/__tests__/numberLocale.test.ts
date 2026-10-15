@@ -46,4 +46,15 @@ describe("no browser-locale number formatting in src", () => {
     }
     expect(offenders).toEqual([]);
   });
+
+  // One helper per file is a second way to format a number (D306): call formatNumber with Intl options.
+  it("no per-file fmtNum / fmtInt wrapper around formatNumber", () => {
+    const offenders: string[] = [];
+    const re = /(?:function|const)\s+(?:fmtNum|fmtInt)\b/g;
+    for (const file of files) {
+      const text = readFileSync(file, "utf8");
+      for (const m of text.matchAll(re)) offenders.push(`${file.slice(root.length)}: ${m[0]}`);
+    }
+    expect(offenders).toEqual([]);
+  });
 });

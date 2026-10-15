@@ -18,11 +18,6 @@ function fmt(market: MarketId, v: number | null, maxDigits = 2): string {
   return formatCurrency(market, v, { maximumFractionDigits: maxDigits });
 }
 
-function fmtInt(v: number | null): string {
-  if (v === null || !Number.isFinite(v)) return "–";
-  return formatNumber(Math.round(v));
-}
-
 function fmtIv(v: number | null): string {
   if (v === null || !Number.isFinite(v)) return "–";
   return `${(v * 100).toFixed(1)}%`;
@@ -101,8 +96,8 @@ function WingTable({ title, rows, atmStrike, market }: WingTableProps) {
                   <td className="py-1.5 pe-3 text-end tabular-nums text-muted-foreground">
                     {fmtSpread(row.bid, row.ask)}
                   </td>
-                  <td className="py-1.5 pe-3 text-end tabular-nums">{fmtInt(row.volume)}</td>
-                  <td className="py-1.5 pe-3 text-end tabular-nums">{fmtInt(row.open_interest)}</td>
+                  <td className="py-1.5 pe-3 text-end tabular-nums">{formatNumber(row.volume, { maximumFractionDigits: 0 })}</td>
+                  <td className="py-1.5 pe-3 text-end tabular-nums">{formatNumber(row.open_interest, { maximumFractionDigits: 0 })}</td>
                   <td className="py-1.5 pe-3 text-end tabular-nums">{fmtIv(row.implied_volatility)}</td>
                   <td className="py-1.5 text-end">
                     {row.in_the_money && (

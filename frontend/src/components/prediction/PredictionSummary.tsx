@@ -2,16 +2,12 @@ import { cn } from "@/lib/utils";
 import type { IndexPredictionArtifact } from "@/lib/api";
 import { tradeUiDeepLink } from "@/lib/trade-ui";
 import { formatIst } from "@/lib/istTime";
+import { formatNumber } from "@/lib/formatters";
 
 function fmtPct(v: number | null | undefined, digits = 2): string {
   if (v == null || !Number.isFinite(v)) return "—";
   const sign = v > 0 ? "+" : "";
   return `${sign}${v.toFixed(digits)}%`;
-}
-
-function fmtNum(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
-  return v.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 }
 
 function viewTone(view: string | null | undefined): string {
@@ -251,14 +247,14 @@ export function PredictionSummary({ artifact, flashReturn, horizonDays = 14 }: P
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         <StatCard
         label={`${horizonDays}d target (Nifty)`}
-        value={fmtNum(targetLevel)}
-        sub={`${fmtPct(expected)} from spot ${fmtNum(spot)}`}
+        value={formatNumber(targetLevel, { maximumFractionDigits: 0 })}
+        sub={`${fmtPct(expected)} from spot ${formatNumber(spot, { maximumFractionDigits: 0 })}`}
         tone={viewTone(view)}
         flash={flashReturn}
       />
       <StatCard
         label="Expected range"
-        value={`${fmtNum(range.low)} – ${fmtNum(range.high)}`}
+        value={`${formatNumber(range.low, { maximumFractionDigits: 0 })} – ${formatNumber(range.high, { maximumFractionDigits: 0 })}`}
         sub={`Index points at horizon · ${bandSourceLabel(range)}`}
       />
       <StatCard
