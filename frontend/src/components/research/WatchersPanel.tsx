@@ -12,6 +12,7 @@ import {
 } from "@/lib/pollIntervalOptions";
 import { cn } from "@/lib/utils";
 import { formatIst } from "@/lib/istTime";
+import { useConfirm } from "@/components/common/useConfirm";
 
 interface Props {
   sessionId?: string | null;
@@ -95,12 +96,21 @@ function WatchersPanelContent({
   } = shared.watchers;
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
 
   const onDelete = async (watchId: string) => {
     if (watchId.startsWith("agent:")) {
       toast.message("Watch activates with the agent — edit rules in chat.");
       return;
     }
+    const watch = watches.find((w) => w.watch_id === watchId);
+    const ok = await confirm({
+      title: "Remove watch",
+      description: `Remove "${watch?.label || watchId}"? The agent stops watching it.`,
+      confirmLabel: "Remove watch",
+      tone: "destructive",
+    });
+    if (!ok) return;
     setDeletingId(watchId);
     try {
       await api.deleteWatch(watchId);
@@ -123,6 +133,7 @@ function WatchersPanelContent({
 
   return (
     <div className={cn("space-y-3", className)}>
+      {confirmDialog}
       <WatchersPollControls
         pollMs={pollMs}
         onPollChange={setPollMs}
