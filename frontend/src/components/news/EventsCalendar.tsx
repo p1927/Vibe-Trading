@@ -2,6 +2,7 @@ import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, type HistoricalUpcomingEvent, type HubNewsCalendarEvent, type IndexUpcomingEvent } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { istTodayIso } from "@/lib/istTime";
 import { EventDetailPanel, type CalendarEventItem } from "@/components/news/EventDetailPanel";
 
 const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -12,6 +13,11 @@ const MONTH_LABELS = [
 
 function toIsoDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Local-midnight Date for the IST calendar day (event dates are IST days, the browser's own "today" can differ). */
+function istTodayDate(): Date {
+  return parseEventDate(istTodayIso()) as Date;
 }
 
 function parseEventDate(value?: string): Date | null {
@@ -55,10 +61,7 @@ export function EventsCalendar({
    * SSE. The calendar remains mount/date-driven elsewhere, avoiding a second poll timer. */
   refreshKey?: unknown;
 }) {
-  const [selectedDate, setSelectedDate] = useState(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  });
+  const [selectedDate, setSelectedDate] = useState(istTodayDate);
   const [newsEvents, setNewsEvents] = useState<HubNewsCalendarEvent[]>([]);
   const [historicalStructuralEvents, setHistoricalStructuralEvents] = useState<HistoricalUpcomingEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -88,6 +91,9 @@ export function EventsCalendar({
     let cancelled = false;
     setLoading(true);
     setError(null);
+    // The previous week's events must not stay on screen (undated ones show in every week) while the next
+    // loads or when it fails.
+    setNewsEvents([]);
     const start = weekStartIso;
     const end = weekEndIso;
     api
@@ -177,7 +183,7 @@ export function EventsCalendar({
     return { map, undated };
   }, [allItems]);
 
-  const today = toIsoDate(new Date());
+  const today = istTodayIso();
   const selectedKey = toIsoDate(selectedDate);
   const selectedDayItems = eventsByDate.map.get(selectedKey) ?? [];
 
@@ -216,7 +222,7 @@ export function EventsCalendar({
           {selectedKey !== today ? (
             <button
               type="button"
-              onClick={() => setSelectedDate(new Date())}
+              onClick={() => setSelectedDate(istTodayDate())}
               className="ml-1 rounded-md border px-1.5 py-1 text-[10px] text-muted-foreground hover:bg-muted/50"
             >
               Today

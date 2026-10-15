@@ -50,6 +50,13 @@ export function formatIstTime(value: string | number | Date | null | undefined, 
   return `${(withSeconds ? TIME : TIME_HM).format(date)} IST`;
 }
 
+const IST_YMD = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" });
+
+/** The IST calendar day as "YYYY-MM-DD": what "today" means for an Indian-market event date, in any browser zone. */
+export function istTodayIso(now: Date = new Date()): string {
+  return IST_YMD.format(now);
+}
+
 const DATE_Y = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric" });
 const DATE_NO_Y = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", day: "numeric", month: "short" });
 

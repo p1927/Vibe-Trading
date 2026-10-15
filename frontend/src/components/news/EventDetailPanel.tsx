@@ -2,6 +2,7 @@ import { ExternalLink, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { HistoricalUpcomingEvent, HubNewsCalendarEvent, HubNewsImpactFigures } from "@/lib/api";
 import { safeHttpUrl } from "@/lib/safeUrl";
+import { istTodayIso } from "@/lib/istTime";
 
 export type CalendarEventItem =
   | { kind: "news"; key: string; data: HubNewsCalendarEvent }
@@ -53,10 +54,8 @@ function isPastDate(dateStr?: string): boolean {
   if (!dateStr) return false;
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr.trim());
   if (!match) return false;
-  const d = new Date(parseInt(match[1], 10), parseInt(match[2], 10) - 1, parseInt(match[3], 10));
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return d.getTime() < today.getTime();
+  // Both sides are IST calendar days (YYYY-MM-DD compares as text), never the browser's zone.
+  return `${match[1]}-${match[2]}-${match[3]}` < istTodayIso();
 }
 
 function EventResultBlock({

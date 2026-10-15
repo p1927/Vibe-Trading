@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { EventsCalendar } from "../EventsCalendar";
+import { istTodayIso } from "@/lib/istTime";
 
 const apiMock = vi.hoisted(() => ({
   getHubNewsEventsCalendar: vi.fn(),
@@ -26,7 +27,7 @@ describe("EventsCalendar", () => {
     render(<EventsCalendar />);
     await waitFor(() => expect(apiMock.getHubNewsEventsCalendar).toHaveBeenCalledTimes(1));
     // the selected day is today; stepping to a day of the same week keeps the same window
-    const today = new Date();
+    const today = new Date(`${istTodayIso()}T12:00:00`);
     const step = today.getDay() === 6 ? -1 : 1;
     fireEvent.click(screen.getByLabelText(step === 1 ? "Next day" : "Previous day"));
     await new Promise((r) => setTimeout(r, 30));
