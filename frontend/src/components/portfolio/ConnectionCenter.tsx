@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { CheckCircle2, FolderCode, Loader2, PlugZap, Plus, ShieldCheck, Trash2, X } from "lucide-react";
 import { PortfolioCompatibilityBadge } from "@/components/portfolio/PortfolioCompatibilityBadge";
 import { api, type ConnectionsResponse, type LocalConnection } from "@/lib/api";
+import { useConfirm } from "@/components/common/useConfirm";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 
 interface Props {
   open: boolean;
@@ -27,9 +29,14 @@ export function ConnectionCenter({ open, onClose, onChanged }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
+  const [confirm, confirmDialog] = useConfirm();
+  const beginLoad = useLatestRequest();
 
+  // Re-opening the drawer or a save/delete refresh overlaps earlier loads: only the newest answer is shown.
   async function load() {
-    setData(await api.getConnections());
+    const current = beginLoad();
+    const res = await api.getConnections();
+    if (current()) setData(res);
   }
 
   useEffect(() => {
@@ -114,6 +121,15 @@ export function ConnectionCenter({ open, onClose, onChanged }: Props) {
   }
 
   async function remove(connection: LocalConnection) {
+    // Deleting a connection also deletes its credentials in the OS vault: never one click.
+    const ok = await confirm({
+      title: t("portfolio.connections.delete"),
+      description: connection.label,
+      confirmLabel: t("portfolio.connections.delete"),
+      cancelLabel: t("common.cancel", { defaultValue: "Cancel" }),
+      tone: "destructive",
+    });
+    if (!ok) return;
     setBusy(`delete:${connection.id}`);
     setMessage(null);
     try {
@@ -130,6 +146,7 @@ export function ConnectionCenter({ open, onClose, onChanged }: Props) {
   if (!open) return null;
 
   return <div className="fixed inset-0 z-[60] flex justify-end bg-black/40" role="presentation">
+    {confirmDialog}
     <section className="flex h-full w-full max-w-2xl flex-col border-l bg-background shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="connection-center-title">
       <header className="flex items-start justify-between border-b p-5">
         <div><h2 id="connection-center-title" className="text-lg font-semibold">{t("portfolio.connections.title")}</h2><p className="mt-1 text-xs text-muted-foreground">{t("portfolio.connections.subtitle")}</p></div>

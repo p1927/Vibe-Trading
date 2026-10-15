@@ -182,7 +182,7 @@ describe("IndiaStrategyPanel", () => {
     vi.spyOn(api, "getIndiaOptionsResearch").mockResolvedValue(research({ pop: null, score: 1 }));
     render(<IndiaStrategyPanel underlying="NIFTY" />);
     screen.getByRole("button", { name: /load/i }).click();
-    expect(await screen.findByTestId("india-strategy-as-of")).toHaveTextContent("2026-10-14 09:31");
+    expect(await screen.findByTestId("india-strategy-as-of")).toHaveTextContent("14 Oct 2026, 09:31 IST");
     const pop = screen.getByText(/PoP/).parentElement!;
     expect(pop).toHaveTextContent("–");
     expect(pop).not.toHaveTextContent("0%");

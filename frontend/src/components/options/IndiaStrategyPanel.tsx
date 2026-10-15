@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -6,6 +6,8 @@ import { api } from "@/lib/api";
 import type { IndiaOptionsResearchData, RankedOptionStrategy } from "@/lib/options";
 import { formatCurrency } from "@/lib/marketConfig";
 import { formatNumber } from "@/lib/formatters";
+import { formatIst } from "@/lib/istTime";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 
 const DEFAULT_TICKER = "NIFTY";
 
@@ -88,19 +90,20 @@ export function IndiaStrategyPanel({ underlying }: Props) {
   const [data, setData] = useState<IndiaOptionsResearchData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const generation = useRef(0);
+  const beginLoad = useLatestRequest();
 
   useEffect(() => {
     if (underlying) setTickerInput(underlying);
   }, [underlying]);
 
   const load = useCallback(async (ticker: string) => {
-    const gen = ++generation.current;
+    const current = beginLoad();
     setLoading(true);
     setError(null);
+    setData(null); // the previous ticker's ranking is not current while this one is being scored
     try {
       const res = await api.getIndiaOptionsResearch(ticker);
-      if (generation.current !== gen) return;
+      if (!current()) return;
       if (!res.ok || !res.data) {
         setError(res.error || t("options.india.requestFailed", { defaultValue: "Request failed" }));
         setData(null);
@@ -108,7 +111,7 @@ export function IndiaStrategyPanel({ underlying }: Props) {
       }
       setData(res.data);
     } catch (e) {
-      if (generation.current !== gen) return;
+      if (!current()) return;
       setError(
         e instanceof Error
           ? e.message
@@ -116,9 +119,9 @@ export function IndiaStrategyPanel({ underlying }: Props) {
       );
       setData(null);
     } finally {
-      if (generation.current === gen) setLoading(false);
+      if (current()) setLoading(false);
     }
-  }, [t]);
+  }, [t, beginLoad]);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -195,7 +198,7 @@ export function IndiaStrategyPanel({ underlying }: Props) {
             {data.as_of ? (
               <span data-testid="india-strategy-as-of">
                 {t("options.india.asOf", { defaultValue: "As of" })}{" "}
-                <span className="font-medium text-foreground">{String(data.as_of).slice(0, 16).replace("T", " ")}</span>
+                <span className="font-medium text-foreground">{formatIst(data.as_of)}</span>
               </span>
             ) : null}
           </div>

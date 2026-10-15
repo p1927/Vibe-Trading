@@ -3,6 +3,7 @@ import { Database, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type CaptureRegistryResponse } from "@/lib/api";
 import { formatIst } from "@/lib/istTime";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 
 const TIER_LABEL: Record<string, string> = {
   capture: "Capturing",
@@ -21,6 +22,7 @@ export function DataCapturePanel() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const beginLoad = useLatestRequest();
 
   const entity = useMemo(
     () => data?.registry?.entities?.find((e) => e.id === "NIFTY") ?? data?.registry?.entities?.[0],
@@ -28,17 +30,18 @@ export function DataCapturePanel() {
   );
 
   const load = useCallback(async () => {
+    const current = beginLoad();
     setLoading(true);
     setError(null);
     try {
       const res = await api.getCaptureRegistry("NIFTY");
-      setData(res);
+      if (current()) setData(res);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load capture registry");
+      if (current()) setError(err instanceof Error ? err.message : "Failed to load capture registry");
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
-  }, []);
+  }, [beginLoad]);
 
   useEffect(() => {
     void load();
@@ -52,6 +55,8 @@ export function DataCapturePanel() {
         entity_id: "NIFTY",
         patch: { capture_enabled: !entity?.capture_enabled },
       });
+      beginLoad(); // the saved registry is newer than any read still in flight
+      setLoading(false);
       setData(res);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Update failed");

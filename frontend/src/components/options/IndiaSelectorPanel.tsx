@@ -7,6 +7,7 @@ import { api, ApiError } from "@/lib/api";
 import type { SelectorCandidate, SelectorRankBy, SelectorResponseData } from "@/lib/options";
 import { formatCurrency } from "@/lib/marketConfig";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 import { formatNumber } from "@/lib/formatters";
 
 const DEFAULT_TICKER = "NIFTY";
@@ -173,17 +174,23 @@ export function IndiaSelectorPanel({ underlying }: Props) {
     candidate: SelectorCandidate;
     widgetId: string;
     orders: Record<string, unknown>[];
+    ticker: string;
   } | null>(null);
   const [executing, setExecuting] = useState(false);
+  const beginLoad = useLatestRequest();
+  const beginPrepare = useLatestRequest();
 
   const load = useCallback(
     async (ticker: string, targetProfit: number, currentRankBy: SelectorRankBy) => {
+      const current = beginLoad();
       setLoading(true);
       setError(null);
+      setData(null); // the previous ticker's candidates are not current while this one is being scored
       try {
         const res = await api.getIndiaOptionsSelector(ticker, targetProfit, {
           rankBy: currentRankBy,
         });
+        if (!current()) return;
         if (!res.ok) {
           setError(res.error || t("options.india.requestFailed", { defaultValue: "Request failed" }));
           setData(null);
@@ -191,6 +198,7 @@ export function IndiaSelectorPanel({ underlying }: Props) {
         }
         setData(res);
       } catch (e) {
+        if (!current()) return;
         setError(
           e instanceof Error
             ? e.message
@@ -198,27 +206,28 @@ export function IndiaSelectorPanel({ underlying }: Props) {
         );
         setData(null);
       } finally {
-        setLoading(false);
+        if (current()) setLoading(false);
       }
     },
-    [t],
+    [t, beginLoad],
   );
 
   const handleApprove = useCallback(
     async (candidate: SelectorCandidate) => {
       const ticker = data?.ticker;
       if (!ticker) return;
+      const current = beginPrepare(); // two quick Approve clicks: only the last prepared basket may be confirmed
       setPreparingName(candidate.name);
       try {
         const res = await api.prepareSelectorWidget(ticker, candidate);
-        setPending({ candidate, widgetId: res.widget_id, orders: res.orders });
+        if (current()) setPending({ candidate, widgetId: res.widget_id, orders: res.orders, ticker });
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed to prepare order");
+        if (current()) toast.error(e instanceof Error ? e.message : "Failed to prepare order");
       } finally {
-        setPreparingName(null);
+        if (current()) setPreparingName(null);
       }
     },
-    [data?.ticker],
+    [data?.ticker, beginPrepare],
   );
 
   const handleConfirm = useCallback(async () => {
@@ -358,9 +367,9 @@ export function IndiaSelectorPanel({ underlying }: Props) {
         description={
           pending
             ? t("options.india.selector.placeOrderDescription", {
-                defaultValue: `Place ${pending.orders.length} leg(s) for ${data?.ticker ?? ""} — ${pending.candidate.name}. This submits a real order.`,
+                defaultValue: `Place ${pending.orders.length} leg(s) for ${pending.ticker} — ${pending.candidate.name}. This submits a real order.`,
                 count: pending.orders.length,
-                ticker: data?.ticker ?? "",
+                ticker: pending.ticker,
                 strategy: pending.candidate.name,
               })
             : undefined

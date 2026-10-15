@@ -6,6 +6,7 @@ import {
   type FactorRegistryGapStatus,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 
 /**
  * Review queue for factor names the news attribution pass could not place in the factor
@@ -45,22 +46,26 @@ export function FactorRegistryGaps() {
   const [loading, setLoading] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const beginLoad = useLatestRequest();
 
   const load = useCallback(async (status: FactorRegistryGapStatus) => {
+    const current = beginLoad(); // a slow answer for the tab left behind must not fill the tab shown now
     setLoading(true);
     setError(null);
     try {
       const res = await api.listFactorRegistryGaps(status, 200);
+      if (!current()) return;
       setRows(res.candidates ?? []);
       setCounts(res.counts ?? {});
       setAcceptedMeans(res.accepted_means ?? "");
     } catch (err) {
+      if (!current()) return;
       setError(err instanceof Error ? err.message : String(err));
       setRows([]);
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
-  }, []);
+  }, [beginLoad]);
 
   useEffect(() => {
     void load(tab);

@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/common/useConfirm";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 import { formatIst } from "@/lib/istTime";
 
 // Per-agent memory viewing/curation panel — 2026-08-29-memory-management-frontend-ui.
@@ -359,15 +360,18 @@ export function AgentMemoryPanel({ agentId }: { agentId: string }) {
   const [detailRetryToken, setDetailRetryToken] = useState(0);
   const [sort, setSort] = useState<"updated" | "importance" | "last_accessed">("updated");
 
+  const beginList = useLatestRequest();
+
   const loadList = useCallback(() => {
+    const current = beginList(); // an earlier agent/sort/Refresh answer must not replace the newest list
     setLoading(true);
     setError(null);
     api
       .listAgentMemory({ agentId, sort })
-      .then((res) => setEntries(res.entries))
-      .catch((err) => setError(`Failed to load memory entries for this agent: ${errorText(err, "request failed")}`))
-      .finally(() => setLoading(false));
-  }, [agentId, sort]);
+      .then((res) => current() && setEntries(res.entries))
+      .catch((err) => current() && setError(`Failed to load memory entries for this agent: ${errorText(err, "request failed")}`))
+      .finally(() => current() && setLoading(false));
+  }, [agentId, sort, beginList]);
 
   useEffect(() => {
     loadList();

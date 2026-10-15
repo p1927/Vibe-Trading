@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
 import { api, type IndexQuantReviewReport } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { formatIst } from "@/lib/istTime";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 
 interface Props {
   ticker?: string;
@@ -12,23 +14,23 @@ export function QuantReviewPanel({ ticker = "NIFTY", horizonDays = 14 }: Props) 
   const [review, setReview] = useState<IndexQuantReviewReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const seq = useRef(0); // a slow answer for a previous ticker/horizon must not replace the current one
+  const beginLoad = useLatestRequest(); // a slow answer for a previous ticker/horizon must not replace the current one
 
   const load = useCallback(
     async (refresh = false) => {
-      const mine = ++seq.current;
+      const current = beginLoad();
       setLoading(true);
       setError(null);
       try {
         const res = await api.getIndexQuantReview(ticker, refresh, horizonDays);
-        if (mine === seq.current) setReview(res.review ?? null);
+        if (current()) setReview(res.review ?? null);
       } catch (e) {
-        if (mine === seq.current) setError(e instanceof Error ? e.message : "Quant review load failed");
+        if (current()) setError(e instanceof Error ? e.message : "Quant review load failed");
       } finally {
-        if (mine === seq.current) setLoading(false);
+        if (current()) setLoading(false);
       }
     },
-    [ticker, horizonDays]
+    [ticker, horizonDays, beginLoad]
   );
 
   useEffect(() => {
@@ -49,7 +51,7 @@ export function QuantReviewPanel({ ticker = "NIFTY", horizonDays = 14 }: Props) 
           <h2 className="text-sm font-semibold">Quant review</h2>
           <p className="text-[11px] text-muted-foreground">
             Second opinion — separate from Ridge headline forecast
-            {review?.as_of ? ` · as of ${String(review.as_of).slice(0, 16).replace("T", " ")}` : ""}
+            {review?.as_of ? ` · as of ${formatIst(review.as_of)}` : ""}
           </p>
         </div>
         <button

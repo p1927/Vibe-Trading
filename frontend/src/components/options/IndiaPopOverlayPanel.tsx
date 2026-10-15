@@ -7,6 +7,7 @@ import type { IndiaOptionsSource, PopOverlayResponse, PopOverlayRow } from "@/li
 import { formatCurrency } from "@/lib/marketConfig";
 import { PopOverlayChart } from "@/components/charts/PopOverlayChart";
 import { formatNumber } from "@/lib/formatters";
+import { useLatestRequest } from "@/hooks/useLatestRequest";
 
 const DEFAULT_TICKER = "NIFTY";
 const MIN_HORIZON = 1;
@@ -72,13 +73,17 @@ export function IndiaPopOverlayPanel({ underlying, source }: Props) {
   const [data, setData] = useState<PopOverlayResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const beginLoad = useLatestRequest();
 
   const load = useCallback(
     async (ticker: string, horizon: number) => {
+      const current = beginLoad();
       setLoading(true);
       setError(null);
+      setData(null); // the previous ticker/horizon result is not current while this one is being scored
       try {
         const res = await api.getIndiaOptionsPopOverlay(ticker, { horizonDays: horizon, source });
+        if (!current()) return;
         if (!res.ok) {
           setError(res.error || t("options.india.requestFailed", { defaultValue: "Request failed" }));
           setData(null);
@@ -86,6 +91,7 @@ export function IndiaPopOverlayPanel({ underlying, source }: Props) {
         }
         setData(res);
       } catch (e) {
+        if (!current()) return;
         setError(
           e instanceof Error
             ? e.message
@@ -93,10 +99,10 @@ export function IndiaPopOverlayPanel({ underlying, source }: Props) {
         );
         setData(null);
       } finally {
-        setLoading(false);
+        if (current()) setLoading(false);
       }
     },
-    [source, t],
+    [source, t, beginLoad],
   );
 
   const onSubmit = (e: FormEvent) => {
