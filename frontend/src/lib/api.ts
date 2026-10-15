@@ -1138,19 +1138,19 @@ export const api = {
     if (params.chart_payload) q.set("chart_payload", params.chart_payload);
     if (params.chart_symbol) q.set("chart_symbol", params.chart_symbol);
     const qs = q.toString();
-    return request<RunData>(`/runs/${id}${qs ? `?${qs}` : ""}`);
+    return request<RunData>(`/runs/${encodeURIComponent(id)}${qs ? `?${qs}` : ""}`);
   },
-  getRunCode: (id: string) => request<Record<string, string>>(`/runs/${id}/code`),
-  getRunFactor: (id: string) => request<FactorReportPayload>(`/runs/${id}/factor`),
+  getRunCode: (id: string) => request<Record<string, string>>(`/runs/${encodeURIComponent(id)}/code`),
+  getRunFactor: (id: string) => request<FactorReportPayload>(`/runs/${encodeURIComponent(id)}/factor`),
   getRunAttribution: (id: string) => request<AttributionResponse>(`/runs/${encodeURIComponent(id)}/attribution`),
-  getRunPine: (id: string) => request<PineScriptResult>(`/runs/${id}/pine`),
+  getRunPine: (id: string) => request<PineScriptResult>(`/runs/${encodeURIComponent(id)}/pine`),
   listSessions: () => request<SessionItem[]>("/sessions"),
   createSession: (title?: string) => request<SessionItem>("/sessions", { method: "POST", body: JSON.stringify({ title: title || "" }) }),
-  deleteSession: (sid: string) => request<{ status: string }>(`/sessions/${sid}`, { method: "DELETE" }),
-  renameSession: (sid: string, title: string) => request<{ status: string }>(`/sessions/${sid}`, { method: "PATCH", body: JSON.stringify({ title }) }),
+  deleteSession: (sid: string) => request<{ status: string }>(`/sessions/${encodeURIComponent(sid)}`, { method: "DELETE" }),
+  renameSession: (sid: string, title: string) => request<{ status: string }>(`/sessions/${encodeURIComponent(sid)}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   // Codex-style LLM summary title from the first exchange; backend refuses to
   // overwrite a manual rename, so this is safe to fire-and-forget.
-  autoTitleSession: (sid: string) => request<{ status: string; title: string }>(`/sessions/${sid}/title/auto`, { method: "POST" }),
+  autoTitleSession: (sid: string) => request<{ status: string; title: string }>(`/sessions/${encodeURIComponent(sid)}/title/auto`, { method: "POST" }),
   // Scheduled research: cadence + timezone are stored as authored (local
   // wall-clock cron + IANA key), so list rows render without any UTC math.
   listScheduledRuns: async (signal?: AbortSignal) =>
@@ -1245,25 +1245,25 @@ export const api = {
       `/scheduled-runs/proposals/${encodeURIComponent(proposalId)}/discard`,
       { method: "POST" },
     ),
-  sendMessage: (sid: string, content: string) => request<{ message_id: string; attempt_id: string }>(`/sessions/${sid}/messages`, { method: "POST", body: JSON.stringify({ content }) }),
-  cancelSession: (sid: string) => request<{ status: string }>(`/sessions/${sid}/cancel`, { method: "POST" }),
-  getSessionMessages: (sid: string) => request<MessageItem[]>(`/sessions/${sid}/messages`),
+  sendMessage: (sid: string, content: string) => request<{ message_id: string; attempt_id: string }>(`/sessions/${encodeURIComponent(sid)}/messages`, { method: "POST", body: JSON.stringify({ content }) }),
+  cancelSession: (sid: string) => request<{ status: string }>(`/sessions/${encodeURIComponent(sid)}/cancel`, { method: "POST" }),
+  getSessionMessages: (sid: string) => request<MessageItem[]>(`/sessions/${encodeURIComponent(sid)}/messages`),
   getSessionProvenance: (sid: string) =>
-    request<ProvenanceListResponse>(`/sessions/${sid}/provenance`),
+    request<ProvenanceListResponse>(`/sessions/${encodeURIComponent(sid)}/provenance`),
   createGoal: (sid: string, body: CreateGoalRequest) =>
-    request<GoalSnapshot>(`/sessions/${sid}/goal`, {
+    request<GoalSnapshot>(`/sessions/${encodeURIComponent(sid)}/goal`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
   /** null = the session has no current goal (200); 404 means an unknown session. */
-  getGoal: (sid: string) => request<GoalSnapshot | null>(`/sessions/${sid}/goal`),
+  getGoal: (sid: string) => request<GoalSnapshot | null>(`/sessions/${encodeURIComponent(sid)}/goal`),
   updateGoal: (sid: string, body: UpdateGoalRequest) =>
-    request<UpdateGoalResponse>(`/sessions/${sid}/goal`, {
+    request<UpdateGoalResponse>(`/sessions/${encodeURIComponent(sid)}/goal`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
   updateGoalStatus: (sid: string, body: UpdateGoalStatusRequest) =>
-    request<UpdateGoalStatusResponse>(`/sessions/${sid}/goal/status`, {
+    request<UpdateGoalStatusResponse>(`/sessions/${encodeURIComponent(sid)}/goal/status`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
@@ -1271,7 +1271,7 @@ export const api = {
   // is minted per connect/reconnect inside useSSE (tickets are single-use, so
   // baking one into a cached URL would break reconnection).
   sseUrl: (sid: string, options?: { replay?: "active" }) => {
-    let url = `${BASE}/sessions/${sid}/events`;
+    let url = `${BASE}/sessions/${encodeURIComponent(sid)}/events`;
     if (options?.replay) url = appendQueryParam(url, "replay", options.replay);
     return url;
   },
