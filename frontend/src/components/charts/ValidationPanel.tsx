@@ -4,6 +4,7 @@ import type { ValidationData } from "@/lib/api";
 import { DistributionChart } from "@/components/charts/DistributionChart";
 import { MonteCarloPathsChart } from "@/components/charts/MonteCarloPathsChart";
 import { WalkForwardChart } from "@/components/charts/WalkForwardChart";
+import { formatNumber } from "@/lib/formatters";
 
 interface Props {
   data: ValidationData;
@@ -50,7 +51,7 @@ function MonteCarloSection({ mc }: { mc: NonNullable<ValidationData["monte_carlo
         <Badge value={sig ? i18n.t("validation.significant") : i18n.t("validation.notSignificant")} good={sig} />
       </div>
       <p className="text-xs text-muted-foreground">
-        {i18n.t("validation.monteCarloDesc", { n: mc.n_simulations.toLocaleString() })}
+        {i18n.t("validation.monteCarloDesc", { n: formatNumber(mc.n_simulations) })}
       </p>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 rounded-xl border border-border/60 bg-muted/20 p-3">
         <Stat label={i18n.t("validation.actualSharpe")} value={mc.actual_sharpe.toFixed(2)} />
@@ -106,7 +107,7 @@ function BootstrapSection({ bs }: { bs: NonNullable<ValidationData["bootstrap"]>
         <Badge value={reliable ? i18n.t("validation.ciAbove0") : i18n.t("validation.ciIncludes0")} good={reliable} />
       </div>
       <p className="text-xs text-muted-foreground">
-        {i18n.t("validation.bootstrapDesc", { n: bs.n_bootstrap.toLocaleString(), pct: (bs.confidence * 100).toFixed(0) + "%" })}
+        {i18n.t("validation.bootstrapDesc", { n: formatNumber(bs.n_bootstrap), pct: (bs.confidence * 100).toFixed(0) + "%" })}
       </p>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 rounded-xl border border-border/60 bg-muted/20 p-3">
         <Stat label={i18n.t("validation.observedSharpe")} value={bs.observed_sharpe.toFixed(2)} />

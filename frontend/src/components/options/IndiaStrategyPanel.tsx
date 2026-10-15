@@ -5,12 +5,13 @@ import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import type { IndiaOptionsResearchData, RankedOptionStrategy } from "@/lib/options";
 import { formatCurrency } from "@/lib/marketConfig";
+import { formatNumber } from "@/lib/formatters";
 
 const DEFAULT_TICKER = "NIFTY";
 
 function fmtNum(v: number | null | undefined, digits = 2): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return "–";
-  return v.toLocaleString(undefined, { maximumFractionDigits: digits });
+  return formatNumber(v, { maximumFractionDigits: digits });
 }
 
 function StrategyCard({ strategy }: { strategy: RankedOptionStrategy }) {

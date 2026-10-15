@@ -61,7 +61,7 @@ export function formatMetricVal(k: string, v: number): string {
     return `${sign}${v.toFixed(2)}`;
   }
   if (INT_KEYS.includes(k)) return String(Math.round(v));
-  if (k === "final_value") return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  if (k === "final_value") return formatNumber(v, { maximumFractionDigits: 0 });
   if (k === "avg_holding_days") return v.toFixed(1);
   return v.toFixed(4);
 }
@@ -82,10 +82,19 @@ export const DISPLAY_ORDER = [
   "benchmark_return", "excess_return", "information_ratio", "final_value", "avg_holding_days",
 ];
 
+/**
+ * The one number format (D306): fixed en-IN grouping (12,34,567.89), whatever the browser language is. A
+ * missing or non-finite value is an explicit dash, never 0. Pass Intl options for currency/percent/decimals.
+ */
+export function formatNumber(value: number | null | undefined, options?: Intl.NumberFormatOptions): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return value.toLocaleString("en-IN", options);
+}
+
 export function abbreviateNum(v: number): string {
   const abs = Math.abs(v);
   if (abs >= 1e9) return (v / 1e9).toFixed(1) + "B";
   if (abs >= 1e6) return (v / 1e6).toFixed(1) + "M";
   if (abs >= 1e4) return (v / 1e3).toFixed(0) + "K";
-  return v.toLocaleString();
+  return formatNumber(v);
 }

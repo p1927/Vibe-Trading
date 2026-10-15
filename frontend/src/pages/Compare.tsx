@@ -10,6 +10,7 @@ import { initEChart, CHART_GROUP, connectCharts } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useThemeDark } from "@/lib/theme-store";
 import { SkeletonChart, SkeletonMetrics } from "@/components/common/Skeleton";
+import { formatNumber } from "@/lib/formatters";
 
 interface MetricDef {
   key: string;
@@ -166,7 +167,7 @@ function EquityChartOverlay({ leftCurve, rightCurve, leftLabel, rightLabel, reba
           let html = `<b>${params[0].axisValue}</b>`;
           for (const p of params) {
             if (p.value == null) continue;
-            const value = rebase ? Number(p.value).toFixed(2) : Number(p.value).toLocaleString();
+            const value = rebase ? Number(p.value).toFixed(2) : formatNumber(Number(p.value));
             html += `<br/>${p.marker} ${p.seriesName}: <b>${value}</b>`;
           }
           return html;

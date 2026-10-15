@@ -4,6 +4,7 @@ import type { PopOverlayRow } from "@/lib/options";
 import { getChartTheme } from "@/lib/chart-theme";
 import { getPnlColors } from "@/lib/pnl-colors";
 import { useChartLifecycle } from "@/hooks/useChartLifecycle";
+import { formatNumber } from "@/lib/formatters";
 
 interface Props {
   rows: PopOverlayRow[];
@@ -72,7 +73,7 @@ export function PopOverlayChart({ rows, underlyingLtp, height = 320 }: Props) {
           nameLocation: "middle",
           nameGap: 26,
           axisLine: { lineStyle: { color: t.axisColor } },
-          axisLabel: { color: t.textColor, fontSize: 10, formatter: (v: number) => v.toLocaleString() },
+          axisLabel: { color: t.textColor, fontSize: 10, formatter: (v: number) => formatNumber(v) },
           splitLine: { show: false },
         },
         yAxis: {

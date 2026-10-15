@@ -10,6 +10,7 @@ import {
 import { AgentAvatar } from "@/components/chat/AgentAvatar";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { cn } from "@/lib/utils";
+import { formatNumber } from "@/lib/formatters";
 
 interface Props {
   proposal: AutonomousAgentProposal;
@@ -88,9 +89,9 @@ export function formatMoney(amount: number | null | undefined, market: "IN" | "U
   // A limit the proposal does not carry is unknown, never "0": a zero budget/max-loss reads as a real cap.
   if (amount == null || !Number.isFinite(amount)) return "not set";
   if (market === "US") {
-    return `$${amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+    return `$${formatNumber(amount, { maximumFractionDigits: 0 })}`;
   }
-  return `₹${amount.toLocaleString()}`;
+  return `₹${formatNumber(amount)}`;
 }
 
 function ProposalInfraStrip({

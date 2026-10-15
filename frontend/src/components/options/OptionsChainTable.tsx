@@ -12,6 +12,7 @@ import {
   type OptionsContractRow,
 } from "@/lib/options";
 import { formatCurrency, MARKETS, type MarketId } from "@/lib/marketConfig";
+import { formatNumber } from "@/lib/formatters";
 
 function fmt(market: MarketId, v: number | null, maxDigits = 2): string {
   return formatCurrency(market, v, { maximumFractionDigits: maxDigits });
@@ -19,7 +20,7 @@ function fmt(market: MarketId, v: number | null, maxDigits = 2): string {
 
 function fmtInt(v: number | null): string {
   if (v === null || !Number.isFinite(v)) return "–";
-  return Math.round(v).toLocaleString();
+  return formatNumber(Math.round(v));
 }
 
 function fmtIv(v: number | null): string {

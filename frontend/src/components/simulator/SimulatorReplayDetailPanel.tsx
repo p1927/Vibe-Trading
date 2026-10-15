@@ -11,6 +11,7 @@ import {
   type ReplayCalendarDay,
 } from "@/lib/api";
 import { cn, localIsoDate } from "@/lib/utils";
+import { formatNumber } from "@/lib/formatters";
 
 type Underlying = "NIFTY" | "BANKNIFTY" | "SENSEX";
 
@@ -52,7 +53,7 @@ const BUCKET_DISPLAY_NAMES: Record<string, string> = {
 
 function fmtNum(n: number | null | undefined): string {
   if (n === null || n === undefined) return "—";
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return formatNumber(n, { maximumFractionDigits: 2 });
 }
 
 // A partially-backfilled bucket can return a non-empty `bars` array where

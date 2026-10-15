@@ -1,9 +1,10 @@
 import type { WatchRuleTelemetry } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { formatNumber } from "@/lib/formatters";
 
 function fmtInr(value: number | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—";
-  return `₹${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  return `₹${formatNumber(value, { maximumFractionDigits: 2 })}`;
 }
 
 function fmtPct(value: number | undefined): string {

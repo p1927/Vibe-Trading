@@ -1626,7 +1626,7 @@ function YearHeatmap({
           if (w - lastLabelCol >= MIN_MONTH_LABEL_GAP_COLS) {
             months.push({
               col: w,
-              label: cell.toLocaleString(undefined, { month: "short" }),
+              label: cell.toLocaleString("en-IN", { month: "short" }),
             });
             lastLabelCol = w;
           }

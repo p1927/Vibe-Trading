@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import type { IndiaOptionsSource, PopOverlayResponse, PopOverlayRow } from "@/lib/options";
 import { formatCurrency } from "@/lib/marketConfig";
 import { PopOverlayChart } from "@/components/charts/PopOverlayChart";
+import { formatNumber } from "@/lib/formatters";
 
 const DEFAULT_TICKER = "NIFTY";
 const MIN_HORIZON = 1;
@@ -13,7 +14,7 @@ const MAX_HORIZON = 60;
 
 function fmtNum(v: number | null | undefined, digits = 2): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return "–";
-  return v.toLocaleString(undefined, { maximumFractionDigits: digits });
+  return formatNumber(v, { maximumFractionDigits: digits });
 }
 
 function fmtPct(v: number | null | undefined): string {

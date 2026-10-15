@@ -14,6 +14,7 @@ import {
   formatLegsSummary,
   shouldShowConfidence,
 } from "@/lib/planDisplay";
+import { formatNumber } from "@/lib/formatters";
 
 const remarkPlugins = [remarkGfm];
 const rehypePlugins = [rehypeHighlight];
@@ -199,7 +200,7 @@ export function ResearchContextPanel({
               {merged.spot != null && (
                 <div className="rounded-lg border bg-background/60 px-2.5 py-2">
                   <dt className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Spot</dt>
-                  <dd className="mt-0.5 font-medium tabular-nums">{Number(merged.spot).toLocaleString()}</dd>
+                  <dd className="mt-0.5 font-medium tabular-nums">{formatNumber(Number(merged.spot))}</dd>
                 </div>
               )}
             </div>

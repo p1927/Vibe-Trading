@@ -5,13 +5,14 @@ import { api } from "@/lib/api";
 import type { TrackRecordResponse } from "@/lib/knowledgeEngine";
 import type { ExecutionAdvisorAdvisory } from "@/lib/options";
 import { formatIstTime } from "@/lib/istTime";
+import { formatNumber } from "@/lib/formatters";
 
 const POLL_INTERVAL_MS = 15_000;
 const UNGROUPED_KEY = "ungrouped";
 
 function fmtNum(v: number | null | undefined, digits = 2): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return "–";
-  return v.toLocaleString(undefined, { maximumFractionDigits: digits });
+  return formatNumber(v, { maximumFractionDigits: digits });
 }
 
 function fmtPct(v: number | null | undefined): string {

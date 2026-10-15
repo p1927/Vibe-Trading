@@ -59,7 +59,7 @@ function buildWeekGrid(dates: string[]): {
         if (!seenMonth.has(mkey)) {
           seenMonth.add(mkey);
           if (w - lastLabelCol >= MIN_MONTH_LABEL_GAP_COLS) {
-            monthLabels.push({ col: w, label: cell.toLocaleString(undefined, { month: "short" }) });
+            monthLabels.push({ col: w, label: cell.toLocaleString("en-IN", { month: "short" }) });
             lastLabelCol = w;
           }
         }

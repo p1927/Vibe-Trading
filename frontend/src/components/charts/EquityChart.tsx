@@ -6,6 +6,7 @@ import { abbreviateNum } from "@/lib/formatters";
 import { escapeHtml } from "@/lib/escapeHtml";
 import { useChartLifecycle } from "@/hooks/useChartLifecycle";
 import type { DrawdownZone } from "@/lib/tearsheet";
+import { formatNumber } from "@/lib/formatters";
 
 interface Props {
   data: EquityPoint[];
@@ -40,7 +41,7 @@ export function EquityChart({ data, height = 300, drawdownZones }: Props) {
           for (const p of params) {
             const val = p.seriesName === "Drawdown%"
               ? `${p.value}%`
-              : Number(p.value).toLocaleString();
+              : formatNumber(Number(p.value));
             html += `<br/>${p.marker} ${p.seriesName}: <b>${val}</b>`;
           }
           return html;

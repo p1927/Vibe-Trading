@@ -1,4 +1,5 @@
 import type { HubPlanArtifact, TradePlanLeg } from "@/lib/api";
+import { formatNumber } from "@/lib/formatters";
 
 const VIEW_LABELS: Record<string, string> = {
   event_volatility: "Range / event volatility",
@@ -65,7 +66,7 @@ export function buildPlanSummary(artifact: HubPlanArtifact): string {
     const parts = [rationale];
     if (legs) parts.push(`Legs: ${legs}.`);
     if (rec?.max_profit != null && rec?.max_loss != null) {
-      parts.push(`Max profit ₹${Math.round(rec.max_profit).toLocaleString()} · Max loss ₹${Math.round(Math.abs(rec.max_loss)).toLocaleString()}.`);
+      parts.push(`Max profit ₹${formatNumber(Math.round(rec.max_profit))} · Max loss ₹${formatNumber(Math.round(Math.abs(rec.max_loss)))}.`);
     }
     return parts.join(" ");
   }

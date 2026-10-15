@@ -5,6 +5,7 @@ import { getChartTheme } from "@/lib/chart-theme";
 import { getPnlColors } from "@/lib/pnl-colors";
 import { abbreviateNum } from "@/lib/formatters";
 import { useChartLifecycle } from "@/hooks/useChartLifecycle";
+import { formatNumber } from "@/lib/formatters";
 
 interface Props {
   curve: ExpiryCurve;
@@ -46,9 +47,9 @@ export function OptionsPayoffChart({ curve, entrySpot, breakevens, height = 340 
           const [spotVal, pnlVal] = Array.isArray(main.value) ? main.value : [main.axisValue, NaN];
           const pnlNum = Number(pnlVal);
           const pnlText = Number.isFinite(pnlNum)
-            ? pnlNum.toLocaleString(undefined, { maximumFractionDigits: 2 })
+            ? formatNumber(pnlNum, { maximumFractionDigits: 2 })
             : "–";
-          return `<b>${Number(spotVal).toLocaleString()}</b><br/>${main.marker} ${pnlLabel}: <b>${pnlText}</b>`;
+          return `<b>${formatNumber(Number(spotVal))}</b><br/>${main.marker} ${pnlLabel}: <b>${pnlText}</b>`;
         },
       },
       legend: {
@@ -80,7 +81,7 @@ export function OptionsPayoffChart({ curve, entrySpot, breakevens, height = 340 
         axisLabel: {
           color: t.textColor,
           fontSize: 10,
-          formatter: (v: number) => v.toLocaleString(),
+          formatter: (v: number) => formatNumber(v),
         },
         splitLine: { show: false },
       },
@@ -121,7 +122,7 @@ export function OptionsPayoffChart({ curve, entrySpot, breakevens, height = 340 
                 xAxis: be,
                 lineStyle: { color: t.warningColor, type: "dashed", width: 1 },
                 label: {
-                  formatter: `${beLabel} ${be.toLocaleString()}`,
+                  formatter: `${beLabel} ${formatNumber(be)}`,
                   position: "middle" as const,
                   fontSize: 10,
                   color: t.warningColor,

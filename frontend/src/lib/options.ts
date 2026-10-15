@@ -1,4 +1,5 @@
 import { formatIstDate } from "@/lib/istTime";
+import { formatNumber } from "@/lib/formatters";
 /**
  * Options Lab — API contract types, preset strategy catalog, and pure
  * display-only helpers.
@@ -645,5 +646,5 @@ export function expirationLabel(epochSeconds: number): string {
 /** Format an IV fraction (0.30) as a percent label ("30%"). */
 export function ivLabel(iv: number): string {
   const pct = fractionToPct(iv);
-  return `${Number(pct.toFixed(2)).toLocaleString()}%`;
+  return `${formatNumber(Number(pct.toFixed(2)))}%`;
 }

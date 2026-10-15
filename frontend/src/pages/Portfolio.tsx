@@ -29,7 +29,7 @@ import {
 import { initEChart } from "@/lib/echarts";
 import { getChartTheme } from "@/lib/chart-theme";
 import { useThemeDark } from "@/lib/theme-store";
-import i18n from "@/i18n";
+import { formatNumber } from "@/lib/formatters";
 import { formatIst, formatIstTime } from "@/lib/istTime";
 
 const BROKER_COLORS: Record<string, string> = {
@@ -47,46 +47,24 @@ const HOLDING_COLORS = [
 // client-side guard so a lost polling response can never spin forever.
 const PORTFOLIO_RECONNECT_DEADLINE_MS = 360_000;
 
-/**
- * Locale used by every Intl formatter on this page. The formatters live at
- * module scope (chart option builders need them outside React), so they read
- * the language off the i18n singleton rather than through a hook; components
- * that render them subscribe to `useTranslation()` and therefore re-render
- * whenever the language changes.
- */
-function uiLocale(): string {
-  return i18n.language || "en";
-}
-
 function money(value: number | null | undefined, currency: "USD" | "CNY" = "USD") {
-  if (value == null || !Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat(uiLocale(), {
-    style: "currency",
-    currency,
-    maximumFractionDigits: currency === "USD" ? 2 : 0,
-  }).format(value);
+  return formatNumber(value, { style: "currency", currency, maximumFractionDigits: currency === "USD" ? 2 : 0 });
 }
 
 function quantity(value: number | null | undefined) {
-  if (value == null || !Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat(uiLocale(), { maximumFractionDigits: 8 }).format(value);
+  return formatNumber(value, { maximumFractionDigits: 8 });
 }
 
 function price(value: number | undefined | null) {
-  if (value == null || !Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat(uiLocale(), {
+  if (value == null) return "—";
+  return formatNumber(value, {
     minimumFractionDigits: value >= 1 ? 2 : 4,
     maximumFractionDigits: value >= 100 ? 2 : value >= 1 ? 4 : 8,
-  }).format(value);
+  });
 }
 
 function percentage(value: number | null | undefined) {
-  if (value == null || !Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat(uiLocale(), {
-    style: "percent",
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  }).format(value);
+  return formatNumber(value, { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
 /** ECharts reports slice shares as 0-100; `percentage` expects a 0-1 ratio. */
@@ -94,14 +72,9 @@ function slicePercentage(percent: number) {
   return percentage(percent / 100);
 }
 
-/** Compact USD tick label for the history axis, e.g. "$120K" / "1,2 Mio. $". */
+/** Compact USD tick label for the history axis, e.g. "$120K". */
 function compactUsd(value: number) {
-  return new Intl.NumberFormat(uiLocale(), {
-    style: "currency",
-    currency: "USD",
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(value);
+  return formatNumber(value, { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 });
 }
 
 function dateTime(value: string | undefined) {
