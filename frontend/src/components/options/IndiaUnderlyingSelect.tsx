@@ -17,9 +17,11 @@ interface Props {
  * vendor sources would need an ~80k-row scrip-master download to enumerate
  * theirs, so they only offer the known indexes here).
  */
+const BUILT_IN_INDEXES = ["NIFTY", "BANKNIFTY", "SENSEX"];
+
 export function IndiaUnderlyingSelect({ source, value, onChange }: Props) {
   const { t } = useTranslation();
-  const [indexes, setIndexes] = useState<string[]>(["NIFTY", "BANKNIFTY", "SENSEX"]);
+  const [indexes, setIndexes] = useState<string[]>(BUILT_IN_INDEXES);
   const [equities, setEquities] = useState<string[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
 
@@ -31,6 +33,9 @@ export function IndiaUnderlyingSelect({ source, value, onChange }: Props) {
       .then((res) => {
         if (cancelled) return;
         if (!res.ok || !res.data) {
+          // The previous source's list is not this source's list.
+          setIndexes(BUILT_IN_INDEXES);
+          setEquities(null);
           setListError("the server returned no list");
           return;
         }
@@ -39,7 +44,10 @@ export function IndiaUnderlyingSelect({ source, value, onChange }: Props) {
       })
       .catch((err: unknown) => {
         // Keep the fallback index list, and say so (tooltip) instead of showing it as the full list.
-        if (!cancelled) setListError(err instanceof Error ? err.message : "request failed");
+        if (cancelled) return;
+        setIndexes(BUILT_IN_INDEXES);
+        setEquities(null);
+        setListError(err instanceof Error ? err.message : "request failed");
       });
     return () => {
       cancelled = true;

@@ -232,11 +232,11 @@ export const MessageBubble = memo(function MessageBubble({ msg, onRetry }: Props
         <div className="flex-1 min-w-0 space-y-1.5">
           <CopyButton text={msg.content} />
           <MarkdownContent content={msg.content} />
-          {msg.elapsed_ms != null && (
+          {Number.isFinite(msg.elapsed_ms) && (msg.elapsed_ms as number) >= 0 && (
             <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground/55">
               <span className="inline-flex items-center gap-1 tabular-nums" title={i18n.t("messageBubble.elapsedTime")}>
                 <Clock3 className="h-3 w-3" aria-hidden="true" />
-                {formatElapsed(msg.elapsed_ms)}
+                {formatElapsed(msg.elapsed_ms as number)}
               </span>
             </div>
           )}

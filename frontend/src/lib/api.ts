@@ -821,7 +821,8 @@ async function consumeRecordingSse(
       }
       if (eventType === "done") {
         gotDone = true;
-        handlers.onDone?.(data.result as RecordingResult);
+        if (data.result == null) handlers.onError?.("Recording finished without a result");
+        else handlers.onDone?.(data.result as RecordingResult);
         return;
       }
       if (eventType === "error") {
@@ -957,7 +958,8 @@ async function consumeForecastEngineRunSse(
       }
       if (eventType === "done") {
         gotDone = true;
-        handlers.onDone?.(data.result as ForecastEngineRunResult);
+        if (data.result == null) handlers.onError?.("Forecast engine run finished without a result");
+        else handlers.onDone?.(data.result as ForecastEngineRunResult);
         return;
       }
       if (eventType === "error") {

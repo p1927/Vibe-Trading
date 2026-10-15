@@ -266,7 +266,7 @@ export function OptionsChainTable({
       {data && answeredBy && !loading ? (
         <p className="mb-2 text-[10px] text-muted-foreground" data-testid="options-chain-source">
           Source: {answeredBy}
-          {data.underlying_ltp != null ? ` · underlying ${data.underlying_ltp}` : ""}
+          {data.underlying_ltp != null ? ` · underlying ${formatNumber(data.underlying_ltp, { maximumFractionDigits: 2 })}` : ""}
         </p>
       ) : null}
 
@@ -278,7 +278,7 @@ export function OptionsChainTable({
           <button
             type="button"
             onClick={() =>
-              void load(data?.ticker ?? tickerInput.trim().toUpperCase() ?? MARKETS[market].defaultTicker, data?.expiration)
+              void load(data?.ticker ?? (tickerInput.trim().toUpperCase() || MARKETS[market].defaultTicker), data?.expiration)
             }
             className="shrink-0 rounded border border-danger/40 px-2.5 py-1 text-xs font-medium transition-colors hover:bg-danger/10"
           >
