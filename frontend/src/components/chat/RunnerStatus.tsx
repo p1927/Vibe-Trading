@@ -1,5 +1,5 @@
 import i18n from '@/i18n';
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   Power,
@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { formatIst } from "@/lib/istTime";
+import { useConfirm } from "@/components/common/useConfirm";
 import {
   api,
   type LiveStatus,
@@ -266,10 +267,26 @@ function BrokerRow({
     return () => { cancelled = true; };
   }, [brokerKey, showOAuthOnRamp]);
 
+  const [confirm, confirmDialog] = useConfirm();
+  const togglingRef = useRef(false);
+
   const toggleRunner = useCallback(async () => {
-    if (busy) return;
+    // A ref, not `busy`: two clicks in one tick both see busy === false. Stopping only reduces risk; starting
+    // lets the runner act under the mandate, so it asks first.
+    if (togglingRef.current) return;
+    togglingRef.current = true;
     setBusy(true);
     try {
+      if (!runnerAlive) {
+        const ok = await confirm({
+          title: i18n.t("runnerStatus.startRunnerTitle"),
+          description: summarizeLimits(mandate?.limits) || undefined,
+          confirmLabel: i18n.t("runnerStatus.startRunner"),
+          cancelLabel: i18n.t("mandate.cancel"),
+          tone: "destructive",
+        });
+        if (!ok) return;
+      }
       if (runnerAlive) {
         await api.stopLiveRunner(brokerKey);
         toast.success(i18n.t("runnerStatus.runnerStoppedFor", { broker: brokerKey }));
@@ -281,12 +298,14 @@ function BrokerRow({
     } catch (error) {
       toast.error(error instanceof Error ? error.message : i18n.t("runnerStatus.runnerControlFailed"));
     } finally {
+      togglingRef.current = false;
       setBusy(false);
     }
-  }, [brokerKey, busy, runnerAlive, onRefresh]);
+  }, [brokerKey, confirm, mandate?.limits, runnerAlive, onRefresh]);
 
   return (
     <div className="grid gap-2 rounded-lg border bg-muted/20 p-2.5">
+      {confirmDialog}
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="truncate text-xs font-semibold capitalize text-foreground">{brokerKey}</span>
