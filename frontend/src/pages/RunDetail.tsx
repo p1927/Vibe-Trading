@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { api, type BacktestMetrics, type EquityPoint, type FactorReportPayload, type RebalanceNotesPayload, type RiskXRayPayload, type RunCard, type RunData, type ValidationData } from "@/lib/api";
+import { api, type EquityPoint, type FactorReportPayload, type RebalanceNotesPayload, type RiskXRayPayload, type RunCard, type RunData, type ValidationData } from "@/lib/api";
 import {
   computeAnnualReturns,
   computeMonthlyReturns,
@@ -52,6 +52,8 @@ import { AttributionTab } from "@/components/charts/AttributionTab";
 import { PositionsTab } from "@/components/run/PositionsTab";
 import { RunCardPanel, RunCardStat, formatRunCardValue } from "@/components/run/RunCard";
 import { isDateColumn } from "@/lib/positions";
+import { buildMetricsCsv, buildTradesCsv } from "@/lib/csv";
+import { fmtFinite } from "@/lib/finite";
 
 const rehypePlugins = [rehypeHighlight];
 
@@ -68,28 +70,6 @@ function downloadCsv(filename: string, csvContent: string) {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
-}
-
-function escapeCsvField(value: unknown): string {
-  const str = String(value ?? "");
-  if (str.includes(",") || str.includes('"') || str.includes("\n")) {
-    return `"${str.replace(/"/g, '""')}"`;
-  }
-  return str;
-}
-
-function buildTradesCsv(trades: Array<Record<string, string>>): string {
-  if (trades.length === 0) return "";
-  const keys = [...new Set(trades.flatMap(Object.keys))];
-  const header = keys.map(escapeCsvField).join(",");
-  const rows = trades.map(tr => keys.map(k => escapeCsvField(tr[k])).join(","));
-  return [header, ...rows].join("\n");
-}
-
-function buildMetricsCsv(metrics: BacktestMetrics): string {
-  const header = "metric,value";
-  const rows = Object.entries(metrics).map(([k, v]) => `${escapeCsvField(k)},${escapeCsvField(v)}`);
-  return [header, ...rows].join("\n");
 }
 
 function cacheFromRun(run: RunData | null, requestedSymbol?: string): ChartCache {
@@ -389,7 +369,9 @@ export function RunDetail() {
             </div>
             <p className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">RUN {runId}</p>
           </div>
-          {run.elapsed_seconds && <span className="text-xs text-muted-foreground">{run.elapsed_seconds.toFixed(1)}s</span>}
+          {typeof run.elapsed_seconds === "number" && Number.isFinite(run.elapsed_seconds) && run.elapsed_seconds > 0 ? (
+            <span className="text-xs text-muted-foreground">{run.elapsed_seconds.toFixed(1)}s</span>
+          ) : null}
         </div>
         {run.prompt && (
           <div>
@@ -573,8 +555,9 @@ function RunCardTab({ card }: { card: RunCard }) {
   );
 }
 
-function fmtPct(v: number | undefined, digits = 1): string {
-  if (v === undefined || Number.isNaN(v)) return "-";
+function fmtPct(v: number | null | undefined, digits = 1): string {
+  // null is a missing reading (JSON has no undefined): Number(null) is 0, which would print "0.0%".
+  if (v == null || !Number.isFinite(v)) return "-";
   return `${(v * 100).toFixed(digits)}%`;
 }
 
@@ -592,8 +575,8 @@ function StudioTab({ xray, notes }: { xray?: RiskXRayPayload; notes?: RebalanceN
       {xray && (
         <RunCardPanel title={i18n.t("runDetail.riskXray")} icon={Gauge}>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <RunCardStat label={i18n.t("runDetail.hhi")} value={concentration.hhi !== undefined ? concentration.hhi.toFixed(3) : "-"} />
-            <RunCardStat label={i18n.t("runDetail.effectiveN")} value={concentration.effective_n !== undefined ? concentration.effective_n.toFixed(1) : "-"} />
+            <RunCardStat label={i18n.t("runDetail.hhi")} value={fmtFinite(concentration.hhi, 3)} />
+            <RunCardStat label={i18n.t("runDetail.effectiveN")} value={fmtFinite(concentration.effective_n, 1)} />
             <RunCardStat label={i18n.t("runDetail.annualizedVol")} value={fmtPct(volatility.annualized_vol)} />
             <RunCardStat label={i18n.t("runDetail.maxDrawdown")} value={fmtPct(drawdown.max_drawdown)} />
           </div>
@@ -1137,6 +1120,9 @@ function CodeTab({ code, error }: { code: Record<string, string>; error: string 
 
   const activeCode = code[active] || "";
   const lineCount = activeCode ? activeCode.split("\n").length : 0;
+  // The fence must be longer than any backtick run inside the code, or the code ends the block early.
+  const longestTicks = Math.max(0, ...(activeCode.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(Math.max(3, longestTicks + 1));
   const copyActive = () => {
     navigator.clipboard.writeText(activeCode).then(
       () => toast.success(i18n.t("runDetail.codeCopied")),
@@ -1167,7 +1153,7 @@ function CodeTab({ code, error }: { code: Record<string, string>; error: string 
       </div>
       <div className="flex-1 overflow-auto p-3 text-xs leading-relaxed bg-muted/20 [&_pre]:m-0 [&_pre]:bg-transparent [&_code]:text-xs">
         <ReactMarkdown rehypePlugins={rehypePlugins}>
-          {`\`\`\`python\n${activeCode}\n\`\`\``}
+          {`${fence}python\n${activeCode}\n${fence}`}
         </ReactMarkdown>
       </div>
     </div>
