@@ -1,5 +1,5 @@
 import { Link2, PanelRightClose, PanelRightOpen } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentDebatePanel } from "@/components/research/AgentDebatePanel";
 import { ResearchContextPanel } from "@/components/research/ResearchContextPanel";
@@ -66,7 +66,14 @@ export function ContextDrawer({
     if (planArtifact) setLocalPlan(planArtifact);
   }, [planArtifact]);
 
+  // The sources belong to a session: moving to another one must not leave the old session's references behind
+  // when the new session has none (the load below only writes a non-empty list).
+  const sourcesSessionRef = useRef(sessionId);
   useEffect(() => {
+    if (sourcesSessionRef.current !== sessionId) {
+      sourcesSessionRef.current = sessionId;
+      setSources([]);
+    }
     if (!sessionId) return;
     let cancelled = false;
     setSourcesError(null);
@@ -107,13 +114,20 @@ export function ContextDrawer({
     };
   }, [ticker, assetType, planArtifact, planRetryToken]);
 
+  const tickerRef = useRef(ticker);
+  tickerRef.current = ticker;
+  const debateStartingRef = useRef(false);
   const runDebate = useCallback(async () => {
-    if (!ticker) return;
+    // A ref, not the parent's `running` flag: two clicks in one tick both see running === false.
+    if (!ticker || debateStartingRef.current) return;
+    debateStartingRef.current = true;
     onDebateUpdate?.(null, true, null);
     setActiveSection("debate");
     setDrawerOpen(true);
     try {
       const res = await api.runAgentDebate({ ticker, asset_type: assetType, refresh: true });
+      // The symbol changed while this ran: its answer is for the old symbol (the parent polls the current one).
+      if (tickerRef.current !== ticker) return;
       if (res.status === "running") {
         onDebateUpdate?.(null, true, null);
         toast.info("Agent debate started — this may take a few minutes");
@@ -126,9 +140,12 @@ export function ContextDrawer({
         onDebateUpdate?.(null, false, res.message || "Debate failed");
       }
     } catch (err) {
+      if (tickerRef.current !== ticker) return;
       const msg = err instanceof Error ? err.message : "Debate request failed";
       onDebateUpdate?.(null, false, msg);
       toast.error(msg);
+    } finally {
+      debateStartingRef.current = false;
     }
   }, [ticker, assetType, onDebateUpdate, setActiveSection, setDrawerOpen]);
 
