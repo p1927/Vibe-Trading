@@ -431,15 +431,19 @@ def _options_request(
 
 def _parse_options(payload: Any, yahoo_symbol: str) -> Dict[str, Any]:
     """Extract the first optionChain result, raising on a reported error."""
-    chain = (payload or {}).get("optionChain") or {}
+    if not isinstance(payload, dict) or not isinstance(payload.get("optionChain"), dict):
+        raise ValueError("Yahoo options response has no optionChain object")
+    chain = payload["optionChain"]
     error = chain.get("error")
     if error:
         description = error.get("description") if isinstance(error, dict) else error
         raise ValueError(f"Yahoo options error for {yahoo_symbol}: {description}")
-    results = chain.get("result") or []
+    results = chain.get("result")
+    if not isinstance(results, list) or any(not isinstance(row, dict) for row in results):
+        raise ValueError("Yahoo options result has changed shape")
     if not results:
         return {}
-    return results[0] or {}
+    return results[0]
 
 
 def search(query: str) -> List[Dict[str, Any]]:

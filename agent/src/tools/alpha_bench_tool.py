@@ -34,6 +34,7 @@ import logging
 import os
 import re
 import secrets
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -48,8 +49,8 @@ from src.agent.tools import BaseTool
 from src.config.accessor import get_env_config
 from src.tools.nifty50_universe import register_nifty50_universe
 from src.tools.nse_sector_universes import (
-    _NSE_SECTOR_INDICES,
-    _load_nse_sector_panel,
+    _NSE_SECTOR_INDICES as _NSE_SECTOR_INDICES,
+    _load_nse_sector_panel as _load_nse_sector_panel,
     register_nse_sector_universes,
 )
 
@@ -161,8 +162,10 @@ def _load_universe_panel(
     cache_dir = get_runtime_root() / "cache"
     cache_path = cache_dir / f"{universe}_{start}_{end}.pkl"
     if use_cache and cache_path.is_file():
-        cached = _read_pickle_cache(cache_path)
-        if cached is not None:
+        age = time.time() - cache_path.stat().st_mtime
+        cached = _read_pickle_cache(cache_path) if 0 <= age <= 24 * 3600 else None
+        if (cached is not None
+                and not (cached.get("_meta") or {}).get("degraded", False)):
             logger.info("universe %s: loaded from cache %s", universe, cache_path)
             return cached
 
@@ -185,7 +188,7 @@ def _load_universe_panel(
             "meaningful results."
         )
 
-    if use_cache:
+    if use_cache and not (panel.get("_meta") or {}).get("degraded", False):
         _write_pickle_cache(cache_dir, cache_path, panel)
 
     return panel
@@ -1040,7 +1043,13 @@ def run_alpha_bench(**kwargs: Any) -> dict[str, Any]:
     except ValueError as exc:
         return {"status": "error", "error": str(exc)}
 
-    top_n = int(kwargs.get("top", 20) or 20)
+    raw_top = kwargs.get("top", 20)
+    try:
+        top_n = int(raw_top)
+        if isinstance(raw_top, bool) or (isinstance(raw_top, float) and raw_top != top_n):
+            raise ValueError("top must be a positive integer")
+    except (TypeError, ValueError, OverflowError):
+        return {"status": "error", "error": "top must be a positive integer"}
     if top_n <= 0:
         return {"status": "error", "error": "top must be > 0"}
 
@@ -1119,6 +1128,7 @@ def run_alpha_bench(**kwargs: Any) -> dict[str, Any]:
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "universe": universe,
         "period": period,
+        "meta": panel.get("_meta") or {},
         "n_alphas_tested": len(results),
         "n_skipped": len(failures),
         "top": top,
@@ -1137,6 +1147,7 @@ def run_alpha_bench(**kwargs: Any) -> dict[str, Any]:
     return {
         "status": "ok",
         "report_path": str(report_path),
+        "meta": panel.get("_meta") or {},
         "n_alphas_tested": len(results),
         "n_skipped": len(failures),
         "top": top,

@@ -63,7 +63,12 @@ def _bare_code(code: str) -> str:
     Returns:
         The leading numeric code (e.g. ``"600519"``).
     """
-    return code.strip().upper().split(".", 1)[0]
+    import re
+
+    normalized = code.strip().upper()
+    if not re.fullmatch(r"[0-9]{6}(?:\.(?:SH|SZ|BJ))?", normalized):
+        raise ValueError("code must be a six-digit A-share symbol with optional SH/SZ/BJ suffix")
+    return normalized.split(".", 1)[0]
 
 
 def _fetch_report(
@@ -203,7 +208,12 @@ class DragonTigerTool(BaseTool):
             return self._error(str(exc))
 
         code_arg = kwargs.get("code")
-        code = _bare_code(code_arg) if isinstance(code_arg, str) and code_arg.strip() else None
+        if code_arg is not None and not isinstance(code_arg, str):
+            return self._error("code must be a symbol string")
+        try:
+            code = _bare_code(code_arg) if code_arg and code_arg.strip() else None
+        except ValueError as exc:
+            return self._error(str(exc))
 
         try:
             data = self._collect(trade_date, code)

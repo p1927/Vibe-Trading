@@ -213,8 +213,15 @@ def _eastmoney_filter(group: str, code: str, secid: str) -> str:
     Returns:
         The Eastmoney ``filter`` query-parameter string.
     """
+    import re
+
+    normalized = code.upper()
     if group == "a":
-        return f'(SECUCODE="{code.upper()}")'
+        if not re.fullmatch(r"[0-9]{6}\.(?:SH|SZ|BJ)", normalized):
+            raise ValueError("invalid A-share code for Eastmoney filter")
+        return f'(SECUCODE="{normalized}")'
+    if group != "hk" or not re.fullmatch(r"116\.[0-9]{5}", secid):
+        raise ValueError("invalid Hong Kong secid for Eastmoney filter")
     bare_code = secid.split(".", 1)[1]
     return f'(SECURITY_CODE="{bare_code}")'
 
@@ -269,10 +276,15 @@ def _fetch_eastmoney_statement(
     if group is None:
         return {"error": "symbol is not an A-share or Hong Kong instrument"}
 
+    try:
+        filter_expr = _eastmoney_filter(group, code, secid)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
     params = {
         "reportName": _EM_REPORT_NAME[group][statement],
         "columns": "ALL",
-        "filter": _eastmoney_filter(group, code, secid),
+        "filter": filter_expr,
         "sortColumns": "REPORT_DATE",
         "sortTypes": "-1",
         "pageNumber": "1",
