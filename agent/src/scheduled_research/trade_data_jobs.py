@@ -87,7 +87,12 @@ def run_nse_macro_refresh_job(config: dict[str, Any] | None = None) -> dict[str,
     cfg = config or {}
     counts = sync_light_repo_seed_layers(allow_live_fetch=bool(cfg.get("allow_live_fetch", True)))
     repo_counts = ingest_repository_to_hub(skip_repo_sync=True, allow_live_fetch=False)
-    summary = {"seed_layers": counts, "repository": repo_counts}
+    # The scheduler fails a run only on `had_errors` / `status == "error"`: a mirror that ingested no row must say so, or it ends
+    # `completed`. An unchanged-fingerprint skip (`hub_mirror_skipped`) is the mirror already being current, not an outage.
+    ingested = sum(int(v) for k, v in repo_counts.items() if k != "hub_mirror_skipped")
+    summary: dict[str, Any] = {"status": "ok", "seed_layers": counts, "repository": repo_counts}
+    if ingested <= 0 and not repo_counts.get("hub_mirror_skipped"):
+        summary.update(status="no_data", had_errors=True, error="nse macro refresh ingested 0 repository rows")
     logger.info("nse macro refresh: %s", summary)
     return summary
 
