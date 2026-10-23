@@ -10,6 +10,7 @@ from typing import Any
 
 from src.config.accessor import get_env_config
 from src.scheduled_research.models import JobStatus, ScheduledResearchJob, validate_schedule
+from src.scheduled_research.run_outcome import finish_run
 from src.trade.hub_bridge import ensure_trade_stack_path
 
 logger = logging.getLogger(__name__)
@@ -456,27 +457,27 @@ async def _dispatch_autonomous_job_inner(job: ScheduledResearchJob) -> None:
             await asyncio.to_thread(finalize_infra_heal, agent_id)
         return
     if job_type == JOB_TYPE_WATCH:
-        await run_watch_tick(agent_id)
+        finish_run(job, await run_watch_tick(agent_id), "autonomous watch tick")
         return
     if job_type == JOB_TYPE_QUANT:
         from trade_integrations.monitor.quant_monitor import run_quant_monitor_tick
 
-        await asyncio.to_thread(run_quant_monitor_tick, agent_id)
+        finish_run(job, await asyncio.to_thread(run_quant_monitor_tick, agent_id), "quant monitor tick")
         return
     if job_type == JOB_TYPE_NEWS:
         from trade_integrations.autonomous_agents.news_monitor import run_news_monitor_tick
 
-        await asyncio.to_thread(run_news_monitor_tick, agent_id)
+        finish_run(job, await asyncio.to_thread(run_news_monitor_tick, agent_id), "news monitor tick")
         return
     if job_type == JOB_TYPE_STRATEGY_REVIEW:
         from trade_integrations.autonomous_agents.strategy_review import run_strategy_review_tick
 
-        await asyncio.to_thread(run_strategy_review_tick, agent_id)
+        finish_run(job, await asyncio.to_thread(run_strategy_review_tick, agent_id), "strategy review tick")
         return
     if job_type == JOB_TYPE_STRATEGY_SNAPSHOT:
         from trade_integrations.autonomous_agents.strategy_review import run_strategy_snapshot_tick
 
-        await asyncio.to_thread(run_strategy_snapshot_tick, agent_id)
+        finish_run(job, await asyncio.to_thread(run_strategy_snapshot_tick, agent_id), "strategy snapshot tick")
         return
     if job_type == JOB_TYPE_RESEARCH:
         if get_env_config().trade.autonomous_research_on_schedule.strip().lower() not in {
