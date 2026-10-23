@@ -14,7 +14,6 @@ from src.tools.skill_writer_tool import (
     DeleteSkillTool,
     SkillFileTool,
     _sanitize_skill_name,
-    USER_SKILLS_DIR,
 )
 
 
@@ -289,3 +288,44 @@ class TestSkillCRUDLifecycle:
             r = json.loads(delete.execute(name="lifecycle"))
             assert r["status"] == "ok"
             assert not (tmp_path / "lifecycle").exists()
+
+
+@pytest.mark.parametrize("operation", ["save", "patch", "auxiliary"])
+def test_atomic_replace_failure_preserves_existing_skill(monkeypatch, tmp_path, operation):
+    from src.core import atomic_write
+    from src.tools import skill_writer_tool as sw
+
+    monkeypatch.setattr(sw, "USER_SKILLS_DIR", tmp_path)
+    skill = tmp_path / "sample" / "SKILL.md"
+    skill.parent.mkdir()
+    skill.write_text("original body")
+    target = skill
+    if operation == "auxiliary":
+        target = skill.parent / "templates" / "x.py"
+        target.parent.mkdir()
+        target.write_text("original body")
+
+    def fail(*args):
+        raise OSError("replace unavailable")
+
+    monkeypatch.setattr(atomic_write.os, "replace", fail)
+    with pytest.raises(OSError, match="replace unavailable"):
+        if operation == "save":
+            SaveSkillTool().execute(name="sample", content="new body")
+        elif operation == "patch":
+            PatchSkillTool().execute(name="sample", find="original", replace="new")
+        else:
+            SkillFileTool().execute(skill_name="sample", action="write", path="templates/x.py", content="new body")
+    assert target.read_text() == "original body"
+    assert not list(target.parent.glob(".*.tmp"))
+
+
+def test_remove_directory_returns_error(monkeypatch, tmp_path):
+    from src.tools import skill_writer_tool as sw
+    monkeypatch.setattr(sw, "USER_SKILLS_DIR", tmp_path)
+    directory = tmp_path / "sample" / "templates"
+    directory.mkdir(parents=True)
+    (directory.parent / "SKILL.md").write_text("skill")
+    out = json.loads(SkillFileTool().execute(skill_name="sample", action="remove", path="templates"))
+    assert out["status"] == "error"
+    assert directory.is_dir()
