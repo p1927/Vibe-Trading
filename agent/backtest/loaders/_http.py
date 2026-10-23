@@ -197,4 +197,6 @@ def throttled_get_json(
         timeout=timeout,
     )
     response.raise_for_status()
-    return response.json()
+    from backtest.loaders.vendor_payloads import validate_payload
+
+    return validate_payload(response.json(), url=url, host_key=host_key, params=params)

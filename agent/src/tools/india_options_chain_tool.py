@@ -186,7 +186,7 @@ def _fetch_chain(
                 expiry_date=expiry_date, strike_count=_DEFAULT_STRIKE_COUNT,
             )
         except OpenAlgoError:
-            return None
+            raise  # execute() preserves the pinned connector's failure in its error envelope.
         result = _normalize_openalgo_chain(body)
 
     return result if result and result.get("strikes") else None
