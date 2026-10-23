@@ -7,10 +7,10 @@ import math
 import os
 import re
 import tempfile
-import threading
 import time
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,7 @@ import httpx
 
 from src.agent.tools import BaseTool
 from src.config.paths import get_runtime_root
+from src.tools.qveris_credits import CreditLedger
 
 SIGNUP_URL = "https://qveris.ai/?ref=Vyjjo5G_1cAHJA"
 INVITE_CODE = "Vyjjo5G_1cAHJA"
@@ -31,9 +32,13 @@ _LEGACY_MODE_MAP = {
     "paid": "paid",
 }
 
-_SESSION_SPEND: dict[str, float] = {}
-_SESSION_RESERVED: dict[str, float] = {}
-_SESSION_BUDGET_LOCK = threading.Lock()
+@lru_cache(maxsize=16)
+def _ledger_at(path: Path) -> CreditLedger:
+    return CreditLedger(path)
+
+
+def _credit_ledger() -> CreditLedger:
+    return _ledger_at(QVERIS_CONFIG_PATH.with_suffix(".credits.sqlite3"))
 
 
 @dataclass
@@ -607,32 +612,22 @@ class QVerisExecuteTool(_QVerisBaseTool):
         session_id = self._session_id()
         budget = max(float(cfg.budget_credits_per_session), 0.0)
         expected = _parse_expected_cost(quote.get("expected_cost"))
-        with _SESSION_BUDGET_LOCK:
-            spent = _SESSION_SPEND.get(session_id, 0.0)
-            reserved = _SESSION_RESERVED.get(session_id, 0.0)
-            # A zero reservation is only trustworthy when the marketplace itself
-            # quoted it. A caller can always write zero, and that used to clear
-            # the pre-check while reserving nothing.
-            valid_quote = (
-                expected is not None
-                and math.isfinite(expected)
-                and (expected > 0.0 or (expected == 0.0 and quote.get("server_attested")))
-            )
-            if (
-                not valid_quote
-                or spent >= budget
-                or spent + reserved + expected > budget
-            ):
-                return _json_response(
-                    {
-                        "ok": False,
-                        "status": "budget_exceeded",
-                        "spent_credits": spent,
-                        "budget_credits_per_session": budget,
-                        "quote": quote,
-                    }
-                )
-            _SESSION_RESERVED[session_id] = reserved + expected
+        # Zero is valid only when attested by the marketplace, never a model hint.
+        valid_quote = (
+            expected is not None
+            and math.isfinite(expected)
+            and (expected > 0.0 or (expected == 0.0 and quote.get("server_attested")))
+        )
+        ledger = _credit_ledger()
+        if valid_quote:
+            reservation, spent = ledger.reserve(session_id, expected, budget)
+        else:
+            reservation, spent = None, ledger.spent(session_id)
+        if reservation is None:
+            return _json_response({
+                "ok": False, "status": "budget_exceeded", "spent_credits": spent,
+                "budget_credits_per_session": budget, "quote": quote,
+            })
 
         try:
             payload = client.execute(
@@ -643,30 +638,32 @@ class QVerisExecuteTool(_QVerisBaseTool):
                 model=kwargs.get("model"),
                 max_response_size=max_response_size,
             )
-        except Exception:
-            with _SESSION_BUDGET_LOCK:
-                remaining = _SESSION_RESERVED.get(session_id, 0.0) - expected
-                if remaining > 1e-12:
-                    _SESSION_RESERVED[session_id] = remaining
-                else:
-                    _SESSION_RESERVED.pop(session_id, None)
+        except Exception as exc:
+            # These httpx failures happen before an HTTP request can be sent.
+            # Read/write timeouts, HTTP errors and arbitrary provider failures are
+            # ambiguous: retain the debit rather than permit a second paid call.
+            unsent = isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
+            ledger.settle(reservation, 0.0 if unsent else expected,
+                          "refunded" if unsent else "uncertain")
+            if not unsent:
+                raise RuntimeError(
+                    f"Qveris execution failed; {expected:g} credits remain debited "
+                    f"because billing is uncertain: {exc}"
+                ) from exc
             raise
 
+        estimated = isinstance(payload.get("cost"), bool)
         try:
             cost = float(payload.get("cost"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             cost = expected
-        if not math.isfinite(cost) or cost < 0.0:
+            estimated = True
+        if not math.isfinite(cost) or cost < 0.0 or estimated:
             cost = expected
+            estimated = True
 
-        with _SESSION_BUDGET_LOCK:
-            remaining = _SESSION_RESERVED.get(session_id, 0.0) - expected
-            if remaining > 1e-12:
-                _SESSION_RESERVED[session_id] = remaining
-            else:
-                _SESSION_RESERVED.pop(session_id, None)
-            _SESSION_SPEND[session_id] = _SESSION_SPEND.get(session_id, 0.0) + cost
-            session_spent = _SESSION_SPEND[session_id]
+        session_spent = ledger.settle(reservation, cost, "uncertain" if estimated else "settled")
+        payload["cost_estimated"] = estimated
 
         payload["cost"] = cost
         payload["remaining_credits"] = payload.get("remaining_credits")

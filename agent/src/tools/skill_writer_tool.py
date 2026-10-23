@@ -20,6 +20,7 @@ from typing import Any
 
 from src.agent.skills import USER_SKILLS_DIR
 from src.agent.tools import BaseTool
+from src.core.atomic_write import atomic_write_text
 
 _ALLOWED_SUBDIRS = {"references", "templates", "examples", "assets"}
 
@@ -106,7 +107,7 @@ class SaveSkillTool(BaseTool):
                 f"category: {category}\n---\n\n{content}"
             )
 
-        skill_path.write_text(content, encoding="utf-8")
+        atomic_write_text(skill_path, content)
         return json.dumps({
             "status": "ok",
             "message": f"Skill '{slug}' saved. Available via load_skill(\"{slug}\") in future sessions.",
@@ -171,19 +172,17 @@ class PatchSkillTool(BaseTool):
         if user_path.exists():
             skill_path = user_path
         elif bundled_path.exists():
-            # Copy bundled skill to user dir before patching
-            user_path.parent.mkdir(parents=True, exist_ok=True)
-            user_path.write_text(bundled_path.read_text(encoding="utf-8"), encoding="utf-8")
+            # Read the bundled original; publish only the final validated patch.
             skill_path = user_path
         else:
             return json.dumps({"status": "error", "error": f"Skill '{name}' not found"})
 
-        content = skill_path.read_text(encoding="utf-8")
+        content = (skill_path if skill_path.exists() else bundled_path).read_text(encoding="utf-8")
         if find_text not in content:
             return json.dumps({"status": "error", "error": f"Text not found in skill '{name}'"})
 
         patched = content.replace(find_text, replace_text, 1)
-        skill_path.write_text(patched, encoding="utf-8")
+        atomic_write_text(skill_path, patched)
         return json.dumps({
             "status": "ok",
             "message": f"Patched skill '{name}': replaced 1 occurrence.",
@@ -340,7 +339,7 @@ class SkillFileTool(BaseTool):
             return json.dumps({"status": "error", "error": "Path escapes skill directory"})
 
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        atomic_write_text(target, content)
         return json.dumps({
             "status": "ok",
             "message": f"Written {rel_path} to skill '{skill_name}'.",
@@ -367,6 +366,8 @@ class SkillFileTool(BaseTool):
         if not target.exists():
             return json.dumps({"status": "error", "error": f"File not found: {rel_path}"})
 
+        if target.is_dir():
+            return json.dumps({"status": "error", "error": "Path is a directory; only files can be removed"})
         target.unlink()
         return json.dumps({
             "status": "ok",

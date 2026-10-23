@@ -43,5 +43,11 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
+@mcp.tool()
+def host_session(vibe_session_id: str = "") -> str:
+    """Echo the injected host identity for the owned stdio integration fixture."""
+    return vibe_session_id
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

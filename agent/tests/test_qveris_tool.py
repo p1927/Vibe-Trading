@@ -16,8 +16,6 @@ def qveris_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(qt, "QVERIS_CONFIG_PATH", tmp_path / "qveris.json")
     monkeypatch.delenv("QVERIS_API_KEY", raising=False)
     monkeypatch.delenv("QVERIS_BASE_URL", raising=False)
-    qt._SESSION_SPEND.clear()
-    getattr(qt, "_SESSION_RESERVED", {}).clear()
     return tmp_path / "qveris.json"
 
 
@@ -211,11 +209,11 @@ def test_parallel_execute_reserves_shared_session_budget(monkeypatch):
     assert first_payload["ok"] is True
     assert second_payload["status"] == "budget_exceeded"
     assert FakeClient.calls == 1
-    assert qt._SESSION_SPEND["shared"] == pytest.approx(0.75)
-    assert qt._SESSION_RESERVED.get("shared", 0.0) == 0.0
+    assert qt._credit_ledger().spent("shared") == pytest.approx(0.75)
+    assert qt._credit_ledger().pending("shared") == 0.0
 
 
-def test_failed_execute_releases_credit_reservation(monkeypatch):
+def test_definite_presend_failure_releases_credit_reservation(monkeypatch):
     qt.save_qveris_config(
         qt.QVerisConfig(
             enabled=True,
@@ -232,7 +230,7 @@ def test_failed_execute_releases_credit_reservation(monkeypatch):
             del args, kwargs
             type(self).calls += 1
             if type(self).calls == 1:
-                raise RuntimeError("provider failed")
+                raise qt.httpx.ConnectError("provider failed")
             return {"success": True, "cost": 1.0, "result": {}}
 
     client = FailOnceClient()
@@ -244,10 +242,10 @@ def test_failed_execute_releases_credit_reservation(monkeypatch):
         "expected_cost": "1 credit",
     }
 
-    with pytest.raises(RuntimeError, match="provider failed"):
+    with pytest.raises(qt.httpx.ConnectError, match="provider failed"):
         tool.execute(**call)
 
-    assert qt._SESSION_RESERVED.get("retry", 0.0) == 0.0
+    assert qt._credit_ledger().pending("retry") == 0.0
     payload = json.loads(tool.execute(**call))
     assert payload["ok"] is True
     assert payload["session_spent_credits"] == pytest.approx(1.0)
@@ -343,7 +341,7 @@ def test_zero_expected_cost_from_the_caller_cannot_clear_the_budget_gate(monkeyp
     assert payload["status"] == "budget_exceeded"
     assert payload["quote"]["expected_cost"] == 5.0
     assert payload["quote"]["quote_source"] == "server_overrode_lower_caller_quote"
-    assert qt._SESSION_SPEND.get("attack", 0.0) == 0.0
+    assert qt._credit_ledger().spent("attack") == 0.0
 
 
 def test_an_unverifiable_zero_quote_fails_closed(monkeypatch):
@@ -405,7 +403,7 @@ def test_an_honest_caller_quote_is_still_honoured(monkeypatch):
     )
 
     assert payload["ok"] is True
-    assert qt._SESSION_SPEND["honest"] == pytest.approx(1.0)
+    assert qt._credit_ledger().spent("honest") == pytest.approx(1.0)
 
 
 def test_model_supplied_session_id_cannot_reset_the_budget(monkeypatch):
@@ -427,17 +425,116 @@ def test_model_supplied_session_id_cannot_reset_the_budget(monkeypatch):
             tool.execute(tool_id="t", parameters={}, expected_cost="1 credit", session_id=rotated)
         )
         assert out["status"] == "budget_exceeded"
-    assert set(qt._SESSION_SPEND) == {"host-1"}
+    assert qt._credit_ledger().spent("host-1") == pytest.approx(1.0)
     # a host without sessions (MCP) shares ONE default key, not a model-chosen one
     other = qt.QVerisExecuteTool()
     ok = json.loads(other.execute(tool_id="t", parameters={}, expected_cost="1 credit", session_id="x"))
     assert ok["ok"] is True
     again = json.loads(other.execute(tool_id="t", parameters={}, expected_cost="1 credit", session_id="y"))
     assert again["status"] == "budget_exceeded"
-    assert set(qt._SESSION_SPEND) == {"host-1", "default"}
+    assert qt._credit_ledger().spent("default") == pytest.approx(1.0)
 
 
 def test_qveris_tools_get_the_host_session_id():
     from src.tools import session_injected_classes
 
     assert {qt.QVerisSearchTool, qt.QVerisInspectTool, qt.QVerisExecuteTool} <= session_injected_classes()
+
+
+def test_ambiguous_execute_failure_remains_charged_after_new_ledger(monkeypatch):
+    qt.save_qveris_config(qt.QVerisConfig(api_key="fixture", mode="paid", budget_credits_per_session=1))
+    class Client:
+        def execute(self, *args, **kwargs):
+            raise qt.httpx.ReadTimeout("response lost after send")
+    monkeypatch.setattr(qt.QVerisExecuteTool, "_client", lambda self: Client())
+    tool = qt.QVerisExecuteTool(default_session_id="ambiguous")
+    call = {"tool_id": "t", "parameters": {}, "expected_cost": 1}
+    with pytest.raises(RuntimeError, match="remain debited") as error:
+        tool.execute(**call)
+    assert isinstance(error.value.__cause__, qt.httpx.ReadTimeout)
+    assert qt._credit_ledger().spent("ambiguous") == 1
+    assert qt._credit_ledger().pending("ambiguous") == 0
+    assert json.loads(qt.QVerisExecuteTool(default_session_id="ambiguous").execute(**call))["status"] == "budget_exceeded"
+
+
+def test_pending_reservation_survives_process_death_and_contends_across_processes(tmp_path):
+    import os
+    import subprocess
+    import sys
+    from src.tools.qveris_credits import CreditLedger
+
+    path = tmp_path / "credits.sqlite3"
+    code = "from pathlib import Path; import os; from src.tools.qveris_credits import CreditLedger; ledger=CreditLedger(Path(os.environ['CREDIT_PATH'])); token,_=ledger.reserve('shared',0.75,1); print(bool(token), flush=True); os._exit(0)"
+    env = {**os.environ, "CREDIT_PATH": str(path)}
+    processes = [subprocess.Popen([sys.executable, "-c", code], env=env, stdout=subprocess.PIPE, text=True) for _ in range(2)]
+    outputs = [p.communicate(timeout=10)[0].strip() for p in processes]
+    assert sorted(outputs) == ["False", "True"]
+    assert all(p.returncode == 0 for p in processes)
+    ledger = CreditLedger(path)
+    assert ledger.spent("shared") == ledger.pending("shared") == 0.75
+    assert ledger.reserve("shared", 0.75, 1)[0] is None
+
+
+def test_ledger_write_failure_prevents_paid_call(monkeypatch):
+    qt.save_qveris_config(qt.QVerisConfig(api_key="fixture", mode="paid"))
+    class Client:
+        def execute(self, *a, **k):
+            raise AssertionError("must not call provider")
+    monkeypatch.setattr(qt.QVerisExecuteTool, "_client", lambda self: Client())
+    def fail(*args, **kwargs):
+        raise OSError("ledger unavailable")
+    monkeypatch.setattr(qt.CreditLedger, "reserve", fail)
+    with pytest.raises(OSError, match="ledger unavailable"):
+        qt.QVerisExecuteTool().execute(tool_id="t", parameters={}, expected_cost=1)
+
+
+def test_real_http_lost_paid_response_retains_debit(monkeypatch):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    requests = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            requests.append(self.path)
+            if self.path.startswith("/tools/execute"):
+                self.close_connection = True  # server accepted submission, response was lost
+                return
+            body = json.dumps({"results": [{"expected_cost": 1}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    cfg = qt.QVerisConfig(api_key="owned-fixture", mode="paid", budget_credits_per_session=1,
+                         base_url=f"http://127.0.0.1:{server.server_port}")
+    qt.save_qveris_config(cfg)
+    client = qt.QVerisClient(cfg, min_interval_seconds=0, max_429_retries=0)
+    monkeypatch.setattr(qt.QVerisExecuteTool, "_client", lambda self: client)
+    try:
+        tool = qt.QVerisExecuteTool(default_session_id="real-wire")
+        with pytest.raises(RuntimeError, match="billing is uncertain") as error:
+            tool.execute(tool_id="fixture", parameters={})
+        assert isinstance(error.value.__cause__, qt.httpx.RemoteProtocolError)
+        assert qt._credit_ledger().spent("real-wire") == 1
+        assert json.loads(tool.execute(tool_id="fixture", parameters={}))["status"] == "budget_exceeded"
+        assert len([p for p in requests if p.startswith("/tools/execute")]) == 1
+    finally:
+        client._client.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(2)
+
+
+@pytest.mark.parametrize("cost", [None, True, "NaN", -1])
+def test_missing_or_invalid_actual_cost_is_explicitly_estimated(monkeypatch, cost):
+    qt.save_qveris_config(qt.QVerisConfig(api_key="fixture", mode="paid"))
+    class Client:
+        def execute(self, *args, **kwargs):
+            return {"cost": cost, "result": {}}
+    monkeypatch.setattr(qt.QVerisExecuteTool, "_client", lambda self: Client())
+    out = json.loads(qt.QVerisExecuteTool(default_session_id="estimated").execute(tool_id="t", parameters={}, expected_cost=2))
+    assert out["ok"] is True and out["cost_estimated"] is True
+    assert out["cost"] == out["session_spent_credits"] == 2

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import time
 from typing import Any
@@ -727,6 +726,7 @@ class SwarmTool(BaseTool):
         *,
         include_shell_tools: bool = False,
         event_callback: Any | None = None,
+        default_session_id: str | None = None,
     ) -> None:
         """Initialize the swarm launcher.
 
@@ -734,9 +734,11 @@ class SwarmTool(BaseTool):
             include_shell_tools: Whether worker registries may include shell
                 execution tools requested by presets.
             event_callback: Optional session event bridge used by the web chat.
+            default_session_id: Host-assigned identity propagated to every worker.
         """
         self.include_shell_tools = include_shell_tools
         self._event_callback = event_callback
+        self._default_session_id = default_session_id
 
     def _emit_session_event(self, event_type: str, data: dict[str, Any]) -> None:
         """Forward swarm status to the hosting session SSE channel if present."""
@@ -797,6 +799,7 @@ class SwarmTool(BaseTool):
             store=store,
             max_workers=get_env_config().swarm.swarm_max_workers,
             agent_config=agent_config,
+            session_id=self._default_session_id,
         )
 
         pending_live_events: list[dict[str, Any]] = []

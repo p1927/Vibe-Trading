@@ -262,7 +262,7 @@ def _finite_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def render_verdict(results: list[dict[str, Any]], report_name: str = "") -> dict[str, Any]:
+def render_verdict(results: list[dict[str, Any]], report_name: str = "", *, sample_ids: list[int] | None = None) -> dict[str, Any]:
     """Render a PASS/FAIL verdict from per-point verification results.
 
     Each result with a ``fetched_value`` is judged against the reported value
@@ -280,18 +280,29 @@ def render_verdict(results: list[dict[str, Any]], report_name: str = "") -> dict
             fetched_source2, ...}``.
         report_name: Optional report name for display.
 
+        sample_ids: Complete IDs returned by extract. The tool entrypoint requires
+            this contract so omitted rows are visible, not counted as successes.
+
     Returns:
-        Verdict dict: ``verdict`` is ``PASS`` (zero failures) or ``FAIL``.
+        Verdict dict: FAIL for failed evidence, INCONCLUSIVE for incomplete or
+        duplicated evidence, PASS only for a complete sample with zero failures.
     """
     fail_items: list[dict[str, Any]] = []
     warn_items: list[dict[str, Any]] = []
     pass_count = 0
     total = 0
+    unverified_ids = []
+    result_ids = [item.get("id") for item in results]
+    invalid_ids = len(set(result_ids)) != len(result_ids)
+    if sample_ids is not None:
+        invalid_ids = invalid_ids or bool(set(result_ids) - set(sample_ids))
+        unverified_ids.extend(sorted(set(sample_ids) - set(result_ids)))
 
     for item in results:
         fetched = item.get("fetched_value")
         if fetched is None:
-            continue  # not verified — skip, do not count
+            unverified_ids.append(item.get("id"))
+            continue  # explicitly unverified; never silently certify a partial sample
         total += 1
         label = item.get("label", "?")
         unit = item.get("unit", "")
@@ -370,11 +381,14 @@ def render_verdict(results: list[dict[str, Any]], report_name: str = "") -> dict
 
     fail_count = len(fail_items)
     # Nothing verified is not a pass: omitted fetched_value rows are skipped above.
-    verdict = "INCONCLUSIVE" if total == 0 else ("PASS" if fail_count == 0 else "FAIL")
+    verdict = "FAIL" if fail_count else ("INCONCLUSIVE" if total == 0 or unverified_ids or invalid_ids else "PASS")
     return {
         "verdict": verdict,
         "report_name": report_name,
         "total": total,
+        "unverified_count": len(unverified_ids),
+        "unverified_ids": unverified_ids,
+        "invalid_result_ids": invalid_ids,
         "pass_count": pass_count,
         "warn_count": len(warn_items),
         "fail_count": fail_count,
@@ -393,7 +407,8 @@ class ReportAuditTool(BaseTool):
         "markdown report and returns a random sample (~15%, clamped 3-30) of "
         "its financial data points to verify; 'verdict' compares each sampled "
         "point's reported value against one or two authoritative fetched values "
-        "at 1% tolerance and returns a PASS/FAIL gate (one failure fails the "
+        "at 1% tolerance. Pass the complete sample_ids from extract; incomplete "
+        "samples return INCONCLUSIVE, one failure fails the "
         "report). Workflow: read the report, extract here, verify each sample "
         "point against market-data/financial-statement tools, then verdict here."
     )
@@ -422,6 +437,10 @@ class ReportAuditTool(BaseTool):
                 "description": "verdict: list of {id, label, reported_value, unit, "
                                "fetched_value, fetched_source, (optional) "
                                "fetched_value2, fetched_source2}.",
+            },
+            "sample_ids": {
+                "type": "array", "items": {"type": "integer"},
+                "description": "verdict: the complete sample_ids returned by extract; all must be verified exactly once.",
             },
             "report_name": {
                 "type": "string",
@@ -465,13 +484,14 @@ class ReportAuditTool(BaseTool):
                 result: dict[str, Any] = {
                     "total_extracted": len(points),
                     "sample_size": len(sampled),
+                    "sample_ids": [point["id"] for point in sampled],
                     "ratio": ratio,
                     "seed": seed,
                     "sample": sampled,
                     "hint": (
                         "For each point in `sample`, fetch its value from an "
                         "authoritative source, then call the 'verdict' command "
-                        "with results=[{id, reported_value, fetched_value, "
+                        "with the complete sample_ids and results=[{id, reported_value, fetched_value, "
                         "fetched_source, ...}]."
                     ),
                 }
@@ -479,8 +499,15 @@ class ReportAuditTool(BaseTool):
                 results = kwargs.get("results")
                 if not isinstance(results, list) or not results:
                     return _err("results (non-empty list) is required for verdict")
+                sample_ids = kwargs.get("sample_ids")
+                if (not isinstance(sample_ids, list) or not sample_ids
+                    or any(type(value) is not int or value < 1 for value in sample_ids)
+                    or len(set(sample_ids)) != len(sample_ids)):
+                    return _err("sample_ids must be the complete non-empty unique ID list returned by extract")
+                if any(not isinstance(item, dict) or type(item.get("id")) is not int for item in results):
+                    return _err("each verdict result must be an object with an integer sample id")
                 result = render_verdict(
-                    results, report_name=str(kwargs.get("report_name") or ""),
+                    results, sample_ids=sample_ids, report_name=str(kwargs.get("report_name") or ""),
                 )
             else:
                 return _err(f"unknown command: {command}")

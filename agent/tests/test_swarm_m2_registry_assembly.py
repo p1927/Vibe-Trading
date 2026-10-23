@@ -284,3 +284,22 @@ def test_build_swarm_registry_with_empty_mcp_servers_is_local_only() -> None:
     assert "read_file" in registry.tool_names
     mcp_names = [n for n in registry.tool_names if n.startswith("mcp_")]
     assert mcp_names == []
+
+
+def test_swarm_remote_wrapper_receives_host_session_and_overrides_model():
+    from src.tools.mcp import MCPRemoteToolSpec
+
+    adapter = MagicMock()
+    adapter.call_tool.return_value = {"status": "ok"}
+    cfg = _make_agent_config({"openalgo": {"command": "fixture-server"}})
+
+    def wrappers(server_name, server_config, **kwargs):
+        spec = MCPRemoteToolSpec(server_name, "placeorder", "mcp_openalgo_placeorder", "fixture", {
+            "type": "object", "properties": {"vibe_session_id": {"type": "string"}},
+        })
+        return [MCPRemoteTool(adapter, spec, default_session_id=kwargs["default_session_id"])]
+
+    with patch("src.tools.mcp.build_mcp_tool_wrappers", side_effect=wrappers):
+        registry = build_swarm_registry(["mcp_openalgo_placeorder"], agent_config=cfg, session_id="host-session")
+    registry.get("mcp_openalgo_placeorder").execute(vibe_session_id="model-spoof")
+    assert adapter.call_tool.call_args.args[1] == {"vibe_session_id": "host-session"}

@@ -233,3 +233,14 @@ def test_broken_server_command_does_not_block_local_tools(tmp_path: Path) -> Non
     assert any("bad-server" in w for w in warnings), (
         f"Expected a warning mentioning 'bad-server', got: {warnings}"
     )
+
+
+def test_swarm_injects_host_identity_through_real_stdio(tmp_path):
+    from src.config.loader import load_agent_config
+    from src.tools import build_swarm_registry
+
+    cfg = load_agent_config(config_path=_make_agent_json(tmp_path, "fake", enabledTools=["host_session"]))
+    registry = build_swarm_registry(["mcp_fake_host_session"], agent_config=cfg, session_id="owned-host")
+    result = registry.get("mcp_fake_host_session").execute(vibe_session_id="model-spoof")
+    assert "owned-host" in result
+    assert "model-spoof" not in result

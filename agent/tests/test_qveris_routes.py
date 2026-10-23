@@ -10,6 +10,19 @@ from src.api import qveris_routes
 from src.tools import qveris_tool as qt
 
 
+@pytest.fixture(autouse=True)
+def isolated_route_lifespan(monkeypatch):
+    # The shared event-loop test needs TestClient's lifespan protocol, not
+    # background workers/preflight that inspect the operator's Trade stack.
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def route_only_lifespan(app):
+        yield
+
+    monkeypatch.setattr(api_server.app.router, "lifespan_context", route_only_lifespan)
+
+
 @pytest.fixture
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(qt, "QVERIS_CONFIG_PATH", tmp_path / "qveris.json")
