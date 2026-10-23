@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import pytest
 
 from src.tools import build_registry
 from src.tools.report_audit_tool import (
@@ -161,14 +160,14 @@ def test_verdict_two_sources_split_is_warn_not_fail() -> None:
     assert out["warn_count"] == 1 and out["fail_count"] == 0
 
 
-def test_verdict_skips_points_without_fetched_value() -> None:
+def test_verdict_marks_missing_fetch_inconclusive() -> None:
     out = render_verdict([
         {"id": 1, "label": "a", "reported_value": 100, "fetched_value": None},
         {"id": 2, "label": "b", "reported_value": 100,
          "fetched_value": 100, "fetched_source": "m"},
     ])
     assert out["total"] == 1   # only the verified point counts
-    assert out["verdict"] == "PASS"
+    assert out["verdict"] == "INCONCLUSIVE"
 
 
 # ── tool contract ─────────────────────────────────────────────────────────
@@ -203,7 +202,7 @@ def test_execute_extract_happy() -> None:
 
 
 def test_execute_verdict_fail() -> None:
-    env = _run(command="verdict", results=[{
+    env = _run(command="verdict", sample_ids=[1], results=[{
         "id": 1, "label": "rev", "reported_value": 100,
         "fetched_value": 150, "fetched_source": "m",
     }])
@@ -214,7 +213,7 @@ def test_execute_verdict_fail() -> None:
 def test_execute_verdict_zero_reported_emits_strict_json() -> None:
     """reported=0 vs nonzero fetched must not emit bare Infinity tokens."""
     raw = ReportAuditTool().execute(
-        command="verdict",
+        command="verdict", sample_ids=[1],
         results=[{
             "id": 1, "label": "zero", "reported_value": 0,
             "fetched_value": 5, "fetched_source": "m",
@@ -240,3 +239,24 @@ def test_execute_unknown_command_is_error() -> None:
     env = _run(command="bogus")
     assert env["status"] == "error"
     assert "unknown command" in env["error"]
+
+
+def test_extract_verdict_workflow_cannot_pass_an_omitted_sample():
+    extracted = _run(command="extract", report_text="Revenue: 100M\nProfit: 20M\nMargin: 10%", seed=1)
+    ids = extracted["sample_ids"]
+    assert len(ids) == 3
+    point = extracted["sample"][0]
+    result = {**point, "fetched_value": point["reported_value"], "fetched_source": "fixture"}
+    out = _run(command="verdict", sample_ids=ids, results=[result])
+    assert out["verdict"] == "INCONCLUSIVE"
+    assert out["unverified_count"] == 2
+    assert out["unverified_ids"] == sorted(set(ids) - {point["id"]})
+    complete = [{**p, "fetched_value": p["reported_value"]} for p in extracted["sample"]]
+    assert _run(command="verdict", sample_ids=ids, results=complete)["verdict"] == "PASS"
+    assert _run(command="verdict", results=complete)["status"] == "error"
+
+
+def test_duplicate_and_unknown_verdict_rows_cannot_replace_missing_points():
+    row = {"id": 1, "reported_value": 100, "fetched_value": 100}
+    assert _run(command="verdict", sample_ids=[1, 2], results=[row, row])["verdict"] == "INCONCLUSIVE"
+    assert _run(command="verdict", sample_ids=[1], results=[{**row, "id": 2}])["verdict"] == "INCONCLUSIVE"
