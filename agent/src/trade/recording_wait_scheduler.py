@@ -172,7 +172,8 @@ async def _recording_wake_poll_tick(store: "ScheduledResearchJobStore") -> None:
             logger.exception(
                 "recording_wake poller: wake_recording_job failed for %s", recording_job_id
             )
-            woke = False
+            # No status transition was confirmed. Keep the existing due entry for the next poll.
+            continue
         if not woke:
             logger.warning(
                 "recording_wake poller: recording job %s was not in a wakeable "

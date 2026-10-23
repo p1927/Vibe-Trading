@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -13,6 +12,7 @@ from typing import Literal, Mapping, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from src.core.atomic_write import atomic_write_text, fsync_directory as _fsync_directory
 from src.live.paths import broker_dir
 
 _FILENAME = "pending_action.json"
@@ -345,21 +345,7 @@ def _write_action(path: Path, action: PendingAction) -> None:
         separators=(",", ":"),
         sort_keys=True,
     )
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
-    try:
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(payload + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        _fsync_directory(path.parent)
-    except Exception:
-        try:
-            temporary.unlink()
-        except OSError:
-            pass
-        raise
+    atomic_write_text(path, payload + "\n")
 
 
 def clear_pending_action(broker: str, action_id: str) -> None:
@@ -377,13 +363,3 @@ def _broker_key(broker: str) -> str:
     if key != "alpaca":
         raise ValueError("pending submit ownership currently supports Alpaca only")
     return key
-
-
-def _fsync_directory(directory: Path) -> None:
-    if os.name == "nt":  # Windows has no portable directory fsync.
-        return
-    descriptor = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)

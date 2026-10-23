@@ -37,20 +37,17 @@ def load_auto_record() -> dict[str, Any]:
     Shape: ``{"enabled": bool, "config": dict | None, "updated_at": str | None}``.
     ``config`` mirrors the recording-start fields (underlyings, equities,
     intervals, ...) captured at the moment auto-record was last enabled.
-    Missing/corrupt file → disabled with no config (fail safe, never
-    fail loud on a background-poller read path).
+    An absent file means disabled. Corrupt or unreadable owned state raises so the poller
+    reports its failure rather than silently claiming Auto Record was disabled.
     """
     path = _store_path()
     with _LOCK:
-        if not path.exists():
-            return {"enabled": False, "config": None, "updated_at": None}
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            logger.exception("failed to read auto_record.json; treating as disabled")
+        except FileNotFoundError:
             return {"enabled": False, "config": None, "updated_at": None}
     if not isinstance(raw, dict):
-        return {"enabled": False, "config": None, "updated_at": None}
+        raise ValueError(f"auto-record state must be an object: {path}")
     return {
         "enabled": bool(raw.get("enabled", False)),
         "config": raw.get("config") if isinstance(raw.get("config"), dict) else None,
@@ -73,10 +70,9 @@ def save_auto_record(*, enabled: bool, config: dict[str, Any] | None) -> dict[st
         "updated_at": datetime.now(tz=timezone.utc).isoformat(),
     }
     with _LOCK:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(path)
+        from src.core.atomic_write import atomic_write_text
+
+        atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2))
     return payload
 
 

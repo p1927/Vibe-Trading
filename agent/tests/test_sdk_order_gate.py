@@ -20,6 +20,7 @@ from src.config.accessor import reset_env_config
 from src.live import audit as live_audit
 from src.live import halt as live_halt
 from src.live import pending_action as pending_state
+from src.core import atomic_write as native_atomic
 from src.live import sdk_order_gate as gate
 from src.live.daily_count import read_daily_count
 from src.live.enforcement import OrderIntent
@@ -230,7 +231,7 @@ def test_pending_persist_failure_makes_zero_broker_calls(monkeypatch) -> None:
     _patch_gate(monkeypatch, mandate=_mandate())
     connector = _FakeConnector()
     patch_module_os(
-        monkeypatch, pending_state,
+        monkeypatch, native_atomic,
         fsync=lambda descriptor: (_ for _ in ()).throw(OSError("disk full")),
     )
 

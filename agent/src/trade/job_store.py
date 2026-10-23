@@ -437,7 +437,7 @@ class JobStore:
                 continue
             try:
                 mtime = (path / "job.json").stat().st_mtime
-            except OSError:
+            except FileNotFoundError:
                 continue
             if cutoff is not None and mtime < cutoff:
                 continue

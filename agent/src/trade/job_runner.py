@@ -94,22 +94,21 @@ def job_file_lock(lock_path: Path, *, valid: bool, exclusive: bool = True):
 def write_job_json_unsafe(path: Path, payload: dict[str, Any]) -> None:
     """Atomic (tmp + rename) write. Caller must already hold the lock (or
     know no concurrent writer exists) — this performs no locking itself."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
+    from src.core.atomic_write import atomic_write_text
+
     body = {"schema_version": JOB_SCHEMA_VERSION, **payload}
-    tmp.write_text(json.dumps(body, ensure_ascii=False, default=str), encoding="utf-8")
-    tmp.replace(path)
+    atomic_write_text(path, json.dumps(body, ensure_ascii=False, default=str))
 
 
 def read_job_json_unsafe(path: Path) -> dict[str, Any] | None:
     """Caller must already hold the lock (or accept a racy read)."""
-    if not path.is_file():
-        return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except FileNotFoundError:
         return None
-    return payload if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        raise ValueError(f"job record must be an object: {path}")
+    return payload
 
 
 def terminate_worker(pid: Any) -> None:

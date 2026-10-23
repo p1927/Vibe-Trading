@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -322,22 +321,9 @@ class SessionStore:
 
     @staticmethod
     def _write_json(path: Path, data: Dict[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        encoded = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
-        fd, temporary_name = tempfile.mkstemp(
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-        )
-        temporary_path = Path(temporary_name)
-        try:
-            with os.fdopen(fd, "wb") as temporary_file:
-                temporary_file.write(encoded)
-                temporary_file.flush()
-                os.fsync(temporary_file.fileno())
-            os.replace(temporary_path, path)
-        finally:
-            temporary_path.unlink(missing_ok=True)
+        from src.core.atomic_write import atomic_write_text
+
+        atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2))
 
     @staticmethod
     def _read_json(path: Path) -> Optional[Dict[str, Any]]:
