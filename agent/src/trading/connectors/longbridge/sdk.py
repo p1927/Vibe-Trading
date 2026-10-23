@@ -25,6 +25,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Mapping
 
+from src.core.atomic_write import SECRET_WRITE, write_json_atomic
 from src.config.paths import get_runtime_root
 from src.trading.connectors.longbridge.credentials import (
     LongbridgeCredentialError,
@@ -207,11 +208,7 @@ def save_config(config: LongbridgeConfig) -> Path:
         "timeout": config.timeout,
         "readonly": config.readonly,
     }
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    write_json_atomic(path, payload, newline=True, **SECRET_WRITE)
     return path
 
 

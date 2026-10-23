@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.core.atomic_write import write_json_atomic
 from src.config.paths import get_runtime_root
 from src.shadow_account.models import ShadowProfile, ShadowRule
 
@@ -78,10 +79,7 @@ def now_iso() -> str:
 def save_profile(profile: ShadowProfile) -> Path:
     """Persist a ShadowProfile to disk as JSON."""
     path = profiles_dir() / f"{_checked_id(profile.shadow_id)}.json"
-    path.write_text(
-        json.dumps(profile.to_dict(), ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
-    )
+    write_json_atomic(path, profile.to_dict(), default=str)
     return path
 
 

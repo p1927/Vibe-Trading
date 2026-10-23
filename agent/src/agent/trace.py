@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from src.core.atomic_write import atomic_write_bytes
+
 logger = logging.getLogger(__name__)
 
 
@@ -240,31 +242,12 @@ class TraceWriter:
             OSError: When the blob cannot be written or renamed at all. The
                 caller must not write the referencing record in that case.
         """
-        tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            payload = value.encode("utf-8")
-            written = 0
-            # os.write may write fewer bytes than requested; a single call can
-            # silently truncate a large sidecar.
-            while written < len(payload):
-                written += os.write(fd, payload[written:])
-            try:
-                os.fsync(fd)
-            except OSError as exc:
-                self._warn_fsync_failure(exc, tmp)
-        except BaseException:
-            os.close(fd)
-            # Never leave a half-written temp file behind for the next run.
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
-        else:
-            os.close(fd)
-        os.replace(tmp, path)
-        self._fsync_dir(path.parent)
+        atomic_write_bytes(
+            path,
+            value.encode("utf-8"),
+            mode=0o600,
+            on_fsync_error=lambda exc: self._warn_fsync_failure(exc, path),
+        )
 
     def _fsync_dir(self, directory: Path) -> None:
         """Fsync a directory so new/renamed entries survive a crash.

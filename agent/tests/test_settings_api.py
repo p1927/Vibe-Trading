@@ -591,6 +591,7 @@ def test_atomic_write_secret_is_crash_safe(
     """A crash during the replace must not corrupt or truncate the secret file,
     nor leave a stray temp file holding the secret behind."""
     from src.api import helpers
+    from src.core import atomic_write as aw
 
     target = tmp_path / ".env"
     target.write_text("OLD=1\n", encoding="utf-8")
@@ -598,10 +599,10 @@ def test_atomic_write_secret_is_crash_safe(
     def _boom(*_args: object, **_kwargs: object) -> None:
         raise OSError("simulated crash before commit")
 
-    patch_module_os(monkeypatch, helpers, replace=_boom)
+    patch_module_os(monkeypatch, aw, replace=_boom)
 
     with pytest.raises(OSError):
-        helpers._atomic_write_secret(target, "NEW=2\n")
+        aw.atomic_write_text(target, "NEW=2\n", **aw.SECRET_WRITE)
 
     # Original content is intact — the swap never happened.
     assert target.read_text(encoding="utf-8") == "OLD=1\n"
@@ -611,10 +612,10 @@ def test_atomic_write_secret_is_crash_safe(
 
 def test_atomic_write_secret_creates_0600_file(tmp_path: Path) -> None:
     """Fresh secret files are created owner-only via the atomic path."""
-    from src.api import helpers
+    from src.core import atomic_write as aw
 
     target = tmp_path / ".env"
-    helpers._atomic_write_secret(target, "KEY=value\n")
+    aw.atomic_write_text(target, "KEY=value\n", **aw.SECRET_WRITE)
 
     assert target.read_text(encoding="utf-8") == "KEY=value\n"
     if os.name != "nt":
@@ -625,12 +626,12 @@ def test_atomic_write_secret_supports_platforms_without_fchmod(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Windows must be able to persist Web UI settings without ``os.fchmod``."""
-    from src.api import helpers
+    from src.core import atomic_write as aw
 
-    monkeypatch.delattr(helpers.os, "fchmod", raising=False)
+    monkeypatch.delattr(aw.os, "fchmod", raising=False)
     target = tmp_path / ".env"
 
-    helpers._atomic_write_secret(target, "KEY=value\n")
+    aw.atomic_write_text(target, "KEY=value\n", **aw.SECRET_WRITE)
 
     assert target.read_text(encoding="utf-8") == "KEY=value\n"
 

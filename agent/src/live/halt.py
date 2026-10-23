@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.core.atomic_write import write_json_atomic
 from src.live.paths import broker_dir, live_root
 
 logger = logging.getLogger(__name__)
@@ -96,9 +97,7 @@ def trip_halt(by: str, reason: str, broker: str | None = None) -> Path:
         "reason": reason,
     }
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    write_json_atomic(path, payload, indent=None, durable=True)
     logger.warning(
         "live kill switch tripped (broker=%s, by=%s): %s",
         broker or "*",

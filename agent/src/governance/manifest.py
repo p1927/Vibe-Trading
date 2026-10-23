@@ -73,6 +73,7 @@ import json
 import platform
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Sequence
+from src.core.atomic_write import strict_dumps
 
 __all__ = [
     "SkillRecord",
@@ -338,7 +339,7 @@ class RunManifest:
         Returns:
             JSON text; round-trips through :meth:`from_json`.
         """
-        return json.dumps(self.to_dict(), sort_keys=True, ensure_ascii=False, indent=indent)
+        return strict_dumps(self.to_dict(), sort_keys=True, ensure_ascii=False, indent=indent)
 
     @classmethod
     def from_json(cls, text: str) -> "RunManifest":

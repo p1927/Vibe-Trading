@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from src.core.atomic_write import write_json_atomic
 from src.agent.tools import BaseTool
 from src.hypotheses import HypothesisRegistry
 
@@ -371,8 +372,7 @@ class GenerateBacktestConfigTool(BaseTool):
             (run_dir / "code").mkdir(parents=True, exist_ok=True)
 
             config_path = run_dir / "config.json"
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(config, f, indent=2, ensure_ascii=False)
+            write_json_atomic(config_path, config)
 
             payload: dict[str, Any] = {
                 "run_dir": str(run_dir),

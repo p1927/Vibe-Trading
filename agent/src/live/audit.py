@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import uuid
 from dataclasses import dataclass, field
@@ -69,6 +70,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Literal, Protocol
 
+from src.core.atomic_write import NonFiniteJSONError, strict_dumps
 from src.live.paths import live_root
 from src.tools.redaction import redact_payload
 
@@ -272,6 +274,17 @@ class LiveActionEvent:
         return redact_payload(record)
 
 
+def _non_finite_as_text(value: Any) -> Any:
+    """`value` with every NaN / inf float replaced by its text, so the record stays valid JSON."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: _non_finite_as_text(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_non_finite_as_text(v) for v in value]
+    return value
+
+
 def write_live_action(
     event: LiveActionEvent,
     *,
@@ -335,7 +348,13 @@ def write_live_action(
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     # default=str: a Decimal/datetime/UUID inside a broker response must not drop the compliance record of an
     # order that has already been sent (callers swallow audit errors by design).
-    line = json.dumps(record, ensure_ascii=False, default=str)
+    try:
+        line = strict_dumps(record, ensure_ascii=False, default=str)
+    except NonFiniteJSONError as exc:
+        # The order is already sent: the compliance record is never dropped for a bad number, and never persists a bare
+        # `NaN` token either. The value is kept as text and the field is named in the log (D479).
+        logger.error("live audit record holds a non-finite number (%s); stored as text", exc)
+        line = strict_dumps(_non_finite_as_text(record), ensure_ascii=False, default=str)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(line + "\n")
         handle.flush()

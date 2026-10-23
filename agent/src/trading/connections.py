@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.core.atomic_write import write_json_atomic
+from src.core.file_lock import locked
 from src.config.paths import get_runtime_root
 from src.trading.credentials import CredentialStore
 from src.trading.local_plugins import discover_plugins
@@ -156,6 +156,7 @@ class ConnectionStore:
                 return connection
         raise ValueError(f"unknown local connection: {target or '?'}")
 
+    @locked
     def save(self, connection: TradingConnection) -> TradingConnection:
         """Validate and persist a connection, replacing any row with its id.
 
@@ -175,6 +176,7 @@ class ConnectionStore:
         self._write(sorted(rows, key=lambda row: (row.created_at, row.id)))
         return validated
 
+    @locked
     def create(self, connection_id: str, profile_id: str, label: str) -> TradingConnection:
         """Create a new connection instance.
 
@@ -203,6 +205,7 @@ class ConnectionStore:
             )
         )
 
+    @locked
     def ensure(self, connection_id: str, profile_id: str, label: str) -> TradingConnection:
         """Return an existing connection, creating it when absent.
 
@@ -226,6 +229,7 @@ class ConnectionStore:
             raise ValueError(f"local connection {existing.id} already uses profile {existing.profile_id}")
         return existing
 
+    @locked
     def delete(self, connection_id: str) -> None:
         """Delete a connection and any secrets stored for it.
 
@@ -325,31 +329,12 @@ class ConnectionStore:
         Args:
             connections: Full set of connections to persist.
         """
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary = tempfile.mkstemp(
-            prefix=".connections-",
-            suffix=".json",
-            dir=self.path.parent,
+        write_json_atomic(
+            self.path,
+            {"schema_version": 1, "connections": [row.to_dict() for row in connections]},
+            newline=True,
+            mode=0o600,
         )
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                json.dump(
-                    {
-                        "schema_version": 1,
-                        "connections": [row.to_dict() for row in connections],
-                    },
-                    handle,
-                    ensure_ascii=False,
-                    indent=2,
-                )
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(temporary, 0o600)
-            os.replace(temporary, self.path)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
 
 
 def credential_field_catalog(profile_id: str) -> list[dict[str, Any]]:

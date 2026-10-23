@@ -15,12 +15,10 @@ import asyncio
 import html
 import importlib.util
 import json
-import os
 import re
-import tempfile
 import threading
 import time
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
@@ -34,6 +32,7 @@ except ImportError:  # pragma: no cover
 import httpx
 from pydantic import Field
 
+from src.core.atomic_write import write_json_atomic
 from src.channels.bus.events import OutboundMessage
 from src.channels.bus.queue import MessageBus
 from src.channels.base import BaseChannel
@@ -791,23 +790,7 @@ class MSTeamsChannel(BaseChannel):
 
     def _write_json_atomically(self, path, data: dict[str, Any]) -> None:
         """Write refs JSON atomically to reduce corruption risk during crashes."""
-        payload = json.dumps(data, indent=2)
-        tmp_path: str | None = None
-        try:
-            fd, tmp_path = tempfile.mkstemp(
-                dir=str(path.parent),
-                prefix=f"{path.name}.",
-                suffix=".tmp",
-            )
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(payload)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, path)
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                with suppress(OSError):
-                    os.unlink(tmp_path)
+        write_json_atomic(path, data, ensure_ascii=True)
 
     def _save_refs_locked(self, *, prune: bool = True) -> None:
         """Persist conversation references (caller must hold _refs_guard)."""

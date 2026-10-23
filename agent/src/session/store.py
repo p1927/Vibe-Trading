@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from src.core.atomic_write import strict_dumps
 from src.session.models import Attempt, Message, Session
 
 logger = logging.getLogger(__name__)
@@ -160,7 +161,7 @@ class SessionStore:
         path = self._messages_file(message.session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(message.to_dict(), ensure_ascii=False) + "\n")
+            f.write(strict_dumps(message.to_dict(), ensure_ascii=False) + "\n")
             f.flush()
             os.fsync(f.fileno())
 
@@ -321,9 +322,9 @@ class SessionStore:
 
     @staticmethod
     def _write_json(path: Path, data: Dict[str, Any]) -> None:
-        from src.core.atomic_write import atomic_write_text
+        from src.core.atomic_write import write_json_atomic
 
-        atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2))
+        write_json_atomic(path, data, mode=0o600)
 
     @staticmethod
     def _read_json(path: Path) -> Optional[Dict[str, Any]]:

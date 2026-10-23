@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from src.core.atomic_write import atomic_write_text
 from src.config.paths import get_data_dir
 
 logger = logging.getLogger(__name__)
@@ -35,9 +36,7 @@ def _store_path() -> Path:
 
 def _write_text_atomic(path: Path, text: str) -> None:
     """Write *text* to *path* atomically via a temp file + rename."""
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(path)
+    atomic_write_text(path, text)
 
 
 def _load() -> dict[str, Any]:

@@ -31,6 +31,7 @@ from types import ModuleType
 from typing import Any, Mapping
 from urllib.parse import urlencode
 
+from src.core.atomic_write import SECRET_WRITE, write_json_atomic
 from src.config.paths import get_runtime_root
 from src.trading import tap_forward
 
@@ -173,11 +174,7 @@ def save_config(config: AlpacaConfig) -> Path:
     """Persist Alpaca settings with owner-only permissions."""
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(config), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    write_json_atomic(path, asdict(config), newline=True, **SECRET_WRITE)
     return path
 
 

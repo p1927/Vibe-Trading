@@ -22,6 +22,7 @@ from urllib.parse import urljoin
 
 import requests
 
+from src.core.atomic_write import SECRET_WRITE, write_json_atomic
 from src.config.paths import get_runtime_root
 
 CONFIG_FILENAME = "trading212.json"
@@ -151,11 +152,7 @@ def save_config(config: Trading212Config) -> Path:
     """Persist Trading 212 settings with owner-only permissions."""
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(config), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    write_json_atomic(path, asdict(config), newline=True, **SECRET_WRITE)
     return path
 
 

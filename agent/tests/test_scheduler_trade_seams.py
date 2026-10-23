@@ -220,7 +220,7 @@ def test_first_fire_rule_is_one_function_for_every_create_surface() -> None:
 
 
 def test_cancelling_a_recording_wake_loads_inside_the_store_transaction(store, monkeypatch) -> None:
-    from src.scheduled_research import store as store_module
+    import src.core.file_lock as file_lock_module
     from src.trade.recording_wait_scheduler import cancel_recording_wake, schedule_recording_wake
 
     schedule_recording_wake(
@@ -231,7 +231,7 @@ def test_cancelling_a_recording_wake_loads_inside_the_store_transaction(store, m
     real_load = store.load
 
     def _load():
-        load_depths.append(store_module._HELD.__dict__.get("depths", {}).get(str(store.path), 0))
+        load_depths.append(file_lock_module._HELD.__dict__.get("depths", {}).get(str(store.path), 0))
         return real_load()
 
     monkeypatch.setattr(store, "load", _load)

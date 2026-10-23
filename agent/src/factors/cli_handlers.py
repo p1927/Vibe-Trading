@@ -65,6 +65,7 @@ except Exception:  # pragma: no cover — rich is a project dep, fallback only
     TextColumn = None  # type: ignore[assignment]
     TimeElapsedColumn = None  # type: ignore[assignment]
 
+from src.core.atomic_write import write_json_atomic
 from src.factors.compare_runner import SORT_KEYS as _COMPARE_SORT_KEYS, compare_alphas
 from src.factors.registry import Registry, RegistryError
 
@@ -885,7 +886,7 @@ def cmd_alpha_export_manifest(args: argparse.Namespace) -> int:
 
         reg = Registry()
         manifest = reg.export_manifest()
-        out_path.write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
+        write_json_atomic(out_path, manifest, ensure_ascii=True, default=str)
         _print(
             f"[green]wrote manifest[/green] ({manifest['health']['loaded']} alphas, "
             f"{manifest['health']['failed']} errors) -> {out_path}"

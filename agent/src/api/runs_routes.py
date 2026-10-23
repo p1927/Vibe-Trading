@@ -5,6 +5,8 @@ Mounted by ``agent/api_server.py`` via ``register_runs_routes(app, ...)``.
 
 from __future__ import annotations
 
+from src.core.atomic_write import write_json_atomic
+
 import csv
 import json
 import logging
@@ -640,16 +642,10 @@ def _build_positions_sector_map(run_dir: Path, run_id: str, *, refresh: bool) ->
         "total_symbols": len(symbols),
         "symbol_limit": _POSITIONS_SECTOR_MAX_SYMBOLS,
     }
-    tmp_path = cache_path.with_name(f".sector_map.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        os.replace(tmp_path, cache_path)
+        write_json_atomic(cache_path, payload)
     except OSError:
-        try:
-            tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        pass  # a cache: the resolved map is still returned
     return payload
 
 

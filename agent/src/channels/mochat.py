@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 from pydantic import Field
 
+from src.core.atomic_write import write_json_atomic
 from src.channels.bus.events import OutboundMessage
 from src.channels.bus.queue import MessageBus
 from src.channels.base import BaseChannel
@@ -895,10 +896,10 @@ class MochatChannel(BaseChannel):
     async def _save_session_cursors(self) -> None:
         try:
             self._state_dir.mkdir(parents=True, exist_ok=True)
-            self._cursor_path.write_text(json.dumps({
+            write_json_atomic(self._cursor_path, {
                 "schemaVersion": 1, "updatedAt": datetime.now(timezone.utc).isoformat(),
                 "cursors": self._session_cursor,
-            }, ensure_ascii=False, indent=2) + "\n", "utf-8")
+            }, newline=True)
         except Exception as e:
             self.logger.warning("Failed to save cursor file: {}", e)
 

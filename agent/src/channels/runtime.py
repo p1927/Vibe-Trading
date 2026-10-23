@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from src.core.atomic_write import write_json_atomic
 from src.channels.bus.events import InboundMessage, OutboundMessage
 from src.channels.bus.queue import MessageBus
 from src.channels.manager import ChannelManager
@@ -364,10 +365,7 @@ class ChannelRuntime:
         return {str(key): str(value) for key, value in data.items() if value}
 
     def _save_session_map(self) -> None:
-        self.session_map_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.session_map_path.with_suffix(self.session_map_path.suffix + ".tmp")
-        tmp.write_text(json.dumps(self._session_map, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(self.session_map_path)
+        write_json_atomic(self.session_map_path, self._session_map)
 
     def reset_session(self, session_key: str) -> str | None:
         """Remove a session mapping so the next message creates a fresh session.

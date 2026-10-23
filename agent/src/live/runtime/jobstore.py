@@ -27,6 +27,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.core.atomic_write import write_json_atomic
 from src.live.paths import live_root
 from src.live.runtime.scheduler import Job
 
@@ -137,18 +138,7 @@ class JobStore:
         """
         target = self.path
         target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        payload = json.dumps(self._envelope(jobs), ensure_ascii=False, indent=2)
-
-        tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            os.write(fd, payload.encode("utf-8"))
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-
-        os.replace(tmp, target)
-        self._fsync_dir(target.parent)
+        write_json_atomic(target, self._envelope(jobs), mode=0o600)
 
     def _quarantine(self, cause: str) -> Path:
         """Rename the corrupt store aside as ``<name>.corrupt-<ts>``.
@@ -179,28 +169,6 @@ class JobStore:
                 exc_info=True,
             )
             return self.path
-
-    @staticmethod
-    def _fsync_dir(directory: Path) -> None:
-        """Fsync a directory fd so a contained ``os.replace`` is durable.
-
-        On platforms where opening a directory for fsync is unsupported (some
-        Windows builds), this is a best-effort no-op: ``os.replace`` is already
-        atomic there, only the rename's durability window differs.
-
-        Args:
-            directory: The directory whose entry was just renamed.
-        """
-        try:
-            dir_fd = os.open(directory, os.O_RDONLY)
-        except OSError:
-            return
-        try:
-            os.fsync(dir_fd)
-        except OSError:
-            logger.debug("parent-dir fsync unsupported on %s", directory, exc_info=True)
-        finally:
-            os.close(dir_fd)
 
     @staticmethod
     def _envelope(jobs: list[Job]) -> dict[str, object]:

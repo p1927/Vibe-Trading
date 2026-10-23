@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import os
-import threading
 from contextlib import contextmanager
 from datetime import date as calendar_date
 from datetime import datetime, timezone
@@ -28,6 +27,7 @@ try:  # Windows advisory byte-range lock.
 except ImportError:  # pragma: no cover - POSIX
     msvcrt = None  # type: ignore[assignment]
 
+from src.core.atomic_write import write_json_atomic
 from src.live.paths import broker_dir
 
 _COUNTER_FILENAME = "trade_counter.json"
@@ -149,28 +149,10 @@ def increment_daily_count(broker: str, action_id: str | None = None) -> int:
     if action_id is not None:
         action_ids.append(action_id)
     path = _counter_path(broker)
-    tmp = path.with_name(
-        f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
-    )
-    payload = json.dumps({"date": today, "count": count, "action_ids": action_ids}, ensure_ascii=False)
     try:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with tmp.open("x", encoding="utf-8", newline="\n") as handle:
-            handle.write(payload + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        tmp.replace(path)
-        if os.name != "nt":
-            descriptor = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-            try:
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
+        write_json_atomic(path, {"date": today, "count": count, "action_ids": action_ids}, indent=None, newline=True)
     except Exception as exc:
-        try:
-            tmp.unlink()
-        except OSError as cleanup_exc:
-            exc.add_note(f"temporary count cleanup also failed: {cleanup_exc}")
         raise DailyCountError("daily order count could not be persisted") from exc
     return count
 

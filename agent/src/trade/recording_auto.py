@@ -70,9 +70,9 @@ def save_auto_record(*, enabled: bool, config: dict[str, Any] | None) -> dict[st
         "updated_at": datetime.now(tz=timezone.utc).isoformat(),
     }
     with _LOCK:
-        from src.core.atomic_write import atomic_write_text
+        from src.core.atomic_write import write_json_atomic
 
-        atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2))
+        write_json_atomic(path, payload, mode=0o600)
     return payload
 
 

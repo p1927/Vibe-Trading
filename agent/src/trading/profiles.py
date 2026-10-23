@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from src.core.atomic_write import write_json_atomic
 from src.config.paths import get_runtime_root
 from src.trading.connectors.alpaca.profiles import ALPACA_PROFILES
 from src.trading.connectors.binance.profiles import BINANCE_PROFILES
@@ -115,10 +116,7 @@ def save_selected_profile_id(profile_id: str) -> Path:
     profile = profile_by_id(profile_id)
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({"selected_profile": profile.id}, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    write_json_atomic(path, {"selected_profile": profile.id}, newline=True)
     try:
         path.chmod(0o600)
     except OSError:

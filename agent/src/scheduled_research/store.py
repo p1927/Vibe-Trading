@@ -14,18 +14,13 @@ from __future__ import annotations
 import json
 import logging
 import os
-import threading
-import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional
 
-try:  # POSIX only; elsewhere the in-process lock below still serialises threads
-    import fcntl
-except ImportError:  # pragma: no cover
-    fcntl = None  # type: ignore[assignment]
-
+from src.core.atomic_write import write_json_atomic
+from src.core.file_lock import file_lock
 from src.config.paths import get_runtime_root
 from src.scheduled_research.models import ScheduledResearchJob, validate_schedule, validate_timezone_shape
 
@@ -76,11 +71,6 @@ def _default_store_path() -> Path:
     :func:`src.config.paths.get_runtime_root`.
     """
     return get_runtime_root() / "scheduled_research" / _STORE_FILENAME
-
-
-_HELD = threading.local()  # per thread: store path -> transaction() re-entry depth
-_THREAD_LOCKS: dict[str, threading.Lock] = {}
-_THREAD_LOCKS_GUARD = threading.Lock()
 
 
 class CorruptStoreError(RuntimeError):
@@ -136,30 +126,8 @@ class ScheduledResearchJobStore:
         API process apart. It is re-entrant per thread and per path, across store instances (the
         autonomous-agent jobs build a fresh store on every call).
         """
-        key = str(self.path)
-        depths: dict[str, int] = _HELD.__dict__.setdefault("depths", {})
-        if depths.get(key):
-            depths[key] += 1
-            try:
-                yield
-            finally:
-                depths[key] -= 1
-            return
-        with _THREAD_LOCKS_GUARD:
-            thread_lock = _THREAD_LOCKS.setdefault(key, threading.Lock())
-        with thread_lock:
-            fd = -1
-            if fcntl is not None:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                fd = os.open(self.path.with_name(self.path.name + ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
-                fcntl.flock(fd, fcntl.LOCK_EX)
-            depths[key] = 1
-            try:
-                yield
-            finally:
-                depths[key] = 0
-                if fd >= 0:
-                    os.close(fd)  # closing releases the flock
+        with file_lock(self.path):
+            yield
 
     # ------------------------------------------------------------------
     # Public API
@@ -207,33 +175,8 @@ class ScheduledResearchJobStore:
             OSError: When the directory cannot be created or the write fails.
         """
         with self.transaction():
-            target = self.path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            payload = json.dumps(self._envelope(jobs), ensure_ascii=False, indent=2)
-
-            last_exc: OSError | None = None
-            for attempt in range(5):
-                tmp = target.with_name(f".{target.name}.{os.getpid()}.{attempt}.tmp")
-                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                with os.fdopen(fd, "wb") as handle:  # os.write may write short; the file object loops
-                    handle.write(payload.encode("utf-8"))
-                    handle.flush()
-                    os.fsync(handle.fileno())
-
-                try:
-                    os.replace(tmp, target)
-                    self._fsync_dir(target.parent)
-                    return
-                except OSError as exc:
-                    last_exc = exc
-                    try:
-                        tmp.unlink(missing_ok=True)
-                    except OSError:
-                        pass
-                    time.sleep(0.05 * (attempt + 1))
-
-            if last_exc is not None:
-                raise last_exc
+            # the shared writer retries the Windows replace race and never leaves a stray temp
+            write_json_atomic(self.path, self._envelope(jobs), mode=0o600)
 
     def upsert(self, job: ScheduledResearchJob, *, validate: bool = True) -> None:
         """Insert or replace a job by id.
@@ -380,19 +323,6 @@ class ScheduledResearchJobStore:
             )
             return self.path
         return quarantined
-
-    @staticmethod
-    def _fsync_dir(directory: Path) -> None:
-        try:
-            dir_fd = os.open(directory, os.O_RDONLY)
-        except OSError:
-            return
-        try:
-            os.fsync(dir_fd)
-        except OSError:
-            logger.debug("parent-dir fsync unsupported on %s", directory, exc_info=True)
-        finally:
-            os.close(dir_fd)
 
     @staticmethod
     def _envelope(jobs: Dict[str, ScheduledResearchJob]) -> dict:

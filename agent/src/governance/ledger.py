@@ -56,6 +56,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, Iterable, Iterator, Mapping
+from src.core.atomic_write import strict_dumps, write_json_atomic
 
 try:  # POSIX advisory lock (Linux/macOS).
     import fcntl
@@ -448,7 +449,7 @@ def append_record(
                 "prev_record_hash": last_hash,
                 "record_hash": record_hash,
             }
-            line = (json.dumps(full_record, ensure_ascii=False) + "\n").encode("utf-8")
+            line = (strict_dumps(full_record, ensure_ascii=False) + "\n").encode("utf-8")  # a NaN is refused before the chain moves
 
             handle.seek(0, os.SEEK_END)
             handle.write(line)
@@ -535,9 +536,7 @@ def export_chain_to_file(path: Path, dest: Path) -> Path:
     """
     export = build_export(path)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(
-        json.dumps(export, sort_keys=True, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    write_json_atomic(dest, export, sort_keys=True)
     return dest
 
 

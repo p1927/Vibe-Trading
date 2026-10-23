@@ -29,13 +29,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from src.core.atomic_write import write_json_atomic
 from src.live.mandate.ceilings import CeilingError, server_ceilings, tighten
 from src.live.mandate.model import MANDATE_SCHEMA_VERSION
 from src.live.paths import broker_dir
@@ -183,14 +183,7 @@ def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
         payload: JSON-serializable mapping to persist.
     """
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    try:
-        os.chmod(tmp, 0o600)
-    except OSError:
-        # Best-effort on platforms without POSIX perms (e.g. Windows).
-        pass
-    os.replace(tmp, path)
+    write_json_atomic(path, payload, indent=None, mode=0o600)
 
 
 def _proposal_path(broker: str, proposal_id: str) -> Path:

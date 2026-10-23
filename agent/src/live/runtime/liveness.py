@@ -19,10 +19,10 @@ Heartbeat writes are atomic (same-dir temp + ``os.replace``) so a concurrent
 from __future__ import annotations
 
 import logging
-import os
 import time
 from pathlib import Path
 
+from src.core.atomic_write import atomic_write_text
 from src.live.runtime.jobstore import runtime_dir
 
 logger = logging.getLogger(__name__)
@@ -94,9 +94,7 @@ def write_heartbeat(runner_id: str, *, now_ms: int | None = None) -> int:
     tick = now_ms if now_ms is not None else _now_ms()
     path = heartbeat_path(runner_id)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(str(tick), encoding="utf-8")
-    os.replace(tmp, path)
+    atomic_write_text(path, str(tick), durable=False)  # a heartbeat only needs atomic visibility
     return tick
 
 

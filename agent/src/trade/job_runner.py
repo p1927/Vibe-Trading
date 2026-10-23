@@ -94,10 +94,10 @@ def job_file_lock(lock_path: Path, *, valid: bool, exclusive: bool = True):
 def write_job_json_unsafe(path: Path, payload: dict[str, Any]) -> None:
     """Atomic (tmp + rename) write. Caller must already hold the lock (or
     know no concurrent writer exists) — this performs no locking itself."""
-    from src.core.atomic_write import atomic_write_text
+    from src.core.atomic_write import write_json_atomic
 
     body = {"schema_version": JOB_SCHEMA_VERSION, **payload}
-    atomic_write_text(path, json.dumps(body, ensure_ascii=False, default=str))
+    write_json_atomic(path, body, indent=None, default=str, mode=0o600)
 
 
 def read_job_json_unsafe(path: Path) -> dict[str, Any] | None:

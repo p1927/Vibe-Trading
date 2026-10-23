@@ -345,7 +345,7 @@ def _write_action(path: Path, action: PendingAction) -> None:
         separators=(",", ":"),
         sort_keys=True,
     )
-    atomic_write_text(path, payload + "\n")
+    atomic_write_text(path, payload + "\n", mode=0o600)
 
 
 def clear_pending_action(broker: str, action_id: str) -> None:

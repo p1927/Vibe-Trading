@@ -17,6 +17,7 @@ from typing import Any, Mapping
 from urllib.parse import urlparse
 from urllib.request import getproxies
 
+from src.core.atomic_write import SECRET_WRITE, write_json_atomic
 from src.config.paths import get_runtime_root
 from src.trading.connectors.binance.shaping import (
     as_iter as _as_iter,
@@ -197,11 +198,7 @@ def save_config(config: BinanceConfig) -> Path:
     """Persist Binance settings with owner-only permissions."""
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(config), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    write_json_atomic(path, asdict(config), newline=True, **SECRET_WRITE)
     return path
 
 

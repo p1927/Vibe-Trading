@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from src.core.atomic_write import strict_dumps
 from src.config.paths import get_runtime_root
 
 
@@ -73,7 +74,7 @@ class PortfolioStore:
                     int(payload["complete"]),
                     str(totals["usd"]),
                     str(totals["cny"]),
-                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                    strict_dumps(payload, ensure_ascii=False, separators=(",", ":")),
                 ),
             )
 

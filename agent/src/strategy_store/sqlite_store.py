@@ -17,6 +17,7 @@ from functools import wraps
 from pathlib import Path
 from typing import Callable, Sequence, TypeVar
 
+from src.core.atomic_write import strict_dumps
 from src.strategy_store.models import (
     Artifact,
     ArtifactStatus,
@@ -79,7 +80,7 @@ def _new_artifact_id() -> str:
 
 def _json_dumps(value: object) -> str:
     """Serialize *value* to a compact JSON string."""
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return strict_dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 def _json_loads(value: str | None, default: object) -> object:

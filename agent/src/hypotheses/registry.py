@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.core.atomic_write import write_json_atomic
+from src.core.file_lock import locked
 from src.config.accessor import get_env_config
 
 HYPOTHESIS_STATUSES = (
@@ -157,6 +158,7 @@ class HypothesisRegistry:
         self.path = path or default_hypotheses_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
+    @locked
     def create(
         self,
         *,
@@ -213,6 +215,7 @@ class HypothesisRegistry:
         self._save(records)
         return hyp
 
+    @locked
     def update(
         self,
         hypothesis_id: str,
@@ -281,6 +284,7 @@ class HypothesisRegistry:
         self._save(records)
         return hyp
 
+    @locked
     def link_backtest(
         self,
         hypothesis_id: str,
@@ -380,12 +384,7 @@ class HypothesisRegistry:
 
     def _save(self, records: list[Hypothesis]) -> None:
         payload = [hyp.to_dict() for hyp in sorted(records, key=lambda h: h.created_at)]
-        tmp_path = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
-        tmp_path.replace(self.path)
+        write_json_atomic(self.path, payload, sort_keys=True)
 
     @staticmethod
     def _find_required(records: list[Hypothesis], hypothesis_id: str) -> Hypothesis:

@@ -12,13 +12,13 @@ File-system-based persistence for SwarmRun. Directory structure:
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from src.config.accessor import get_env_config
+from src.core.atomic_write import _REPLACE_ATTEMPTS, _REPLACE_BACKOFF, atomic_write_text
 
 from src.swarm.models import SwarmEvent, SwarmRun
 from src.tools.redaction import redact_internal_paths
@@ -76,47 +76,11 @@ def swarm_runs_root() -> Path:
     return get_swarm_runs_dir()
 
 
-_TRANSIENT_WINERRORS = (5, 32)  # ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION
-_REPLACE_ATTEMPTS = 6
-_REPLACE_BACKOFF = (0.025, 0.05, 0.1, 0.2, 0.4)  # seconds; len == attempts - 1
-
-
-def _is_transient_windows_error(exc: OSError) -> bool:
-    """True for the Windows access/sharing race on os.replace.
-
-    ``winerror`` is only set on Windows; ``getattr`` keeps this a hard
-    False on POSIX, so the retry path is Windows-only and POSIX behavior
-    is unchanged.
-    """
-    return getattr(exc, "winerror", None) in _TRANSIENT_WINERRORS
-
-
-def _replace_with_retry(tmp: Path, target: Path) -> None:
-    """``os.replace`` retried on the Windows concurrent-access race.
-
-    A reader holding ``target`` open (e.g. ``load_run`` on the poll path)
-    makes Windows fail the rename with WinError 5/32. POSIX ``os.replace``
-    is atomic and never raises these, so off-Windows this loop runs
-    exactly once — no behavior change. Non-transient errors re-raise
-    immediately; the last transient error re-raises after the budget.
-    """
-    for attempt in range(_REPLACE_ATTEMPTS):
-        try:
-            os.replace(tmp, target)
-            return
-        except OSError as exc:
-            if not _is_transient_windows_error(exc):
-                raise
-            if attempt == _REPLACE_ATTEMPTS - 1:
-                raise
-            time.sleep(_REPLACE_BACKOFF[attempt])
-
-
 class SwarmStore:
     """File-based persistence store for SwarmRun.
 
     Each run is stored under base_dir/{run_id}/. run.json uses atomic writes
-    (write to .tmp then rename) to prevent corruption. events.jsonl is append-only
+    (src.core.atomic_write: unique temp then rename) to prevent corruption. events.jsonl is append-only
     and supports offset-based reads for SSE streaming.
 
     Attributes:
@@ -190,7 +154,7 @@ class SwarmStore:
             return None
         # The file may be read mid-replace by a concurrent writer; retry a
         # transient read/parse failure before giving up (same race as
-        # _replace_with_retry, reader side).
+        # atomic_write.replace_with_retry, reader side).
         last: Exception | None = None
         for attempt in range(_REPLACE_ATTEMPTS):
             try:
@@ -553,13 +517,6 @@ class SwarmStore:
         return reaped
 
     def _atomic_write(self, path: Path, content: str) -> None:
-        """Atomically write a file: write to .tmp then rename.
-
-        Args:
-            path: Target file path.
-            content: File content.
-        """
-        tmp_path = path.with_suffix(".tmp")
+        """Atomically write a file (``src.core.atomic_write``, which retries the Windows replace race) under the store lock."""
         with self._write_lock:
-            tmp_path.write_text(content, encoding="utf-8")
-            _replace_with_retry(tmp_path, path)
+            atomic_write_text(path, content)

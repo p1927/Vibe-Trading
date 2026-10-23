@@ -17,6 +17,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Iterator, Mapping
 
+from src.core.atomic_write import SECRET_WRITE, write_json_atomic
 from src.config.paths import get_runtime_root
 from src.trading.connectors.mt5.symbols import normalize_base
 
@@ -162,11 +163,7 @@ def save_config(config: MT5Config) -> Path:
     """Persist MT5 settings with owner-only permissions (best-effort on Windows)."""
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(config), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    write_json_atomic(path, asdict(config), newline=True, **SECRET_WRITE)
     return path
 
 

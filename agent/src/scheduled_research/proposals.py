@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import threading
 import time
@@ -12,6 +11,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, Mapping
 
+from src.core.atomic_write import write_json_atomic
 from src.config.paths import get_runtime_root
 from src.scheduled_research.service import (
     build_job_from_draft,
@@ -39,26 +39,7 @@ def _path(proposal_id: str) -> Path:
 
 def _write(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                fd = -1
-                handle.write(
-                    (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode()
-                )
-                handle.flush()
-                os.fsync(handle.fileno())
-        finally:
-            if fd >= 0:
-                os.close(fd)
-        os.replace(tmp, path)
-    except BaseException:
-        with suppress(OSError):
-            os.unlink(tmp)
-        raise
-    os.chmod(path, 0o600)
+    write_json_atomic(path, payload, newline=True, mode=0o600)
 
 
 def _read(proposal_id: str) -> dict[str, Any]:

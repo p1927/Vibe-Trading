@@ -22,6 +22,7 @@ from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
+from src.core.atomic_write import strict_dumps
 from src.strategy_discovery.models import (
     EVIDENCE_STAGES,
     QUALITY_INSUFFICIENT,
@@ -251,11 +252,11 @@ class EvidenceStore:
                         row.excess_in_regime,
                         row.sharpe_in_regime,
                         row.max_drawdown_in_regime,
-                        json.dumps(list(row.date_ranges), ensure_ascii=False),
+                        strict_dumps(list(row.date_ranges), ensure_ascii=False),
                         row.breakeven_fee_bps,
                         1 if row.cost_sensitive else 0,
                         row.evidence_quality,
-                        json.dumps(list(row.warnings), ensure_ascii=False),
+                        strict_dumps(list(row.warnings), ensure_ascii=False),
                         row.last_verified,
                         row.evidence_stage,
                         row.provenance,
@@ -297,11 +298,11 @@ class EvidenceStore:
                         row.excess_in_regime,
                         row.sharpe_in_regime,
                         row.max_drawdown_in_regime,
-                        json.dumps(list(row.date_ranges), ensure_ascii=False),
+                        strict_dumps(list(row.date_ranges), ensure_ascii=False),
                         row.breakeven_fee_bps,
                         1 if row.cost_sensitive else 0,
                         row.evidence_quality,
-                        json.dumps(list(row.warnings), ensure_ascii=False),
+                        strict_dumps(list(row.warnings), ensure_ascii=False),
                         row.last_verified,
                         row.evidence_stage,
                         row.provenance,

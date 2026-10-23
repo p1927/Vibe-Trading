@@ -12,6 +12,7 @@ from urllib.parse import quote, urlparse
 
 from pydantic import Field
 
+from src.core.atomic_write import SECRET_WRITE, write_json_atomic
 from src.security.workspace_policy import is_path_within
 
 try:
@@ -362,8 +363,7 @@ class MatrixChannel(BaseChannel):
             "device_id": resp.device_id,
         }
         try:
-            with open(self.session_path, "w", encoding="utf-8") as f:
-                json.dump(session, f, indent=2)
+            write_json_atomic(self.session_path, session, ensure_ascii=True, **SECRET_WRITE)  # holds the access token
             self.logger.info("Session saved to {}", self.session_path)
         except Exception as e:
             self.logger.warning("Failed to save session: {}", e)

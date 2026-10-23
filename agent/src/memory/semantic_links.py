@@ -8,12 +8,12 @@ Feature flag: VT_MEMORY_LINKS (default off).
 
 from __future__ import annotations
 
+from src.core.atomic_write import write_json_atomic
+
 import json
 import logging
 import math
-import os
 import re
-import tempfile
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -251,33 +251,10 @@ class SemanticLinker:
             .isoformat(),
         }
 
-        content = json.dumps(data, indent=2, ensure_ascii=False)
-
-        # Atomic write: write to temp file in same directory, then rename
-        dir_path = rel_path.parent
-        dir_path.mkdir(parents=True, exist_ok=True)
-
-        fd = None
-        tmp_path = None
         try:
-            fd, tmp_path = tempfile.mkstemp(
-                suffix=".tmp", prefix=".relations_", dir=str(dir_path)
-            )
-            os.write(fd, content.encode("utf-8"))
-            os.fsync(fd)
-            os.close(fd)
-            fd = None
-            os.replace(tmp_path, str(rel_path))
-            tmp_path = None
+            write_json_atomic(rel_path, data)
         except OSError:
             logger.exception("Failed to write relations file: %s", rel_path)
-            if fd is not None:
-                os.close(fd)
-            if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
 
     def load_relations(self, entry_path: Path) -> List[Tuple[str, float]]:
         """Read relations from .relations.json sidecar.

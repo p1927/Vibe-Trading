@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from src.core.atomic_write import write_json_atomic
 from src.config.paths import get_runtime_root
 from src.portfolio.compatibility import profile_compatibility
 from src.trading.connections import (
@@ -259,17 +258,5 @@ class PortfolioSettingsStore:
             if isinstance(settings, dict)
             else parse_settings(settings.to_dict(), self.connection_store)
         )
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary = tempfile.mkstemp(prefix=".portfolio-", suffix=".json", dir=self.path.parent)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                json.dump(validated.to_dict(), handle, ensure_ascii=False, indent=2)
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(temporary, 0o600)
-            os.replace(temporary, self.path)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+        write_json_atomic(self.path, validated.to_dict(), newline=True, mode=0o600)
         return validated

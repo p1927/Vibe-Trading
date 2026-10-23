@@ -13,11 +13,11 @@ Feature flags (env vars):
 from __future__ import annotations
 
 import logging
-import os
 import time
 from pathlib import Path
 from types import MappingProxyType
 
+from src.core.atomic_write import atomic_write_text
 from src.memory.persistent import (
     MemoryEntry,
     PersistentMemory,
@@ -393,9 +393,7 @@ class MemoryLifecycle:
                 new_lines.append("")
                 new_lines.append(compressed_body)
 
-                tmp_path = entry.path.with_suffix(entry.path.suffix + ".tmp")
-                tmp_path.write_text("\n".join(new_lines), encoding="utf-8")
-                os.replace(tmp_path, entry.path)
+                atomic_write_text(entry.path, "\n".join(new_lines))
                 from src.memory.versioning import commit as _git_commit
                 _git_commit(
                     self.memory_dir, [entry.path], f"compress: {entry.title} -> {target_level}"
@@ -467,6 +465,4 @@ class MemoryLifecycle:
         if not field_found:
             lines.insert(end_idx, f"{field}: {value}")
 
-        tmp_path = path.with_suffix(path.suffix + ".tmp")
-        tmp_path.write_text("\n".join(lines), encoding="utf-8")
-        os.replace(tmp_path, path)
+        atomic_write_text(path, "\n".join(lines))

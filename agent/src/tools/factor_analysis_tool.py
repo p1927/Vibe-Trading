@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from src.core.atomic_write import write_json_atomic
 from src.agent.tools import BaseTool
 from src.factors.factor_analysis_core import compute_ic_series, compute_group_equity
 
@@ -71,10 +72,7 @@ def run_factor_analysis(
         "ic_positive_ratio": round(ic_positive_ratio, 4),
         "ic_count": len(ic_series),
     }
-    (out_path / "ic_summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2, allow_nan=False),
-        encoding="utf-8",
-    )
+    write_json_atomic(out_path / "ic_summary.json", summary)  # refuses a NaN / inf and names the field
 
     equity_df = compute_group_equity(factor_df, return_df, n_groups)
     if equity_df.empty:

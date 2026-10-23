@@ -13,11 +13,11 @@ memory home is a separate, explicit step (backlog 2026-10-14-e2e-memory-tag-reta
 
 from __future__ import annotations
 
-import os
 import re
 from contextlib import nullcontext
 from pathlib import Path
 
+from src.core.atomic_write import atomic_write_text
 from src.agent.frontmatter import parse_frontmatter
 from src.memory.persistent import memory_lock
 
@@ -81,7 +81,5 @@ def retag_legacy_e2e_entries(memory_dir: Path, *, apply: bool = False) -> list[P
             line = f"keywords: [{', '.join([E2E_TAG, *keywords])}]"
             head = fm.group(1)
             head = _KEYWORDS_LINE_RE.sub(lambda _m: line, head, count=1) if "keywords:" in head else f"{head}\n{line}"
-            tmp = path.with_suffix(path.suffix + ".tmp")
-            tmp.write_text(text[: fm.start(1)] + head + text[fm.end(1):], encoding="utf-8")
-            os.replace(tmp, path)
+            atomic_write_text(path, text[: fm.start(1)] + head + text[fm.end(1):])
     return changed

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import src.agent.trace as trace_mod
+import src.core.atomic_write as aw_mod
 from src.agent.trace import TraceWriter
 from tests.module_os_helpers import patch_module_os
 
@@ -218,7 +219,7 @@ def test_sidecar_write_is_atomic_and_leaves_no_temp_files(
         replace_targets.append(str(dst))
         real_replace(src, dst)
 
-    patch_module_os(monkeypatch, trace_mod, replace=_tracking_replace)
+    patch_module_os(monkeypatch, aw_mod, replace=_tracking_replace)
     trace = TraceWriter(tmp_path)
     trace.write_tool_result(
         call_id="call-1",
@@ -252,7 +253,7 @@ def test_record_never_references_missing_sidecar_on_crash(
     def _failing_replace(src: object, dst: object) -> None:
         raise OSError("simulated crash before sidecar rename")
 
-    patch_module_os(monkeypatch, trace_mod, replace=_failing_replace)
+    patch_module_os(monkeypatch, aw_mod, replace=_failing_replace)
     with pytest.raises(OSError, match="simulated crash"):
         trace.write_tool_result(
             call_id="call-1",
@@ -281,7 +282,7 @@ def test_sidecar_survives_a_partial_write(tmp_path, monkeypatch):
             return real_write(fd, data[:16])
         return real_write(fd, data)
 
-    patch_module_os(monkeypatch, trace_mod, write=_short_write)
+    patch_module_os(monkeypatch, aw_mod, write=_short_write)
 
     writer = TraceWriter(tmp_path)
     body = "x" * 5000
@@ -300,7 +301,7 @@ def test_failed_sidecar_write_leaves_no_temp_file(tmp_path, monkeypatch):
     def _boom(fd, data):
         raise OSError("disk exploded")
 
-    patch_module_os(monkeypatch, trace_mod, write=_boom)
+    patch_module_os(monkeypatch, aw_mod, write=_boom)
     writer = TraceWriter(tmp_path)
     with pytest.raises(OSError):
         writer._attach_text_field({}, field="result", value="y" * 5000,

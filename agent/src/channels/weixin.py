@@ -25,6 +25,7 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+from src.core.atomic_write import SECRET_WRITE, write_json_atomic
 from src.channels.brace_logging import get_channel_logger; logger = get_channel_logger(__name__)
 from pydantic import Field
 
@@ -228,7 +229,7 @@ class WeixinChannel(BaseChannel):
                 "typing_tickets": self._typing_tickets,
                 "base_url": self.config.base_url,
             }
-            state_file.write_text(json.dumps(data, ensure_ascii=False))
+            write_json_atomic(state_file, data, indent=None, **SECRET_WRITE)  # holds the token
 
     # ------------------------------------------------------------------
     # HTTP helpers  (matches api.ts buildHeaders / apiFetch)

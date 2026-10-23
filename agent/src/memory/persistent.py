@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
-import os
 import re
 import sys
 import time as _time
@@ -15,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Generator, List, Optional
 
+from src.core.atomic_write import atomic_write_text
 from src.agent.frontmatter import parse_frontmatter as _parse_frontmatter
 from src.config.paths import get_runtime_root
 
@@ -426,9 +426,7 @@ class PersistentMemory:
             if not acquired:
                 logger.warning("update_entry(%s): lock timeout", entry.title)
                 return False
-            tmp_path = entry.path.with_suffix(entry.path.suffix + ".tmp")
-            tmp_path.write_text("\n".join(new_lines), encoding="utf-8")
-            os.replace(tmp_path, entry.path)
+            atomic_write_text(entry.path, "\n".join(new_lines))
             from src.memory.versioning import commit as _git_commit
             _git_commit(self._dir, [entry.path], f"edit: {entry.title}")
 

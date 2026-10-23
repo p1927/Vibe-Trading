@@ -123,9 +123,9 @@ def load_config() -> OpenAlgoConfig:
 def save_config(config: OpenAlgoConfig) -> Path:
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    from src.api.helpers import _atomic_write_secret  # the one 0600-from-creation atomic secret write (holds api_key)
+    from src.core.atomic_write import SECRET_WRITE, write_json_atomic
 
-    _atomic_write_secret(path, json.dumps(asdict(config), indent=2, ensure_ascii=False) + "\n")
+    write_json_atomic(path, asdict(config), newline=True, **SECRET_WRITE)  # holds api_key
     return path
 
 

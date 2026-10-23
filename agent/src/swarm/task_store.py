@@ -6,11 +6,15 @@ Provides DAG algorithms: dependency resolution, cycle detection, and topological
 
 from __future__ import annotations
 
-import threading
 from collections import defaultdict, deque
 from pathlib import Path
 
+from src.core.atomic_write import atomic_write_text
+from src.core.file_lock import file_lock
 from src.swarm.models import SwarmTask, TaskStatus
+
+
+TASKS_LOCK = "tasks"  # sidecar lock name under the tasks dir: every task file's load, mutate, save holds it
 
 
 class TaskStore:
@@ -31,7 +35,6 @@ class TaskStore:
         self.run_dir = run_dir
         self._tasks_dir = run_dir / "tasks"
         self._tasks_dir.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
 
     def _task_path(self, task_id: str) -> Path:
         """Return the file path for a task.
@@ -51,10 +54,8 @@ class TaskStore:
             task: SwarmTask instance.
         """
         path = self._task_path(task.id)
-        tmp_path = path.with_suffix(".tmp")
-        with self._lock:
-            tmp_path.write_text(task.model_dump_json(indent=2), encoding="utf-8")
-            tmp_path.replace(path)
+        with file_lock(self._tasks_dir / TASKS_LOCK):
+            atomic_write_text(path, task.model_dump_json(indent=2))
 
     def load_task(self, task_id: str) -> SwarmTask:
         """Load a task by ID.
@@ -99,15 +100,16 @@ class TaskStore:
         Returns:
             Updated SwarmTask instance.
         """
-        task = self.load_task(task_id)
-        updated_data = task.model_dump()
-        updated_data["status"] = status
-        for key, value in kwargs.items():
-            if key in updated_data:
-                updated_data[key] = value
-        updated_task = SwarmTask.model_validate(updated_data)
-        self.save_task(updated_task)
-        return updated_task
+        with file_lock(self._tasks_dir / TASKS_LOCK):  # load, mutate, save: a concurrent completion must not be erased
+            task = self.load_task(task_id)
+            updated_data = task.model_dump()
+            updated_data["status"] = status
+            for key, value in kwargs.items():
+                if key in updated_data:
+                    updated_data[key] = value
+            updated_task = SwarmTask.model_validate(updated_data)
+            self.save_task(updated_task)
+            return updated_task
 
 
 def resolve_dependencies(tasks_dir: Path, completed_task_id: str) -> list[str]:
@@ -124,6 +126,11 @@ def resolve_dependencies(tasks_dir: Path, completed_task_id: str) -> list[str]:
     Returns:
         List of newly unblocked task IDs (blocked_by went from non-empty to empty).
     """
+    with file_lock(tasks_dir / TASKS_LOCK):
+        return _resolve_dependencies_locked(tasks_dir, completed_task_id)
+
+
+def _resolve_dependencies_locked(tasks_dir: Path, completed_task_id: str) -> list[str]:
     newly_unblocked: list[str] = []
 
     for path in tasks_dir.glob("task-*.json"):
@@ -140,9 +147,7 @@ def resolve_dependencies(tasks_dir: Path, completed_task_id: str) -> list[str]:
             newly_unblocked.append(task.id)
 
         updated_task = SwarmTask.model_validate(updated_data)
-        tmp_path = path.with_suffix(".tmp")
-        tmp_path.write_text(updated_task.model_dump_json(indent=2), encoding="utf-8")
-        tmp_path.replace(path)
+        atomic_write_text(path, updated_task.model_dump_json(indent=2))
 
     return newly_unblocked
 

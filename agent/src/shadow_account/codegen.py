@@ -12,13 +12,13 @@ files and launching ``run_backtest``.
 from __future__ import annotations
 
 import ast
-import json
 import math
 from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from src.core.atomic_write import write_json_atomic
 from src.shadow_account.models import PRICE_FEATURES, ShadowProfile, ShadowRule
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -222,7 +222,5 @@ def write_run_dir(
         source=source,
         initial_capital=initial_capital,
     )
-    (run_dir / "config.json").write_text(
-        json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8",
-    )
+    write_json_atomic(run_dir / "config.json", cfg)
     return run_dir

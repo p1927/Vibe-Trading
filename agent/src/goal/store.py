@@ -16,6 +16,7 @@ from functools import wraps
 from pathlib import Path
 from typing import Callable, TypeVar
 
+from src.core.atomic_write import strict_dumps
 from src.config.accessor import get_env_config
 from src.goal.models import (
     AuditRow,
@@ -61,7 +62,7 @@ def _id(prefix: str) -> str:
 
 
 def _json_dumps(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return strict_dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 def _json_loads(value: str | None, default: object) -> object:

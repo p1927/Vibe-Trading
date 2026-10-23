@@ -12,20 +12,20 @@ from pathlib import Path
 
 import pytest
 
-import src.core.state as state_mod
+import src.core.atomic_write as aw_mod
 from src.core.state import RunStateStore
 from tests.module_os_helpers import patch_module_os
 
 
 def test_write_json_calls_fsync(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fsynced: list[int] = []
-    real_fsync = state_mod.os.fsync
+    real_fsync = aw_mod.os.fsync
 
     def spy(fd: int) -> None:
         fsynced.append(fd)
         real_fsync(fd)
 
-    patch_module_os(monkeypatch, state_mod, fsync=spy)
+    patch_module_os(monkeypatch, aw_mod, fsync=spy)
 
     target = tmp_path / "state.json"
     RunStateStore._write_json(target, {"status": "success"})

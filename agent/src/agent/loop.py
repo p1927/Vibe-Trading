@@ -27,6 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
+from src.core.atomic_write import atomic_write_text, strict_dumps, write_json_atomic
+from src.core.atomic_write import write_json_atomic
 from src.agent.compaction_policy import (
     adjust_cut_idx_for_tool_batches,
     is_protected_tool,
@@ -295,12 +297,7 @@ def _record_llm_usage(
 
     try:
         path = run_dir / LLM_USAGE_ARTIFACT
-        tmp_path = path.with_suffix(path.suffix + ".tmp")
-        tmp_path.write_text(
-            json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        tmp_path.replace(path)
+        write_json_atomic(path, summary, sort_keys=True, newline=True)
     except OSError as exc:
         logger.debug("LLM usage artifact write skipped: %s", exc)
 
@@ -1079,10 +1076,7 @@ def _archive_backtest_result(result: str, active_run_dir: str | None) -> bool:
             ]
     for stale in previously_archived - set(archived):
         (target / stale).unlink(missing_ok=True)
-    (target / _ARCHIVE_MANIFEST).write_text(
-        json.dumps({"source_run": source.name, "files": sorted(archived)}, indent=2),
-        encoding="utf-8",
-    )
+    write_json_atomic(target / _ARCHIVE_MANIFEST, {"source_run": source.name, "files": sorted(archived)}, ensure_ascii=True)
     for filename in (
         "config.json",
         "design_spec.json",
@@ -3206,9 +3200,10 @@ class AgentLoop:
 
         # Save full transcript before compressing next to the active trace.
         transcript_path = trace.dir_path / f"transcript_{int(_time.time())}.jsonl"
-        with open(transcript_path, "w", encoding="utf-8") as f:
-            for msg in messages:
-                f.write(json.dumps(_redacted_for_transcript(msg), default=str, ensure_ascii=False) + "\n")
+        atomic_write_text(
+            transcript_path,
+            "".join(strict_dumps(_redacted_for_transcript(msg), default=str, ensure_ascii=False) + "\n" for msg in messages),
+        )
 
         system_msg = messages[0]
         body = messages[1:]

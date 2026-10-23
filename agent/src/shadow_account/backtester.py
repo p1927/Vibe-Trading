@@ -26,6 +26,7 @@ from typing import Any
 import pandas as pd
 
 from backtest.engines._market_hooks import code_currency
+from src.core.atomic_write import write_json_atomic
 from src.shadow_account.codegen import write_run_dir
 from src.shadow_account.models import (
     AttributionBreakdown,
@@ -367,10 +368,7 @@ def _cache_result(
 
     payload = _asdict(result)
     try:
-        (run_dir / f"shadow_result_{_cache_key(profile, window_start, window_end)}.json").write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
-        )
+        write_json_atomic(run_dir / f"shadow_result_{_cache_key(profile, window_start, window_end)}.json", payload, default=str)
     except OSError as exc:  # pragma: no cover — disk failure is non-fatal
         logger.warning("Failed to cache shadow result: %s", exc)
 

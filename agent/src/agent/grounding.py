@@ -30,6 +30,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
+from src.core.atomic_write import write_json_atomic
 from src.market_data import canonical_fx_pair
 from src.agent.instrument_identity import (
     registry_equivalent_symbol,
@@ -1643,7 +1644,6 @@ class GroundingLedger:
         try:
             artifact_dir.mkdir(parents=True, exist_ok=True)
             path = artifact_dir / GROUNDING_ARTIFACT
-            temp = path.with_suffix(path.suffix + ".tmp")
             payload = {
                 "schema_version": 1,
                 "updated_at": _utc_now(),
@@ -1654,11 +1654,7 @@ class GroundingLedger:
                 "tool_failures": list(self._tool_failures),
                 "validations": list(self._validations),
             }
-            temp.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            temp.replace(path)
+            write_json_atomic(path, payload, sort_keys=True, newline=True)
         except OSError:
             # Grounding decisions remain in memory; a read-only/broken artifact
             # directory must not crash the agent's error path.

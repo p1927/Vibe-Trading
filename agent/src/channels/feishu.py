@@ -7,7 +7,6 @@ import importlib.util
 import json
 import os
 import re
-import tempfile
 import threading
 import time
 import uuid
@@ -23,6 +22,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
 
+from src.core.atomic_write import write_json_atomic
 from src.channels.bus.events import DeliveryReceipt, OutboundMessage
 from src.channels.bus.queue import MessageBus
 from src.channels.base import BaseChannel
@@ -82,33 +82,7 @@ def _persist_login_credentials(
     )
 
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    content = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-    fd, temporary = tempfile.mkstemp(
-        dir=path.parent,
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-    )
-    try:
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                fd = -1
-                handle.write(content)
-                handle.flush()
-                if hasattr(os, "fchmod"):
-                    os.fchmod(handle.fileno(), 0o600)
-                os.fsync(handle.fileno())
-        finally:
-            if fd >= 0:
-                os.close(fd)
-        os.replace(temporary, path)
-    except BaseException:
-        with suppress(OSError):
-            os.unlink(temporary)
-        raise
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+    write_json_atomic(path, payload, newline=True, mode=0o600)
     return path
 
 

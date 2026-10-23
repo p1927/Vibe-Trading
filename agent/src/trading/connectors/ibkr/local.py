@@ -16,6 +16,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Iterable, Mapping
 
+from src.core.atomic_write import SECRET_WRITE, write_json_atomic
 from src.config.paths import get_runtime_root
 
 CONFIG_FILENAME = "ibkr-local.json"
@@ -168,11 +169,7 @@ def save_config(config: IBKRLocalConfig) -> Path:
     """
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(config), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    write_json_atomic(path, asdict(config), newline=True, **SECRET_WRITE)
     return path
 
 

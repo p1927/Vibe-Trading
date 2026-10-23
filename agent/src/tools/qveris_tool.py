@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
-import tempfile
 import time
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
@@ -16,6 +14,7 @@ from typing import Any
 
 import httpx
 
+from src.core.atomic_write import write_json_atomic
 from src.agent.tools import BaseTool
 from src.config.paths import get_runtime_root
 from src.tools.qveris_credits import CreditLedger
@@ -107,21 +106,7 @@ def save_qveris_config(config: QVerisConfig) -> QVerisConfig:
         mode=normalize_qveris_mode(config.mode),
         budget_credits_per_session=max(float(config.budget_credits_per_session), 0.0),
     )
-    QVERIS_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=".qveris.", suffix=".tmp", dir=str(QVERIS_CONFIG_PATH.parent)
-    )
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(asdict(cfg), handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-        os.chmod(tmp_path, 0o600)
-        os.replace(tmp_path, QVERIS_CONFIG_PATH)
-        os.chmod(QVERIS_CONFIG_PATH, 0o600)
-    finally:
-        if tmp_path.exists():
-            tmp_path.unlink()
+    write_json_atomic(QVERIS_CONFIG_PATH, asdict(cfg), newline=True, mode=0o600)
     return cfg
 
 

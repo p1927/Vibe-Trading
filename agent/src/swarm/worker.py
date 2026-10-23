@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from src.core.atomic_write import write_json_atomic
 from src.agent.context import ContextBuilder
 from src.agent.progress import HeartbeatTimer
 from src.agent.skills import SkillsLoader
@@ -1258,10 +1259,7 @@ def _persist_messages(artifact_dir: Path, messages: list[dict]) -> None:
     """Persist messages to disk for post-mortem analysis."""
     try:
         path = artifact_dir / "messages.json"
-        path.write_text(
-            json.dumps(messages, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
-        )
+        write_json_atomic(path, messages, default=str)
     except Exception:
         logger.warning("Failed to persist messages to %s", artifact_dir, exc_info=True)
 

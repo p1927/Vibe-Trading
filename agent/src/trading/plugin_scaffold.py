@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
 from pathlib import Path
 
+from src.core.atomic_write import write_json_atomic
 from src.trading.local_plugins import (
     MANIFEST_FILENAME,
     LocalConnectorPlugin,
@@ -98,10 +98,7 @@ def scaffold_connector(connector_id: str, destination: Path) -> Path:
             ],
         },
     }
-    (target / MANIFEST_FILENAME).write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    write_json_atomic(target / MANIFEST_FILENAME, manifest, newline=True)
     (target / "adapter.py").write_text(_ADAPTER_TEMPLATE, encoding="utf-8")
     (target / "README.md").write_text(
         f"# {clean} local connector\n\n"

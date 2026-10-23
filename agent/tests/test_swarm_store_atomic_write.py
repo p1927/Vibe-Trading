@@ -19,6 +19,7 @@ import os
 
 import pytest
 
+import src.core.atomic_write as aw_mod
 import src.swarm.store as store_mod
 from src.swarm.models import SwarmRun
 from src.swarm.store import SwarmStore
@@ -38,7 +39,7 @@ def _run(rid: str = "r") -> SwarmRun:
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch):
     # Keep retry tests instant + deterministic.
-    monkeypatch.setattr(store_mod.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(aw_mod.time, "sleep", lambda *_a, **_k: None)
 
 
 def test_replace_retries_transient_winerror_then_succeeds(tmp_path, monkeypatch):
@@ -54,7 +55,7 @@ def test_replace_retries_transient_winerror_then_succeeds(tmp_path, monkeypatch)
             raise _winerr(5)
         return real(src, dst, *a, **k)
 
-    patch_module_os(monkeypatch, store_mod, replace=flaky)
+    patch_module_os(monkeypatch, aw_mod, replace=flaky)
 
     upd = _run()
     upd.final_report = "RETRIED-OK"
@@ -73,7 +74,7 @@ def test_non_transient_error_reraises_immediately(tmp_path, monkeypatch):
         calls["n"] += 1
         raise _winerr(2)  # ERROR_FILE_NOT_FOUND — NOT in the transient set
 
-    patch_module_os(monkeypatch, store_mod, replace=boom)
+    patch_module_os(monkeypatch, aw_mod, replace=boom)
     with pytest.raises(OSError):
         store.update_run(_run())
     assert calls["n"] == 1, "non-transient must not be retried (no masking)"
@@ -88,7 +89,7 @@ def test_transient_budget_is_bounded(tmp_path, monkeypatch):
         calls["n"] += 1
         raise _winerr(32)  # ERROR_SHARING_VIOLATION, forever
 
-    patch_module_os(monkeypatch, store_mod, replace=always)
+    patch_module_os(monkeypatch, aw_mod, replace=always)
     with pytest.raises(OSError):
         store.update_run(_run())
     assert calls["n"] == store_mod._REPLACE_ATTEMPTS
@@ -127,7 +128,7 @@ def test_load_run_missing_is_fast_none(tmp_path, monkeypatch):
 def test_posix_oserror_is_not_treated_transient():
     """POSIX no-op guard: a plain OSError (no winerror) is never transient,
     so off-Windows the retry loop runs exactly once — no behavior change."""
-    from src.swarm.store import _is_transient_windows_error
+    from src.core.atomic_write import _is_transient_windows_error
 
     assert _is_transient_windows_error(OSError("posix")) is False
     assert _is_transient_windows_error(_winerr(13)) is False

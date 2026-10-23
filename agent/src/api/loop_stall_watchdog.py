@@ -25,7 +25,6 @@ instead of asking the loop (backlog 2026-09-21-loop-stall-watchdog-no-health-sig
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import sys
@@ -35,6 +34,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from src.core.atomic_write import write_json_atomic
 from src.config.paths import get_runtime_root
 
 logger = logging.getLogger(__name__)
@@ -62,9 +62,7 @@ def _publish(stalled_since: float | None) -> None:
     path = Path(get_runtime_root()) / STATUS_FILE
     payload = {**loop_stall_stats(), "pid": os.getpid(), "stalled_since": stalled_since, "updated_at": time.time()}
     try:
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload))
-        os.replace(tmp, path)
+        write_json_atomic(path, payload, indent=None, ensure_ascii=True, durable=False)
     except OSError:
         logger.warning("could not write %s", path, exc_info=True)
 

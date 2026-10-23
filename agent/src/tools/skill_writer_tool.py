@@ -107,7 +107,7 @@ class SaveSkillTool(BaseTool):
                 f"category: {category}\n---\n\n{content}"
             )
 
-        atomic_write_text(skill_path, content)
+        atomic_write_text(skill_path, content, mode=0o600)
         return json.dumps({
             "status": "ok",
             "message": f"Skill '{slug}' saved. Available via load_skill(\"{slug}\") in future sessions.",
@@ -182,7 +182,7 @@ class PatchSkillTool(BaseTool):
             return json.dumps({"status": "error", "error": f"Text not found in skill '{name}'"})
 
         patched = content.replace(find_text, replace_text, 1)
-        atomic_write_text(skill_path, patched)
+        atomic_write_text(skill_path, patched, mode=0o600)
         return json.dumps({
             "status": "ok",
             "message": f"Patched skill '{name}': replaced 1 occurrence.",
@@ -339,7 +339,7 @@ class SkillFileTool(BaseTool):
             return json.dumps({"status": "error", "error": "Path escapes skill directory"})
 
         target.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(target, content)
+        atomic_write_text(target, content, mode=0o600)
         return json.dumps({
             "status": "ok",
             "message": f"Written {rel_path} to skill '{skill_name}'.",
