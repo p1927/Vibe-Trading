@@ -29,7 +29,6 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     # See .claude/backlog item 2026-08-25-prediction-ledger-get-hub-dir-not-monkeypatch-isolated.
     monkeypatch.setattr(hub_context, "get_hub_dir", lambda: tmp)
     monkeypatch.setattr(api_server, "_API_KEY", "")
-    monkeypatch.delenv("AUTONOMOUS_AGENT_TRADING_WATCHLIST", raising=False)
     return TestClient(api_server.app, client=("127.0.0.1", 50000))
 
 
@@ -44,7 +43,7 @@ def test_router_is_mounted_on_the_app(client: TestClient) -> None:
     assert response.status_code == 200
 
 
-def test_candidates_defaults_to_nifty_watchlist_when_unset(client: TestClient) -> None:
+def test_candidates_are_nifty_only(client: TestClient) -> None:
     response = client.get("/board/advisory/candidates")
 
     assert response.status_code == 200
@@ -61,15 +60,6 @@ def test_candidates_empty_for_ticker_with_no_research_doc(client: TestClient) ->
     assert entry["confidence"]["ticker"] == "NIFTY"
     assert entry["confidence"]["confidence"] is None
     assert entry["confidence"]["is_stale"] is True
-
-
-def test_candidates_uses_configured_watchlist(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AUTONOMOUS_AGENT_TRADING_WATCHLIST", "NIFTY,BANKNIFTY")
-
-    response = client.get("/board/advisory/candidates")
-
-    assert response.status_code == 200
-    assert sorted(response.json().keys()) == ["BANKNIFTY", "NIFTY"]
 
 
 def test_forecast_returns_none_status_when_nothing_pushed(client: TestClient) -> None:
