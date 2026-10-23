@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -134,3 +135,39 @@ def test_decay_check_and_scan_share_one_history_window() -> None:
     root = Path(__file__).resolve().parents[1] / "src" / "tools"
     for name in ("sdm_status_tool.py", "sdm_decay_scan_tool.py"):
         assert "limit=DECAY_HISTORY_LIMIT" in (root / name).read_text(), name
+
+
+def test_openalex_total_outage_raises_instead_of_reporting_missing(monkeypatch) -> None:
+    from src.tools import research_papers_tool as rp
+
+    def down(*a, **k):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(rp, "_openalex_get", down)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        rp._openalex_fetch("openalex_id", ["W1", "W2"])
+    out = json.loads(rp.ResearchPapersTool().execute(mode="read", source="openalex", paper_ids=["W123"]))
+    assert out["ok"] is False
+
+    calls = iter([OSError("batch down"), {"id": "https://openalex.org/W1"}, OSError("one id 404")])
+
+    def flaky(*a, **k):
+        v = next(calls)
+        if isinstance(v, Exception):
+            raise v
+        return v
+
+    monkeypatch.setattr(rp, "_openalex_get", flaky)
+    assert [w["id"] for w in rp._openalex_fetch("openalex_id", ["W1", "W2"])] == ["https://openalex.org/W1"]
+
+
+def test_disposition_effect_with_intraday_winners_is_not_a_fabricated_high() -> None:
+    import pandas as pd
+
+    from src.tools.trade_journal_tool import _disposition_effect
+
+    rts = pd.DataFrame({"pnl": [100.0, 50.0, -80.0], "hold_days": [0.0, 0.0, 5.0]})
+    out = _disposition_effect(rts)
+    assert out["severity"] == "low" and "ratio_loss_to_win_hold" not in out
+    rts = pd.DataFrame({"pnl": [100.0, -80.0], "hold_days": [2.0, 5.0]})
+    assert _disposition_effect(rts)["severity"] == "high"
