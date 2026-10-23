@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from src.api.security import require_local_or_auth
 
 advisory_router = APIRouter(prefix="/board/advisory", tags=["board"])
+_ADVISORY_TICKERS = ("NIFTY",)
 
 
 class ApproveCandidateRequest(BaseModel):
@@ -73,22 +74,16 @@ def _orders_for_strategy(widget: Dict[str, Any], strategy_name: str | None) -> l
     return orders
 
 
-def _watchlist() -> list[str]:
-    from trade_integrations.autonomous_agents.trading_config import get_agent_trading_config
-
-    watchlist = list(get_agent_trading_config().watchlist)
-    return watchlist or ["NIFTY"]
-
-
 @advisory_router.get("/candidates")
 def get_advisory_candidates() -> Dict[str, Any]:
-    """Per watchlist ticker: live index-direction confidence plus ranked, currently-
-    profitable option strategy candidates."""
+    """NIFTY (the product): live index-direction confidence plus ranked, currently-
+    profitable option strategy candidates. There is no global watchlist (R7: symbols come from
+    an agent's mandate and the advisory board has no agent), so the ticker is fixed."""
     from trade_integrations.autonomous_agents.strategy_rank import score_ranked_strategies
     from trade_integrations.dataflows.prediction_ledger_bridge import get_live_confidence
 
     result: Dict[str, Any] = {}
-    for ticker in _watchlist():
+    for ticker in _ADVISORY_TICKERS:
         result[ticker] = {
             "confidence": get_live_confidence(ticker),
             "candidates": score_ranked_strategies(ticker),

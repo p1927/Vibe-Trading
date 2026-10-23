@@ -76,6 +76,10 @@ def _classify(
     return DecaySignal.CRITICAL
 
 
+#: Bench results a decay evaluation reads. The single-artifact check and the scan must use the same window, or one artifact gets two verdicts.
+DECAY_HISTORY_LIMIT = 20
+
+
 class DecayEvaluator:
     """Evaluates factor/strategy health and determines status transitions.
 

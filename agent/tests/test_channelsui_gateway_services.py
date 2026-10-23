@@ -110,7 +110,7 @@ def test_scope_for_set_request_prefers_persisted_scope_over_default(tmp_path):
     persisted = WorkspaceScope(root=str(tmp_path / "other"), restrict_to_workspace=False)
     service.persist_scope("chat-1", persisted)
     scope = service.scope_for_set_request(
-        {}, chat_id="chat-1", chat_running=False, controls_available=True
+        {}, chat_id="chat-1", controls_available=True
     )
     assert scope == persisted
 
@@ -118,7 +118,7 @@ def test_scope_for_set_request_prefers_persisted_scope_over_default(tmp_path):
 def test_scope_for_message_returns_default_for_unknown_chat(tmp_path):
     service = WorkspaceService(workspace_path=tmp_path)
     scope = service.scope_for_message(
-        {}, chat_id="unknown", chat_running=True, controls_available=True
+        {}, chat_id="unknown", controls_available=True
     )
     assert scope.root == str(tmp_path.resolve())
 

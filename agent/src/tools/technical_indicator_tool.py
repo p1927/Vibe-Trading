@@ -225,7 +225,9 @@ class TechnicalIndicatorTool(BaseTool):
         # Fetch enough bars to cover the longest indicator window + buffer.
         end_date = datetime.now().strftime("%Y-%m-%d")
         # Daily RSI needs the full Wilder warmup whatever ``lookback`` is.
-        days_back = max(lookback * 2, RSI_WARMUP_CALENDAR_DAYS) if interval == "1d" else lookback * 2
+        # Weekly / monthly bars span 7 / ~31 calendar days each: ``lookback`` BARS need that many days, not ``lookback`` days.
+        bar_days = {"1wk": 7, "1mo": 31}.get(interval, 1)
+        days_back = max(lookback * 2, RSI_WARMUP_CALENDAR_DAYS) if interval == "1d" else lookback * 2 * bar_days
         start_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
         try:

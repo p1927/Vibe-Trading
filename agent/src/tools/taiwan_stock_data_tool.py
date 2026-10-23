@@ -1180,12 +1180,8 @@ class TaiwanStockDataTool(BaseTool):
             else:
                 data = self._universe(
                     connection,
-                    active_only=bool(
-                        kwargs.get(
-                            "active_only",
-                            True,
-                        )
-                    ),
+                    # A string "false" from a model is falsy, not bool("false") == True.
+                    active_only=str(kwargs.get("active_only", True)).strip().lower() not in ("false", "0", "no", ""),
                     market=kwargs.get("market"),
                     industry=kwargs.get("industry"),
                     limit=limit,

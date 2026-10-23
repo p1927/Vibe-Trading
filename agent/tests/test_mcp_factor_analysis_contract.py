@@ -88,13 +88,15 @@ def _write_synthetic_csvs(tmp_path) -> tuple[str, str]:
     return str(factor_csv), str(return_csv)
 
 
-def test_well_formed_call_runs_end_to_end(tmp_path) -> None:
+def test_well_formed_call_runs_end_to_end(tmp_path, monkeypatch) -> None:
     """The issue scenario: a well-formed MCP call reaches the implementation.
 
     Uses the real tool registry against synthetic CSVs. Pre-fix this raised
     ``KeyError: 'factor_csv'``; post-fix it returns ``status == "ok"`` and
     writes the analysis artifacts.
     """
+    monkeypatch.setenv("VIBE_TRADING_ALLOWED_FILE_ROOTS", str(tmp_path))
+    monkeypatch.setenv("VIBE_TRADING_ALLOWED_RUN_ROOTS", str(tmp_path))
     factor_csv, return_csv = _write_synthetic_csvs(tmp_path)
     output_dir = tmp_path / "out"
 

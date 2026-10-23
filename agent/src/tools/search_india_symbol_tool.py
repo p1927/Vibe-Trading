@@ -66,7 +66,10 @@ class SearchIndiaSymbolTool(BaseTool):
                     "query": query,
                     "count": len(matches),
                     "candidates": matches,
-                    "sources": {"openalgo": "ok"},
+                    # Report the provider that actually answered (openalgo, or the
+                    # local registry fallback), not a hard-coded "openalgo ok".
+                    "sources": {str(m.get("source") or "unknown"): "ok" for m in matches}
+                    or {"openalgo": "no_matches"},
                 },
             },
             ensure_ascii=False,

@@ -247,7 +247,8 @@ def _compute_profile(df: pd.DataFrame) -> dict[str, Any]:
         avg_win = wins["pnl"].mean() if len(wins) else 0.0
         avg_loss = losses["pnl"].mean() if len(losses) else 0.0
         win_rate = round(len(wins) / len(rts_df), 4)
-        pnl_ratio = round(_safe_div(avg_win, abs(avg_loss)), 2) if avg_loss else float("inf") if avg_win else 0.0
+        # No losing trade -> the ratio is undefined (None), not float("inf") (which json.dumps writes as invalid `Infinity`).
+        pnl_ratio = round(_safe_div(avg_win, abs(avg_loss)), 2) if avg_loss else None if avg_win else 0.0
         avg_hold = round(rts_df["hold_days"].mean(), 2)
         total_pnl = round(rts_df["pnl"].sum(), 2)
         # Cumulative PnL → max drawdown
@@ -323,7 +324,14 @@ def _disposition_effect(rts_df: pd.DataFrame) -> dict[str, Any]:
         }
     win_hold = float(wins["hold_days"].mean())
     loss_hold = float(losses["hold_days"].mean())
-    ratio = loss_hold / win_hold if win_hold > 0 else float("inf")
+    if win_hold <= 0:  # winners all closed the day they opened: no ratio, and no manufactured "high" finding
+        return {
+            "severity": "low",
+            "avg_winner_hold_days": round(win_hold, 2),
+            "avg_loser_hold_days": round(loss_hold, 2),
+            "evidence": "winning roundtrips closed intraday; holding-time ratio is undefined",
+        }
+    ratio = loss_hold / win_hold
     severity = _severity(ratio, (1.2, 1.5))
     return {
         "severity": severity,

@@ -1383,6 +1383,7 @@ def _openalex_fetch(filter_key: str, keys: list[str]) -> list[dict[str, Any]]:
         logger.warning("openalex batch read failed (%s): %s", filter_key, exc)
 
     works: list[dict[str, Any]] = []
+    errors: list[Exception] = []
     for key in keys:
         # The single-work path needs the "doi:" prefix; a bare DOI answers 404.
         path = f"/{key}" if filter_key == "openalex_id" else f"/doi:{key}"
@@ -1390,9 +1391,13 @@ def _openalex_fetch(filter_key: str, keys: list[str]) -> list[dict[str, Any]]:
             work = _openalex_get(path, {"select": _OPENALEX_SELECT})
         except Exception as exc:  # noqa: BLE001 - one bad id must not kill the rest
             logger.warning("openalex read failed for %s: %s", key, exc)
+            errors.append(exc)
             continue
         if isinstance(work, dict) and work.get("id"):
             works.append(work)
+    if errors and len(errors) == len(keys):
+        # Every request failed: that is an outage, not "OpenAlex does not know these papers".
+        raise RuntimeError(f"openalex unavailable for all {len(keys)} id(s): {errors[0]}")
     return works
 
 

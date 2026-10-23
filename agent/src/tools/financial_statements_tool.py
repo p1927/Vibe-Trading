@@ -524,8 +524,8 @@ def _synthesize_fiscal_q4(
             continue
         values = {
             concept: annual[concept] - sum(quarter[concept] for quarter in inside)
-            for concept in annual["_units"]
-            if all(concept in quarter for quarter in inside)
+            for concept, unit in annual["_units"].items()
+            if all(concept in quarter for quarter in inside) and _is_additive_unit(unit)
         }
         if not values:
             continue
@@ -550,6 +550,17 @@ def _synthesize_fiscal_q4(
         }
         record.update(values)
         frames[(q4_start, end)] = record
+
+
+def _is_additive_unit(unit: Any) -> bool:
+    """True when quarterly figures in ``unit`` add up to the annual one (a currency amount).
+
+    Per-share figures (``USD/shares``) and share counts (``shares``) do not: FY EPS is not
+    the sum of quarterly EPS (the share base moves), and a share count is a level, so
+    ``FY - (Q1 + Q2 + Q3)`` would fabricate a Q4 figure.
+    """
+    u = str(unit or "").strip().lower()
+    return bool(u) and "/" not in u and u not in {"shares", "pure"}
 
 
 def _merge_sec_instants(

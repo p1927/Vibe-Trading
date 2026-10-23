@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, writesAllowed } from './helpers/liveStack'
 
 /**
  * Stock Simulator standalone-backend E2E — exercises the live
@@ -229,6 +229,7 @@ test.describe('Stock Simulator — standalone service :8902 (live backend)', () 
   test('/control/replay/speed mutates /control/replay/status.clock.speed (real change, no mock)', async ({
     request,
   }) => {
+    test.skip(!writesAllowed, 'mutates live state: set E2E_ALLOW_LIVE_WRITES=1 and E2E_STACK_PAPER=1 against a paper stack')
     const token = readControlToken()
     if (!token) {
       test.skip(true, 'STOCK_SIMULATOR_CONTROL_TOKEN not set in env')

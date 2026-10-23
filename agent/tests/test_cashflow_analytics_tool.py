@@ -86,9 +86,10 @@ def test_envelope_reports_all_three_measures_and_their_workings() -> None:
 
 
 def test_flows_can_be_loaded_from_a_file_and_internal_kinds_are_ignored(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ) -> None:
     """A dividend row sits inside the valuations and must not be netted out."""
+    monkeypatch.setenv("VIBE_TRADING_ALLOWED_FILE_ROOTS", str(tmp_path))
     payload = json.loads(
         CashFlowPerformanceTool().execute(
             valuations=_valuations(),

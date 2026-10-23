@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, writesAllowed } from './helpers/liveStack'
 import { hasErrorBoundary, trackConsoleErrors } from './helpers/apiMock'
 
 /**
@@ -141,6 +141,7 @@ test.describe('Scheduled Jobs — pause/resume round-trip (live API)', () => {
     page,
     request,
   }) => {
+    test.skip(!writesAllowed, 'mutates live state: set E2E_ALLOW_LIVE_WRITES=1 and E2E_STACK_PAPER=1 against a paper stack')
     // Find a real run that's safe to flip — not currently paused, not
     // currently running, low consecutive_failures so we don't disrupt an
     // actively-failing recovery. The selector is the test's, not the

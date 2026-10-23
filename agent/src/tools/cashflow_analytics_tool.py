@@ -358,8 +358,10 @@ def _resolve_flows(kwargs: dict[str, Any]) -> CashFlowSeries | None:
         columns = kwargs.get("flows_columns")
         if columns is not None and not isinstance(columns, dict):
             raise ValueError("flows_columns must be an object mapping field to column name")
+        from src.tools.path_utils import safe_user_path
+
         return load_cashflows(
-            str(path),
+            str(safe_user_path(str(path))),
             columns=columns,
             currency=currency,
             default_kind=kwargs.get("flows_default_kind"),
