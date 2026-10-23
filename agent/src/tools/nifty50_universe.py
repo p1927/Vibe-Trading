@@ -47,7 +47,7 @@ def _load_nifty50_stock_simulator(code: str, start: str, end: str) -> "pd.DataFr
 
         result = _StockSimLoader().fetch([f"{code}.NS"], start, end)
     except Exception as exc:  # noqa: BLE001 — degrade to the existing fallback
-        logger.debug("nifty50 stock_simulator fetch failed for %s: %s", code, exc)
+        logger.warning("nifty50 stock_simulator fetch failed for %s: %s", code, exc)
         return None
     frame = result.get(f"{code}.NS")
     if frame is None or frame.empty:

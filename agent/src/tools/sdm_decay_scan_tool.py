@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from src.agent.tools import BaseTool
-from src.strategy_store.decay import DecayEvaluator
+from src.strategy_store.decay import DECAY_HISTORY_LIMIT, DecayEvaluator
 from src.strategy_store.metrics import compute_decay_metrics, has_decay_inputs
 from src.strategy_store.models import (
     ArtifactStatus,
@@ -96,7 +96,7 @@ class SdmDecayScanTool(BaseTool):
             for artifact in targets:
                 counts["total_scanned"] += 1
                 bench_history = list(
-                    store.get_bench_history(artifact.id, limit=20)
+                    store.get_bench_history(artifact.id, limit=DECAY_HISTORY_LIMIT)
                 )
 
                 if len(bench_history) < 3:

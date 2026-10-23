@@ -312,19 +312,26 @@ def _leg_row_history(
     }
 
 
-def _lot_size_for(underlying: str) -> int:
-    """Exchange lot size for the contract multiplier — read from
-    ``UNDERLYING_META`` for the known indexes (values change on exchange
-    revision; see that dict's own comment for the last-verified numbers and
-    where to confirm them), else ``1`` for individual equities (cash-market
-    convention, same fallback ``master_contract._equity_row`` already uses).
-    Never hardcode the actual numbers here — this function must stay the
-    only place that resolves them, so a future revision only needs updating
-    in ``UNDERLYING_META``."""
-    from trade_integrations.stock_simulator.master_contract import UNDERLYING_META
+def _lot_size_for(underlying: str) -> int | None:
+    """Exchange lot size for the contract multiplier. Indexes read ``UNDERLYING_META``
+    (values change on exchange revision; see that dict's own comment); a stock
+    underlying reads its real per-symbol NFO lot from the master contract, and
+    returns ``None`` (unknown, never a guessed ``1``) when that is unavailable.
+    This function must stay the only place that resolves lot sizes."""
+    from trade_integrations.stock_simulator.master_contract import (
+        UNDERLYING_META,
+        StockLotSizeUnavailable,
+        _stock_option_lotsize,
+    )
 
     meta = UNDERLYING_META.get(underlying.upper())
-    return meta["lotsize"] if meta else 1
+    if meta:
+        return meta["lotsize"]
+    try:
+        return _stock_option_lotsize(underlying)
+    except StockLotSizeUnavailable as exc:
+        logger.warning("lot size unknown for %s: %s", underlying, exc)
+        return None
 
 
 def _success(

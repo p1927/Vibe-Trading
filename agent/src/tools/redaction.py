@@ -139,6 +139,15 @@ _SENSITIVE_ARG_MARKERS_FOLDED = tuple(_fold_key(m) for m in _SENSITIVE_ARG_MARKE
 #: Folded form of :data:`_RESULT_SAFE_KEYS`. Exact (folded) match only, so
 #: ``secret_content`` / ``content_token`` keep redacting everywhere.
 _RESULT_SAFE_KEYS_FOLDED = frozenset(_fold_key(k) for k in _RESULT_SAFE_KEYS)
+#: Token COUNTS (LLM usage) that the ``token`` marker would otherwise blank in
+#: the RESULT sink; they carry numbers, not credentials. Exact folded match only;
+#: a bare ``tokens`` stays redacted (it can hold a credential list), and the
+#: arguments/audit sink stays strict.
+_COUNT_KEYS_FOLDED = frozenset(
+    _fold_key(k)
+    for k in ("max_tokens", "total_tokens", "input_tokens", "output_tokens",
+              "prompt_tokens", "completion_tokens", "max_output_tokens", "token_count")
+)
 
 
 @lru_cache(maxsize=8)
@@ -275,6 +284,8 @@ def is_sensitive_arg(name: str, *, sink: str = ARGUMENTS_SINK) -> bool:
     normalized = name.strip().lower()
     folded = _fold_key(name)
     if sink == RESULT_SINK and folded in _RESULT_SAFE_KEYS_FOLDED:
+        return False
+    if sink == RESULT_SINK and folded in _COUNT_KEYS_FOLDED:
         return False
     if normalized in _SENSITIVE_ARG_KEYS or any(
         marker in normalized for marker in _SENSITIVE_ARG_MARKERS

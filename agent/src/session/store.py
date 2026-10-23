@@ -13,6 +13,13 @@ from src.session.models import Attempt, Message, Session
 logger = logging.getLogger(__name__)
 
 
+def _safe_component(value: str, kind: str) -> str:
+    """Reject an id that would climb out of the directory it is joined onto."""
+    if not value or value in {".", ".."} or any(c in "/\\" or ord(c) < 32 for c in value):
+        raise ValueError(f"invalid {kind}: {value!r}")
+    return value
+
+
 class SessionStore:
     """Filesystem-backed persistent storage.
 
@@ -40,7 +47,7 @@ class SessionStore:
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     def _session_dir(self, session_id: str) -> Path:
-        return self.base_dir / session_id
+        return self.base_dir / _safe_component(session_id, "session_id")
 
     def _session_file(self, session_id: str) -> Path:
         return self._session_dir(session_id) / "session.json"
@@ -49,7 +56,7 @@ class SessionStore:
         return self._session_dir(session_id) / "messages.jsonl"
 
     def _attempt_dir(self, session_id: str, attempt_id: str) -> Path:
-        return self._session_dir(session_id) / "attempts" / attempt_id
+        return self._session_dir(session_id) / "attempts" / _safe_component(attempt_id, "attempt_id")
 
     def _attempt_file(self, session_id: str, attempt_id: str) -> Path:
         return self._attempt_dir(session_id, attempt_id) / "attempt.json"

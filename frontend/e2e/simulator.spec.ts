@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './helpers/liveStack'
 
 /**
  * Stock Simulator behavioural E2E — src/pages/Simulator.tsx + the

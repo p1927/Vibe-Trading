@@ -33,12 +33,12 @@ from src.agent.tools import BaseTool
 # ---------------------------------------------------------------------------
 
 _KV_LABEL_RE = re.compile(
-    r"(?P<label>[一-龥A-Za-z][^|\n：:*]{1,30})[：:]\s*[~约]?\$?"
+    r"(?P<label>[一-龥A-Za-z][^|\n：:*]{1,30})[：:]\s*(?P<sign>[-−–]?)[~约]?\$?"
     r"(?P<num>[\d,，.]+)\s*"
     r"(?P<unit>亿[元美港]?元?|万亿|[xX倍]|%|[BMT])?"
 )
 
-_NUMUNIT_RE = re.compile(r"[~约]?\$?([\d,，.]+)\s*(亿[元美港]?元?|万亿|[xX倍]|%|[BMT])?")
+_NUMUNIT_RE = re.compile(r"([-−–]?)[~约]?\$?([\d,，.]+)\s*(亿[元美港]?元?|万亿|[xX倍]|%|[BMT])?")
 _TABLE_SEP_RE = re.compile(r"^\|[\-\s|:]+\|$")
 
 _SKIP_LABELS = {
@@ -52,8 +52,9 @@ _QUARTER_RE = re.compile(r"(20\d{2}|Q[1-4]|\d{4}\s*Q[1-4])")
 def _clean_num(s: str) -> float | None:
     """Normalise a numeric string with commas (ASCII or wide) to float."""
     s = s.replace(",", "").replace("，", "").strip()
+    neg = s[:1] in "-−–"
     try:
-        return float(s)
+        return -float(s[1:]) if neg else float(s)
     except ValueError:
         return None
 
@@ -119,9 +120,9 @@ def _parse_md_tables(lines: list[str]) -> list[tuple[str, str, float, str, int, 
                         )
                         m = _NUMUNIT_RE.search(cell)
                         if m:
-                            val = _clean_num(m.group(1))
-                            unit = (m.group(2) or "").strip()
-                            if val and val != 0 and val < 1e15:
+                            val = _clean_num(m.group(1) + m.group(2))
+                            unit = (m.group(3) or "").strip()
+                            if val and abs(val) < 1e15:
                                 results.append((row_label, col_header, val, unit, i + 1, dline))
                     i += 1
                 continue
@@ -149,7 +150,7 @@ def extract_data_points(md_text: str) -> list[dict[str, Any]]:
         label = re.sub(r"[*_`]+", "", label).strip()
         if not _is_valid_label(label):
             return
-        if val is None or val == 0 or val > 1e15:
+        if val is None or val == 0 or abs(val) > 1e15:
             return
         if _QUARTER_RE.fullmatch(label.strip()):
             return
@@ -192,7 +193,7 @@ def extract_data_points(md_text: str) -> list[dict[str, Any]]:
         for m in _KV_LABEL_RE.finditer(stripped):
             _add(
                 m.group("label"),
-                _clean_num(m.group("num")),
+                _clean_num(m.group("sign") + m.group("num")),
                 (m.group("unit") or "").strip(),
                 lineno,
                 stripped,

@@ -9,7 +9,7 @@ from src.strategy_store.models import is_four_eyes_violation
 from typing import Any
 
 from src.agent.tools import BaseTool
-from src.strategy_store.decay import DecayEvaluator
+from src.strategy_store.decay import DECAY_HISTORY_LIMIT, DecayEvaluator
 from src.strategy_store.metrics import compute_decay_metrics, has_decay_inputs
 from src.strategy_store.models import (
     ArtifactStatus,
@@ -226,7 +226,7 @@ class SdmStatusTool(BaseTool):
         if artifact is None:
             return _error(ValueError(f"Artifact not found: {artifact_id}"))
 
-        bench_history = list(store.get_bench_history(artifact_id, limit=10))
+        bench_history = list(store.get_bench_history(artifact_id, limit=DECAY_HISTORY_LIMIT))
         if len(bench_history) < 3:
             return _ok({
                 "artifact_id": artifact_id,

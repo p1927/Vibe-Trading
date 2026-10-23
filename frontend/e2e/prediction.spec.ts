@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './helpers/liveStack'
 
 /**
  * Predictions panel behavioural E2E — src/pages/Prediction.tsx +

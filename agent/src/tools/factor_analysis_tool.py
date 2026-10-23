@@ -143,9 +143,17 @@ class FactorAnalysisTool(BaseTool):
         Returns:
             JSON-formatted analysis summary.
         """
+        from src.tools.path_utils import safe_run_dir, safe_user_path
+
+        try:  # model-supplied read/write paths are confined to the allowed import / run roots
+            factor_csv = str(safe_user_path(str(kwargs["factor_csv"])))
+            return_csv = str(safe_user_path(str(kwargs["return_csv"])))
+            output_dir = str(safe_run_dir(str(kwargs["output_dir"])))
+        except (KeyError, ValueError) as exc:
+            return json.dumps({"status": "error", "error": f"invalid path: {exc}"}, ensure_ascii=False)
         return run_factor_analysis(
-            factor_csv=kwargs["factor_csv"],
-            return_csv=kwargs["return_csv"],
-            output_dir=kwargs["output_dir"],
+            factor_csv=factor_csv,
+            return_csv=return_csv,
+            output_dir=output_dir,
             n_groups=kwargs.get("n_groups", 5),
         )
