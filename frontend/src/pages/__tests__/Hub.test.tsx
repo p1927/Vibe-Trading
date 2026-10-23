@@ -122,6 +122,32 @@ describe("Hub page", () => {
     expect(field).toHaveValue(0.9);
   });
 
+  it("saves only edited fields even when polling refreshes the server config", async () => {
+    mocked.getHubNewsPipelineConfig.mockResolvedValue({ config: {
+      relevance_min_confidence: 0.55, light_lookback_days: 1,
+    } });
+    mocked.updateHubNewsPipelineConfig.mockResolvedValue({ config: {
+      relevance_min_confidence: 0, light_lookback_days: 2,
+    } });
+    render(<Hub />);
+    fireEvent.click(await screen.findByText("Show schedule settings"));
+    const field = (await screen.findByText("Min relevance confidence")).parentElement!.querySelector("input")!;
+    fireEvent.change(field, { target: { value: "0" } });
+    mocked.getHubNewsPipelineConfig.mockResolvedValue({ config: {
+      relevance_min_confidence: 0.55, light_lookback_days: 2,
+    } });
+    const before = mocked.getHubNewsPipelineConfig.mock.calls.length;
+    fireEvent.click(screen.getByText("Refresh"));
+    await waitFor(() => expect(mocked.getHubNewsPipelineConfig.mock.calls.length).toBeGreaterThan(before));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    fireEvent.click(screen.getByText("Save schedule"));
+    await waitFor(() => expect(mocked.updateHubNewsPipelineConfig).toHaveBeenCalledWith({ relevance_min_confidence: 0 }));
+    await waitFor(() => expect(field).toHaveValue(0));
+    // The acknowledged result becomes the next draft baseline.
+    fireEvent.click(screen.getByText("Save schedule"));
+    await waitFor(() => expect(mocked.updateHubNewsPipelineConfig).toHaveBeenLastCalledWith({}));
+  });
+
   it("labels the last maintainer run with its own finish time, and says when none was recorded", async () => {
     mocked.getHubStatus.mockResolvedValue(
       status({ news_maintainer: { present: true, mode: "maintenance", stages: [], finished_at: "2026-10-01T08:00:00Z" } }),

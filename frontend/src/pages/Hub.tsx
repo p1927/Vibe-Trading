@@ -624,6 +624,7 @@ export function Hub() {
   const [obsSummary, setObsSummary] = useState<ObservabilitySummaryResponse | null>(null);
   const [pipelineConfig, setPipelineConfig] = useState<HubNewsPipelineConfig | null>(null);
   const [pipelineDraft, setPipelineDraft] = useState<HubNewsPipelineConfig | null>(null);
+  const pipelineBaseline = useRef<HubNewsPipelineConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -682,7 +683,11 @@ export function Hub() {
       const cfg = cfgRes?.config;
       if (cfg) {
         setPipelineConfig(cfg);
-        setPipelineDraft((draft) => draft ?? cfg);
+        setPipelineDraft((draft) => {
+          if (draft) return draft;
+          pipelineBaseline.current = cfg;
+          return cfg;
+        });
       }
     } catch (err) {
       if (seq !== loadSeq.current) return;
@@ -897,7 +902,7 @@ export function Hub() {
     setBusy("save-pipeline");
     setError(null);
     try {
-      const res = await api.updateHubNewsPipelineConfig({
+      const changes = {
         full_ingest_cron: pipelineDraft.full_ingest_cron,
         light_ingest_cron: pipelineDraft.light_ingest_cron,
         entity_drain_cron: pipelineDraft.entity_drain_cron,
@@ -918,10 +923,16 @@ export function Hub() {
         wiki_search_top_k: pipelineDraft.wiki_search_top_k,
         wiki_search_max_per_pass: pipelineDraft.wiki_search_max_per_pass,
         wiki_search_min_score: pipelineDraft.wiki_search_min_score,
-      });
+      };
+      const patch = Object.fromEntries(
+        Object.entries(changes).filter(([key, value]) =>
+          value !== pipelineBaseline.current?.[key as keyof HubNewsPipelineConfig]),
+      );
+      const res = await api.updateHubNewsPipelineConfig(patch);
       if (res.config) {
         setPipelineConfig(res.config);
         setPipelineDraft(res.config);
+        pipelineBaseline.current = res.config;
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save pipeline config");
