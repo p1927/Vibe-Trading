@@ -40,8 +40,6 @@ def qveris_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(qt, "QVERIS_CONFIG_PATH", tmp_path / "qveris.json")
     monkeypatch.delenv("QVERIS_API_KEY", raising=False)
     monkeypatch.delenv("QVERIS_BASE_URL", raising=False)
-    qt._SESSION_SPEND.clear()
-    getattr(qt, "_SESSION_RESERVED", {}).clear()
     return tmp_path / "qveris.json"
 
 
