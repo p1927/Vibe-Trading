@@ -457,6 +457,7 @@ def run_worker(
     grounding_block: str = "",
     agent_config: AgentConfig | None = None,
     cancel_event: threading.Event | None = None,
+    session_id: str | None = None,
 ) -> WorkerResult:
     """Run one worker task, releasing the per-task LLM client on exit.
 
@@ -507,6 +508,7 @@ def run_worker(
             grounding_block=grounding_block,
             agent_config=agent_config,
             cancel_event=cancel_event,
+            session_id=session_id,
         )
     finally:
         llm.close()
@@ -525,6 +527,7 @@ def _run_worker_impl(
     *,
     llm: ChatLLM,
     cancel_event: threading.Event | None = None,
+    session_id: str | None = None,
 ) -> WorkerResult:
     """Execute a single worker task using a lightweight ReAct loop.
 
@@ -577,6 +580,7 @@ def _run_worker_impl(
     registry = build_swarm_registry(
         agent_spec.tools,
         agent_config=agent_config,
+        session_id=session_id or f"swarm:{run_dir.name}",
         include_shell_tools=include_shell_tools,
     )
 

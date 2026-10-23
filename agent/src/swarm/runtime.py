@@ -265,11 +265,13 @@ class SwarmRuntime:
         store: SwarmStore,
         max_workers: int = 4,
         agent_config: AgentConfig | None = None,
+        session_id: str | None = None,
     ) -> None:
         """Initialize SwarmRuntime.
 
         Args:
             store: SwarmStore instance for run persistence.
+            session_id: Host-assigned chat identity, never model-supplied.
             max_workers: Maximum concurrent worker threads.
             agent_config: Optional resolved agent config carrying remote MCP
                 server definitions. Boot-time / operator-trusted; never derived
@@ -281,6 +283,7 @@ class SwarmRuntime:
         self._store = store
         self._max_workers = max_workers
         self._agent_config = agent_config
+        self._session_id = session_id
         self._cancel_events: dict[str, threading.Event] = {}
         self._live_callbacks: dict[str, Callable] = {}
         self._lock = threading.Lock()
@@ -1141,6 +1144,7 @@ class SwarmRuntime:
                 include_shell_tools=include_shell_tools,
                 grounding_block=grounding_block,
                 agent_config=self._agent_config,
+                session_id=self._session_id or f"swarm:{run_id}",
                 cancel_event=cancel_event,
             )
 

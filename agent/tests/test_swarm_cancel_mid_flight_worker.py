@@ -116,3 +116,18 @@ def test_cancelled_worker_result_persists_as_cancelled_task(tmp_path, monkeypatc
     assert "task_failed" not in event_types, event_types
 
     assert store.load_run(run.id).status == RunStatus.cancelled
+
+
+def test_runtime_forwards_trusted_session_or_run_identity(tmp_path, monkeypatch):
+    received = []
+    def capture_worker(**kwargs):
+        received.append(kwargs["session_id"])
+        return WorkerResult(status="completed", summary="done")
+    monkeypatch.setattr(rt, "run_worker", capture_worker)
+    store, runtime, run = _make_run(tmp_path)
+    runtime._execute_run(run, threading.Event())
+    assert received == [f"swarm:{run.id}"]
+    # A fresh runtime created by the chat tool carries the actual host identity.
+    trusted = rt.SwarmRuntime(store=store, session_id="trusted-chat")
+    trusted._run_worker_with_retries(run.agents[0], run.tasks[0], {}, {}, tmp_path, None, run.id)
+    assert received[-1] == "trusted-chat"

@@ -204,7 +204,7 @@ def build_registry(
             elif cls in session_injected:
                 registry.register(cls(default_session_id=session_id, event_callback=event_callback))
             elif cls is SwarmTool:
-                registry.register(cls(include_shell_tools=include_shell_tools, event_callback=event_callback))
+                registry.register(cls(include_shell_tools=include_shell_tools, event_callback=event_callback, default_session_id=session_id))
             else:
                 registry.register(cls())
         except Exception as exc:
@@ -250,7 +250,6 @@ def build_registry(
                 from src.live.registry import (
                     is_live_broker,
                     should_register_live_channel,
-                    wrap_live_broker_tools,
                 )
 
                 server_url = server_config.url
@@ -296,10 +295,6 @@ def build_registry(
                     local_server_name=local_server_names[server_name],
                     default_session_id=session_id,
                 )
-                if live:
-                    wrappers = wrap_live_broker_tools(
-                        server_name, wrappers, url=server_url
-                    )
                 for tool in wrappers:
                     registry.register(tool)
                 logger.info(
@@ -340,6 +335,7 @@ def build_swarm_registry(
     *,
     agent_config: "AgentConfig | None" = None,
     include_shell_tools: bool = False,
+    session_id: str | None = None,
 ) -> ToolRegistry:
     """Build a per-worker registry that merges local + remote MCP tools.
 
@@ -362,6 +358,7 @@ def build_swarm_registry(
             MCP wrappers are appended to the candidate pool before filtering.
             Pass ``None`` to keep the worker strictly local.
         include_shell_tools: Whether shell-execution tools are eligible.
+        session_id: Host-assigned identity inherited by local and remote tools.
 
     Returns:
         ToolRegistry containing the whitelist intersection of local tools
@@ -373,6 +370,7 @@ def build_swarm_registry(
     )
     full = build_registry(
         agent_config=swarm_agent_config,
+        session_id=session_id,
         include_shell_tools=include_shell_tools,
         _mcp_server_tool_name_segments=swarm_local_server_names,
     )

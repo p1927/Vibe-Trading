@@ -195,3 +195,19 @@ def test_no_cancel_event_leaves_stream_chat_signature_untouched(tmp_path):
     _run(tmp_path, llm, registry, cancel_event=None)
 
     assert llm.should_cancel_seen and all(p is None for p in llm.should_cancel_seen)
+
+
+def test_worker_forwards_host_identity_to_registry(tmp_path, monkeypatch):
+    seen = []
+    registry = _Registry()
+    def build(*args, **kwargs):
+        seen.append(kwargs["session_id"])
+        return registry
+    monkeypatch.setattr(worker_mod, "build_swarm_registry", build)
+    monkeypatch.setattr(worker_mod, "ChatLLM", _ScriptedLLM(_tool_call_response()))
+    event = threading.Event()
+    event.set()
+    run_worker(SwarmAgentSpec(id="a", role="a", system_prompt="a", tools=[]),
+               SwarmTask(id="t", agent_id="a", prompt_template="a"), {}, {}, tmp_path,
+               session_id="trusted-chat", cancel_event=event)
+    assert seen == ["trusted-chat"]
