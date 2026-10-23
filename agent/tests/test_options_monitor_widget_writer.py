@@ -38,8 +38,10 @@ def test_refreshed_widget_lands_in_store_dir(monkeypatch, tmp_path):
 
 
 def test_invalid_widget_id_fails_loud(monkeypatch, tmp_path):
-    with pytest.raises(RuntimeError):
-        _run(monkeypatch, tmp_path, "../evil")
+    result = _run(monkeypatch, tmp_path, "../evil")
+    assert result["had_errors"] is True
+    assert "not a valid trade widget id" in result["errors"]["tp_NIFTY_aaaaaaaaaaaa"]["error"]
+    assert result["refreshed"] == []
     d = tmp_path / "trade_widgets"
     assert not d.exists() or not list(d.iterdir())
 

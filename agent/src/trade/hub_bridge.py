@@ -62,6 +62,26 @@ def requires_first_answer_tool_call(user_message: str, session_config: dict[str,
 
 session_widget_emitted: dict[str, dict[str, float]] = {}
 WIDGET_EMIT_DEDUP_SECONDS = 10 * 60
+# Match the bounded insertion-order dedup pattern used by channel message caches.
+_WIDGET_MAX_SESSIONS = 256
+_WIDGET_MAX_KEYS_PER_SESSION = 64
+_WIDGET_PRUNE_SECONDS = 60
+_widget_pruned_at = float("-inf")
+_widget_lock = threading.Lock()
+
+
+def _prune_widget_emits(now: float) -> None:
+    """Expire inactive sessions periodically, rather than scan all sessions per widget."""
+    global _widget_pruned_at
+    if now < _widget_pruned_at or now - _widget_pruned_at >= _WIDGET_PRUNE_SECONDS:
+        for sid, emits in list(session_widget_emitted.items()):
+            for key, last in list(emits.items()):
+                if not 0 <= now - last < WIDGET_EMIT_DEDUP_SECONDS:
+                    del emits[key]
+            if not emits:
+                del session_widget_emitted[sid]
+        _widget_pruned_at = now
+
 
 
 def trade_repo_root() -> Path | None:
@@ -136,11 +156,10 @@ def _should_emit_widget(session_id: str, ticker: str, now: float, *, widget_kind
     if not session_id:
         return False
     key = _widget_dedup_key(ticker, widget_kind)
-    session_emits = session_widget_emitted.get(session_id, {})
-    last = session_emits.get(key)
-    if last is not None and (now - last) < WIDGET_EMIT_DEDUP_SECONDS:
-        return False
-    return True
+    with _widget_lock:
+        _prune_widget_emits(now)
+        last = session_widget_emitted.get(session_id, {}).get(key)
+        return last is None or not 0 <= now - last < WIDGET_EMIT_DEDUP_SECONDS
 
 
 def _record_widget_emitted(
@@ -153,7 +172,17 @@ def _record_widget_emitted(
     if not session_id:
         return
     key = _widget_dedup_key(ticker, widget_kind)
-    session_widget_emitted.setdefault(session_id, {})[key] = now
+    with _widget_lock:
+        _prune_widget_emits(now)
+        # Refresh insertion order so capacity eviction removes the least recently emitted.
+        emits = session_widget_emitted.pop(session_id, {})
+        emits.pop(key, None)
+        emits[key] = now
+        while len(emits) > _WIDGET_MAX_KEYS_PER_SESSION:
+            del emits[next(iter(emits))]
+        session_widget_emitted[session_id] = emits
+        while len(session_widget_emitted) > _WIDGET_MAX_SESSIONS:
+            del session_widget_emitted[next(iter(session_widget_emitted))]
 
 
 def emit_trade_widget(

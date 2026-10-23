@@ -67,24 +67,34 @@ def start_refresh(
     if not _LOCK.acquire(blocking=False):
         return False, dict(_JOB)
     try:
-        _JOB.clear()
-        _JOB.update(
-            {
-                "job_id": f"scoreboard-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}",
-                "state": "running",
-                "ticker": key,
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "finished_at": None,
-                "error": None,
-            }
-        )
-        _THREAD = threading.Thread(
-            target=_run,
-            args=(_JOB, key, history_days(key, days), horizon_days, eval_step),
-            name="track-scoreboard-refresh",
-            daemon=True,
-        )
-        _THREAD.start()
+        # Validate disk-backed history before replacing the last truthful job state.
+        effective_days = history_days(key, days)
+        previous_job = dict(_JOB)
+        previous_thread = _THREAD
+        try:
+            _JOB.clear()
+            _JOB.update(
+                {
+                    "job_id": f"scoreboard-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}",
+                    "state": "running",
+                    "ticker": key,
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                    "finished_at": None,
+                    "error": None,
+                }
+            )
+            _THREAD = threading.Thread(
+                target=_run,
+                args=(_JOB, key, effective_days, horizon_days, eval_step),
+                name="track-scoreboard-refresh",
+                daemon=True,
+            )
+            _THREAD.start()
+        except Exception:
+            _JOB.clear()
+            _JOB.update(previous_job)
+            _THREAD = previous_thread
+            raise
     except Exception:
         _LOCK.release()
         raise

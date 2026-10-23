@@ -82,3 +82,25 @@ def test_dispatch_attaches_the_summary(monkeypatch):
     )
     index_jobs.dispatch_index_job_sync(job)
     assert job.config["_last_result_summary"]["status"] == "ok"
+
+
+@pytest.mark.parametrize("failure", ["history", "construct", "start"])
+def test_failed_start_preserves_last_truthful_job_and_releases_lock(monkeypatch, failure):
+    previous = {"job_id": "old", "state": "done", "ticker": "OLD"}
+    monkeypatch.setattr(scoreboard_refresh, "_JOB", dict(previous))
+    old_thread = scoreboard_refresh._THREAD
+
+    def fail(*args, **kwargs):
+        raise OSError("broken scoreboard or thread")
+
+    monkeypatch.setattr(scoreboard_refresh, "history_days", fail if failure == "history" else lambda *a: 730)
+    if failure == "construct":
+        monkeypatch.setattr(scoreboard_refresh.threading, "Thread", fail)
+    if failure == "start":
+        monkeypatch.setattr(scoreboard_refresh.threading.Thread, "start", fail)
+    with pytest.raises(OSError, match="broken"):
+        scoreboard_refresh.start_refresh("NIFTY")
+    assert scoreboard_refresh.current_job() == previous
+    assert scoreboard_refresh._THREAD is old_thread
+    assert scoreboard_refresh._LOCK.acquire(blocking=False)
+    scoreboard_refresh._LOCK.release()
