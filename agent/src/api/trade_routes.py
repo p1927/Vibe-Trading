@@ -47,8 +47,38 @@ trade_router = APIRouter(prefix="/trade", tags=["trade"], dependencies=[Depends(
 
 
 def _ticker_key(raw: str | None, default: str = "NIFTY") -> str:
-    """Canonical (upper-case, stripped) ticker/entity id from a request; 400 when path-unsafe."""
-    return safe_path_component((raw or default).strip().upper(), "ticker")
+    """Canonical (upper-case, stripped) ticker/entity id from a request; 400 when path-unsafe.
+
+    The default applies only when the parameter is absent: a present-but-blank `ticker=` is a 422, not a silent NIFTY.
+    """
+    if raw is not None and not raw.strip() and default:
+        raise HTTPException(status_code=422, detail="ticker must not be empty (omit it for the default)")
+    return safe_path_component((default if raw is None else raw).strip().upper(), "ticker")
+
+
+def _query_day(raw: str | None, name: str) -> str | None:
+    """A `YYYY-MM-DD` query day (an ISO datetime keeps its date part); 422 on anything else, None when absent."""
+    if raw is None:
+        return None
+    try:
+        return datetime.fromisoformat(raw.strip()).date().isoformat()
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"{name} must be a valid YYYY-MM-DD date, got {raw!r}") from None
+
+
+def _query_window(since: str | None, until: str | None, day: str | None) -> tuple[str | None, str | None, str | None]:
+    """Validated (since, until, day); 422 when `until` is before `since`."""
+    s, u, d = _query_day(since, "since"), _query_day(until, "until"), _query_day(day, "day")
+    if s and u and u < s:
+        raise HTTPException(status_code=422, detail=f"until ({u}) is before since ({s})")
+    return (since if s else None), (until if u else None), d
+
+
+def _query_limit(limit: int, *, maximum: int) -> int:
+    """`limit` must be >= 1 (422); above `maximum` it is clamped (the response count shows what was returned)."""
+    if limit < 1:
+        raise HTTPException(status_code=422, detail=f"limit must be >= 1, got {limit}")
+    return min(limit, maximum)
 
 _WIDGET_ID_RE = re.compile(r"(?:tp|ts|ti|ns)_[A-Z][A-Z0-9]*_[0-9a-f]{12}")
 _WIDGET_ID_INLINE_RE = re.compile(r"((?:tp|ts|ti|ns)_[A-Z][A-Z0-9]*_[0-9a-f]{12})")
@@ -1639,6 +1669,8 @@ def get_index_prediction(
 ) -> IndexPredictionResponse:
     """Load cached index research artifact for the prediction page."""
     key = _ticker_key(ticker)
+    if horizon_days is not None and horizon_days < 1:
+        raise HTTPException(status_code=422, detail=f"horizon_days must be >= 1, got {horizon_days}")
     try:
         from src.trade.hub_bridge import load_hub_plan_artifact, prefetch_index_hub_plan
 
@@ -3637,6 +3669,8 @@ def get_index_verified_news(
 ) -> IndexVerifiedNewsResponse:
     """Filter verified hub news by date, symbol, topic, factor, or theme tags."""
     key = _ticker_key(ticker)
+    since, until, day = _query_window(since, until, day)
+    row_limit = _query_limit(limit, maximum=100)
 
     def _csv(raw: str | None) -> list[str] | None:
         if not raw:
@@ -3661,8 +3695,9 @@ def get_index_verified_news(
             themes=_csv(themes),
             tags=_csv(tags),
             include_rejected=include_rejected,
-            limit=max(1, min(limit, 100)),
+            limit=row_limit,
         )
+        items = [news_hub_bridge.without_legacy_forecast(item) for item in items]  # D410: one honesty rule, not a copy
         return IndexVerifiedNewsResponse(
             status="ok",
             ticker=key,
