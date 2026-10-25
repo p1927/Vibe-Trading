@@ -56,6 +56,7 @@ from .index_jobs import (
     JOB_TYPE_FORECAST_ENGINE_REFRESH,
     JOB_TYPE_FORECAST_PLATFORM_RETRAIN,
     JOB_TYPE_GLOBAL_MACRO_EOD_REFRESH,
+    JOB_TYPE_INDEX_TRACK_SCOREBOARD,
     JOB_TYPE_HUB_NEWS_ENTITY,
     JOB_TYPE_HUB_NEWS_INGEST,
     JOB_TYPE_INDEX_CALIBRATION,
@@ -217,6 +218,9 @@ _JOB_DETAILS: Dict[str, JobTypeDetail] = {
     ),
     JOB_TYPE_FORECAST_PLATFORM_RETRAIN: JobTypeDetail(
         "Retrains the forecast-platform model (LLM/ML pipeline)."
+    ),
+    JOB_TYPE_INDEX_TRACK_SCOREBOARD: JobTypeDetail(
+        "Post-close recompute of the per-track prediction scoreboard (the cache the Prediction tab reads)."
     ),
     JOB_TYPE_FORECAST_ENGINE_REFRESH: JobTypeDetail(
         "Refreshes every forecast-engine recipe's TimesFM forecast and walk-forward evaluation "

@@ -74,12 +74,30 @@ def test_fail_job_records_error_and_frees_scope(mod):
 
 
 @pytest.mark.parametrize("mod", MODS, ids=IDS)
-def test_corrupt_job_file_reads_as_missing_not_crash(mod):
+def test_corrupt_job_file_raises_on_read_but_does_not_stop_hydration(mod):
+    """An unreadable job file is not an absent job (4528e8e8, D479: reading it as absent hid a live recording from
+    the one-session scan); the read raises, while the boot-time scan of the whole directory skips it."""
     job_id = _start(mod)[0]
     mod._job_file(job_id).write_text("{not json", encoding="utf-8")
     _cache(mod).clear()
-    assert mod.get_job(job_id) is None
+    with pytest.raises(ValueError):
+        mod.get_job(job_id)
     mod.hydrate_jobs_from_disk()  # must not raise on the corrupt file
+
+
+@pytest.mark.parametrize("mod", MODS, ids=IDS)
+def test_one_corrupt_job_file_does_not_stop_the_others_being_hydrated(mod):
+    bad = _start(mod)[0]
+    # a second, healthy job on another scope
+    if mod is ext:
+        good = mod.start_job(ticker="BANKNIFTY", horizon_days=14)[0]
+    else:
+        good = mod.start_job(ticker="BANKNIFTY", recipe="r2", start="2026-01-01", end="2026-02-01", horizon=5)[0]
+    mod._job_file(bad).write_text("{not json", encoding="utf-8")
+    _cache(mod).clear()
+    mod._ACTIVE_BY_SCOPE.clear()
+    mod.hydrate_jobs_from_disk()
+    assert good in _cache(mod)
 
 
 @pytest.mark.parametrize("mod", MODS, ids=IDS)

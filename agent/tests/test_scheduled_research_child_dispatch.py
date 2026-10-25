@@ -115,10 +115,12 @@ def test_child_gets_the_budget_the_log_and_the_child_marker() -> None:
     assert any(e["message"] == "stage x: done" for e in get_logs_since(job.id))
 
 
-def test_a_cancel_at_the_deadline_gets_no_grace_past_it(tmp_path) -> None:
+def test_a_cancel_at_the_deadline_gets_no_grace_past_it(tmp_path, monkeypatch) -> None:
     """The executor writes the job's cancel flag when its dispatch budget runs out; the child's
     10 s cancel grace must not extend the run past that same budget (it used to: +10 s)."""
     import threading
+
+    monkeypatch.setenv("TRADE_STACK_ROOT", str(tmp_path))  # the cancel flag lives under <root>/log, not the repo's
 
     from trade_integrations.dataflows.index_research.pipeline_cancel import (
         PipelineCancelledError,

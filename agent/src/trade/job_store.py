@@ -260,7 +260,13 @@ class JobStore:
         for path in root.iterdir():
             if not path.is_dir() or not job_runner.job_id_valid(path.name):
                 continue
-            job = self.read(path.name)
+            try:
+                job = self.read(path.name)
+            except (OSError, ValueError):
+                # One unreadable job file must not stop the rest from being adopted: an unhydrated live job is
+                # invisible to the one-session guard and to the stale reaper. The read itself still raises.
+                logger.exception("job hydration skipped unreadable job %s under %s", path.name, root)
+                continue
             if job is None:
                 continue
             with self.jobs_lock:
