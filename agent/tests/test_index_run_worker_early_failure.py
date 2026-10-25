@@ -18,13 +18,33 @@ def _isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("TRADE_STACK_ROOT", str(tmp_path))
 
 
-def test_early_import_failure_marks_the_job_failed(monkeypatch):
-    """The aggregator import precedes PipelineCancelledError's: its failure used to raise UnboundLocalError from the
+@pytest.mark.parametrize(
+    "module",
+    ["trade_integrations.dataflows.index_research.aggregator", "trade_integrations.context.hub"],
+)
+def test_early_import_failure_marks_the_job_failed(monkeypatch, module):
+    """These imports precede PipelineCancelledError's: a failure used to raise UnboundLocalError from the
     `except PipelineCancelledError` clause itself, skipping fail_job and leaving the job running."""
     import sys
 
-    monkeypatch.setitem(sys.modules, "trade_integrations.dataflows.index_research.aggregator", None)
+    # the cleanup in `finally` needs pipeline_cancel (which imports context.hub): load it before poisoning
+    import trade_integrations.dataflows.index_research.pipeline_cancel  # noqa: F401
+
+    monkeypatch.setitem(sys.modules, module, None)
     job_id, _ = run_jobs.start_job(ticker="NIFTY", horizon_days=14, refresh_constituents=False)
     run_jobs.run_worker(job_id)  # must not raise UnboundLocalError
     rec = run_jobs._get_job_record(job_id)
     assert rec["status"] != "running" and rec.get("error")
+
+
+def test_a_failure_after_the_import_still_fails_the_job(monkeypatch):
+    import trade_integrations.dataflows.index_research.aggregator as agg
+
+    def boom(*a, **k):
+        raise RuntimeError("pipeline blew up")
+
+    monkeypatch.setattr(agg, "run_index_research", boom)
+    job_id, _ = run_jobs.start_job(ticker="NIFTY", horizon_days=14, refresh_constituents=False)
+    run_jobs.run_worker(job_id)
+    rec = run_jobs._get_job_record(job_id)
+    assert rec["status"] != "running" and "pipeline blew up" in str(rec.get("error"))
